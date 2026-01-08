@@ -1,0 +1,827 @@
+let products = [];
+let selectedProduct = null;
+let currentSuggestion = null;
+let currentLanguage = 'de';
+let productTranslations = {};
+let descriptionMode = 'rendered'; // 'rendered' or 'html'
+let hasUnsavedChanges = false;
+let originalData = {}; // Store original values to detect changes
+let pendingAction = null; // Store pending navigation action
+
+// Available languages
+const LANGUAGES = {
+  de: 'Deutsch',
+  en: 'English',
+  fr: 'Français',
+  es: 'Español',
+  it: 'Italiano',
+};
+
+// Load products on page load
+window.addEventListener('DOMContentLoaded', () => {
+  loadProducts();
+});
+
+// Check if current data has changed from original
+function checkForChanges() {
+  if (!originalData.title) return false; // No data loaded yet
+
+  const descField = document.getElementById('field-description');
+  const currentDescription = descriptionMode === 'rendered' ? descField.innerHTML : descField.value;
+
+  const hasChanges =
+    document.getElementById('field-title').value !== originalData.title ||
+    currentDescription !== originalData.description ||
+    document.getElementById('field-handle').value !== originalData.handle ||
+    document.getElementById('field-seoTitle').value !== originalData.seoTitle ||
+    document.getElementById('field-metaDescription').value !== originalData.metaDescription;
+
+  hasUnsavedChanges = hasChanges;
+  updateSaveButton();
+  return hasChanges;
+}
+
+// Update save button state
+function updateSaveButton() {
+  const saveBtn = document.getElementById('save-btn');
+  if (!saveBtn) return;
+
+  if (hasUnsavedChanges) {
+    saveBtn.disabled = false;
+    saveBtn.classList.add('has-changes');
+    saveBtn.textContent = '💾 Speichern *';
+  } else {
+    saveBtn.disabled = true;
+    saveBtn.classList.remove('has-changes');
+    saveBtn.textContent = '💾 Gespeichert';
+  }
+}
+
+// Show confirmation modal
+function showUnsavedChangesModal(action) {
+  pendingAction = action;
+
+  const modalContainer = document.getElementById('modalContainer');
+  modalContainer.innerHTML = `
+    <div class="modal-overlay">
+      <div class="modal-content">
+        <h3 class="modal-title">⚠️ Ungespeicherte Änderungen</h3>
+        <p class="modal-message">
+          Du hast ungespeicherte Änderungen. Möchtest du diese speichern, bevor du fortfährst?
+        </p>
+        <div class="modal-actions">
+          <button class="modal-btn modal-btn-cancel" onclick="closeModal()">
+            Abbrechen
+          </button>
+          <button class="modal-btn modal-btn-discard" onclick="discardChanges()">
+            Verwerfen
+          </button>
+          <button class="modal-btn modal-btn-save" onclick="saveAndContinue()">
+            Speichern & Fortfahren
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// Close modal
+function closeModal() {
+  document.getElementById('modalContainer').innerHTML = '';
+  pendingAction = null;
+}
+
+// Discard changes and continue
+function discardChanges() {
+  hasUnsavedChanges = false;
+  closeModal();
+  if (pendingAction) {
+    pendingAction();
+    pendingAction = null;
+  }
+}
+
+// Save and continue
+async function saveAndContinue() {
+  closeModal();
+  await saveTranslation();
+  if (pendingAction) {
+    pendingAction();
+    pendingAction = null;
+  }
+}
+
+async function loadProducts() {
+  const productsList = document.getElementById('productsList');
+  productsList.innerHTML = '<div class="loading"><div class="spinner"></div><p>Lade Produkte...</p></div>';
+
+  try {
+    const response = await fetch('/api/products');
+    const data = await response.json();
+
+    if (data.success) {
+      products = data.products;
+      console.log('DEBUG: Loaded products:', products);
+      console.log('DEBUG: First product:', products[0]);
+      renderProducts();
+    } else {
+      productsList.innerHTML = `<div class="error-message">Fehler: ${data.error}</div>`;
+    }
+  } catch (error) {
+    productsList.innerHTML = `<div class="error-message">Fehler beim Laden: ${error.message}</div>`;
+  }
+}
+
+function renderProducts() {
+  const productsList = document.getElementById('productsList');
+
+  if (products.length === 0) {
+    productsList.innerHTML = '<div class="empty-state"><p>Keine Produkte gefunden</p></div>';
+    return;
+  }
+
+  productsList.innerHTML = products
+    .map(
+      (product) => `
+    <div class="product-item ${selectedProduct?.id === product.id ? 'active' : ''}" onclick="selectProduct('${
+        product.id
+      }')">
+      <div class="product-item-content">
+        ${product.featuredImage
+          ? `<img src="${product.featuredImage}" alt="${escapeHtml(product.title)}" class="product-thumbnail" onerror="this.style.display='none'">`
+          : `<div class="product-thumbnail-placeholder">📦</div>`
+        }
+        <div class="product-info-text">
+          <div class="product-title">${escapeHtml(product.title)}</div>
+          <div class="product-type">${escapeHtml(product.productType || 'Kein Typ')}</div>
+        </div>
+      </div>
+    </div>
+  `
+    )
+    .join('');
+}
+
+async function selectProduct(productId) {
+  // Check for unsaved changes
+  if (hasUnsavedChanges) {
+    showUnsavedChangesModal(() => selectProductInternal(productId));
+    return;
+  }
+
+  selectProductInternal(productId);
+}
+
+async function selectProductInternal(productId) {
+  selectedProduct = products.find((p) => p.id === productId);
+  currentSuggestion = null;
+  currentLanguage = 'de';
+  hasUnsavedChanges = false;
+  renderProducts();
+
+  const productDetail = document.getElementById('productDetail');
+  productDetail.innerHTML = '<div class="loading"><div class="spinner"></div><p>Lade Produktdetails...</p></div>';
+
+  try {
+    const response = await fetch(`/api/products/${encodeURIComponent(productId)}`);
+    const data = await response.json();
+
+    if (data.success) {
+      productTranslations = data.translations || {};
+      renderProductDetail(data.product);
+    } else {
+      productDetail.innerHTML = `<div class="error-message">Fehler: ${data.error}</div>`;
+    }
+  } catch (error) {
+    productDetail.innerHTML = `<div class="error-message">Fehler: ${error.message}</div>`;
+  }
+}
+
+function getTranslationStatus(translations) {
+  const requiredFields = ['title', 'description', 'seoTitle', 'metaDescription'];
+  const missing = requiredFields.filter((field) => !translations[field]);
+
+  if (missing.length === 0) return 'complete';
+  if (missing.length === requiredFields.length) return 'missing';
+  return 'partial';
+}
+
+function renderLanguageSelector(product) {
+  return `
+    <div class="language-selector">
+      ${Object.entries(LANGUAGES)
+        .map(([code, name]) => {
+          const isActive = currentLanguage === code;
+          const trans = productTranslations[code] || {};
+          const status = code === 'de' ? 'complete' : getTranslationStatus(trans);
+          const statusClass = isActive ? 'active' : `status-${status}`;
+
+          return `
+            <button class="lang-btn ${statusClass}" onclick="switchLanguage('${code}')">
+              ${name}
+            </button>
+          `;
+        })
+        .join('')}
+    </div>
+  `;
+}
+
+function switchLanguage(lang) {
+  // Check for unsaved changes
+  if (hasUnsavedChanges) {
+    showUnsavedChangesModal(() => switchLanguageInternal(lang));
+    return;
+  }
+
+  switchLanguageInternal(lang);
+}
+
+function switchLanguageInternal(lang) {
+  currentLanguage = lang;
+  hasUnsavedChanges = false;
+  // Reload product detail with new language
+  const productDetail = document.getElementById('productDetail');
+  const response = fetch(`/api/products/${encodeURIComponent(selectedProduct.id)}`)
+    .then((r) => r.json())
+    .then((data) => {
+      if (data.success) {
+        productTranslations = data.translations || {};
+        renderProductDetail(data.product);
+      }
+    });
+}
+
+function getCurrentTranslation(product) {
+  if (currentLanguage === 'de') {
+    return {
+      title: product.title,
+      description: product.descriptionHtml,
+      descriptionPlain: product.descriptionHtml.replace(/<[^>]*>/g, ''),
+      handle: product.handle,
+      seoTitle: product.seo.title || '',
+      metaDescription: product.seo.description || '',
+    };
+  }
+
+  const trans = productTranslations[currentLanguage] || {
+    title: '',
+    description: '',
+    handle: '',
+    seoTitle: '',
+    metaDescription: '',
+  };
+
+  return {
+    ...trans,
+    descriptionPlain: trans.description.replace(/<[^>]*>/g, ''),
+  };
+}
+
+function renderProductDetail(product) {
+  const scoreClass =
+    product.seoScore >= 70 ? 'score-good' : product.seoScore >= 40 ? 'score-medium' : 'score-bad';
+
+  const currentTrans = getCurrentTranslation(product);
+  const isGerman = currentLanguage === 'de';
+
+  // Get description content based on mode
+  const descriptionContent = descriptionMode === 'html' ? currentTrans.description : currentTrans.descriptionPlain;
+
+  const productDetail = document.getElementById('productDetail');
+  productDetail.innerHTML = `
+    ${renderLanguageSelector(product)}
+
+    <div class="product-header">
+      <h2 class="product-title-large">${escapeHtml(product.title)}</h2>
+      <button id="save-btn" class="save-btn" onclick="saveTranslation()" disabled>💾 Gespeichert</button>
+    </div>
+
+    <div class="field-group">
+      <label class="field-label">Titel (${LANGUAGES[currentLanguage]})</label>
+      <input
+        type="text"
+        class="editable-field"
+        id="field-title"
+      />
+      <div class="field-meta" id="field-title-meta">0 Zeichen</div>
+    </div>
+
+    <div class="field-group">
+      <div class="description-header">
+        <label class="field-label">Beschreibung (${LANGUAGES[currentLanguage]})</label>
+        <button class="toggle-mode-btn" onclick="toggleDescriptionMode()">
+          ${descriptionMode === 'html' ? '👁️ Formatiert' : '📝 HTML'}
+        </button>
+      </div>
+      ${
+        descriptionMode === 'rendered'
+          ? `
+        <div class="formatting-toolbar">
+          <button class="format-btn" onclick="formatText('bold')" title="Fett"><strong>B</strong></button>
+          <button class="format-btn" onclick="formatText('italic')" title="Kursiv"><em>I</em></button>
+          <button class="format-btn" onclick="formatText('underline')" title="Unterstrichen"><u>U</u></button>
+          <span style="border-left: 1px solid #cbd5e0; margin: 0 0.25rem;"></span>
+          <button class="format-btn" onclick="formatText('h1')" title="Überschrift 1">H1</button>
+          <button class="format-btn" onclick="formatText('h2')" title="Überschrift 2">H2</button>
+          <button class="format-btn" onclick="formatText('h3')" title="Überschrift 3">H3</button>
+          <span style="border-left: 1px solid #cbd5e0; margin: 0 0.25rem;"></span>
+          <button class="format-btn" onclick="formatText('ul')" title="Aufzählung">• Liste</button>
+          <button class="format-btn" onclick="formatText('ol')" title="Nummerierte Liste">1. Liste</button>
+          <span style="border-left: 1px solid #cbd5e0; margin: 0 0.25rem;"></span>
+          <button class="format-btn" onclick="formatText('p')" title="Absatz">¶ Absatz</button>
+          <button class="format-btn" onclick="formatText('br')" title="Zeilenumbruch">↵ Umbruch</button>
+        </div>
+        <div
+          class="rendered-content"
+          id="field-description"
+          contenteditable="true"
+        ></div>
+        `
+          : `
+        <textarea
+          class="editable-field"
+          id="field-description"
+        ></textarea>
+        `
+      }
+      <div class="field-meta" id="field-description-meta">0 Zeichen</div>
+    </div>
+
+    <div class="field-group">
+      <label class="field-label">URL-Slug (${LANGUAGES[currentLanguage]})</label>
+      <input
+        type="text"
+        class="editable-field"
+        id="field-handle"
+      />
+    </div>
+
+    <div class="field-group">
+      <label class="field-label">SEO-Titel (${LANGUAGES[currentLanguage]})</label>
+      <input
+        type="text"
+        class="editable-field"
+        id="field-seoTitle"
+      />
+      <div class="field-meta" id="field-seoTitle-meta">0 Zeichen (empfohlen: 50-60)</div>
+    </div>
+
+    <div class="field-group">
+      <label class="field-label">Meta-Description (${LANGUAGES[currentLanguage]})</label>
+      <textarea
+        class="editable-field"
+        id="field-metaDescription"
+      ></textarea>
+      <div class="field-meta" id="field-metaDescription-meta">0 Zeichen (empfohlen: 150-160)</div>
+    </div>
+
+    ${
+      isGerman
+        ? `
+    <div class="seo-score">
+      <div class="score-circle ${scoreClass}">
+        ${product.seoScore}%
+      </div>
+      <div class="seo-issues">
+        <h3>SEO-Analyse</h3>
+        ${
+          product.seoIssues.length > 0
+            ? product.seoIssues.map((issue) => `<div class="issue-item">⚠️ ${escapeHtml(issue)}</div>`).join('')
+            : '<div class="issue-item">✅ Keine Probleme gefunden</div>'
+        }
+      </div>
+    </div>
+
+    <div class="actions">
+      <button class="btn btn-primary" onclick="suggestSEO()">
+        🤖 SEO mit KI optimieren
+      </button>
+      <button class="btn btn-secondary" onclick="translateDirect()">
+        🌍 In alle Sprachen übersetzen
+      </button>
+    </div>
+    `
+        : ''
+    }
+
+    <div id="suggestionContainer"></div>
+    <div id="messageContainer"></div>
+  `;
+
+  // Set field values AFTER HTML is rendered
+  document.getElementById('field-title').value = currentTrans.title;
+
+  const descField = document.getElementById('field-description');
+  if (descriptionMode === 'rendered') {
+    // For contenteditable div, set innerHTML
+    descField.innerHTML = currentTrans.description;
+  } else {
+    // For textarea, set value
+    descField.value = descriptionContent;
+  }
+
+  document.getElementById('field-handle').value = currentTrans.handle;
+  document.getElementById('field-seoTitle').value = currentTrans.seoTitle;
+  document.getElementById('field-metaDescription').value = currentTrans.metaDescription;
+
+  // Store original data for change detection
+  originalData = {
+    title: currentTrans.title,
+    description: currentTrans.description,
+    handle: currentTrans.handle,
+    seoTitle: currentTrans.seoTitle,
+    metaDescription: currentTrans.metaDescription,
+  };
+
+  // Reset change state
+  hasUnsavedChanges = false;
+  updateSaveButton();
+
+  // Update character counts
+  const descLength = descriptionMode === 'rendered' ? descField.innerText.length : descriptionContent.length;
+  document.getElementById('field-title-meta').textContent = `${currentTrans.title.length} Zeichen`;
+  document.getElementById('field-description-meta').textContent = `${descLength} Zeichen`;
+  document.getElementById('field-seoTitle-meta').textContent = `${currentTrans.seoTitle.length} Zeichen (empfohlen: 50-60)`;
+  document.getElementById('field-metaDescription-meta').textContent = `${currentTrans.metaDescription.length} Zeichen (empfohlen: 150-160)`;
+
+  // Add real-time character counters
+  updateCharacterCounters();
+
+  // Add input listener for contenteditable
+  if (descriptionMode === 'rendered') {
+    descField.addEventListener('input', () => {
+      document.getElementById('field-description-meta').textContent = `${descField.innerText.length} Zeichen`;
+      checkForChanges();
+    });
+  }
+}
+
+function formatText(command) {
+  const descField = document.getElementById('field-description');
+  descField.focus();
+
+  switch (command) {
+    case 'bold':
+      document.execCommand('bold', false, null);
+      break;
+    case 'italic':
+      document.execCommand('italic', false, null);
+      break;
+    case 'underline':
+      document.execCommand('underline', false, null);
+      break;
+    case 'h1':
+      document.execCommand('formatBlock', false, '<h1>');
+      break;
+    case 'h2':
+      document.execCommand('formatBlock', false, '<h2>');
+      break;
+    case 'h3':
+      document.execCommand('formatBlock', false, '<h3>');
+      break;
+    case 'p':
+      document.execCommand('formatBlock', false, '<p>');
+      break;
+    case 'ul':
+      document.execCommand('insertUnorderedList', false, null);
+      break;
+    case 'ol':
+      document.execCommand('insertOrderedList', false, null);
+      break;
+    case 'br':
+      document.execCommand('insertHTML', false, '<br>');
+      break;
+  }
+
+  // Update character count
+  document.getElementById('field-description-meta').textContent = `${descField.innerText.length} Zeichen`;
+}
+
+function toggleDescriptionMode() {
+  // Save current content before switching
+  const descField = document.getElementById('field-description');
+  let currentContent = '';
+
+  if (descriptionMode === 'rendered') {
+    // Switch from rendered to HTML
+    currentContent = descField.innerHTML;
+  } else {
+    // Switch from HTML to rendered
+    currentContent = descField.value;
+  }
+
+  descriptionMode = descriptionMode === 'html' ? 'rendered' : 'html';
+
+  // Re-render the product detail
+  fetch(`/api/products/${encodeURIComponent(selectedProduct.id)}`)
+    .then((r) => r.json())
+    .then((data) => {
+      if (data.success) {
+        productTranslations = data.translations || {};
+
+        // Temporarily store the content we want to preserve
+        const tempContent = currentContent;
+
+        renderProductDetail(data.product);
+
+        // Restore the content after re-render
+        const newDescField = document.getElementById('field-description');
+        if (descriptionMode === 'rendered') {
+          newDescField.innerHTML = tempContent;
+        } else {
+          newDescField.value = tempContent;
+        }
+      }
+    });
+}
+
+function updateCharacterCounters() {
+  const fields = ['title', 'description', 'seoTitle', 'metaDescription'];
+  fields.forEach((field) => {
+    const input = document.getElementById(`field-${field}`);
+    if (input) {
+      input.addEventListener('input', (e) => {
+        const meta = e.target.parentElement.querySelector('.field-meta');
+        if (meta) {
+          const length = e.target.value ? e.target.value.length : e.target.innerText.length;
+          let metaText = `${length} Zeichen`;
+
+          if (field === 'seoTitle') {
+            metaText += ' (empfohlen: 50-60)';
+          } else if (field === 'metaDescription') {
+            metaText += ' (empfohlen: 150-160)';
+          }
+
+          meta.textContent = metaText;
+        }
+
+        // Check for changes
+        checkForChanges();
+      });
+    }
+  });
+
+  // Also add listener to handle field
+  const handleField = document.getElementById('field-handle');
+  if (handleField) {
+    handleField.addEventListener('input', checkForChanges);
+  }
+}
+
+async function saveTranslation() {
+  const messageContainer = document.getElementById('messageContainer');
+  messageContainer.innerHTML =
+    '<div class="loading"><div class="spinner"></div><p>Speichere...</p></div>';
+
+  const descField = document.getElementById('field-description');
+  const description = descriptionMode === 'rendered' ? descField.innerHTML : descField.value;
+
+  const translationData = {
+    title: document.getElementById('field-title').value,
+    description: description,
+    handle: document.getElementById('field-handle').value,
+    seoTitle: document.getElementById('field-seoTitle').value,
+    metaDescription: document.getElementById('field-metaDescription').value,
+  };
+
+  try {
+    const response = await fetch(
+      `/api/products/${encodeURIComponent(selectedProduct.id)}/save-translation/${currentLanguage}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(translationData),
+      }
+    );
+
+    const data = await response.json();
+
+    if (data.success) {
+      messageContainer.innerHTML = `
+        <div class="success-message">
+          ✅ ${currentLanguage === 'de' ? 'Produkt' : 'Übersetzung für ' + LANGUAGES[currentLanguage]} gespeichert!
+        </div>
+      `;
+
+      // Update local translations cache
+      if (currentLanguage !== 'de') {
+        productTranslations[currentLanguage] = translationData;
+      }
+
+      // Update original data to reflect saved state
+      originalData = { ...translationData };
+      hasUnsavedChanges = false;
+      updateSaveButton();
+
+      setTimeout(() => {
+        messageContainer.innerHTML = '';
+      }, 3000);
+    } else {
+      messageContainer.innerHTML = `<div class="error-message">Fehler: ${data.error}</div>`;
+    }
+  } catch (error) {
+    messageContainer.innerHTML = `<div class="error-message">Fehler: ${error.message}</div>`;
+  }
+}
+
+async function suggestSEO() {
+  const suggestionContainer = document.getElementById('suggestionContainer');
+  suggestionContainer.innerHTML =
+    '<div class="loading"><div class="spinner"></div><p>KI erstellt Vorschlag...</p></div>';
+
+  try {
+    const response = await fetch(`/api/products/${encodeURIComponent(selectedProduct.id)}/suggest-seo`, {
+      method: 'POST',
+    });
+    const data = await response.json();
+
+    if (data.success) {
+      currentSuggestion = data.suggestion;
+      renderSuggestion(data.suggestion);
+    } else {
+      suggestionContainer.innerHTML = `<div class="error-message">Fehler: ${data.error}</div>`;
+    }
+  } catch (error) {
+    suggestionContainer.innerHTML = `<div class="error-message">Fehler: ${error.message}</div>`;
+  }
+}
+
+function renderSuggestion(suggestion) {
+  const suggestionContainer = document.getElementById('suggestionContainer');
+  suggestionContainer.innerHTML = `
+    <div class="suggestion-box">
+      <h3>🤖 KI-Vorschlag</h3>
+
+      <div class="field-group">
+        <label class="field-label">SEO-Titel</label>
+        <input
+          type="text"
+          class="editable-field"
+          id="suggestion-seoTitle"
+          value="${escapeHtml(suggestion.seoTitle)}"
+        />
+        <div class="field-meta" id="suggestion-seoTitle-length">${suggestion.seoTitle.length} Zeichen</div>
+      </div>
+
+      <div class="field-group">
+        <label class="field-label">Meta-Description</label>
+        <textarea
+          class="editable-field"
+          id="suggestion-metaDescription"
+        >${escapeHtml(suggestion.metaDescription)}</textarea>
+        <div class="field-meta" id="suggestion-metaDescription-length">${suggestion.metaDescription.length} Zeichen</div>
+      </div>
+
+      <div class="suggestion-item">
+        <label>Begründung</label>
+        <div class="reasoning">${escapeHtml(suggestion.reasoning)}</div>
+      </div>
+
+      <div class="suggestion-actions">
+        <button class="btn btn-accept" onclick="acceptSuggestion()">
+          ✅ Akzeptieren & Übersetzen
+        </button>
+        <button class="btn btn-reject" onclick="rejectSuggestion()">
+          ❌ Ablehnen
+        </button>
+      </div>
+    </div>
+  `;
+
+  // Add character counters to suggestion fields
+  document.getElementById('suggestion-seoTitle').addEventListener('input', (e) => {
+    document.getElementById('suggestion-seoTitle-length').textContent = `${e.target.value.length} Zeichen`;
+    currentSuggestion.seoTitle = e.target.value;
+  });
+
+  document.getElementById('suggestion-metaDescription').addEventListener('input', (e) => {
+    document.getElementById('suggestion-metaDescription-length').textContent = `${e.target.value.length} Zeichen`;
+    currentSuggestion.metaDescription = e.target.value;
+  });
+}
+
+async function acceptSuggestion() {
+  if (!currentSuggestion) return;
+
+  // Get current values from editable fields
+  currentSuggestion.seoTitle = document.getElementById('suggestion-seoTitle').value;
+  currentSuggestion.metaDescription = document.getElementById('suggestion-metaDescription').value;
+
+  const messageContainer = document.getElementById('messageContainer');
+  messageContainer.innerHTML = '<div class="loading"><div class="spinner"></div><p>Speichere und übersetze...</p></div>';
+
+  try {
+    // First apply SEO
+    const seoResponse = await fetch(`/api/products/${encodeURIComponent(selectedProduct.id)}/apply-seo`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        seoTitle: currentSuggestion.seoTitle,
+        metaDescription: currentSuggestion.metaDescription,
+      }),
+    });
+
+    const seoData = await seoResponse.json();
+
+    if (!seoData.success) {
+      messageContainer.innerHTML = `<div class="error-message">Fehler beim Speichern: ${seoData.error}</div>`;
+      return;
+    }
+
+    // Then translate
+    const translateResponse = await fetch(`/api/products/${encodeURIComponent(selectedProduct.id)}/translate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        seoTitle: currentSuggestion.seoTitle,
+        metaDescription: currentSuggestion.metaDescription,
+      }),
+    });
+
+    const translateData = await translateResponse.json();
+
+    if (translateData.success) {
+      messageContainer.innerHTML = `
+        <div class="success-message">
+          <strong>✅ Erfolgreich!</strong><br>
+          SEO-Daten wurden gespeichert und in ${Object.keys(translateData.translations).join(', ').toUpperCase()} übersetzt.
+        </div>
+      `;
+
+      // Clear suggestion
+      document.getElementById('suggestionContainer').innerHTML = '';
+      currentSuggestion = null;
+
+      // Reload product
+      setTimeout(() => selectProduct(selectedProduct.id), 2000);
+    } else {
+      messageContainer.innerHTML = `<div class="error-message">Fehler bei Übersetzung: ${translateData.error}</div>`;
+    }
+  } catch (error) {
+    messageContainer.innerHTML = `<div class="error-message">Fehler: ${error.message}</div>`;
+  }
+}
+
+function rejectSuggestion() {
+  document.getElementById('suggestionContainer').innerHTML = '';
+  document.getElementById('messageContainer').innerHTML =
+    '<div class="error-message">Vorschlag wurde abgelehnt.</div>';
+  currentSuggestion = null;
+
+  setTimeout(() => {
+    document.getElementById('messageContainer').innerHTML = '';
+  }, 3000);
+}
+
+async function translateDirect() {
+  const messageContainer = document.getElementById('messageContainer');
+
+  // Get current SEO data from editable fields
+  const seoTitle = document.getElementById('field-seoTitle').value;
+  const metaDescription = document.getElementById('field-metaDescription').value;
+
+  if (!seoTitle || !metaDescription) {
+    messageContainer.innerHTML = `<div class="error-message">SEO-Titel und Meta-Description müssen zuerst gesetzt werden!</div>`;
+    return;
+  }
+
+  messageContainer.innerHTML = '<div class="loading"><div class="spinner"></div><p>Übersetze...</p></div>';
+
+  try {
+    const translateResponse = await fetch(`/api/products/${encodeURIComponent(selectedProduct.id)}/translate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        seoTitle,
+        metaDescription,
+      }),
+    });
+
+    const translateData = await translateResponse.json();
+
+    if (translateData.success) {
+      messageContainer.innerHTML = `
+        <div class="success-message">
+          <strong>✅ Übersetzungen hochgeladen!</strong><br>
+          Sprachen: ${Object.keys(translateData.translations).join(', ').toUpperCase()}
+        </div>
+      `;
+
+      setTimeout(() => {
+        messageContainer.innerHTML = '';
+        selectProduct(selectedProduct.id);
+      }, 3000);
+    } else {
+      messageContainer.innerHTML = `<div class="error-message">Fehler: ${translateData.error}</div>`;
+    }
+  } catch (error) {
+    messageContainer.innerHTML = `<div class="error-message">Fehler: ${error.message}</div>`;
+  }
+}
+
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
