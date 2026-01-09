@@ -35,7 +35,7 @@ export async function handleProductActions({ request }: ActionFunctionArgs) {
   }
 
   if (action === "generateAIText") {
-    return handleGenerateAIText(aiService, aiInstructions, formData);
+    return handleGenerateAIText(aiService, aiInstructions, formData, session.shop, productId);
   }
 
   if (action === "translateField") {
@@ -47,7 +47,7 @@ export async function handleProductActions({ request }: ActionFunctionArgs) {
   }
 
   if (action === "translateAll") {
-    return handleTranslateAll(admin, translationService, formData, productId);
+    return handleTranslateAll(admin, translationService, formData, productId, session.shop);
   }
 
   if (action === "updateProduct") {
@@ -84,14 +84,42 @@ async function handleLoadTranslations(admin: any, formData: FormData, productId:
   }
 }
 
-async function handleGenerateAIText(aiService: AIService, aiInstructions: any, formData: FormData) {
+async function handleGenerateAIText(
+  aiService: AIService,
+  aiInstructions: any,
+  formData: FormData,
+  shop: string,
+  productId: string
+) {
   const fieldType = formData.get("fieldType") as string;
   const currentValue = formData.get("currentValue") as string;
   const contextTitle = formData.get("contextTitle") as string;
   const contextDescription = formData.get("contextDescription") as string;
 
+  const { db } = await import("../db.server");
+
+  // Create task entry
+  const task = await db.task.create({
+    data: {
+      shop,
+      type: "aiGeneration",
+      status: "running",
+      resourceType: "product",
+      resourceId: productId,
+      resourceTitle: contextTitle,
+      fieldType,
+      progress: 0,
+    },
+  });
+
   try {
     let generatedContent = "";
+
+    // Update task to running
+    await db.task.update({
+      where: { id: task.id },
+      data: { status: "running", progress: 10 },
+    });
 
     if (fieldType === "title") {
       let prompt = `Erstelle einen optimierten Produkttitel.`;
@@ -152,8 +180,29 @@ async function handleGenerateAIText(aiService: AIService, aiInstructions: any, f
       generatedContent = await aiService.generateProductTitle(prompt);
     }
 
+    // Update task to completed
+    await db.task.update({
+      where: { id: task.id },
+      data: {
+        status: "completed",
+        progress: 100,
+        completedAt: new Date(),
+        result: JSON.stringify({ generatedContent, fieldType }),
+      },
+    });
+
     return json({ success: true, generatedContent, fieldType });
   } catch (error: any) {
+    // Update task to failed
+    await db.task.update({
+      where: { id: task.id },
+      data: {
+        status: "failed",
+        completedAt: new Date(),
+        error: error.message,
+      },
+    });
+
     return json({ success: false, error: error.message }, { status: 500 });
   }
 }
@@ -196,13 +245,30 @@ async function handleTranslateAll(
   admin: any,
   translationService: TranslationService,
   formData: FormData,
-  productId: string
+  productId: string,
+  shop: string
 ) {
   const title = formData.get("title") as string;
   const description = formData.get("description") as string;
   const handle = formData.get("handle") as string;
   const seoTitle = formData.get("seoTitle") as string;
   const metaDescription = formData.get("metaDescription") as string;
+
+  const { db } = await import("../db.server");
+
+  // Create task entry
+  const task = await db.task.create({
+    data: {
+      shop,
+      type: "bulkTranslation",
+      status: "running",
+      resourceType: "product",
+      resourceId: productId,
+      resourceTitle: title,
+      fieldType: "all",
+      progress: 0,
+    },
+  });
 
   try {
     const changedFields: any = {};
@@ -213,10 +279,32 @@ async function handleTranslateAll(
     if (metaDescription) changedFields.metaDescription = metaDescription;
 
     if (Object.keys(changedFields).length === 0) {
+      await db.task.update({
+        where: { id: task.id },
+        data: {
+          status: "failed",
+          completedAt: new Date(),
+          error: "No fields to translate",
+        },
+      });
       return json({ success: false, error: "No fields to translate" }, { status: 400 });
     }
 
+    // Update progress
+    await db.task.update({
+      where: { id: task.id },
+      data: { progress: 20 },
+    });
+
     const translations = await translationService.translateProduct(changedFields);
+    const totalLocales = Object.keys(translations).length;
+    let processedLocales = 0;
+
+    // Update progress
+    await db.task.update({
+      where: { id: task.id },
+      data: { progress: 40, total: totalLocales, processed: 0 },
+    });
 
     // Save translations to Shopify for all non-primary locales
     for (const [locale, fields] of Object.entries(translations)) {
@@ -252,10 +340,39 @@ async function handleTranslateAll(
           }
         );
       }
+
+      processedLocales++;
+      // Update progress after each locale
+      const progressPercent = Math.round(40 + (processedLocales / totalLocales) * 60);
+      await db.task.update({
+        where: { id: task.id },
+        data: { progress: progressPercent, processed: processedLocales },
+      });
     }
+
+    // Mark task as completed
+    await db.task.update({
+      where: { id: task.id },
+      data: {
+        status: "completed",
+        progress: 100,
+        completedAt: new Date(),
+        result: JSON.stringify({ translations }),
+      },
+    });
 
     return json({ success: true, translations });
   } catch (error: any) {
+    // Mark task as failed
+    await db.task.update({
+      where: { id: task.id },
+      data: {
+        status: "failed",
+        completedAt: new Date(),
+        error: error.message,
+      },
+    });
+
     return json({ success: false, error: error.message }, { status: 500 });
   }
 }
