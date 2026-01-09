@@ -10,6 +10,7 @@ import {
 } from "@shopify/polaris";
 import { FieldEditor } from "./FieldEditor";
 import { DescriptionEditor } from "./DescriptionEditor";
+import { ProductOptions } from "./ProductOptions";
 
 interface Product {
   id: string;
@@ -82,6 +83,12 @@ interface ProductEditorProps {
   fetcherFormData: FormData | null;
   showSuccessBanner: boolean;
   selectProductText: string;
+  optionTranslations: Record<string, { name: string; values: string[] }>;
+  onOptionNameChange: (optionId: string, value: string) => void;
+  onOptionValueChange: (optionId: string, valueIndex: number, value: string) => void;
+  onTranslateOption: (optionId: string) => void;
+  isTranslatingOption: boolean;
+  translatingOptionId?: string;
 }
 
 export function ProductEditor({
@@ -116,6 +123,12 @@ export function ProductEditor({
   fetcherFormData,
   showSuccessBanner,
   selectProductText,
+  optionTranslations,
+  onOptionNameChange,
+  onOptionValueChange,
+  onTranslateOption,
+  isTranslatingOption,
+  translatingOptionId,
 }: ProductEditorProps) {
   const [descriptionMode, setDescriptionMode] = useState<"html" | "rendered">("rendered");
 
