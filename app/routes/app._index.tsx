@@ -181,7 +181,7 @@ export default function Index() {
         console.log('Fetcher state before submit:', fetcher.state);
         fetcher.submit(
           { action: "loadTranslations", productId: selectedProduct.id, locale: currentLanguage },
-          { method: "POST", action: "/app" }
+          { method: "POST" }
         );
         console.log('Fetcher state after submit:', fetcher.state);
       } else {
