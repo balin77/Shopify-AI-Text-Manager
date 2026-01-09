@@ -3,7 +3,6 @@ import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-r
 import { useLoaderData, useFetcher } from "@remix-run/react";
 import {
   Page,
-  Layout,
   Card,
   ResourceList,
   ResourceItem,
@@ -22,12 +21,20 @@ import {
 import { SearchIcon, ChevronLeftIcon, ChevronRightIcon } from "@shopify/polaris-icons";
 import { authenticate } from "../shopify.server";
 import { AIService } from "../../src/services/ai.service";
+import { TranslationService } from "../../src/services/translation.service";
+
+const LANGUAGES = {
+  de: "Deutsch",
+  en: "English",
+  fr: "Français",
+  es: "Español",
+  it: "Italiano",
+};
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
 
   try {
-    // Get all products with GraphQL
     const response = await admin.graphql(
       `#graphql
         query getProducts($first: Int!) {
@@ -47,25 +54,22 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
                   title
                   description
                 }
+                translations(locale: "en") {
+                  key
+                  value
+                  locale
+                }
               }
             }
           }
         }`,
-      {
-        variables: {
-          first: 50,
-        },
-      }
+      { variables: { first: 50 } }
     );
 
     const data = await response.json();
     const products = data.data.products.edges.map((edge: any) => edge.node);
 
-    return json({
-      products,
-      shop: session.shop,
-      error: null,
-    });
+    return json({ products, shop: session.shop, error: null });
   } catch (error: any) {
     return json({ products: [], shop: session.shop, error: error.message }, { status: 500 });
   }
@@ -73,45 +77,73 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
-
   const formData = await request.formData();
   const action = formData.get("action");
   const productId = formData.get("productId") as string;
 
   const aiService = new AIService(process.env.AI_PROVIDER as any || "huggingface");
+  const translationService = new TranslationService(process.env.AI_PROVIDER as any || "huggingface");
 
-  if (action === "generateSEO") {
+  if (action === "generateAIText") {
+    const fieldType = formData.get("fieldType") as string;
+    const currentValue = formData.get("currentValue") as string;
+
     try {
-      // Get product details
       const response = await admin.graphql(
         `#graphql
           query getProduct($id: ID!) {
             product(id: $id) {
               id
               title
-              description
+              descriptionHtml
             }
           }`,
-        {
-          variables: { id: productId },
-        }
+        { variables: { id: productId } }
       );
 
       const data = await response.json();
       const product = data.data.product;
 
-      const suggestion = await aiService.generateSEO(
-        product.title,
-        product.description || ""
-      );
+      let generatedContent = "";
+      if (fieldType === "title") {
+        generatedContent = await aiService.generateProductTitle(product.descriptionHtml || "");
+      } else if (fieldType === "description") {
+        generatedContent = await aiService.generateProductDescription(product.title, currentValue);
+      }
 
-      return json({ success: true, suggestion });
+      return json({ success: true, generatedContent, fieldType });
     } catch (error: any) {
       return json({ success: false, error: error.message }, { status: 500 });
     }
   }
 
-  if (action === "applySEO") {
+  if (action === "translateAll") {
+    const title = formData.get("title") as string;
+    const description = formData.get("description") as string;
+    const handle = formData.get("handle") as string;
+    const seoTitle = formData.get("seoTitle") as string;
+    const metaDescription = formData.get("metaDescription") as string;
+
+    try {
+      const changedFields: any = {};
+      if (title) changedFields.title = title;
+      if (description) changedFields.description = description;
+      if (handle) changedFields.handle = handle;
+      if (seoTitle) changedFields.seoTitle = seoTitle;
+      if (metaDescription) changedFields.metaDescription = metaDescription;
+
+      const translations = await translationService.translateProduct(changedFields);
+
+      return json({ success: true, translations });
+    } catch (error: any) {
+      return json({ success: false, error: error.message }, { status: 500 });
+    }
+  }
+
+  if (action === "updateProduct") {
+    const title = formData.get("title") as string;
+    const descriptionHtml = formData.get("descriptionHtml") as string;
+    const handle = formData.get("handle") as string;
     const seoTitle = formData.get("seoTitle") as string;
     const metaDescription = formData.get("metaDescription") as string;
 
@@ -122,6 +154,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             productUpdate(input: $input) {
               product {
                 id
+                title
+                handle
+                descriptionHtml
                 seo {
                   title
                   description
@@ -137,56 +172,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           variables: {
             input: {
               id: productId,
+              title,
+              handle,
+              descriptionHtml,
               seo: {
                 title: seoTitle,
                 description: metaDescription,
               },
-            },
-          },
-        }
-      );
-
-      const data = await response.json();
-
-      if (data.data.productUpdate.userErrors.length > 0) {
-        return json({
-          success: false,
-          error: data.data.productUpdate.userErrors[0].message
-        }, { status: 500 });
-      }
-
-      return json({ success: true });
-    } catch (error: any) {
-      return json({ success: false, error: error.message }, { status: 500 });
-    }
-  }
-
-  if (action === "updateProduct") {
-    const title = formData.get("title") as string;
-    const descriptionHtml = formData.get("descriptionHtml") as string;
-
-    try {
-      const response = await admin.graphql(
-        `#graphql
-          mutation updateProduct($input: ProductInput!) {
-            productUpdate(input: $input) {
-              product {
-                id
-                title
-                descriptionHtml
-              }
-              userErrors {
-                field
-                message
-              }
-            }
-          }`,
-        {
-          variables: {
-            input: {
-              id: productId,
-              title,
-              descriptionHtml,
             },
           },
         }
@@ -218,36 +210,40 @@ export default function Index() {
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
-  const [modalActive, setModalActive] = useState(false);
-  const [seoTitle, setSeoTitle] = useState("");
-  const [metaDescription, setMetaDescription] = useState("");
+  const [currentLanguage, setCurrentLanguage] = useState("de");
+  const [aiModalActive, setAiModalActive] = useState(false);
+  const [aiFieldType, setAiFieldType] = useState<"title" | "description" | null>(null);
+  const [aiGeneratedContent, setAiGeneratedContent] = useState("");
   const [hasChanges, setHasChanges] = useState(false);
   const productsPerPage = 10;
 
-  // Rich text editor state
+  // Editable fields
   const [editableTitle, setEditableTitle] = useState("");
   const [editableDescription, setEditableDescription] = useState("");
+  const [editableHandle, setEditableHandle] = useState("");
+  const [editableSeoTitle, setEditableSeoTitle] = useState("");
+  const [editableMetaDescription, setEditableMetaDescription] = useState("");
   const [descriptionMode, setDescriptionMode] = useState<"html" | "rendered">("rendered");
   const descriptionEditorRef = useRef<HTMLDivElement>(null);
 
-  // Filter products by search
+  // Filter and pagination
   const filteredProducts = products.filter((p: any) =>
     p.title.toLowerCase().includes(searchQuery.toLowerCase())
   );
-
-  // Pagination
   const totalPages = Math.ceil(filteredProducts.length / productsPerPage);
   const startIndex = (currentPage - 1) * productsPerPage;
   const paginatedProducts = filteredProducts.slice(startIndex, startIndex + productsPerPage);
 
-  // Get selected product
   const selectedProduct = products.find((p: any) => p.id === selectedProductId);
 
-  // Load product data into editable fields
+  // Load product data
   useEffect(() => {
     if (selectedProduct) {
       setEditableTitle(selectedProduct.title);
       setEditableDescription(selectedProduct.descriptionHtml || "");
+      setEditableHandle(selectedProduct.handle);
+      setEditableSeoTitle(selectedProduct.seo?.title || "");
+      setEditableMetaDescription(selectedProduct.seo?.description || "");
       setHasChanges(false);
     }
   }, [selectedProduct]);
@@ -257,33 +253,12 @@ export default function Index() {
     if (selectedProduct) {
       const titleChanged = editableTitle !== selectedProduct.title;
       const descChanged = editableDescription !== (selectedProduct.descriptionHtml || "");
-      setHasChanges(titleChanged || descChanged);
+      const handleChanged = editableHandle !== selectedProduct.handle;
+      const seoTitleChanged = editableSeoTitle !== (selectedProduct.seo?.title || "");
+      const metaDescChanged = editableMetaDescription !== (selectedProduct.seo?.description || "");
+      setHasChanges(titleChanged || descChanged || handleChanged || seoTitleChanged || metaDescChanged);
     }
-  }, [editableTitle, editableDescription, selectedProduct]);
-
-  const handleGenerateSEO = (productId: string) => {
-    setSelectedProductId(productId);
-    fetcher.submit(
-      { action: "generateSEO", productId },
-      { method: "POST" }
-    );
-  };
-
-  const handleApplySEO = () => {
-    if (!selectedProductId) return;
-
-    fetcher.submit(
-      {
-        action: "applySEO",
-        productId: selectedProductId,
-        seoTitle,
-        metaDescription,
-      },
-      { method: "POST" }
-    );
-
-    setModalActive(false);
-  };
+  }, [editableTitle, editableDescription, editableHandle, editableSeoTitle, editableMetaDescription, selectedProduct]);
 
   const handleSaveProduct = () => {
     if (!selectedProductId || !hasChanges) return;
@@ -294,6 +269,42 @@ export default function Index() {
         productId: selectedProductId,
         title: editableTitle,
         descriptionHtml: editableDescription,
+        handle: editableHandle,
+        seoTitle: editableSeoTitle,
+        metaDescription: editableMetaDescription,
+      },
+      { method: "POST" }
+    );
+  };
+
+  const handleGenerateAI = (fieldType: "title" | "description") => {
+    if (!selectedProductId) return;
+
+    const currentValue = fieldType === "title" ? editableTitle : editableDescription;
+
+    fetcher.submit(
+      {
+        action: "generateAIText",
+        productId: selectedProductId,
+        fieldType,
+        currentValue,
+      },
+      { method: "POST" }
+    );
+  };
+
+  const handleTranslateAll = () => {
+    if (!selectedProductId) return;
+
+    fetcher.submit(
+      {
+        action: "translateAll",
+        productId: selectedProductId,
+        title: editableTitle,
+        description: editableDescription,
+        handle: editableHandle,
+        seoTitle: editableSeoTitle,
+        metaDescription: editableMetaDescription,
       },
       { method: "POST" }
     );
@@ -337,39 +348,40 @@ export default function Index() {
         break;
     }
 
-    // Update state with new HTML
     setEditableDescription(descriptionEditorRef.current.innerHTML);
   };
 
   const toggleDescriptionMode = () => {
-    if (descriptionMode === "rendered") {
-      // Switch to HTML mode
-      setDescriptionMode("html");
-    } else {
-      // Switch to rendered mode
-      setDescriptionMode("rendered");
-    }
+    setDescriptionMode(descriptionMode === "html" ? "rendered" : "html");
   };
 
-  // When SEO suggestion is generated, open modal
-  if (fetcher.data?.success && (fetcher.data as any).suggestion && !modalActive) {
-    const suggestion = (fetcher.data as any).suggestion;
-    setSeoTitle(suggestion.seoTitle);
-    setMetaDescription(suggestion.metaDescription);
-    setModalActive(true);
-  }
+  // Handle AI generation response
+  useEffect(() => {
+    if (fetcher.data?.success && (fetcher.data as any).generatedContent) {
+      setAiGeneratedContent((fetcher.data as any).generatedContent);
+      setAiFieldType((fetcher.data as any).fieldType);
+      setAiModalActive(true);
+    }
+  }, [fetcher.data]);
+
+  const handleAcceptAI = () => {
+    if (aiFieldType === "title") {
+      setEditableTitle(aiGeneratedContent);
+    } else if (aiFieldType === "description") {
+      setEditableDescription(aiGeneratedContent);
+    }
+    setAiModalActive(false);
+  };
 
   return (
     <Page title={`ContentPilot AI - ${shop}`}>
       <div style={{ height: "100vh", display: "flex", gap: "1rem", padding: "1rem", overflow: "hidden" }}>
-        {/* Left: Product List - Fixed Width */}
+        {/* Left: Product List */}
         <div style={{ width: "350px", flexShrink: 0, display: "flex", flexDirection: "column", gap: "1rem" }}>
           <Card padding="0">
             <div style={{ padding: "1rem", borderBottom: "1px solid #e1e3e5" }}>
               <BlockStack gap="300">
-                <Text as="h2" variant="headingMd">
-                  Produkte ({filteredProducts.length})
-                </Text>
+                <Text as="h2" variant="headingMd">Produkte ({filteredProducts.length})</Text>
                 <div style={{ position: "relative" }}>
                   <div style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }}>
                     <Icon source={SearchIcon} />
@@ -408,21 +420,13 @@ export default function Index() {
                       onClick={() => setSelectedProductId(id)}
                       media={
                         featuredImage ? (
-                          <Thumbnail
-                            source={featuredImage.url}
-                            alt={featuredImage.altText || title}
-                            size="small"
-                          />
+                          <Thumbnail source={featuredImage.url} alt={featuredImage.altText || title} size="small" />
                         ) : undefined
                       }
                     >
                       <BlockStack gap="100">
-                        <Text as="p" variant="bodyMd" fontWeight={isSelected ? "bold" : "regular"}>
-                          {title}
-                        </Text>
-                        <Badge tone={status === "ACTIVE" ? "success" : undefined}>
-                          {status}
-                        </Badge>
+                        <Text as="p" variant="bodyMd" fontWeight={isSelected ? "bold" : "regular"}>{title}</Text>
+                        <Badge tone={status === "ACTIVE" ? "success" : undefined}>{status}</Badge>
                       </BlockStack>
                     </ResourceItem>
                   );
@@ -430,7 +434,6 @@ export default function Index() {
               />
             </div>
 
-            {/* Pagination */}
             {totalPages > 1 && (
               <div style={{ padding: "1rem", borderTop: "1px solid #e1e3e5" }}>
                 <InlineStack align="space-between" blockAlign="center">
@@ -438,21 +441,9 @@ export default function Index() {
                     {startIndex + 1}-{Math.min(startIndex + productsPerPage, filteredProducts.length)} von {filteredProducts.length}
                   </Text>
                   <InlineStack gap="200">
-                    <Button
-                      icon={ChevronLeftIcon}
-                      onClick={() => setCurrentPage(currentPage - 1)}
-                      disabled={currentPage === 1}
-                      accessibilityLabel="Vorherige Seite"
-                    />
-                    <Text as="span" variant="bodySm">
-                      {currentPage} / {totalPages}
-                    </Text>
-                    <Button
-                      icon={ChevronRightIcon}
-                      onClick={() => setCurrentPage(currentPage + 1)}
-                      disabled={currentPage === totalPages}
-                      accessibilityLabel="Nächste Seite"
-                    />
+                    <Button icon={ChevronLeftIcon} onClick={() => setCurrentPage(currentPage - 1)} disabled={currentPage === 1} accessibilityLabel="Vorherige Seite" />
+                    <Text as="span" variant="bodySm">{currentPage} / {totalPages}</Text>
+                    <Button icon={ChevronRightIcon} onClick={() => setCurrentPage(currentPage + 1)} disabled={currentPage === totalPages} accessibilityLabel="Nächste Seite" />
                   </InlineStack>
                 </InlineStack>
               </div>
@@ -460,17 +451,15 @@ export default function Index() {
           </Card>
         </div>
 
-        {/* Right: Product Detail - Full Width */}
+        {/* Right: Product Detail */}
         <div style={{ flex: 1, overflow: "auto" }}>
           {error && (
             <div style={{ marginBottom: "1rem" }}>
-              <Banner title="Fehler" tone="critical">
-                <p>{error}</p>
-              </Banner>
+              <Banner title="Fehler" tone="critical"><p>{error}</p></Banner>
             </div>
           )}
 
-          {fetcher.data?.success && !(fetcher.data as any).suggestion && (
+          {fetcher.data?.success && !(fetcher.data as any).generatedContent && (
             <div style={{ marginBottom: "1rem" }}>
               <Banner title="Erfolg!" tone="success" onDismiss={() => {}}>
                 <p>Änderungen erfolgreich gespeichert!</p>
@@ -481,64 +470,79 @@ export default function Index() {
           <Card padding="600">
             {selectedProduct ? (
               <BlockStack gap="500">
+                {/* Language Selector */}
+                <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+                  {Object.entries(LANGUAGES).map(([code, name]) => (
+                    <Button
+                      key={code}
+                      variant={currentLanguage === code ? "primary" : undefined}
+                      onClick={() => setCurrentLanguage(code)}
+                      size="slim"
+                    >
+                      {name}
+                    </Button>
+                  ))}
+                </div>
+
                 {/* Header with Save Button */}
                 <InlineStack align="space-between" blockAlign="center">
                   <InlineStack gap="200" blockAlign="center">
-                    <Badge tone={selectedProduct.status === "ACTIVE" ? "success" : undefined}>
-                      {selectedProduct.status}
-                    </Badge>
-                    <Text as="p" variant="bodySm" tone="subdued">
-                      Handle: {selectedProduct.handle}
-                    </Text>
+                    <Badge tone={selectedProduct.status === "ACTIVE" ? "success" : undefined}>{selectedProduct.status}</Badge>
+                    <Text as="p" variant="bodySm" tone="subdued">ID: {selectedProduct.id.split("/").pop()}</Text>
                   </InlineStack>
-                  <Button
-                    variant={hasChanges ? "primary" : undefined}
-                    onClick={handleSaveProduct}
-                    disabled={!hasChanges}
-                    loading={fetcher.state !== "idle" && fetcher.formData?.get("action") === "updateProduct"}
-                  >
-                    Änderungen speichern
-                  </Button>
+                  <InlineStack gap="200">
+                    {currentLanguage === "de" && (
+                      <Button
+                        onClick={handleTranslateAll}
+                        loading={fetcher.state !== "idle" && fetcher.formData?.get("action") === "translateAll"}
+                      >
+                        In alle Sprachen übersetzen
+                      </Button>
+                    )}
+                    <Button
+                      variant={hasChanges ? "primary" : undefined}
+                      onClick={handleSaveProduct}
+                      disabled={!hasChanges}
+                      loading={fetcher.state !== "idle" && fetcher.formData?.get("action") === "updateProduct"}
+                    >
+                      Änderungen speichern
+                    </Button>
+                  </InlineStack>
                 </InlineStack>
 
-                {/* Featured Image */}
                 {selectedProduct.featuredImage && (
-                  <img
-                    src={selectedProduct.featuredImage.url}
-                    alt={selectedProduct.title}
-                    style={{ width: "100%", maxWidth: "300px", borderRadius: "8px" }}
-                  />
+                  <img src={selectedProduct.featuredImage.url} alt={selectedProduct.title} style={{ width: "100%", maxWidth: "300px", borderRadius: "8px" }} />
                 )}
 
                 {/* Editable Title */}
-                <TextField
-                  label="Produkttitel"
-                  value={editableTitle}
-                  onChange={setEditableTitle}
-                  autoComplete="off"
-                  helpText={`${editableTitle.length} Zeichen`}
-                />
+                <div>
+                  <TextField
+                    label={`Produkttitel (${LANGUAGES[currentLanguage as keyof typeof LANGUAGES]})`}
+                    value={editableTitle}
+                    onChange={setEditableTitle}
+                    autoComplete="off"
+                    helpText={`${editableTitle.length} Zeichen`}
+                  />
+                  <div style={{ marginTop: "0.5rem" }}>
+                    <Button size="slim" onClick={() => handleGenerateAI("title")} loading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "title"}>
+                      ✨ Mit KI generieren / verbessern
+                    </Button>
+                  </div>
+                </div>
 
-                {/* Editable Description with Formatting Toolbar */}
+                {/* Editable Description */}
                 <div>
                   <InlineStack align="space-between" blockAlign="center">
-                    <Text as="p" variant="bodyMd" fontWeight="semibold">
-                      Produktbeschreibung
-                    </Text>
-                    <Button
-                      size="slim"
-                      onClick={toggleDescriptionMode}
-                    >
-                      {descriptionMode === "html" ? "Vorschau" : "HTML"}
-                    </Button>
+                    <Text as="p" variant="bodyMd" fontWeight="semibold">Produktbeschreibung ({LANGUAGES[currentLanguage as keyof typeof LANGUAGES]})</Text>
+                    <Button size="slim" onClick={toggleDescriptionMode}>{descriptionMode === "html" ? "Vorschau" : "HTML"}</Button>
                   </InlineStack>
 
                   {descriptionMode === "rendered" && (
                     <div style={{ marginTop: "0.5rem", display: "flex", gap: "0.25rem", flexWrap: "wrap", padding: "0.5rem", background: "#f6f6f7", border: "1px solid #c9cccf", borderRadius: "8px 8px 0 0" }}>
                       <ButtonGroup variant="segmented">
-                        <Button size="slim" onClick={() => handleFormatText("bold")}><strong>B</strong></Button>
-                        <Button size="slim" onClick={() => handleFormatText("italic")}><em>I</em></Button>
-                        <Button size="slim" onClick={() => handleFormatText("underline")}><u>U</u></Button>
+                        <Button size="slim" onClick={() => handleFormatText("bold")}>B</Button>
+                        <Button size="slim" onClick={() => handleFormatText("italic")}>I</Button>
+                        <Button size="slim" onClick={() => handleFormatText("underline")}>U</Button>
                       </ButtonGroup>
                       <ButtonGroup variant="segmented">
                         <Button size="slim" onClick={() => handleFormatText("h1")}>H1</Button>
@@ -589,89 +593,67 @@ export default function Index() {
                       }}
                     />
                   )}
-                  <Text as="p" variant="bodySm" tone="subdued">
-                    {editableDescription.replace(/<[^>]*>/g, "").length} Zeichen
-                  </Text>
+                  <Text as="p" variant="bodySm" tone="subdued">{editableDescription.replace(/<[^>]*>/g, "").length} Zeichen</Text>
+                  <div style={{ marginTop: "0.5rem" }}>
+                    <Button size="slim" onClick={() => handleGenerateAI("description")} loading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "description"}>
+                      ✨ Mit KI generieren / verbessern
+                    </Button>
+                  </div>
                 </div>
 
-                {/* SEO Section */}
-                <div style={{ marginTop: "2rem", paddingTop: "2rem", borderTop: "2px solid #e1e3e5" }}>
-                  <BlockStack gap="400">
-                    <Text as="h3" variant="headingMd">
-                      SEO Optimierung
-                    </Text>
-                    <BlockStack gap="200">
-                      <div>
-                        <Text as="p" variant="bodyMd" fontWeight="semibold">
-                          SEO Titel:
-                        </Text>
-                        <Text as="p" variant="bodyMd" tone="subdued">
-                          {selectedProduct.seo?.title || "Nicht gesetzt"}
-                        </Text>
-                      </div>
-                      <div>
-                        <Text as="p" variant="bodyMd" fontWeight="semibold">
-                          Meta-Beschreibung:
-                        </Text>
-                        <Text as="p" variant="bodyMd" tone="subdued">
-                          {selectedProduct.seo?.description || "Nicht gesetzt"}
-                        </Text>
-                      </div>
-                    </BlockStack>
-                    <Button
-                      variant="primary"
-                      onClick={() => handleGenerateSEO(selectedProduct.id)}
-                      loading={fetcher.state !== "idle" && selectedProductId === selectedProduct.id}
-                    >
-                      SEO mit KI optimieren
-                    </Button>
-                  </BlockStack>
-                </div>
+                {/* URL Slug */}
+                <TextField
+                  label={`URL-Slug (${LANGUAGES[currentLanguage as keyof typeof LANGUAGES]})`}
+                  value={editableHandle}
+                  onChange={setEditableHandle}
+                  autoComplete="off"
+                />
+
+                {/* SEO Title */}
+                <TextField
+                  label={`SEO-Titel (${LANGUAGES[currentLanguage as keyof typeof LANGUAGES]})`}
+                  value={editableSeoTitle}
+                  onChange={setEditableSeoTitle}
+                  autoComplete="off"
+                  helpText={`${editableSeoTitle.length} Zeichen (empfohlen: 50-60)`}
+                />
+
+                {/* Meta Description */}
+                <TextField
+                  label={`Meta-Beschreibung (${LANGUAGES[currentLanguage as keyof typeof LANGUAGES]})`}
+                  value={editableMetaDescription}
+                  onChange={setEditableMetaDescription}
+                  multiline={3}
+                  autoComplete="off"
+                  helpText={`${editableMetaDescription.length} Zeichen (empfohlen: 150-160)`}
+                />
               </BlockStack>
             ) : (
               <div style={{ textAlign: "center", padding: "4rem 2rem" }}>
-                <Text as="p" variant="headingLg" tone="subdued">
-                  Wähle ein Produkt aus der Liste
-                </Text>
+                <Text as="p" variant="headingLg" tone="subdued">Wähle ein Produkt aus der Liste</Text>
               </div>
             )}
           </Card>
         </div>
       </div>
 
+      {/* AI Suggestion Modal */}
       <Modal
-        open={modalActive}
-        onClose={() => setModalActive(false)}
-        title="KI-generierte SEO-Vorschläge"
+        open={aiModalActive}
+        onClose={() => setAiModalActive(false)}
+        title="KI-generierter Vorschlag"
         primaryAction={{
           content: "Übernehmen",
-          onAction: handleApplySEO,
-          loading: fetcher.state !== "idle",
+          onAction: handleAcceptAI,
         }}
-        secondaryActions={[
-          {
-            content: "Abbrechen",
-            onAction: () => setModalActive(false),
-          },
-        ]}
+        secondaryActions={[{ content: "Ablehnen", onAction: () => setAiModalActive(false) }]}
       >
         <Modal.Section>
           <BlockStack gap="400">
-            <TextField
-              label="SEO-Titel"
-              value={seoTitle}
-              onChange={setSeoTitle}
-              autoComplete="off"
-              helpText={`${seoTitle.length} Zeichen (optimal: 50-60)`}
-            />
-            <TextField
-              label="Meta-Beschreibung"
-              value={metaDescription}
-              onChange={setMetaDescription}
-              multiline={4}
-              autoComplete="off"
-              helpText={`${metaDescription.length} Zeichen (optimal: 150-160)`}
-            />
+            <Text as="p" variant="bodyMd"><strong>Generierter {aiFieldType === "title" ? "Titel" : "Beschreibung"}:</strong></Text>
+            <div style={{ padding: "12px", background: "#f6f6f7", borderRadius: "8px", whiteSpace: "pre-wrap" }}>
+              {aiGeneratedContent}
+            </div>
           </BlockStack>
         </Modal.Section>
       </Modal>

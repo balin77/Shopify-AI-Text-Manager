@@ -289,6 +289,39 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     throw new Error('No AI provider configured');
   }
 
+  async generateProductTitle(description: string): Promise<string> {
+    const prompt = `Du bist ein E-Commerce-Experte. Erstelle einen prägnanten, verkaufsstarken Produkttitel basierend auf dieser Beschreibung:
+
+${description}
+
+Der Titel sollte:
+- Max. 80 Zeichen lang sein
+- Das Hauptprodukt und wichtigste Vorteile enthalten
+- SEO-freundlich sein
+- Aufmerksamkeit erregen
+
+Gib nur den Titel zurück, ohne zusätzliche Erklärungen.`;
+
+    return await this.askAI(prompt);
+  }
+
+  async generateProductDescription(title: string, currentDescription: string): Promise<string> {
+    const prompt = `Du bist ein E-Commerce-Experte. ${currentDescription ? 'Verbessere' : 'Erstelle'} eine detaillierte Produktbeschreibung für: ${title}
+
+${currentDescription ? `Aktuelle Beschreibung: ${currentDescription}` : ''}
+
+Die Beschreibung sollte:
+- 200-400 Wörter umfassen
+- HTML-Formatierung verwenden (<p>, <strong>, <ul>, <li>)
+- Produktmerkmale und Vorteile hervorheben
+- Emotionalen Mehrwert bieten
+- Überzeugende Gründe zum Kauf liefern
+
+Gib nur die HTML-formatierte Beschreibung zurück, ohne zusätzliche Erklärungen.`;
+
+    return await this.askAI(prompt);
+  }
+
   private parseJSONResponse(text: string): any {
     // Try to extract JSON from markdown code blocks
     const jsonMatch = text.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
