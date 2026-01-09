@@ -27,80 +27,97 @@ export default function ContentPage() {
   return (
     <Page fullWidth>
       <MainNavigation />
-      <div style={{ padding: "1rem" }}>
-        {/* Sub-Navigation for Content Types */}
-        <Card padding="0">
-          <div style={{ borderBottom: "1px solid #e1e3e5", padding: "1rem" }}>
-            <InlineStack gap="300">
-              {CONTENT_TYPES.map((type) => (
-                <button
-                  key={type.id}
-                  onClick={() => setSelectedType(type.id)}
-                  style={{
-                    padding: "0.75rem 1.5rem",
-                    border: selectedType === type.id ? "2px solid #008060" : "1px solid #c9cccf",
-                    borderRadius: "8px",
-                    background: selectedType === type.id ? "#f1f8f5" : "white",
-                    cursor: "pointer",
-                    transition: "all 0.2s",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "0.5rem",
-                  }}
-                >
-                  <span style={{ fontSize: "1.2rem" }}>{type.icon}</span>
-                  <Text
-                    as="span"
-                    variant="bodyMd"
-                    fontWeight={selectedType === type.id ? "semibold" : "regular"}
-                  >
-                    {type.label}
-                  </Text>
-                </button>
-              ))}
-            </InlineStack>
-          </div>
 
-          <div style={{ padding: "2rem" }}>
-            <BlockStack gap="400">
-              {selectedType === "menus" && (
-                <ContentSection
-                  title="Menüs"
-                  description="Verwalten und übersetzen Sie Ihre Shop-Navigation und Menüs"
-                  status="coming-soon"
-                />
-              )}
-              {selectedType === "blogs" && (
-                <ContentSection
-                  title="Blog-Beiträge"
-                  description="Erstellen und übersetzen Sie Blog-Artikel mit KI-Unterstützung"
-                  status="coming-soon"
-                />
-              )}
-              {selectedType === "collections" && (
-                <ContentSection
-                  title="Kollektionen"
-                  description="Bearbeiten und übersetzen Sie Produktkollektionen"
-                  status="coming-soon"
-                />
-              )}
-              {selectedType === "pages" && (
-                <ContentSection
-                  title="Seiten"
-                  description="Verwalten Sie Ihre Shop-Seiten (Impressum, AGB, etc.)"
-                  status="coming-soon"
-                />
-              )}
-              {selectedType === "theme" && (
-                <ContentSection
-                  title="Theme-Texte"
-                  description="Übersetzen Sie Theme-Texte wie Buttons, Labels und Meldungen"
-                  status="coming-soon"
-                />
-              )}
-            </BlockStack>
-          </div>
-        </Card>
+      {/* Horizontal Sub-Navigation for Content Types */}
+      <div style={{ borderBottom: "1px solid #e1e3e5", background: "white", padding: "1rem" }}>
+        <InlineStack gap="300">
+          {CONTENT_TYPES.map((type) => (
+            <button
+              key={type.id}
+              onClick={() => setSelectedType(type.id)}
+              style={{
+                padding: "0.75rem 1.5rem",
+                border: selectedType === type.id ? "2px solid #008060" : "1px solid #c9cccf",
+                borderRadius: "8px",
+                background: selectedType === type.id ? "#f1f8f5" : "white",
+                cursor: "pointer",
+                transition: "all 0.2s",
+                display: "flex",
+                alignItems: "center",
+                gap: "0.5rem",
+              }}
+            >
+              <span style={{ fontSize: "1.2rem" }}>{type.icon}</span>
+              <Text
+                as="span"
+                variant="bodyMd"
+                fontWeight={selectedType === type.id ? "semibold" : "regular"}
+              >
+                {type.label}
+              </Text>
+            </button>
+          ))}
+        </InlineStack>
+      </div>
+
+      {/* Main Content Area with Left Sidebar */}
+      <div style={{ height: "calc(100vh - 120px)", display: "flex", gap: "1rem", padding: "1rem", overflow: "hidden" }}>
+        {/* Left Sidebar - Items List */}
+        <div style={{ width: "350px", flexShrink: 0 }}>
+          <Card padding="0">
+            <div style={{ padding: "1rem", borderBottom: "1px solid #e1e3e5" }}>
+              <Text as="h2" variant="headingMd">
+                {CONTENT_TYPES.find((t) => t.id === selectedType)?.label}
+              </Text>
+            </div>
+            <div style={{ padding: "2rem", textAlign: "center" }}>
+              <Text as="p" variant="bodySm" tone="subdued">
+                Keine Einträge verfügbar
+              </Text>
+            </div>
+          </Card>
+        </div>
+
+        {/* Right Content Area */}
+        <div style={{ flex: 1, overflow: "auto" }}>
+          <Card padding="600">
+            {selectedType === "menus" && (
+              <ContentSection
+                title="Menüs"
+                description="Verwalten und übersetzen Sie Ihre Shop-Navigation und Menüs"
+                status="coming-soon"
+              />
+            )}
+            {selectedType === "blogs" && (
+              <ContentSection
+                title="Blog-Beiträge"
+                description="Erstellen und übersetzen Sie Blog-Artikel mit KI-Unterstützung"
+                status="coming-soon"
+              />
+            )}
+            {selectedType === "collections" && (
+              <ContentSection
+                title="Kollektionen"
+                description="Bearbeiten und übersetzen Sie Produktkollektionen"
+                status="coming-soon"
+              />
+            )}
+            {selectedType === "pages" && (
+              <ContentSection
+                title="Seiten"
+                description="Verwalten Sie Ihre Shop-Seiten (Impressum, AGB, etc.)"
+                status="coming-soon"
+              />
+            )}
+            {selectedType === "theme" && (
+              <ContentSection
+                title="Theme-Texte"
+                description="Übersetzen Sie Theme-Texte wie Buttons, Labels und Meldungen"
+                status="coming-soon"
+              />
+            )}
+          </Card>
+        </div>
       </div>
     </Page>
   );
