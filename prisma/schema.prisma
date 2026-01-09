@@ -56,3 +56,27 @@ model AIInstructions {
   createdAt               DateTime @default(now())
   updatedAt               DateTime @updatedAt
 }
+
+model Task {
+  id             String    @id @default(cuid())
+  shop           String
+  type           String    // "translation", "aiGeneration", "bulkTranslation", "bulkAiGeneration"
+  status         String    @default("pending") // "pending", "running", "completed", "failed", "cancelled"
+  resourceType   String?   // "product", "collection", "blog", "page"
+  resourceId     String?   // Shopify GID
+  resourceTitle  String?   // For display purposes
+  fieldType      String?   // "title", "description", "handle", "seoTitle", "metaDescription", "all"
+  targetLocale   String?   // For translations
+  progress       Int       @default(0) // 0-100
+  total          Int?      // Total number of items (for bulk operations)
+  processed      Int       @default(0) // Number of processed items
+  result         String?   @db.Text // JSON string with results or error message
+  error          String?   @db.Text
+  startedAt      DateTime  @default(now())
+  completedAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([shop, status])
+  @@index([shop, createdAt])
+}
