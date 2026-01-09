@@ -4,10 +4,17 @@ import { AIService } from "../../src/services/ai.service";
 import { TranslationService } from "../../src/services/translation.service";
 
 export async function handleProductActions({ request }: ActionFunctionArgs) {
+  console.error('=== PRODUCT ACTION HANDLER CALLED ===');
+  console.error('Request method:', request.method);
+  console.error('Request URL:', request.url);
+
   const { admin, session } = await authenticate.admin(request);
   const formData = await request.formData();
   const action = formData.get("action");
   const productId = formData.get("productId") as string;
+
+  console.error('Action:', action);
+  console.error('Product ID:', productId);
 
   // Load AI settings and instructions from database
   const { db } = await import("../db.server");
