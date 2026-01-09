@@ -9,8 +9,11 @@ export const de = {
   // Products Page
   products: {
     title: "Produkte",
+    count: "Produkte",
     search: "Produkte suchen...",
     selectProduct: "Wähle ein Produkt aus der Liste",
+    noEntries: "Keine Einträge verfügbar",
+    selectFromList: "Wähle einen Eintrag aus der Liste",
     saveChanges: "Änderungen speichern",
     translateAll: "In alle Sprachen übersetzen",
     productTitle: "Produkttitel",
@@ -56,7 +59,7 @@ export const de = {
   content: {
     menus: "Menüs",
     menusDescription: "Verwalten und übersetzen Sie Ihre Shop-Navigation und Menüs",
-    blogs: "Blog-Beiträge",
+    blogs: "Blogs",
     blogsDescription: "Erstellen und übersetzen Sie Blog-Artikel mit KI-Unterstützung",
     collections: "Kollektionen",
     collectionsDescription: "Bearbeiten und übersetzen Sie Produktkollektionen",
@@ -65,6 +68,7 @@ export const de = {
     theme: "Theme-Texte",
     themeDescription: "Übersetzen Sie Theme-Texte wie Buttons, Labels und Meldungen",
     noEntries: "Keine Einträge verfügbar",
+    selectFromList: "Wähle einen Eintrag aus der Liste",
     comingSoon: "Demnächst verfügbar",
   },
 

@@ -1,29 +1,15 @@
 {
   "permissions": {
     "allow": [
-      "Bash(npm init:*)",
-      "Bash(npm install:*)",
-      "Bash(npx tsx:*)",
+      "Bash(ForEach-Object { Stop-Process -Id $_d -Force -ErrorAction SilentlyContinue })",
       "Bash(npm run build:*)",
-      "Bash(git init:*)",
-      "Bash(git remote add:*)",
+      "Bash(npm run dev:*)",
       "Bash(git add:*)",
-      "Bash(git commit:*)",
+      "Bash(git commit -m \"$(cat <<''EOF''\nfix: Implement full \"Translate to All Languages\" functionality\n\n- Server now automatically saves all translations to Shopify\n- Client uses current editable field values (including AI-generated content)\n- UI updates to reflect new translations after successful translation\n- Only non-empty fields are translated\n- Added error handling for empty field sets\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")",
       "Bash(git push:*)",
-      "Read(//c/Users/guble/OneDrive/Shopify/**)",
-      "Bash(npx prisma generate:*)",
-      "Bash(npx prisma db push:*)",
-      "Bash(npm run typecheck:*)",
-      "Bash(npx ngrok http 3000)",
-      "Bash(timeout 10 bash:*)",
-      "Bash(npx cloudflared:*)",
-      "Bash(npm run web:old:*)",
-      "Bash(awk:*)",
-      "Bash(xargs kill -9)",
-      "Bash(dir:*)",
-      "Bash(del nul)",
-      "Bash(del \"c:\\Users\\guble\\OneDrive\\Shopify\\Shopify API Connector\\app\\routes\\app._index.tsx\")",
-      "Bash(move \"c:\\Users\\guble\\OneDrive\\Shopify\\Shopify API Connector\\app\\routes\\app._index.new.tsx\" \"c:\\Users\\guble\\OneDrive\\Shopify\\Shopify API Connector\\app\\routes\\app._index.tsx\")"
+      "Bash(git log:*)",
+      "Bash(git commit -m \"$(cat <<''EOF''\nfix: Replace contentHtml with content for blog articles\n\nUpdated all GraphQL queries and mutations to use the correct ''content'' field instead of ''contentHtml'' for blog articles. The contentHtml field doesn''t exist in Shopify''s Article type, causing GraphQL errors.\n\nChanges:\n- GraphQL query: contentHtml → content\n- GraphQL mutation: contentHtml → content  \n- Frontend references updated to use content field\n- Translation key updated from ''contentHtml'' to ''body_html''\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")",
+      "Bash(git commit:*)"
     ],
     "deny": [],
     "ask": []

@@ -22,6 +22,7 @@ import { authenticate } from "../shopify.server";
 import { AIService } from "../../src/services/ai.service";
 import { TranslationService } from "../../src/services/translation.service";
 import { MainNavigation } from "../components/MainNavigation";
+import { useI18n } from "../contexts/I18nContext";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
@@ -435,6 +436,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 export default function Index() {
   const { products, shop, shopLocales, primaryLocale, error } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
+  const { t } = useI18n();
 
   // State
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
@@ -868,7 +870,7 @@ export default function Index() {
           <Card padding="0">
             <div style={{ padding: "1rem", borderBottom: "1px solid #e1e3e5" }}>
               <BlockStack gap="300">
-                <Text as="h2" variant="headingMd">Produkte ({filteredProducts.length})</Text>
+                <Text as="h2" variant="headingMd">{t.products.count} ({filteredProducts.length})</Text>
                 <div style={{ position: "relative" }}>
                   <div style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }}>
                     <Icon source={SearchIcon} />
@@ -880,7 +882,7 @@ export default function Index() {
                       setSearchQuery(e.target.value);
                       setCurrentPage(1);
                     }}
-                    placeholder="Produkte suchen..."
+                    placeholder={t.products.search}
                     style={{
                       width: "100%",
                       padding: "8px 12px 8px 36px",
@@ -906,15 +908,17 @@ export default function Index() {
                       id={id}
                       onClick={() => setSelectedProductId(id)}
                       media={
-                        featuredImage ? (
-                          <Thumbnail source={featuredImage.url} alt={featuredImage.altText || title} size="small" />
-                        ) : undefined
+                        <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem", alignItems: "flex-start" }}>
+                          {featuredImage ? (
+                            <Thumbnail source={featuredImage.url} alt={featuredImage.altText || title} size="small" />
+                          ) : (
+                            <div style={{ width: "40px", height: "40px", background: "#e1e3e5", borderRadius: "8px" }} />
+                          )}
+                          <Badge tone={status === "ACTIVE" ? "success" : undefined}>{status}</Badge>
+                        </div>
                       }
                     >
-                      <BlockStack gap="100">
-                        <Text as="p" variant="bodyMd" fontWeight={isSelected ? "bold" : "regular"}>{title}</Text>
-                        <Badge tone={status === "ACTIVE" ? "success" : undefined}>{status}</Badge>
-                      </BlockStack>
+                      <Text as="p" variant="bodyMd" fontWeight={isSelected ? "bold" : "regular"}>{title}</Text>
                     </ResourceItem>
                   );
                 }}
@@ -1317,7 +1321,7 @@ export default function Index() {
               </BlockStack>
             ) : (
               <div style={{ textAlign: "center", padding: "4rem 2rem" }}>
-                <Text as="p" variant="headingLg" tone="subdued">Wähle ein Produkt aus der Liste</Text>
+                <Text as="p" variant="headingLg" tone="subdued">{t.products.selectProduct}</Text>
               </div>
             )}
           </Card>
