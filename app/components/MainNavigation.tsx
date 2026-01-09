@@ -1,13 +1,15 @@
 import { Link, useLocation } from "@remix-run/react";
 import { InlineStack, Text } from "@shopify/polaris";
+import { useI18n } from "../contexts/I18nContext";
 
 export function MainNavigation() {
   const location = useLocation();
+  const { t } = useI18n();
 
   const tabs = [
-    { id: "products", label: "Produkte", path: "/app" },
-    { id: "content", label: "Andere Inhalte", path: "/app/content" },
-    { id: "settings", label: "Einstellungen", path: "/app/settings" },
+    { id: "products", label: t.nav.products, path: "/app" },
+    { id: "content", label: t.nav.otherContent, path: "/app/content" },
+    { id: "settings", label: t.nav.settings, path: "/app/settings" },
   ];
 
   return (
