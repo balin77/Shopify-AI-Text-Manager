@@ -1,133 +1,158 @@
-# 🚀 Shopify SEO Optimizer
+# 🚀 Shopify AI Text Manager
 
-Ein modularer, KI-gestützter SEO-Optimizer für Shopify-Produkte mit automatischer Übersetzung in mehrere Sprachen.
+Eine professionelle Shopify Embedded App für KI-gestützte Texterstellung, SEO-Optimierung und automatische Übersetzungen.
 
 ## ✨ Features
 
-- 🤖 **KI-gestützte SEO-Optimierung** mit mehreren AI-Providern (HuggingFace, Gemini, Claude, OpenAI)
-- 🌍 **Automatische Übersetzungen** in 5 Sprachen (DE, EN, FR, ES, IT)
-- 📝 **Rich-Text-Editor** mit HTML-Formatierung
+- 🤖 **KI-gestützte Texterstellung** mit mehreren AI-Providern (HuggingFace, Gemini, Claude, OpenAI, Grok, DeepSeek)
+- 🌍 **Automatische Übersetzungen** in alle Shopify Shop-Sprachen
+- 📝 **Content-Verwaltung** für Produkte, Blogs, Collections und Pages
 - 💾 **Intelligentes Change-Tracking** verhindert Datenverlust
-- 🎨 **Moderne Web-UI** mit Echtzeit-Updates
-- 📊 **SEO-Score-Berechnung** mit konkreten Verbesserungsvorschlägen
-- 🏗️ **Modulare Architektur** - Services, Components, State Management
-
-## 📚 Dokumentation
-
-- **[ARCHITECTURE.md](ARCHITECTURE.md)** - Detaillierte Architektur-Dokumentation mit Code-Beispielen
-- **[OAUTH-SETUP.md](OAUTH-SETUP.md)** - OAuth-Setup Anleitung
+- 🎨 **Embedded Shopify App** mit Polaris Design System
+- 📊 **SEO-Score-Berechnung** mit Echtzeit-Optimierungsvorschlägen
+- 🏗️ **Modulare Architektur** - Remix, React, Prisma, GraphQL
 
 ## 🚀 Schnellstart
 
 ### 1. Installation
+
 ```bash
 npm install
 ```
 
-### 2. OAuth Setup
-Folge der detaillierten Anleitung in [OAUTH-SETUP.md](OAUTH-SETUP.md)
+### 2. Environment Variables
 
-**Kurzversion:**
-1. App im [Shopify Partners Dashboard](https://partners.shopify.com/) erstellen
-2. Credentials in `.env` eintragen
-3. OAuth Flow starten: `npm run oauth`
-4. Browser öffnen: `http://localhost:3000/auth`
-5. App autorisieren
+Erstelle eine `.env` Datei mit folgenden Variablen:
 
-### 3. Web-App starten
+```env
+# Shopify App Credentials
+SHOPIFY_API_KEY=your-api-key
+SHOPIFY_API_SECRET=your-api-secret
+SHOPIFY_APP_URL=https://your-app-url.railway.app
+
+# WICHTIG: Keine Leerzeichen zwischen den Scopes!
+SHOPIFY_SCOPES=read_products,write_products,read_translations,write_translations,read_locales,read_content,write_content,read_online_store_pages,write_online_store_pages
+
+# Database
+DATABASE_URL=postgresql://user:password@host:port/database
+
+# AI Provider (optional)
+AI_PROVIDER=huggingface
+HUGGINGFACE_API_KEY=your-key
+```
+
+### 3. Datenbank Setup
+
 ```bash
-npm run web
+npx prisma generate
+npx prisma db push
 ```
-Öffne `http://localhost:3001` im Browser
 
-## 💡 Verwendung
+### 4. Development starten
 
-### Web-UI
-Die Web-App bietet eine benutzerfreundliche Oberfläche:
-1. Produkte durchsuchen und filtern
-2. Produktdetails bearbeiten (Titel, Beschreibung, Handle)
-3. SEO-Daten optimieren mit KI-Unterstützung
-4. Übersetzungen in mehrere Sprachen verwalten
-5. SEO-Score in Echtzeit sehen
-
-### Programmatische Nutzung
-
-Die Services können auch direkt verwendet werden:
-
-```typescript
-import { ShopifyConnector } from './src/shopify-connector';
-import { ProductService } from './src/services/product.service';
-import { AIService } from './src/services/ai.service';
-
-const connector = new ShopifyConnector();
-const productService = new ProductService(connector);
-const aiService = new AIService('huggingface');
-
-// Alle Produkte abrufen
-const products = await productService.getAllProducts(250);
-
-// SEO generieren
-const suggestion = await aiService.generateSEO(
-  'Produkttitel',
-  'Produktbeschreibung'
-);
-
-// Produkt aktualisieren
-await productService.updateProduct(productId, {
-  seoTitle: suggestion.seoTitle,
-  metaDescription: suggestion.metaDescription
-});
+```bash
+npm run dev
 ```
+
+## ⚠️ Wichtige Hinweise
+
+### Scopes Configuration
+
+**KRITISCH:** Die `SHOPIFY_SCOPES` Environment Variable darf **KEINE Leerzeichen** zwischen den Scopes enthalten!
+
+✅ **Richtig:**
+```env
+SHOPIFY_SCOPES=read_products,write_products,read_translations
+```
+
+❌ **Falsch:**
+```env
+SHOPIFY_SCOPES=read_products, write_products, read_translations
+                          ^^^           ^^^
+                    Diese Leerzeichen brechen die App!
+```
+
+**Symptome bei falschen Scopes:**
+- Navigation funktioniert nicht
+- Authentifizierung schlägt fehl
+- API-Requests werden abgelehnt
+- App lädt nicht oder zeigt weiße Seite
+
+**Lösung:**
+1. Überprüfe die `SHOPIFY_SCOPES` auf Railway/Hosting
+2. Entferne alle Leerzeichen nach Kommas
+3. App neu deployen
+4. Shopify App eventuell neu installieren
+
+### Authentication Strategy
+
+Die App verwendet `unstable_newEmbeddedAuthStrategy: true` für moderne Token-Exchange-Authentifizierung. Falls Probleme auftreten, kann diese in `app/shopify.server.ts` deaktiviert werden.
 
 ## 📦 Projektstruktur
 
 ```
-Shopify API Connector/
+Shopify AI Text Manager/
+├── app/
+│   ├── routes/              # Remix Routes
+│   │   ├── app._index.tsx   # Produkte-Seite
+│   │   ├── app.content.tsx  # Content-Verwaltung
+│   │   ├── app.settings.tsx # Einstellungen
+│   │   └── app.tasks.tsx    # Task-Tracking
+│   ├── components/          # React Components
+│   ├── services/            # Business Logic
+│   ├── graphql/             # GraphQL Queries
+│   └── contexts/            # React Contexts
 ├── src/
-│   ├── services/              # Backend Services
-│   │   ├── product.service.ts
-│   │   ├── translation.service.ts
-│   │   └── ai.service.ts
-│   ├── types/                 # TypeScript Typen
-│   └── shopify-connector.ts   # Shopify API Wrapper
-├── web-app/
-│   ├── server.ts              # Express Server
-│   ├── js/
-│   │   ├── modules/           # State Management
-│   │   ├── services/          # Frontend API Service
-│   │   ├── components/        # UI Components
-│   │   └── utils/             # Helper Functions
-│   └── index.html
-├── ARCHITECTURE.md            # Architektur-Dokumentation
-├── MIGRATION-GUIDE.md         # Migrations-Guide
-└── README.md
+│   └── services/            # Shared Services
+├── prisma/
+│   └── schema.prisma        # Datenbank Schema
+└── public/                  # Static Assets
 ```
-
-## 🔧 Verfügbare Scripts
-
-- `npm run web` - Web-App starten (Port 3001)
-- `npm run oauth` - OAuth Setup (einmalig)
-- `npm run build` - TypeScript kompilieren
-- `npm run dev` - Development Mode
 
 ## 🤖 AI Provider
 
-Unterstützte AI-Provider (konfigurierbar über `.env`):
+Unterstützte AI-Provider (konfigurierbar in den App-Einstellungen):
 
-- **HuggingFace** (Standard, kostenlos)
+- **HuggingFace** (kostenlos)
 - **Google Gemini** (kostenlos)
-- **Claude**
-- **OpenAI**
+- **Claude** (Anthropic)
+- **OpenAI** (GPT)
+- **Grok** (xAI)
+- **DeepSeek**
 
-```env
-AI_PROVIDER=huggingface
-HUGGINGFACE_API_KEY=dein-key
-```
+API-Keys werden in der App unter "Einstellungen" hinterlegt.
+
+## 🔧 Deployment auf Railway
+
+1. Projekt mit Railway verbinden
+2. Environment Variables setzen (siehe oben)
+3. PostgreSQL Datenbank hinzufügen
+4. Deploy - Railway baut und startet automatisch
+
+**Wichtig:** Nach Deployment App in Shopify installieren/neu autorisieren!
 
 ## 📖 Weitere Dokumentation
 
-- [Shopify GraphQL Admin API](https://shopify.dev/docs/api/admin-graphql)
-- [Shopify API Library](https://github.com/Shopify/shopify-api-js)
+- [Shopify App Development](https://shopify.dev/docs/apps)
+- [Remix Documentation](https://remix.run/docs)
+- [Shopify Polaris](https://polaris.shopify.com/)
+
+## 🐛 Troubleshooting
+
+### App lädt nicht / Weiße Seite
+- Überprüfe Browser-Konsole auf Fehler
+- Checke Railway Logs
+- Verifiziere Environment Variables (besonders `SHOPIFY_SCOPES`)
+
+### Navigation funktioniert nicht
+- Leerzeichen in `SHOPIFY_SCOPES` entfernen
+- App in Shopify neu installieren
+- Session-Storage in Datenbank leeren
+
+### API-Fehler
+- Scopes überprüfen - alle benötigten Permissions vorhanden?
+- Shopify API-Limits beachten
+- Access Token gültig?
 
 ## 📄 Lizenz
 
