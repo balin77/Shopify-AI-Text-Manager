@@ -65,10 +65,21 @@ async function handleLoadTranslations(admin: any, formData: FormData, productId:
   const locale = formData.get("locale") as string;
 
   try {
+    console.log('=== LOADING TRANSLATIONS ===');
+    console.log('Product ID:', productId);
+    console.log('Locale:', locale);
+
     const translationsResponse = await admin.graphql(
       `#graphql
         query getProductTranslations($resourceId: ID!, $locale: String!) {
           translatableResource(resourceId: $resourceId) {
+            resourceId
+            translatableContent {
+              key
+              value
+              digest
+              locale
+            }
             translations(locale: $locale) {
               key
               value
@@ -80,10 +91,17 @@ async function handleLoadTranslations(admin: any, formData: FormData, productId:
     );
 
     const translationsData = await translationsResponse.json();
+    console.log('Full response:', JSON.stringify(translationsData, null, 2));
+
+    const translatableContent = translationsData.data?.translatableResource?.translatableContent || [];
     const translations = translationsData.data?.translatableResource?.translations || [];
 
-    return json({ success: true, translations, locale });
+    console.log('Available translatable keys:', translatableContent.map((c: any) => c.key));
+    console.log('Loaded translations:', translations);
+
+    return json({ success: true, translations, locale, translatableContent });
   } catch (error: any) {
+    console.error('Error loading translations:', error);
     return json({ success: false, error: error.message }, { status: 500 });
   }
 }
