@@ -16,9 +16,22 @@ export function MainNavigation() {
 
   const handleNavClick = (e: React.MouseEvent<HTMLAnchorElement>, path: string) => {
     e.preventDefault();
-    console.log("=== NAVIGATION CLICK ===");
-    console.log("Navigating to:", path);
-    navigate(path);
+
+    // Get current URL parameters
+    const currentUrl = new URL(window.location.href);
+    const params = currentUrl.searchParams;
+
+    // Build new URL with all current parameters
+    const newUrl = new URL(path, window.location.origin);
+    params.forEach((value, key) => {
+      newUrl.searchParams.set(key, value);
+    });
+
+    console.log("=== NAVIGATION ===");
+    console.log("Navigating to:", newUrl.toString());
+
+    // Use window.location.assign for reliable navigation in iframe
+    window.location.assign(newUrl.toString());
   };
 
   return (
