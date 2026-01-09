@@ -21,7 +21,9 @@
       "Bash(awk:*)",
       "Bash(xargs kill -9)",
       "Bash(dir:*)",
-      "Bash(del nul)"
+      "Bash(del nul)",
+      "Bash(del \"c:\\Users\\guble\\OneDrive\\Shopify\\Shopify API Connector\\app\\routes\\app._index.tsx\")",
+      "Bash(move \"c:\\Users\\guble\\OneDrive\\Shopify\\Shopify API Connector\\app\\routes\\app._index.new.tsx\" \"c:\\Users\\guble\\OneDrive\\Shopify\\Shopify API Connector\\app\\routes\\app._index.tsx\")"
     ],
     "deny": [],
     "ask": []

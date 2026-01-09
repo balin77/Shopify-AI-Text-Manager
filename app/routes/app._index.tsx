@@ -11,7 +11,6 @@ import {
   BlockStack,
   InlineStack,
   Button,
-  Modal,
   TextField,
   Banner,
   Thumbnail,
@@ -183,6 +182,22 @@ Gib nur die Meta-Description zurück, ohne Erklärungen.`;
     }
   }
 
+  if (action === "translateSuggestion") {
+    const suggestion = formData.get("suggestion") as string;
+    const fieldType = formData.get("fieldType") as string;
+
+    try {
+      const changedFields: any = {};
+      changedFields[fieldType] = suggestion;
+
+      const translations = await translationService.translateProduct(changedFields);
+
+      return json({ success: true, translations, fieldType });
+    } catch (error: any) {
+      return json({ success: false, error: error.message }, { status: 500 });
+    }
+  }
+
   if (action === "translateAll") {
     const title = formData.get("title") as string;
     const description = formData.get("description") as string;
@@ -207,6 +222,7 @@ Gib nur die Meta-Description zurück, ohne Erklärungen.`;
   }
 
   if (action === "updateProduct") {
+    const locale = formData.get("locale") as string;
     const title = formData.get("title") as string;
     const descriptionHtml = formData.get("descriptionHtml") as string;
     const handle = formData.get("handle") as string;
@@ -214,52 +230,91 @@ Gib nur die Meta-Description zurück, ohne Erklärungen.`;
     const metaDescription = formData.get("metaDescription") as string;
 
     try {
-      const response = await admin.graphql(
-        `#graphql
-          mutation updateProduct($input: ProductInput!) {
-            productUpdate(input: $input) {
-              product {
-                id
-                title
-                handle
-                descriptionHtml
-                seo {
+      // If it's not the primary locale, we need to use translations API
+      if (locale !== formData.get("primaryLocale")) {
+        const translationsInput = [];
+        if (title) translationsInput.push({ key: "title", value: title, locale });
+        if (descriptionHtml) translationsInput.push({ key: "body_html", value: descriptionHtml, locale });
+        if (handle) translationsInput.push({ key: "handle", value: handle, locale });
+        if (seoTitle) translationsInput.push({ key: "seo_title", value: seoTitle, locale });
+        if (metaDescription) translationsInput.push({ key: "seo_description", value: metaDescription, locale });
+
+        // Register translations
+        for (const translation of translationsInput) {
+          await admin.graphql(
+            `#graphql
+              mutation translateProduct($resourceId: ID!, $translations: [TranslationInput!]!) {
+                translationsRegister(resourceId: $resourceId, translations: $translations) {
+                  userErrors {
+                    field
+                    message
+                  }
+                  translations {
+                    locale
+                    key
+                    value
+                  }
+                }
+              }`,
+            {
+              variables: {
+                resourceId: productId,
+                translations: [translation]
+              },
+            }
+          );
+        }
+
+        return json({ success: true });
+      } else {
+        // Update primary locale using productUpdate
+        const response = await admin.graphql(
+          `#graphql
+            mutation updateProduct($input: ProductInput!) {
+              productUpdate(input: $input) {
+                product {
+                  id
                   title
-                  description
+                  handle
+                  descriptionHtml
+                  seo {
+                    title
+                    description
+                  }
+                }
+                userErrors {
+                  field
+                  message
                 }
               }
-              userErrors {
-                field
-                message
-              }
-            }
-          }`,
-        {
-          variables: {
-            input: {
-              id: productId,
-              title,
-              handle,
-              descriptionHtml,
-              seo: {
-                title: seoTitle,
-                description: metaDescription,
+            }`,
+          {
+            variables: {
+              input: {
+                id: productId,
+                title,
+                handle,
+                descriptionHtml,
+                seo: {
+                  title: seoTitle,
+                  description: metaDescription,
+                },
               },
             },
-          },
+          }
+        );
+
+        const data = await response.json();
+
+        if (data.data.productUpdate.userErrors.length > 0) {
+          return json({
+            success: false,
+            error: data.data.productUpdate.userErrors[0].message
+          }, { status: 500 });
         }
-      );
 
-      const data = await response.json();
-
-      if (data.data.productUpdate.userErrors.length > 0) {
-        return json({
-          success: false,
-          error: data.data.productUpdate.userErrors[0].message
-        }, { status: 500 });
+        return json({ success: true, product: data.data.productUpdate.product });
       }
-
-      return json({ success: true, product: data.data.productUpdate.product });
     } catch (error: any) {
       return json({ success: false, error: error.message }, { status: 500 });
     }
@@ -300,29 +355,59 @@ export default function Index() {
 
   const selectedProduct = products.find((p: any) => p.id === selectedProductId);
 
-  // Load product data
+  // Helper function to get translated value
+  const getTranslatedValue = (key: string, locale: string, fallback: string) => {
+    if (!selectedProduct || locale === primaryLocale) {
+      return fallback;
+    }
+
+    const translation = selectedProduct.translations?.find(
+      (t: any) => t.key === key && t.locale === locale
+    );
+
+    return translation?.value || "";
+  };
+
+  // Load product data when product or language changes
   useEffect(() => {
     if (selectedProduct) {
-      setEditableTitle(selectedProduct.title);
-      setEditableDescription(selectedProduct.descriptionHtml || "");
-      setEditableHandle(selectedProduct.handle);
-      setEditableSeoTitle(selectedProduct.seo?.title || "");
-      setEditableMetaDescription(selectedProduct.seo?.description || "");
+      if (currentLanguage === primaryLocale) {
+        setEditableTitle(selectedProduct.title);
+        setEditableDescription(selectedProduct.descriptionHtml || "");
+        setEditableHandle(selectedProduct.handle);
+        setEditableSeoTitle(selectedProduct.seo?.title || "");
+        setEditableMetaDescription(selectedProduct.seo?.description || "");
+      } else {
+        setEditableTitle(getTranslatedValue("title", currentLanguage, ""));
+        setEditableDescription(getTranslatedValue("body_html", currentLanguage, ""));
+        setEditableHandle(getTranslatedValue("handle", currentLanguage, ""));
+        setEditableSeoTitle(getTranslatedValue("seo_title", currentLanguage, ""));
+        setEditableMetaDescription(getTranslatedValue("seo_description", currentLanguage, ""));
+      }
+      setAiSuggestions({});
       setHasChanges(false);
     }
-  }, [selectedProduct]);
+  }, [selectedProduct, currentLanguage]);
 
   // Track changes
   useEffect(() => {
     if (selectedProduct) {
-      const titleChanged = editableTitle !== selectedProduct.title;
-      const descChanged = editableDescription !== (selectedProduct.descriptionHtml || "");
-      const handleChanged = editableHandle !== selectedProduct.handle;
-      const seoTitleChanged = editableSeoTitle !== (selectedProduct.seo?.title || "");
-      const metaDescChanged = editableMetaDescription !== (selectedProduct.seo?.description || "");
+      const getOriginalValue = (key: string, fallback: string) => {
+        if (currentLanguage === primaryLocale) {
+          return fallback;
+        }
+        return getTranslatedValue(key, currentLanguage, "");
+      };
+
+      const titleChanged = editableTitle !== getOriginalValue("title", selectedProduct.title);
+      const descChanged = editableDescription !== getOriginalValue("body_html", selectedProduct.descriptionHtml || "");
+      const handleChanged = editableHandle !== getOriginalValue("handle", selectedProduct.handle);
+      const seoTitleChanged = editableSeoTitle !== getOriginalValue("seo_title", selectedProduct.seo?.title || "");
+      const metaDescChanged = editableMetaDescription !== getOriginalValue("seo_description", selectedProduct.seo?.description || "");
+
       setHasChanges(titleChanged || descChanged || handleChanged || seoTitleChanged || metaDescChanged);
     }
-  }, [editableTitle, editableDescription, editableHandle, editableSeoTitle, editableMetaDescription, selectedProduct]);
+  }, [editableTitle, editableDescription, editableHandle, editableSeoTitle, editableMetaDescription, selectedProduct, currentLanguage]);
 
   const handleSaveProduct = () => {
     if (!selectedProductId || !hasChanges) return;
@@ -331,6 +416,8 @@ export default function Index() {
       {
         action: "updateProduct",
         productId: selectedProductId,
+        locale: currentLanguage,
+        primaryLocale,
         title: editableTitle,
         descriptionHtml: editableDescription,
         handle: editableHandle,
@@ -341,10 +428,16 @@ export default function Index() {
     );
   };
 
-  const handleGenerateAI = (fieldType: "title" | "description") => {
+  const handleGenerateAI = (fieldType: string) => {
     if (!selectedProductId) return;
 
-    const currentValue = fieldType === "title" ? editableTitle : editableDescription;
+    const currentValue = {
+      title: editableTitle,
+      description: editableDescription,
+      handle: editableHandle,
+      seoTitle: editableSeoTitle,
+      metaDescription: editableMetaDescription,
+    }[fieldType] || "";
 
     fetcher.submit(
       {
@@ -352,6 +445,55 @@ export default function Index() {
         productId: selectedProductId,
         fieldType,
         currentValue,
+        contextTitle: editableTitle,
+        contextDescription: editableDescription,
+      },
+      { method: "POST" }
+    );
+  };
+
+  const handleAcceptSuggestion = (fieldType: string) => {
+    const suggestion = aiSuggestions[fieldType];
+    if (!suggestion) return;
+
+    switch (fieldType) {
+      case "title":
+        setEditableTitle(suggestion);
+        break;
+      case "description":
+        setEditableDescription(suggestion);
+        break;
+      case "handle":
+        setEditableHandle(suggestion);
+        break;
+      case "seoTitle":
+        setEditableSeoTitle(suggestion);
+        break;
+      case "metaDescription":
+        setEditableMetaDescription(suggestion);
+        break;
+    }
+
+    setAiSuggestions(prev => {
+      const newSuggestions = { ...prev };
+      delete newSuggestions[fieldType];
+      return newSuggestions;
+    });
+  };
+
+  const handleAcceptAndTranslate = (fieldType: string) => {
+    const suggestion = aiSuggestions[fieldType];
+    if (!suggestion) return;
+
+    // First accept the suggestion
+    handleAcceptSuggestion(fieldType);
+
+    // Then trigger translation
+    fetcher.submit(
+      {
+        action: "translateSuggestion",
+        suggestion,
+        fieldType,
       },
       { method: "POST" }
     );
@@ -422,19 +564,29 @@ export default function Index() {
   // Handle AI generation response
   useEffect(() => {
     if (fetcher.data?.success && (fetcher.data as any).generatedContent) {
-      setAiGeneratedContent((fetcher.data as any).generatedContent);
-      setAiFieldType((fetcher.data as any).fieldType);
-      setAiModalActive(true);
+      const fieldType = (fetcher.data as any).fieldType;
+      setAiSuggestions(prev => ({
+        ...prev,
+        [fieldType]: (fetcher.data as any).generatedContent,
+      }));
     }
   }, [fetcher.data]);
 
-  const handleAcceptAI = () => {
-    if (aiFieldType === "title") {
-      setEditableTitle(aiGeneratedContent);
-    } else if (aiFieldType === "description") {
-      setEditableDescription(aiGeneratedContent);
-    }
-    setAiModalActive(false);
+  // Check if field is translated
+  const isFieldTranslated = (key: string) => {
+    if (currentLanguage === primaryLocale) return true;
+    if (!selectedProduct) return false;
+
+    const translation = selectedProduct.translations?.find(
+      (t: any) => t.key === key && t.locale === currentLanguage
+    );
+
+    return !!translation && !!translation.value;
+  };
+
+  const getFieldBackgroundColor = (key: string) => {
+    if (currentLanguage === primaryLocale) return "white";
+    return isFieldTranslated(key) ? "white" : "#fff4e5";
   };
 
   return (
@@ -537,14 +689,14 @@ export default function Index() {
               <BlockStack gap="500">
                 {/* Language Selector */}
                 <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
-                  {Object.entries(LANGUAGES).map(([code, name]) => (
+                  {shopLocales.map((locale: any) => (
                     <Button
-                      key={code}
-                      variant={currentLanguage === code ? "primary" : undefined}
-                      onClick={() => setCurrentLanguage(code)}
+                      key={locale.locale}
+                      variant={currentLanguage === locale.locale ? "primary" : undefined}
+                      onClick={() => setCurrentLanguage(locale.locale)}
                       size="slim"
                     >
-                      {name}
+                      {locale.name} {locale.primary && "(Hauptsprache)"}
                     </Button>
                   ))}
                 </div>
@@ -556,7 +708,7 @@ export default function Index() {
                     <Text as="p" variant="bodySm" tone="subdued">ID: {selectedProduct.id.split("/").pop()}</Text>
                   </InlineStack>
                   <InlineStack gap="200">
-                    {currentLanguage === "de" && (
+                    {currentLanguage === primaryLocale && (
                       <Button
                         onClick={handleTranslateAll}
                         loading={fetcher.state !== "idle" && fetcher.formData?.get("action") === "translateAll"}
@@ -581,15 +733,40 @@ export default function Index() {
 
                 {/* Editable Title */}
                 <div>
-                  <TextField
-                    label={`Produkttitel (${LANGUAGES[currentLanguage as keyof typeof LANGUAGES]})`}
-                    value={editableTitle}
-                    onChange={setEditableTitle}
-                    autoComplete="off"
-                    helpText={`${editableTitle.length} Zeichen`}
-                  />
+                  <div style={{ background: getFieldBackgroundColor("title"), borderRadius: "8px", padding: "1px" }}>
+                    <TextField
+                      label={`Produkttitel (${shopLocales.find((l: any) => l.locale === currentLanguage)?.name || currentLanguage})`}
+                      value={editableTitle}
+                      onChange={setEditableTitle}
+                      autoComplete="off"
+                      helpText={`${editableTitle.length} Zeichen`}
+                    />
+                  </div>
+                  {aiSuggestions.title && (
+                    <div style={{ marginTop: "0.5rem", padding: "1rem", background: "#f0f9ff", border: "1px solid #0891b2", borderRadius: "8px" }}>
+                      <BlockStack gap="300">
+                        <Text as="p" variant="bodyMd" fontWeight="semibold">KI-Vorschlag:</Text>
+                        <Text as="p" variant="bodyMd">{aiSuggestions.title}</Text>
+                        <InlineStack gap="200">
+                          <Button size="slim" variant="primary" onClick={() => handleAcceptSuggestion("title")}>
+                            Übernehmen
+                          </Button>
+                          <Button size="slim" onClick={() => handleAcceptAndTranslate("title")}>
+                            Übernehmen & Übersetzen
+                          </Button>
+                          <Button size="slim" onClick={() => setAiSuggestions(prev => { const newSuggestions = { ...prev }; delete newSuggestions.title; return newSuggestions; })}>
+                            Ablehnen
+                          </Button>
+                        </InlineStack>
+                      </BlockStack>
+                    </div>
+                  )}
                   <div style={{ marginTop: "0.5rem" }}>
-                    <Button size="slim" onClick={() => handleGenerateAI("title")} loading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "title"}>
+                    <Button
+                      size="slim"
+                      onClick={() => handleGenerateAI("title")}
+                      loading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "title"}
+                    >
                       ✨ Mit KI generieren / verbessern
                     </Button>
                   </div>
@@ -598,7 +775,9 @@ export default function Index() {
                 {/* Editable Description */}
                 <div>
                   <InlineStack align="space-between" blockAlign="center">
-                    <Text as="p" variant="bodyMd" fontWeight="semibold">Produktbeschreibung ({LANGUAGES[currentLanguage as keyof typeof LANGUAGES]})</Text>
+                    <Text as="p" variant="bodyMd" fontWeight="semibold">
+                      Produktbeschreibung ({shopLocales.find((l: any) => l.locale === currentLanguage)?.name || currentLanguage})
+                    </Text>
                     <Button size="slim" onClick={toggleDescriptionMode}>{descriptionMode === "html" ? "Vorschau" : "HTML"}</Button>
                   </InlineStack>
 
@@ -625,73 +804,195 @@ export default function Index() {
                     </div>
                   )}
 
-                  {descriptionMode === "html" ? (
-                    <textarea
-                      value={editableDescription}
-                      onChange={(e) => setEditableDescription(e.target.value)}
-                      style={{
-                        width: "100%",
-                        minHeight: "200px",
-                        padding: "12px",
-                        border: "1px solid #c9cccf",
-                        borderRadius: "8px",
-                        fontFamily: "monospace",
-                        fontSize: "14px",
-                        marginTop: "0.5rem",
-                      }}
-                    />
-                  ) : (
-                    <div
-                      ref={descriptionEditorRef}
-                      contentEditable
-                      onInput={(e) => setEditableDescription(e.currentTarget.innerHTML)}
-                      dangerouslySetInnerHTML={{ __html: editableDescription }}
-                      style={{
-                        width: "100%",
-                        minHeight: "200px",
-                        padding: "12px",
-                        border: "1px solid #c9cccf",
-                        borderTop: "none",
-                        borderRadius: "0 0 8px 8px",
-                        background: "white",
-                        lineHeight: "1.6",
-                      }}
-                    />
-                  )}
+                  <div style={{ background: getFieldBackgroundColor("body_html"), borderRadius: "8px", padding: "1px" }}>
+                    {descriptionMode === "html" ? (
+                      <textarea
+                        value={editableDescription}
+                        onChange={(e) => setEditableDescription(e.target.value)}
+                        style={{
+                          width: "100%",
+                          minHeight: "200px",
+                          padding: "12px",
+                          border: "1px solid #c9cccf",
+                          borderRadius: "8px",
+                          fontFamily: "monospace",
+                          fontSize: "14px",
+                          marginTop: "0.5rem",
+                          background: getFieldBackgroundColor("body_html"),
+                        }}
+                      />
+                    ) : (
+                      <div
+                        ref={descriptionEditorRef}
+                        contentEditable
+                        onInput={(e) => setEditableDescription(e.currentTarget.innerHTML)}
+                        dangerouslySetInnerHTML={{ __html: editableDescription }}
+                        style={{
+                          width: "100%",
+                          minHeight: "200px",
+                          padding: "12px",
+                          border: "1px solid #c9cccf",
+                          borderTop: "none",
+                          borderRadius: "0 0 8px 8px",
+                          background: getFieldBackgroundColor("body_html"),
+                          lineHeight: "1.6",
+                        }}
+                      />
+                    )}
+                  </div>
                   <Text as="p" variant="bodySm" tone="subdued">{editableDescription.replace(/<[^>]*>/g, "").length} Zeichen</Text>
+                  {aiSuggestions.description && (
+                    <div style={{ marginTop: "0.5rem", padding: "1rem", background: "#f0f9ff", border: "1px solid #0891b2", borderRadius: "8px" }}>
+                      <BlockStack gap="300">
+                        <Text as="p" variant="bodyMd" fontWeight="semibold">KI-Vorschlag:</Text>
+                        <div dangerouslySetInnerHTML={{ __html: aiSuggestions.description }} />
+                        <InlineStack gap="200">
+                          <Button size="slim" variant="primary" onClick={() => handleAcceptSuggestion("description")}>
+                            Übernehmen
+                          </Button>
+                          <Button size="slim" onClick={() => handleAcceptAndTranslate("description")}>
+                            Übernehmen & Übersetzen
+                          </Button>
+                          <Button size="slim" onClick={() => setAiSuggestions(prev => { const newSuggestions = { ...prev }; delete newSuggestions.description; return newSuggestions; })}>
+                            Ablehnen
+                          </Button>
+                        </InlineStack>
+                      </BlockStack>
+                    </div>
+                  )}
                   <div style={{ marginTop: "0.5rem" }}>
-                    <Button size="slim" onClick={() => handleGenerateAI("description")} loading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "description"}>
+                    <Button
+                      size="slim"
+                      onClick={() => handleGenerateAI("description")}
+                      loading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "description"}
+                    >
                       ✨ Mit KI generieren / verbessern
                     </Button>
                   </div>
                 </div>
 
                 {/* URL Slug */}
-                <TextField
-                  label={`URL-Slug (${LANGUAGES[currentLanguage as keyof typeof LANGUAGES]})`}
-                  value={editableHandle}
-                  onChange={setEditableHandle}
-                  autoComplete="off"
-                />
+                <div>
+                  <div style={{ background: getFieldBackgroundColor("handle"), borderRadius: "8px", padding: "1px" }}>
+                    <TextField
+                      label={`URL-Slug (${shopLocales.find((l: any) => l.locale === currentLanguage)?.name || currentLanguage})`}
+                      value={editableHandle}
+                      onChange={setEditableHandle}
+                      autoComplete="off"
+                    />
+                  </div>
+                  {aiSuggestions.handle && (
+                    <div style={{ marginTop: "0.5rem", padding: "1rem", background: "#f0f9ff", border: "1px solid #0891b2", borderRadius: "8px" }}>
+                      <BlockStack gap="300">
+                        <Text as="p" variant="bodyMd" fontWeight="semibold">KI-Vorschlag:</Text>
+                        <Text as="p" variant="bodyMd">{aiSuggestions.handle}</Text>
+                        <InlineStack gap="200">
+                          <Button size="slim" variant="primary" onClick={() => handleAcceptSuggestion("handle")}>
+                            Übernehmen
+                          </Button>
+                          <Button size="slim" onClick={() => handleAcceptAndTranslate("handle")}>
+                            Übernehmen & Übersetzen
+                          </Button>
+                          <Button size="slim" onClick={() => setAiSuggestions(prev => { const newSuggestions = { ...prev }; delete newSuggestions.handle; return newSuggestions; })}>
+                            Ablehnen
+                          </Button>
+                        </InlineStack>
+                      </BlockStack>
+                    </div>
+                  )}
+                  <div style={{ marginTop: "0.5rem" }}>
+                    <Button
+                      size="slim"
+                      onClick={() => handleGenerateAI("handle")}
+                      loading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "handle"}
+                    >
+                      ✨ Mit KI generieren
+                    </Button>
+                  </div>
+                </div>
 
                 {/* SEO Title */}
-                <TextField
-                  label={`SEO-Titel (${LANGUAGES[currentLanguage as keyof typeof LANGUAGES]})`}
-                  value={editableSeoTitle}
-                  onChange={setEditableSeoTitle}
-                  autoComplete="off"
-                  helpText={`${editableSeoTitle.length} Zeichen (empfohlen: 50-60)`}
-                />
+                <div>
+                  <div style={{ background: getFieldBackgroundColor("seo_title"), borderRadius: "8px", padding: "1px" }}>
+                    <TextField
+                      label={`SEO-Titel (${shopLocales.find((l: any) => l.locale === currentLanguage)?.name || currentLanguage})`}
+                      value={editableSeoTitle}
+                      onChange={setEditableSeoTitle}
+                      autoComplete="off"
+                      helpText={`${editableSeoTitle.length} Zeichen (empfohlen: 50-60)`}
+                    />
+                  </div>
+                  {aiSuggestions.seoTitle && (
+                    <div style={{ marginTop: "0.5rem", padding: "1rem", background: "#f0f9ff", border: "1px solid #0891b2", borderRadius: "8px" }}>
+                      <BlockStack gap="300">
+                        <Text as="p" variant="bodyMd" fontWeight="semibold">KI-Vorschlag:</Text>
+                        <Text as="p" variant="bodyMd">{aiSuggestions.seoTitle}</Text>
+                        <InlineStack gap="200">
+                          <Button size="slim" variant="primary" onClick={() => handleAcceptSuggestion("seoTitle")}>
+                            Übernehmen
+                          </Button>
+                          <Button size="slim" onClick={() => handleAcceptAndTranslate("seoTitle")}>
+                            Übernehmen & Übersetzen
+                          </Button>
+                          <Button size="slim" onClick={() => setAiSuggestions(prev => { const newSuggestions = { ...prev }; delete newSuggestions.seoTitle; return newSuggestions; })}>
+                            Ablehnen
+                          </Button>
+                        </InlineStack>
+                      </BlockStack>
+                    </div>
+                  )}
+                  <div style={{ marginTop: "0.5rem" }}>
+                    <Button
+                      size="slim"
+                      onClick={() => handleGenerateAI("seoTitle")}
+                      loading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "seoTitle"}
+                    >
+                      ✨ Mit KI generieren
+                    </Button>
+                  </div>
+                </div>
 
                 {/* Meta Description */}
-                <TextField
-                  label={`Meta-Beschreibung (${LANGUAGES[currentLanguage as keyof typeof LANGUAGES]})`}
-                  value={editableMetaDescription}
-                  onChange={setEditableMetaDescription}
-                  multiline={3}
-                  autoComplete="off"
-                  helpText={`${editableMetaDescription.length} Zeichen (empfohlen: 150-160)`}
-                />
+                <div>
+                  <div style={{ background: getFieldBackgroundColor("seo_description"), borderRadius: "8px", padding: "1px" }}>
+                    <TextField
+                      label={`Meta-Beschreibung (${shopLocales.find((l: any) => l.locale === currentLanguage)?.name || currentLanguage})`}
+                      value={editableMetaDescription}
+                      onChange={setEditableMetaDescription}
+                      multiline={3}
+                      autoComplete="off"
+                      helpText={`${editableMetaDescription.length} Zeichen (empfohlen: 150-160)`}
+                    />
+                  </div>
+                  {aiSuggestions.metaDescription && (
+                    <div style={{ marginTop: "0.5rem", padding: "1rem", background: "#f0f9ff", border: "1px solid #0891b2", borderRadius: "8px" }}>
+                      <BlockStack gap="300">
+                        <Text as="p" variant="bodyMd" fontWeight="semibold">KI-Vorschlag:</Text>
+                        <Text as="p" variant="bodyMd">{aiSuggestions.metaDescription}</Text>
+                        <InlineStack gap="200">
+                          <Button size="slim" variant="primary" onClick={() => handleAcceptSuggestion("metaDescription")}>
+                            Übernehmen
+                          </Button>
+                          <Button size="slim" onClick={() => handleAcceptAndTranslate("metaDescription")}>
+                            Übernehmen & Übersetzen
+                          </Button>
+                          <Button size="slim" onClick={() => setAiSuggestions(prev => { const newSuggestions = { ...prev }; delete newSuggestions.metaDescription; return newSuggestions; })}>
+                            Ablehnen
+                          </Button>
+                        </InlineStack>
+                      </BlockStack>
+                    </div>
+                  )}
+                  <div style={{ marginTop: "0.5rem" }}>
+                    <Button
+                      size="slim"
+                      onClick={() => handleGenerateAI("metaDescription")}
+                      loading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "metaDescription"}
+                    >
+                      ✨ Mit KI generieren
+                    </Button>
+                  </div>
+                </div>
               </BlockStack>
             ) : (
               <div style={{ textAlign: "center", padding: "4rem 2rem" }}>
@@ -701,27 +1002,6 @@ export default function Index() {
           </Card>
         </div>
       </div>
-
-      {/* AI Suggestion Modal */}
-      <Modal
-        open={aiModalActive}
-        onClose={() => setAiModalActive(false)}
-        title="KI-generierter Vorschlag"
-        primaryAction={{
-          content: "Übernehmen",
-          onAction: handleAcceptAI,
-        }}
-        secondaryActions={[{ content: "Ablehnen", onAction: () => setAiModalActive(false) }]}
-      >
-        <Modal.Section>
-          <BlockStack gap="400">
-            <Text as="p" variant="bodyMd"><strong>Generierter {aiFieldType === "title" ? "Titel" : "Beschreibung"}:</strong></Text>
-            <div style={{ padding: "12px", background: "#f6f6f7", borderRadius: "8px", whiteSpace: "pre-wrap" }}>
-              {aiGeneratedContent}
-            </div>
-          </BlockStack>
-        </Modal.Section>
-      </Modal>
     </Page>
   );
 }
