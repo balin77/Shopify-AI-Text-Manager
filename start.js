@@ -1,4 +1,4 @@
-const { execSync } = require('child_process');
+import { execSync } from 'child_process';
 
 // Only run Prisma migration if DATABASE_URL is set
 if (process.env.DATABASE_URL) {
