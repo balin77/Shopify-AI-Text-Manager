@@ -5,6 +5,7 @@ export const en: Translation = {
   nav: {
     products: "Products",
     otherContent: "Other Content",
+    tasks: "Tasks",
     settings: "Settings",
   },
 
@@ -158,6 +159,49 @@ export const en: Translation = {
     successSaved: "Successfully saved!",
     settingsSaved: "Your settings have been updated.",
     changesSaved: "Changes saved successfully!",
+  },
+
+  // Tasks Page
+  tasks: {
+    title: "Tasks",
+    noTasks: "No running tasks",
+    noTasksDescription: "All tasks will appear here when you start AI generations or translations.",
+    taskType: {
+      translation: "Translation",
+      aiGeneration: "AI Generation",
+      bulkTranslation: "Bulk Translation",
+      bulkAiGeneration: "Bulk AI Generation",
+    },
+    status: {
+      pending: "Pending",
+      running: "Running",
+      completed: "Completed",
+      failed: "Failed",
+      cancelled: "Cancelled",
+    },
+    progress: "Progress",
+    startedAt: "Started at",
+    completedAt: "Completed at",
+    duration: "Duration",
+    cancel: "Cancel",
+    retry: "Retry",
+    delete: "Delete",
+    viewDetails: "View details",
+    hideDetails: "Hide details",
+    resourceType: {
+      product: "Product",
+      collection: "Collection",
+      blog: "Blog Article",
+      page: "Page",
+    },
+    fieldType: {
+      title: "Title",
+      description: "Description",
+      handle: "URL Slug",
+      seoTitle: "SEO Title",
+      metaDescription: "Meta Description",
+      all: "All Fields",
+    },
   },
 
   // SEO Sidebar

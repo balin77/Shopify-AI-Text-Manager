@@ -3,6 +3,7 @@ export const de = {
   nav: {
     products: "Produkte",
     otherContent: "Andere Inhalte",
+    tasks: "Aufgaben",
     settings: "Einstellungen",
   },
 
@@ -156,6 +157,49 @@ export const de = {
     successSaved: "Erfolgreich gespeichert!",
     settingsSaved: "Ihre Einstellungen wurden aktualisiert.",
     changesSaved: "Änderungen erfolgreich gespeichert!",
+  },
+
+  // Tasks Page
+  tasks: {
+    title: "Aufgaben",
+    noTasks: "Keine laufenden Aufgaben",
+    noTasksDescription: "Alle Aufgaben werden hier angezeigt, wenn Sie KI-Generierungen oder Übersetzungen starten.",
+    taskType: {
+      translation: "Übersetzung",
+      aiGeneration: "KI-Generierung",
+      bulkTranslation: "Massenübersetzung",
+      bulkAiGeneration: "Massen-KI-Generierung",
+    },
+    status: {
+      pending: "Wartend",
+      running: "Läuft",
+      completed: "Abgeschlossen",
+      failed: "Fehlgeschlagen",
+      cancelled: "Abgebrochen",
+    },
+    progress: "Fortschritt",
+    startedAt: "Gestartet um",
+    completedAt: "Abgeschlossen um",
+    duration: "Dauer",
+    cancel: "Abbrechen",
+    retry: "Wiederholen",
+    delete: "Löschen",
+    viewDetails: "Details anzeigen",
+    hideDetails: "Details ausblenden",
+    resourceType: {
+      product: "Produkt",
+      collection: "Kollektion",
+      blog: "Blog-Artikel",
+      page: "Seite",
+    },
+    fieldType: {
+      title: "Titel",
+      description: "Beschreibung",
+      handle: "URL-Slug",
+      seoTitle: "SEO-Titel",
+      metaDescription: "Meta-Beschreibung",
+      all: "Alle Felder",
+    },
   },
 
   // SEO Sidebar
