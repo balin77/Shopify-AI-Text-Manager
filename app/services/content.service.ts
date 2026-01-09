@@ -3,7 +3,11 @@ import {
   GET_SHOP_LOCALES,
   GET_BLOGS,
   GET_COLLECTIONS,
-  GET_PAGES
+  GET_PAGES,
+  GET_SHOP_POLICIES,
+  GET_SHOP_METADATA,
+  GET_MENUS,
+  GET_THEMES
 } from "../graphql/content.queries";
 
 export class ContentService {
@@ -75,12 +79,74 @@ export class ContentService {
     return pages;
   }
 
+  async getShopPolicies() {
+    const response = await this.admin.graphql(GET_SHOP_POLICIES);
+    const data = await response.json();
+
+    console.log('=== SHOP POLICIES API RESPONSE ===');
+    console.log('Raw policies data:', JSON.stringify(data, null, 2));
+
+    return data.data.shop;
+  }
+
+  async getShopMetadata() {
+    const response = await this.admin.graphql(GET_SHOP_METADATA);
+    const data = await response.json();
+
+    console.log('=== SHOP METADATA API RESPONSE ===');
+    console.log('Raw shop metadata:', JSON.stringify(data, null, 2));
+
+    const shop = data.data.shop;
+    shop.metafields = shop.metafields?.edges?.map((edge: any) => edge.node) || [];
+
+    return shop;
+  }
+
+  async getMenus(first: number = 50) {
+    const response = await this.admin.graphql(GET_MENUS, {
+      variables: { first }
+    });
+    const data = await response.json();
+
+    console.log('=== MENUS API RESPONSE ===');
+    console.log('Raw menus data:', JSON.stringify(data, null, 2));
+    console.log('Number of menus:', data.data?.menus?.edges?.length || 0);
+
+    const menus = data.data.menus.edges.map((edge: any) => ({
+      ...edge.node,
+      translations: []
+    }));
+
+    console.log('Processed menus:', menus.length);
+    return menus;
+  }
+
+  async getThemes(first: number = 50) {
+    const response = await this.admin.graphql(GET_THEMES, {
+      variables: { first }
+    });
+    const data = await response.json();
+
+    console.log('=== THEMES API RESPONSE ===');
+    console.log('Raw themes data:', JSON.stringify(data, null, 2));
+    console.log('Number of themes:', data.data?.themes?.edges?.length || 0);
+
+    const themes = data.data.themes.edges.map((edge: any) => edge.node);
+
+    console.log('Processed themes:', themes.length);
+    return themes;
+  }
+
   async getAllContent() {
-    const [shopLocales, blogs, collections, pages] = await Promise.all([
+    const [shopLocales, blogs, collections, pages, policies, metadata, menus, themes] = await Promise.all([
       this.getShopLocales(),
       this.getBlogs(),
       this.getCollections(),
-      this.getPages()
+      this.getPages(),
+      this.getShopPolicies(),
+      this.getShopMetadata(),
+      this.getMenus(),
+      this.getThemes()
     ]);
 
     const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "de";
@@ -90,6 +156,10 @@ export class ContentService {
       blogs,
       collections,
       pages,
+      policies,
+      metadata,
+      menus,
+      themes,
       primaryLocale
     };
   }

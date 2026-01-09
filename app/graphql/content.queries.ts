@@ -82,3 +82,113 @@ export const GET_TRANSLATIONS = `#graphql
     }
   }
 `;
+
+export const GET_SHOP_POLICIES = `#graphql
+  query getShopPolicies {
+    shop {
+      privacyPolicy {
+        id
+        title
+        body
+        url
+      }
+      refundPolicy {
+        id
+        title
+        body
+        url
+      }
+      shippingPolicy {
+        id
+        title
+        body
+        url
+      }
+      termsOfService {
+        id
+        title
+        body
+        url
+      }
+      subscriptionPolicy {
+        id
+        title
+        body
+        url
+      }
+    }
+  }
+`;
+
+export const GET_SHOP_METADATA = `#graphql
+  query getShopMetadata {
+    shop {
+      id
+      name
+      description
+      email
+      contactEmail
+      currencyCode
+      ianaTimezone
+      primaryDomain {
+        host
+        url
+      }
+      myshopifyDomain
+      metafields(first: 100) {
+        edges {
+          node {
+            id
+            namespace
+            key
+            value
+            type
+          }
+        }
+      }
+    }
+  }
+`;
+
+export const GET_MENUS = `#graphql
+  query getMenus($first: Int!) {
+    menus(first: $first) {
+      edges {
+        node {
+          id
+          handle
+          title
+          items {
+            id
+            title
+            url
+            type
+            items {
+              id
+              title
+              url
+              type
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
+export const GET_THEMES = `#graphql
+  query getThemes($first: Int!) {
+    themes(first: $first) {
+      edges {
+        node {
+          id
+          name
+          role
+          themeStoreId
+          createdAt
+          updatedAt
+        }
+      }
+    }
+  }
+`;
