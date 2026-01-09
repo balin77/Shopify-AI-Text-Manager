@@ -65,7 +65,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
                       id
                       title
                       handle
-                      content
+                      contentHtml
                       publishedAt
                     }
                   }
@@ -78,10 +78,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     );
 
     const blogsData = await blogsResponse.json();
+    console.log('=== BLOGS API RESPONSE ===');
+    console.log('Raw blogs data:', JSON.stringify(blogsData, null, 2));
+    console.log('Number of blogs:', blogsData.data?.blogs?.edges?.length || 0);
+
     const blogs = blogsData.data.blogs.edges.map((edge: any) => ({
       ...edge.node,
       articles: edge.node.articles.edges.map((a: any) => ({ ...a.node, translations: [] }))
     }));
+    console.log('Processed blogs:', blogs.length);
 
     // Fetch collections
     const collectionsResponse = await admin.graphql(
@@ -106,10 +111,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     );
 
     const collectionsData = await collectionsResponse.json();
+    console.log('=== COLLECTIONS API RESPONSE ===');
+    console.log('Raw collections data:', JSON.stringify(collectionsData, null, 2));
+    console.log('Number of collections:', collectionsData.data?.collections?.edges?.length || 0);
+
     const collections = collectionsData.data.collections.edges.map((edge: any) => ({
       ...edge.node,
       translations: []
     }));
+    console.log('Processed collections:', collections.length);
 
     // Fetch pages
     const pagesResponse = await admin.graphql(
@@ -131,10 +141,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     );
 
     const pagesData = await pagesResponse.json();
+    console.log('=== PAGES API RESPONSE ===');
+    console.log('Raw pages data:', JSON.stringify(pagesData, null, 2));
+    console.log('Number of pages:', pagesData.data?.pages?.edges?.length || 0);
+
     const pages = pagesData.data.pages.edges.map((edge: any) => ({
       ...edge.node,
       translations: []
     }));
+    console.log('Processed pages:', pages.length);
 
     return json({
       blogs,
@@ -330,7 +345,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           if (metaDescription) translationsInput.push({ key: "seo_description", value: metaDescription, locale });
         } else if (contentType === "blogs") {
           if (title) translationsInput.push({ key: "title", value: title, locale });
-          if (description) translationsInput.push({ key: "content", value: description, locale });
+          if (description) translationsInput.push({ key: "body_html", value: description, locale });
           if (handle) translationsInput.push({ key: "handle", value: handle, locale });
           if (seoTitle) translationsInput.push({ key: "seo_title", value: seoTitle, locale });
           if (metaDescription) translationsInput.push({ key: "seo_description", value: metaDescription, locale });
@@ -457,7 +472,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                     id
                     title
                     handle
-                    content
+                    contentHtml
                   }
                   userErrors {
                     field
@@ -556,7 +571,7 @@ export default function ContentPage() {
         setEditableTitle(selectedItem.title);
 
         if (selectedType === "blogs") {
-          setEditableDescription((selectedItem as any).content || selectedItem.body || "");
+          setEditableDescription((selectedItem as any).contentHtml || selectedItem.body || "");
           setEditableHandle(selectedItem.handle);
           setEditableSeoTitle("");
           setEditableMetaDescription("");
@@ -590,7 +605,7 @@ export default function ContentPage() {
         }
 
         const titleKey = "title";
-        const descKey = selectedType === "pages" ? "body" : selectedType === "blogs" ? "content" : "description";
+        const descKey = selectedType === "pages" ? "body" : selectedType === "blogs" ? "body_html" : "description";
 
         setEditableTitle(getTranslatedValue(titleKey, currentLanguage, ""));
         setEditableDescription(getTranslatedValue(descKey, currentLanguage, ""));
@@ -616,7 +631,7 @@ export default function ContentPage() {
 
         if (loadedLocale === currentLanguage) {
           const titleKey = "title";
-          const descKey = selectedType === "pages" ? "body" : selectedType === "blogs" ? "content" : "description";
+          const descKey = selectedType === "pages" ? "body" : selectedType === "blogs" ? "body_html" : "description";
 
           setEditableTitle(getTranslatedValue(titleKey, currentLanguage, ""));
           setEditableDescription(getTranslatedValue(descKey, currentLanguage, ""));
@@ -639,8 +654,8 @@ export default function ContentPage() {
       };
 
       const titleKey = "title";
-      const descKey = selectedType === "pages" ? "body" : selectedType === "blogs" ? "content" : "description";
-      const descFallback = selectedType === "pages" ? (selectedItem.body || "") : selectedType === "blogs" ? ((selectedItem as any).content || selectedItem.body || "") : (selectedItem.descriptionHtml || "");
+      const descKey = selectedType === "pages" ? "body" : selectedType === "blogs" ? "contentHtml" : "description";
+      const descFallback = selectedType === "pages" ? (selectedItem.body || "") : selectedType === "blogs" ? ((selectedItem as any).contentHtml || selectedItem.body || "") : (selectedItem.descriptionHtml || "");
 
       const titleChanged = editableTitle !== getOriginalValue(titleKey, selectedItem.title);
       const descChanged = editableDescription !== getOriginalValue(descKey, descFallback || "");
@@ -704,9 +719,9 @@ export default function ContentPage() {
     const sourceMap: Record<string, string> = {
       title: selectedItem.title || "",
       description: selectedType === "pages" ? (selectedItem.body || "") :
-                   selectedType === "blogs" ? ((selectedItem as any).content || selectedItem.body || "") :
+                   selectedType === "blogs" ? ((selectedItem as any).contentHtml || selectedItem.body || "") :
                    (selectedItem.descriptionHtml || ""),
-      body: selectedItem.body || (selectedItem as any).content || "",
+      body: selectedItem.body || (selectedItem as any).contentHtml || "",
       handle: selectedItem.handle || "",
       seoTitle: selectedItem.seo?.title || "",
       metaDescription: selectedItem.seo?.description || "",
@@ -1105,7 +1120,7 @@ export default function ContentPage() {
                     </div>
                   )}
 
-                  <div style={{ background: getFieldBackgroundColor(selectedType === "pages" ? "body" : selectedType === "blogs" ? "content" : "description"), borderRadius: "8px", padding: "1px" }}>
+                  <div style={{ background: getFieldBackgroundColor(selectedType === "pages" ? "body" : selectedType === "blogs" ? "body_html" : "description"), borderRadius: "8px", padding: "1px" }}>
                     {descriptionMode === "html" ? (
                       <textarea
                         value={editableDescription}
