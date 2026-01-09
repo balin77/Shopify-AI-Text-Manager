@@ -3,19 +3,31 @@ import { Link, Outlet, useLoaderData, useRouteError } from "@remix-run/react";
 import { boundary } from "@shopify/shopify-app-remix/server";
 import { AppProvider } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
+import { I18nProvider } from "../contexts/I18nContext";
+import type { Locale } from "../i18n";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  await authenticate.admin(request);
+  const { session } = await authenticate.admin(request);
 
-  return json({ apiKey: process.env.SHOPIFY_API_KEY || "" });
+  // Load app language preference from database
+  const { db } = await import("../db.server");
+  const settings = await db.aISettings.findUnique({
+    where: { shop: session.shop },
+  });
+
+  const appLanguage = (settings?.appLanguage || "de") as Locale;
+
+  return json({ appLanguage });
 };
 
 export default function App() {
-  const { apiKey } = useLoaderData<typeof loader>();
+  const { appLanguage } = useLoaderData<typeof loader>();
 
   return (
     <AppProvider i18n={{}}>
-      <Outlet />
+      <I18nProvider locale={appLanguage}>
+        <Outlet />
+      </I18nProvider>
     </AppProvider>
   );
 }
