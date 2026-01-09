@@ -122,7 +122,7 @@ export default function SettingsPage() {
   };
 
   return (
-    <Page title={`ContentPilot AI - ${shop}`}>
+    <Page fullWidth>
       <MainNavigation />
       <div style={{ padding: "1rem" }}>
         <div style={{ display: "flex", gap: "1rem" }}>
