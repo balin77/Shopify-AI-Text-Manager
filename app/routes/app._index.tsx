@@ -61,6 +61,23 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
                   title
                   description
                 }
+                options {
+                  id
+                  name
+                  position
+                  values
+                }
+                metafields(first: 100) {
+                  edges {
+                    node {
+                      id
+                      namespace
+                      key
+                      value
+                      type
+                    }
+                  }
+                }
               }
             }
           }
@@ -72,6 +89,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     let products = data.data.products.edges.map((edge: any) => {
       const product = edge.node;
       product.images = product.images?.edges?.map((imgEdge: any) => imgEdge.node) || [];
+      product.metafields = product.metafields?.edges?.map((mfEdge: any) => mfEdge.node) || [];
       return product;
     });
 

@@ -1102,8 +1102,8 @@ export default function ContentPage() {
                   </div>
                 )}
 
-                {/* SEO Fields (not for pages) */}
-                {selectedType !== "pages" && (
+                {/* SEO Fields (only for blogs) */}
+                {selectedType === "blogs" && (
                   <>
                     {/* SEO Title */}
                     <div>
@@ -1183,7 +1183,7 @@ export default function ContentPage() {
         </div>
 
         {/* Right: SEO Sidebar */}
-        {selectedItem && currentLanguage === primaryLocale && selectedType !== "pages" && (
+        {selectedItem && currentLanguage === primaryLocale && selectedType === "blogs" && (
           <div style={{ width: "320px", flexShrink: 0, overflow: "auto" }}>
             <SeoSidebar
               title={editableTitle}
