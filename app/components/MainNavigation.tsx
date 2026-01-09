@@ -14,10 +14,23 @@ export function MainNavigation() {
     { id: "settings", label: t.nav.settings, path: "/app/settings" },
   ];
 
-  const handleClick = (e: React.MouseEvent<HTMLAnchorElement>, path: string) => {
+  const handleClick = (e: React.MouseEvent, path: string) => {
     e.preventDefault();
-    console.log("Navigation clicked:", path);
-    navigate(path);
+    e.stopPropagation();
+
+    // Force navigation using window.location in embedded context
+    if (typeof window !== "undefined") {
+      // Check if we're in an embedded Shopify context
+      const isEmbedded = window.self !== window.top;
+
+      if (isEmbedded) {
+        // In embedded context, use window.location to force full page navigation
+        window.top!.location.href = path;
+      } else {
+        // In standalone context, use Remix navigation
+        navigate(path);
+      }
+    }
   };
 
   return (
