@@ -13,6 +13,15 @@ export function MainNavigation() {
     { id: "settings", label: t.nav.settings, path: "/app/settings" },
   ];
 
+  const handleNavClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
+    console.log("=== NAVIGATION CLICK DEBUG ===");
+    console.log("Click event triggered");
+    console.log("Target:", e.currentTarget.getAttribute("href"));
+    console.log("Location:", window.location.href);
+    console.log("Is embedded:", window.self !== window.top);
+    // Let Remix handle the navigation (don't preventDefault)
+  };
+
   return (
     <div
       style={{
@@ -32,6 +41,7 @@ export function MainNavigation() {
             <Link
               key={tab.id}
               to={tab.path}
+              onClick={handleNavClick}
               style={{
                 textDecoration: "none",
                 padding: "1rem 0.5rem",
