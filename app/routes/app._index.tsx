@@ -753,6 +753,30 @@ export default function Index() {
 
   return (
     <Page fullWidth>
+      <style>{`
+        .description-editor h1 {
+          font-size: 2em;
+          font-weight: bold;
+          margin: 0.67em 0;
+        }
+        .description-editor h2 {
+          font-size: 1.5em;
+          font-weight: bold;
+          margin: 0.75em 0;
+        }
+        .description-editor h3 {
+          font-size: 1.17em;
+          font-weight: bold;
+          margin: 0.83em 0;
+        }
+        .description-editor p {
+          margin: 1em 0;
+        }
+        .description-editor ul, .description-editor ol {
+          margin: 1em 0;
+          padding-left: 40px;
+        }
+      `}</style>
       <MainNavigation />
       <div style={{ height: "calc(100vh - 60px)", display: "flex", gap: "1rem", padding: "1rem", overflow: "hidden" }}>
         {/* Left: Product List */}
@@ -1009,6 +1033,7 @@ export default function Index() {
                           background: getFieldBackgroundColor("body_html"),
                           lineHeight: "1.6",
                         }}
+                        className="description-editor"
                       />
                     )}
                   </div>

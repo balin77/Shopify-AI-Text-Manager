@@ -865,6 +865,30 @@ export default function ContentPage() {
 
   return (
     <Page fullWidth>
+      <style>{`
+        .description-editor h1 {
+          font-size: 2em;
+          font-weight: bold;
+          margin: 0.67em 0;
+        }
+        .description-editor h2 {
+          font-size: 1.5em;
+          font-weight: bold;
+          margin: 0.75em 0;
+        }
+        .description-editor h3 {
+          font-size: 1.17em;
+          font-weight: bold;
+          margin: 0.83em 0;
+        }
+        .description-editor p {
+          margin: 1em 0;
+        }
+        .description-editor ul, .description-editor ol {
+          margin: 1em 0;
+          padding-left: 40px;
+        }
+      `}</style>
       <MainNavigation />
 
       {/* Horizontal Sub-Navigation for Content Types */}
@@ -1093,6 +1117,7 @@ export default function ContentPage() {
                           borderRadius: "0 0 8px 8px",
                           lineHeight: "1.6",
                         }}
+                        className="description-editor"
                       />
                     )}
                   </div>
