@@ -210,6 +210,27 @@ Gib nur die Meta-Description zurück, ohne Erklärungen.`;
     }
   }
 
+  if (action === "translateField") {
+    const fieldType = formData.get("fieldType") as string;
+    const sourceText = formData.get("sourceText") as string;
+    const targetLocale = formData.get("targetLocale") as string;
+
+    try {
+      // Translate single field to target locale
+      const changedFields: any = {};
+      changedFields[fieldType] = sourceText;
+
+      const translations = await translationService.translateProduct(changedFields);
+
+      // Extract translation for target locale
+      const translatedValue = translations[targetLocale]?.[fieldType] || "";
+
+      return json({ success: true, translatedValue, fieldType, targetLocale });
+    } catch (error: any) {
+      return json({ success: false, error: error.message }, { status: 500 });
+    }
+  }
+
   if (action === "translateSuggestion") {
     const suggestion = formData.get("suggestion") as string;
     const fieldType = formData.get("fieldType") as string;
@@ -522,6 +543,37 @@ export default function Index() {
     );
   };
 
+  const handleTranslateField = (fieldType: string) => {
+    if (!selectedProductId || !selectedProduct) return;
+
+    // Get source text from primary locale
+    const sourceMap: Record<string, string> = {
+      title: selectedProduct.title,
+      description: selectedProduct.descriptionHtml || "",
+      handle: selectedProduct.handle,
+      seoTitle: selectedProduct.seo?.title || "",
+      metaDescription: selectedProduct.seo?.description || "",
+    };
+
+    const sourceText = sourceMap[fieldType] || "";
+
+    if (!sourceText) {
+      alert("Kein Text in der Hauptsprache vorhanden zum Übersetzen");
+      return;
+    }
+
+    fetcher.submit(
+      {
+        action: "translateField",
+        productId: selectedProductId,
+        fieldType,
+        sourceText,
+        targetLocale: currentLanguage,
+      },
+      { method: "POST" }
+    );
+  };
+
   const handleAcceptSuggestion = (fieldType: string) => {
     const suggestion = aiSuggestions[fieldType];
     if (!suggestion) return;
@@ -639,6 +691,33 @@ export default function Index() {
         ...prev,
         [fieldType]: (fetcher.data as any).generatedContent,
       }));
+    }
+  }, [fetcher.data]);
+
+  // Handle translated field response
+  useEffect(() => {
+    if (fetcher.data?.success && 'translatedValue' in fetcher.data) {
+      const fieldType = (fetcher.data as any).fieldType;
+      const translatedValue = (fetcher.data as any).translatedValue;
+
+      // Directly set the translated value in the field
+      switch (fieldType) {
+        case "title":
+          setEditableTitle(translatedValue);
+          break;
+        case "description":
+          setEditableDescription(translatedValue);
+          break;
+        case "handle":
+          setEditableHandle(translatedValue);
+          break;
+        case "seoTitle":
+          setEditableSeoTitle(translatedValue);
+          break;
+        case "metaDescription":
+          setEditableMetaDescription(translatedValue);
+          break;
+      }
     }
   }, [fetcher.data]);
 
@@ -832,13 +911,23 @@ export default function Index() {
                     </div>
                   )}
                   <div style={{ marginTop: "0.5rem" }}>
-                    <Button
-                      size="slim"
-                      onClick={() => handleGenerateAI("title")}
-                      loading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "title"}
-                    >
-                      ✨ Mit KI generieren / verbessern
-                    </Button>
+                    {currentLanguage === primaryLocale ? (
+                      <Button
+                        size="slim"
+                        onClick={() => handleGenerateAI("title")}
+                        loading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "title" && fetcher.formData?.get("action") === "generateAIText"}
+                      >
+                        ✨ Mit KI generieren / verbessern
+                      </Button>
+                    ) : (
+                      <Button
+                        size="slim"
+                        onClick={() => handleTranslateField("title")}
+                        loading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "title" && fetcher.formData?.get("action") === "translateField"}
+                      >
+                        🌐 Aus Hauptsprache übersetzen
+                      </Button>
+                    )}
                   </div>
                 </div>
 
@@ -931,13 +1020,23 @@ export default function Index() {
                     </div>
                   )}
                   <div style={{ marginTop: "0.5rem" }}>
-                    <Button
-                      size="slim"
-                      onClick={() => handleGenerateAI("description")}
-                      loading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "description"}
-                    >
-                      ✨ Mit KI generieren / verbessern
-                    </Button>
+                    {currentLanguage === primaryLocale ? (
+                      <Button
+                        size="slim"
+                        onClick={() => handleGenerateAI("description")}
+                        loading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "description" && fetcher.formData?.get("action") === "generateAIText"}
+                      >
+                        ✨ Mit KI generieren / verbessern
+                      </Button>
+                    ) : (
+                      <Button
+                        size="slim"
+                        onClick={() => handleTranslateField("description")}
+                        loading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "description" && fetcher.formData?.get("action") === "translateField"}
+                      >
+                        🌐 Aus Hauptsprache übersetzen
+                      </Button>
+                    )}
                   </div>
                 </div>
 
@@ -971,13 +1070,23 @@ export default function Index() {
                     </div>
                   )}
                   <div style={{ marginTop: "0.5rem" }}>
-                    <Button
-                      size="slim"
-                      onClick={() => handleGenerateAI("handle")}
-                      loading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "handle"}
-                    >
-                      ✨ Mit KI generieren
-                    </Button>
+                    {currentLanguage === primaryLocale ? (
+                      <Button
+                        size="slim"
+                        onClick={() => handleGenerateAI("handle")}
+                        loading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "handle" && fetcher.formData?.get("action") === "generateAIText"}
+                      >
+                        ✨ Mit KI generieren
+                      </Button>
+                    ) : (
+                      <Button
+                        size="slim"
+                        onClick={() => handleTranslateField("handle")}
+                        loading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "handle" && fetcher.formData?.get("action") === "translateField"}
+                      >
+                        🌐 Aus Hauptsprache übersetzen
+                      </Button>
+                    )}
                   </div>
                 </div>
 
@@ -1012,13 +1121,23 @@ export default function Index() {
                     </div>
                   )}
                   <div style={{ marginTop: "0.5rem" }}>
-                    <Button
-                      size="slim"
-                      onClick={() => handleGenerateAI("seoTitle")}
-                      loading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "seoTitle"}
-                    >
-                      ✨ Mit KI generieren
-                    </Button>
+                    {currentLanguage === primaryLocale ? (
+                      <Button
+                        size="slim"
+                        onClick={() => handleGenerateAI("seoTitle")}
+                        loading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "seoTitle" && fetcher.formData?.get("action") === "generateAIText"}
+                      >
+                        ✨ Mit KI generieren
+                      </Button>
+                    ) : (
+                      <Button
+                        size="slim"
+                        onClick={() => handleTranslateField("seoTitle")}
+                        loading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "seoTitle" && fetcher.formData?.get("action") === "translateField"}
+                      >
+                        🌐 Aus Hauptsprache übersetzen
+                      </Button>
+                    )}
                   </div>
                 </div>
 
@@ -1054,13 +1173,23 @@ export default function Index() {
                     </div>
                   )}
                   <div style={{ marginTop: "0.5rem" }}>
-                    <Button
-                      size="slim"
-                      onClick={() => handleGenerateAI("metaDescription")}
-                      loading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "metaDescription"}
-                    >
-                      ✨ Mit KI generieren
-                    </Button>
+                    {currentLanguage === primaryLocale ? (
+                      <Button
+                        size="slim"
+                        onClick={() => handleGenerateAI("metaDescription")}
+                        loading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "metaDescription" && fetcher.formData?.get("action") === "generateAIText"}
+                      >
+                        ✨ Mit KI generieren
+                      </Button>
+                    ) : (
+                      <Button
+                        size="slim"
+                        onClick={() => handleTranslateField("metaDescription")}
+                        loading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "metaDescription" && fetcher.formData?.get("action") === "translateField"}
+                      >
+                        🌐 Aus Hauptsprache übersetzen
+                      </Button>
+                    )}
                   </div>
                 </div>
               </BlockStack>
