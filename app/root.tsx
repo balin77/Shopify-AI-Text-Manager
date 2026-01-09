@@ -1,8 +1,30 @@
-import { Links, Meta, Outlet, Scripts, ScrollRestoration } from "@remix-run/react";
+import { Links, Meta, Outlet, Scripts, ScrollRestoration, useLoaderData } from "@remix-run/react";
 import { AppProvider } from "@shopify/polaris";
+import { Provider as AppBridgeProvider } from "@shopify/app-bridge-react";
 import "@shopify/polaris/build/esm/styles.css";
+import type { LoaderFunctionArgs } from "@remix-run/node";
+import { json } from "@remix-run/node";
+
+export const loader = async ({ request }: LoaderFunctionArgs) => {
+  const url = new URL(request.url);
+  const apiKey = process.env.SHOPIFY_API_KEY || "";
+  const host = url.searchParams.get("host") || "";
+
+  return json({
+    apiKey,
+    host,
+  });
+};
 
 export default function App() {
+  const { apiKey, host } = useLoaderData<typeof loader>();
+
+  const appBridgeConfig = {
+    apiKey,
+    host: host || "",
+    forceRedirect: true,
+  };
+
   return (
     <html lang="de">
       <head>
@@ -15,11 +37,16 @@ export default function App() {
         />
         <Meta />
         <Links />
+        <script
+          src="https://cdn.shopify.com/shopifycloud/app-bridge.js"
+        />
       </head>
       <body>
-        <AppProvider i18n={{}}>
-          <Outlet />
-        </AppProvider>
+        <AppBridgeProvider config={appBridgeConfig}>
+          <AppProvider i18n={{}}>
+            <Outlet />
+          </AppProvider>
+        </AppBridgeProvider>
         <ScrollRestoration />
         <Scripts />
       </body>
