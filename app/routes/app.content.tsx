@@ -21,7 +21,7 @@ import { AIService } from "../../src/services/ai.service";
 import { TranslationService } from "../../src/services/translation.service";
 import { useI18n } from "../contexts/I18nContext";
 
-type ContentType = "blogs" | "collections" | "pages";
+type ContentType = "collections" | "blogs" | "metaobjects" | "pages" | "policies" | "shopMetadata" | "menus" | "templates";
 
 const getContentTypes = (t: any) => [
   { id: "blogs" as ContentType, label: t.content.blogs, icon: "📝" },
@@ -733,7 +733,7 @@ export default function ContentPage() {
     const sourceText = sourceMap[fieldType] || "";
 
     if (!sourceText) {
-      alert("Kein Text in der Hauptsprache vorhanden zum Übersetzen");
+      alert(t.content.noSourceText);
       return;
     }
 
@@ -882,7 +882,7 @@ export default function ContentPage() {
   const renderAISuggestion = (fieldType: string, suggestionText: string) => (
     <div style={{ marginTop: "0.5rem", padding: "1rem", background: "#f0f9ff", border: "1px solid #0891b2", borderRadius: "8px" }}>
       <BlockStack gap="300">
-        <Text as="p" variant="bodyMd" fontWeight="semibold">KI-Vorschlag:</Text>
+        <Text as="p" variant="bodyMd" fontWeight="semibold">{t.content.aiSuggestion}</Text>
         {fieldType === "description" || fieldType === "body" ? (
           <div dangerouslySetInnerHTML={{ __html: suggestionText }} />
         ) : (
@@ -890,10 +890,10 @@ export default function ContentPage() {
         )}
         <InlineStack gap="200">
           <Button size="slim" variant="primary" onClick={() => handleAcceptSuggestion(fieldType)}>
-            Übernehmen
+            {t.content.accept}
           </Button>
           <Button size="slim" onClick={() => setAiSuggestions(prev => { const newSuggestions = { ...prev }; delete newSuggestions[fieldType]; return newSuggestions; })}>
-            Ablehnen
+            {t.content.decline}
           </Button>
         </InlineStack>
       </BlockStack>
@@ -976,7 +976,7 @@ export default function ContentPage() {
             <div style={{ maxHeight: "calc(100vh - 200px)", overflowY: "auto" }}>
               {currentItems.length > 0 ? (
                 <ResourceList
-                  resourceName={{ singular: "Eintrag", plural: "Einträge" }}
+                  resourceName={{ singular: t.content.entry, plural: t.content.entries }}
                   items={currentItems}
                   renderItem={(item: any) => {
                     const { id, title } = item;
@@ -993,7 +993,7 @@ export default function ContentPage() {
                           </Text>
                           {selectedType === "blogs" && (
                             <Text as="p" variant="bodySm" tone="subdued">
-                              Blog: {item.blogTitle}
+                              {t.content.blogPrefix} {item.blogTitle}
                             </Text>
                           )}
                         </BlockStack>
@@ -1016,14 +1016,14 @@ export default function ContentPage() {
         <div style={{ flex: 1, overflow: "auto" }}>
           {error && (
             <div style={{ marginBottom: "1rem" }}>
-              <Banner title="Fehler" tone="critical"><p>{error}</p></Banner>
+              <Banner title={t.content.error} tone="critical"><p>{error}</p></Banner>
             </div>
           )}
 
           {fetcher.data?.success && !(fetcher.data as any).generatedContent && (
             <div style={{ marginBottom: "1rem" }}>
-              <Banner title="Erfolg!" tone="success">
-                <p>Änderungen erfolgreich gespeichert!</p>
+              <Banner title={t.content.success} tone="success">
+                <p>{t.content.changesSaved}</p>
               </Banner>
             </div>
           )}
@@ -1040,21 +1040,21 @@ export default function ContentPage() {
                       onClick={() => setCurrentLanguage(locale.locale)}
                       size="slim"
                     >
-                      {locale.name} {locale.primary && "(Hauptsprache)"}
+                      {locale.name} {locale.primary && `(${t.content.primaryLanguageSuffix})`}
                     </Button>
                   ))}
                 </div>
 
                 {/* Header with Save Button */}
                 <InlineStack align="space-between" blockAlign="center">
-                  <Text as="p" variant="bodySm" tone="subdued">ID: {selectedItem.id.split("/").pop()}</Text>
+                  <Text as="p" variant="bodySm" tone="subdued">{t.content.idPrefix} {selectedItem.id.split("/").pop()}</Text>
                   <Button
                     variant={hasChanges ? "primary" : undefined}
                     onClick={handleSaveContent}
                     disabled={!hasChanges}
                     loading={fetcher.state !== "idle" && fetcher.formData?.get("action") === "updateContent"}
                   >
-                    Änderungen speichern
+                    {t.content.saveChanges}
                   </Button>
                 </InlineStack>
 
@@ -1062,11 +1062,11 @@ export default function ContentPage() {
                 <div>
                   <div style={{ background: getFieldBackgroundColor("title"), borderRadius: "8px", padding: "1px" }}>
                     <TextField
-                      label={`Titel (${shopLocales.find((l: any) => l.locale === currentLanguage)?.name || currentLanguage})`}
+                      label={`${t.content.title} (${shopLocales.find((l: any) => l.locale === currentLanguage)?.name || currentLanguage})`}
                       value={editableTitle}
                       onChange={setEditableTitle}
                       autoComplete="off"
-                      helpText={`${editableTitle.length} Zeichen`}
+                      helpText={`${editableTitle.length} ${t.content.characters}`}
                     />
                   </div>
                   {aiSuggestions.title && renderAISuggestion("title", aiSuggestions.title)}
@@ -1077,7 +1077,7 @@ export default function ContentPage() {
                         onClick={() => handleGenerateAI("title")}
                         loading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "title" && fetcher.formData?.get("action") === "generateAIText"}
                       >
-                        Mit KI generieren / verbessern
+                        {t.content.generateWithAI}
                       </Button>
                     ) : (
                       <Button
@@ -1085,7 +1085,7 @@ export default function ContentPage() {
                         onClick={() => handleTranslateField("title")}
                         loading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "title" && fetcher.formData?.get("action") === "translateField"}
                       >
-                        Aus Hauptsprache übersetzen
+                        {t.content.translateFromPrimary}
                       </Button>
                     )}
                   </div>
@@ -1095,9 +1095,9 @@ export default function ContentPage() {
                 <div>
                   <InlineStack align="space-between" blockAlign="center">
                     <Text as="p" variant="bodyMd" fontWeight="semibold">
-                      {selectedType === "pages" ? "Inhalt" : "Beschreibung"} ({shopLocales.find((l: any) => l.locale === currentLanguage)?.name || currentLanguage})
+                      {selectedType === "pages" ? t.content.content : t.content.description} ({shopLocales.find((l: any) => l.locale === currentLanguage)?.name || currentLanguage})
                     </Text>
-                    <Button size="slim" onClick={toggleDescriptionMode}>{descriptionMode === "html" ? "Vorschau" : "HTML"}</Button>
+                    <Button size="slim" onClick={toggleDescriptionMode}>{descriptionMode === "html" ? t.content.preview : t.content.html}</Button>
                   </InlineStack>
 
                   {descriptionMode === "rendered" && (
@@ -1113,12 +1113,12 @@ export default function ContentPage() {
                         <Button size="slim" onClick={() => handleFormatText("h3")}>H3</Button>
                       </ButtonGroup>
                       <ButtonGroup variant="segmented">
-                        <Button size="slim" onClick={() => handleFormatText("ul")}>Liste</Button>
-                        <Button size="slim" onClick={() => handleFormatText("ol")}>Num.</Button>
+                        <Button size="slim" onClick={() => handleFormatText("ul")}>{t.content.formatting.list}</Button>
+                        <Button size="slim" onClick={() => handleFormatText("ol")}>{t.content.formatting.numberedList}</Button>
                       </ButtonGroup>
                       <ButtonGroup variant="segmented">
-                        <Button size="slim" onClick={() => handleFormatText("p")}>Absatz</Button>
-                        <Button size="slim" onClick={() => handleFormatText("br")}>Umbruch</Button>
+                        <Button size="slim" onClick={() => handleFormatText("p")}>{t.content.formatting.paragraph}</Button>
+                        <Button size="slim" onClick={() => handleFormatText("br")}>{t.content.formatting.lineBreak}</Button>
                       </ButtonGroup>
                     </div>
                   )}
@@ -1158,7 +1158,7 @@ export default function ContentPage() {
                       />
                     )}
                   </div>
-                  <Text as="p" variant="bodySm" tone="subdued">{editableDescription.replace(/<[^>]*>/g, "").length} Zeichen</Text>
+                  <Text as="p" variant="bodySm" tone="subdued">{editableDescription.replace(/<[^>]*>/g, "").length} {t.content.characters}</Text>
                   {aiSuggestions.description && renderAISuggestion("description", aiSuggestions.description)}
                   {aiSuggestions.body && renderAISuggestion("body", aiSuggestions.body)}
                   <div style={{ marginTop: "0.5rem" }}>
@@ -1168,7 +1168,7 @@ export default function ContentPage() {
                         onClick={() => handleGenerateAI(selectedType === "pages" ? "body" : "description")}
                         loading={fetcher.state !== "idle" && (fetcher.formData?.get("fieldType") === "description" || fetcher.formData?.get("fieldType") === "body") && fetcher.formData?.get("action") === "generateAIText"}
                       >
-                        Mit KI generieren / verbessern
+                        {t.content.generateWithAI}
                       </Button>
                     ) : (
                       <Button
@@ -1176,7 +1176,7 @@ export default function ContentPage() {
                         onClick={() => handleTranslateField(selectedType === "pages" ? "body" : "description")}
                         loading={fetcher.state !== "idle" && (fetcher.formData?.get("fieldType") === "description" || fetcher.formData?.get("fieldType") === "body") && fetcher.formData?.get("action") === "translateField"}
                       >
-                        Aus Hauptsprache übersetzen
+                        {t.content.translateFromPrimary}
                       </Button>
                     )}
                   </div>
@@ -1187,7 +1187,7 @@ export default function ContentPage() {
                   <div>
                     <div style={{ background: getFieldBackgroundColor("handle"), borderRadius: "8px", padding: "1px" }}>
                       <TextField
-                        label={`URL-Slug (${shopLocales.find((l: any) => l.locale === currentLanguage)?.name || currentLanguage})`}
+                        label={`${t.content.urlSlug} (${shopLocales.find((l: any) => l.locale === currentLanguage)?.name || currentLanguage})`}
                         value={editableHandle}
                         onChange={setEditableHandle}
                         autoComplete="off"
@@ -1201,7 +1201,7 @@ export default function ContentPage() {
                           onClick={() => handleGenerateAI("handle")}
                           loading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "handle" && fetcher.formData?.get("action") === "generateAIText"}
                         >
-                          Mit KI generieren
+                          {t.content.generateWithAIShort}
                         </Button>
                       ) : (
                         <Button
@@ -1209,7 +1209,7 @@ export default function ContentPage() {
                           onClick={() => handleTranslateField("handle")}
                           loading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "handle" && fetcher.formData?.get("action") === "translateField"}
                         >
-                          Aus Hauptsprache übersetzen
+                          {t.content.translateFromPrimary}
                         </Button>
                       )}
                     </div>
@@ -1223,11 +1223,11 @@ export default function ContentPage() {
                     <div>
                       <div style={{ background: getFieldBackgroundColor("seo_title"), borderRadius: "8px", padding: "1px" }}>
                         <TextField
-                          label={`SEO-Titel (${shopLocales.find((l: any) => l.locale === currentLanguage)?.name || currentLanguage})`}
+                          label={`${t.content.seoTitle} (${shopLocales.find((l: any) => l.locale === currentLanguage)?.name || currentLanguage})`}
                           value={editableSeoTitle}
                           onChange={setEditableSeoTitle}
                           autoComplete="off"
-                          helpText={`${editableSeoTitle.length} Zeichen (empfohlen: 50-60)`}
+                          helpText={`${editableSeoTitle.length} ${t.content.characters} (${t.content.recommended}: 50-60)`}
                         />
                       </div>
                       {aiSuggestions.seoTitle && renderAISuggestion("seoTitle", aiSuggestions.seoTitle)}
@@ -1238,7 +1238,7 @@ export default function ContentPage() {
                             onClick={() => handleGenerateAI("seoTitle")}
                             loading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "seoTitle" && fetcher.formData?.get("action") === "generateAIText"}
                           >
-                            Mit KI generieren
+                            {t.content.generateWithAIShort}
                           </Button>
                         ) : (
                           <Button
@@ -1246,7 +1246,7 @@ export default function ContentPage() {
                             onClick={() => handleTranslateField("seoTitle")}
                             loading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "seoTitle" && fetcher.formData?.get("action") === "translateField"}
                           >
-                            Aus Hauptsprache übersetzen
+                            {t.content.translateFromPrimary}
                           </Button>
                         )}
                       </div>
@@ -1256,12 +1256,12 @@ export default function ContentPage() {
                     <div>
                       <div style={{ background: getFieldBackgroundColor("seo_description"), borderRadius: "8px", padding: "1px" }}>
                         <TextField
-                          label={`Meta-Beschreibung (${shopLocales.find((l: any) => l.locale === currentLanguage)?.name || currentLanguage})`}
+                          label={`${t.content.metaDescription} (${shopLocales.find((l: any) => l.locale === currentLanguage)?.name || currentLanguage})`}
                           value={editableMetaDescription}
                           onChange={setEditableMetaDescription}
                           multiline={3}
                           autoComplete="off"
-                          helpText={`${editableMetaDescription.length} Zeichen (empfohlen: 150-160)`}
+                          helpText={`${editableMetaDescription.length} ${t.content.characters} (${t.content.recommended}: 150-160)`}
                         />
                       </div>
                       {aiSuggestions.metaDescription && renderAISuggestion("metaDescription", aiSuggestions.metaDescription)}
@@ -1272,7 +1272,7 @@ export default function ContentPage() {
                             onClick={() => handleGenerateAI("metaDescription")}
                             loading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "metaDescription" && fetcher.formData?.get("action") === "generateAIText"}
                           >
-                            Mit KI generieren
+                            {t.content.generateWithAIShort}
                           </Button>
                         ) : (
                           <Button
@@ -1280,7 +1280,7 @@ export default function ContentPage() {
                             onClick={() => handleTranslateField("metaDescription")}
                             loading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "metaDescription" && fetcher.formData?.get("action") === "translateField"}
                           >
-                            Aus Hauptsprache übersetzen
+                            {t.content.translateFromPrimary}
                           </Button>
                         )}
                       </div>
@@ -1299,3 +1299,4 @@ export default function ContentPage() {
     </Page>
   );
 }
+
