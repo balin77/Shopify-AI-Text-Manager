@@ -7,7 +7,17 @@
       "Bash(npm run build:*)",
       "Bash(git init:*)",
       "Bash(git remote add:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Read(//c/Users/guble/OneDrive/Shopify/**)",
+      "Bash(npx prisma generate:*)",
+      "Bash(npx prisma db push:*)",
+      "Bash(npm run typecheck:*)",
+      "Bash(npx ngrok http 3000)",
+      "Bash(timeout 10 bash:*)",
+      "Bash(npx cloudflared:*)",
+      "Bash(npm run web:old:*)"
     ],
     "deny": [],
     "ask": []

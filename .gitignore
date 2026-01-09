@@ -3,3 +3,16 @@ dist/
 .env
 *.log
 .DS_Store
+
+# Remix/Vite Build
+build/
+.cache/
+public/build/
+
+# Prisma
+prisma/*.db
+prisma/*.db-journal
+*.sqlite
+
+# Shopify
+.shopify/
