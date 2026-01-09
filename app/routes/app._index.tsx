@@ -278,7 +278,51 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       if (seoTitle) changedFields.seoTitle = seoTitle;
       if (metaDescription) changedFields.metaDescription = metaDescription;
 
+      // If no fields have content, return error
+      if (Object.keys(changedFields).length === 0) {
+        return json({ success: false, error: "No fields to translate" }, { status: 400 });
+      }
+
+      // Get translations for all locales
       const translations = await translationService.translateProduct(changedFields);
+
+      // Save translations to Shopify for all non-primary locales
+      for (const [locale, fields] of Object.entries(translations)) {
+        const translationsInput = [];
+
+        // Map field names to Shopify translation keys
+        if (fields.title) translationsInput.push({ key: "title", value: fields.title, locale });
+        if (fields.description) translationsInput.push({ key: "body_html", value: fields.description, locale });
+        if (fields.handle) translationsInput.push({ key: "handle", value: fields.handle, locale });
+        if (fields.seoTitle) translationsInput.push({ key: "seo_title", value: fields.seoTitle, locale });
+        if (fields.metaDescription) translationsInput.push({ key: "seo_description", value: fields.metaDescription, locale });
+
+        // Register all translations for this locale
+        for (const translation of translationsInput) {
+          await admin.graphql(
+            `#graphql
+              mutation translateProduct($resourceId: ID!, $translations: [TranslationInput!]!) {
+                translationsRegister(resourceId: $resourceId, translations: $translations) {
+                  userErrors {
+                    field
+                    message
+                  }
+                  translations {
+                    locale
+                    key
+                    value
+                  }
+                }
+              }`,
+            {
+              variables: {
+                resourceId: productId,
+                translations: [translation]
+              },
+            }
+          );
+        }
+      }
 
       return json({ success: true, translations });
     } catch (error: any) {
@@ -639,6 +683,8 @@ export default function Index() {
   const handleTranslateAll = () => {
     if (!selectedProductId) return;
 
+    // Use current editable field values (including AI-generated or manually edited content)
+    // This translates the current working state, not the saved product data
     fetcher.submit(
       {
         action: "translateAll",
@@ -736,17 +782,39 @@ export default function Index() {
     }
   }, [fetcher.data]);
 
-  // Handle "Accept & Translate" response - display translations as new suggestions
+  // Handle "translateAll" response - update product translations in local state
   useEffect(() => {
-    if (fetcher.data?.success && 'translations' in fetcher.data && !('locale' in fetcher.data)) {
-      const fieldType = (fetcher.data as any).fieldType;
+    if (fetcher.data?.success && 'translations' in fetcher.data && !('locale' in fetcher.data) && !('fieldType' in fetcher.data)) {
       const translations = (fetcher.data as any).translations;
 
-      // Show all translations as suggestions for each locale
-      console.log("Übersetzungen erhalten:", translations);
+      // This is a "translateAll" response - update all translations in the product
+      if (selectedProduct) {
+        // Convert translations object to Shopify translation format
+        for (const [locale, fields] of Object.entries(translations)) {
+          const newTranslations = [];
 
-      // For now, just show a success message - user can manually translate to each language
-      // The translations are available but we'd need a more complex UI to show them all at once
+          if (fields.title) newTranslations.push({ key: "title", value: fields.title, locale });
+          if (fields.description) newTranslations.push({ key: "body_html", value: fields.description, locale });
+          if (fields.handle) newTranslations.push({ key: "handle", value: fields.handle, locale });
+          if (fields.seoTitle) newTranslations.push({ key: "seo_title", value: fields.seoTitle, locale });
+          if (fields.metaDescription) newTranslations.push({ key: "seo_description", value: fields.metaDescription, locale });
+
+          // Update product translations for this locale
+          selectedProduct.translations = [
+            ...selectedProduct.translations.filter((t: any) => t.locale !== locale),
+            ...newTranslations
+          ];
+        }
+
+        // If currently viewing a non-primary locale, refresh the fields
+        if (currentLanguage !== primaryLocale) {
+          setEditableTitle(getTranslatedValue("title", currentLanguage, ""));
+          setEditableDescription(getTranslatedValue("body_html", currentLanguage, ""));
+          setEditableHandle(getTranslatedValue("handle", currentLanguage, ""));
+          setEditableSeoTitle(getTranslatedValue("seo_title", currentLanguage, ""));
+          setEditableMetaDescription(getTranslatedValue("seo_description", currentLanguage, ""));
+        }
+      }
     }
   }, [fetcher.data]);
 
