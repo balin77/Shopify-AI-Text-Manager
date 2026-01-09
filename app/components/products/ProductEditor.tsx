@@ -29,6 +29,19 @@ interface Product {
     url: string;
     altText?: string;
   }>;
+  options?: Array<{
+    id: string;
+    name: string;
+    position: number;
+    values: string[];
+  }>;
+  metafields?: Array<{
+    id: string;
+    namespace: string;
+    key: string;
+    value: string;
+    type: string;
+  }>;
 }
 
 interface ShopLocale {
@@ -290,6 +303,70 @@ export function ProductEditor({
             onAcceptAndTranslate={() => onAcceptAndTranslate("metaDescription")}
             onRejectSuggestion={() => onRejectSuggestion("metaDescription")}
           />
+
+          {/* Product Options */}
+          {product.options && product.options.length > 0 && !isPrimaryLocale && (
+            <div>
+              <Text as="h3" variant="headingMd">Produktoptionen (nur Übersetzungen)</Text>
+              <div style={{ marginTop: "0.5rem" }}>
+                <Text as="p" variant="bodySm" tone="subdued">
+                  Die Optionsnamen können nur in Fremdsprachen übersetzt werden. Die Werte werden nicht übersetzt.
+                </Text>
+              </div>
+              {product.options.map((option) => (
+                <div key={option.id} style={{ marginTop: "1rem" }}>
+                  <FieldEditor
+                    label={`Option: ${option.name}`}
+                    value={""} // TODO: Get translated value
+                    onChange={() => {}} // TODO: Handle change
+                    fieldType={`option_${option.id}`}
+                    suggestion={undefined}
+                    isPrimaryLocale={false}
+                    backgroundColor="white"
+                    helpText={`Werte: ${option.values.join(", ")}`}
+                    isLoading={false}
+                    onGenerateAI={() => {}}
+                    onTranslate={() => {}} // TODO: Implement translation
+                    onAcceptSuggestion={() => {}}
+                    onAcceptAndTranslate={() => {}}
+                    onRejectSuggestion={() => {}}
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Metafields */}
+          {product.metafields && product.metafields.length > 0 && !isPrimaryLocale && (
+            <div>
+              <Text as="h3" variant="headingMd">Metafelder (nur Übersetzungen)</Text>
+              <div style={{ marginTop: "0.5rem" }}>
+                <Text as="p" variant="bodySm" tone="subdued">
+                  Metafelder können nur in Fremdsprachen übersetzt werden.
+                </Text>
+              </div>
+              {product.metafields.map((metafield) => (
+                <div key={metafield.id} style={{ marginTop: "1rem" }}>
+                  <FieldEditor
+                    label={`${metafield.namespace}.${metafield.key}`}
+                    value={""} // TODO: Get translated value
+                    onChange={() => {}} // TODO: Handle change
+                    fieldType={`metafield_${metafield.id}`}
+                    suggestion={undefined}
+                    isPrimaryLocale={false}
+                    backgroundColor="white"
+                    helpText={`Originalwert: ${metafield.value.substring(0, 100)}${metafield.value.length > 100 ? '...' : ''}`}
+                    isLoading={false}
+                    onGenerateAI={() => {}}
+                    onTranslate={() => {}} // TODO: Implement translation
+                    onAcceptSuggestion={() => {}}
+                    onAcceptAndTranslate={() => {}}
+                    onRejectSuggestion={() => {}}
+                  />
+                </div>
+              ))}
+            </div>
+          )}
         </BlockStack>
       </Card>
     </>
