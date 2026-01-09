@@ -15,31 +15,38 @@ import {
 import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
 import { db } from "../db.server";
-
-const AI_PROVIDERS = [
-  { label: "Hugging Face (Kostenlos)", value: "huggingface" },
-  { label: "Google Gemini (Kostenlos)", value: "gemini" },
-  { label: "Anthropic Claude", value: "claude" },
-  { label: "OpenAI GPT", value: "openai" },
-];
-
-const APP_LANGUAGES = [
-  { label: "Deutsch", value: "de" },
-  { label: "English", value: "en" },
-];
+import { useI18n } from "../contexts/I18nContext";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
+
+  // Fetch shop's primary locale
+  const localesResponse = await admin.graphql(
+    `#graphql
+      query getShopLocales {
+        shopLocales {
+          locale
+          primary
+        }
+      }`
+  );
+
+  const localesData = await localesResponse.json();
+  const primaryShopLocale = localesData.data.shopLocales.find((l: any) => l.primary)?.locale || "de";
 
   let settings = await db.aISettings.findUnique({
     where: { shop: session.shop },
   });
 
   if (!settings) {
+    // Auto-select app language based on shop's primary locale
+    const autoSelectedLanguage = primaryShopLocale.startsWith("en") ? "en" : "de";
+
     settings = await db.aISettings.create({
       data: {
         shop: session.shop,
         preferredProvider: "huggingface",
+        appLanguage: autoSelectedLanguage,
       },
     });
   }
@@ -99,6 +106,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 export default function SettingsPage() {
   const { shop, settings } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
+  const { t } = useI18n();
+
+  const AI_PROVIDERS = [
+    { label: t.settings.providers.huggingface, value: "huggingface" },
+    { label: t.settings.providers.gemini, value: "gemini" },
+    { label: t.settings.providers.claude, value: "claude" },
+    { label: t.settings.providers.openai, value: "openai" },
+  ];
+
+  const APP_LANGUAGES = [
+    { label: t.settings.languages.de, value: "de" },
+    { label: t.settings.languages.en, value: "en" },
+  ];
 
   const [huggingfaceKey, setHuggingfaceKey] = useState(settings.huggingfaceApiKey);
   const [geminiKey, setGeminiKey] = useState(settings.geminiApiKey);
@@ -149,7 +169,7 @@ export default function SettingsPage() {
                 }}
               >
                 <Text as="p" variant="bodyMd" fontWeight="semibold">
-                  AI API-Zugangscodes
+                  {t.settings.aiApiAccess}
                 </Text>
               </div>
             </Card>
@@ -159,13 +179,13 @@ export default function SettingsPage() {
           <div style={{ flex: 1 }}>
             <BlockStack gap="400">
               {fetcher.data?.success && (
-                <Banner title="Erfolgreich gespeichert!" tone="success" onDismiss={() => {}}>
-                  Ihre AI-Einstellungen wurden aktualisiert.
+                <Banner title={t.common.success} tone="success" onDismiss={() => {}}>
+                  {t.common.settingsSaved}
                 </Banner>
               )}
 
               {fetcher.data && !fetcher.data.success && 'error' in fetcher.data && (
-                <Banner title="Fehler" tone="critical">
+                <Banner title={t.common.error} tone="critical">
                   {fetcher.data.error as string}
                 </Banner>
               )}
@@ -173,47 +193,46 @@ export default function SettingsPage() {
               <Card>
                 <BlockStack gap="500">
                   <Text as="h2" variant="headingLg">
-                    AI API-Zugangscodes verwalten
+                    {t.settings.manageAiKeys}
                   </Text>
 
                   <Text as="p" variant="bodyMd" tone="subdued">
-                    Konfigurieren Sie Ihre bevorzugten KI-Anbieter. Die API-Schlüssel werden sicher
-                    verschlüsselt gespeichert und nur für Ihre Shop-Übersetzungen verwendet.
+                    {t.settings.aiKeysDescription}
                   </Text>
 
                   <Select
-                    label="App-Sprache"
+                    label={t.settings.appLanguage}
                     options={APP_LANGUAGES}
                     value={appLanguage}
                     onChange={setAppLanguage}
-                    helpText="Wählen Sie die Sprache für die Benutzeroberfläche"
+                    helpText={t.settings.appLanguageDescription}
                   />
 
                   <Select
-                    label="Bevorzugter AI-Anbieter"
+                    label={t.settings.preferredProvider}
                     options={AI_PROVIDERS}
                     value={provider}
                     onChange={setProvider}
-                    helpText="Wählen Sie den Standard-Anbieter für KI-Generierung und Übersetzungen"
+                    helpText={t.settings.providerHelp}
                   />
 
                   <div style={{ paddingTop: "1rem", borderTop: "1px solid #e1e3e5" }}>
                     <BlockStack gap="400">
                       <Text as="h3" variant="headingMd">
-                        API-Schlüssel
+                        {t.settings.apiKeys}
                       </Text>
 
                       {/* Hugging Face */}
                       <div>
                         <TextField
-                          label="Hugging Face API-Schlüssel"
+                          label={t.settings.huggingface}
                           value={huggingfaceKey}
                           onChange={setHuggingfaceKey}
                           type="password"
                           autoComplete="off"
                           helpText={
                             <span>
-                              Kostenlos erhältlich bei{" "}
+                              {t.settings.huggingfaceHelp}{" "}
                               <a
                                 href="https://huggingface.co/settings/tokens"
                                 target="_blank"
@@ -230,14 +249,14 @@ export default function SettingsPage() {
                       {/* Google Gemini */}
                       <div>
                         <TextField
-                          label="Google Gemini API-Schlüssel"
+                          label={t.settings.gemini}
                           value={geminiKey}
                           onChange={setGeminiKey}
                           type="password"
                           autoComplete="off"
                           helpText={
                             <span>
-                              Kostenlos erhältlich bei{" "}
+                              {t.settings.geminiHelp}{" "}
                               <a
                                 href="https://aistudio.google.com/app/apikey"
                                 target="_blank"
@@ -254,14 +273,14 @@ export default function SettingsPage() {
                       {/* Anthropic Claude */}
                       <div>
                         <TextField
-                          label="Anthropic Claude API-Schlüssel"
+                          label={t.settings.claude}
                           value={claudeKey}
                           onChange={setClaudeKey}
                           type="password"
                           autoComplete="off"
                           helpText={
                             <span>
-                              Erhältlich bei{" "}
+                              {t.settings.claudeHelp}{" "}
                               <a
                                 href="https://console.anthropic.com/settings/keys"
                                 target="_blank"
@@ -278,14 +297,14 @@ export default function SettingsPage() {
                       {/* OpenAI */}
                       <div>
                         <TextField
-                          label="OpenAI API-Schlüssel"
+                          label={t.settings.openai}
                           value={openaiKey}
                           onChange={setOpenaiKey}
                           type="password"
                           autoComplete="off"
                           helpText={
                             <span>
-                              Erhältlich bei{" "}
+                              {t.settings.openaiHelp}{" "}
                               <a
                                 href="https://platform.openai.com/api-keys"
                                 target="_blank"
@@ -308,7 +327,7 @@ export default function SettingsPage() {
                       disabled={!hasChanges}
                       loading={fetcher.state !== "idle"}
                     >
-                      Änderungen speichern
+                      {t.products.saveChanges}
                     </Button>
                   </InlineStack>
                 </BlockStack>
