@@ -17,7 +17,9 @@
       "Bash(npx ngrok http 3000)",
       "Bash(timeout 10 bash:*)",
       "Bash(npx cloudflared:*)",
-      "Bash(npm run web:old:*)"
+      "Bash(npm run web:old:*)",
+      "Bash(awk:*)",
+      "Bash(xargs kill -9)"
     ],
     "deny": [],
     "ask": []
