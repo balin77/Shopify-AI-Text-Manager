@@ -198,10 +198,19 @@ export default function Index() {
             ...selectedProduct.translations.filter((t: any) => t.locale !== locale),
             ...newTranslations
           ];
+
+          // If we're currently viewing this locale, update the editable fields
+          if (currentLanguage === locale) {
+            if (fields.title) setEditableTitle(fields.title);
+            if (fields.description) setEditableDescription(fields.description);
+            if (fields.handle) setEditableHandle(fields.handle);
+            if (fields.seoTitle) setEditableSeoTitle(fields.seoTitle);
+            if (fields.metaDescription) setEditableMetaDescription(fields.metaDescription);
+          }
         }
       }
     }
-  }, [fetcher.data]);
+  }, [fetcher.data, currentLanguage]);
 
   const handleSaveProduct = () => {
     if (!selectedProductId || !hasChanges) return;
@@ -272,16 +281,17 @@ export default function Index() {
   };
 
   const handleTranslateAll = () => {
-    if (!selectedProductId) return;
+    if (!selectedProductId || !selectedProduct) return;
+    // Always use the primary locale values (original product data), not the current editable values
     fetcher.submit(
       {
         action: "translateAll",
         productId: selectedProductId,
-        title: editableTitle,
-        description: editableDescription,
-        handle: editableHandle,
-        seoTitle: editableSeoTitle,
-        metaDescription: editableMetaDescription,
+        title: selectedProduct.title,
+        description: selectedProduct.descriptionHtml || "",
+        handle: selectedProduct.handle,
+        seoTitle: selectedProduct.seo?.title || "",
+        metaDescription: selectedProduct.seo?.description || "",
       },
       { method: "POST" }
     );
