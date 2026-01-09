@@ -19,13 +19,14 @@ import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
 import { AIService } from "../../src/services/ai.service";
 import { TranslationService } from "../../src/services/translation.service";
+import { useI18n } from "../contexts/I18nContext";
 
 type ContentType = "blogs" | "collections" | "pages";
 
-const CONTENT_TYPES = [
-  { id: "blogs" as ContentType, label: "Blogs", icon: "📝" },
-  { id: "collections" as ContentType, label: "Kollektionen", icon: "📂" },
-  { id: "pages" as ContentType, label: "Seiten", icon: "📄" },
+const getContentTypes = (t: any) => [
+  { id: "blogs" as ContentType, label: t.content.blogs, icon: "📝" },
+  { id: "collections" as ContentType, label: t.content.collections, icon: "📂" },
+  { id: "pages" as ContentType, label: t.content.pages, icon: "📄" },
 ];
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -65,7 +66,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
                       id
                       title
                       handle
-                      content
+                      body
                       publishedAt
                     }
                   }
@@ -472,7 +473,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                     id
                     title
                     handle
-                    content
+                    body
                   }
                   userErrors {
                     field
@@ -518,7 +519,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 export default function ContentPage() {
   const { blogs, collections, pages, shop, shopLocales, primaryLocale, error } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
+  const { t } = useI18n();
 
+  const CONTENT_TYPES = getContentTypes(t);
   const [selectedType, setSelectedType] = useState<ContentType>("blogs");
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [currentLanguage, setCurrentLanguage] = useState(primaryLocale);
@@ -571,7 +574,7 @@ export default function ContentPage() {
         setEditableTitle(selectedItem.title);
 
         if (selectedType === "blogs") {
-          setEditableDescription((selectedItem as any).content || selectedItem.body || "");
+          setEditableDescription(selectedItem.body || "");
           setEditableHandle(selectedItem.handle);
           setEditableSeoTitle("");
           setEditableMetaDescription("");
@@ -655,7 +658,7 @@ export default function ContentPage() {
 
       const titleKey = "title";
       const descKey = selectedType === "pages" ? "body" : selectedType === "blogs" ? "body_html" : "description";
-      const descFallback = selectedType === "pages" ? (selectedItem.body || "") : selectedType === "blogs" ? ((selectedItem as any).content || selectedItem.body || "") : (selectedItem.descriptionHtml || "");
+      const descFallback = selectedType === "pages" ? (selectedItem.body || "") : selectedType === "blogs" ? (selectedItem.body || "") : (selectedItem.descriptionHtml || "");
 
       const titleChanged = editableTitle !== getOriginalValue(titleKey, selectedItem.title);
       const descChanged = editableDescription !== getOriginalValue(descKey, descFallback || "");
@@ -719,9 +722,9 @@ export default function ContentPage() {
     const sourceMap: Record<string, string> = {
       title: selectedItem.title || "",
       description: selectedType === "pages" ? (selectedItem.body || "") :
-                   selectedType === "blogs" ? ((selectedItem as any).content || selectedItem.body || "") :
+                   selectedType === "blogs" ? (selectedItem.body || "") :
                    (selectedItem.descriptionHtml || ""),
-      body: selectedItem.body || (selectedItem as any).content || "",
+      body: selectedItem.body || "",
       handle: selectedItem.handle || "",
       seoTitle: selectedItem.seo?.title || "",
       metaDescription: selectedItem.seo?.description || "",
@@ -928,7 +931,7 @@ export default function ContentPage() {
       {/* Horizontal Sub-Navigation for Content Types */}
       <div style={{ borderBottom: "1px solid #e1e3e5", background: "white", padding: "1rem" }}>
         <InlineStack gap="300">
-          {CONTENT_TYPES.map((type) => (
+          {CONTENT_TYPES.map((type: any) => (
             <button
               key={type.id}
               onClick={() => {
@@ -967,7 +970,7 @@ export default function ContentPage() {
           <Card padding="0">
             <div style={{ padding: "1rem", borderBottom: "1px solid #e1e3e5" }}>
               <Text as="h2" variant="headingMd">
-                {CONTENT_TYPES.find((t) => t.id === selectedType)?.label} ({currentItems.length})
+                {CONTENT_TYPES.find((t: any) => t.id === selectedType)?.label} ({currentItems.length})
               </Text>
             </div>
             <div style={{ maxHeight: "calc(100vh - 200px)", overflowY: "auto" }}>
@@ -1001,7 +1004,7 @@ export default function ContentPage() {
               ) : (
                 <div style={{ padding: "2rem", textAlign: "center" }}>
                   <Text as="p" variant="bodySm" tone="subdued">
-                    Keine Einträge verfügbar
+                    {t.content.noEntries}
                   </Text>
                 </div>
               )}
@@ -1287,7 +1290,7 @@ export default function ContentPage() {
               </BlockStack>
             ) : (
               <div style={{ textAlign: "center", padding: "4rem 2rem" }}>
-                <Text as="p" variant="headingLg" tone="subdued">Wähle einen Eintrag aus der Liste</Text>
+                <Text as="p" variant="headingLg" tone="subdued">{t.content.selectFromList}</Text>
               </div>
             )}
           </Card>

@@ -11,8 +11,11 @@ export const en: Translation = {
   // Products Page
   products: {
     title: "Products",
+    count: "Products",
     search: "Search products...",
     selectProduct: "Select a product from the list",
+    noEntries: "No entries available",
+    selectFromList: "Select an entry from the list",
     saveChanges: "Save changes",
     translateAll: "Translate to all languages",
     productTitle: "Product title",
@@ -58,7 +61,7 @@ export const en: Translation = {
   content: {
     menus: "Menus",
     menusDescription: "Manage and translate your shop navigation and menus",
-    blogs: "Blog Posts",
+    blogs: "Blogs",
     blogsDescription: "Create and translate blog articles with AI support",
     collections: "Collections",
     collectionsDescription: "Edit and translate product collections",
@@ -67,6 +70,7 @@ export const en: Translation = {
     theme: "Theme Texts",
     themeDescription: "Translate theme texts like buttons, labels and messages",
     noEntries: "No entries available",
+    selectFromList: "Select an entry from the list",
     comingSoon: "Coming soon",
   },
 

@@ -34,15 +34,15 @@ export function MainNavigation() {
               style={{
                 textDecoration: "none",
                 padding: "1rem 0.5rem",
-                borderBottom: isActive ? "2px solid #008060" : "2px solid transparent",
+                borderBottom: isActive ? "3px solid #303030" : "2px solid transparent",
                 transition: "border-color 0.2s",
               }}
             >
               <Text
                 as="span"
                 variant="bodyMd"
-                fontWeight={isActive ? "semibold" : "regular"}
-                tone={isActive ? undefined : "subdued"}
+                fontWeight={isActive ? "bold" : "regular"}
+                tone="base"
               >
                 {tab.label}
               </Text>
