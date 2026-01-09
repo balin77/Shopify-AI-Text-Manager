@@ -1,9 +1,10 @@
-import { Link, useLocation } from "@remix-run/react";
+import { useLocation, useNavigate } from "@remix-run/react";
 import { InlineStack, Text } from "@shopify/polaris";
 import { useI18n } from "../contexts/I18nContext";
 
 export function MainNavigation() {
   const location = useLocation();
+  const navigate = useNavigate();
   const { t } = useI18n();
 
   const tabs = [
@@ -13,13 +14,11 @@ export function MainNavigation() {
     { id: "settings", label: t.nav.settings, path: "/app/settings" },
   ];
 
-  const handleNavClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
-    console.log("=== NAVIGATION CLICK DEBUG ===");
-    console.log("Click event triggered");
-    console.log("Target:", e.currentTarget.getAttribute("href"));
-    console.log("Location:", window.location.href);
-    console.log("Is embedded:", window.self !== window.top);
-    // Let Remix handle the navigation (don't preventDefault)
+  const handleNavClick = (e: React.MouseEvent<HTMLAnchorElement>, path: string) => {
+    e.preventDefault();
+    console.log("=== NAVIGATION CLICK ===");
+    console.log("Navigating to:", path);
+    navigate(path);
   };
 
   return (
@@ -38,16 +37,17 @@ export function MainNavigation() {
               : location.pathname.startsWith(tab.path);
 
           return (
-            <Link
+            <a
               key={tab.id}
-              to={tab.path}
-              onClick={handleNavClick}
+              href={tab.path}
+              onClick={(e) => handleNavClick(e, tab.path)}
               style={{
                 textDecoration: "none",
                 padding: "1rem 0.5rem",
                 borderBottom: isActive ? "3px solid #303030" : "3px solid transparent",
                 transition: "border-color 0.2s",
                 display: "inline-block",
+                cursor: "pointer",
               }}
             >
               <Text
@@ -58,7 +58,7 @@ export function MainNavigation() {
               >
                 {tab.label}
               </Text>
-            </Link>
+            </a>
           );
         })}
       </InlineStack>
