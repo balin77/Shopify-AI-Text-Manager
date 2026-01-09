@@ -455,6 +455,13 @@ async function handleTranslateAll(
       } catch (localeError: any) {
         console.error(`[TranslateAll] ERROR: Failed to translate to ${locale}:`, localeError);
         console.error(`[TranslateAll] ERROR Stack:`, localeError.stack);
+
+        // Check if it's an API limit error
+        const errorMessage = localeError.message || String(localeError);
+        if (errorMessage.includes('usage limit') || errorMessage.includes('quota') || errorMessage.includes('rate limit')) {
+          console.error(`[TranslateAll] AI Provider quota exceeded. Please check Settings to switch AI provider or add API keys.`);
+        }
+
         // Continue with other locales even if one fails
       }
     }
@@ -475,6 +482,12 @@ async function handleTranslateAll(
       resultString = `{"success":true,"localesProcessed":${processedLocales},"attempted":${totalLocales}}`;
     }
 
+    // Determine error message if no locales were processed
+    let finalError = null;
+    if (processedLocales === 0) {
+      finalError = "No locales were successfully translated. This may be due to API quota limits. Please check your AI provider settings and ensure you have sufficient API credits.";
+    }
+
     await db.task.update({
       where: { id: task.id },
       data: {
@@ -482,7 +495,7 @@ async function handleTranslateAll(
         progress: 100,
         completedAt: new Date(),
         result: resultString,
-        error: processedLocales === 0 ? "No locales were successfully translated" : null,
+        error: finalError,
       },
     });
 
