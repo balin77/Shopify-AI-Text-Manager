@@ -14,7 +14,7 @@ export default function App() {
   const { apiKey } = useLoaderData<typeof loader>();
 
   return (
-    <AppProvider i18n={{}} apiKey={apiKey}>
+    <AppProvider i18n={{}}>
       <Outlet />
     </AppProvider>
   );
