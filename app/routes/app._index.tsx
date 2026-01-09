@@ -178,10 +178,12 @@ export default function Index() {
 
       if (!hasTranslations) {
         console.log('>>> SUBMITTING loadTranslations request <<<');
+        console.log('Fetcher state before submit:', fetcher.state);
         fetcher.submit(
           { action: "loadTranslations", productId: selectedProduct.id, locale: currentLanguage },
-          { method: "POST" }
+          { method: "POST", action: "/app" }
         );
+        console.log('Fetcher state after submit:', fetcher.state);
       } else {
         console.log('Translations already loaded, skipping request');
       }
@@ -191,7 +193,9 @@ export default function Index() {
   // Handle loaded translations
   useEffect(() => {
     console.log('=== FRONTEND: Handle loaded translations ===');
+    console.log('fetcher.state:', fetcher.state);
     console.log('fetcher.data:', fetcher.data);
+    console.log('fetcher.formData:', fetcher.formData);
     console.log('Has translations:', 'translations' in (fetcher.data || {}));
     console.log('Has locale:', 'locale' in (fetcher.data || {}));
 
