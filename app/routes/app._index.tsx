@@ -22,6 +22,7 @@ import { authenticate } from "../shopify.server";
 import { AIService } from "../../src/services/ai.service";
 import { TranslationService } from "../../src/services/translation.service";
 import { MainNavigation } from "../components/MainNavigation";
+import { SeoSidebar } from "../components/SeoSidebar";
 import { useI18n } from "../contexts/I18nContext";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -61,6 +62,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
                   url
                   altText
                 }
+                images(first: 250) {
+                  edges {
+                    node {
+                      altText
+                      url
+                    }
+                  }
+                }
                 seo {
                   title
                   description
@@ -73,7 +82,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     );
 
     const data = await response.json();
-    let products = data.data.products.edges.map((edge: any) => edge.node);
+    let products = data.data.products.edges.map((edge: any) => {
+      const product = edge.node;
+      // Normalize images array from edges format
+      product.images = product.images?.edges?.map((imgEdge: any) => imgEdge.node) || [];
+      return product;
+    });
 
     // Initialize empty translations array for each product
     // We'll load translations on-demand when a product is selected to avoid slow page loads
@@ -914,7 +928,7 @@ export default function Index() {
                           ) : (
                             <div style={{ width: "40px", height: "40px", background: "#e1e3e5", borderRadius: "8px" }} />
                           )}
-                          <Badge tone={status === "ACTIVE" ? "success" : undefined}>{status}</Badge>
+                          <Badge tone={status === "ACTIVE" ? "success" : undefined} size="small">{status}</Badge>
                         </div>
                       }
                     >
@@ -942,8 +956,8 @@ export default function Index() {
           </Card>
         </div>
 
-        {/* Right: Product Detail */}
-        <div style={{ flex: 1, overflow: "auto" }}>
+        {/* Middle: Product Detail */}
+        <div style={{ flex: 1, overflow: "auto", minWidth: 0 }}>
           {error && (
             <div style={{ marginBottom: "1rem" }}>
               <Banner title="Fehler" tone="critical"><p>{error}</p></Banner>
@@ -1326,6 +1340,21 @@ export default function Index() {
             )}
           </Card>
         </div>
+
+        {/* Right: SEO Sidebar */}
+        {selectedProduct && currentLanguage === primaryLocale && (
+          <div style={{ width: "320px", flexShrink: 0, overflow: "auto" }}>
+            <SeoSidebar
+              title={editableTitle}
+              description={editableDescription}
+              handle={editableHandle}
+              seoTitle={editableSeoTitle}
+              metaDescription={editableMetaDescription}
+              imagesWithAlt={selectedProduct.images?.filter((img: any) => img.altText).length || 0}
+              totalImages={selectedProduct.images?.length || 0}
+            />
+          </div>
+        )}
       </div>
     </Page>
   );

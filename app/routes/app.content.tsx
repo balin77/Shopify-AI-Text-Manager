@@ -17,6 +17,7 @@ import {
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
+import { SeoSidebar } from "../components/SeoSidebar";
 import { AIService } from "../../src/services/ai.service";
 import { TranslationService } from "../../src/services/translation.service";
 import { useI18n } from "../contexts/I18nContext";
@@ -1017,8 +1018,8 @@ export default function ContentPage() {
           </Card>
         </div>
 
-        {/* Right Content Area */}
-        <div style={{ flex: 1, overflow: "auto" }}>
+        {/* Middle: Entry Detail */}
+        <div style={{ flex: 1, overflow: "auto", minWidth: 0 }}>
           {error && (
             <div style={{ marginBottom: "1rem" }}>
               <Banner title={t.content.error} tone="critical"><p>{error}</p></Banner>
@@ -1300,6 +1301,19 @@ export default function ContentPage() {
             )}
           </Card>
         </div>
+
+        {/* Right: SEO Sidebar */}
+        {selectedItem && currentLanguage === primaryLocale && selectedType !== "pages" && (
+          <div style={{ width: "320px", flexShrink: 0, overflow: "auto" }}>
+            <SeoSidebar
+              title={editableTitle}
+              description={editableDescription}
+              handle={editableHandle}
+              seoTitle={editableSeoTitle}
+              metaDescription={editableMetaDescription}
+            />
+          </div>
+        )}
       </div>
     </Page>
   );
