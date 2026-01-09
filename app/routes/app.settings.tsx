@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher } from "@remix-run/react";
 import {
@@ -11,6 +11,7 @@ import {
   Banner,
   Select,
   InlineStack,
+  ButtonGroup,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
@@ -201,6 +202,8 @@ export default function SettingsPage() {
   const [seoTitleInstructions, setSeoTitleInstructions] = useState(instructions.seoTitleInstructions);
   const [metaDescFormat, setMetaDescFormat] = useState(instructions.metaDescFormat);
   const [metaDescInstructions, setMetaDescInstructions] = useState(instructions.metaDescInstructions);
+  const [descriptionFormatMode, setDescriptionFormatMode] = useState<"html" | "rendered">("rendered");
+  const descriptionFormatEditorRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (selectedSection === "instructions") {
@@ -232,6 +235,51 @@ export default function SettingsPage() {
     handleFormat, handleInstructions, seoTitleFormat, seoTitleInstructions,
     metaDescFormat, metaDescInstructions, instructions, selectedSection
   ]);
+
+  const handleFormatText = (command: string) => {
+    if (descriptionFormatMode !== "rendered" || !descriptionFormatEditorRef.current) return;
+
+    descriptionFormatEditorRef.current.focus();
+
+    switch (command) {
+      case "bold":
+        document.execCommand("bold", false);
+        break;
+      case "italic":
+        document.execCommand("italic", false);
+        break;
+      case "underline":
+        document.execCommand("underline", false);
+        break;
+      case "h1":
+        document.execCommand("formatBlock", false, "<h1>");
+        break;
+      case "h2":
+        document.execCommand("formatBlock", false, "<h2>");
+        break;
+      case "h3":
+        document.execCommand("formatBlock", false, "<h3>");
+        break;
+      case "p":
+        document.execCommand("formatBlock", false, "<p>");
+        break;
+      case "ul":
+        document.execCommand("insertUnorderedList", false);
+        break;
+      case "ol":
+        document.execCommand("insertOrderedList", false);
+        break;
+      case "br":
+        document.execCommand("insertHTML", false, "<br>");
+        break;
+    }
+
+    setDescriptionFormat(descriptionFormatEditorRef.current.innerHTML);
+  };
+
+  const toggleDescriptionFormatMode = () => {
+    setDescriptionFormatMode(descriptionFormatMode === "html" ? "rendered" : "html");
+  };
 
   const handleSave = () => {
     if (!hasChanges) return;
@@ -271,6 +319,30 @@ export default function SettingsPage() {
 
   return (
     <Page fullWidth>
+      <style>{`
+        .description-editor h1 {
+          font-size: 2em;
+          font-weight: bold;
+          margin: 0.67em 0;
+        }
+        .description-editor h2 {
+          font-size: 1.5em;
+          font-weight: bold;
+          margin: 0.75em 0;
+        }
+        .description-editor h3 {
+          font-size: 1.17em;
+          font-weight: bold;
+          margin: 0.83em 0;
+        }
+        .description-editor p {
+          margin: 1em 0;
+        }
+        .description-editor ul, .description-editor ol {
+          margin: 1em 0;
+          padding-left: 40px;
+        }
+      `}</style>
       <MainNavigation />
       <div style={{ padding: "1rem" }}>
         <div style={{ display: "flex", gap: "1rem" }}>
@@ -531,6 +603,17 @@ export default function SettingsPage() {
                       Geben Sie für jedes Feld ein Formatbeispiel und spezifische Anweisungen an, an denen sich die KI orientieren soll.
                     </Text>
 
+                    <InlineStack align="end">
+                      <Button
+                        variant={hasChanges ? "primary" : undefined}
+                        onClick={handleSave}
+                        disabled={!hasChanges}
+                        loading={fetcher.state !== "idle"}
+                      >
+                        {t.products.saveChanges}
+                      </Button>
+                    </InlineStack>
+
                     {/* Title */}
                     <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
                       <BlockStack gap="400">
@@ -542,7 +625,7 @@ export default function SettingsPage() {
                           multiline={3}
                           autoComplete="off"
                           placeholder="z.B. Premium Leder Geldbörse - Elegant & Stilvoll"
-                          helpText="Kopieren Sie ein Beispiel eines idealen Titels hier hinein"
+                          helpText={`${titleFormat.length} Zeichen - Kopieren Sie ein Beispiel eines idealen Titels hier hinein`}
                         />
                         <TextField
                           label="Anweisungen"
@@ -551,7 +634,7 @@ export default function SettingsPage() {
                           multiline={3}
                           autoComplete="off"
                           placeholder="z.B. Nicht länger als 60 Zeichen, gehobene Ausdrucksweise, Material und Hauptmerkmal nennen"
-                          helpText="Spezifische Anweisungen für die KI"
+                          helpText={`${titleInstructions.length} Zeichen - Spezifische Anweisungen für die KI`}
                         />
                       </BlockStack>
                     </div>
@@ -559,16 +642,78 @@ export default function SettingsPage() {
                     {/* Description */}
                     <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
                       <BlockStack gap="400">
-                        <Text as="h3" variant="headingMd">Beschreibung</Text>
-                        <TextField
-                          label="Formatbeispiel"
-                          value={descriptionFormat}
-                          onChange={setDescriptionFormat}
-                          multiline={5}
-                          autoComplete="off"
-                          placeholder="z.B. Entdecken Sie unsere handgefertigte Ledertasche..."
-                          helpText="Kopieren Sie ein Beispiel einer idealen Beschreibung hier hinein"
-                        />
+                        <InlineStack align="space-between" blockAlign="center">
+                          <Text as="h3" variant="headingMd">Beschreibung</Text>
+                          <Button size="slim" onClick={toggleDescriptionFormatMode}>
+                            {descriptionFormatMode === "html" ? "Vorschau" : "HTML"}
+                          </Button>
+                        </InlineStack>
+
+                        <div>
+                          <Text as="p" variant="bodyMd" fontWeight="medium">Formatbeispiel</Text>
+                          {descriptionFormatMode === "rendered" && (
+                            <div style={{ marginTop: "0.5rem", display: "flex", gap: "0.25rem", flexWrap: "wrap", padding: "0.5rem", background: "white", border: "1px solid #c9cccf", borderRadius: "8px 8px 0 0" }}>
+                              <ButtonGroup variant="segmented">
+                                <Button size="slim" onClick={() => handleFormatText("bold")}>B</Button>
+                                <Button size="slim" onClick={() => handleFormatText("italic")}>I</Button>
+                                <Button size="slim" onClick={() => handleFormatText("underline")}>U</Button>
+                              </ButtonGroup>
+                              <ButtonGroup variant="segmented">
+                                <Button size="slim" onClick={() => handleFormatText("h1")}>H1</Button>
+                                <Button size="slim" onClick={() => handleFormatText("h2")}>H2</Button>
+                                <Button size="slim" onClick={() => handleFormatText("h3")}>H3</Button>
+                              </ButtonGroup>
+                              <ButtonGroup variant="segmented">
+                                <Button size="slim" onClick={() => handleFormatText("ul")}>Liste</Button>
+                                <Button size="slim" onClick={() => handleFormatText("ol")}>Num.</Button>
+                              </ButtonGroup>
+                              <ButtonGroup variant="segmented">
+                                <Button size="slim" onClick={() => handleFormatText("p")}>Absatz</Button>
+                                <Button size="slim" onClick={() => handleFormatText("br")}>Umbruch</Button>
+                              </ButtonGroup>
+                            </div>
+                          )}
+
+                          {descriptionFormatMode === "html" ? (
+                            <textarea
+                              value={descriptionFormat}
+                              onChange={(e) => setDescriptionFormat(e.target.value)}
+                              placeholder="z.B. <h2>Entdecken Sie unsere handgefertigte Ledertasche</h2><p>Premium Qualität...</p>"
+                              style={{
+                                width: "100%",
+                                minHeight: "150px",
+                                padding: "12px",
+                                border: "1px solid #c9cccf",
+                                borderRadius: "8px",
+                                fontFamily: "monospace",
+                                fontSize: "14px",
+                                marginTop: "0.5rem",
+                              }}
+                            />
+                          ) : (
+                            <div
+                              ref={descriptionFormatEditorRef}
+                              contentEditable
+                              onInput={(e) => setDescriptionFormat(e.currentTarget.innerHTML)}
+                              dangerouslySetInnerHTML={{ __html: descriptionFormat || '<p>z.B. Entdecken Sie unsere handgefertigte Ledertasche...</p>' }}
+                              style={{
+                                width: "100%",
+                                minHeight: "150px",
+                                padding: "12px",
+                                border: "1px solid #c9cccf",
+                                borderTop: "none",
+                                borderRadius: "0 0 8px 8px",
+                                lineHeight: "1.6",
+                                background: "white",
+                              }}
+                              className="description-editor"
+                            />
+                          )}
+                          <Text as="p" variant="bodySm" tone="subdued">
+                            {descriptionFormat.replace(/<[^>]*>/g, "").length} Zeichen - Kopieren Sie ein Beispiel einer idealen Beschreibung hier hinein
+                          </Text>
+                        </div>
+
                         <TextField
                           label="Anweisungen"
                           value={descriptionInstructions}
@@ -576,7 +721,7 @@ export default function SettingsPage() {
                           multiline={3}
                           autoComplete="off"
                           placeholder="z.B. 150-200 Wörter, gehobene Ausdrucksweise, Vorteile hervorheben, Storytelling verwenden"
-                          helpText="Spezifische Anweisungen für die KI"
+                          helpText={`${descriptionInstructions.length} Zeichen - Spezifische Anweisungen für die KI`}
                         />
                       </BlockStack>
                     </div>
@@ -592,7 +737,7 @@ export default function SettingsPage() {
                           multiline={2}
                           autoComplete="off"
                           placeholder="z.B. premium-leder-geldboerse-elegant"
-                          helpText="Kopieren Sie ein Beispiel eines idealen URL-Slugs hier hinein"
+                          helpText={`${handleFormat.length} Zeichen - Kopieren Sie ein Beispiel eines idealen URL-Slugs hier hinein`}
                         />
                         <TextField
                           label="Anweisungen"
@@ -601,7 +746,7 @@ export default function SettingsPage() {
                           multiline={3}
                           autoComplete="off"
                           placeholder="z.B. Nur Kleinbuchstaben und Bindestriche, keine Umlaute, max. 50 Zeichen, SEO-optimiert"
-                          helpText="Spezifische Anweisungen für die KI"
+                          helpText={`${handleInstructions.length} Zeichen - Spezifische Anweisungen für die KI`}
                         />
                       </BlockStack>
                     </div>
@@ -617,7 +762,7 @@ export default function SettingsPage() {
                           multiline={2}
                           autoComplete="off"
                           placeholder="z.B. Premium Leder Geldbörse kaufen | Handgefertigt & Elegant"
-                          helpText="Kopieren Sie ein Beispiel eines idealen SEO-Titels hier hinein"
+                          helpText={`${seoTitleFormat.length} Zeichen - Kopieren Sie ein Beispiel eines idealen SEO-Titels hier hinein`}
                         />
                         <TextField
                           label="Anweisungen"
@@ -626,7 +771,7 @@ export default function SettingsPage() {
                           multiline={3}
                           autoComplete="off"
                           placeholder="z.B. 50-60 Zeichen, Keywords am Anfang, Call-to-Action verwenden"
-                          helpText="Spezifische Anweisungen für die KI"
+                          helpText={`${seoTitleInstructions.length} Zeichen - Spezifische Anweisungen für die KI`}
                         />
                       </BlockStack>
                     </div>
@@ -642,7 +787,7 @@ export default function SettingsPage() {
                           multiline={3}
                           autoComplete="off"
                           placeholder="z.B. Entdecken Sie unsere handgefertigten Premium Leder Geldbörsen. Elegant, langlebig und zeitlos. Jetzt kaufen!"
-                          helpText="Kopieren Sie ein Beispiel einer idealen Meta-Beschreibung hier hinein"
+                          helpText={`${metaDescFormat.length} Zeichen - Kopieren Sie ein Beispiel einer idealen Meta-Beschreibung hier hinein`}
                         />
                         <TextField
                           label="Anweisungen"
@@ -651,7 +796,7 @@ export default function SettingsPage() {
                           multiline={3}
                           autoComplete="off"
                           placeholder="z.B. 150-160 Zeichen, Keywords verwenden, zum Klicken anregen, USP hervorheben"
-                          helpText="Spezifische Anweisungen für die KI"
+                          helpText={`${metaDescInstructions.length} Zeichen - Spezifische Anweisungen für die KI`}
                         />
                       </BlockStack>
                     </div>
