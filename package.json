@@ -7,7 +7,7 @@
     "build": "remix vite:build",
     "postinstall": "prisma generate || true",
     "dev": "remix vite:dev",
-    "start": "prisma db push --accept-data-loss && remix-serve ./build/server/index.js",
+    "start": "node start.js",
     "typecheck": "tsc",
     "prisma:generate": "prisma generate",
     "prisma:push": "prisma db push",
