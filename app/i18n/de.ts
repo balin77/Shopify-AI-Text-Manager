@@ -157,6 +157,57 @@ export const de = {
     settingsSaved: "Ihre Einstellungen wurden aktualisiert.",
     changesSaved: "Änderungen erfolgreich gespeichert!",
   },
+
+  // SEO Sidebar
+  seo: {
+    title: "SEO-Score",
+    issuesTitle: "Gefundene Probleme",
+    recommendationsTitle: "Empfehlungen",
+    scoreDetailsTitle: "Score-Berechnung",
+    points: "Pkt.",
+    showDetails: "Details anzeigen",
+    hideDetails: "Details ausblenden",
+    scoreLabels: {
+      good: "Sehr gut",
+      medium: "Verbesserungsfähig",
+      poor: "Mangelhaft",
+    },
+    issues: {
+      titleLengthGood: "Titel hat optimale Länge (30-70 Zeichen)",
+      titleTooShort: "Titel ist zu kurz (min. 30 Zeichen empfohlen)",
+      titleTooLong: "Titel ist zu lang (max. 70 Zeichen empfohlen)",
+      seoTitleGood: "SEO-Titel ist vorhanden und optimal (max. 60 Zeichen)",
+      seoTitleMissing: "SEO-Titel fehlt",
+      seoTitleTooLong: "SEO-Titel ist zu lang (max. 60 Zeichen)",
+      descriptionGood: "Beschreibung ist ausführlich (mind. 150 Zeichen)",
+      descriptionMissing: "Beschreibung fehlt",
+      descriptionTooShort: "Beschreibung ist zu kurz (mind. 150 Zeichen empfohlen)",
+      metaDescriptionGood: "Meta-Description ist optimal (120-160 Zeichen)",
+      metaDescriptionMissing: "Meta-Description fehlt",
+      metaDescriptionTooShort: "Meta-Description ist zu kurz (mind. 120 Zeichen)",
+      metaDescriptionTooLong: "Meta-Description ist zu lang (max. 160 Zeichen)",
+      allImagesHaveAlt: "Alle Bilder haben Alt-Texte",
+      someImagesMissingAlt: "{count} Bilder ohne Alt-Text",
+    },
+    recommendations: {
+      expandTitle: "Erweitere den Titel auf mindestens 30 Zeichen",
+      shortenTitle: "Kürze den Titel auf maximal 70 Zeichen",
+      addSeoTitle: "Füge einen SEO-Titel hinzu (max. 60 Zeichen)",
+      shortenSeoTitle: "Kürze den SEO-Titel auf maximal 60 Zeichen",
+      expandDescription: "Erweitere die Beschreibung auf mindestens 150 Zeichen",
+      addMetaDescription: "Füge eine Meta-Description hinzu (120-160 Zeichen)",
+      expandMetaDescription: "Erweitere die Meta-Description auf mindestens 120 Zeichen",
+      shortenMetaDescription: "Kürze die Meta-Description auf maximal 160 Zeichen",
+      addImageAlt: "Füge Alt-Texte zu allen Bildern hinzu",
+    },
+    criteria: {
+      titleLength: "Titel-Länge (30-70 Zeichen)",
+      seoTitle: "SEO-Titel (max. 60 Zeichen)",
+      description: "Beschreibung (mind. 150 Zeichen)",
+      metaDescription: "Meta-Description (120-160 Zeichen)",
+      imageAlt: "Alle Bilder haben Alt-Texte",
+    },
+  },
 };
 
 export type Translation = typeof de;
