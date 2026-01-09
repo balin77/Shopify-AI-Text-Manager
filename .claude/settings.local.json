@@ -19,7 +19,9 @@
       "Bash(npx cloudflared:*)",
       "Bash(npm run web:old:*)",
       "Bash(awk:*)",
-      "Bash(xargs kill -9)"
+      "Bash(xargs kill -9)",
+      "Bash(dir:*)",
+      "Bash(del nul)"
     ],
     "deny": [],
     "ask": []

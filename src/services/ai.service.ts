@@ -5,31 +5,44 @@ import OpenAI from 'openai';
 
 export type AIProvider = 'huggingface' | 'gemini' | 'claude' | 'openai';
 
+export interface AIServiceConfig {
+  huggingfaceApiKey?: string;
+  geminiApiKey?: string;
+  claudeApiKey?: string;
+  openaiApiKey?: string;
+}
+
 export class AIService {
   private huggingface?: HfInference;
   private gemini?: any;
   private anthropic?: Anthropic;
   private openai?: OpenAI;
   private provider: AIProvider;
+  private config: AIServiceConfig;
 
-  constructor(provider: AIProvider = 'huggingface') {
+  constructor(provider: AIProvider = 'huggingface', config: AIServiceConfig = {}) {
     this.provider = provider;
+    this.config = config;
     this.initializeProvider();
   }
 
   private initializeProvider() {
     if (this.provider === 'huggingface') {
-      this.huggingface = new HfInference(process.env.HUGGINGFACE_API_KEY || '');
+      const apiKey = this.config.huggingfaceApiKey || process.env.HUGGINGFACE_API_KEY || '';
+      this.huggingface = new HfInference(apiKey);
       console.log('🤖 AI Provider: Hugging Face (FREE)');
     } else if (this.provider === 'gemini') {
-      const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY || '');
+      const apiKey = this.config.geminiApiKey || process.env.GOOGLE_API_KEY || '';
+      const genAI = new GoogleGenerativeAI(apiKey);
       this.gemini = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-lite' });
       console.log('🤖 AI Provider: Google Gemini (FREE)');
     } else if (this.provider === 'claude') {
-      this.anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || '' });
+      const apiKey = this.config.claudeApiKey || process.env.ANTHROPIC_API_KEY || '';
+      this.anthropic = new Anthropic({ apiKey });
       console.log('🤖 AI Provider: Claude');
     } else if (this.provider === 'openai') {
-      this.openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || '' });
+      const apiKey = this.config.openaiApiKey || process.env.OPENAI_API_KEY || '';
+      this.openai = new OpenAI({ apiKey });
       console.log('🤖 AI Provider: OpenAI');
     }
   }
