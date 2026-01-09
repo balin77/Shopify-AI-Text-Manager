@@ -1,9 +1,10 @@
-import { Link, useLocation } from "@remix-run/react";
+import { useLocation, useNavigate } from "@remix-run/react";
 import { InlineStack, Text } from "@shopify/polaris";
 import { useI18n } from "../contexts/I18nContext";
 
 export function MainNavigation() {
   const location = useLocation();
+  const navigate = useNavigate();
   const { t } = useI18n();
 
   const tabs = [
@@ -12,6 +13,12 @@ export function MainNavigation() {
     { id: "tasks", label: t.nav.tasks, path: "/app/tasks" },
     { id: "settings", label: t.nav.settings, path: "/app/settings" },
   ];
+
+  const handleClick = (e: React.MouseEvent<HTMLAnchorElement>, path: string) => {
+    e.preventDefault();
+    console.log("Navigation clicked:", path);
+    navigate(path);
+  };
 
   return (
     <div
@@ -29,16 +36,17 @@ export function MainNavigation() {
               : location.pathname.startsWith(tab.path);
 
           return (
-            <Link
+            <a
               key={tab.id}
-              to={tab.path}
-              prefetch="intent"
+              href={tab.path}
+              onClick={(e) => handleClick(e, tab.path)}
               style={{
                 textDecoration: "none",
                 padding: "1rem 0.5rem",
                 borderBottom: isActive ? "3px solid #303030" : "3px solid transparent",
                 transition: "border-color 0.2s",
                 display: "inline-block",
+                cursor: "pointer",
               }}
             >
               <Text
@@ -49,7 +57,7 @@ export function MainNavigation() {
               >
                 {tab.label}
               </Text>
-            </Link>
+            </a>
           );
         })}
       </InlineStack>
