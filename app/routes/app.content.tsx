@@ -25,7 +25,7 @@ export default function ContentPage() {
   const [selectedType, setSelectedType] = useState<ContentType>("menus");
 
   return (
-    <Page title={`ContentPilot AI - ${shop}`}>
+    <Page fullWidth>
       <MainNavigation />
       <div style={{ padding: "1rem" }}>
         {/* Sub-Navigation for Content Types */}

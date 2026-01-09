@@ -44,7 +44,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const shopLocales = localesData.data.shopLocales;
     const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "de";
 
-    // Fetch products with all translations
+    // Get all available locales for fetching translations
+    const availableLocales = shopLocales.map((l: any) => l.locale);
+
+    // Fetch products
     const response = await admin.graphql(
       `#graphql
         query getProducts($first: Int!) {
@@ -64,11 +67,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
                   title
                   description
                 }
-                translations {
-                  key
-                  value
-                  locale
-                }
               }
             }
           }
@@ -77,7 +75,38 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     );
 
     const data = await response.json();
-    const products = data.data.products.edges.map((edge: any) => edge.node);
+    let products = data.data.products.edges.map((edge: any) => edge.node);
+
+    // Fetch translations for each product and each locale
+    for (const product of products) {
+      product.translations = [];
+
+      for (const locale of availableLocales) {
+        if (locale === primaryLocale) continue; // Skip primary locale
+
+        try {
+          const translationsResponse = await admin.graphql(
+            `#graphql
+              query getProductTranslations($resourceId: ID!, $locale: String!) {
+                translatableResource(resourceId: $resourceId) {
+                  translations(locale: $locale) {
+                    key
+                    value
+                    locale
+                  }
+                }
+              }`,
+            { variables: { resourceId: product.id, locale } }
+          );
+
+          const translationsData = await translationsResponse.json();
+          const translations = translationsData.data?.translatableResource?.translations || [];
+          product.translations.push(...translations);
+        } catch (err) {
+          console.error(`Failed to fetch translations for product ${product.id} locale ${locale}:`, err);
+        }
+      }
+    }
 
     return json({
       products,
@@ -590,7 +619,7 @@ export default function Index() {
   };
 
   return (
-    <Page title={`ContentPilot AI - ${shop}`}>
+    <Page fullWidth>
       <MainNavigation />
       <div style={{ height: "calc(100vh - 60px)", display: "flex", gap: "1rem", padding: "1rem", overflow: "hidden" }}>
         {/* Left: Product List */}
