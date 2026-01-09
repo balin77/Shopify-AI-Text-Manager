@@ -304,6 +304,10 @@ async function handleTranslateAll(
     let processedLocales = 0;
     const allTranslations: Record<string, any> = {};
 
+    console.log(`[TranslateAll] Starting translation for product ${productId}`);
+    console.log(`[TranslateAll] Fields to translate:`, Object.keys(changedFields));
+    console.log(`[TranslateAll] Target locales:`, targetLocales);
+
     // Update progress
     await db.task.update({
       where: { id: task.id },
@@ -313,14 +317,21 @@ async function handleTranslateAll(
     // Translate each locale one by one to prevent data loss
     for (const locale of targetLocales) {
       try {
+        console.log(`[TranslateAll] Starting translation for locale: ${locale}`);
+
         // Translate to this specific locale
         const localeTranslations = await translationService.translateProduct(changedFields, [locale]);
+        console.log(`[TranslateAll] Translation response for ${locale}:`, JSON.stringify(localeTranslations).substring(0, 200));
+
         const fields = localeTranslations[locale];
 
         if (!fields) {
-          console.warn(`No translations returned for locale ${locale}`);
+          console.warn(`[TranslateAll] No translations returned for locale ${locale}`);
+          console.warn(`[TranslateAll] Full response:`, localeTranslations);
           continue;
         }
+
+        console.log(`[TranslateAll] Successfully got translations for ${locale}, fields:`, Object.keys(fields));
 
         // Store translations
         allTranslations[locale] = fields;
@@ -333,8 +344,11 @@ async function handleTranslateAll(
         if (fields.seoTitle) translationsInput.push({ key: "seo_title", value: fields.seoTitle, locale });
         if (fields.metaDescription) translationsInput.push({ key: "seo_description", value: fields.metaDescription, locale });
 
+        console.log(`[TranslateAll] Saving ${translationsInput.length} translations to Shopify for ${locale}`);
+
         for (const translation of translationsInput) {
-          await admin.graphql(
+          console.log(`[TranslateAll] Saving field ${translation.key} for ${locale}`);
+          const response = await admin.graphql(
             `#graphql
               mutation translateProduct($resourceId: ID!, $translations: [TranslationInput!]!) {
                 translationsRegister(resourceId: $resourceId, translations: $translations) {
@@ -356,9 +370,18 @@ async function handleTranslateAll(
               },
             }
           );
+
+          const responseData = await response.json();
+          if (responseData.data?.translationsRegister?.userErrors?.length > 0) {
+            console.error(`[TranslateAll] Shopify API error for ${locale}:`, responseData.data.translationsRegister.userErrors);
+          } else {
+            console.log(`[TranslateAll] Successfully saved ${translation.key} for ${locale}`);
+          }
         }
 
         processedLocales++;
+        console.log(`[TranslateAll] Completed locale ${locale}. Progress: ${processedLocales}/${totalLocales}`);
+
         // Update progress after each locale
         const progressPercent = Math.round(10 + (processedLocales / totalLocales) * 90);
         await db.task.update({
@@ -366,10 +389,13 @@ async function handleTranslateAll(
           data: { progress: progressPercent, processed: processedLocales },
         });
       } catch (localeError: any) {
-        console.error(`Failed to translate to ${locale}:`, localeError);
+        console.error(`[TranslateAll] ERROR: Failed to translate to ${locale}:`, localeError);
+        console.error(`[TranslateAll] ERROR Stack:`, localeError.stack);
         // Continue with other locales even if one fails
       }
     }
+
+    console.log(`[TranslateAll] Finished all locales. Processed: ${processedLocales}/${totalLocales}`);
 
     // Mark task as completed
     let resultString = "";
