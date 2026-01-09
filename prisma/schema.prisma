@@ -34,6 +34,8 @@ model AISettings {
   geminiApiKey        String?
   claudeApiKey        String?
   openaiApiKey        String?
+  grokApiKey          String?
+  deepseekApiKey      String?
   preferredProvider   String   @default("huggingface")
   appLanguage         String   @default("de")
   createdAt           DateTime @default(now())

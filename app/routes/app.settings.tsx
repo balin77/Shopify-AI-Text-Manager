@@ -72,6 +72,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       geminiApiKey: settings.geminiApiKey || "",
       claudeApiKey: settings.claudeApiKey || "",
       openaiApiKey: settings.openaiApiKey || "",
+      grokApiKey: settings.grokApiKey || "",
+      deepseekApiKey: settings.deepseekApiKey || "",
       preferredProvider: settings.preferredProvider,
       appLanguage: settings.appLanguage || "de",
     },
@@ -134,6 +136,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const geminiApiKey = formData.get("geminiApiKey") as string;
       const claudeApiKey = formData.get("claudeApiKey") as string;
       const openaiApiKey = formData.get("openaiApiKey") as string;
+      const grokApiKey = formData.get("grokApiKey") as string;
+      const deepseekApiKey = formData.get("deepseekApiKey") as string;
       const preferredProvider = formData.get("preferredProvider") as string;
       const appLanguage = formData.get("appLanguage") as string;
 
@@ -144,6 +148,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           geminiApiKey: geminiApiKey || null,
           claudeApiKey: claudeApiKey || null,
           openaiApiKey: openaiApiKey || null,
+          grokApiKey: grokApiKey || null,
+          deepseekApiKey: deepseekApiKey || null,
           preferredProvider,
           appLanguage,
         },
@@ -153,6 +159,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           geminiApiKey: geminiApiKey || null,
           claudeApiKey: claudeApiKey || null,
           openaiApiKey: openaiApiKey || null,
+          grokApiKey: grokApiKey || null,
+          deepseekApiKey: deepseekApiKey || null,
           preferredProvider,
           appLanguage,
         },
