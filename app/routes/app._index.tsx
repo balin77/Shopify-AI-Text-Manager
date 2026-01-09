@@ -108,6 +108,7 @@ export default function Index() {
 
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
   const [currentLanguage, setCurrentLanguage] = useState(primaryLocale);
+  const [loadedTranslations, setLoadedTranslations] = useState<Record<string, any[]>>({});
 
   const selectedProduct = products.find((p: any) => p.id === selectedProductId);
 
@@ -128,6 +129,7 @@ export default function Index() {
     selectedProduct,
     currentLanguage,
     primaryLocale,
+    loadedTranslations,
   });
 
   const { aiSuggestions, removeSuggestion } = useAISuggestions(fetcher.data);
@@ -135,7 +137,8 @@ export default function Index() {
   // Load translations when language changes
   useEffect(() => {
     if (selectedProduct && currentLanguage !== primaryLocale) {
-      const hasTranslations = selectedProduct.translations?.some(
+      const itemKey = `${selectedProduct.id}_${currentLanguage}`;
+      const hasTranslations = loadedTranslations[itemKey] || selectedProduct.translations?.some(
         (t: any) => t.locale === currentLanguage
       );
 
@@ -146,17 +149,19 @@ export default function Index() {
         );
       }
     }
-  }, [selectedProductId, currentLanguage]);
+  }, [selectedProductId, currentLanguage, loadedTranslations]);
 
   // Handle loaded translations
   useEffect(() => {
     if (fetcher.data?.success && 'translations' in fetcher.data && 'locale' in fetcher.data) {
       const { locale, translations } = fetcher.data as any;
-      if (selectedProduct && locale) {
-        selectedProduct.translations = [
-          ...selectedProduct.translations.filter((t: any) => t.locale !== locale),
-          ...translations
-        ];
+      if (selectedProduct && locale && translations) {
+        // Store translations in state by product ID and locale
+        const itemKey = `${selectedProduct.id}_${locale}`;
+        setLoadedTranslations(prev => ({
+          ...prev,
+          [itemKey]: translations
+        }));
       }
     }
   }, [fetcher.data]);
@@ -186,6 +191,8 @@ export default function Index() {
     ) {
       const translations = (fetcher.data as any).translations;
       if (selectedProduct) {
+        const updatedTranslations = { ...loadedTranslations };
+
         for (const [locale, fields] of Object.entries(translations as any)) {
           const newTranslations = [];
           if (fields.title) newTranslations.push({ key: "title", value: fields.title, locale });
@@ -194,10 +201,9 @@ export default function Index() {
           if (fields.seoTitle) newTranslations.push({ key: "seo_title", value: fields.seoTitle, locale });
           if (fields.metaDescription) newTranslations.push({ key: "seo_description", value: fields.metaDescription, locale });
 
-          selectedProduct.translations = [
-            ...selectedProduct.translations.filter((t: any) => t.locale !== locale),
-            ...newTranslations
-          ];
+          // Store in loadedTranslations state
+          const itemKey = `${selectedProduct.id}_${locale}`;
+          updatedTranslations[itemKey] = newTranslations;
 
           // If we're currently viewing this locale, update the editable fields
           if (currentLanguage === locale) {
@@ -208,9 +214,52 @@ export default function Index() {
             if (fields.metaDescription) setEditableMetaDescription(fields.metaDescription);
           }
         }
+
+        // Update state once with all translations
+        setLoadedTranslations(updatedTranslations);
       }
     }
   }, [fetcher.data, currentLanguage]);
+
+  // Update translations in state after saving
+  useEffect(() => {
+    if (fetcher.data?.success &&
+        !('translations' in fetcher.data) &&
+        !('generatedContent' in fetcher.data) &&
+        !('translatedValue' in fetcher.data) &&
+        selectedProduct &&
+        currentLanguage !== primaryLocale) {
+      // This was a successful updateProduct action for a translation
+      const itemKey = `${selectedProduct.id}_${currentLanguage}`;
+
+      // Build updated translations array
+      const existingTranslations = loadedTranslations[itemKey] || [];
+      const updatedTranslations = [...existingTranslations];
+
+      // Helper to update or add a translation
+      const updateTranslation = (key: string, value: string) => {
+        const index = updatedTranslations.findIndex(t => t.key === key && t.locale === currentLanguage);
+        if (index >= 0) {
+          updatedTranslations[index] = { key, value, locale: currentLanguage };
+        } else {
+          updatedTranslations.push({ key, value, locale: currentLanguage });
+        }
+      };
+
+      // Update translations with current editable values
+      if (editableTitle) updateTranslation("title", editableTitle);
+      if (editableDescription) updateTranslation("body_html", editableDescription);
+      if (editableHandle) updateTranslation("handle", editableHandle);
+      if (editableSeoTitle) updateTranslation("seo_title", editableSeoTitle);
+      if (editableMetaDescription) updateTranslation("seo_description", editableMetaDescription);
+
+      // Update state
+      setLoadedTranslations(prev => ({
+        ...prev,
+        [itemKey]: updatedTranslations
+      }));
+    }
+  }, [fetcher.data]);
 
   const handleSaveProduct = () => {
     if (!selectedProductId || !hasChanges) return;
