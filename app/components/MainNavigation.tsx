@@ -1,4 +1,4 @@
-import { Link, useLocation } from "@remix-run/react";
+import { useLocation } from "@remix-run/react";
 import { InlineStack, Text } from "@shopify/polaris";
 import { useI18n } from "../contexts/I18nContext";
 
@@ -29,14 +29,15 @@ export function MainNavigation() {
               : location.pathname.startsWith(tab.path);
 
           return (
-            <Link
+            <a
               key={tab.id}
-              to={tab.path}
+              href={tab.path}
               style={{
                 textDecoration: "none",
                 padding: "1rem 0.5rem",
                 borderBottom: isActive ? "3px solid #303030" : "2px solid transparent",
                 transition: "border-color 0.2s",
+                display: "block",
               }}
             >
               <Text
@@ -47,7 +48,7 @@ export function MainNavigation() {
               >
                 {tab.label}
               </Text>
-            </Link>
+            </a>
           );
         })}
       </InlineStack>
