@@ -24,9 +24,14 @@ import { useI18n } from "../contexts/I18nContext";
 type ContentType = "collections" | "blogs" | "metaobjects" | "pages" | "policies" | "shopMetadata" | "menus" | "templates";
 
 const getContentTypes = (t: any) => [
-  { id: "blogs" as ContentType, label: t.content.blogs, icon: "📝" },
-  { id: "collections" as ContentType, label: t.content.collections, icon: "📂" },
-  { id: "pages" as ContentType, label: t.content.pages, icon: "📄" },
+  { id: "collections" as ContentType, label: t.content.collections, icon: "📂", description: t.content.collectionsDescription },
+  { id: "blogs" as ContentType, label: t.content.blogs, icon: "📝", description: t.content.blogsDescription },
+  { id: "metaobjects" as ContentType, label: t.content.metaobjects, icon: "🗂️", description: t.content.metaobjectsDescription, comingSoon: true },
+  { id: "pages" as ContentType, label: t.content.pages, icon: "📄", description: t.content.pagesDescription },
+  { id: "policies" as ContentType, label: t.content.policies, icon: "📋", description: t.content.policiesDescription, comingSoon: true },
+  { id: "shopMetadata" as ContentType, label: t.content.shopMetadata, icon: "🏷️", description: t.content.shopMetadataDescription, comingSoon: true },
+  { id: "menus" as ContentType, label: t.content.menus, icon: "🍔", description: t.content.menusDescription, comingSoon: true },
+  { id: "templates" as ContentType, label: t.content.templates, icon: "📧", description: t.content.templatesDescription, comingSoon: true },
 ];
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -1299,4 +1304,5 @@ export default function ContentPage() {
     </Page>
   );
 }
+
 
