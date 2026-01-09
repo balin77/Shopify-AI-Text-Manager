@@ -298,64 +298,77 @@ async function handleTranslateAll(
       return json({ success: false, error: "No fields to translate" }, { status: 400 });
     }
 
-    // Update progress
-    await db.task.update({
-      where: { id: task.id },
-      data: { progress: 20 },
-    });
-
-    const translations = await translationService.translateProduct(changedFields);
-    const totalLocales = Object.keys(translations).length;
+    // Get target locales
+    const targetLocales = ['en', 'fr', 'es', 'it'];
+    const totalLocales = targetLocales.length;
     let processedLocales = 0;
+    const allTranslations: Record<string, any> = {};
 
     // Update progress
     await db.task.update({
       where: { id: task.id },
-      data: { progress: 40, total: totalLocales, processed: 0 },
+      data: { progress: 10, total: totalLocales, processed: 0 },
     });
 
-    // Save translations to Shopify for all non-primary locales
-    for (const [locale, fields] of Object.entries(translations)) {
-      const translationsInput = [];
+    // Translate each locale one by one to prevent data loss
+    for (const locale of targetLocales) {
+      try {
+        // Translate to this specific locale
+        const localeTranslations = await translationService.translateProduct(changedFields, [locale]);
+        const fields = localeTranslations[locale];
 
-      if (fields.title) translationsInput.push({ key: "title", value: fields.title, locale });
-      if (fields.description) translationsInput.push({ key: "body_html", value: fields.description, locale });
-      if (fields.handle) translationsInput.push({ key: "handle", value: fields.handle, locale });
-      if (fields.seoTitle) translationsInput.push({ key: "seo_title", value: fields.seoTitle, locale });
-      if (fields.metaDescription) translationsInput.push({ key: "seo_description", value: fields.metaDescription, locale });
+        if (!fields) {
+          console.warn(`No translations returned for locale ${locale}`);
+          continue;
+        }
 
-      for (const translation of translationsInput) {
-        await admin.graphql(
-          `#graphql
-            mutation translateProduct($resourceId: ID!, $translations: [TranslationInput!]!) {
-              translationsRegister(resourceId: $resourceId, translations: $translations) {
-                userErrors {
-                  field
-                  message
+        // Store translations
+        allTranslations[locale] = fields;
+
+        // Save to Shopify immediately
+        const translationsInput = [];
+        if (fields.title) translationsInput.push({ key: "title", value: fields.title, locale });
+        if (fields.description) translationsInput.push({ key: "body_html", value: fields.description, locale });
+        if (fields.handle) translationsInput.push({ key: "handle", value: fields.handle, locale });
+        if (fields.seoTitle) translationsInput.push({ key: "seo_title", value: fields.seoTitle, locale });
+        if (fields.metaDescription) translationsInput.push({ key: "seo_description", value: fields.metaDescription, locale });
+
+        for (const translation of translationsInput) {
+          await admin.graphql(
+            `#graphql
+              mutation translateProduct($resourceId: ID!, $translations: [TranslationInput!]!) {
+                translationsRegister(resourceId: $resourceId, translations: $translations) {
+                  userErrors {
+                    field
+                    message
+                  }
+                  translations {
+                    locale
+                    key
+                    value
+                  }
                 }
-                translations {
-                  locale
-                  key
-                  value
-                }
-              }
-            }`,
-          {
-            variables: {
-              resourceId: productId,
-              translations: [translation]
-            },
-          }
-        );
+              }`,
+            {
+              variables: {
+                resourceId: productId,
+                translations: [translation]
+              },
+            }
+          );
+        }
+
+        processedLocales++;
+        // Update progress after each locale
+        const progressPercent = Math.round(10 + (processedLocales / totalLocales) * 90);
+        await db.task.update({
+          where: { id: task.id },
+          data: { progress: progressPercent, processed: processedLocales },
+        });
+      } catch (localeError: any) {
+        console.error(`Failed to translate to ${locale}:`, localeError);
+        // Continue with other locales even if one fails
       }
-
-      processedLocales++;
-      // Update progress after each locale
-      const progressPercent = Math.round(40 + (processedLocales / totalLocales) * 60);
-      await db.task.update({
-        where: { id: task.id },
-        data: { progress: progressPercent, processed: processedLocales },
-      });
     }
 
     // Mark task as completed
@@ -363,25 +376,27 @@ async function handleTranslateAll(
     try {
       resultString = JSON.stringify({
         success: true,
-        localesProcessed: Object.keys(translations).length,
-        locales: Object.keys(translations)
+        localesProcessed: processedLocales,
+        locales: Object.keys(allTranslations),
+        attempted: totalLocales
       });
     } catch (e) {
       // Fallback if JSON.stringify fails
-      resultString = `{"success":true,"localesProcessed":${Object.keys(translations).length}}`;
+      resultString = `{"success":true,"localesProcessed":${processedLocales},"attempted":${totalLocales}}`;
     }
 
     await db.task.update({
       where: { id: task.id },
       data: {
-        status: "completed",
+        status: processedLocales > 0 ? "completed" : "failed",
         progress: 100,
         completedAt: new Date(),
         result: resultString,
+        error: processedLocales === 0 ? "No locales were successfully translated" : null,
       },
     });
 
-    return json({ success: true, translations });
+    return json({ success: processedLocales > 0, translations: allTranslations, processedLocales, totalLocales });
   } catch (error: any) {
     // Mark task as failed
     const errorMessage = (error.message || String(error)).substring(0, 1000);
