@@ -29,7 +29,18 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       take: 50, // Limit to last 50 tasks
     });
 
-    return json({ tasks, shop: session.shop });
+    // Sanitize tasks to prevent JSON serialization errors
+    const sanitizedTasks = tasks.map(task => ({
+      ...task,
+      result: null, // Don't send result to client, we don't display it anyway
+      error: task.error ? String(task.error).substring(0, 500) : null,
+      startedAt: task.startedAt.toISOString(),
+      completedAt: task.completedAt ? task.completedAt.toISOString() : null,
+      createdAt: task.createdAt.toISOString(),
+      updatedAt: task.updatedAt.toISOString(),
+    }));
+
+    return json({ tasks: sanitizedTasks, shop: session.shop });
   } catch (error: any) {
     return json({ tasks: [], shop: session.shop, error: error.message }, { status: 500 });
   }
