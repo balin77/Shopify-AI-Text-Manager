@@ -314,6 +314,35 @@ async function handleTranslateAll(
       data: { progress: 10, total: totalLocales, processed: 0 },
     });
 
+    // First, get the translatableContent for this product
+    console.log(`[TranslateAll] Fetching translatableContent for product ${productId}`);
+    const translatableResponse = await admin.graphql(
+      `#graphql
+        query getTranslatableContent($resourceId: ID!) {
+          translatableResource(resourceId: $resourceId) {
+            resourceId
+            translatableContent {
+              key
+              value
+              digest
+              locale
+            }
+          }
+        }`,
+      { variables: { resourceId: productId } }
+    );
+
+    const translatableData = await translatableResponse.json();
+    const translatableContent = translatableData.data?.translatableResource?.translatableContent || [];
+    console.log(`[TranslateAll] Found ${translatableContent.length} translatable content items`);
+
+    // Create a map of key -> digest
+    const digestMap: Record<string, string> = {};
+    for (const content of translatableContent) {
+      digestMap[content.key] = content.digest;
+    }
+    console.log(`[TranslateAll] Digest map:`, digestMap);
+
     // Translate each locale one by one to prevent data loss
     for (const locale of targetLocales) {
       try {
@@ -338,16 +367,51 @@ async function handleTranslateAll(
 
         // Save to Shopify immediately
         const translationsInput = [];
-        if (fields.title) translationsInput.push({ key: "title", value: fields.title, locale });
-        if (fields.description) translationsInput.push({ key: "body_html", value: fields.description, locale });
-        if (fields.handle) translationsInput.push({ key: "handle", value: fields.handle, locale });
-        if (fields.seoTitle) translationsInput.push({ key: "seo_title", value: fields.seoTitle, locale });
-        if (fields.metaDescription) translationsInput.push({ key: "seo_description", value: fields.metaDescription, locale });
+        if (fields.title && digestMap['title']) {
+          translationsInput.push({
+            key: "title",
+            value: fields.title,
+            locale,
+            translatableContentDigest: digestMap['title']
+          });
+        }
+        if (fields.description && digestMap['body_html']) {
+          translationsInput.push({
+            key: "body_html",
+            value: fields.description,
+            locale,
+            translatableContentDigest: digestMap['body_html']
+          });
+        }
+        if (fields.handle && digestMap['handle']) {
+          translationsInput.push({
+            key: "handle",
+            value: fields.handle,
+            locale,
+            translatableContentDigest: digestMap['handle']
+          });
+        }
+        if (fields.seoTitle && digestMap['seo_title']) {
+          translationsInput.push({
+            key: "seo_title",
+            value: fields.seoTitle,
+            locale,
+            translatableContentDigest: digestMap['seo_title']
+          });
+        }
+        if (fields.metaDescription && digestMap['seo_description']) {
+          translationsInput.push({
+            key: "seo_description",
+            value: fields.metaDescription,
+            locale,
+            translatableContentDigest: digestMap['seo_description']
+          });
+        }
 
         console.log(`[TranslateAll] Saving ${translationsInput.length} translations to Shopify for ${locale}`);
 
         for (const translation of translationsInput) {
-          console.log(`[TranslateAll] Saving field ${translation.key} for ${locale}`);
+          console.log(`[TranslateAll] Saving field ${translation.key} for ${locale} with digest ${translation.translatableContentDigest}`);
           const response = await admin.graphql(
             `#graphql
               mutation translateProduct($resourceId: ID!, $translations: [TranslationInput!]!) {
