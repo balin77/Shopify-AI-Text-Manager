@@ -407,8 +407,8 @@ export default function ContentPage() {
         if (selectedType === "blogs") {
           setEditableDescription(selectedItem.body || "");
           setEditableHandle(selectedItem.handle);
-          setEditableSeoTitle(selectedItem.seo?.title || "");
-          setEditableMetaDescription(selectedItem.seo?.description || "");
+          setEditableSeoTitle("");
+          setEditableMetaDescription("");
         } else if (selectedType === "collections") {
           setEditableDescription(selectedItem.descriptionHtml || "");
           setEditableHandle(selectedItem.handle);
@@ -563,7 +563,6 @@ export default function ContentPage() {
   const handleTranslateField = (fieldType: string) => {
     if (!selectedItemId || !selectedItem) return;
 
-    // Use current editable values from primary language
     const sourceMap: Record<string, string> = {
       title: selectedItem.title || "",
       description: selectedType === "pages" ? (selectedItem.body || "") :
@@ -1103,8 +1102,8 @@ export default function ContentPage() {
                   </div>
                 )}
 
-                {/* SEO Fields (only for blogs and collections) */}
-                {(selectedType === "blogs" || selectedType === "collections") && (
+                {/* SEO Fields (only for blogs) */}
+                {selectedType === "blogs" && (
                   <>
                     {/* SEO Title */}
                     <div>
@@ -1184,7 +1183,7 @@ export default function ContentPage() {
         </div>
 
         {/* Right: SEO Sidebar */}
-        {selectedItem && currentLanguage === primaryLocale && (selectedType === "blogs" || selectedType === "collections") && (
+        {selectedItem && currentLanguage === primaryLocale && selectedType === "blogs" && (
           <div style={{ width: "320px", flexShrink: 0, overflow: "auto" }}>
             <SeoSidebar
               title={editableTitle}
