@@ -181,25 +181,33 @@ async function handleGenerateAIText(
     }
 
     // Update task to completed
+    let resultString = "";
+    try {
+      resultString = JSON.stringify({ generatedContent: generatedContent.substring(0, 500), fieldType });
+    } catch (e) {
+      resultString = JSON.stringify({ fieldType, success: true });
+    }
+
     await db.task.update({
       where: { id: task.id },
       data: {
         status: "completed",
         progress: 100,
         completedAt: new Date(),
-        result: JSON.stringify({ generatedContent, fieldType }),
+        result: resultString,
       },
     });
 
     return json({ success: true, generatedContent, fieldType });
   } catch (error: any) {
     // Update task to failed
+    const errorMessage = (error.message || String(error)).substring(0, 1000);
     await db.task.update({
       where: { id: task.id },
       data: {
         status: "failed",
         completedAt: new Date(),
-        error: error.message,
+        error: errorMessage,
       },
     });
 
@@ -357,19 +365,24 @@ async function handleTranslateAll(
         status: "completed",
         progress: 100,
         completedAt: new Date(),
-        result: JSON.stringify({ translations }),
+        result: JSON.stringify({
+          success: true,
+          localesProcessed: Object.keys(translations).length,
+          locales: Object.keys(translations)
+        }),
       },
     });
 
     return json({ success: true, translations });
   } catch (error: any) {
     // Mark task as failed
+    const errorMessage = (error.message || String(error)).substring(0, 1000);
     await db.task.update({
       where: { id: task.id },
       data: {
         status: "failed",
         completedAt: new Date(),
-        error: error.message,
+        error: errorMessage,
       },
     });
 
