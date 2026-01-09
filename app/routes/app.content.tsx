@@ -65,7 +65,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
                       id
                       title
                       handle
-                      contentHtml
+                      content
                       publishedAt
                     }
                   }
@@ -472,7 +472,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                     id
                     title
                     handle
-                    contentHtml
+                    content
                   }
                   userErrors {
                     field
@@ -571,7 +571,7 @@ export default function ContentPage() {
         setEditableTitle(selectedItem.title);
 
         if (selectedType === "blogs") {
-          setEditableDescription((selectedItem as any).contentHtml || selectedItem.body || "");
+          setEditableDescription((selectedItem as any).content || selectedItem.body || "");
           setEditableHandle(selectedItem.handle);
           setEditableSeoTitle("");
           setEditableMetaDescription("");
@@ -654,8 +654,8 @@ export default function ContentPage() {
       };
 
       const titleKey = "title";
-      const descKey = selectedType === "pages" ? "body" : selectedType === "blogs" ? "contentHtml" : "description";
-      const descFallback = selectedType === "pages" ? (selectedItem.body || "") : selectedType === "blogs" ? ((selectedItem as any).contentHtml || selectedItem.body || "") : (selectedItem.descriptionHtml || "");
+      const descKey = selectedType === "pages" ? "body" : selectedType === "blogs" ? "body_html" : "description";
+      const descFallback = selectedType === "pages" ? (selectedItem.body || "") : selectedType === "blogs" ? ((selectedItem as any).content || selectedItem.body || "") : (selectedItem.descriptionHtml || "");
 
       const titleChanged = editableTitle !== getOriginalValue(titleKey, selectedItem.title);
       const descChanged = editableDescription !== getOriginalValue(descKey, descFallback || "");
@@ -719,9 +719,9 @@ export default function ContentPage() {
     const sourceMap: Record<string, string> = {
       title: selectedItem.title || "",
       description: selectedType === "pages" ? (selectedItem.body || "") :
-                   selectedType === "blogs" ? ((selectedItem as any).contentHtml || selectedItem.body || "") :
+                   selectedType === "blogs" ? ((selectedItem as any).content || selectedItem.body || "") :
                    (selectedItem.descriptionHtml || ""),
-      body: selectedItem.body || (selectedItem as any).contentHtml || "",
+      body: selectedItem.body || (selectedItem as any).content || "",
       handle: selectedItem.handle || "",
       seoTitle: selectedItem.seo?.title || "",
       metaDescription: selectedItem.seo?.description || "",
