@@ -127,6 +127,7 @@ export default function Index() {
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
   const [currentLanguage, setCurrentLanguage] = useState(primaryLocale);
   const [loadedTranslations, setLoadedTranslations] = useState<Record<string, any[]>>({});
+  const [optionTranslations, setOptionTranslations] = useState<Record<string, { name: string; values: string[] }>>({});
 
   const selectedProduct = products.find((p: any) => p.id === selectedProductId);
 
@@ -245,6 +246,7 @@ export default function Index() {
         !('translations' in fetcher.data) &&
         !('generatedContent' in fetcher.data) &&
         !('translatedValue' in fetcher.data) &&
+        !('translatedName' in fetcher.data) &&
         selectedProduct &&
         currentLanguage !== primaryLocale) {
       // This was a successful updateProduct action for a translation
@@ -275,6 +277,20 @@ export default function Index() {
       setLoadedTranslations(prev => ({
         ...prev,
         [itemKey]: updatedTranslations
+      }));
+    }
+  }, [fetcher.data]);
+
+  // Handle translated option response
+  useEffect(() => {
+    if (fetcher.data?.success && 'translatedName' in fetcher.data && 'translatedValues' in fetcher.data) {
+      const { optionId, translatedName, translatedValues } = fetcher.data as any;
+      setOptionTranslations(prev => ({
+        ...prev,
+        [optionId]: {
+          name: translatedName,
+          values: translatedValues
+        }
       }));
     }
   }, [fetcher.data]);
@@ -364,6 +380,51 @@ export default function Index() {
     );
   };
 
+  // Product Options Handlers
+  const handleOptionNameChange = (optionId: string, value: string) => {
+    setOptionTranslations(prev => ({
+      ...prev,
+      [optionId]: {
+        ...prev[optionId],
+        name: value,
+        values: prev[optionId]?.values || []
+      }
+    }));
+  };
+
+  const handleOptionValueChange = (optionId: string, valueIndex: number, value: string) => {
+    setOptionTranslations(prev => {
+      const option = prev[optionId] || { name: "", values: [] };
+      const newValues = [...option.values];
+      newValues[valueIndex] = value;
+      return {
+        ...prev,
+        [optionId]: {
+          ...option,
+          values: newValues
+        }
+      };
+    });
+  };
+
+  const handleTranslateOption = (optionId: string) => {
+    if (!selectedProduct) return;
+    const option = selectedProduct.options?.find((opt: any) => opt.id === optionId);
+    if (!option) return;
+
+    fetcher.submit(
+      {
+        action: "translateOption",
+        productId: selectedProduct.id,
+        optionId,
+        optionName: option.name,
+        optionValues: JSON.stringify(option.values),
+        targetLocale: currentLanguage,
+      },
+      { method: "POST" }
+    );
+  };
+
   return (
     <Page fullWidth>
       <style>{`
@@ -426,6 +487,12 @@ export default function Index() {
             fetcherFormData={fetcher.formData}
             showSuccessBanner={fetcher.data?.success && !(fetcher.data as any).generatedContent}
             selectProductText={t.products.selectProduct}
+            optionTranslations={optionTranslations}
+            onOptionNameChange={handleOptionNameChange}
+            onOptionValueChange={handleOptionValueChange}
+            onTranslateOption={handleTranslateOption}
+            isTranslatingOption={fetcher.state !== "idle" && fetcher.formData?.get("action") === "translateOption"}
+            translatingOptionId={fetcher.formData?.get("optionId")?.toString()}
           />
         </div>
 
