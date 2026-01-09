@@ -450,10 +450,9 @@ export default function Index() {
         setEditableSeoTitle(getTranslatedValue("seo_title", currentLanguage, ""));
         setEditableMetaDescription(getTranslatedValue("seo_description", currentLanguage, ""));
       }
-      setAiSuggestions({});
       setHasChanges(false);
     }
-  }, [selectedProduct, currentLanguage]);
+  }, [selectedProductId, currentLanguage]);
 
   // Handle loaded translations
   useEffect(() => {
