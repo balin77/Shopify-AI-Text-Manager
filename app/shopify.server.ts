@@ -1,4 +1,5 @@
-import "@shopify/shopify-app-remix/adapters/node";
+// Removed node adapter import - using Web Fetch API instead
+// import "@shopify/shopify-app-remix/adapters/node";
 import {
   ApiVersion,
   AppDistribution,
