@@ -155,32 +155,67 @@ export default function Index() {
 
   // Load translations when language changes
   useEffect(() => {
+    console.log('=== FRONTEND: Load translations check ===');
+    console.log('selectedProduct:', selectedProduct?.id);
+    console.log('currentLanguage:', currentLanguage);
+    console.log('primaryLocale:', primaryLocale);
+    console.log('Is foreign language:', currentLanguage !== primaryLocale);
+
     if (selectedProduct && currentLanguage !== primaryLocale) {
       const itemKey = `${selectedProduct.id}_${currentLanguage}`;
-      const hasTranslations = loadedTranslations[itemKey] || selectedProduct.translations?.some(
+      const hasInLoadedState = !!loadedTranslations[itemKey];
+      const hasInProductObject = selectedProduct.translations?.some(
         (t: any) => t.locale === currentLanguage
       );
+      const hasTranslations = hasInLoadedState || hasInProductObject;
+
+      console.log('itemKey:', itemKey);
+      console.log('hasInLoadedState:', hasInLoadedState);
+      console.log('hasInProductObject:', hasInProductObject);
+      console.log('hasTranslations:', hasTranslations);
+      console.log('loadedTranslations:', loadedTranslations);
+      console.log('product.translations:', selectedProduct.translations);
 
       if (!hasTranslations) {
+        console.log('>>> SUBMITTING loadTranslations request <<<');
         fetcher.submit(
           { action: "loadTranslations", productId: selectedProduct.id, locale: currentLanguage },
           { method: "POST" }
         );
+      } else {
+        console.log('Translations already loaded, skipping request');
       }
     }
   }, [selectedProductId, currentLanguage, loadedTranslations]);
 
   // Handle loaded translations
   useEffect(() => {
+    console.log('=== FRONTEND: Handle loaded translations ===');
+    console.log('fetcher.data:', fetcher.data);
+    console.log('Has translations:', 'translations' in (fetcher.data || {}));
+    console.log('Has locale:', 'locale' in (fetcher.data || {}));
+
     if (fetcher.data?.success && 'translations' in fetcher.data && 'locale' in fetcher.data) {
       const { locale, translations } = fetcher.data as any;
+      console.log('Processing translations:');
+      console.log('- Locale:', locale);
+      console.log('- Translations:', translations);
+      console.log('- Selected product:', selectedProduct?.id);
+
       if (selectedProduct && locale && translations) {
         // Store translations in state by product ID and locale
         const itemKey = `${selectedProduct.id}_${locale}`;
-        setLoadedTranslations(prev => ({
-          ...prev,
-          [itemKey]: translations
-        }));
+        console.log('Storing translations with key:', itemKey);
+        console.log('Translation count:', translations.length);
+
+        setLoadedTranslations(prev => {
+          const updated = {
+            ...prev,
+            [itemKey]: translations
+          };
+          console.log('Updated loadedTranslations:', updated);
+          return updated;
+        });
       }
     }
   }, [fetcher.data]);
