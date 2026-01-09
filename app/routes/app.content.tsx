@@ -15,6 +15,7 @@ import {
   Banner,
   ButtonGroup,
 } from "@shopify/polaris";
+import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
 import { SeoSidebar } from "../components/SeoSidebar";
@@ -724,6 +725,7 @@ export default function ContentPage() {
 
   return (
     <Page fullWidth>
+      <TitleBar title={t.nav.otherContent} />
       <style>{`
         .description-editor h1 {
           font-size: 2em;

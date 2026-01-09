@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher } from "@remix-run/react";
 import { Page, Banner } from "@shopify/polaris";
+import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
 import { SeoSidebar } from "../components/SeoSidebar";
@@ -299,6 +300,7 @@ export default function Index() {
 
   return (
     <Page fullWidth>
+      <TitleBar title={t.nav.products} />
       <style>{`
         .description-editor h1 { font-size: 2em; font-weight: bold; margin: 0.67em 0; }
         .description-editor h2 { font-size: 1.5em; font-weight: bold; margin: 0.75em 0; }
