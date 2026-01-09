@@ -183,15 +183,15 @@ export function SeoSidebar({
     };
   };
 
-  const getScoreColor = (score: number): "success" | "warning" | "critical" => {
-    if (score >= 70) return "success";
-    if (score >= 40) return "warning";
+  const getScoreColor = (scoreValue: number): "success" | "warning" | "critical" => {
+    if (scoreValue >= 70) return "success";
+    if (scoreValue >= 40) return "warning";
     return "critical";
   };
 
-  const getScoreLabel = (score: number): string => {
-    if (score >= 70) return t.seo.scoreLabels.good;
-    if (score >= 40) return t.seo.scoreLabels.medium;
+  const getScoreLabel = (scoreValue: number): string => {
+    if (scoreValue >= 70) return t.seo.scoreLabels.good;
+    if (scoreValue >= 40) return t.seo.scoreLabels.medium;
     return t.seo.scoreLabels.poor;
   };
 
@@ -205,8 +205,8 @@ export function SeoSidebar({
               width: "80px",
               height: "80px",
               borderRadius: "50%",
-              background: score >= 70 ? "#e3f2e9" : score >= 40 ? "#fff4e5" : "#fbeae5",
-              border: `3px solid ${score >= 70 ? "#008060" : score >= 40 ? "#f59e00" : "#d72c0d"}`,
+              background: analysis.score >= 70 ? "#e3f2e9" : analysis.score >= 40 ? "#fff4e5" : "#fbeae5",
+              border: `3px solid ${analysis.score >= 70 ? "#008060" : analysis.score >= 40 ? "#f59e00" : "#d72c0d"}`,
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
@@ -223,13 +223,13 @@ export function SeoSidebar({
             <Text as="p" variant="headingMd">
               {t.seo.title}
             </Text>
-            <Badge tone={getScoreColor(analysis.score)}>{getScoreLabel(analysis.score)}</Badge>
+            <Badge tone={getScoreColor(analysis.score) as any}>{getScoreLabel(analysis.score)}</Badge>
           </div>
         </div>
 
         {/* Progress Bar */}
         <div>
-          <ProgressBar progress={analysis.score} tone={getScoreColor(analysis.score)} size="small" />
+          <ProgressBar progress={analysis.score} tone={getScoreColor(analysis.score) as any} size="small" />
         </div>
 
         {/* Issues Summary */}
