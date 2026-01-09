@@ -24,8 +24,14 @@ export function MainNavigation() {
       const isEmbedded = window.self !== window.top;
 
       if (isEmbedded) {
+        // Preserve current URL parameters (shop, host, etc.)
+        const currentParams = new URLSearchParams(window.location.search);
+        const newUrl = currentParams.toString()
+          ? `${path}?${currentParams.toString()}`
+          : path;
+
         // In embedded context, use window.location to force full page navigation
-        window.top!.location.href = path;
+        window.top!.location.href = newUrl;
       } else {
         // In standalone context, use Remix navigation
         navigate(path);
