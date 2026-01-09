@@ -720,6 +720,20 @@ export default function Index() {
     }
   }, [fetcher.data]);
 
+  // Handle "Accept & Translate" response - display translations as new suggestions
+  useEffect(() => {
+    if (fetcher.data?.success && 'translations' in fetcher.data && !('locale' in fetcher.data)) {
+      const fieldType = (fetcher.data as any).fieldType;
+      const translations = (fetcher.data as any).translations;
+
+      // Show all translations as suggestions for each locale
+      console.log("Übersetzungen erhalten:", translations);
+
+      // For now, just show a success message - user can manually translate to each language
+      // The translations are available but we'd need a more complex UI to show them all at once
+    }
+  }, [fetcher.data]);
+
   // Check if field is translated
   const isFieldTranslated = (key: string) => {
     if (currentLanguage === primaryLocale) return true;

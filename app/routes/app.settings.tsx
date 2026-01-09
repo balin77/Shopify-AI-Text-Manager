@@ -120,6 +120,7 @@ export default function SettingsPage() {
     { label: t.settings.languages.en, value: "en" },
   ];
 
+  const [selectedSection, setSelectedSection] = useState<"language" | "ai">("language");
   const [huggingfaceKey, setHuggingfaceKey] = useState(settings.huggingfaceApiKey);
   const [geminiKey, setGeminiKey] = useState(settings.geminiApiKey);
   const [claudeKey, setClaudeKey] = useState(settings.claudeApiKey);
@@ -161,17 +162,41 @@ export default function SettingsPage() {
           {/* Left Sidebar */}
           <div style={{ width: "250px", flexShrink: 0 }}>
             <Card padding="0">
-              <div
+              <button
+                onClick={() => setSelectedSection("language")}
                 style={{
+                  width: "100%",
                   padding: "1rem",
-                  background: "#f1f8f5",
-                  borderLeft: "3px solid #008060",
+                  background: selectedSection === "language" ? "#f1f8f5" : "white",
+                  borderLeft: selectedSection === "language" ? "3px solid #008060" : "3px solid transparent",
+                  border: "none",
+                  textAlign: "left",
+                  cursor: "pointer",
+                  transition: "all 0.2s",
                 }}
               >
-                <Text as="p" variant="bodyMd" fontWeight="semibold">
+                <Text as="p" variant="bodyMd" fontWeight={selectedSection === "language" ? "semibold" : "regular"}>
+                  {t.settings.appLanguage}
+                </Text>
+              </button>
+              <button
+                onClick={() => setSelectedSection("ai")}
+                style={{
+                  width: "100%",
+                  padding: "1rem",
+                  background: selectedSection === "ai" ? "#f1f8f5" : "white",
+                  borderLeft: selectedSection === "ai" ? "3px solid #008060" : "3px solid transparent",
+                  border: "none",
+                  borderTop: "1px solid #e1e3e5",
+                  textAlign: "left",
+                  cursor: "pointer",
+                  transition: "all 0.2s",
+                }}
+              >
+                <Text as="p" variant="bodyMd" fontWeight={selectedSection === "ai" ? "semibold" : "regular"}>
                   {t.settings.aiApiAccess}
                 </Text>
-              </div>
+              </button>
             </Card>
           </div>
 
@@ -190,31 +215,59 @@ export default function SettingsPage() {
                 </Banner>
               )}
 
-              <Card>
-                <BlockStack gap="500">
-                  <Text as="h2" variant="headingLg">
-                    {t.settings.manageAiKeys}
-                  </Text>
+              {/* Language Settings */}
+              {selectedSection === "language" && (
+                <Card>
+                  <BlockStack gap="500">
+                    <Text as="h2" variant="headingLg">
+                      {t.settings.appLanguage}
+                    </Text>
 
-                  <Text as="p" variant="bodyMd" tone="subdued">
-                    {t.settings.aiKeysDescription}
-                  </Text>
+                    <Text as="p" variant="bodyMd" tone="subdued">
+                      {t.settings.appLanguageDescription}
+                    </Text>
 
-                  <Select
-                    label={t.settings.appLanguage}
-                    options={APP_LANGUAGES}
-                    value={appLanguage}
-                    onChange={setAppLanguage}
-                    helpText={t.settings.appLanguageDescription}
-                  />
+                    <Select
+                      label={t.settings.appLanguage}
+                      options={APP_LANGUAGES}
+                      value={appLanguage}
+                      onChange={setAppLanguage}
+                      helpText={t.settings.appLanguageDescription}
+                    />
 
-                  <Select
-                    label={t.settings.preferredProvider}
-                    options={AI_PROVIDERS}
-                    value={provider}
-                    onChange={setProvider}
-                    helpText={t.settings.providerHelp}
-                  />
+                    <InlineStack align="end">
+                      <Button
+                        variant={hasChanges ? "primary" : undefined}
+                        onClick={handleSave}
+                        disabled={!hasChanges}
+                        loading={fetcher.state !== "idle"}
+                      >
+                        {t.products.saveChanges}
+                      </Button>
+                    </InlineStack>
+                  </BlockStack>
+                </Card>
+              )}
+
+              {/* AI Settings */}
+              {selectedSection === "ai" && (
+                <Card>
+                  <BlockStack gap="500">
+                    <Text as="h2" variant="headingLg">
+                      {t.settings.manageAiKeys}
+                    </Text>
+
+                    <Text as="p" variant="bodyMd" tone="subdued">
+                      {t.settings.aiKeysDescription}
+                    </Text>
+
+                    <Select
+                      label={t.settings.preferredProvider}
+                      options={AI_PROVIDERS}
+                      value={provider}
+                      onChange={setProvider}
+                      helpText={t.settings.providerHelp}
+                    />
 
                   <div style={{ paddingTop: "1rem", borderTop: "1px solid #e1e3e5" }}>
                     <BlockStack gap="400">
@@ -320,18 +373,19 @@ export default function SettingsPage() {
                     </BlockStack>
                   </div>
 
-                  <InlineStack align="end">
-                    <Button
-                      variant={hasChanges ? "primary" : undefined}
-                      onClick={handleSave}
-                      disabled={!hasChanges}
-                      loading={fetcher.state !== "idle"}
-                    >
-                      {t.products.saveChanges}
-                    </Button>
-                  </InlineStack>
-                </BlockStack>
-              </Card>
+                    <InlineStack align="end">
+                      <Button
+                        variant={hasChanges ? "primary" : undefined}
+                        onClick={handleSave}
+                        disabled={!hasChanges}
+                        loading={fetcher.state !== "idle"}
+                      >
+                        {t.products.saveChanges}
+                      </Button>
+                    </InlineStack>
+                  </BlockStack>
+                </Card>
+              )}
             </BlockStack>
           </div>
         </div>

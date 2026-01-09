@@ -65,12 +65,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
                       id
                       title
                       handle
-                      contentHtml
+                      content
                       publishedAt
-                      seo {
-                        title
-                        description
-                      }
                     }
                   }
                 }
@@ -442,11 +438,7 @@ Gib nur die Meta-Description zurück, ohne Erklärungen.`;
                     id
                     title
                     handle
-                    contentHtml
-                    seo {
-                      title
-                      description
-                    }
+                    content
                   }
                   userErrors {
                     field
@@ -545,10 +537,10 @@ export default function ContentPage() {
         setEditableTitle(selectedItem.title);
 
         if (selectedType === "blogs") {
-          setEditableDescription(selectedItem.contentHtml || "");
+          setEditableDescription(selectedItem.content || "");
           setEditableHandle(selectedItem.handle);
-          setEditableSeoTitle(selectedItem.seo?.title || "");
-          setEditableMetaDescription(selectedItem.seo?.description || "");
+          setEditableSeoTitle("");
+          setEditableMetaDescription("");
         } else if (selectedType === "collections") {
           setEditableDescription(selectedItem.descriptionHtml || "");
           setEditableHandle(selectedItem.handle);
@@ -629,7 +621,7 @@ export default function ContentPage() {
 
       const titleKey = "title";
       const descKey = selectedType === "pages" ? "body" : selectedType === "blogs" ? "content" : "description";
-      const descFallback = selectedType === "pages" ? selectedItem.body : selectedType === "blogs" ? selectedItem.contentHtml : selectedItem.descriptionHtml;
+      const descFallback = selectedType === "pages" ? selectedItem.body : selectedType === "blogs" ? selectedItem.content : selectedItem.descriptionHtml;
 
       const titleChanged = editableTitle !== getOriginalValue(titleKey, selectedItem.title);
       const descChanged = editableDescription !== getOriginalValue(descKey, descFallback || "");
@@ -693,9 +685,9 @@ export default function ContentPage() {
     const sourceMap: Record<string, string> = {
       title: selectedItem.title,
       description: selectedType === "pages" ? (selectedItem.body || "") :
-                   selectedType === "blogs" ? (selectedItem.contentHtml || "") :
+                   selectedType === "blogs" ? (selectedItem.content || "") :
                    (selectedItem.descriptionHtml || ""),
-      body: selectedItem.body || selectedItem.contentHtml || "",
+      body: selectedItem.body || selectedItem.content || "",
       handle: selectedItem.handle || "",
       seoTitle: selectedItem.seo?.title || "",
       metaDescription: selectedItem.seo?.description || "",
