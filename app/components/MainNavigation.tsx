@@ -1,10 +1,9 @@
-import { useLocation, useNavigate } from "@remix-run/react";
+import { Link, useLocation } from "@remix-run/react";
 import { InlineStack, Text } from "@shopify/polaris";
 import { useI18n } from "../contexts/I18nContext";
 
 export function MainNavigation() {
   const location = useLocation();
-  const navigate = useNavigate();
   const { t } = useI18n();
 
   const tabs = [
@@ -13,31 +12,6 @@ export function MainNavigation() {
     { id: "tasks", label: t.nav.tasks, path: "/app/tasks" },
     { id: "settings", label: t.nav.settings, path: "/app/settings" },
   ];
-
-  const handleClick = (e: React.MouseEvent, path: string) => {
-    e.preventDefault();
-    e.stopPropagation();
-
-    // Force navigation using window.location in embedded context
-    if (typeof window !== "undefined") {
-      // Check if we're in an embedded Shopify context
-      const isEmbedded = window.self !== window.top;
-
-      if (isEmbedded) {
-        // Preserve current URL parameters (shop, host, etc.)
-        const currentParams = new URLSearchParams(window.location.search);
-        const newUrl = currentParams.toString()
-          ? `${path}?${currentParams.toString()}`
-          : path;
-
-        // In embedded context, use window.location to force full page navigation
-        window.top!.location.href = newUrl;
-      } else {
-        // In standalone context, use Remix navigation
-        navigate(path);
-      }
-    }
-  };
 
   return (
     <div
@@ -55,17 +29,15 @@ export function MainNavigation() {
               : location.pathname.startsWith(tab.path);
 
           return (
-            <a
+            <Link
               key={tab.id}
-              href={tab.path}
-              onClick={(e) => handleClick(e, tab.path)}
+              to={tab.path}
               style={{
                 textDecoration: "none",
                 padding: "1rem 0.5rem",
                 borderBottom: isActive ? "3px solid #303030" : "3px solid transparent",
                 transition: "border-color 0.2s",
                 display: "inline-block",
-                cursor: "pointer",
               }}
             >
               <Text
@@ -76,7 +48,7 @@ export function MainNavigation() {
               >
                 {tab.label}
               </Text>
-            </a>
+            </Link>
           );
         })}
       </InlineStack>
