@@ -353,6 +353,7 @@ export default function ContentPage() {
   const [currentLanguage, setCurrentLanguage] = useState(primaryLocale);
   const [aiSuggestions, setAiSuggestions] = useState<Record<string, string>>({});
   const [hasChanges, setHasChanges] = useState(false);
+  const [loadedTranslations, setLoadedTranslations] = useState<Record<string, any[]>>({});
 
   // Editable fields
   const [editableTitle, setEditableTitle] = useState("");
@@ -386,7 +387,11 @@ export default function ContentPage() {
       return fallback;
     }
 
-    const translation = selectedItem.translations?.find(
+    // First check loaded translations state
+    const itemKey = `${selectedItem.id}_${locale}`;
+    const translations = loadedTranslations[itemKey] || selectedItem.translations || [];
+
+    const translation = translations.find(
       (t: any) => t.key === key && t.locale === locale
     );
 
@@ -417,7 +422,8 @@ export default function ContentPage() {
         }
       } else {
         // Check if translations for this locale are already loaded
-        const hasTranslations = selectedItem.translations?.some(
+        const itemKey = `${selectedItem.id}_${currentLanguage}`;
+        const hasTranslations = loadedTranslations[itemKey] || selectedItem.translations?.some(
           (t: any) => t.locale === currentLanguage
         );
 
@@ -431,34 +437,8 @@ export default function ContentPage() {
             },
             { method: "POST" }
           );
-        }
-
-        const titleKey = "title";
-        const descKey = selectedType === "pages" ? "body" : selectedType === "blogs" ? "body_html" : "description";
-
-        setEditableTitle(getTranslatedValue(titleKey, currentLanguage, ""));
-        setEditableDescription(getTranslatedValue(descKey, currentLanguage, ""));
-        setEditableHandle(getTranslatedValue("handle", currentLanguage, ""));
-        setEditableSeoTitle(getTranslatedValue("seo_title", currentLanguage, ""));
-        setEditableMetaDescription(getTranslatedValue("seo_description", currentLanguage, ""));
-      }
-      setHasChanges(false);
-    }
-  }, [selectedItemId, currentLanguage]);
-
-  // Handle loaded translations
-  useEffect(() => {
-    if (fetcher.data?.success && 'translations' in fetcher.data && 'locale' in fetcher.data) {
-      const loadedLocale = (fetcher.data as any).locale;
-      const loadedTranslations = (fetcher.data as any).translations;
-
-      if (selectedItem && loadedLocale) {
-        selectedItem.translations = [
-          ...selectedItem.translations.filter((t: any) => t.locale !== loadedLocale),
-          ...loadedTranslations
-        ];
-
-        if (loadedLocale === currentLanguage) {
+        } else {
+          // Translations are already loaded, update the fields
           const titleKey = "title";
           const descKey = selectedType === "pages" ? "body" : selectedType === "blogs" ? "body_html" : "description";
 
@@ -467,6 +447,44 @@ export default function ContentPage() {
           setEditableHandle(getTranslatedValue("handle", currentLanguage, ""));
           setEditableSeoTitle(getTranslatedValue("seo_title", currentLanguage, ""));
           setEditableMetaDescription(getTranslatedValue("seo_description", currentLanguage, ""));
+        }
+      }
+      setHasChanges(false);
+    }
+  }, [selectedItemId, currentLanguage, loadedTranslations]);
+
+  // Handle loaded translations
+  useEffect(() => {
+    if (fetcher.data?.success && 'translations' in fetcher.data && 'locale' in fetcher.data) {
+      const loadedLocale = (fetcher.data as any).locale;
+      const translations = (fetcher.data as any).translations;
+
+      if (selectedItem && loadedLocale && translations) {
+        // Store translations in state by item ID and locale
+        const itemKey = `${selectedItem.id}_${loadedLocale}`;
+
+        setLoadedTranslations(prev => ({
+          ...prev,
+          [itemKey]: translations
+        }));
+
+        // Only update fields if this is for the current language
+        if (loadedLocale === currentLanguage) {
+          const titleKey = "title";
+          const descKey = selectedType === "pages" ? "body" : selectedType === "blogs" ? "body_html" : "description";
+
+          // Get values from the newly loaded translations
+          const newTitle = translations.find((t: any) => t.key === titleKey)?.value || "";
+          const newDesc = translations.find((t: any) => t.key === descKey)?.value || "";
+          const newHandle = translations.find((t: any) => t.key === "handle")?.value || "";
+          const newSeoTitle = translations.find((t: any) => t.key === "seo_title")?.value || "";
+          const newMetaDesc = translations.find((t: any) => t.key === "seo_description")?.value || "";
+
+          setEditableTitle(newTitle);
+          setEditableDescription(newDesc);
+          setEditableHandle(newHandle);
+          setEditableSeoTitle(newSeoTitle);
+          setEditableMetaDescription(newMetaDesc);
         }
       }
     }
@@ -689,11 +707,57 @@ export default function ContentPage() {
     }
   }, [fetcher.data]);
 
+  // Update translations in state after saving
+  useEffect(() => {
+    if (fetcher.data?.success &&
+        !('translations' in fetcher.data) &&
+        !('generatedContent' in fetcher.data) &&
+        !('translatedValue' in fetcher.data) &&
+        selectedItem &&
+        currentLanguage !== primaryLocale) {
+      // This was a successful updateContent action for a translation
+      const itemKey = `${selectedItem.id}_${currentLanguage}`;
+      const titleKey = "title";
+      const descKey = selectedType === "pages" ? "body" : selectedType === "blogs" ? "body_html" : "description";
+
+      // Build updated translations array
+      const existingTranslations = loadedTranslations[itemKey] || [];
+      const updatedTranslations = [...existingTranslations];
+
+      // Helper to update or add a translation
+      const updateTranslation = (key: string, value: string) => {
+        const index = updatedTranslations.findIndex(t => t.key === key && t.locale === currentLanguage);
+        if (index >= 0) {
+          updatedTranslations[index] = { key, value, locale: currentLanguage };
+        } else {
+          updatedTranslations.push({ key, value, locale: currentLanguage });
+        }
+      };
+
+      // Update translations with current editable values
+      if (editableTitle) updateTranslation(titleKey, editableTitle);
+      if (editableDescription) updateTranslation(descKey, editableDescription);
+      if (editableHandle) updateTranslation("handle", editableHandle);
+      if (editableSeoTitle) updateTranslation("seo_title", editableSeoTitle);
+      if (editableMetaDescription) updateTranslation("seo_description", editableMetaDescription);
+
+      // Update state
+      setLoadedTranslations(prev => ({
+        ...prev,
+        [itemKey]: updatedTranslations
+      }));
+    }
+  }, [fetcher.data]);
+
   const isFieldTranslated = (key: string) => {
     if (currentLanguage === primaryLocale) return true;
     if (!selectedItem) return false;
 
-    const translation = selectedItem.translations?.find(
+    // Check loaded translations state
+    const itemKey = `${selectedItem.id}_${currentLanguage}`;
+    const translations = loadedTranslations[itemKey] || selectedItem.translations || [];
+
+    const translation = translations.find(
       (t: any) => t.key === key && t.locale === currentLanguage
     );
 
