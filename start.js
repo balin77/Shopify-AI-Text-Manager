@@ -14,6 +14,6 @@ if (process.env.DATABASE_URL) {
   console.log('DATABASE_URL not found, skipping Prisma migration');
 }
 
-// Start the Remix server
-console.log('Starting Remix server...');
-execSync('npx remix-serve ./build/server/index.js', { stdio: 'inherit' });
+// Start the Express server (instead of remix-serve)
+console.log('Starting Express server...');
+execSync('node server.js', { stdio: 'inherit' });
