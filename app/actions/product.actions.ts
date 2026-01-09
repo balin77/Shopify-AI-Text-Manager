@@ -359,17 +359,25 @@ async function handleTranslateAll(
     }
 
     // Mark task as completed
+    let resultString = "";
+    try {
+      resultString = JSON.stringify({
+        success: true,
+        localesProcessed: Object.keys(translations).length,
+        locales: Object.keys(translations)
+      });
+    } catch (e) {
+      // Fallback if JSON.stringify fails
+      resultString = `{"success":true,"localesProcessed":${Object.keys(translations).length}}`;
+    }
+
     await db.task.update({
       where: { id: task.id },
       data: {
         status: "completed",
         progress: 100,
         completedAt: new Date(),
-        result: JSON.stringify({
-          success: true,
-          localesProcessed: Object.keys(translations).length,
-          locales: Object.keys(translations)
-        }),
+        result: resultString,
       },
     });
 
