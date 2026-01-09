@@ -1,5 +1,4 @@
-// Removed node adapter import - using Web Fetch API instead
-// import "@shopify/shopify-app-remix/adapters/node";
+import "@shopify/shopify-app-remix/adapters/node";
 import {
   ApiVersion,
   AppDistribution,
@@ -19,6 +18,9 @@ const shopify = shopifyApp({
   sessionStorage: new PrismaSessionStorage(prisma),
   distribution: AppDistribution.AppStore,
   restResources: restResources as any,
+  future: {
+    unstable_newEmbeddedAuthStrategy: true,
+  },
   hooks: {
     afterAuth: async ({ session }) => {
       shopify.registerWebhooks({ session });
