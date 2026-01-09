@@ -152,9 +152,9 @@ export default function SettingsPage() {
                 </Banner>
               )}
 
-              {fetcher.data?.error && (
+              {fetcher.data && !fetcher.data.success && 'error' in fetcher.data && (
                 <Banner title="Fehler" tone="critical">
-                  {fetcher.data.error}
+                  {fetcher.data.error as string}
                 </Banner>
               )}
 

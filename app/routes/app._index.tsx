@@ -44,9 +44,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const shopLocales = localesData.data.shopLocales;
     const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "de";
 
-    // Get all available locales for fetching translations
-    const availableLocales = shopLocales.map((l: any) => l.locale);
-
     // Fetch products
     const response = await admin.graphql(
       `#graphql
@@ -77,35 +74,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const data = await response.json();
     let products = data.data.products.edges.map((edge: any) => edge.node);
 
-    // Fetch translations for each product and each locale
+    // Initialize empty translations array for each product
+    // We'll load translations on-demand when a product is selected to avoid slow page loads
     for (const product of products) {
       product.translations = [];
-
-      for (const locale of availableLocales) {
-        if (locale === primaryLocale) continue; // Skip primary locale
-
-        try {
-          const translationsResponse = await admin.graphql(
-            `#graphql
-              query getProductTranslations($resourceId: ID!, $locale: String!) {
-                translatableResource(resourceId: $resourceId) {
-                  translations(locale: $locale) {
-                    key
-                    value
-                    locale
-                  }
-                }
-              }`,
-            { variables: { resourceId: product.id, locale } }
-          );
-
-          const translationsData = await translationsResponse.json();
-          const translations = translationsData.data?.translatableResource?.translations || [];
-          product.translations.push(...translations);
-        } catch (err) {
-          console.error(`Failed to fetch translations for product ${product.id} locale ${locale}:`, err);
-        }
-      }
     }
 
     return json({
@@ -148,6 +120,33 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   const aiService = new AIService(provider, config);
   const translationService = new TranslationService(provider, config);
+
+  if (action === "loadTranslations") {
+    const locale = formData.get("locale") as string;
+
+    try {
+      const translationsResponse = await admin.graphql(
+        `#graphql
+          query getProductTranslations($resourceId: ID!, $locale: String!) {
+            translatableResource(resourceId: $resourceId) {
+              translations(locale: $locale) {
+                key
+                value
+                locale
+              }
+            }
+          }`,
+        { variables: { resourceId: productId, locale } }
+      );
+
+      const translationsData = await translationsResponse.json();
+      const translations = translationsData.data?.translatableResource?.translations || [];
+
+      return json({ success: true, translations, locale });
+    } catch (error: any) {
+      return json({ success: false, error: error.message }, { status: 500 });
+    }
+  }
 
   if (action === "generateAIText") {
     const fieldType = formData.get("fieldType") as string;
@@ -407,6 +406,23 @@ export default function Index() {
         setEditableSeoTitle(selectedProduct.seo?.title || "");
         setEditableMetaDescription(selectedProduct.seo?.description || "");
       } else {
+        // Check if translations for this locale are already loaded
+        const hasTranslations = selectedProduct.translations?.some(
+          (t: any) => t.locale === currentLanguage
+        );
+
+        if (!hasTranslations) {
+          // Load translations for this locale
+          fetcher.submit(
+            {
+              action: "loadTranslations",
+              productId: selectedProduct.id,
+              locale: currentLanguage,
+            },
+            { method: "POST" }
+          );
+        }
+
         setEditableTitle(getTranslatedValue("title", currentLanguage, ""));
         setEditableDescription(getTranslatedValue("body_html", currentLanguage, ""));
         setEditableHandle(getTranslatedValue("handle", currentLanguage, ""));
@@ -417,6 +433,31 @@ export default function Index() {
       setHasChanges(false);
     }
   }, [selectedProduct, currentLanguage]);
+
+  // Handle loaded translations
+  useEffect(() => {
+    if (fetcher.data?.success && 'translations' in fetcher.data && 'locale' in fetcher.data) {
+      const loadedLocale = (fetcher.data as any).locale;
+      const loadedTranslations = (fetcher.data as any).translations;
+
+      // Update the product with new translations
+      if (selectedProduct && loadedLocale) {
+        selectedProduct.translations = [
+          ...selectedProduct.translations.filter((t: any) => t.locale !== loadedLocale),
+          ...loadedTranslations
+        ];
+
+        // Update fields if this is the current language
+        if (loadedLocale === currentLanguage) {
+          setEditableTitle(getTranslatedValue("title", currentLanguage, ""));
+          setEditableDescription(getTranslatedValue("body_html", currentLanguage, ""));
+          setEditableHandle(getTranslatedValue("handle", currentLanguage, ""));
+          setEditableSeoTitle(getTranslatedValue("seo_title", currentLanguage, ""));
+          setEditableMetaDescription(getTranslatedValue("seo_description", currentLanguage, ""));
+        }
+      }
+    }
+  }, [fetcher.data]);
 
   // Track changes
   useEffect(() => {
