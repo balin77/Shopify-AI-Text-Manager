@@ -684,6 +684,8 @@ export default function SettingsPage() {
 
                           {descriptionFormatMode === "html" ? (
                             <textarea
+                              id="description-format-textarea"
+                              name="descriptionFormat"
                               value={descriptionFormat}
                               onChange={(e) => setDescriptionFormat(e.target.value)}
                               placeholder="z.B. <h2>Entdecken Sie unsere handgefertigte Ledertasche</h2><p>Premium Qualität...</p>"
@@ -700,6 +702,7 @@ export default function SettingsPage() {
                             />
                           ) : (
                             <div
+                              id="description-format-contenteditable"
                               ref={descriptionFormatEditorRef}
                               contentEditable
                               onInput={(e) => setDescriptionFormat(e.currentTarget.innerHTML)}
@@ -715,6 +718,8 @@ export default function SettingsPage() {
                                 background: "white",
                               }}
                               className="description-editor"
+                              role="textbox"
+                              aria-label="Formatbeispiel für Beschreibung"
                             />
                           )}
                           <Text as="p" variant="bodySm" tone="subdued">

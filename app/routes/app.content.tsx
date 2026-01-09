@@ -950,6 +950,8 @@ export default function ContentPage() {
                   <div style={{ background: getFieldBackgroundColor(selectedType === "pages" ? "body" : selectedType === "blogs" ? "body_html" : "description"), borderRadius: "8px", padding: "1px" }}>
                     {descriptionMode === "html" ? (
                       <textarea
+                        id="content-description-textarea"
+                        name="description"
                         value={editableDescription}
                         onChange={(e) => setEditableDescription(e.target.value)}
                         style={{
@@ -965,6 +967,7 @@ export default function ContentPage() {
                       />
                     ) : (
                       <div
+                        id="content-description-contenteditable"
                         ref={descriptionEditorRef}
                         contentEditable
                         onInput={(e) => setEditableDescription(e.currentTarget.innerHTML)}
@@ -979,6 +982,8 @@ export default function ContentPage() {
                           lineHeight: "1.6",
                         }}
                         className="description-editor"
+                        role="textbox"
+                        aria-label={selectedType === "pages" ? t.content.content : t.content.description}
                       />
                     )}
                   </div>

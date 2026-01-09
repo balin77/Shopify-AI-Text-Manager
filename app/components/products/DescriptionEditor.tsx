@@ -146,6 +146,8 @@ export function DescriptionEditor({
       <div style={{ background: backgroundColor, borderRadius: "8px", padding: "1px" }}>
         {mode === "html" ? (
           <textarea
+            id="description-editor-textarea"
+            name="description"
             value={value}
             onChange={(e) => onChange(e.target.value)}
             style={{
@@ -162,6 +164,7 @@ export function DescriptionEditor({
           />
         ) : (
           <div
+            id="description-editor-contenteditable"
             ref={editorRef}
             contentEditable
             onInput={(e) => onChange(e.currentTarget.innerHTML)}
@@ -177,6 +180,8 @@ export function DescriptionEditor({
               lineHeight: "1.6",
             }}
             className="description-editor"
+            role="textbox"
+            aria-label={label}
           />
         )}
       </div>
