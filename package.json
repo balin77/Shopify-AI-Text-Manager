@@ -22,7 +22,7 @@
     "@anthropic-ai/sdk": "^0.71.2",
     "@google/generative-ai": "^0.24.1",
     "@huggingface/inference": "^4.13.5",
-    "@prisma/client": "^5.22.0",
+    "@prisma/client": "^6.19.0",
     "@remix-run/node": "^2.17.3",
     "@remix-run/react": "^2.17.3",
     "@remix-run/serve": "^2.17.3",
@@ -45,7 +45,7 @@
     "@types/node": "^25.0.3",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
-    "prisma": "^5.22.0",
+    "prisma": "^6.19.0",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
     "vite": "^5.4.21"
