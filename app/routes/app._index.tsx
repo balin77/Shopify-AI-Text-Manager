@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData } from "@remix-run/react";
+import { useLoaderData, Link } from "@remix-run/react";
 import {
   Page,
   Layout,
@@ -53,12 +53,13 @@ export default function Index() {
                 </Text>
               </BlockStack>
 
-              <Button
-                variant="primary"
-                url="/app/products"
-              >
-                Produkte verwalten
-              </Button>
+              <Link to="/app/products" style={{ textDecoration: 'none' }}>
+                <Button
+                  variant="primary"
+                >
+                  Produkte verwalten
+                </Button>
+              </Link>
             </BlockStack>
           </Card>
         </Layout.Section>
