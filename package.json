@@ -4,12 +4,16 @@
   "description": "",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc",
-    "start": "node dist/index.js",
-    "dev": "tsx src/index.ts",
-    "oauth": "tsx src/oauth-setup.ts",
-    "web": "tsx web-app/server.ts",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "build": "prisma generate && prisma db push --accept-data-loss && remix vite:build",
+    "dev": "remix vite:dev",
+    "start": "remix-serve ./build/server/index.js",
+    "typecheck": "tsc",
+    "prisma:generate": "prisma generate",
+    "prisma:push": "prisma db push",
+    "shopify": "shopify app dev",
+    "deploy": "shopify app deploy",
+    "web:old": "tsx web-app/server.ts",
+    "oauth:old": "tsx src/oauth-setup.ts"
   },
   "keywords": [],
   "author": "",
@@ -18,15 +22,32 @@
     "@anthropic-ai/sdk": "^0.71.2",
     "@google/generative-ai": "^0.24.1",
     "@huggingface/inference": "^4.13.5",
+    "@prisma/client": "^5.22.0",
+    "@remix-run/node": "^2.17.3",
+    "@remix-run/react": "^2.17.3",
+    "@remix-run/serve": "^2.17.3",
+    "@shopify/app-bridge": "^3.7.11",
+    "@shopify/app-bridge-react": "^4.2.8",
+    "@shopify/polaris": "^13.9.5",
     "@shopify/shopify-api": "^12.2.0",
+    "@shopify/shopify-app-remix": "^4.1.0",
+    "@shopify/shopify-app-session-storage-prisma": "^8.0.0",
     "@types/express": "^5.0.6",
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
-    "openai": "^6.15.0"
+    "openai": "^6.15.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "remix": "^2.17.3"
   },
   "devDependencies": {
+    "@remix-run/dev": "^2.17.3",
     "@types/node": "^25.0.3",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "prisma": "^5.22.0",
     "tsx": "^4.21.0",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vite": "^5.4.21"
   }
 }
