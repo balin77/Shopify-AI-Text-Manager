@@ -4,9 +4,10 @@
   "description": "",
   "main": "dist/index.js",
   "scripts": {
-    "build": "prisma generate && prisma db push --accept-data-loss && remix vite:build",
+    "build": "remix vite:build",
+    "postinstall": "prisma generate || true",
     "dev": "remix vite:dev",
-    "start": "remix-serve ./build/server/index.js",
+    "start": "prisma db push --accept-data-loss && remix-serve ./build/server/index.js",
     "typecheck": "tsc",
     "prisma:generate": "prisma generate",
     "prisma:push": "prisma db push",
