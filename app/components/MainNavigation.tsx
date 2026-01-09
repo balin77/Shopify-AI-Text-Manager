@@ -1,10 +1,13 @@
-import { Link, useLocation } from "@remix-run/react";
+import { useLocation, useNavigate } from "@remix-run/react";
 import { InlineStack, Text } from "@shopify/polaris";
 import { useI18n } from "../contexts/I18nContext";
+import { useEffect, useRef } from "react";
 
 export function MainNavigation() {
   const location = useLocation();
+  const navigate = useNavigate();
   const { t } = useI18n();
+  const appBridgeRef = useRef<any>(null);
 
   const tabs = [
     { id: "products", label: t.nav.products, path: "/app" },
@@ -12,6 +15,39 @@ export function MainNavigation() {
     { id: "tasks", label: t.nav.tasks, path: "/app/tasks" },
     { id: "settings", label: t.nav.settings, path: "/app/settings" },
   ];
+
+  useEffect(() => {
+    // Initialize Shopify App Bridge if in embedded context
+    if (typeof window !== "undefined" && (window as any).shopify?.environment) {
+      try {
+        const shopifyConfig = (window as any).shopifyConfig;
+        if (shopifyConfig && (window as any).shopify?.createApp) {
+          appBridgeRef.current = (window as any).shopify.createApp({
+            apiKey: shopifyConfig.apiKey,
+            host: shopifyConfig.host,
+          });
+        }
+      } catch (error) {
+        console.error("Failed to initialize Shopify App Bridge:", error);
+      }
+    }
+  }, []);
+
+  const handleNavigation = (path: string) => {
+    // Check if we're in Shopify embedded context
+    if (appBridgeRef.current && (window as any).shopify?.Redirect) {
+      try {
+        const Redirect = (window as any).shopify.Redirect.create(appBridgeRef.current);
+        Redirect.dispatch((window as any).shopify.Redirect.Action.APP, path);
+      } catch (error) {
+        console.error("App Bridge navigation failed, falling back to navigate:", error);
+        navigate(path);
+      }
+    } else {
+      // Fallback to regular navigation
+      navigate(path);
+    }
+  };
 
   return (
     <div
@@ -29,14 +65,17 @@ export function MainNavigation() {
               : location.pathname.startsWith(tab.path);
 
           return (
-            <Link
+            <button
               key={tab.id}
-              to={tab.path}
+              onClick={() => handleNavigation(tab.path)}
               style={{
                 textDecoration: "none",
                 padding: "1rem 0.5rem",
-                borderBottom: isActive ? "3px solid #303030" : "2px solid transparent",
+                borderBottom: isActive ? "3px solid #303030" : "3px solid transparent",
                 transition: "border-color 0.2s",
+                background: "none",
+                border: "none",
+                cursor: "pointer",
               }}
             >
               <Text
@@ -47,7 +86,7 @@ export function MainNavigation() {
               >
                 {tab.label}
               </Text>
-            </Link>
+            </button>
           );
         })}
       </InlineStack>
