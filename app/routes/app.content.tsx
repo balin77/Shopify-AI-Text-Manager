@@ -18,9 +18,18 @@ import {
 import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
 import { SeoSidebar } from "../components/SeoSidebar";
+import { AISuggestionBanner } from "../components/AISuggestionBanner";
 import { AIService } from "../../src/services/ai.service";
 import { TranslationService } from "../../src/services/translation.service";
 import { useI18n } from "../contexts/I18nContext";
+import { GET_TRANSLATIONS } from "../graphql/content.queries";
+import {
+  TRANSLATE_CONTENT,
+  UPDATE_PAGE,
+  UPDATE_COLLECTION,
+  UPDATE_ARTICLE
+} from "../graphql/content.mutations";
+import { ContentService } from "../services/content.service";
 
 type ContentType = "collections" | "blogs" | "metaobjects" | "pages" | "policies" | "shopMetadata" | "menus" | "templates";
 
@@ -39,124 +48,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
 
   try {
-    // Fetch shop locales
-    const localesResponse = await admin.graphql(
-      `#graphql
-        query getShopLocales {
-          shopLocales {
-            locale
-            name
-            primary
-            published
-          }
-        }`
-    );
-
-    const localesData = await localesResponse.json();
-    const shopLocales = localesData.data.shopLocales;
-    const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "de";
-
-    // Fetch blogs with articles
-    const blogsResponse = await admin.graphql(
-      `#graphql
-        query getBlogs($first: Int!) {
-          blogs(first: $first) {
-            edges {
-              node {
-                id
-                title
-                handle
-                articles(first: 50) {
-                  edges {
-                    node {
-                      id
-                      title
-                      handle
-                      body
-                      publishedAt
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }`,
-      { variables: { first: 50 } }
-    );
-
-    const blogsData = await blogsResponse.json();
-    console.log('=== BLOGS API RESPONSE ===');
-    console.log('Raw blogs data:', JSON.stringify(blogsData, null, 2));
-    console.log('Number of blogs:', blogsData.data?.blogs?.edges?.length || 0);
-
-    const blogs = blogsData.data.blogs.edges.map((edge: any) => ({
-      ...edge.node,
-      articles: edge.node.articles.edges.map((a: any) => ({ ...a.node, translations: [] }))
-    }));
-    console.log('Processed blogs:', blogs.length);
-
-    // Fetch collections
-    const collectionsResponse = await admin.graphql(
-      `#graphql
-        query getCollections($first: Int!) {
-          collections(first: $first) {
-            edges {
-              node {
-                id
-                title
-                handle
-                descriptionHtml
-                seo {
-                  title
-                  description
-                }
-              }
-            }
-          }
-        }`,
-      { variables: { first: 50 } }
-    );
-
-    const collectionsData = await collectionsResponse.json();
-    console.log('=== COLLECTIONS API RESPONSE ===');
-    console.log('Raw collections data:', JSON.stringify(collectionsData, null, 2));
-    console.log('Number of collections:', collectionsData.data?.collections?.edges?.length || 0);
-
-    const collections = collectionsData.data.collections.edges.map((edge: any) => ({
-      ...edge.node,
-      translations: []
-    }));
-    console.log('Processed collections:', collections.length);
-
-    // Fetch pages
-    const pagesResponse = await admin.graphql(
-      `#graphql
-        query getPages($first: Int!) {
-          pages(first: $first) {
-            edges {
-              node {
-                id
-                title
-                handle
-                bodySummary
-                body
-              }
-            }
-          }
-        }`,
-      { variables: { first: 50 } }
-    );
-
-    const pagesData = await pagesResponse.json();
-    console.log('=== PAGES API RESPONSE ===');
-    console.log('Raw pages data:', JSON.stringify(pagesData, null, 2));
-    console.log('Number of pages:', pagesData.data?.pages?.edges?.length || 0);
-
-    const pages = pagesData.data.pages.edges.map((edge: any) => ({
-      ...edge.node,
-      translations: []
-    }));
-    console.log('Processed pages:', pages.length);
+    const contentService = new ContentService(admin);
+    const { shopLocales, blogs, collections, pages, primaryLocale } = await contentService.getAllContent();
 
     return json({
       blogs,
@@ -212,19 +105,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const locale = formData.get("locale") as string;
 
     try {
-      const translationsResponse = await admin.graphql(
-        `#graphql
-          query getTranslations($resourceId: ID!, $locale: String!) {
-            translatableResource(resourceId: $resourceId) {
-              translations(locale: $locale) {
-                key
-                value
-                locale
-              }
-            }
-          }`,
-        { variables: { resourceId: itemId, locale } }
-      );
+      const translationsResponse = await admin.graphql(GET_TRANSLATIONS, {
+        variables: { resourceId: itemId, locale }
+      });
 
       const translationsData = await translationsResponse.json();
       const translations = translationsData.data?.translatableResource?.translations || [];
@@ -359,61 +242,28 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         }
 
         for (const translation of translationsInput) {
-          await admin.graphql(
-            `#graphql
-              mutation translateContent($resourceId: ID!, $translations: [TranslationInput!]!) {
-                translationsRegister(resourceId: $resourceId, translations: $translations) {
-                  userErrors {
-                    field
-                    message
-                  }
-                  translations {
-                    locale
-                    key
-                    value
-                  }
-                }
-              }`,
-            {
-              variables: {
-                resourceId: itemId,
-                translations: [translation]
-              },
+          await admin.graphql(TRANSLATE_CONTENT, {
+            variables: {
+              resourceId: itemId,
+              translations: [translation]
             }
-          );
+          });
         }
 
         return json({ success: true });
       } else {
         // Update primary locale
         if (contentType === "pages") {
-          const response = await admin.graphql(
-            `#graphql
-              mutation updatePage($id: ID!, $page: PageInput!) {
-                pageUpdate(id: $id, page: $page) {
-                  page {
-                    id
-                    title
-                    handle
-                    body
-                  }
-                  userErrors {
-                    field
-                    message
-                  }
-                }
-              }`,
-            {
-              variables: {
-                id: itemId,
-                page: {
-                  title,
-                  handle,
-                  body: description,
-                },
+          const response = await admin.graphql(UPDATE_PAGE, {
+            variables: {
+              id: itemId,
+              page: {
+                title,
+                handle,
+                body: description,
               },
             }
-          );
+          });
 
           const data = await response.json();
           if (data.data.pageUpdate.userErrors.length > 0) {
@@ -425,41 +275,20 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
           return json({ success: true, item: data.data.pageUpdate.page });
         } else if (contentType === "collections") {
-          const response = await admin.graphql(
-            `#graphql
-              mutation updateCollection($input: CollectionInput!) {
-                collectionUpdate(input: $input) {
-                  collection {
-                    id
-                    title
-                    handle
-                    descriptionHtml
-                    seo {
-                      title
-                      description
-                    }
-                  }
-                  userErrors {
-                    field
-                    message
-                  }
-                }
-              }`,
-            {
-              variables: {
-                input: {
-                  id: itemId,
-                  title,
-                  handle,
-                  descriptionHtml: description,
-                  seo: {
-                    title: seoTitle,
-                    description: metaDescription,
-                  },
+          const response = await admin.graphql(UPDATE_COLLECTION, {
+            variables: {
+              input: {
+                id: itemId,
+                title,
+                handle,
+                descriptionHtml: description,
+                seo: {
+                  title: seoTitle,
+                  description: metaDescription,
                 },
               },
             }
-          );
+          });
 
           const data = await response.json();
           if (data.data.collectionUpdate.userErrors.length > 0) {
@@ -471,37 +300,20 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
           return json({ success: true, item: data.data.collectionUpdate.collection });
         } else if (contentType === "blogs") {
-          const response = await admin.graphql(
-            `#graphql
-              mutation updateArticle($id: ID!, $article: ArticleUpdateInput!) {
-                articleUpdate(id: $id, article: $article) {
-                  article {
-                    id
-                    title
-                    handle
-                    body
-                  }
-                  userErrors {
-                    field
-                    message
-                  }
-                }
-              }`,
-            {
-              variables: {
-                id: itemId,
-                article: {
-                  title,
-                  handle,
-                  body: description,
-                  seo: seoTitle || metaDescription ? {
-                    title: seoTitle || undefined,
-                    description: metaDescription || undefined,
-                  } : undefined,
-                },
+          const response = await admin.graphql(UPDATE_ARTICLE, {
+            variables: {
+              id: itemId,
+              article: {
+                title,
+                handle,
+                body: description,
+                seo: seoTitle || metaDescription ? {
+                  title: seoTitle || undefined,
+                  description: metaDescription || undefined,
+                } : undefined,
               },
             }
-          );
+          });
 
           const data = await response.json();
           if (data.data.articleUpdate.userErrors.length > 0) {
@@ -886,24 +698,20 @@ export default function ContentPage() {
   };
 
   const renderAISuggestion = (fieldType: string, suggestionText: string) => (
-    <div style={{ marginTop: "0.5rem", padding: "1rem", background: "#f0f9ff", border: "1px solid #0891b2", borderRadius: "8px" }}>
-      <BlockStack gap="300">
-        <Text as="p" variant="bodyMd" fontWeight="semibold">{t.content.aiSuggestion}</Text>
-        {fieldType === "description" || fieldType === "body" ? (
-          <div dangerouslySetInnerHTML={{ __html: suggestionText }} />
-        ) : (
-          <Text as="p" variant="bodyMd">{suggestionText}</Text>
-        )}
-        <InlineStack gap="200">
-          <Button size="slim" variant="primary" onClick={() => handleAcceptSuggestion(fieldType)}>
-            {t.content.accept}
-          </Button>
-          <Button size="slim" onClick={() => setAiSuggestions(prev => { const newSuggestions = { ...prev }; delete newSuggestions[fieldType]; return newSuggestions; })}>
-            {t.content.decline}
-          </Button>
-        </InlineStack>
-      </BlockStack>
-    </div>
+    <AISuggestionBanner
+      fieldType={fieldType}
+      suggestionText={suggestionText}
+      isHtml={fieldType === "description" || fieldType === "body"}
+      onAccept={() => handleAcceptSuggestion(fieldType)}
+      onDecline={() => setAiSuggestions(prev => {
+        const newSuggestions = { ...prev };
+        delete newSuggestions[fieldType];
+        return newSuggestions;
+      })}
+      acceptLabel={t.content.accept}
+      declineLabel={t.content.decline}
+      titleLabel={t.content.aiSuggestion}
+    />
   );
 
   return (
