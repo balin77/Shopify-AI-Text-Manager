@@ -216,8 +216,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         } else {
           prompt += `\n\nDie Meta-Description sollte:\n- 150-160 Zeichen lang sein\n- Keywords enthalten\n- Zum Klicken anregen\n- Den Produktnutzen klar kommunizieren\n- Einen Call-to-Action enthalten`;
         }
-        prompt += `\n\nGib nur die Meta-Description zurück, ohne Erklärungen.`;
-        generatedContent = await aiService.generateProductDescription(contextTitle, prompt);
+        prompt += `\n\nGib nur die Meta-Description als reinen Text zurück, ohne HTML-Tags und ohne Erklärungen.`;
+        generatedContent = await aiService.generateProductTitle(prompt);
       }
 
       return json({ success: true, generatedContent, fieldType });
