@@ -104,9 +104,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const action = formData.get("action");
   const productId = formData.get("productId") as string;
 
-  // Load AI settings from database
+  // Load AI settings and instructions from database
   const { db } = await import("../db.server");
   const aiSettings = await db.aISettings.findUnique({
+    where: { shop: session.shop },
+  });
+
+  const aiInstructions = await db.aIInstructions.findUnique({
     where: { shop: session.shop },
   });
 
@@ -158,49 +162,61 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       let generatedContent = "";
 
       if (fieldType === "title") {
-        generatedContent = await aiService.generateProductTitle(contextDescription || currentValue);
+        let prompt = `Erstelle einen optimierten Produkttitel.`;
+        if (aiInstructions?.titleFormat) {
+          prompt += `\n\nFormatbeispiel:\n${aiInstructions.titleFormat}`;
+        }
+        if (aiInstructions?.titleInstructions) {
+          prompt += `\n\nAnweisungen:\n${aiInstructions.titleInstructions}`;
+        }
+        prompt += `\n\nKontext:\n${contextDescription || currentValue}\n\nGib nur den Titel zurück, ohne Erklärungen.`;
+        generatedContent = await aiService.generateProductTitle(prompt);
       } else if (fieldType === "description") {
-        generatedContent = await aiService.generateProductDescription(contextTitle, currentValue);
+        let prompt = `Erstelle eine optimierte Produktbeschreibung für: ${contextTitle}`;
+        if (aiInstructions?.descriptionFormat) {
+          prompt += `\n\nFormatbeispiel:\n${aiInstructions.descriptionFormat}`;
+        }
+        if (aiInstructions?.descriptionInstructions) {
+          prompt += `\n\nAnweisungen:\n${aiInstructions.descriptionInstructions}`;
+        }
+        prompt += `\n\nAktueller Inhalt:\n${currentValue}\n\nGib nur die Beschreibung zurück, ohne Erklärungen.`;
+        generatedContent = await aiService.generateProductDescription(contextTitle, prompt);
       } else if (fieldType === "handle") {
-        const prompt = `Erstelle einen SEO-freundlichen URL-Slug (handle) für dieses Produkt:
-Titel: ${contextTitle}
-Beschreibung: ${contextDescription}
-
-Der Slug sollte:
-- Nur Kleinbuchstaben und Bindestriche enthalten
-- Keine Sonderzeichen oder Umlaute haben
-- Kurz und prägnant sein (2-5 Wörter)
-- SEO-optimiert sein
-
-Gib nur den Slug zurück, ohne Erklärungen.`;
+        let prompt = `Erstelle einen SEO-freundlichen URL-Slug (handle) für dieses Produkt:\nTitel: ${contextTitle}\nBeschreibung: ${contextDescription}`;
+        if (aiInstructions?.handleFormat) {
+          prompt += `\n\nFormatbeispiel:\n${aiInstructions.handleFormat}`;
+        }
+        if (aiInstructions?.handleInstructions) {
+          prompt += `\n\nAnweisungen:\n${aiInstructions.handleInstructions}`;
+        } else {
+          prompt += `\n\nDer Slug sollte:\n- Nur Kleinbuchstaben und Bindestriche enthalten\n- Keine Sonderzeichen oder Umlaute haben\n- Kurz und prägnant sein (2-5 Wörter)\n- SEO-optimiert sein`;
+        }
+        prompt += `\n\nGib nur den Slug zurück, ohne Erklärungen.`;
         generatedContent = await aiService.generateProductTitle(prompt);
         generatedContent = generatedContent.toLowerCase().trim();
       } else if (fieldType === "seoTitle") {
-        const prompt = `Erstelle einen optimierten SEO-Titel für dieses Produkt:
-Titel: ${contextTitle}
-Beschreibung: ${contextDescription}
-
-Der SEO-Titel sollte:
-- Max. 60 Zeichen lang sein
-- Keywords enthalten
-- Zum Klicken anregen
-- Den Produktnutzen kommunizieren
-
-Gib nur den SEO-Titel zurück, ohne Erklärungen.`;
+        let prompt = `Erstelle einen optimierten SEO-Titel für dieses Produkt:\nTitel: ${contextTitle}\nBeschreibung: ${contextDescription}`;
+        if (aiInstructions?.seoTitleFormat) {
+          prompt += `\n\nFormatbeispiel:\n${aiInstructions.seoTitleFormat}`;
+        }
+        if (aiInstructions?.seoTitleInstructions) {
+          prompt += `\n\nAnweisungen:\n${aiInstructions.seoTitleInstructions}`;
+        } else {
+          prompt += `\n\nDer SEO-Titel sollte:\n- Max. 60 Zeichen lang sein\n- Keywords enthalten\n- Zum Klicken anregen\n- Den Produktnutzen kommunizieren`;
+        }
+        prompt += `\n\nGib nur den SEO-Titel zurück, ohne Erklärungen.`;
         generatedContent = await aiService.generateProductTitle(prompt);
       } else if (fieldType === "metaDescription") {
-        const prompt = `Erstelle eine optimierte Meta-Description für dieses Produkt:
-Titel: ${contextTitle}
-Beschreibung: ${contextDescription}
-
-Die Meta-Description sollte:
-- 150-160 Zeichen lang sein
-- Keywords enthalten
-- Zum Klicken anregen
-- Den Produktnutzen klar kommunizieren
-- Einen Call-to-Action enthalten
-
-Gib nur die Meta-Description zurück, ohne Erklärungen.`;
+        let prompt = `Erstelle eine optimierte Meta-Description für dieses Produkt:\nTitel: ${contextTitle}\nBeschreibung: ${contextDescription}`;
+        if (aiInstructions?.metaDescFormat) {
+          prompt += `\n\nFormatbeispiel:\n${aiInstructions.metaDescFormat}`;
+        }
+        if (aiInstructions?.metaDescInstructions) {
+          prompt += `\n\nAnweisungen:\n${aiInstructions.metaDescInstructions}`;
+        } else {
+          prompt += `\n\nDie Meta-Description sollte:\n- 150-160 Zeichen lang sein\n- Keywords enthalten\n- Zum Klicken anregen\n- Den Produktnutzen klar kommunizieren\n- Einen Call-to-Action enthalten`;
+        }
+        prompt += `\n\nGib nur die Meta-Description zurück, ohne Erklärungen.`;
         generatedContent = await aiService.generateProductDescription(contextTitle, prompt);
       }
 

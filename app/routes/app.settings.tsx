@@ -51,6 +51,19 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     });
   }
 
+  // Fetch AI instructions
+  let instructions = await db.aIInstructions.findUnique({
+    where: { shop: session.shop },
+  });
+
+  if (!instructions) {
+    instructions = await db.aIInstructions.create({
+      data: {
+        shop: session.shop,
+      },
+    });
+  }
+
   return json({
     shop: session.shop,
     settings: {
@@ -61,50 +74,98 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       preferredProvider: settings.preferredProvider,
       appLanguage: settings.appLanguage || "de",
     },
+    instructions: {
+      titleFormat: instructions.titleFormat || "",
+      titleInstructions: instructions.titleInstructions || "",
+      descriptionFormat: instructions.descriptionFormat || "",
+      descriptionInstructions: instructions.descriptionInstructions || "",
+      handleFormat: instructions.handleFormat || "",
+      handleInstructions: instructions.handleInstructions || "",
+      seoTitleFormat: instructions.seoTitleFormat || "",
+      seoTitleInstructions: instructions.seoTitleInstructions || "",
+      metaDescFormat: instructions.metaDescFormat || "",
+      metaDescInstructions: instructions.metaDescInstructions || "",
+    },
   });
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const formData = await request.formData();
-
-  const huggingfaceApiKey = formData.get("huggingfaceApiKey") as string;
-  const geminiApiKey = formData.get("geminiApiKey") as string;
-  const claudeApiKey = formData.get("claudeApiKey") as string;
-  const openaiApiKey = formData.get("openaiApiKey") as string;
-  const preferredProvider = formData.get("preferredProvider") as string;
-  const appLanguage = formData.get("appLanguage") as string;
+  const actionType = formData.get("actionType") as string;
 
   try {
-    await db.aISettings.upsert({
-      where: { shop: session.shop },
-      update: {
-        huggingfaceApiKey: huggingfaceApiKey || null,
-        geminiApiKey: geminiApiKey || null,
-        claudeApiKey: claudeApiKey || null,
-        openaiApiKey: openaiApiKey || null,
-        preferredProvider,
-        appLanguage,
-      },
-      create: {
-        shop: session.shop,
-        huggingfaceApiKey: huggingfaceApiKey || null,
-        geminiApiKey: geminiApiKey || null,
-        claudeApiKey: claudeApiKey || null,
-        openaiApiKey: openaiApiKey || null,
-        preferredProvider,
-        appLanguage,
-      },
-    });
+    if (actionType === "saveInstructions") {
+      // Save AI instructions
+      await db.aIInstructions.upsert({
+        where: { shop: session.shop },
+        update: {
+          titleFormat: (formData.get("titleFormat") as string) || null,
+          titleInstructions: (formData.get("titleInstructions") as string) || null,
+          descriptionFormat: (formData.get("descriptionFormat") as string) || null,
+          descriptionInstructions: (formData.get("descriptionInstructions") as string) || null,
+          handleFormat: (formData.get("handleFormat") as string) || null,
+          handleInstructions: (formData.get("handleInstructions") as string) || null,
+          seoTitleFormat: (formData.get("seoTitleFormat") as string) || null,
+          seoTitleInstructions: (formData.get("seoTitleInstructions") as string) || null,
+          metaDescFormat: (formData.get("metaDescFormat") as string) || null,
+          metaDescInstructions: (formData.get("metaDescInstructions") as string) || null,
+        },
+        create: {
+          shop: session.shop,
+          titleFormat: (formData.get("titleFormat") as string) || null,
+          titleInstructions: (formData.get("titleInstructions") as string) || null,
+          descriptionFormat: (formData.get("descriptionFormat") as string) || null,
+          descriptionInstructions: (formData.get("descriptionInstructions") as string) || null,
+          handleFormat: (formData.get("handleFormat") as string) || null,
+          handleInstructions: (formData.get("handleInstructions") as string) || null,
+          seoTitleFormat: (formData.get("seoTitleFormat") as string) || null,
+          seoTitleInstructions: (formData.get("seoTitleInstructions") as string) || null,
+          metaDescFormat: (formData.get("metaDescFormat") as string) || null,
+          metaDescInstructions: (formData.get("metaDescInstructions") as string) || null,
+        },
+      });
 
-    return json({ success: true });
+      return json({ success: true });
+    } else {
+      // Save AI settings
+      const huggingfaceApiKey = formData.get("huggingfaceApiKey") as string;
+      const geminiApiKey = formData.get("geminiApiKey") as string;
+      const claudeApiKey = formData.get("claudeApiKey") as string;
+      const openaiApiKey = formData.get("openaiApiKey") as string;
+      const preferredProvider = formData.get("preferredProvider") as string;
+      const appLanguage = formData.get("appLanguage") as string;
+
+      await db.aISettings.upsert({
+        where: { shop: session.shop },
+        update: {
+          huggingfaceApiKey: huggingfaceApiKey || null,
+          geminiApiKey: geminiApiKey || null,
+          claudeApiKey: claudeApiKey || null,
+          openaiApiKey: openaiApiKey || null,
+          preferredProvider,
+          appLanguage,
+        },
+        create: {
+          shop: session.shop,
+          huggingfaceApiKey: huggingfaceApiKey || null,
+          geminiApiKey: geminiApiKey || null,
+          claudeApiKey: claudeApiKey || null,
+          openaiApiKey: openaiApiKey || null,
+          preferredProvider,
+          appLanguage,
+        },
+      });
+
+      return json({ success: true });
+    }
   } catch (error: any) {
     return json({ success: false, error: error.message }, { status: 500 });
   }
 };
 
 export default function SettingsPage() {
-  const { shop, settings } = useLoaderData<typeof loader>();
+  const { shop, settings, instructions } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const { t } = useI18n();
 
@@ -120,7 +181,7 @@ export default function SettingsPage() {
     { label: t.settings.languages.en, value: "en" },
   ];
 
-  const [selectedSection, setSelectedSection] = useState<"language" | "ai">("language");
+  const [selectedSection, setSelectedSection] = useState<"language" | "ai" | "instructions">("language");
   const [huggingfaceKey, setHuggingfaceKey] = useState(settings.huggingfaceApiKey);
   const [geminiKey, setGeminiKey] = useState(settings.geminiApiKey);
   const [claudeKey, setClaudeKey] = useState(settings.claudeApiKey);
@@ -129,29 +190,83 @@ export default function SettingsPage() {
   const [appLanguage, setAppLanguage] = useState(settings.appLanguage);
   const [hasChanges, setHasChanges] = useState(false);
 
+  // AI Instructions state
+  const [titleFormat, setTitleFormat] = useState(instructions.titleFormat);
+  const [titleInstructions, setTitleInstructions] = useState(instructions.titleInstructions);
+  const [descriptionFormat, setDescriptionFormat] = useState(instructions.descriptionFormat);
+  const [descriptionInstructions, setDescriptionInstructions] = useState(instructions.descriptionInstructions);
+  const [handleFormat, setHandleFormat] = useState(instructions.handleFormat);
+  const [handleInstructions, setHandleInstructions] = useState(instructions.handleInstructions);
+  const [seoTitleFormat, setSeoTitleFormat] = useState(instructions.seoTitleFormat);
+  const [seoTitleInstructions, setSeoTitleInstructions] = useState(instructions.seoTitleInstructions);
+  const [metaDescFormat, setMetaDescFormat] = useState(instructions.metaDescFormat);
+  const [metaDescInstructions, setMetaDescInstructions] = useState(instructions.metaDescInstructions);
+
   useEffect(() => {
-    const changed =
-      huggingfaceKey !== settings.huggingfaceApiKey ||
-      geminiKey !== settings.geminiApiKey ||
-      claudeKey !== settings.claudeApiKey ||
-      openaiKey !== settings.openaiApiKey ||
-      provider !== settings.preferredProvider ||
-      appLanguage !== settings.appLanguage;
-    setHasChanges(changed);
-  }, [huggingfaceKey, geminiKey, claudeKey, openaiKey, provider, appLanguage, settings]);
+    if (selectedSection === "instructions") {
+      const changed =
+        titleFormat !== instructions.titleFormat ||
+        titleInstructions !== instructions.titleInstructions ||
+        descriptionFormat !== instructions.descriptionFormat ||
+        descriptionInstructions !== instructions.descriptionInstructions ||
+        handleFormat !== instructions.handleFormat ||
+        handleInstructions !== instructions.handleInstructions ||
+        seoTitleFormat !== instructions.seoTitleFormat ||
+        seoTitleInstructions !== instructions.seoTitleInstructions ||
+        metaDescFormat !== instructions.metaDescFormat ||
+        metaDescInstructions !== instructions.metaDescInstructions;
+      setHasChanges(changed);
+    } else {
+      const changed =
+        huggingfaceKey !== settings.huggingfaceApiKey ||
+        geminiKey !== settings.geminiApiKey ||
+        claudeKey !== settings.claudeApiKey ||
+        openaiKey !== settings.openaiApiKey ||
+        provider !== settings.preferredProvider ||
+        appLanguage !== settings.appLanguage;
+      setHasChanges(changed);
+    }
+  }, [
+    huggingfaceKey, geminiKey, claudeKey, openaiKey, provider, appLanguage, settings,
+    titleFormat, titleInstructions, descriptionFormat, descriptionInstructions,
+    handleFormat, handleInstructions, seoTitleFormat, seoTitleInstructions,
+    metaDescFormat, metaDescInstructions, instructions, selectedSection
+  ]);
 
   const handleSave = () => {
-    fetcher.submit(
-      {
-        huggingfaceApiKey: huggingfaceKey,
-        geminiApiKey: geminiKey,
-        claudeApiKey: claudeKey,
-        openaiApiKey: openaiKey,
-        preferredProvider: provider,
-        appLanguage: appLanguage,
-      },
-      { method: "POST" }
-    );
+    if (!hasChanges) return;
+
+    if (selectedSection === "instructions") {
+      fetcher.submit(
+        {
+          actionType: "saveInstructions",
+          titleFormat,
+          titleInstructions,
+          descriptionFormat,
+          descriptionInstructions,
+          handleFormat,
+          handleInstructions,
+          seoTitleFormat,
+          seoTitleInstructions,
+          metaDescFormat,
+          metaDescInstructions,
+        },
+        { method: "POST" }
+      );
+    } else {
+      fetcher.submit(
+        {
+          actionType: "saveSettings",
+          huggingfaceApiKey: huggingfaceKey,
+          geminiApiKey: geminiKey,
+          claudeApiKey: claudeKey,
+          openaiApiKey: openaiKey,
+          preferredProvider: provider,
+          appLanguage: appLanguage,
+        },
+        { method: "POST" }
+      );
+    }
   };
 
   return (
@@ -195,6 +310,24 @@ export default function SettingsPage() {
               >
                 <Text as="p" variant="bodyMd" fontWeight={selectedSection === "ai" ? "semibold" : "regular"}>
                   {t.settings.aiApiAccess}
+                </Text>
+              </button>
+              <button
+                onClick={() => setSelectedSection("instructions")}
+                style={{
+                  width: "100%",
+                  padding: "1rem",
+                  background: selectedSection === "instructions" ? "#f1f8f5" : "white",
+                  borderLeft: selectedSection === "instructions" ? "3px solid #008060" : "3px solid transparent",
+                  border: "none",
+                  borderTop: "1px solid #e1e3e5",
+                  textAlign: "left",
+                  cursor: "pointer",
+                  transition: "all 0.2s",
+                }}
+              >
+                <Text as="p" variant="bodyMd" fontWeight={selectedSection === "instructions" ? "semibold" : "regular"}>
+                  KI-Anweisungen
                 </Text>
               </button>
             </Card>
@@ -371,6 +504,157 @@ export default function SettingsPage() {
                       </div>
                     </BlockStack>
                   </div>
+
+                    <InlineStack align="end">
+                      <Button
+                        variant={hasChanges ? "primary" : undefined}
+                        onClick={handleSave}
+                        disabled={!hasChanges}
+                        loading={fetcher.state !== "idle"}
+                      >
+                        {t.products.saveChanges}
+                      </Button>
+                    </InlineStack>
+                  </BlockStack>
+                </Card>
+              )}
+
+              {/* AI Instructions */}
+              {selectedSection === "instructions" && (
+                <Card>
+                  <BlockStack gap="500">
+                    <Text as="h2" variant="headingLg">
+                      KI-Anweisungen für Produktfelder
+                    </Text>
+
+                    <Text as="p" variant="bodyMd" tone="subdued">
+                      Geben Sie für jedes Feld ein Formatbeispiel und spezifische Anweisungen an, an denen sich die KI orientieren soll.
+                    </Text>
+
+                    {/* Title */}
+                    <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
+                      <BlockStack gap="400">
+                        <Text as="h3" variant="headingMd">Titel</Text>
+                        <TextField
+                          label="Formatbeispiel"
+                          value={titleFormat}
+                          onChange={setTitleFormat}
+                          multiline={3}
+                          autoComplete="off"
+                          placeholder="z.B. Premium Leder Geldbörse - Elegant & Stilvoll"
+                          helpText="Kopieren Sie ein Beispiel eines idealen Titels hier hinein"
+                        />
+                        <TextField
+                          label="Anweisungen"
+                          value={titleInstructions}
+                          onChange={setTitleInstructions}
+                          multiline={3}
+                          autoComplete="off"
+                          placeholder="z.B. Nicht länger als 60 Zeichen, gehobene Ausdrucksweise, Material und Hauptmerkmal nennen"
+                          helpText="Spezifische Anweisungen für die KI"
+                        />
+                      </BlockStack>
+                    </div>
+
+                    {/* Description */}
+                    <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
+                      <BlockStack gap="400">
+                        <Text as="h3" variant="headingMd">Beschreibung</Text>
+                        <TextField
+                          label="Formatbeispiel"
+                          value={descriptionFormat}
+                          onChange={setDescriptionFormat}
+                          multiline={5}
+                          autoComplete="off"
+                          placeholder="z.B. Entdecken Sie unsere handgefertigte Ledertasche..."
+                          helpText="Kopieren Sie ein Beispiel einer idealen Beschreibung hier hinein"
+                        />
+                        <TextField
+                          label="Anweisungen"
+                          value={descriptionInstructions}
+                          onChange={setDescriptionInstructions}
+                          multiline={3}
+                          autoComplete="off"
+                          placeholder="z.B. 150-200 Wörter, gehobene Ausdrucksweise, Vorteile hervorheben, Storytelling verwenden"
+                          helpText="Spezifische Anweisungen für die KI"
+                        />
+                      </BlockStack>
+                    </div>
+
+                    {/* Handle */}
+                    <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
+                      <BlockStack gap="400">
+                        <Text as="h3" variant="headingMd">URL-Slug (Handle)</Text>
+                        <TextField
+                          label="Formatbeispiel"
+                          value={handleFormat}
+                          onChange={setHandleFormat}
+                          multiline={2}
+                          autoComplete="off"
+                          placeholder="z.B. premium-leder-geldboerse-elegant"
+                          helpText="Kopieren Sie ein Beispiel eines idealen URL-Slugs hier hinein"
+                        />
+                        <TextField
+                          label="Anweisungen"
+                          value={handleInstructions}
+                          onChange={setHandleInstructions}
+                          multiline={3}
+                          autoComplete="off"
+                          placeholder="z.B. Nur Kleinbuchstaben und Bindestriche, keine Umlaute, max. 50 Zeichen, SEO-optimiert"
+                          helpText="Spezifische Anweisungen für die KI"
+                        />
+                      </BlockStack>
+                    </div>
+
+                    {/* SEO Title */}
+                    <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
+                      <BlockStack gap="400">
+                        <Text as="h3" variant="headingMd">SEO-Titel</Text>
+                        <TextField
+                          label="Formatbeispiel"
+                          value={seoTitleFormat}
+                          onChange={setSeoTitleFormat}
+                          multiline={2}
+                          autoComplete="off"
+                          placeholder="z.B. Premium Leder Geldbörse kaufen | Handgefertigt & Elegant"
+                          helpText="Kopieren Sie ein Beispiel eines idealen SEO-Titels hier hinein"
+                        />
+                        <TextField
+                          label="Anweisungen"
+                          value={seoTitleInstructions}
+                          onChange={setSeoTitleInstructions}
+                          multiline={3}
+                          autoComplete="off"
+                          placeholder="z.B. 50-60 Zeichen, Keywords am Anfang, Call-to-Action verwenden"
+                          helpText="Spezifische Anweisungen für die KI"
+                        />
+                      </BlockStack>
+                    </div>
+
+                    {/* Meta Description */}
+                    <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
+                      <BlockStack gap="400">
+                        <Text as="h3" variant="headingMd">Meta-Beschreibung</Text>
+                        <TextField
+                          label="Formatbeispiel"
+                          value={metaDescFormat}
+                          onChange={setMetaDescFormat}
+                          multiline={3}
+                          autoComplete="off"
+                          placeholder="z.B. Entdecken Sie unsere handgefertigten Premium Leder Geldbörsen. Elegant, langlebig und zeitlos. Jetzt kaufen!"
+                          helpText="Kopieren Sie ein Beispiel einer idealen Meta-Beschreibung hier hinein"
+                        />
+                        <TextField
+                          label="Anweisungen"
+                          value={metaDescInstructions}
+                          onChange={setMetaDescInstructions}
+                          multiline={3}
+                          autoComplete="off"
+                          placeholder="z.B. 150-160 Zeichen, Keywords verwenden, zum Klicken anregen, USP hervorheben"
+                          helpText="Spezifische Anweisungen für die KI"
+                        />
+                      </BlockStack>
+                    </div>
 
                     <InlineStack align="end">
                       <Button

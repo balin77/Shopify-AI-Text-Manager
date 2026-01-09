@@ -39,3 +39,20 @@ model AISettings {
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 }
+
+model AIInstructions {
+  id                      String   @id @default(cuid())
+  shop                    String   @unique
+  titleFormat             String?  @db.Text
+  titleInstructions       String?  @db.Text
+  descriptionFormat       String?  @db.Text
+  descriptionInstructions String?  @db.Text
+  handleFormat            String?  @db.Text
+  handleInstructions      String?  @db.Text
+  seoTitleFormat          String?  @db.Text
+  seoTitleInstructions    String?  @db.Text
+  metaDescFormat          String?  @db.Text
+  metaDescInstructions    String?  @db.Text
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+}
