@@ -31,7 +31,23 @@ export async function handleProductActions({ request }: ActionFunctionArgs) {
   const translationService = new TranslationService(provider, config);
 
   if (action === "loadTranslations") {
-    return handleLoadTranslations(admin, formData, productId);
+    console.error('!!! LOAD TRANSLATIONS ACTION TRIGGERED !!!');
+    console.error('Product ID:', productId);
+    console.error('Locale:', formData.get("locale"));
+
+    // Simple test response
+    return json({
+      success: true,
+      translations: [
+        { key: "title", value: "TEST TITLE", locale: formData.get("locale") },
+        { key: "handle", value: "test-handle", locale: formData.get("locale") }
+      ],
+      locale: formData.get("locale"),
+      test: "THIS IS A TEST RESPONSE"
+    });
+
+    // Original code commented out for now
+    // return handleLoadTranslations(admin, formData, productId);
   }
 
   if (action === "generateAIText") {
