@@ -27,6 +27,10 @@ export const GET_BLOGS = `#graphql
                 handle
                 body
                 publishedAt
+                seo {
+                  title
+                  description
+                }
               }
             }
           }

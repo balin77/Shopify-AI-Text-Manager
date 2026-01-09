@@ -54,6 +54,10 @@ export async function handleProductActions({ request }: ActionFunctionArgs) {
     return handleUpdateProduct(admin, formData, productId);
   }
 
+  if (action === "translateOption") {
+    return handleTranslateOption(translationService, formData);
+  }
+
   return json({ success: false, error: "Unknown action" }, { status: 400 });
 }
 
@@ -607,6 +611,42 @@ async function handleUpdateProduct(admin: any, formData: FormData, productId: st
 
       return json({ success: true, product: data.data.productUpdate.product });
     }
+  } catch (error: any) {
+    return json({ success: false, error: error.message }, { status: 500 });
+  }
+}
+
+async function handleTranslateOption(translationService: TranslationService, formData: FormData) {
+  const optionId = formData.get("optionId") as string;
+  const optionName = formData.get("optionName") as string;
+  const optionValuesStr = formData.get("optionValues") as string;
+  const targetLocale = formData.get("targetLocale") as string;
+
+  try {
+    const optionValues = JSON.parse(optionValuesStr);
+
+    // Translate the option name
+    const nameTranslations = await translationService.translateProduct({ optionName });
+    const translatedName = nameTranslations[targetLocale]?.optionName || "";
+
+    // Translate all option values
+    const valueFields: any = {};
+    optionValues.forEach((value: string, index: number) => {
+      valueFields[`value_${index}`] = value;
+    });
+
+    const valueTranslations = await translationService.translateProduct(valueFields);
+    const translatedValues = optionValues.map((_: string, index: number) => {
+      return valueTranslations[targetLocale]?.[`value_${index}`] || "";
+    });
+
+    return json({
+      success: true,
+      optionId,
+      translatedName,
+      translatedValues,
+      targetLocale
+    });
   } catch (error: any) {
     return json({ success: false, error: error.message }, { status: 500 });
   }
