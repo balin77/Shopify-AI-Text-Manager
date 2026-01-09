@@ -17,28 +17,44 @@ import {
   Banner,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
-import { ProductService } from "../../src/services/product.service";
 import { AIService } from "../../src/services/ai.service";
-import { ShopifyConnector } from "../../src/shopify-connector";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
-
-  // Verwende deine bestehenden Services
-  const connector = new ShopifyConnector();
-  const productService = new ProductService(connector);
+  const { admin, session } = await authenticate.admin(request);
 
   try {
-    const products = await productService.getAllProducts(50);
+    // Use Shopify Admin GraphQL API directly
+    const response = await admin.graphql(
+      `#graphql
+        query getProducts($first: Int!) {
+          products(first: $first) {
+            edges {
+              node {
+                id
+                title
+                handle
+                status
+                featuredImage {
+                  url
+                  altText
+                }
+              }
+            }
+          }
+        }`,
+      {
+        variables: {
+          first: 50,
+        },
+      }
+    );
+
+    const data = await response.json();
+
+    const products = data.data.products.edges.map((edge: any) => edge.node);
 
     return json({
-      products: products.map((p: any) => ({
-        id: p.id,
-        title: p.title,
-        handle: p.handle,
-        status: p.status,
-        featuredImage: p.featuredImage,
-      })),
+      products,
       error: null,
     });
   } catch (error: any) {
@@ -47,19 +63,34 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
 
   const formData = await request.formData();
   const action = formData.get("action");
   const productId = formData.get("productId") as string;
 
-  const connector = new ShopifyConnector();
-  const productService = new ProductService(connector);
   const aiService = new AIService(process.env.AI_PROVIDER as any || "huggingface");
 
   if (action === "generateSEO") {
     try {
-      const product = await productService.getProductDetails(productId);
+      // Get product details via GraphQL
+      const response = await admin.graphql(
+        `#graphql
+          query getProduct($id: ID!) {
+            product(id: $id) {
+              id
+              title
+              description
+            }
+          }`,
+        {
+          variables: { id: productId },
+        }
+      );
+
+      const data = await response.json();
+      const product = data.data.product;
+
       const suggestion = await aiService.generateSEO(
         product.title,
         product.description || ""
@@ -76,10 +107,45 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const metaDescription = formData.get("metaDescription") as string;
 
     try {
-      await productService.updateProduct(productId, {
-        seoTitle,
-        metaDescription,
-      });
+      // Update product SEO via GraphQL
+      const response = await admin.graphql(
+        `#graphql
+          mutation updateProduct($input: ProductInput!) {
+            productUpdate(input: $input) {
+              product {
+                id
+                seo {
+                  title
+                  description
+                }
+              }
+              userErrors {
+                field
+                message
+              }
+            }
+          }`,
+        {
+          variables: {
+            input: {
+              id: productId,
+              seo: {
+                title: seoTitle,
+                description: metaDescription,
+              },
+            },
+          },
+        }
+      );
+
+      const data = await response.json();
+
+      if (data.data.productUpdate.userErrors.length > 0) {
+        return json({
+          success: false,
+          error: data.data.productUpdate.userErrors[0].message
+        }, { status: 500 });
+      }
 
       return json({ success: true });
     } catch (error: any) {
