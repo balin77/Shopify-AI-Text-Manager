@@ -22,19 +22,30 @@ import { SearchIcon, ChevronLeftIcon, ChevronRightIcon } from "@shopify/polaris-
 import { authenticate } from "../shopify.server";
 import { AIService } from "../../src/services/ai.service";
 import { TranslationService } from "../../src/services/translation.service";
-
-const LANGUAGES = {
-  de: "Deutsch",
-  en: "English",
-  fr: "Français",
-  es: "Español",
-  it: "Italiano",
-};
+import { MainNavigation } from "../components/MainNavigation";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
 
   try {
+    // Fetch shop locales
+    const localesResponse = await admin.graphql(
+      `#graphql
+        query getShopLocales {
+          shopLocales {
+            locale
+            name
+            primary
+            published
+          }
+        }`
+    );
+
+    const localesData = await localesResponse.json();
+    const shopLocales = localesData.data.shopLocales;
+    const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "de";
+
+    // Fetch products with all translations
     const response = await admin.graphql(
       `#graphql
         query getProducts($first: Int!) {
@@ -54,7 +65,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
                   title
                   description
                 }
-                translations(locale: "en") {
+                translations {
                   key
                   value
                   locale
@@ -69,9 +80,21 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const data = await response.json();
     const products = data.data.products.edges.map((edge: any) => edge.node);
 
-    return json({ products, shop: session.shop, error: null });
+    return json({
+      products,
+      shop: session.shop,
+      shopLocales,
+      primaryLocale,
+      error: null
+    });
   } catch (error: any) {
-    return json({ products: [], shop: session.shop, error: error.message }, { status: 500 });
+    return json({
+      products: [],
+      shop: session.shop,
+      shopLocales: [],
+      primaryLocale: "de",
+      error: error.message
+    }, { status: 500 });
   }
 };
 
@@ -81,34 +104,77 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const action = formData.get("action");
   const productId = formData.get("productId") as string;
 
-  const aiService = new AIService(process.env.AI_PROVIDER as any || "huggingface");
-  const translationService = new TranslationService(process.env.AI_PROVIDER as any || "huggingface");
+  // Load AI settings from database
+  const { db } = await import("../db.server");
+  const aiSettings = await db.aISettings.findUnique({
+    where: { shop: session.shop },
+  });
+
+  const provider = (aiSettings?.preferredProvider as any) || process.env.AI_PROVIDER || "huggingface";
+  const config = {
+    huggingfaceApiKey: aiSettings?.huggingfaceApiKey || undefined,
+    geminiApiKey: aiSettings?.geminiApiKey || undefined,
+    claudeApiKey: aiSettings?.claudeApiKey || undefined,
+    openaiApiKey: aiSettings?.openaiApiKey || undefined,
+  };
+
+  const aiService = new AIService(provider, config);
+  const translationService = new TranslationService(provider, config);
 
   if (action === "generateAIText") {
     const fieldType = formData.get("fieldType") as string;
     const currentValue = formData.get("currentValue") as string;
+    const contextTitle = formData.get("contextTitle") as string;
+    const contextDescription = formData.get("contextDescription") as string;
 
     try {
-      const response = await admin.graphql(
-        `#graphql
-          query getProduct($id: ID!) {
-            product(id: $id) {
-              id
-              title
-              descriptionHtml
-            }
-          }`,
-        { variables: { id: productId } }
-      );
-
-      const data = await response.json();
-      const product = data.data.product;
-
       let generatedContent = "";
+
       if (fieldType === "title") {
-        generatedContent = await aiService.generateProductTitle(product.descriptionHtml || "");
+        generatedContent = await aiService.generateProductTitle(contextDescription || currentValue);
       } else if (fieldType === "description") {
-        generatedContent = await aiService.generateProductDescription(product.title, currentValue);
+        generatedContent = await aiService.generateProductDescription(contextTitle, currentValue);
+      } else if (fieldType === "handle") {
+        const prompt = `Erstelle einen SEO-freundlichen URL-Slug (handle) für dieses Produkt:
+Titel: ${contextTitle}
+Beschreibung: ${contextDescription}
+
+Der Slug sollte:
+- Nur Kleinbuchstaben und Bindestriche enthalten
+- Keine Sonderzeichen oder Umlaute haben
+- Kurz und prägnant sein (2-5 Wörter)
+- SEO-optimiert sein
+
+Gib nur den Slug zurück, ohne Erklärungen.`;
+        generatedContent = await aiService.generateProductTitle(prompt);
+        generatedContent = generatedContent.toLowerCase().trim();
+      } else if (fieldType === "seoTitle") {
+        const prompt = `Erstelle einen optimierten SEO-Titel für dieses Produkt:
+Titel: ${contextTitle}
+Beschreibung: ${contextDescription}
+
+Der SEO-Titel sollte:
+- Max. 60 Zeichen lang sein
+- Keywords enthalten
+- Zum Klicken anregen
+- Den Produktnutzen kommunizieren
+
+Gib nur den SEO-Titel zurück, ohne Erklärungen.`;
+        generatedContent = await aiService.generateProductTitle(prompt);
+      } else if (fieldType === "metaDescription") {
+        const prompt = `Erstelle eine optimierte Meta-Description für dieses Produkt:
+Titel: ${contextTitle}
+Beschreibung: ${contextDescription}
+
+Die Meta-Description sollte:
+- 150-160 Zeichen lang sein
+- Keywords enthalten
+- Zum Klicken anregen
+- Den Produktnutzen klar kommunizieren
+- Einen Call-to-Action enthalten
+
+Gib nur die Meta-Description zurück, ohne Erklärungen.`;
+        generatedContent = await aiService.generateProductDescription(contextTitle, prompt);
       }
 
       return json({ success: true, generatedContent, fieldType });
@@ -203,17 +269,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function Index() {
-  const { products, shop, error } = useLoaderData<typeof loader>();
+  const { products, shop, shopLocales, primaryLocale, error } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
 
   // State
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
-  const [currentLanguage, setCurrentLanguage] = useState("de");
-  const [aiModalActive, setAiModalActive] = useState(false);
-  const [aiFieldType, setAiFieldType] = useState<"title" | "description" | null>(null);
-  const [aiGeneratedContent, setAiGeneratedContent] = useState("");
+  const [currentLanguage, setCurrentLanguage] = useState(primaryLocale);
+  const [aiSuggestions, setAiSuggestions] = useState<Record<string, string>>({});
   const [hasChanges, setHasChanges] = useState(false);
   const productsPerPage = 10;
 
@@ -375,7 +439,8 @@ export default function Index() {
 
   return (
     <Page title={`ContentPilot AI - ${shop}`}>
-      <div style={{ height: "100vh", display: "flex", gap: "1rem", padding: "1rem", overflow: "hidden" }}>
+      <MainNavigation />
+      <div style={{ height: "calc(100vh - 60px)", display: "flex", gap: "1rem", padding: "1rem", overflow: "hidden" }}>
         {/* Left: Product List */}
         <div style={{ width: "350px", flexShrink: 0, display: "flex", flexDirection: "column", gap: "1rem" }}>
           <Card padding="0">

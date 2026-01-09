@@ -26,3 +26,15 @@ model Session {
   refreshToken         String?
   refreshTokenExpires  DateTime?
 }
+
+model AISettings {
+  id                  String   @id @default(cuid())
+  shop                String   @unique
+  huggingfaceApiKey   String?
+  geminiApiKey        String?
+  claudeApiKey        String?
+  openaiApiKey        String?
+  preferredProvider   String   @default("huggingface")
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+}
