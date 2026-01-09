@@ -49,12 +49,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   try {
     const contentService = new ContentService(admin);
-    const { shopLocales, blogs, collections, pages, primaryLocale } = await contentService.getAllContent();
+    const { shopLocales, blogs, collections, pages, policies, metadata, menus, themes, primaryLocale } = await contentService.getAllContent();
 
     return json({
       blogs,
       collections,
       pages,
+      policies,
+      metadata,
+      menus,
+      themes,
       shop: session.shop,
       shopLocales,
       primaryLocale,
@@ -65,6 +69,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       blogs: [],
       collections: [],
       pages: [],
+      policies: {},
+      metadata: {},
+      menus: [],
+      themes: [],
       shop: session.shop,
       shopLocales: [],
       primaryLocale: "de",
@@ -335,7 +343,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function ContentPage() {
-  const { blogs, collections, pages, shop, shopLocales, primaryLocale, error } = useLoaderData<typeof loader>();
+  const { blogs, collections, pages, policies, metadata, menus, themes, shop, shopLocales, primaryLocale, error } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const { t } = useI18n();
 
