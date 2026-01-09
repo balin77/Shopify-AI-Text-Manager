@@ -1,5 +1,5 @@
 import { Card, BlockStack, Text, InlineStack, Badge, Button, ProgressBar } from "@shopify/polaris";
-import { useState, useEffect } from "react";
+import { useState, useMemo } from "react";
 import { useI18n } from "../contexts/I18nContext";
 
 interface SeoIssue {
@@ -34,15 +34,9 @@ export function SeoSidebar({
   totalImages = 0,
 }: SeoSidebarProps) {
   const { t } = useI18n();
-  const [analysis, setAnalysis] = useState<SeoAnalysis>({ score: 0, issues: [], recommendations: [] });
   const [showDetails, setShowDetails] = useState(false);
 
-  useEffect(() => {
-    const newAnalysis = analyzeSEO();
-    setAnalysis(newAnalysis);
-  }, [title, description, handle, seoTitle, metaDescription, imagesWithAlt, totalImages]);
-
-  const analyzeSEO = (): SeoAnalysis => {
+  const analysis = useMemo((): SeoAnalysis => {
     const issues: SeoIssue[] = [];
     let score = 0;
 
@@ -181,7 +175,7 @@ export function SeoSidebar({
       issues,
       recommendations,
     };
-  };
+  }, [title, description, handle, seoTitle, metaDescription, imagesWithAlt, totalImages, t]);
 
   const getScoreColor = (scoreValue: number): "success" | "warning" | "critical" => {
     if (scoreValue >= 70) return "success";
