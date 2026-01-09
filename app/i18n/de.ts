@@ -1,0 +1,118 @@
+export const de = {
+  // Navigation
+  nav: {
+    products: "Produkte",
+    otherContent: "Andere Inhalte",
+    settings: "Einstellungen",
+  },
+
+  // Products Page
+  products: {
+    title: "Produkte",
+    search: "Produkte suchen...",
+    selectProduct: "Wähle ein Produkt aus der Liste",
+    saveChanges: "Änderungen speichern",
+    translateAll: "In alle Sprachen übersetzen",
+    productTitle: "Produkttitel",
+    productDescription: "Produktbeschreibung",
+    urlSlug: "URL-Slug",
+    seoTitle: "SEO-Titel",
+    metaDescription: "Meta-Beschreibung",
+    primaryLanguage: "Hauptsprache",
+    characters: "Zeichen",
+    recommended: "empfohlen",
+    preview: "Vorschau",
+    html: "HTML",
+    aiGenerate: "Mit KI generieren / verbessern",
+    aiGenerateShort: "Mit KI generieren",
+    aiSuggestion: "KI-Vorschlag:",
+    accept: "Übernehmen",
+    acceptTranslate: "Übernehmen & Übersetzen",
+    decline: "Ablehnen",
+    status: {
+      active: "AKTIV",
+      draft: "ENTWURF",
+    },
+    formatting: {
+      bold: "B",
+      italic: "I",
+      underline: "U",
+      h1: "H1",
+      h2: "H2",
+      h3: "H3",
+      list: "Liste",
+      numberedList: "Num.",
+      paragraph: "Absatz",
+      lineBreak: "Umbruch",
+    },
+    pagination: {
+      of: "von",
+      previous: "Vorherige Seite",
+      next: "Nächste Seite",
+    },
+  },
+
+  // Content Page
+  content: {
+    menus: "Menüs",
+    menusDescription: "Verwalten und übersetzen Sie Ihre Shop-Navigation und Menüs",
+    blogs: "Blog-Beiträge",
+    blogsDescription: "Erstellen und übersetzen Sie Blog-Artikel mit KI-Unterstützung",
+    collections: "Kollektionen",
+    collectionsDescription: "Bearbeiten und übersetzen Sie Produktkollektionen",
+    pages: "Seiten",
+    pagesDescription: "Verwalten Sie Ihre Shop-Seiten (Impressum, AGB, etc.)",
+    theme: "Theme-Texte",
+    themeDescription: "Übersetzen Sie Theme-Texte wie Buttons, Labels und Meldungen",
+    noEntries: "Keine Einträge verfügbar",
+    comingSoon: "Demnächst verfügbar",
+  },
+
+  // Settings Page
+  settings: {
+    title: "Einstellungen",
+    aiApiAccess: "AI API-Zugangscodes",
+    appLanguage: "App-Sprache",
+    appLanguageDescription: "Wählen Sie die Sprache für die Benutzeroberfläche",
+    manageAiKeys: "AI API-Zugangscodes verwalten",
+    aiKeysDescription: "Konfigurieren Sie Ihre bevorzugten KI-Anbieter. Die API-Schlüssel werden sicher verschlüsselt gespeichert und nur für Ihre Shop-Übersetzungen verwendet.",
+    preferredProvider: "Bevorzugter AI-Anbieter",
+    providerHelp: "Wählen Sie den Standard-Anbieter für KI-Generierung und Übersetzungen",
+    apiKeys: "API-Schlüssel",
+    huggingface: "Hugging Face API-Schlüssel",
+    huggingfaceHelp: "Kostenlos erhältlich bei",
+    gemini: "Google Gemini API-Schlüssel",
+    geminiHelp: "Kostenlos erhältlich bei",
+    claude: "Anthropic Claude API-Schlüssel",
+    claudeHelp: "Erhältlich bei",
+    openai: "OpenAI API-Schlüssel",
+    openaiHelp: "Erhältlich bei",
+    providers: {
+      huggingface: "Hugging Face (Kostenlos)",
+      gemini: "Google Gemini (Kostenlos)",
+      claude: "Anthropic Claude",
+      openai: "OpenAI GPT",
+    },
+    languages: {
+      de: "Deutsch",
+      en: "English",
+    },
+  },
+
+  // Common
+  common: {
+    save: "Speichern",
+    cancel: "Abbrechen",
+    delete: "Löschen",
+    edit: "Bearbeiten",
+    close: "Schließen",
+    loading: "Lädt...",
+    error: "Fehler",
+    success: "Erfolg!",
+    successSaved: "Erfolgreich gespeichert!",
+    settingsSaved: "Ihre Einstellungen wurden aktualisiert.",
+    changesSaved: "Änderungen erfolgreich gespeichert!",
+  },
+};
+
+export type Translation = typeof de;

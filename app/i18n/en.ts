@@ -1,0 +1,118 @@
+import type { Translation } from "./de";
+
+export const en: Translation = {
+  // Navigation
+  nav: {
+    products: "Products",
+    otherContent: "Other Content",
+    settings: "Settings",
+  },
+
+  // Products Page
+  products: {
+    title: "Products",
+    search: "Search products...",
+    selectProduct: "Select a product from the list",
+    saveChanges: "Save changes",
+    translateAll: "Translate to all languages",
+    productTitle: "Product title",
+    productDescription: "Product description",
+    urlSlug: "URL slug",
+    seoTitle: "SEO title",
+    metaDescription: "Meta description",
+    primaryLanguage: "Primary language",
+    characters: "characters",
+    recommended: "recommended",
+    preview: "Preview",
+    html: "HTML",
+    aiGenerate: "Generate / improve with AI",
+    aiGenerateShort: "Generate with AI",
+    aiSuggestion: "AI suggestion:",
+    accept: "Accept",
+    acceptTranslate: "Accept & Translate",
+    decline: "Decline",
+    status: {
+      active: "ACTIVE",
+      draft: "DRAFT",
+    },
+    formatting: {
+      bold: "B",
+      italic: "I",
+      underline: "U",
+      h1: "H1",
+      h2: "H2",
+      h3: "H3",
+      list: "List",
+      numberedList: "Num.",
+      paragraph: "Paragraph",
+      lineBreak: "Break",
+    },
+    pagination: {
+      of: "of",
+      previous: "Previous page",
+      next: "Next page",
+    },
+  },
+
+  // Content Page
+  content: {
+    menus: "Menus",
+    menusDescription: "Manage and translate your shop navigation and menus",
+    blogs: "Blog Posts",
+    blogsDescription: "Create and translate blog articles with AI support",
+    collections: "Collections",
+    collectionsDescription: "Edit and translate product collections",
+    pages: "Pages",
+    pagesDescription: "Manage your shop pages (Imprint, Terms, etc.)",
+    theme: "Theme Texts",
+    themeDescription: "Translate theme texts like buttons, labels and messages",
+    noEntries: "No entries available",
+    comingSoon: "Coming soon",
+  },
+
+  // Settings Page
+  settings: {
+    title: "Settings",
+    aiApiAccess: "AI API Access Codes",
+    appLanguage: "App Language",
+    appLanguageDescription: "Choose the language for the user interface",
+    manageAiKeys: "Manage AI API Access Codes",
+    aiKeysDescription: "Configure your preferred AI providers. API keys are stored securely encrypted and only used for your shop translations.",
+    preferredProvider: "Preferred AI Provider",
+    providerHelp: "Choose the default provider for AI generation and translations",
+    apiKeys: "API Keys",
+    huggingface: "Hugging Face API Key",
+    huggingfaceHelp: "Free at",
+    gemini: "Google Gemini API Key",
+    geminiHelp: "Free at",
+    claude: "Anthropic Claude API Key",
+    claudeHelp: "Available at",
+    openai: "OpenAI API Key",
+    openaiHelp: "Available at",
+    providers: {
+      huggingface: "Hugging Face (Free)",
+      gemini: "Google Gemini (Free)",
+      claude: "Anthropic Claude",
+      openai: "OpenAI GPT",
+    },
+    languages: {
+      de: "Deutsch",
+      en: "English",
+    },
+  },
+
+  // Common
+  common: {
+    save: "Save",
+    cancel: "Cancel",
+    delete: "Delete",
+    edit: "Edit",
+    close: "Close",
+    loading: "Loading...",
+    error: "Error",
+    success: "Success!",
+    successSaved: "Successfully saved!",
+    settingsSaved: "Your settings have been updated.",
+    changesSaved: "Changes saved successfully!",
+  },
+};

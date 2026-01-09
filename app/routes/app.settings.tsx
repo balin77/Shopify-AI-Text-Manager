@@ -23,6 +23,11 @@ const AI_PROVIDERS = [
   { label: "OpenAI GPT", value: "openai" },
 ];
 
+const APP_LANGUAGES = [
+  { label: "Deutsch", value: "de" },
+  { label: "English", value: "en" },
+];
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
 
@@ -47,6 +52,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       claudeApiKey: settings.claudeApiKey || "",
       openaiApiKey: settings.openaiApiKey || "",
       preferredProvider: settings.preferredProvider,
+      appLanguage: settings.appLanguage || "de",
     },
   });
 };
@@ -60,6 +66,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const claudeApiKey = formData.get("claudeApiKey") as string;
   const openaiApiKey = formData.get("openaiApiKey") as string;
   const preferredProvider = formData.get("preferredProvider") as string;
+  const appLanguage = formData.get("appLanguage") as string;
 
   try {
     await db.aISettings.upsert({
@@ -70,6 +77,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         claudeApiKey: claudeApiKey || null,
         openaiApiKey: openaiApiKey || null,
         preferredProvider,
+        appLanguage,
       },
       create: {
         shop: session.shop,
@@ -78,6 +86,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         claudeApiKey: claudeApiKey || null,
         openaiApiKey: openaiApiKey || null,
         preferredProvider,
+        appLanguage,
       },
     });
 
@@ -96,6 +105,7 @@ export default function SettingsPage() {
   const [claudeKey, setClaudeKey] = useState(settings.claudeApiKey);
   const [openaiKey, setOpenaiKey] = useState(settings.openaiApiKey);
   const [provider, setProvider] = useState(settings.preferredProvider);
+  const [appLanguage, setAppLanguage] = useState(settings.appLanguage);
   const [hasChanges, setHasChanges] = useState(false);
 
   useEffect(() => {
@@ -104,9 +114,10 @@ export default function SettingsPage() {
       geminiKey !== settings.geminiApiKey ||
       claudeKey !== settings.claudeApiKey ||
       openaiKey !== settings.openaiApiKey ||
-      provider !== settings.preferredProvider;
+      provider !== settings.preferredProvider ||
+      appLanguage !== settings.appLanguage;
     setHasChanges(changed);
-  }, [huggingfaceKey, geminiKey, claudeKey, openaiKey, provider, settings]);
+  }, [huggingfaceKey, geminiKey, claudeKey, openaiKey, provider, appLanguage, settings]);
 
   const handleSave = () => {
     fetcher.submit(
@@ -116,6 +127,7 @@ export default function SettingsPage() {
         claudeApiKey: claudeKey,
         openaiApiKey: openaiKey,
         preferredProvider: provider,
+        appLanguage: appLanguage,
       },
       { method: "POST" }
     );
@@ -168,6 +180,14 @@ export default function SettingsPage() {
                     Konfigurieren Sie Ihre bevorzugten KI-Anbieter. Die API-Schlüssel werden sicher
                     verschlüsselt gespeichert und nur für Ihre Shop-Übersetzungen verwendet.
                   </Text>
+
+                  <Select
+                    label="App-Sprache"
+                    options={APP_LANGUAGES}
+                    value={appLanguage}
+                    onChange={setAppLanguage}
+                    helpText="Wählen Sie die Sprache für die Benutzeroberfläche"
+                  />
 
                   <Select
                     label="Bevorzugter AI-Anbieter"
