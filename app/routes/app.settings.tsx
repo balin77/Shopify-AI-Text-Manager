@@ -228,11 +228,10 @@ export default function SettingsPage() {
                     </Text>
 
                     <Select
-                      label={t.settings.appLanguage}
+                      label=""
                       options={APP_LANGUAGES}
                       value={appLanguage}
                       onChange={setAppLanguage}
-                      helpText={t.settings.appLanguageDescription}
                     />
 
                     <InlineStack align="end">

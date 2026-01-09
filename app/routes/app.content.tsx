@@ -537,7 +537,7 @@ export default function ContentPage() {
         setEditableTitle(selectedItem.title);
 
         if (selectedType === "blogs") {
-          setEditableDescription(selectedItem.content || "");
+          setEditableDescription((selectedItem as any).content || selectedItem.body || "");
           setEditableHandle(selectedItem.handle);
           setEditableSeoTitle("");
           setEditableMetaDescription("");
@@ -621,7 +621,7 @@ export default function ContentPage() {
 
       const titleKey = "title";
       const descKey = selectedType === "pages" ? "body" : selectedType === "blogs" ? "content" : "description";
-      const descFallback = selectedType === "pages" ? selectedItem.body : selectedType === "blogs" ? selectedItem.content : selectedItem.descriptionHtml;
+      const descFallback = selectedType === "pages" ? (selectedItem.body || "") : selectedType === "blogs" ? ((selectedItem as any).content || selectedItem.body || "") : (selectedItem.descriptionHtml || "");
 
       const titleChanged = editableTitle !== getOriginalValue(titleKey, selectedItem.title);
       const descChanged = editableDescription !== getOriginalValue(descKey, descFallback || "");
@@ -683,11 +683,11 @@ export default function ContentPage() {
     if (!selectedItemId || !selectedItem) return;
 
     const sourceMap: Record<string, string> = {
-      title: selectedItem.title,
+      title: selectedItem.title || "",
       description: selectedType === "pages" ? (selectedItem.body || "") :
-                   selectedType === "blogs" ? (selectedItem.content || "") :
+                   selectedType === "blogs" ? ((selectedItem as any).content || selectedItem.body || "") :
                    (selectedItem.descriptionHtml || ""),
-      body: selectedItem.body || selectedItem.content || "",
+      body: selectedItem.body || (selectedItem as any).content || "",
       handle: selectedItem.handle || "",
       seoTitle: selectedItem.seo?.title || "",
       metaDescription: selectedItem.seo?.description || "",
