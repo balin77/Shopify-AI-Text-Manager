@@ -3,13 +3,15 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 
-export type AIProvider = 'huggingface' | 'gemini' | 'claude' | 'openai';
+export type AIProvider = 'huggingface' | 'gemini' | 'claude' | 'openai' | 'grok' | 'deepseek';
 
 export interface AIServiceConfig {
   huggingfaceApiKey?: string;
   geminiApiKey?: string;
   claudeApiKey?: string;
   openaiApiKey?: string;
+  grokApiKey?: string;
+  deepseekApiKey?: string;
 }
 
 export class AIService {
@@ -17,6 +19,8 @@ export class AIService {
   private gemini?: any;
   private anthropic?: Anthropic;
   private openai?: OpenAI;
+  private grok?: OpenAI;
+  private deepseek?: OpenAI;
   private provider: AIProvider;
   private config: AIServiceConfig;
 
@@ -44,6 +48,20 @@ export class AIService {
       const apiKey = this.config.openaiApiKey || process.env.OPENAI_API_KEY || '';
       this.openai = new OpenAI({ apiKey });
       console.log('🤖 AI Provider: OpenAI');
+    } else if (this.provider === 'grok') {
+      const apiKey = this.config.grokApiKey || process.env.GROK_API_KEY || '';
+      this.grok = new OpenAI({
+        apiKey,
+        baseURL: 'https://api.x.ai/v1',
+      });
+      console.log('🤖 AI Provider: Grok (X.AI)');
+    } else if (this.provider === 'deepseek') {
+      const apiKey = this.config.deepseekApiKey || process.env.DEEPSEEK_API_KEY || '';
+      this.deepseek = new OpenAI({
+        apiKey,
+        baseURL: 'https://api.deepseek.com',
+      });
+      console.log('🤖 AI Provider: DeepSeek');
     }
   }
 
@@ -295,6 +313,22 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
         model: 'gpt-4o-mini',
         messages: [{ role: 'user', content: prompt }],
         max_tokens: 2000,
+      });
+      return completion.choices[0].message.content || '';
+    } else if (this.provider === 'grok' && this.grok) {
+      const completion = await this.grok.chat.completions.create({
+        model: 'grok-beta',
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 2000,
+        temperature: 0.7,
+      });
+      return completion.choices[0].message.content || '';
+    } else if (this.provider === 'deepseek' && this.deepseek) {
+      const completion = await this.deepseek.chat.completions.create({
+        model: 'deepseek-chat',
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 2000,
+        temperature: 0.7,
       });
       return completion.choices[0].message.content || '';
     }
