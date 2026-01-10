@@ -52,10 +52,7 @@ export async function handleProductActions({ request }: ActionFunctionArgs) {
   const queue = AIQueueService.getInstance();
   await queue.updateRateLimits(aiSettings);
 
-  if (action === "loadTranslations") {
-    console.log('🌐 [PRODUCT.ACTIONS] Loading translations for locale:', formData.get("locale"));
-    return handleLoadTranslations(admin, formData, productId);
-  }
+  // Note: loadTranslations action removed - translations are now pre-loaded from database in the loader
 
   if (action === "generateAIText") {
     console.log('🤖 [PRODUCT.ACTIONS] Generating AI text for field:', formData.get("fieldType"));
