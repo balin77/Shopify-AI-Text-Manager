@@ -102,14 +102,7 @@ export function ProductList({
                 id={id}
                 onClick={() => onProductSelect(id)}
                 media={
-                  <div
-                    style={{
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: "0.25rem",
-                      alignItems: "flex-start",
-                    }}
-                  >
+                  <InlineStack gap="200" blockAlign="center">
                     {featuredImage ? (
                       <Thumbnail
                         source={featuredImage.url}
@@ -129,7 +122,7 @@ export function ProductList({
                     <Badge tone={status === "ACTIVE" ? "success" : undefined} size="small">
                       {status}
                     </Badge>
-                  </div>
+                  </InlineStack>
                 }
               >
                 <Text as="p" variant="bodyMd" fontWeight={isSelected ? "bold" : "regular"}>
