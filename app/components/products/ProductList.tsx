@@ -57,7 +57,7 @@ export function ProductList({
       case "ACTIVE":
         return "#00a047"; // Success green
       case "DRAFT":
-        return "#ffb800"; // Warning yellow
+        return "#8c9196"; // Gray
       case "ARCHIVED":
         return "#8c9196"; // Subdued gray
       default:
@@ -113,24 +113,25 @@ export function ProductList({
             const isSelected = selectedProductId === id;
 
             return (
-              <ResourceItem
-                id={id}
-                onClick={() => onProductSelect(id)}
-                media={
-                  <InlineStack gap="300" blockAlign="center">
-                    {/* Status stripe on the left */}
+              <div style={{ position: "relative" }}>
+                {/* Status stripe positioned absolutely at the left edge */}
+                <div
+                  style={{
+                    position: "absolute",
+                    left: 0,
+                    top: 0,
+                    bottom: 0,
+                    width: "4px",
+                    backgroundColor: getStatusColor(status),
+                    zIndex: 1,
+                  }}
+                />
+                <ResourceItem
+                  id={id}
+                  onClick={() => onProductSelect(id)}
+                  media={
                     <div
-                      style={{
-                        width: "4px",
-                        height: "64px",
-                        backgroundColor: getStatusColor(status),
-                        borderRadius: "2px",
-                        flexShrink: 0,
-                      }}
-                    />
-                    {/* Product image with hover badge */}
-                    <div
-                      style={{ position: "relative", display: "inline-block" }}
+                      style={{ position: "relative", display: "inline-block", marginLeft: "12px" }}
                       onMouseEnter={() => setHoveredProductId(id)}
                       onMouseLeave={() => setHoveredProductId(null)}
                     >
@@ -150,31 +151,39 @@ export function ProductList({
                           }}
                         />
                       )}
-                      {/* Badge on hover */}
+                      {/* Badge on hover - positioned at bottom */}
                       {hoveredProductId === id && (
                         <div
                           style={{
                             position: "absolute",
-                            top: "50%",
+                            bottom: "8px",
                             left: "50%",
-                            transform: "translate(-50%, -50%)",
+                            transform: "translateX(-50%)",
                             pointerEvents: "none",
                             zIndex: 10,
                           }}
                         >
-                          <Badge tone={status === "ACTIVE" ? "success" : undefined}>
+                          <Badge
+                            tone={
+                              status === "ACTIVE"
+                                ? "success"
+                                : status === "DRAFT"
+                                  ? undefined
+                                  : "info"
+                            }
+                          >
                             {status}
                           </Badge>
                         </div>
                       )}
                     </div>
-                  </InlineStack>
-                }
-              >
-                <Text as="p" variant="bodyMd" fontWeight={isSelected ? "bold" : "regular"}>
-                  {title}
-                </Text>
-              </ResourceItem>
+                  }
+                >
+                  <Text as="p" variant="bodyMd" fontWeight={isSelected ? "bold" : "regular"}>
+                    {title}
+                  </Text>
+                </ResourceItem>
+              </div>
             );
           }}
         />
