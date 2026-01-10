@@ -40,6 +40,7 @@ export function ProductList({
 }: ProductListProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
+  const [hoveredProductId, setHoveredProductId] = useState<string | null>(null);
   const productsPerPage = 10;
 
   // Filter and pagination
@@ -49,6 +50,20 @@ export function ProductList({
   const totalPages = Math.ceil(filteredProducts.length / productsPerPage);
   const startIndex = (currentPage - 1) * productsPerPage;
   const paginatedProducts = filteredProducts.slice(startIndex, startIndex + productsPerPage);
+
+  // Get color for status stripe
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case "ACTIVE":
+        return "#00a047"; // Success green
+      case "DRAFT":
+        return "#ffb800"; // Warning yellow
+      case "ARCHIVED":
+        return "#8c9196"; // Subdued gray
+      default:
+        return "#babfc3"; // Default gray
+    }
+  };
 
   return (
     <Card padding="0">
@@ -102,26 +117,57 @@ export function ProductList({
                 id={id}
                 onClick={() => onProductSelect(id)}
                 media={
-                  <InlineStack gap="200" blockAlign="center">
-                    {featuredImage ? (
-                      <Thumbnail
-                        source={featuredImage.url}
-                        alt={featuredImage.altText || title}
-                        size="small"
-                      />
-                    ) : (
-                      <div
-                        style={{
-                          width: "40px",
-                          height: "40px",
-                          background: "#e1e3e5",
-                          borderRadius: "8px",
-                        }}
-                      />
-                    )}
-                    <Badge tone={status === "ACTIVE" ? "success" : undefined} size="small">
-                      {status}
-                    </Badge>
+                  <InlineStack gap="300" blockAlign="center">
+                    {/* Status stripe on the left */}
+                    <div
+                      style={{
+                        width: "4px",
+                        height: "64px",
+                        backgroundColor: getStatusColor(status),
+                        borderRadius: "2px",
+                        flexShrink: 0,
+                      }}
+                    />
+                    {/* Product image with hover badge */}
+                    <div
+                      style={{ position: "relative", display: "inline-block" }}
+                      onMouseEnter={() => setHoveredProductId(id)}
+                      onMouseLeave={() => setHoveredProductId(null)}
+                    >
+                      {featuredImage ? (
+                        <Thumbnail
+                          source={featuredImage.url}
+                          alt={featuredImage.altText || title}
+                          size="large"
+                        />
+                      ) : (
+                        <div
+                          style={{
+                            width: "60px",
+                            height: "60px",
+                            background: "#e1e3e5",
+                            borderRadius: "8px",
+                          }}
+                        />
+                      )}
+                      {/* Badge on hover */}
+                      {hoveredProductId === id && (
+                        <div
+                          style={{
+                            position: "absolute",
+                            top: "50%",
+                            left: "50%",
+                            transform: "translate(-50%, -50%)",
+                            pointerEvents: "none",
+                            zIndex: 10,
+                          }}
+                        >
+                          <Badge tone={status === "ACTIVE" ? "success" : undefined}>
+                            {status}
+                          </Badge>
+                        </div>
+                      )}
+                    </div>
                   </InlineStack>
                 }
               >
