@@ -34,7 +34,7 @@ export function MainNavigation() {
             <NavLink
               key={tab.id}
               to={tab.path}
-              prefetch="intent"
+              prefetch="none"
               onClick={(e) => {
                 console.log("🖱️ [MainNavigation] Tab clicked:", tab.id, "->", tab.path);
                 console.log("🖱️ [MainNavigation] Current location:", location.pathname);
