@@ -13,6 +13,11 @@ export default async function handleRequest(
   responseHeaders: Headers,
   remixContext: EntryContext
 ) {
+  const url = new URL(request.url);
+  console.log(`📥 [ENTRY.SERVER] Request: ${request.method} ${url.pathname}`);
+  console.log(`🔍 [ENTRY.SERVER] Status Code: ${responseStatusCode}`);
+  console.log(`🔍 [ENTRY.SERVER] Headers:`, Object.fromEntries(request.headers.entries()));
+
   addDocumentResponseHeaders(request, responseHeaders);
 
   return new Promise((resolve, reject) => {
@@ -31,6 +36,8 @@ export default async function handleRequest(
 
           responseHeaders.set("Content-Type", "text/html");
 
+          console.log(`✅ [ENTRY.SERVER] Shell ready, sending response with status ${responseStatusCode}`);
+
           resolve(
             new Response(stream, {
               headers: responseHeaders,
@@ -41,9 +48,11 @@ export default async function handleRequest(
           pipe(body);
         },
         onShellError(error: unknown) {
+          console.error("❌ [ENTRY.SERVER] Shell error:", error);
           reject(error);
         },
         onError(error: unknown) {
+          console.error("❌ [ENTRY.SERVER] Render error:", error);
           responseStatusCode = 500;
           if (shellRendered) {
             console.error(error);

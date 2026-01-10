@@ -75,7 +75,22 @@ if (process.env.SHOPIFY_APP_URL) {
 
 // Validate SHOPIFY_SCOPES
 if (process.env.SHOPIFY_SCOPES) {
+  console.log('\n📋 Detailed SHOPIFY_SCOPES validation:');
+  console.log('   Raw value:', process.env.SHOPIFY_SCOPES);
+
   const scopes = process.env.SHOPIFY_SCOPES.split(',');
+  console.log('   Parsed scopes count:', scopes.length);
+  console.log('   Individual scopes:');
+  scopes.forEach((scope, index) => {
+    const trimmed = scope.trim();
+    if (scope !== trimmed) {
+      warnings.push(`⚠️  Scope at position ${index} has whitespace: "${scope}" (should be "${trimmed}")`);
+      console.log(`     ${index + 1}. "${scope}" ⚠️ HAS WHITESPACE!`);
+    } else {
+      console.log(`     ${index + 1}. "${scope}"`);
+    }
+  });
+
   const requiredScopes = [
     'read_products',
     'write_products',
