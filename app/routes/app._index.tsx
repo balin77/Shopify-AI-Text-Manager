@@ -153,53 +153,46 @@ export default function Index() {
 
   const { aiSuggestions, removeSuggestion } = useAISuggestions(fetcher.data);
 
-  // Load translations when language changes
-  useEffect(() => {
-    console.log('=== FRONTEND: Load translations check ===');
-    console.log('selectedProduct:', selectedProduct?.id);
-    console.log('currentLanguage:', currentLanguage);
-    console.log('primaryLocale:', primaryLocale);
-    console.log('Is foreign language:', currentLanguage !== primaryLocale);
+  // Handle language change and load translations
+  const handleLanguageChange = (newLanguage: string) => {
+    console.log('=== LANGUAGE CHANGE HANDLER ===');
+    console.log('New language:', newLanguage);
+    console.log('Primary locale:', primaryLocale);
+    console.log('Selected product:', selectedProduct?.id);
 
-    if (selectedProduct && currentLanguage !== primaryLocale) {
-      const itemKey = `${selectedProduct.id}_${currentLanguage}`;
+    setCurrentLanguage(newLanguage);
+
+    // Load translations if switching to a foreign language
+    if (selectedProduct && newLanguage !== primaryLocale) {
+      const itemKey = `${selectedProduct.id}_${newLanguage}`;
       const hasInLoadedState = !!loadedTranslations[itemKey];
       const hasInProductObject = selectedProduct.translations?.some(
-        (t: any) => t.locale === currentLanguage
+        (t: any) => t.locale === newLanguage
       );
       const hasTranslations = hasInLoadedState || hasInProductObject;
 
-      console.log('itemKey:', itemKey);
-      console.log('hasInLoadedState:', hasInLoadedState);
-      console.log('hasInProductObject:', hasInProductObject);
-      console.log('hasTranslations:', hasTranslations);
-      console.log('loadedTranslations:', loadedTranslations);
-      console.log('product.translations:', selectedProduct.translations);
+      console.log('Has translations:', hasTranslations);
+      console.log('Has in loaded state:', hasInLoadedState);
+      console.log('Has in product object:', hasInProductObject);
 
       if (!hasTranslations) {
         console.log('>>> SUBMITTING loadTranslations request <<<');
-        console.log('Fetcher state before submit:', fetcher.state);
         console.log('Submitting with data:', {
           action: "loadTranslations",
           productId: selectedProduct.id,
-          locale: currentLanguage
+          locale: newLanguage
         });
 
-        try {
-          fetcher.submit(
-            { action: "loadTranslations", productId: selectedProduct.id, locale: currentLanguage },
-            { method: "POST" }
-          );
-          console.log('Fetcher state after submit:', fetcher.state);
-          console.log('Submit completed without error');
-        } catch (error) {
-          console.error('ERROR during fetcher.submit:', error);
-        }
+        fetcher.submit(
+          { action: "loadTranslations", productId: selectedProduct.id, locale: newLanguage },
+          { method: "POST" }
+        );
+        console.log('Submit completed');
       } else {
         console.log('Translations already loaded, skipping request');
       }
     }
-  }, [selectedProductId, currentLanguage, loadedTranslations]);
+  };
 
   // Handle loaded translations
   useEffect(() => {
@@ -510,7 +503,7 @@ export default function Index() {
             shopLocales={shopLocales}
             primaryLocale={primaryLocale}
             currentLanguage={currentLanguage}
-            onLanguageChange={setCurrentLanguage}
+            onLanguageChange={handleLanguageChange}
             editableTitle={editableTitle}
             setEditableTitle={setEditableTitle}
             editableDescription={editableDescription}
