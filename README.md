@@ -86,9 +86,119 @@ SHOPIFY_SCOPES=read_products, write_products, read_translations
 3. App neu deployen
 4. Shopify App eventuell neu installieren
 
+### Embedded App Navigation - Wichtige technische Details
+
+**WICHTIG:** Diese App verwendet eine spezielle Navigation-Implementierung für Shopify Embedded Apps, die sich von Standard-React/Remix-Apps unterscheidet.
+
+#### Das Problem mit Standard-Navigation
+
+In Shopify Embedded Apps (die im Shopify Admin iframe laufen) funktioniert normale Client-Side-Navigation **nicht**:
+
+❌ **Was NICHT funktioniert:**
+- `<Link>` von Remix/React Router → Klicks werden blockiert
+- `<NavLink>` → Pathname ändert sich nicht
+- `useNavigate()` → Navigation wird vom iframe abgefangen
+- `AppProvider` von `@shopify/shopify-app-remix/react` → Verursacht React Suspense Errors (#418, #423)
+
+#### Die Lösung: Full Page Reload mit URL-Parameter Preservation
+
+✅ **Was funktioniert:**
+
+```typescript
+// In MainNavigation.tsx
+const handleClick = (path: string) => {
+  // 1. Current URL mit allen Parametern auslesen
+  const url = new URL(window.location.href);
+  const searchParams = url.searchParams;
+
+  // 2. Neue URL mit erhaltenen Parametern erstellen
+  const newUrl = `${path}?${searchParams.toString()}`;
+
+  // 3. Full Page Reload durchführen
+  window.location.href = newUrl;
+};
+```
+
+**Warum das funktioniert:**
+1. ✅ Full Page Reloads werden vom Shopify iframe **nicht blockiert**
+2. ✅ URL-Parameter (`embedded`, `hmac`, `host`, `id_token`, etc.) bleiben erhalten
+3. ✅ Session bleibt durch die erhaltenen Parameter gültig
+4. ✅ Authentifizierung funktioniert bei jedem Request
+
+#### AppProvider Konfiguration
+
+Verwende den **Polaris AppProvider**, NICHT den von `@shopify/shopify-app-remix`:
+
+```typescript
+// ✅ RICHTIG - app/routes/app.tsx
+import { AppProvider } from "@shopify/polaris";
+
+export default function App() {
+  return (
+    <AppProvider i18n={{}}>
+      <Outlet />
+    </AppProvider>
+  );
+}
+```
+
+```typescript
+// ❌ FALSCH - Verursacht React Errors
+import { AppProvider } from "@shopify/shopify-app-remix/react";
+```
+
+#### Prefetch-Request Handling
+
+Remix sendet Prefetch-Requests, die keine Session-Tokens enthalten. Diese müssen abgefangen werden:
+
+```typescript
+// In app.tsx loader
+export const loader = async ({ request }: LoaderFunctionArgs) => {
+  const headers = Object.fromEntries(request.headers.entries());
+  const isPrefetch = headers['sec-purpose'] === 'prefetch';
+
+  if (isPrefetch) {
+    // Prefetch-Requests sofort mit Default-Daten beantworten
+    return json({ appLanguage: "de" });
+  }
+
+  // Normale Requests mit Authentication behandeln
+  const { session } = await authenticate.admin(request);
+  // ...
+};
+```
+
+#### Bekannte Limitationen
+
+- **Keine Client-Side-Navigation**: Jeder Tab-Wechsel löst einen Full Page Reload aus
+- **Langsamere UX**: SPA-Navigation wäre schneller, funktioniert aber nicht im iframe
+- **App Bridge Navigation**: Theoretisch möglich, aber komplex und fehleranfällig
+
+#### Debugging
+
+**Backend Logs checken:**
+```bash
+# Railway Logs sollten zeigen:
+🔍 [APP.TSX LOADER] Start - URL: /app/content
+✅ [APP.TSX LOADER] Authentication successful
+```
+
+**Browser Console checken:**
+```javascript
+// Sollte zeigen:
+🖱️ [MainNavigation] Tab clicked: content -> /app/content
+🖱️ [MainNavigation] Navigating to: /app/content?embedded=1&hmac=...
+```
+
+#### Referenzen
+
+- [GitHub Issue #369 - Shopify Remix Navigation Bug](https://github.com/Shopify/shopify-app-template-remix/issues/369)
+- [GitHub Issue #529 - Suspense Boundary Problem](https://github.com/Shopify/shopify-app-js/issues/529)
+- Diese Probleme sind bekannt und dokumentiert, aber noch nicht von Shopify gefixt
+
 ### Authentication Strategy
 
-Die App verwendet `unstable_newEmbeddedAuthStrategy: true` für moderne Token-Exchange-Authentifizierung. Falls Probleme auftreten, kann diese in `app/shopify.server.ts` deaktiviert werden.
+Die App verwendet die Standard-Authentifizierung von `@shopify/shopify-app-remix`. Falls Probleme auftreten, checke die Railway Logs für Authentication-Fehler.
 
 ## 📦 Projektstruktur
 
@@ -306,9 +416,31 @@ Wichtige Modelle:
 - Verifiziere Environment Variables (besonders `SHOPIFY_SCOPES`)
 
 ### Navigation funktioniert nicht
-- Leerzeichen in `SHOPIFY_SCOPES` entfernen
-- App in Shopify neu installieren
-- Session-Storage in Datenbank leeren
+
+**Symptome:**
+- Klicks auf Navigation-Tabs haben keine Wirkung
+- Pathname ändert sich nicht
+- Keine Backend-Requests sichtbar in Railway Logs
+- React Errors #418 oder #423 in Browser Console
+
+**Lösungen:**
+
+1. **Überprüfe die Navigation-Implementierung:**
+   - Muss `window.location.href` mit URL-Parameter Preservation verwenden
+   - NICHT `<Link>`, `<NavLink>`, oder `useNavigate()` verwenden
+   - Siehe [Embedded App Navigation](#embedded-app-navigation---wichtige-technische-details)
+
+2. **Überprüfe den AppProvider:**
+   - Muss von `@shopify/polaris` importiert sein
+   - NICHT von `@shopify/shopify-app-remix/react`
+
+3. **Scopes überprüfen:**
+   - Leerzeichen in `SHOPIFY_SCOPES` entfernen
+   - App in Shopify neu installieren
+
+4. **Session-Storage leeren:**
+   - Datenbank-Tabelle `Session` leeren
+   - App neu autorisieren
 
 ### API-Fehler
 - Scopes überprüfen - alle benötigten Permissions vorhanden?
