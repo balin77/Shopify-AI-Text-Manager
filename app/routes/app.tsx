@@ -22,7 +22,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   if (isPrefetch) {
     console.log("⚡ [APP.TSX LOADER] Prefetch request detected - returning default language");
     // Return default data for prefetch - no auth needed
-    return json({ appLanguage: "de" as Locale });
+    return json({
+      appLanguage: "de" as Locale,
+      apiKey: process.env.SHOPIFY_API_KEY || ""
+    });
   }
 
   try {
@@ -43,7 +46,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const appLanguage = (settings?.appLanguage || "de") as Locale;
     console.log("✅ [APP.TSX LOADER] App language:", appLanguage);
 
-    return json({ appLanguage });
+    return json({
+      appLanguage,
+      apiKey: process.env.SHOPIFY_API_KEY || ""
+    });
   } catch (error) {
     console.error("❌ [APP.TSX LOADER] Error:", error);
     console.error("❌ [APP.TSX LOADER] Error stack:", error instanceof Error ? error.stack : "No stack");
@@ -52,12 +58,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 };
 
 export default function App() {
-  const { appLanguage } = useLoaderData<typeof loader>();
+  const { appLanguage, apiKey } = useLoaderData<typeof loader>();
 
   console.log("🎨 [APP.TSX] Rendering App component with language:", appLanguage);
+  console.log("🎨 [APP.TSX] API Key present:", apiKey ? "✅ Yes" : "❌ No");
 
   return (
-    <AppProvider isEmbeddedApp>
+    <AppProvider isEmbeddedApp apiKey={apiKey}>
       <I18nProvider locale={appLanguage}>
         <Outlet />
       </I18nProvider>
