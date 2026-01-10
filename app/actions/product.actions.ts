@@ -34,11 +34,6 @@ export async function handleProductActions({ request }: ActionFunctionArgs) {
     openaiApiKey: aiSettings?.openaiApiKey || undefined,
   };
 
-  // Update queue rate limits from settings
-  const { AIQueueService } = await import("../../src/services/ai-queue.service");
-  const queue = AIQueueService.getInstance();
-  await queue.updateRateLimits(aiSettings);
-
   if (action === "loadTranslations") {
     console.error('!!! LOAD TRANSLATIONS ACTION TRIGGERED !!!');
     console.error('Product ID:', productId);
@@ -161,8 +156,8 @@ async function handleGenerateAIText(
   });
 
   try {
-    // Create AI service with shop and taskId for queue management
-    const aiService = new AIService(provider, config, shop, task.id);
+    // Create AI service
+    const aiService = new AIService(provider, config);
 
     let generatedContent = "";
 
@@ -294,7 +289,7 @@ async function handleTranslateField(
   });
 
   try {
-    const translationService = new TranslationService(provider, config, shop, task.id);
+    const translationService = new TranslationService(provider, config);
 
     const changedFields: any = {};
     changedFields[fieldType] = sourceText;
@@ -356,7 +351,7 @@ async function handleTranslateSuggestion(
   });
 
   try {
-    const translationService = new TranslationService(provider, config, shop, task.id);
+    const translationService = new TranslationService(provider, config);
 
     const changedFields: any = {};
     changedFields[fieldType] = suggestion;
@@ -488,7 +483,7 @@ async function handleTranslateAll(
     console.log(`[TranslateAll] Digest map:`, digestMap);
 
     // Create translation service with shop and taskId for queue management
-    const translationService = new TranslationService(provider, config, shop, task.id);
+    const translationService = new TranslationService(provider, config);
 
     // Translate each locale one by one to prevent data loss
     for (const locale of targetLocales) {
@@ -787,7 +782,7 @@ async function handleTranslateOption(
   });
 
   try {
-    const translationService = new TranslationService(provider, config, shop, task.id);
+    const translationService = new TranslationService(provider, config);
 
     const optionValues = JSON.parse(optionValuesStr);
 
