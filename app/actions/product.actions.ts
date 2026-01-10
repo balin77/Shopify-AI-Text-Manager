@@ -331,25 +331,71 @@ async function handleTranslateField(
   }
 }
 
-async function handleTranslateSuggestion(translationService: TranslationService, formData: FormData) {
+async function handleTranslateSuggestion(
+  provider: any,
+  config: any,
+  formData: FormData,
+  shop: string
+) {
   const suggestion = formData.get("suggestion") as string;
   const fieldType = formData.get("fieldType") as string;
+  const productId = formData.get("productId") as string;
+
+  const { db } = await import("../db.server");
+
+  const task = await db.task.create({
+    data: {
+      shop,
+      type: "translation",
+      status: "pending",
+      resourceType: "product",
+      resourceId: productId,
+      fieldType,
+      progress: 0,
+    },
+  });
 
   try {
+    const translationService = new TranslationService(provider, config, shop, task.id);
+
     const changedFields: any = {};
     changedFields[fieldType] = suggestion;
 
+    await db.task.update({
+      where: { id: task.id },
+      data: { status: "queued", progress: 10 },
+    });
+
     const translations = await translationService.translateProduct(changedFields);
+
+    await db.task.update({
+      where: { id: task.id },
+      data: {
+        status: "completed",
+        progress: 100,
+        completedAt: new Date(),
+      },
+    });
 
     return json({ success: true, translations, fieldType });
   } catch (error: any) {
+    await db.task.update({
+      where: { id: task.id },
+      data: {
+        status: "failed",
+        completedAt: new Date(),
+        error: error.message,
+      },
+    });
+
     return json({ success: false, error: error.message }, { status: 500 });
   }
 }
 
 async function handleTranslateAll(
   admin: any,
-  translationService: TranslationService,
+  provider: any,
+  config: any,
   formData: FormData,
   productId: string,
   shop: string
@@ -440,6 +486,9 @@ async function handleTranslateAll(
       digestMap[content.key] = content.digest;
     }
     console.log(`[TranslateAll] Digest map:`, digestMap);
+
+    // Create translation service with shop and taskId for queue management
+    const translationService = new TranslationService(provider, config, shop, task.id);
 
     // Translate each locale one by one to prevent data loss
     for (const locale of targetLocales) {
@@ -710,17 +759,45 @@ async function handleUpdateProduct(admin: any, formData: FormData, productId: st
   }
 }
 
-async function handleTranslateOption(translationService: TranslationService, formData: FormData) {
+async function handleTranslateOption(
+  provider: any,
+  config: any,
+  formData: FormData,
+  shop: string
+) {
   const optionId = formData.get("optionId") as string;
   const optionName = formData.get("optionName") as string;
   const optionValuesStr = formData.get("optionValues") as string;
   const targetLocale = formData.get("targetLocale") as string;
+  const productId = formData.get("productId") as string;
+
+  const { db } = await import("../db.server");
+
+  const task = await db.task.create({
+    data: {
+      shop,
+      type: "translation",
+      status: "pending",
+      resourceType: "product",
+      resourceId: productId,
+      fieldType: "option",
+      targetLocale,
+      progress: 0,
+    },
+  });
 
   try {
+    const translationService = new TranslationService(provider, config, shop, task.id);
+
     const optionValues = JSON.parse(optionValuesStr);
 
+    await db.task.update({
+      where: { id: task.id },
+      data: { status: "queued", progress: 10 },
+    });
+
     // Translate the option name
-    const nameTranslations = await translationService.translateProduct({ optionName });
+    const nameTranslations = await translationService.translateProduct({ optionName }, [targetLocale]);
     const translatedName = nameTranslations[targetLocale]?.optionName || "";
 
     // Translate all option values
@@ -729,9 +806,18 @@ async function handleTranslateOption(translationService: TranslationService, for
       valueFields[`value_${index}`] = value;
     });
 
-    const valueTranslations = await translationService.translateProduct(valueFields);
+    const valueTranslations = await translationService.translateProduct(valueFields, [targetLocale]);
     const translatedValues = optionValues.map((_: string, index: number) => {
       return valueTranslations[targetLocale]?.[`value_${index}`] || "";
+    });
+
+    await db.task.update({
+      where: { id: task.id },
+      data: {
+        status: "completed",
+        progress: 100,
+        completedAt: new Date(),
+      },
     });
 
     return json({
@@ -742,6 +828,15 @@ async function handleTranslateOption(translationService: TranslationService, for
       targetLocale
     });
   } catch (error: any) {
+    await db.task.update({
+      where: { id: task.id },
+      data: {
+        status: "failed",
+        completedAt: new Date(),
+        error: error.message,
+      },
+    });
+
     return json({ success: false, error: error.message }, { status: 500 });
   }
 }
