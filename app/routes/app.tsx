@@ -1,5 +1,6 @@
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
 import { Link, Outlet, useLoaderData, useRouteError } from "@remix-run/react";
+import { Suspense } from "react";
 import { boundary } from "@shopify/shopify-app-remix/server";
 import { AppProvider } from "@shopify/shopify-app-remix/react";
 import polarisStyles from "@shopify/polaris/build/esm/styles.css?url";
@@ -64,11 +65,13 @@ export default function App() {
   console.log("🎨 [APP.TSX] API Key present:", apiKey ? "✅ Yes" : "❌ No");
 
   return (
-    <AppProvider isEmbeddedApp apiKey={apiKey}>
-      <I18nProvider locale={appLanguage}>
-        <Outlet />
-      </I18nProvider>
-    </AppProvider>
+    <Suspense fallback={<div>Loading...</div>}>
+      <AppProvider isEmbeddedApp apiKey={apiKey}>
+        <I18nProvider locale={appLanguage}>
+          <Outlet />
+        </I18nProvider>
+      </AppProvider>
+    </Suspense>
   );
 }
 
