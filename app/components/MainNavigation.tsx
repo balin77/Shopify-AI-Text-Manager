@@ -1,4 +1,4 @@
-import { useLocation } from "@remix-run/react";
+import { Link, useLocation } from "@remix-run/react";
 import { InlineStack, Text } from "@shopify/polaris";
 import { useI18n } from "../contexts/I18nContext";
 
@@ -14,23 +14,6 @@ export function MainNavigation() {
     { id: "tasks", label: t.nav.tasks, path: "/app/tasks" },
     { id: "settings", label: t.nav.settings, path: "/app/settings" },
   ];
-
-  const handleNavigation = (path: string, tabId: string) => {
-    console.log("🖱️ [MainNavigation] Tab clicked:", tabId, "->", path);
-    console.log("🖱️ [MainNavigation] Current location:", location.pathname);
-    console.log("🖱️ [MainNavigation] Using full page reload for navigation");
-
-    // Get current URL parameters to preserve embedded context
-    const url = new URL(window.location.href);
-    const searchParams = url.searchParams;
-
-    // Build new URL with same parameters
-    const newUrl = `${path}?${searchParams.toString()}`;
-    console.log("🖱️ [MainNavigation] Navigating to:", newUrl);
-
-    // Use window.location for navigation in embedded app
-    window.location.href = newUrl;
-  };
 
   return (
     <div
@@ -48,17 +31,18 @@ export function MainNavigation() {
               : location.pathname.startsWith(tab.path);
 
           return (
-            <button
+            <Link
               key={tab.id}
-              onClick={() => handleNavigation(tab.path, tab.id)}
+              to={tab.path}
+              onClick={() => {
+                console.log("🖱️ [MainNavigation] Link clicked:", tab.id, "->", tab.path);
+              }}
               style={{
                 textDecoration: "none",
                 padding: "1rem 0.5rem",
                 borderBottom: isActive ? "3px solid #303030" : "2px solid transparent",
                 transition: "border-color 0.2s",
-                background: "none",
-                border: "none",
-                cursor: "pointer",
+                display: "block",
               }}
             >
               <Text
@@ -69,7 +53,7 @@ export function MainNavigation() {
               >
                 {tab.label}
               </Text>
-            </button>
+            </Link>
           );
         })}
       </InlineStack>
