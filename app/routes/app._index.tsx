@@ -179,11 +179,22 @@ export default function Index() {
       if (!hasTranslations) {
         console.log('>>> SUBMITTING loadTranslations request <<<');
         console.log('Fetcher state before submit:', fetcher.state);
-        fetcher.submit(
-          { action: "loadTranslations", productId: selectedProduct.id, locale: currentLanguage },
-          { method: "POST" }
-        );
-        console.log('Fetcher state after submit:', fetcher.state);
+        console.log('Submitting with data:', {
+          action: "loadTranslations",
+          productId: selectedProduct.id,
+          locale: currentLanguage
+        });
+
+        try {
+          fetcher.submit(
+            { action: "loadTranslations", productId: selectedProduct.id, locale: currentLanguage },
+            { method: "POST" }
+          );
+          console.log('Fetcher state after submit:', fetcher.state);
+          console.log('Submit completed without error');
+        } catch (error) {
+          console.error('ERROR during fetcher.submit:', error);
+        }
       } else {
         console.log('Translations already loaded, skipping request');
       }
