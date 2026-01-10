@@ -12,7 +12,18 @@ export const links = () => [{ rel: "stylesheet", href: polarisStyles }];
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   console.log("🔍 [APP.TSX LOADER] Start - URL:", request.url);
   console.log("🔍 [APP.TSX LOADER] Method:", request.method);
-  console.log("🔍 [APP.TSX LOADER] Headers:", Object.fromEntries(request.headers.entries()));
+
+  const headers = Object.fromEntries(request.headers.entries());
+  console.log("🔍 [APP.TSX LOADER] Headers:", headers);
+
+  // Check if this is a prefetch request - these don't have session tokens
+  const isPrefetch = headers['sec-purpose'] === 'prefetch' || headers['purpose'] === 'prefetch';
+
+  if (isPrefetch) {
+    console.log("⚡ [APP.TSX LOADER] Prefetch request detected - returning default language");
+    // Return default data for prefetch - no auth needed
+    return json({ appLanguage: "de" as Locale });
+  }
 
   try {
     console.log("🔍 [APP.TSX LOADER] Authenticating...");
