@@ -20,14 +20,12 @@ interface UseProductFieldsProps {
   selectedProduct: Product | null;
   currentLanguage: string;
   primaryLocale: string;
-  loadedTranslations?: Record<string, any[]>;
 }
 
 export function useProductFields({
   selectedProduct,
   currentLanguage,
   primaryLocale,
-  loadedTranslations = {},
 }: UseProductFieldsProps) {
   const [editableTitle, setEditableTitle] = useState("");
   const [editableDescription, setEditableDescription] = useState("");
@@ -42,11 +40,7 @@ export function useProductFields({
       return fallback;
     }
 
-    // First check loaded translations state
-    const itemKey = `${selectedProduct.id}_${locale}`;
-    const translations = loadedTranslations[itemKey] || selectedProduct.translations || [];
-
-    const translation = translations.find(
+    const translation = selectedProduct.translations.find(
       (t: any) => t.key === key && t.locale === locale
     );
 
@@ -71,7 +65,7 @@ export function useProductFields({
       }
       setHasChanges(false);
     }
-  }, [selectedProduct?.id, currentLanguage, loadedTranslations]);
+  }, [selectedProduct?.id, currentLanguage]);
 
   // Track changes
   useEffect(() => {
@@ -98,11 +92,7 @@ export function useProductFields({
     if (currentLanguage === primaryLocale) return true;
     if (!selectedProduct) return false;
 
-    // Check loaded translations state
-    const itemKey = `${selectedProduct.id}_${currentLanguage}`;
-    const translations = loadedTranslations[itemKey] || selectedProduct.translations || [];
-
-    const translation = translations.find(
+    const translation = selectedProduct.translations.find(
       (t: any) => t.key === key && t.locale === currentLanguage
     );
 
