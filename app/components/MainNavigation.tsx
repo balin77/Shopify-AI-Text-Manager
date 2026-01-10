@@ -50,7 +50,6 @@ export function MainNavigation() {
               style={{
                 textDecoration: "none",
                 padding: "1rem 0.5rem",
-                borderBottom: isActive ? "3px solid #303030" : "2px solid transparent",
                 transition: "border-color 0.2s",
                 background: "none",
                 border: "none",

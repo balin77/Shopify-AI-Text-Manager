@@ -2,14 +2,11 @@ import { json, type LoaderFunctionArgs } from "@remix-run/node";
 import { Link, Outlet, useLoaderData, useRouteError } from "@remix-run/react";
 import { boundary } from "@shopify/shopify-app-remix/server";
 import { AppProvider } from "@shopify/polaris";
-import { shopifyApp } from "@shopify/shopify-app-remix/react";
+import { AppProvider as ShopifyAppProvider } from "@shopify/shopify-app-remix/react";
 import "@shopify/polaris/build/esm/styles.css";
 import { authenticate } from "../shopify.server";
 import { I18nProvider } from "../contexts/I18nContext";
 import type { Locale } from "../i18n";
-
-// Initialize Shopify App Bridge
-const ShopifyApp = shopifyApp();
 
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -66,13 +63,13 @@ export default function App() {
   console.log("🎨 [APP.TSX] Rendering App component with language:", appLanguage);
 
   return (
-    <ShopifyApp apiKey={apiKey}>
+    <ShopifyAppProvider apiKey={apiKey}>
       <AppProvider i18n={{}}>
         <I18nProvider locale={appLanguage}>
           <Outlet />
         </I18nProvider>
       </AppProvider>
-    </ShopifyApp>
+    </ShopifyAppProvider>
   );
 }
 
