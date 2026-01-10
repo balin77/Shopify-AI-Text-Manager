@@ -1,10 +1,13 @@
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
 import { Link, Outlet, useLoaderData, useRouteError } from "@remix-run/react";
 import { boundary } from "@shopify/shopify-app-remix/server";
-import { AppProvider } from "@shopify/polaris";
+import { AppProvider } from "@shopify/shopify-app-remix/react";
+import polarisStyles from "@shopify/polaris/build/esm/styles.css?url";
 import { authenticate } from "../shopify.server";
 import { I18nProvider } from "../contexts/I18nContext";
 import type { Locale } from "../i18n";
+
+export const links = () => [{ rel: "stylesheet", href: polarisStyles }];
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   console.log("🔍 [APP.TSX LOADER] Start - URL:", request.url);
@@ -40,8 +43,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 export default function App() {
   const { appLanguage } = useLoaderData<typeof loader>();
 
+  console.log("🎨 [APP.TSX] Rendering App component with language:", appLanguage);
+
   return (
-    <AppProvider i18n={{}}>
+    <AppProvider isEmbeddedApp>
       <I18nProvider locale={appLanguage}>
         <Outlet />
       </I18nProvider>
