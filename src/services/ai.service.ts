@@ -2,6 +2,7 @@ import { HfInference } from '@huggingface/inference';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
+import { AIQueueService } from './ai-queue.service';
 
 export type AIProvider = 'huggingface' | 'gemini' | 'claude' | 'openai' | 'grok' | 'deepseek';
 
@@ -23,10 +24,16 @@ export class AIService {
   private deepseek?: OpenAI;
   private provider: AIProvider;
   private config: AIServiceConfig;
+  private queue: AIQueueService;
+  private shop?: string;
+  private taskId?: string;
 
-  constructor(provider: AIProvider = 'huggingface', config: AIServiceConfig = {}) {
+  constructor(provider: AIProvider = 'huggingface', config: AIServiceConfig = {}, shop?: string, taskId?: string) {
     this.provider = provider;
     this.config = config;
+    this.shop = shop;
+    this.taskId = taskId;
+    this.queue = AIQueueService.getInstance();
     this.initializeProvider();
   }
 
@@ -287,8 +294,30 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     return this.parseJSONResponse(responseText);
   }
 
+  private estimateTokens(prompt: string): number {
+    // Rough estimate: ~4 characters per token
+    // Add output tokens estimate (2000 max_tokens)
+    const inputTokens = Math.ceil(prompt.length / 4);
+    const outputTokens = 2000;
+    return inputTokens + outputTokens;
+  }
+
   private async askAI(prompt: string): Promise<string> {
-    return this.executeAIRequest(prompt);
+    // If no shop/taskId provided, execute directly (backward compatibility)
+    if (!this.shop || !this.taskId) {
+      return this.executeAIRequest(prompt);
+    }
+
+    // Use queue for rate-limited execution
+    const estimatedTokens = this.estimateTokens(prompt);
+
+    return this.queue.enqueue(
+      this.shop,
+      this.taskId,
+      this.provider,
+      estimatedTokens,
+      () => this.executeAIRequest(prompt)
+    );
   }
 
   private async executeAIRequest(prompt: string): Promise<string> {
