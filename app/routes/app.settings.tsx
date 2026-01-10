@@ -76,6 +76,20 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       deepseekApiKey: settings.deepseekApiKey || "",
       preferredProvider: settings.preferredProvider,
       appLanguage: settings.appLanguage || "de",
+
+      // Rate limits
+      hfMaxTokensPerMinute: settings.hfMaxTokensPerMinute || 1000000,
+      hfMaxRequestsPerMinute: settings.hfMaxRequestsPerMinute || 100,
+      geminiMaxTokensPerMinute: settings.geminiMaxTokensPerMinute || 1000000,
+      geminiMaxRequestsPerMinute: settings.geminiMaxRequestsPerMinute || 15,
+      claudeMaxTokensPerMinute: settings.claudeMaxTokensPerMinute || 40000,
+      claudeMaxRequestsPerMinute: settings.claudeMaxRequestsPerMinute || 5,
+      openaiMaxTokensPerMinute: settings.openaiMaxTokensPerMinute || 200000,
+      openaiMaxRequestsPerMinute: settings.openaiMaxRequestsPerMinute || 500,
+      grokMaxTokensPerMinute: settings.grokMaxTokensPerMinute || 100000,
+      grokMaxRequestsPerMinute: settings.grokMaxRequestsPerMinute || 60,
+      deepseekMaxTokensPerMinute: settings.deepseekMaxTokensPerMinute || 100000,
+      deepseekMaxRequestsPerMinute: settings.deepseekMaxRequestsPerMinute || 60,
     },
     instructions: {
       titleFormat: instructions.titleFormat || "",
@@ -141,6 +155,20 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const preferredProvider = formData.get("preferredProvider") as string;
       const appLanguage = formData.get("appLanguage") as string;
 
+      // Rate limits
+      const hfMaxTokensPerMinute = parseInt(formData.get("hfMaxTokensPerMinute") as string) || null;
+      const hfMaxRequestsPerMinute = parseInt(formData.get("hfMaxRequestsPerMinute") as string) || null;
+      const geminiMaxTokensPerMinute = parseInt(formData.get("geminiMaxTokensPerMinute") as string) || null;
+      const geminiMaxRequestsPerMinute = parseInt(formData.get("geminiMaxRequestsPerMinute") as string) || null;
+      const claudeMaxTokensPerMinute = parseInt(formData.get("claudeMaxTokensPerMinute") as string) || null;
+      const claudeMaxRequestsPerMinute = parseInt(formData.get("claudeMaxRequestsPerMinute") as string) || null;
+      const openaiMaxTokensPerMinute = parseInt(formData.get("openaiMaxTokensPerMinute") as string) || null;
+      const openaiMaxRequestsPerMinute = parseInt(formData.get("openaiMaxRequestsPerMinute") as string) || null;
+      const grokMaxTokensPerMinute = parseInt(formData.get("grokMaxTokensPerMinute") as string) || null;
+      const grokMaxRequestsPerMinute = parseInt(formData.get("grokMaxRequestsPerMinute") as string) || null;
+      const deepseekMaxTokensPerMinute = parseInt(formData.get("deepseekMaxTokensPerMinute") as string) || null;
+      const deepseekMaxRequestsPerMinute = parseInt(formData.get("deepseekMaxRequestsPerMinute") as string) || null;
+
       await db.aISettings.upsert({
         where: { shop: session.shop },
         update: {
@@ -152,6 +180,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           deepseekApiKey: deepseekApiKey || null,
           preferredProvider,
           appLanguage,
+          hfMaxTokensPerMinute,
+          hfMaxRequestsPerMinute,
+          geminiMaxTokensPerMinute,
+          geminiMaxRequestsPerMinute,
+          claudeMaxTokensPerMinute,
+          claudeMaxRequestsPerMinute,
+          openaiMaxTokensPerMinute,
+          openaiMaxRequestsPerMinute,
+          grokMaxTokensPerMinute,
+          grokMaxRequestsPerMinute,
+          deepseekMaxTokensPerMinute,
+          deepseekMaxRequestsPerMinute,
         },
         create: {
           shop: session.shop,
@@ -163,6 +203,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           deepseekApiKey: deepseekApiKey || null,
           preferredProvider,
           appLanguage,
+          hfMaxTokensPerMinute,
+          hfMaxRequestsPerMinute,
+          geminiMaxTokensPerMinute,
+          geminiMaxRequestsPerMinute,
+          claudeMaxTokensPerMinute,
+          claudeMaxRequestsPerMinute,
+          openaiMaxTokensPerMinute,
+          openaiMaxRequestsPerMinute,
+          grokMaxTokensPerMinute,
+          grokMaxRequestsPerMinute,
+          deepseekMaxTokensPerMinute,
+          deepseekMaxRequestsPerMinute,
         },
       });
 
@@ -197,6 +249,24 @@ export default function SettingsPage() {
   const [openaiKey, setOpenaiKey] = useState(settings.openaiApiKey);
   const [provider, setProvider] = useState(settings.preferredProvider);
   const [appLanguage, setAppLanguage] = useState(settings.appLanguage);
+
+  // Rate limit states
+  const [hfMaxTokensPerMinute, setHfMaxTokensPerMinute] = useState(String(settings.hfMaxTokensPerMinute));
+  const [hfMaxRequestsPerMinute, setHfMaxRequestsPerMinute] = useState(String(settings.hfMaxRequestsPerMinute));
+  const [geminiMaxTokensPerMinute, setGeminiMaxTokensPerMinute] = useState(String(settings.geminiMaxTokensPerMinute));
+  const [geminiMaxRequestsPerMinute, setGeminiMaxRequestsPerMinute] = useState(String(settings.geminiMaxRequestsPerMinute));
+  const [claudeMaxTokensPerMinute, setClaudeMaxTokensPerMinute] = useState(String(settings.claudeMaxTokensPerMinute));
+  const [claudeMaxRequestsPerMinute, setClaudeMaxRequestsPerMinute] = useState(String(settings.claudeMaxRequestsPerMinute));
+  const [openaiMaxTokensPerMinute, setOpenaiMaxTokensPerMinute] = useState(String(settings.openaiMaxTokensPerMinute));
+  const [openaiMaxRequestsPerMinute, setOpenaiMaxRequestsPerMinute] = useState(String(settings.openaiMaxRequestsPerMinute));
+  const [grokMaxTokensPerMinute, setGrokMaxTokensPerMinute] = useState(String(settings.grokMaxTokensPerMinute));
+  const [grokMaxRequestsPerMinute, setGrokMaxRequestsPerMinute] = useState(String(settings.grokMaxRequestsPerMinute));
+  const [deepseekMaxTokensPerMinute, setDeepseekMaxTokensPerMinute] = useState(String(settings.deepseekMaxTokensPerMinute));
+  const [deepseekMaxRequestsPerMinute, setDeepseekMaxRequestsPerMinute] = useState(String(settings.deepseekMaxRequestsPerMinute));
+
+  const [grokKey, setGrokKey] = useState(settings.grokApiKey);
+  const [deepseekKey, setDeepseekKey] = useState(settings.deepseekApiKey);
+
   const [hasChanges, setHasChanges] = useState(false);
 
   // AI Instructions state
@@ -233,8 +303,22 @@ export default function SettingsPage() {
         geminiKey !== settings.geminiApiKey ||
         claudeKey !== settings.claudeApiKey ||
         openaiKey !== settings.openaiApiKey ||
+        grokKey !== settings.grokApiKey ||
+        deepseekKey !== settings.deepseekApiKey ||
         provider !== settings.preferredProvider ||
-        appLanguage !== settings.appLanguage;
+        appLanguage !== settings.appLanguage ||
+        hfMaxTokensPerMinute !== String(settings.hfMaxTokensPerMinute) ||
+        hfMaxRequestsPerMinute !== String(settings.hfMaxRequestsPerMinute) ||
+        geminiMaxTokensPerMinute !== String(settings.geminiMaxTokensPerMinute) ||
+        geminiMaxRequestsPerMinute !== String(settings.geminiMaxRequestsPerMinute) ||
+        claudeMaxTokensPerMinute !== String(settings.claudeMaxTokensPerMinute) ||
+        claudeMaxRequestsPerMinute !== String(settings.claudeMaxRequestsPerMinute) ||
+        openaiMaxTokensPerMinute !== String(settings.openaiMaxTokensPerMinute) ||
+        openaiMaxRequestsPerMinute !== String(settings.openaiMaxRequestsPerMinute) ||
+        grokMaxTokensPerMinute !== String(settings.grokMaxTokensPerMinute) ||
+        grokMaxRequestsPerMinute !== String(settings.grokMaxRequestsPerMinute) ||
+        deepseekMaxTokensPerMinute !== String(settings.deepseekMaxTokensPerMinute) ||
+        deepseekMaxRequestsPerMinute !== String(settings.deepseekMaxRequestsPerMinute);
       setHasChanges(changed);
     }
   }, [
@@ -317,8 +401,22 @@ export default function SettingsPage() {
           geminiApiKey: geminiKey,
           claudeApiKey: claudeKey,
           openaiApiKey: openaiKey,
+          grokApiKey: grokKey,
+          deepseekApiKey: deepseekKey,
           preferredProvider: provider,
           appLanguage: appLanguage,
+          hfMaxTokensPerMinute,
+          hfMaxRequestsPerMinute,
+          geminiMaxTokensPerMinute,
+          geminiMaxRequestsPerMinute,
+          claudeMaxTokensPerMinute,
+          claudeMaxRequestsPerMinute,
+          openaiMaxTokensPerMinute,
+          openaiMaxRequestsPerMinute,
+          grokMaxTokensPerMinute,
+          grokMaxRequestsPerMinute,
+          deepseekMaxTokensPerMinute,
+          deepseekMaxRequestsPerMinute,
         },
         { method: "POST" }
       );
@@ -488,99 +586,285 @@ export default function SettingsPage() {
                       </Text>
 
                       {/* Hugging Face */}
-                      <div>
-                        <TextField
-                          label={t.settings.huggingface}
-                          value={huggingfaceKey}
-                          onChange={setHuggingfaceKey}
-                          type="password"
-                          autoComplete="off"
-                          helpText={
-                            <span>
-                              {t.settings.huggingfaceHelp}{" "}
-                              <a
-                                href="https://huggingface.co/settings/tokens"
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                style={{ color: "#008060" }}
-                              >
-                                Hugging Face
-                              </a>
-                            </span>
-                          }
-                        />
+                      <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
+                        <BlockStack gap="400">
+                          <Text as="h3" variant="headingMd">Hugging Face</Text>
+                          <TextField
+                            label="API Key"
+                            value={huggingfaceKey}
+                            onChange={setHuggingfaceKey}
+                            type="password"
+                            autoComplete="off"
+                            helpText={
+                              <span>
+                                {t.settings.huggingfaceHelp}{" "}
+                                <a
+                                  href="https://huggingface.co/settings/tokens"
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  style={{ color: "#008060" }}
+                                >
+                                  Hugging Face
+                                </a>
+                              </span>
+                            }
+                          />
+                          <InlineStack gap="400">
+                            <div style={{ flex: 1 }}>
+                              <TextField
+                                label="Max Tokens / Minute"
+                                value={hfMaxTokensPerMinute}
+                                onChange={setHfMaxTokensPerMinute}
+                                type="number"
+                                autoComplete="off"
+                              />
+                            </div>
+                            <div style={{ flex: 1 }}>
+                              <TextField
+                                label="Max Requests / Minute"
+                                value={hfMaxRequestsPerMinute}
+                                onChange={setHfMaxRequestsPerMinute}
+                                type="number"
+                                autoComplete="off"
+                              />
+                            </div>
+                          </InlineStack>
+                        </BlockStack>
                       </div>
 
                       {/* Google Gemini */}
-                      <div>
-                        <TextField
-                          label={t.settings.gemini}
-                          value={geminiKey}
-                          onChange={setGeminiKey}
-                          type="password"
-                          autoComplete="off"
-                          helpText={
-                            <span>
-                              {t.settings.geminiHelp}{" "}
-                              <a
-                                href="https://aistudio.google.com/app/apikey"
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                style={{ color: "#008060" }}
-                              >
-                                Google AI Studio
-                              </a>
-                            </span>
-                          }
-                        />
+                      <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
+                        <BlockStack gap="400">
+                          <Text as="h3" variant="headingMd">Google Gemini</Text>
+                          <TextField
+                            label="API Key"
+                            value={geminiKey}
+                            onChange={setGeminiKey}
+                            type="password"
+                            autoComplete="off"
+                            helpText={
+                              <span>
+                                {t.settings.geminiHelp}{" "}
+                                <a
+                                  href="https://aistudio.google.com/app/apikey"
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  style={{ color: "#008060" }}
+                                >
+                                  Google AI Studio
+                                </a>
+                              </span>
+                            }
+                          />
+                          <InlineStack gap="400">
+                            <div style={{ flex: 1 }}>
+                              <TextField
+                                label="Max Tokens / Minute"
+                                value={geminiMaxTokensPerMinute}
+                                onChange={setGeminiMaxTokensPerMinute}
+                                type="number"
+                                autoComplete="off"
+                              />
+                            </div>
+                            <div style={{ flex: 1 }}>
+                              <TextField
+                                label="Max Requests / Minute"
+                                value={geminiMaxRequestsPerMinute}
+                                onChange={setGeminiMaxRequestsPerMinute}
+                                type="number"
+                                autoComplete="off"
+                              />
+                            </div>
+                          </InlineStack>
+                        </BlockStack>
                       </div>
 
                       {/* Anthropic Claude */}
-                      <div>
-                        <TextField
-                          label={t.settings.claude}
-                          value={claudeKey}
-                          onChange={setClaudeKey}
-                          type="password"
-                          autoComplete="off"
-                          helpText={
-                            <span>
-                              {t.settings.claudeHelp}{" "}
-                              <a
-                                href="https://console.anthropic.com/settings/keys"
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                style={{ color: "#008060" }}
-                              >
-                                Anthropic Console
-                              </a>
-                            </span>
-                          }
-                        />
+                      <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
+                        <BlockStack gap="400">
+                          <Text as="h3" variant="headingMd">Anthropic Claude</Text>
+                          <TextField
+                            label="API Key"
+                            value={claudeKey}
+                            onChange={setClaudeKey}
+                            type="password"
+                            autoComplete="off"
+                            helpText={
+                              <span>
+                                {t.settings.claudeHelp}{" "}
+                                <a
+                                  href="https://console.anthropic.com/settings/keys"
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  style={{ color: "#008060" }}
+                                >
+                                  Anthropic Console
+                                </a>
+                              </span>
+                            }
+                          />
+                          <InlineStack gap="400">
+                            <div style={{ flex: 1 }}>
+                              <TextField
+                                label="Max Tokens / Minute"
+                                value={claudeMaxTokensPerMinute}
+                                onChange={setClaudeMaxTokensPerMinute}
+                                type="number"
+                                autoComplete="off"
+                              />
+                            </div>
+                            <div style={{ flex: 1 }}>
+                              <TextField
+                                label="Max Requests / Minute"
+                                value={claudeMaxRequestsPerMinute}
+                                onChange={setClaudeMaxRequestsPerMinute}
+                                type="number"
+                                autoComplete="off"
+                              />
+                            </div>
+                          </InlineStack>
+                        </BlockStack>
                       </div>
 
                       {/* OpenAI */}
-                      <div>
-                        <TextField
-                          label={t.settings.openai}
-                          value={openaiKey}
-                          onChange={setOpenaiKey}
-                          type="password"
-                          autoComplete="off"
-                          helpText={
-                            <span>
-                              {t.settings.openaiHelp}{" "}
-                              <a
-                                href="https://platform.openai.com/api-keys"
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                style={{ color: "#008060" }}
-                              >
-                                OpenAI Platform
-                              </a>
-                            </span>
-                          }
-                        />
+                      <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
+                        <BlockStack gap="400">
+                          <Text as="h3" variant="headingMd">OpenAI</Text>
+                          <TextField
+                            label="API Key"
+                            value={openaiKey}
+                            onChange={setOpenaiKey}
+                            type="password"
+                            autoComplete="off"
+                            helpText={
+                              <span>
+                                {t.settings.openaiHelp}{" "}
+                                <a
+                                  href="https://platform.openai.com/api-keys"
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  style={{ color: "#008060" }}
+                                >
+                                  OpenAI Platform
+                                </a>
+                              </span>
+                            }
+                          />
+                          <InlineStack gap="400">
+                            <div style={{ flex: 1 }}>
+                              <TextField
+                                label="Max Tokens / Minute"
+                                value={openaiMaxTokensPerMinute}
+                                onChange={setOpenaiMaxTokensPerMinute}
+                                type="number"
+                                autoComplete="off"
+                              />
+                            </div>
+                            <div style={{ flex: 1 }}>
+                              <TextField
+                                label="Max Requests / Minute"
+                                value={openaiMaxRequestsPerMinute}
+                                onChange={setOpenaiMaxRequestsPerMinute}
+                                type="number"
+                                autoComplete="off"
+                              />
+                            </div>
+                          </InlineStack>
+                        </BlockStack>
+                      </div>
+
+                      {/* Grok */}
+                      <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
+                        <BlockStack gap="400">
+                          <Text as="h3" variant="headingMd">Grok (X.AI)</Text>
+                          <TextField
+                            label="API Key"
+                            value={grokKey}
+                            onChange={setGrokKey}
+                            type="password"
+                            autoComplete="off"
+                            helpText={
+                              <span>
+                                Get your API key from{" "}
+                                <a
+                                  href="https://console.x.ai"
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  style={{ color: "#008060" }}
+                                >
+                                  X.AI Console
+                                </a>
+                              </span>
+                            }
+                          />
+                          <InlineStack gap="400">
+                            <div style={{ flex: 1 }}>
+                              <TextField
+                                label="Max Tokens / Minute"
+                                value={grokMaxTokensPerMinute}
+                                onChange={setGrokMaxTokensPerMinute}
+                                type="number"
+                                autoComplete="off"
+                              />
+                            </div>
+                            <div style={{ flex: 1 }}>
+                              <TextField
+                                label="Max Requests / Minute"
+                                value={grokMaxRequestsPerMinute}
+                                onChange={setGrokMaxRequestsPerMinute}
+                                type="number"
+                                autoComplete="off"
+                              />
+                            </div>
+                          </InlineStack>
+                        </BlockStack>
+                      </div>
+
+                      {/* DeepSeek */}
+                      <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
+                        <BlockStack gap="400">
+                          <Text as="h3" variant="headingMd">DeepSeek</Text>
+                          <TextField
+                            label="API Key"
+                            value={deepseekKey}
+                            onChange={setDeepseekKey}
+                            type="password"
+                            autoComplete="off"
+                            helpText={
+                              <span>
+                                Get your API key from{" "}
+                                <a
+                                  href="https://platform.deepseek.com"
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  style={{ color: "#008060" }}
+                                >
+                                  DeepSeek Platform
+                                </a>
+                              </span>
+                            }
+                          />
+                          <InlineStack gap="400">
+                            <div style={{ flex: 1 }}>
+                              <TextField
+                                label="Max Tokens / Minute"
+                                value={deepseekMaxTokensPerMinute}
+                                onChange={setDeepseekMaxTokensPerMinute}
+                                type="number"
+                                autoComplete="off"
+                              />
+                            </div>
+                            <div style={{ flex: 1 }}>
+                              <TextField
+                                label="Max Requests / Minute"
+                                value={deepseekMaxRequestsPerMinute}
+                                onChange={setDeepseekMaxRequestsPerMinute}
+                                type="number"
+                                autoComplete="off"
+                              />
+                            </div>
+                          </InlineStack>
+                        </BlockStack>
                       </div>
                     </BlockStack>
                   </div>
