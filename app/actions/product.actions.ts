@@ -34,8 +34,10 @@ export async function handleProductActions({ request }: ActionFunctionArgs) {
     openaiApiKey: aiSettings?.openaiApiKey || undefined,
   };
 
-  const aiService = new AIService(provider, config);
-  const translationService = new TranslationService(provider, config);
+  // Update queue rate limits from settings
+  const { AIQueueService } = await import("../../src/services/ai-queue.service");
+  const queue = AIQueueService.getInstance();
+  await queue.updateRateLimits(aiSettings);
 
   if (action === "loadTranslations") {
     console.error('!!! LOAD TRANSLATIONS ACTION TRIGGERED !!!');
@@ -58,19 +60,19 @@ export async function handleProductActions({ request }: ActionFunctionArgs) {
   }
 
   if (action === "generateAIText") {
-    return handleGenerateAIText(aiService, aiInstructions, formData, session.shop, productId);
+    return handleGenerateAIText(provider, config, aiInstructions, formData, session.shop, productId);
   }
 
   if (action === "translateField") {
-    return handleTranslateField(translationService, formData);
+    return handleTranslateField(provider, config, formData, session.shop);
   }
 
   if (action === "translateSuggestion") {
-    return handleTranslateSuggestion(translationService, formData);
+    return handleTranslateSuggestion(provider, config, formData, session.shop);
   }
 
   if (action === "translateAll") {
-    return handleTranslateAll(admin, translationService, formData, productId, session.shop);
+    return handleTranslateAll(admin, provider, config, formData, productId, session.shop);
   }
 
   if (action === "updateProduct") {
@@ -78,7 +80,7 @@ export async function handleProductActions({ request }: ActionFunctionArgs) {
   }
 
   if (action === "translateOption") {
-    return handleTranslateOption(translationService, formData);
+    return handleTranslateOption(provider, config, formData, session.shop);
   }
 
   return json({ success: false, error: "Unknown action" }, { status: 400 });
@@ -130,7 +132,8 @@ async function handleLoadTranslations(admin: any, formData: FormData, productId:
 }
 
 async function handleGenerateAIText(
-  aiService: AIService,
+  provider: any,
+  config: any,
   aiInstructions: any,
   formData: FormData,
   shop: string,
@@ -148,7 +151,7 @@ async function handleGenerateAIText(
     data: {
       shop,
       type: "aiGeneration",
-      status: "running",
+      status: "pending",
       resourceType: "product",
       resourceId: productId,
       resourceTitle: contextTitle,
@@ -158,12 +161,15 @@ async function handleGenerateAIText(
   });
 
   try {
+    // Create AI service with shop and taskId for queue management
+    const aiService = new AIService(provider, config, shop, task.id);
+
     let generatedContent = "";
 
-    // Update task to running
+    // Update task to queued (queue will update to running)
     await db.task.update({
       where: { id: task.id },
-      data: { status: "running", progress: 10 },
+      data: { status: "queued", progress: 10 },
     });
 
     if (fieldType === "title") {
@@ -260,20 +266,67 @@ async function handleGenerateAIText(
   }
 }
 
-async function handleTranslateField(translationService: TranslationService, formData: FormData) {
+async function handleTranslateField(
+  provider: any,
+  config: any,
+  formData: FormData,
+  shop: string
+) {
   const fieldType = formData.get("fieldType") as string;
   const sourceText = formData.get("sourceText") as string;
   const targetLocale = formData.get("targetLocale") as string;
+  const productId = formData.get("productId") as string;
+
+  const { db } = await import("../db.server");
+
+  // Create task entry
+  const task = await db.task.create({
+    data: {
+      shop,
+      type: "translation",
+      status: "pending",
+      resourceType: "product",
+      resourceId: productId,
+      fieldType,
+      targetLocale,
+      progress: 0,
+    },
+  });
 
   try {
+    const translationService = new TranslationService(provider, config, shop, task.id);
+
     const changedFields: any = {};
     changedFields[fieldType] = sourceText;
 
-    const translations = await translationService.translateProduct(changedFields);
+    await db.task.update({
+      where: { id: task.id },
+      data: { status: "queued", progress: 10 },
+    });
+
+    const translations = await translationService.translateProduct(changedFields, [targetLocale]);
     const translatedValue = translations[targetLocale]?.[fieldType] || "";
+
+    await db.task.update({
+      where: { id: task.id },
+      data: {
+        status: "completed",
+        progress: 100,
+        completedAt: new Date(),
+      },
+    });
 
     return json({ success: true, translatedValue, fieldType, targetLocale });
   } catch (error: any) {
+    await db.task.update({
+      where: { id: task.id },
+      data: {
+        status: "failed",
+        completedAt: new Date(),
+        error: error.message,
+      },
+    });
+
     return json({ success: false, error: error.message }, { status: 500 });
   }
 }

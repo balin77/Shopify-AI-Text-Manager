@@ -3,8 +3,8 @@ import { AIService, type AIProvider, type AIServiceConfig } from './ai.service';
 export class TranslationService {
   private aiService: AIService;
 
-  constructor(aiProvider: AIProvider = 'huggingface', config: AIServiceConfig = {}) {
-    this.aiService = new AIService(aiProvider, config);
+  constructor(aiProvider: AIProvider = 'huggingface', config: AIServiceConfig = {}, shop?: string, taskId?: string) {
+    this.aiService = new AIService(aiProvider, config, shop, taskId);
   }
 
   async translateProduct(fields: Record<string, string>, targetLocales?: string[]): Promise<Record<string, Record<string, string>>> {

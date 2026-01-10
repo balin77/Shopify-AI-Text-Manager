@@ -28,18 +28,43 @@ model Session {
 }
 
 model AISettings {
-  id                  String   @id @default(cuid())
-  shop                String   @unique
-  huggingfaceApiKey   String?
-  geminiApiKey        String?
-  claudeApiKey        String?
-  openaiApiKey        String?
-  grokApiKey          String?
-  deepseekApiKey      String?
-  preferredProvider   String   @default("huggingface")
-  appLanguage         String   @default("de")
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
+  id                          String   @id @default(cuid())
+  shop                        String   @unique
+  huggingfaceApiKey           String?
+  geminiApiKey                String?
+  claudeApiKey                String?
+  openaiApiKey                String?
+  grokApiKey                  String?
+  deepseekApiKey              String?
+  preferredProvider           String   @default("huggingface")
+  appLanguage                 String   @default("de")
+
+  // Rate Limiting - Hugging Face
+  hfMaxTokensPerMinute        Int?     @default(1000000)
+  hfMaxRequestsPerMinute      Int?     @default(100)
+
+  // Rate Limiting - Gemini
+  geminiMaxTokensPerMinute    Int?     @default(1000000)
+  geminiMaxRequestsPerMinute  Int?     @default(15)
+
+  // Rate Limiting - Claude
+  claudeMaxTokensPerMinute    Int?     @default(40000)
+  claudeMaxRequestsPerMinute  Int?     @default(5)
+
+  // Rate Limiting - OpenAI
+  openaiMaxTokensPerMinute    Int?     @default(200000)
+  openaiMaxRequestsPerMinute  Int?     @default(500)
+
+  // Rate Limiting - Grok
+  grokMaxTokensPerMinute      Int?     @default(100000)
+  grokMaxRequestsPerMinute    Int?     @default(60)
+
+  // Rate Limiting - DeepSeek
+  deepseekMaxTokensPerMinute  Int?     @default(100000)
+  deepseekMaxRequestsPerMinute Int?    @default(60)
+
+  createdAt                   DateTime @default(now())
+  updatedAt                   DateTime @updatedAt
 }
 
 model AIInstructions {
@@ -63,7 +88,7 @@ model Task {
   id             String    @id @default(cuid())
   shop           String
   type           String    // "translation", "aiGeneration", "bulkTranslation", "bulkAiGeneration"
-  status         String    @default("pending") // "pending", "running", "completed", "failed", "cancelled"
+  status         String    @default("pending") // "pending", "queued", "running", "completed", "failed", "cancelled"
   resourceType   String?   // "product", "collection", "blog", "page"
   resourceId     String?   // Shopify GID
   resourceTitle  String?   // For display purposes
@@ -74,6 +99,12 @@ model Task {
   processed      Int       @default(0) // Number of processed items
   result         String?   @db.Text // JSON string with results or error message
   error          String?   @db.Text
+
+  // Queue management
+  queuePosition  Int?      // Position in queue (null if not queued)
+  retryCount     Int       @default(0) // Number of retries attempted
+  estimatedTokens Int?     // Estimated tokens for this task
+
   startedAt      DateTime  @default(now())
   completedAt    DateTime?
   createdAt      DateTime  @default(now())
@@ -81,4 +112,5 @@ model Task {
 
   @@index([shop, status])
   @@index([shop, createdAt])
+  @@index([shop, queuePosition])
 }
