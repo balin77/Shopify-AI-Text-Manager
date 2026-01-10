@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useFetcher } from "@remix-run/react";
+import { useLoaderData } from "@remix-run/react";
 import { Page, Layout, Card, Button, Banner, Text, BlockStack } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
@@ -38,45 +38,83 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 };
 
 export default function Setup() {
-  const { shop, productCount, translationCount, webhookCount } = useLoaderData<typeof loader>();
-  const webhookFetcher = useFetcher();
-  const syncFetcher = useFetcher();
+  const initialData = useLoaderData<typeof loader>();
+
+  const [shop] = useState(initialData.shop);
+  const [productCount, setProductCount] = useState(initialData.productCount);
+  const [translationCount, setTranslationCount] = useState(initialData.translationCount);
+  const [webhookCount, setWebhookCount] = useState(initialData.webhookCount);
 
   const [webhookStatus, setWebhookStatus] = useState<string>("");
   const [syncStatus, setSyncStatus] = useState<string>("");
+  const [webhookLoading, setWebhookLoading] = useState(false);
+  const [syncLoading, setSyncLoading] = useState(false);
+  const [webhookData, setWebhookData] = useState<any>(null);
+  const [syncErrors, setSyncErrors] = useState<string[]>([]);
 
   const handleSetupWebhooks = async () => {
     setWebhookStatus("Setting up webhooks...");
-    webhookFetcher.submit({}, { method: "POST", action: "/api/setup-webhooks" });
+    setWebhookLoading(true);
+    setWebhookData(null);
+
+    try {
+      const response = await fetch("/api/setup-webhooks", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        setWebhookStatus(`✓ ${data.message}`);
+        setWebhookData(data);
+      } else {
+        setWebhookStatus(`✗ Error: ${data.error}`);
+      }
+    } catch (error: any) {
+      setWebhookStatus(`✗ Error: ${error.message}`);
+    } finally {
+      setWebhookLoading(false);
+    }
   };
 
   const handleSyncProducts = async (force: boolean = false) => {
     setSyncStatus("Syncing products...");
-    syncFetcher.submit(
-      {},
-      {
+    setSyncLoading(true);
+    setSyncErrors([]);
+
+    try {
+      const url = force ? "/api/sync-products?force=true" : "/api/sync-products";
+      const response = await fetch(url, {
         method: "POST",
-        action: force ? "/api/sync-products?force=true" : "/api/sync-products",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        setSyncStatus(`✓ ${data.message}`);
+        if (data.errors) {
+          setSyncErrors(data.errors);
+        }
+        // Refresh counts
+        if (data.synced > 0) {
+          // Reload page to get fresh counts
+          window.location.reload();
+        }
+      } else {
+        setSyncStatus(`✗ Error: ${data.error}`);
       }
-    );
+    } catch (error: any) {
+      setSyncStatus(`✗ Error: ${error.message}`);
+    } finally {
+      setSyncLoading(false);
+    }
   };
-
-  // Update status when fetchers complete
-  if (webhookFetcher.data && webhookStatus === "Setting up webhooks...") {
-    if (webhookFetcher.data.success) {
-      setWebhookStatus(`✓ ${webhookFetcher.data.message}`);
-    } else {
-      setWebhookStatus(`✗ Error: ${webhookFetcher.data.error}`);
-    }
-  }
-
-  if (syncFetcher.data && syncStatus === "Syncing products...") {
-    if (syncFetcher.data.success) {
-      setSyncStatus(`✓ ${syncFetcher.data.message}`);
-    } else {
-      setSyncStatus(`✗ Error: ${syncFetcher.data.error}`);
-    }
-  }
 
   return (
     <Page fullWidth title="App Setup">
@@ -123,7 +161,7 @@ export default function Setup() {
                 </Text>
                 <Button
                   onClick={handleSetupWebhooks}
-                  loading={webhookFetcher.state !== "idle"}
+                  loading={webhookLoading}
                 >
                   Setup Webhooks
                 </Button>
@@ -136,12 +174,12 @@ export default function Setup() {
                     {webhookStatus}
                   </Banner>
                 )}
-                {webhookFetcher.data?.webhooks && (
+                {webhookData?.webhooks && (
                   <BlockStack gap="200">
                     <Text as="p" variant="bodyMd" fontWeight="bold">
                       Registered webhooks:
                     </Text>
-                    {webhookFetcher.data.webhooks.map((w: any, i: number) => (
+                    {webhookData.webhooks.map((w: any, i: number) => (
                       <Text as="p" key={i}>
                         • {w.topic} → {w.callbackUrl}
                       </Text>
@@ -163,7 +201,7 @@ export default function Setup() {
                 <BlockStack gap="200">
                   <Button
                     onClick={() => handleSyncProducts(false)}
-                    loading={syncFetcher.state !== "idle"}
+                    loading={syncLoading}
                     variant="primary"
                   >
                     Sync Products
@@ -171,7 +209,7 @@ export default function Setup() {
                   {productCount > 0 && (
                     <Button
                       onClick={() => handleSyncProducts(true)}
-                      loading={syncFetcher.state !== "idle"}
+                      loading={syncLoading}
                       variant="secondary"
                     >
                       Force Re-Sync (overwrite existing)
@@ -185,12 +223,12 @@ export default function Setup() {
                     {syncStatus}
                   </Banner>
                 )}
-                {syncFetcher.data?.errors && syncFetcher.data.errors.length > 0 && (
+                {syncErrors.length > 0 && (
                   <BlockStack gap="200">
                     <Text as="p" variant="bodyMd" fontWeight="bold">
                       Errors:
                     </Text>
-                    {syncFetcher.data.errors.map((err: string, i: number) => (
+                    {syncErrors.map((err: string, i: number) => (
                       <Text as="p" key={i} tone="critical">
                         • {err}
                       </Text>

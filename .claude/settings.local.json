@@ -18,7 +18,8 @@
       "Bash(powershell.exe -Command \"Remove-Item ''C:\\Users\\guble\\OneDrive\\Shopify\\Shopify API Connector\\fix-content-types.ps1'' -Force; Remove-Item ''C:\\Users\\guble\\OneDrive\\Shopify\\Shopify API Connector\\update-content-types.ps1'' -Force -ErrorAction SilentlyContinue\")",
       "Bash(npx prisma migrate dev:*)",
       "Bash(npx prisma generate:*)",
-      "Bash(npm run validate:env:*)"
+      "Bash(npm run validate:env:*)",
+      "Read(//c/Users/guble/OneDrive/Shopify/ImageVariantManager/**)"
     ],
     "deny": [],
     "ask": []
