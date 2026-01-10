@@ -1,9 +1,10 @@
-import { NavLink, useLocation } from "@remix-run/react";
+import { useLocation, useNavigate } from "@remix-run/react";
 import { InlineStack, Text } from "@shopify/polaris";
 import { useI18n } from "../contexts/I18nContext";
 
 export function MainNavigation() {
   const location = useLocation();
+  const navigate = useNavigate();
   const { t } = useI18n();
 
   console.log("🧭 [MainNavigation] Current pathname:", location.pathname);
@@ -14,6 +15,13 @@ export function MainNavigation() {
     { id: "tasks", label: t.nav.tasks, path: "/app/tasks" },
     { id: "settings", label: t.nav.settings, path: "/app/settings" },
   ];
+
+  const handleNavigation = (path: string, tabId: string) => {
+    console.log("🖱️ [MainNavigation] Tab clicked:", tabId, "->", path);
+    console.log("🖱️ [MainNavigation] Current location:", location.pathname);
+    console.log("🖱️ [MainNavigation] Navigating to:", path);
+    navigate(path);
+  };
 
   return (
     <div
@@ -31,19 +39,17 @@ export function MainNavigation() {
               : location.pathname.startsWith(tab.path);
 
           return (
-            <NavLink
+            <button
               key={tab.id}
-              to={tab.path}
-              prefetch="none"
-              onClick={(e) => {
-                console.log("🖱️ [MainNavigation] Tab clicked:", tab.id, "->", tab.path);
-                console.log("🖱️ [MainNavigation] Current location:", location.pathname);
-              }}
+              onClick={() => handleNavigation(tab.path, tab.id)}
               style={{
                 textDecoration: "none",
                 padding: "1rem 0.5rem",
                 borderBottom: isActive ? "3px solid #303030" : "2px solid transparent",
                 transition: "border-color 0.2s",
+                background: "none",
+                border: "none",
+                cursor: "pointer",
               }}
             >
               <Text
@@ -54,7 +60,7 @@ export function MainNavigation() {
               >
                 {tab.label}
               </Text>
-            </NavLink>
+            </button>
           );
         })}
       </InlineStack>
