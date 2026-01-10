@@ -6,6 +6,8 @@ export function MainNavigation() {
   const location = useLocation();
   const { t } = useI18n();
 
+  console.log("🧭 [MainNavigation] Current pathname:", location.pathname);
+
   const tabs = [
     { id: "products", label: t.nav.products, path: "/app" },
     { id: "content", label: t.nav.otherContent, path: "/app/content" },
@@ -32,6 +34,10 @@ export function MainNavigation() {
             <Link
               key={tab.id}
               to={tab.path}
+              onClick={(e) => {
+                console.log("🖱️ [MainNavigation] Tab clicked:", tab.id, "->", tab.path);
+                console.log("🖱️ [MainNavigation] Event:", e);
+              }}
               style={{
                 textDecoration: "none",
                 padding: "1rem 0.5rem",

@@ -7,17 +7,34 @@ import { I18nProvider } from "../contexts/I18nContext";
 import type { Locale } from "../i18n";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  console.log("🔍 [APP.TSX LOADER] Start - URL:", request.url);
+  console.log("🔍 [APP.TSX LOADER] Method:", request.method);
+  console.log("🔍 [APP.TSX LOADER] Headers:", Object.fromEntries(request.headers.entries()));
 
-  // Load app language preference from database
-  const { db } = await import("../db.server");
-  const settings = await db.aISettings.findUnique({
-    where: { shop: session.shop },
-  });
+  try {
+    console.log("🔍 [APP.TSX LOADER] Authenticating...");
+    const { session } = await authenticate.admin(request);
+    console.log("✅ [APP.TSX LOADER] Authentication successful");
+    console.log("✅ [APP.TSX LOADER] Shop:", session.shop);
+    console.log("✅ [APP.TSX LOADER] Session ID:", session.id);
 
-  const appLanguage = (settings?.appLanguage || "de") as Locale;
+    // Load app language preference from database
+    const { db } = await import("../db.server");
+    console.log("🔍 [APP.TSX LOADER] Loading settings from DB...");
+    const settings = await db.aISettings.findUnique({
+      where: { shop: session.shop },
+    });
+    console.log("✅ [APP.TSX LOADER] Settings loaded:", settings ? "Found" : "Not found");
 
-  return json({ appLanguage });
+    const appLanguage = (settings?.appLanguage || "de") as Locale;
+    console.log("✅ [APP.TSX LOADER] App language:", appLanguage);
+
+    return json({ appLanguage });
+  } catch (error) {
+    console.error("❌ [APP.TSX LOADER] Error:", error);
+    console.error("❌ [APP.TSX LOADER] Error stack:", error instanceof Error ? error.stack : "No stack");
+    throw error;
+  }
 };
 
 export default function App() {

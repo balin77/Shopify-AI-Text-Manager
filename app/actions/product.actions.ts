@@ -4,17 +4,30 @@ import { AIService } from "../../src/services/ai.service";
 import { TranslationService } from "../../src/services/translation.service";
 
 export async function handleProductActions({ request }: ActionFunctionArgs) {
-  console.error('=== PRODUCT ACTION HANDLER CALLED ===');
-  console.error('Request method:', request.method);
-  console.error('Request URL:', request.url);
+  console.log('📮 [PRODUCT.ACTIONS] === PRODUCT ACTION HANDLER CALLED ===');
+  console.log('📮 [PRODUCT.ACTIONS] Request method:', request.method);
+  console.log('📮 [PRODUCT.ACTIONS] Request URL:', request.url);
+  console.log('📮 [PRODUCT.ACTIONS] Headers:', Object.fromEntries(request.headers.entries()));
 
-  const { admin, session } = await authenticate.admin(request);
-  const formData = await request.formData();
-  const action = formData.get("action");
-  const productId = formData.get("productId") as string;
+  try {
+    console.log('🔐 [PRODUCT.ACTIONS] Authenticating request...');
+    const { admin, session } = await authenticate.admin(request);
+    console.log('✅ [PRODUCT.ACTIONS] Authentication successful - Shop:', session.shop);
 
-  console.error('Action:', action);
-  console.error('Product ID:', productId);
+    console.log('📥 [PRODUCT.ACTIONS] Parsing form data...');
+    const formData = await request.formData();
+
+    // Log all form data
+    console.log('📋 [PRODUCT.ACTIONS] Form Data Contents:');
+    for (const [key, value] of formData.entries()) {
+      console.log(`   - ${key}:`, typeof value === 'string' ? value.substring(0, 100) : value);
+    }
+
+    const action = formData.get("action");
+    const productId = formData.get("productId") as string;
+
+    console.log('🎯 [PRODUCT.ACTIONS] Action:', action);
+    console.log('🎯 [PRODUCT.ACTIONS] Product ID:', productId);
 
   // Load AI settings and instructions from database
   const { db } = await import("../db.server");
@@ -40,50 +53,47 @@ export async function handleProductActions({ request }: ActionFunctionArgs) {
   await queue.updateRateLimits(aiSettings);
 
   if (action === "loadTranslations") {
-    console.error('!!! LOAD TRANSLATIONS ACTION TRIGGERED !!!');
-    console.error('Product ID:', productId);
-    console.error('Locale:', formData.get("locale"));
-
-    // Simple test response
-    return json({
-      success: true,
-      translations: [
-        { key: "title", value: "TEST TITLE", locale: formData.get("locale") },
-        { key: "handle", value: "test-handle", locale: formData.get("locale") }
-      ],
-      locale: formData.get("locale"),
-      test: "THIS IS A TEST RESPONSE"
-    });
-
-    // Original code commented out for now
-    // return handleLoadTranslations(admin, formData, productId);
+    console.log('🌐 [PRODUCT.ACTIONS] Loading translations for locale:', formData.get("locale"));
+    return handleLoadTranslations(admin, formData, productId);
   }
 
   if (action === "generateAIText") {
+    console.log('🤖 [PRODUCT.ACTIONS] Generating AI text for field:', formData.get("fieldType"));
     return handleGenerateAIText(provider, config, aiInstructions, formData, session.shop, productId);
   }
 
   if (action === "translateField") {
+    console.log('🌐 [PRODUCT.ACTIONS] Translating field:', formData.get("fieldType"), 'to locale:', formData.get("targetLocale"));
     return handleTranslateField(provider, config, formData, session.shop);
   }
 
   if (action === "translateSuggestion") {
+    console.log('🌐 [PRODUCT.ACTIONS] Translating suggestion for field:', formData.get("fieldType"));
     return handleTranslateSuggestion(provider, config, formData, session.shop);
   }
 
   if (action === "translateAll") {
+    console.log('🌐 [PRODUCT.ACTIONS] Translating all fields for product:', productId);
     return handleTranslateAll(admin, provider, config, formData, productId, session.shop);
   }
 
   if (action === "updateProduct") {
+    console.log('💾 [PRODUCT.ACTIONS] Updating product:', productId, 'for locale:', formData.get("locale"));
     return handleUpdateProduct(admin, formData, productId);
   }
 
   if (action === "translateOption") {
+    console.log('🌐 [PRODUCT.ACTIONS] Translating option:', formData.get("optionId"), 'to locale:', formData.get("targetLocale"));
     return handleTranslateOption(provider, config, formData, session.shop);
   }
 
+  console.error('❌ [PRODUCT.ACTIONS] Unknown action:', action);
   return json({ success: false, error: "Unknown action" }, { status: 400 });
+  } catch (error) {
+    console.error('❌ [PRODUCT.ACTIONS] Top-level error:', error);
+    console.error('❌ [PRODUCT.ACTIONS] Error stack:', error instanceof Error ? error.stack : 'No stack');
+    throw error;
+  }
 }
 
 async function handleLoadTranslations(admin: any, formData: FormData, productId: string) {
