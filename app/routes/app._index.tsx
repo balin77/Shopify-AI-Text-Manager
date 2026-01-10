@@ -176,11 +176,21 @@ export default function Index() {
           locale: newLanguage
         });
 
-        fetcher.submit(
-          { action: "loadTranslations", productId: selectedProduct.id, locale: newLanguage },
-          { method: "POST" }
-        );
-        console.log('Submit completed');
+        // Create FormData explicitly
+        const formData = new FormData();
+        formData.append("action", "loadTranslations");
+        formData.append("productId", selectedProduct.id);
+        formData.append("locale", newLanguage);
+
+        console.log('FormData created, entries:');
+        for (const [key, value] of formData.entries()) {
+          console.log(`  ${key}: ${value}`);
+        }
+
+        console.log('Calling fetcher.submit...');
+        fetcher.submit(formData, { method: "POST" });
+        console.log('fetcher.submit returned');
+        console.log('Fetcher state:', fetcher.state);
       } else {
         console.log('Translations already loaded, skipping request');
       }
