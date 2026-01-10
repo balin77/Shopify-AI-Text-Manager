@@ -1,10 +1,9 @@
-import { useLocation, useNavigate } from "@remix-run/react";
+import { useLocation } from "@remix-run/react";
 import { InlineStack, Text } from "@shopify/polaris";
 import { useI18n } from "../contexts/I18nContext";
 
 export function MainNavigation() {
   const location = useLocation();
-  const navigate = useNavigate();
   const { t } = useI18n();
 
   console.log("🧭 [MainNavigation] Current pathname:", location.pathname);
@@ -19,8 +18,18 @@ export function MainNavigation() {
   const handleNavigation = (path: string, tabId: string) => {
     console.log("🖱️ [MainNavigation] Tab clicked:", tabId, "->", path);
     console.log("🖱️ [MainNavigation] Current location:", location.pathname);
-    console.log("🖱️ [MainNavigation] Navigating to:", path);
-    navigate(path);
+    console.log("🖱️ [MainNavigation] Using full page reload for navigation");
+
+    // Get current URL parameters to preserve embedded context
+    const url = new URL(window.location.href);
+    const searchParams = url.searchParams;
+
+    // Build new URL with same parameters
+    const newUrl = `${path}?${searchParams.toString()}`;
+    console.log("🖱️ [MainNavigation] Navigating to:", newUrl);
+
+    // Use window.location for navigation in embedded app
+    window.location.href = newUrl;
   };
 
   return (
