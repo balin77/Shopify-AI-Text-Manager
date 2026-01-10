@@ -1,4 +1,4 @@
-import { Link, useLocation } from "@remix-run/react";
+import { useLocation } from "@remix-run/react";
 import { InlineStack, Text } from "@shopify/polaris";
 import { useI18n } from "../contexts/I18nContext";
 
@@ -14,6 +14,18 @@ export function MainNavigation() {
     { id: "tasks", label: t.nav.tasks, path: "/app/tasks" },
     { id: "settings", label: t.nav.settings, path: "/app/settings" },
   ];
+
+  const handleClick = (path: string, tabId: string) => {
+    console.log("🖱️ [MainNavigation] Tab clicked:", tabId, "->", path);
+
+    // Preserve URL parameters for embedded app
+    const url = new URL(window.location.href);
+    const searchParams = url.searchParams;
+    const newUrl = `${path}?${searchParams.toString()}`;
+
+    console.log("🖱️ [MainNavigation] Navigating to:", newUrl);
+    window.location.href = newUrl;
+  };
 
   return (
     <div
@@ -31,18 +43,18 @@ export function MainNavigation() {
               : location.pathname.startsWith(tab.path);
 
           return (
-            <Link
+            <button
               key={tab.id}
-              to={tab.path}
-              onClick={() => {
-                console.log("🖱️ [MainNavigation] Link clicked:", tab.id, "->", tab.path);
-              }}
+              onClick={() => handleClick(tab.path, tab.id)}
               style={{
                 textDecoration: "none",
                 padding: "1rem 0.5rem",
                 borderBottom: isActive ? "3px solid #303030" : "2px solid transparent",
                 transition: "border-color 0.2s",
-                display: "block",
+                background: "none",
+                border: "none",
+                borderBottom: isActive ? "3px solid #303030" : "3px solid transparent",
+                cursor: "pointer",
               }}
             >
               <Text
@@ -53,7 +65,7 @@ export function MainNavigation() {
               >
                 {tab.label}
               </Text>
-            </Link>
+            </button>
           );
         })}
       </InlineStack>
