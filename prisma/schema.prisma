@@ -114,3 +114,101 @@ model Task {
   @@index([shop, createdAt])
   @@index([shop, queuePosition])
 }
+
+model Product {
+  id              String   @id // Shopify GID (e.g., "gid://shopify/Product/123")
+  shop            String
+  title           String
+  descriptionHtml String?  @db.Text
+  handle          String
+  status          String   // "ACTIVE", "DRAFT", "ARCHIVED"
+  seoTitle        String?
+  seoDescription  String?  @db.Text
+  featuredImageUrl String?
+  featuredImageAlt String?
+
+  // Shopify Metadata
+  shopifyUpdatedAt DateTime
+  lastSyncedAt     DateTime @default(now())
+
+  // Relations
+  translations    Translation[]
+  images          ProductImage[]
+  options         ProductOption[]
+  metafields      ProductMetafield[]
+
+  @@unique([shop, id])
+  @@index([shop])
+  @@index([shop, status])
+  @@index([lastSyncedAt])
+}
+
+model Translation {
+  id         String  @id @default(cuid())
+  productId  String
+  product    Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  key        String  // "title", "body_html", "handle", "seo_title", "seo_description"
+  value      String  @db.Text
+  locale     String  // "en", "fr", "es", "it", etc.
+  digest     String? // Shopify digest for updates
+
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([productId, key, locale])
+  @@index([productId, locale])
+  @@index([locale])
+}
+
+model ProductImage {
+  id        String  @id @default(cuid())
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  url       String
+  altText   String?
+  position  Int?
+
+  @@index([productId])
+}
+
+model ProductOption {
+  id        String  @id // Shopify Option ID
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  name      String
+  position  Int
+  values    String  @db.Text // JSON array
+
+  @@index([productId])
+}
+
+model ProductMetafield {
+  id        String  @id // Shopify Metafield ID
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  namespace String
+  key       String
+  value     String  @db.Text
+  type      String
+
+  @@index([productId])
+}
+
+model WebhookLog {
+  id        String   @id @default(cuid())
+  shop      String
+  topic     String   // "products/create", "products/update", "products/delete"
+  productId String?
+  payload   String   @db.Text // Full webhook payload
+  processed Boolean  @default(false)
+  error     String?  @db.Text
+  createdAt DateTime @default(now())
+
+  @@index([shop, topic])
+  @@index([processed])
+  @@index([createdAt])
+}

@@ -15,8 +15,10 @@ import { handleProductActions } from "../actions/product.actions";
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
 
+  console.log("[LOADER] Loading products from DATABASE for shop:", session.shop);
+
   try {
-    // Fetch shop locales
+    // 1. Fetch shop locales (still from Shopify, as this changes rarely)
     const localesResponse = await admin.graphql(
       `#graphql
         query getShopLocales {
@@ -33,85 +35,91 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const shopLocales = localesData.data.shopLocales;
     const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "de";
 
-    // Fetch products
-    const response = await admin.graphql(
-      `#graphql
-        query getProducts($first: Int!) {
-          products(first: $first) {
-            edges {
-              node {
-                id
-                title
-                handle
-                status
-                descriptionHtml
-                featuredImage {
-                  url
-                  altText
-                }
-                images(first: 250) {
-                  edges {
-                    node {
-                      altText
-                      url
-                    }
-                  }
-                }
-                seo {
-                  title
-                  description
-                }
-                options {
-                  id
-                  name
-                  position
-                  values
-                }
-                metafields(first: 100) {
-                  edges {
-                    node {
-                      id
-                      namespace
-                      key
-                      value
-                      type
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }`,
-      { variables: { first: 50 } }
-    );
+    console.log("[LOADER] Primary locale:", primaryLocale);
+    console.log("[LOADER] Available locales:", shopLocales.length);
 
-    const data = await response.json();
-    let products = data.data.products.edges.map((edge: any) => {
-      const product = edge.node;
-      product.images = product.images?.edges?.map((imgEdge: any) => imgEdge.node) || [];
-      product.metafields = product.metafields?.edges?.map((mfEdge: any) => mfEdge.node) || [];
-      return product;
+    // 2. Fetch products from DATABASE (much faster!)
+    const { db } = await import("../db.server");
+
+    const dbProducts = await db.product.findMany({
+      where: {
+        shop: session.shop,
+      },
+      include: {
+        translations: true,
+        images: true,
+        options: true,
+        metafields: true,
+      },
+      orderBy: {
+        title: "asc",
+      },
+      take: 50,
     });
 
-    for (const product of products) {
-      product.translations = [];
-    }
+    console.log("[LOADER] Loaded", dbProducts.length, "products from database");
+
+    // 3. Transform to frontend format
+    const products = dbProducts.map((p) => ({
+      id: p.id,
+      title: p.title,
+      descriptionHtml: p.descriptionHtml,
+      handle: p.handle,
+      status: p.status,
+      featuredImage: {
+        url: p.featuredImageUrl,
+        altText: p.featuredImageAlt,
+      },
+      images: p.images.map((img) => ({
+        url: img.url,
+        altText: img.altText,
+      })),
+      seo: {
+        title: p.seoTitle,
+        description: p.seoDescription,
+      },
+      options: p.options.map((opt) => ({
+        id: opt.id,
+        name: opt.name,
+        position: opt.position,
+        values: JSON.parse(opt.values),
+      })),
+      metafields: p.metafields.map((mf) => ({
+        id: mf.id,
+        namespace: mf.namespace,
+        key: mf.key,
+        value: mf.value,
+        type: mf.type,
+      })),
+      // IMPORTANT: All translations are already loaded!
+      translations: p.translations.map((t) => ({
+        key: t.key,
+        value: t.value,
+        locale: t.locale,
+      })),
+    }));
+
+    console.log("[LOADER] Total translations loaded:", products.reduce((sum, p) => sum + p.translations.length, 0));
 
     return json({
       products,
       shop: session.shop,
       shopLocales,
       primaryLocale,
-      error: null
+      error: null,
     });
   } catch (error: any) {
-    return json({
-      products: [],
-      shop: session.shop,
-      shopLocales: [],
-      primaryLocale: "de",
-      error: error.message
-    }, { status: 500 });
+    console.error("[LOADER] Error:", error);
+    return json(
+      {
+        products: [],
+        shop: session.shop,
+        shopLocales: [],
+        primaryLocale: "de",
+        error: error.message,
+      },
+      { status: 500 }
+    );
   }
 };
 
@@ -151,81 +159,12 @@ export default function Index() {
 
   const { aiSuggestions, removeSuggestion } = useAISuggestions(fetcher.data);
 
-  // Handle language change and load translations
+  // Handle language change (no more loading needed - all translations pre-loaded!)
   const handleLanguageChange = (newLanguage: string) => {
-    console.log('=== LANGUAGE CHANGE HANDLER ===');
-    console.log('New language:', newLanguage);
-    console.log('Primary locale:', primaryLocale);
-    console.log('Selected product:', selectedProduct?.id);
-
+    console.log('[LANGUAGE-CHANGE] Switching to:', newLanguage);
     setCurrentLanguage(newLanguage);
-
-    // Load translations if switching to a foreign language
-    if (selectedProduct && newLanguage !== primaryLocale) {
-      const hasTranslations = selectedProduct.translations?.some(
-        (t: any) => t.locale === newLanguage
-      );
-
-      console.log('Has translations:', hasTranslations);
-
-      if (!hasTranslations) {
-        console.log('>>> SUBMITTING loadTranslations request <<<');
-        console.log('Submitting with data:', {
-          action: "loadTranslations",
-          productId: selectedProduct.id,
-          locale: newLanguage
-        });
-
-        // Create FormData explicitly
-        const formData = new FormData();
-        formData.append("action", "loadTranslations");
-        formData.append("productId", selectedProduct.id);
-        formData.append("locale", newLanguage);
-
-        console.log('FormData created, entries:');
-        for (const [key, value] of formData.entries()) {
-          console.log(`  ${key}: ${value}`);
-        }
-
-        console.log('Calling fetcher.submit...');
-        fetcher.submit(formData, { method: "POST" });
-        console.log('fetcher.submit returned');
-        console.log('Fetcher state:', fetcher.state);
-      } else {
-        console.log('Translations already loaded, skipping request');
-      }
-    }
+    // That's it! All translations are already in the product object from the loader
   };
-
-  // Handle loaded translations
-  useEffect(() => {
-    console.log('=== FRONTEND: Handle loaded translations ===');
-    console.log('fetcher.state:', fetcher.state);
-    console.log('fetcher.data:', fetcher.data);
-    console.log('Has translations:', 'translations' in (fetcher.data || {}));
-    console.log('Has locale:', 'locale' in (fetcher.data || {}));
-
-    if (fetcher.data?.success && 'translations' in fetcher.data && 'locale' in fetcher.data) {
-      const { locale, translations } = fetcher.data as any;
-      console.log('Processing translations:');
-      console.log('- Locale:', locale);
-      console.log('- Translations:', translations);
-      console.log('- Selected product:', selectedProduct?.id);
-
-      if (selectedProduct && locale && translations) {
-        console.log('Storing translations in product object');
-        console.log('Translation count:', translations.length);
-
-        // Store translations directly in selectedProduct
-        selectedProduct.translations = [
-          ...selectedProduct.translations.filter((t: any) => t.locale !== locale),
-          ...translations
-        ];
-
-        console.log('Updated product.translations:', selectedProduct.translations);
-      }
-    }
-  }, [fetcher.data]);
 
   // Handle translated field response
   useEffect(() => {
