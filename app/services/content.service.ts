@@ -126,6 +126,13 @@ export class ContentService {
 
   async getMenus(first: number = 50) {
     try {
+      // First get shop locales to know which languages to fetch
+      const shopLocales = await this.getShopLocales();
+      const locales = shopLocales.filter((l: any) => !l.primary).map((l: any) => l.locale);
+
+      console.log('=== FETCHING MENUS WITH TRANSLATIONS ===');
+      console.log('Non-primary locales:', locales);
+
       const response = await this.admin.graphql(GET_MENUS, {
         variables: { first }
       });
@@ -135,13 +142,51 @@ export class ContentService {
       console.log('Raw menus data:', JSON.stringify(data, null, 2));
       console.log('Number of menus:', data.data?.menus?.edges?.length || 0);
 
-      const menus = data.data?.menus?.edges?.map((edge: any) => ({
-        ...edge.node,
-        translations: []
-      })) || [];
+      // For each menu, fetch translations for each locale
+      const menusWithTranslations = [];
 
-      console.log('Processed menus:', menus.length);
-      return menus;
+      for (const edge of data.data?.menus?.edges || []) {
+        const menu = edge.node;
+        const allTranslations = [];
+
+        // Fetch translations for each non-primary locale
+        for (const locale of locales) {
+          try {
+            const translationsQuery = `#graphql
+              query getMenuTranslations($id: ID!, $locale: String!) {
+                menu(id: $id) {
+                  translations(locale: $locale) {
+                    locale
+                    key
+                    value
+                    outdated
+                  }
+                }
+              }
+            `;
+
+            const transResponse = await this.admin.graphql(translationsQuery, {
+              variables: { id: menu.id, locale }
+            });
+            const transData = await transResponse.json();
+
+            const translations = transData.data?.menu?.translations || [];
+            console.log(`Translations for menu ${menu.id} (${locale}):`, translations.length);
+
+            allTranslations.push(...translations);
+          } catch (error) {
+            console.error(`Error fetching translations for menu ${menu.id} in locale ${locale}:`, error);
+          }
+        }
+
+        menusWithTranslations.push({
+          ...menu,
+          translations: allTranslations
+        });
+      }
+
+      console.log('Processed menus with translations:', menusWithTranslations.length);
+      return menusWithTranslations;
     } catch (error) {
       console.error('Error fetching menus:', error);
       return [];
