@@ -132,7 +132,11 @@ export default function Index() {
   const { products, shop, shopLocales, primaryLocale, error } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
+
+  console.log('[INDEX] Current locale:', locale);
+  console.log('[INDEX] t.products.resourceName:', t.products.resourceName);
+  console.log('[INDEX] t.products.pagination:', t.products.pagination);
 
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
   const [currentLanguage, setCurrentLanguage] = useState(primaryLocale);
@@ -404,6 +408,35 @@ export default function Index() {
     );
   };
 
+  const handleGenerateAltText = (imageIndex: number) => {
+    if (!selectedProduct || !selectedProduct.images || !selectedProduct.images[imageIndex]) return;
+
+    fetcher.submit(
+      {
+        action: "generateAltText",
+        productId: selectedProduct.id,
+        imageIndex: imageIndex.toString(),
+        imageUrl: selectedProduct.images[imageIndex].url,
+        productTitle: selectedProduct.title,
+      },
+      { method: "POST" }
+    );
+  };
+
+  const handleGenerateAllAltTexts = () => {
+    if (!selectedProduct || !selectedProduct.images || selectedProduct.images.length === 0) return;
+
+    fetcher.submit(
+      {
+        action: "generateAllAltTexts",
+        productId: selectedProduct.id,
+        imagesData: JSON.stringify(selectedProduct.images),
+        productTitle: selectedProduct.title,
+      },
+      { method: "POST" }
+    );
+  };
+
   return (
     <Page fullWidth>
       <style>{`
@@ -476,6 +509,8 @@ export default function Index() {
             onTranslateOption={handleTranslateOption}
             isTranslatingOption={fetcher.state !== "idle" && fetcher.formData?.get("action") === "translateOption"}
             translatingOptionId={fetcher.formData?.get("optionId")?.toString()}
+            onGenerateAltText={handleGenerateAltText}
+            onGenerateAllAltTexts={handleGenerateAllAltTexts}
           />
 
           {/* Translation Debug Panel */}
