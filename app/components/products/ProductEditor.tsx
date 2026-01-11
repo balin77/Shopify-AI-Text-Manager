@@ -411,7 +411,7 @@ export function ProductEditor({
 
           {/* Title Field */}
           <FieldEditor
-            label={`Produkttitel (${
+            label={`${t.products.productTitle} (${
               shopLocales.find((l) => l.locale === currentLanguage)?.name || currentLanguage
             })`}
             value={editableTitle}
@@ -420,7 +420,7 @@ export function ProductEditor({
             suggestion={aiSuggestions.title}
             isPrimaryLocale={isPrimaryLocale}
             backgroundColor={getFieldBackgroundColor("title")}
-            helpText={`${editableTitle.length} Zeichen`}
+            helpText={`${editableTitle.length} ${t.products.characters}`}
             isLoading={isFieldLoading("title", isPrimaryLocale ? "generateAIText" : "translateField")}
             onGenerateAI={() => onGenerateAI("title")}
             onTranslate={() => onTranslateField("title")}
@@ -431,7 +431,7 @@ export function ProductEditor({
 
           {/* Description Field */}
           <DescriptionEditor
-            label={`Produktbeschreibung (${
+            label={`${t.products.productDescription} (${
               shopLocales.find((l) => l.locale === currentLanguage)?.name || currentLanguage
             })`}
             value={editableDescription}
@@ -453,7 +453,7 @@ export function ProductEditor({
 
           {/* Handle Field */}
           <FieldEditor
-            label={`URL-Slug (${
+            label={`${t.products.urlSlug} (${
               shopLocales.find((l) => l.locale === currentLanguage)?.name || currentLanguage
             })`}
             value={editableHandle}
@@ -472,7 +472,7 @@ export function ProductEditor({
 
           {/* SEO Title Field */}
           <FieldEditor
-            label={`SEO-Titel (${
+            label={`${t.products.seoTitle} (${
               shopLocales.find((l) => l.locale === currentLanguage)?.name || currentLanguage
             })`}
             value={editableSeoTitle}
@@ -481,7 +481,7 @@ export function ProductEditor({
             suggestion={aiSuggestions.seoTitle}
             isPrimaryLocale={isPrimaryLocale}
             backgroundColor={getFieldBackgroundColor("meta_title")}
-            helpText={`${editableSeoTitle.length} Zeichen (empfohlen: 50-60)`}
+            helpText={`${editableSeoTitle.length} ${t.products.characters} (${t.products.recommended}: 50-60)`}
             isLoading={isFieldLoading("seoTitle", isPrimaryLocale ? "generateAIText" : "translateField")}
             onGenerateAI={() => onGenerateAI("seoTitle")}
             onTranslate={() => onTranslateField("seoTitle")}
@@ -492,7 +492,7 @@ export function ProductEditor({
 
           {/* Meta Description Field */}
           <FieldEditor
-            label={`Meta-Beschreibung (${
+            label={`${t.products.metaDescription} (${
               shopLocales.find((l) => l.locale === currentLanguage)?.name || currentLanguage
             })`}
             value={editableMetaDescription}
@@ -501,7 +501,7 @@ export function ProductEditor({
             suggestion={aiSuggestions.metaDescription}
             isPrimaryLocale={isPrimaryLocale}
             backgroundColor={getFieldBackgroundColor("meta_description")}
-            helpText={`${editableMetaDescription.length} Zeichen (empfohlen: 150-160)`}
+            helpText={`${editableMetaDescription.length} ${t.products.characters} (${t.products.recommended}: 150-160)`}
             multiline={3}
             isLoading={isFieldLoading("metaDescription", isPrimaryLocale ? "generateAIText" : "translateField")}
             onGenerateAI={() => onGenerateAI("metaDescription")}
