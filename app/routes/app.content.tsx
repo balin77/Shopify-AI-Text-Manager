@@ -68,32 +68,42 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "de";
 
     // Load content from DATABASE (not from Shopify!)
-    const [collections, articles, dbPages] = await Promise.all([
-      // Collections with translations
+    const [collections, articles, dbPages, allTranslations] = await Promise.all([
+      // Collections
       db.collection.findMany({
         where: { shop: session.shop },
-        include: {
-          translations: true,
-        },
         orderBy: { title: 'asc' },
       }),
-      // Articles with translations
+      // Articles
       db.article.findMany({
         where: { shop: session.shop },
-        include: {
-          translations: true,
-        },
         orderBy: { title: 'asc' },
       }),
-      // Pages with translations
+      // Pages
       db.page.findMany({
         where: { shop: session.shop },
-        include: {
-          translations: true,
-        },
         orderBy: { title: 'asc' },
       }),
+      // Load all ContentTranslations for this shop
+      db.contentTranslation.findMany({
+        where: {
+          OR: [
+            { resourceType: 'Collection' },
+            { resourceType: 'Article' },
+            { resourceType: 'Page' },
+          ]
+        },
+      }),
     ]);
+
+    // Group translations by resourceId for easy lookup
+    const translationsByResource = allTranslations.reduce((acc: Record<string, any[]>, trans) => {
+      if (!acc[trans.resourceId]) {
+        acc[trans.resourceId] = [];
+      }
+      acc[trans.resourceId].push(trans);
+      return acc;
+    }, {});
 
     // Transform DB data to match frontend expectations
     // Group articles by blog
@@ -115,7 +125,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
           title: article.seoTitle,
           description: article.seoDescription,
         },
-        translations: article.translations,
+        translations: translationsByResource[article.id] || [],
       });
     }
 
@@ -131,7 +141,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         title: c.seoTitle,
         description: c.seoDescription,
       },
-      translations: c.translations,
+      translations: translationsByResource[c.id] || [],
     }));
 
     // Transform pages
@@ -140,7 +150,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       title: p.title,
       handle: p.handle,
       body: p.body,
-      translations: p.translations,
+      translations: translationsByResource[p.id] || [],
     }));
 
     // Policies, metadata, menus, themes still loaded on-demand from ContentService
