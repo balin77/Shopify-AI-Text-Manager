@@ -52,6 +52,68 @@ export class WebhookRegistrationService {
   }
 
   /**
+   * Register all content webhooks (collections, blogs)
+   */
+  async registerContentWebhooks(): Promise<void> {
+    const appUrl = process.env.SHOPIFY_APP_URL;
+
+    if (!appUrl) {
+      throw new Error("SHOPIFY_APP_URL environment variable not set");
+    }
+
+    const webhooks = [
+      // Collection webhooks
+      {
+        topic: "COLLECTIONS_CREATE",
+        address: `${appUrl}/webhooks/collections`,
+      },
+      {
+        topic: "COLLECTIONS_UPDATE",
+        address: `${appUrl}/webhooks/collections`,
+      },
+      {
+        topic: "COLLECTIONS_DELETE",
+        address: `${appUrl}/webhooks/collections`,
+      },
+      // Blog article webhooks
+      {
+        topic: "ARTICLES_CREATE",
+        address: `${appUrl}/webhooks/articles`,
+      },
+      {
+        topic: "ARTICLES_UPDATE",
+        address: `${appUrl}/webhooks/articles`,
+      },
+      {
+        topic: "ARTICLES_DELETE",
+        address: `${appUrl}/webhooks/articles`,
+      },
+    ];
+
+    console.log("[WebhookRegistration] Registering content webhooks...");
+
+    for (const webhook of webhooks) {
+      try {
+        await this.registerWebhook(webhook.topic, webhook.address);
+        console.log(`[WebhookRegistration] ✓ Registered ${webhook.topic}`);
+      } catch (error: any) {
+        console.error(`[WebhookRegistration] ✗ Failed to register ${webhook.topic}:`, error.message);
+        // Continue with other webhooks even if one fails
+      }
+    }
+
+    console.log("[WebhookRegistration] Content webhook registration complete");
+  }
+
+  /**
+   * Register ALL webhooks (products + content)
+   */
+  async registerAllWebhooks(): Promise<void> {
+    await this.registerProductWebhooks();
+    await this.registerContentWebhooks();
+  }
+
+  /**
    * Register a single webhook
    */
   private async registerWebhook(topic: string, address: string): Promise<void> {

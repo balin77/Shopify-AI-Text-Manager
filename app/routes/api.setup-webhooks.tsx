@@ -21,8 +21,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     const webhookService = new WebhookRegistrationService(admin);
 
-    // Register webhooks
-    await webhookService.registerProductWebhooks();
+    // Register ALL webhooks (products + content)
+    await webhookService.registerAllWebhooks();
 
     // List registered webhooks
     const webhooks = await webhookService.listWebhooks();

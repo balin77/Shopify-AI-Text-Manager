@@ -22,7 +22,8 @@
       "Read(//c/Users/guble/OneDrive/Shopify/ImageVariantManager/**)",
       "Bash(cat:*)",
       "Bash(railway variables:*)",
-      "Bash(railway service:*)"
+      "Bash(railway service:*)",
+      "Bash(git reset:*)"
     ],
     "deny": [],
     "ask": []

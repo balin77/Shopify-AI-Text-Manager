@@ -214,3 +214,97 @@ model WebhookLog {
   @@index([processed])
   @@index([createdAt])
 }
+
+// ============================================
+// CONTENT MODELS (Collections, Blogs, Pages)
+// ============================================
+
+model Collection {
+  id              String   @id // Shopify GID (e.g., "gid://shopify/Collection/123")
+  shop            String
+  title           String
+  descriptionHtml String?  @db.Text
+  handle          String
+  seoTitle        String?
+  seoDescription  String?  @db.Text
+
+  // Shopify Metadata
+  shopifyUpdatedAt DateTime
+  lastSyncedAt     DateTime @default(now())
+
+  // Relations
+  translations    ContentTranslation[]
+
+  @@unique([shop, id])
+  @@index([shop])
+  @@index([lastSyncedAt])
+}
+
+model Article {
+  id              String   @id // Shopify GID (e.g., "gid://shopify/Article/123")
+  shop            String
+  blogId          String   // Shopify Blog GID
+  blogTitle       String   // For display purposes
+  title           String
+  body            String?  @db.Text
+  handle          String
+  seoTitle        String?
+  seoDescription  String?  @db.Text
+
+  // Shopify Metadata
+  shopifyUpdatedAt DateTime
+  lastSyncedAt     DateTime @default(now())
+
+  // Relations
+  translations    ContentTranslation[]
+
+  @@unique([shop, id])
+  @@index([shop])
+  @@index([shop, blogId])
+  @@index([lastSyncedAt])
+}
+
+model Page {
+  id              String   @id // Shopify GID (e.g., "gid://shopify/Page/123")
+  shop            String
+  title           String
+  body            String?  @db.Text
+  handle          String
+
+  // Shopify Metadata
+  shopifyUpdatedAt DateTime
+  lastSyncedAt     DateTime @default(now())
+
+  // Relations
+  translations    ContentTranslation[]
+
+  @@unique([shop, id])
+  @@index([shop])
+  @@index([lastSyncedAt])
+}
+
+model ContentTranslation {
+  id           String  @id @default(cuid())
+
+  // Polymorphic relation (can belong to Collection, Article, or Page)
+  resourceId   String  // The GID of the parent resource
+  resourceType String  // "Collection", "Article", or "Page"
+
+  key          String  // "title", "body", "description", "handle", "seo_title", "seo_description"
+  value        String  @db.Text
+  locale       String  // "en", "fr", "es", "it", etc.
+  digest       String? // Shopify digest for updates
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relations
+  collection   Collection? @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+  article      Article?    @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+  page         Page?       @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+
+  @@unique([resourceId, key, locale])
+  @@index([resourceId, locale])
+  @@index([resourceType])
+  @@index([locale])
+}
