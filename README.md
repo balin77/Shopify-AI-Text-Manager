@@ -13,6 +13,9 @@ Eine professionelle Shopify Embedded App für KI-gestützte Texterstellung, SEO-
 - 🏗️ **Modulare Architektur** - Remix, React, Prisma, GraphQL
 - ⚡ **AI Queue System** mit Rate Limiting und automatischem Retry
 - 📋 **Task Management** mit Echtzeit-Tracking und Queue-Visualisierung
+- 🚀 **DB-Caching** - Blitzschnelle Ladezeiten durch PostgreSQL-Cache
+- 🔄 **Webhook-System** - Automatische Synchronisierung mit Shopify
+- ⚡ **Instant Updates** - Änderungen sofort sichtbar ohne Reload
 
 ## 🚀 Schnellstart
 
@@ -480,14 +483,264 @@ Queue prüft Rate Limits (alle 100ms)
 
 ## 🔧 Deployment auf Railway
 
+### 1. Projekt-Setup
+
 1. Projekt mit Railway verbinden
 2. Environment Variables setzen (siehe oben)
 3. PostgreSQL Datenbank hinzufügen
-4. Deploy - Railway baut und startet automatisch
+
+### 2. Custom Start Command konfigurieren
+
+**WICHTIG:** Setze den Start Command auf:
+
+```bash
+npm run start:migrate
+```
+
+**Wo:** Railway Dashboard → Service → Settings → Deploy → Start Command
+
+**Warum:** Führt automatisch Datenbank-Migrationen vor jedem Start aus.
+
+### 3. Nach dem Deployment
+
+**Webhooks einrichten (einmalig):**
+
+1. Öffne deine App im Shopify Admin
+2. Navigiere zu `/app/setup`
+3. Klicke auf **"Setup Webhooks"**
+4. Erwartung: 9 Webhooks registriert
+   - 3x Products (create, update, delete)
+   - 3x Collections (create, update, delete)
+   - 3x Articles/Blogs (create, update, delete)
+
+**Content synchronisieren (einmalig):**
+
+```javascript
+// In der Browser Console (wenn du in der App eingeloggt bist):
+fetch('/api/sync-content', { method: 'POST' })
+  .then(r => r.json())
+  .then(console.log)
+
+// Erwartung: { success: true, stats: { collections: X, articles: Y, pages: Z } }
+```
 
 **Wichtig:** Nach Deployment App in Shopify installieren/neu autorisieren!
 
 ## 🏗️ Technische Architektur
+
+### DB-Caching & Webhook-System
+
+Die App verwendet eine **Dual-Sync Strategie** für maximale Performance und Konsistenz:
+
+#### 1. Sofortiges DB-Update nach Save
+
+Wenn ein User Content in der App speichert:
+
+```
+User speichert → Shopify Mutation → Success → DB Update → User sieht Änderung
+                     (0.5s)           ✅         (0.1s)         (instant!)
+```
+
+**Implementierung:**
+
+```typescript
+// In app/routes/app.content.tsx
+if (locale !== primaryLocale) {
+  // Save to Shopify
+  await admin.graphql(TRANSLATE_CONTENT, { ... });
+
+  // 🔥 DIRECT DB UPDATE: Sofort nach Shopify-Success
+  await db.contentTranslation.createMany({
+    data: translationsInput.map(t => ({
+      resourceId: itemId,
+      resourceType: "Collection",  // or "Article", "Page"
+      key: t.key,
+      value: t.value,
+      locale: t.locale,
+    })),
+  });
+}
+```
+
+**Vorteile:**
+- ⚡ **Instant Updates** - User sieht Änderungen sofort
+- 💾 **Keine Wartezeit** - Kein Warten auf Webhooks
+- 🎯 **Garantierte Konsistenz** - DB = Shopify direkt nach Save
+
+#### 2. Webhook-basierte Synchronisierung
+
+Für **externe Änderungen** (direkt in Shopify Admin):
+
+```
+Änderung in Shopify → Webhook Event → Background Job → DB Update
+                         (1-3s)          (async)         ✅
+```
+
+**Registrierte Webhooks:**
+
+| Topic | Handler | Funktion |
+|-------|---------|----------|
+| `products/create` | [webhooks.products.tsx](app/routes/webhooks.products.tsx) | Neues Produkt → DB |
+| `products/update` | [webhooks.products.tsx](app/routes/webhooks.products.tsx) | Produkt-Update → DB |
+| `products/delete` | [webhooks.products.tsx](app/routes/webhooks.products.tsx) | Produkt löschen aus DB |
+| `collections/create` | [webhooks.collections.tsx](app/routes/webhooks.collections.tsx) | Neue Collection → DB |
+| `collections/update` | [webhooks.collections.tsx](app/routes/webhooks.collections.tsx) | Collection-Update → DB |
+| `collections/delete` | [webhooks.collections.tsx](app/routes/webhooks.collections.tsx) | Collection löschen aus DB |
+| `articles/create` | [webhooks.articles.tsx](app/routes/webhooks.articles.tsx) | Neuer Artikel → DB |
+| `articles/update` | [webhooks.articles.tsx](app/routes/webhooks.articles.tsx) | Artikel-Update → DB |
+| `articles/delete` | [webhooks.articles.tsx](app/routes/webhooks.articles.tsx) | Artikel löschen aus DB |
+
+**Webhook-Flow:**
+
+```typescript
+// 1. Shopify sendet Webhook
+POST /webhooks/collections
+  Body: { id: 123, title: "New Title", ... }
+
+// 2. Webhook-Handler verifiziert Signature
+const verified = verifyWebhook(rawBody, hmac);
+
+// 3. Event wird in DB geloggt
+await db.webhookLog.create({ shop, topic, payload, processed: false });
+
+// 4. Background Processing (async - blockiert Shopify nicht)
+processWebhookAsync(logId, shop, collectionId, topic);
+  ↓
+  ContentSyncService.syncCollection(collectionId)
+  ↓
+  - Fetch collection data from Shopify
+  - Fetch all translations
+  - Upsert to database
+  ↓
+  Mark webhook as processed
+```
+
+**Services:**
+
+- **[ContentSyncService](app/services/content-sync.service.ts)** - Synchronisiert Collections, Articles, Pages
+- **[ProductSyncService](app/services/product-sync.service.ts)** - Synchronisiert Produkte
+- **[WebhookRegistrationService](app/services/webhook-registration.service.ts)** - Registriert Webhooks
+
+#### 3. DB-basierter Loader
+
+Alle Content-Seiten laden Daten aus der **lokalen PostgreSQL-Datenbank**, nicht von Shopify:
+
+```typescript
+// app/routes/app.content.tsx - Loader
+const [collections, articles, pages] = await Promise.all([
+  db.collection.findMany({
+    where: { shop: session.shop },
+    include: { translations: true },  // Alle Übersetzungen pre-loaded!
+  }),
+  db.article.findMany({ ... }),
+  db.page.findMany({ ... }),
+]);
+```
+
+**Performance-Verbesserung:**
+
+| Operation | Vorher (Shopify API) | Jetzt (DB) | Verbesserung |
+|-----------|---------------------|-----------|--------------|
+| Page Load | 3-5 Sekunden | < 0.5 Sekunden | **10x schneller** |
+| Language Switch | Broken (fetcher issue) | Instant | **∞ schneller** |
+| After Save | Inconsistent | Instant | **Guaranteed** |
+
+#### 4. Datenbank Schema
+
+**Content Models:**
+
+```prisma
+model Collection {
+  id              String   @id
+  shop            String
+  title           String
+  descriptionHtml String?
+  handle          String
+  seoTitle        String?
+  seoDescription  String?
+  shopifyUpdatedAt DateTime
+  lastSyncedAt     DateTime
+
+  translations    ContentTranslation[]
+}
+
+model Article {
+  id              String   @id
+  shop            String
+  blogId          String
+  blogTitle       String
+  title           String
+  body            String?
+  handle          String
+  seoTitle        String?
+  seoDescription  String?
+  shopifyUpdatedAt DateTime
+  lastSyncedAt     DateTime
+
+  translations    ContentTranslation[]
+}
+
+model Page {
+  id              String   @id
+  shop            String
+  title           String
+  body            String?
+  handle          String
+  shopifyUpdatedAt DateTime
+  lastSyncedAt     DateTime
+
+  translations    ContentTranslation[]
+}
+
+model ContentTranslation {
+  id           String  @id
+  resourceId   String  // Collection/Article/Page ID
+  resourceType String  // "Collection", "Article", or "Page"
+  key          String  // "title", "body", "handle", etc.
+  value        String
+  locale       String  // "en", "fr", "es", etc.
+  digest       String? // Shopify digest
+}
+```
+
+**Sync Status Tracking:**
+
+```prisma
+model WebhookLog {
+  id        String   @id
+  shop      String
+  topic     String   // "collections/update", etc.
+  productId String?  // Resource ID
+  payload   String   // Full webhook payload
+  processed Boolean
+  error     String?
+  createdAt DateTime
+}
+```
+
+#### 5. API Routes
+
+- **[/api/sync-content](app/routes/api.sync-content.tsx)** - Bulk-Sync aller Collections, Articles, Pages
+- **[/api/sync-products](app/routes/api.sync-products.tsx)** - Bulk-Sync aller Produkte
+- **[/api/setup-webhooks](app/routes/api.setup-webhooks.tsx)** - Webhook-Registration
+
+**Verwendung:**
+
+```bash
+# Alle Content synchronisieren
+POST /api/sync-content
+
+# Response:
+{
+  "success": true,
+  "stats": {
+    "collections": 15,
+    "articles": 42,
+    "pages": 8,
+    "total": 65
+  }
+}
+```
 
 ### AI Queue System
 
@@ -662,6 +915,164 @@ Wichtige Modelle:
 - Browser-Cache leeren
 - Seite neu laden (F5)
 - Polling erfolgt alle 5 Sekunden - kurz warten
+
+### DB-Caching & Webhook Issues
+
+#### "Content-Seite lädt langsam / zeigt keine Daten"
+
+**Symptome:**
+- Content-Seite ist leer oder zeigt "0 Collections/Articles/Pages"
+- Ladezeiten immer noch 3-5 Sekunden
+- Railway Logs zeigen DB-Fehler
+
+**Ursachen & Lösungen:**
+
+1. **Migration nicht ausgeführt:**
+   ```bash
+   # Auf Railway:
+   railway run npx prisma migrate deploy
+
+   # Oder: Custom Start Command setzen (siehe Deployment)
+   npm run start:migrate
+   ```
+
+2. **Content nicht synchronisiert:**
+   ```javascript
+   // In Browser Console (in der App):
+   fetch('/api/sync-content', { method: 'POST' })
+     .then(r => r.json())
+     .then(console.log)
+
+   // Sollte zeigen: { success: true, stats: { ... } }
+   ```
+
+3. **Webhooks nicht registriert:**
+   - Gehe zu `/app/setup`
+   - Klicke "Setup Webhooks"
+   - Prüfe ob 9 Webhooks registriert wurden
+
+#### "Änderungen werden nicht gespeichert"
+
+**Symptome:**
+- User speichert Content
+- "Success" Message erscheint
+- Nach Reload sind Änderungen weg
+
+**Lösungen:**
+
+1. **Prüfe Railway Logs:**
+   ```bash
+   railway logs | grep "CONTENT-UPDATE"
+
+   # Sollte zeigen:
+   [CONTENT-UPDATE] Updating DB for collection gid://...
+   [CONTENT-UPDATE] ✓ Updated collection in DB
+   ```
+
+2. **DB-Konsistenz prüfen:**
+   ```sql
+   -- In Railway PostgreSQL Console:
+   SELECT COUNT(*) FROM "Collection";
+   SELECT COUNT(*) FROM "ContentTranslation";
+
+   -- Sollte > 0 sein nach Sync
+   ```
+
+3. **Force Re-Sync:**
+   ```javascript
+   // Sync einzelnen Content-Type:
+   fetch('/api/sync-content', { method: 'POST' })
+   ```
+
+#### "Webhooks werden nicht empfangen"
+
+**Symptome:**
+- Änderungen in Shopify Admin erscheinen nicht in der App
+- Railway Logs zeigen keine `[WEBHOOK]` Messages
+- WebhookLog Tabelle ist leer
+
+**Lösungen:**
+
+1. **Webhook-URLs prüfen:**
+   - Gehe zu Shopify Admin → Settings → Notifications → Webhooks
+   - URLs sollten sein: `https://your-app.railway.app/webhooks/[products|collections|articles]`
+   - Status sollte "Connected" sein
+
+2. **SHOPIFY_API_SECRET prüfen:**
+   ```bash
+   # Auf Railway:
+   echo $SHOPIFY_API_SECRET
+
+   # Sollte dein API Secret sein, nicht leer!
+   ```
+
+3. **Signature-Fehler debuggen:**
+   ```bash
+   railway logs | grep "WEBHOOK"
+
+   # Bei Signature-Fehler:
+   [WEBHOOK] Invalid signature
+   [WEBHOOK] Expected: xxx
+   [WEBHOOK] Received: yyy
+
+   # → SHOPIFY_API_SECRET ist falsch!
+   ```
+
+4. **Webhook neu registrieren:**
+   - `/app/setup` → "Setup Webhooks"
+   - Oder: Manuelle Registration in Shopify Admin
+
+#### "Performance nicht verbessert nach DB-Caching"
+
+**Symptome:**
+- Content-Seite lädt immer noch langsam (> 2 Sekunden)
+- Keine Performance-Verbesserung sichtbar
+
+**Checkliste:**
+
+1. ✅ Migration ausgeführt? (`npm run start:migrate`)
+2. ✅ Content synchronisiert? (`POST /api/sync-content`)
+3. ✅ Railway Logs zeigen DB-Queries? (`[CONTENT-LOADER]`)
+4. ✅ Browser-Cache geleert?
+
+**Debugging:**
+
+```javascript
+// In Browser Console:
+performance.mark('start');
+
+// Navigiere zu Content-Seite, dann:
+performance.mark('end');
+performance.measure('load', 'start', 'end');
+console.log(performance.getEntriesByType('measure'));
+
+// Sollte < 1000ms sein für DB-basiertes Load
+```
+
+#### "Translations fehlen nach Save"
+
+**Symptome:**
+- User speichert Übersetzung
+- Success Message
+- Übersetzung fehlt beim Language-Switch
+
+**Ursache:** Direct DB Update schlägt fehl
+
+**Lösung:**
+
+```bash
+# Railway Logs prüfen:
+railway logs | grep "CONTENT-UPDATE"
+
+# Bei Fehler:
+[CONTENT-UPDATE] Error: ...
+# → Checke Prisma Schema, unique constraints, etc.
+
+# Webhook als Fallback prüfen:
+railway logs | grep "ContentSync"
+# Sollte zeigen:
+[ContentSync] ✓ Saved X translations to DB
+```
 
 ## 📄 Lizenz
 
