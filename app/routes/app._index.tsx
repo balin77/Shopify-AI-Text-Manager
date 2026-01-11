@@ -569,7 +569,12 @@ export default function Index() {
               handle={editableHandle}
               seoTitle={editableSeoTitle}
               metaDescription={editableMetaDescription}
-              imagesWithAlt={selectedProduct.images?.filter((img: any) => img.altText).length || 0}
+              imagesWithAlt={
+                selectedProduct.images?.filter((img: any, index: number) => {
+                  // Check if there's a new alt-text in state OR an existing alt-text
+                  return imageAltTexts[index] || img.altText;
+                }).length || 0
+              }
               totalImages={selectedProduct.images?.length || 0}
             />
           </div>
