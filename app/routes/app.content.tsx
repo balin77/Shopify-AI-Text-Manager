@@ -350,14 +350,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           if (title) translationsInput.push({ key: "title", value: title, locale });
           if (description) translationsInput.push({ key: "description", value: description, locale });
           if (handle) translationsInput.push({ key: "handle", value: handle, locale });
-          if (seoTitle) translationsInput.push({ key: "seo_title", value: seoTitle, locale });
-          if (metaDescription) translationsInput.push({ key: "seo_description", value: metaDescription, locale });
+          if (seoTitle) translationsInput.push({ key: "meta_title", value: seoTitle, locale });
+          if (metaDescription) translationsInput.push({ key: "meta_description", value: metaDescription, locale });
         } else if (contentType === "blogs") {
           if (title) translationsInput.push({ key: "title", value: title, locale });
           if (description) translationsInput.push({ key: "body_html", value: description, locale });
           if (handle) translationsInput.push({ key: "handle", value: handle, locale });
-          if (seoTitle) translationsInput.push({ key: "seo_title", value: seoTitle, locale });
-          if (metaDescription) translationsInput.push({ key: "seo_description", value: metaDescription, locale });
+          if (seoTitle) translationsInput.push({ key: "meta_title", value: seoTitle, locale });
+          if (metaDescription) translationsInput.push({ key: "meta_description", value: metaDescription, locale });
         }
 
         // Save to Shopify
@@ -645,8 +645,8 @@ export default function ContentPage() {
           setEditableTitle(getTranslatedValue(titleKey, currentLanguage, ""));
           setEditableDescription(getTranslatedValue(descKey, currentLanguage, ""));
           setEditableHandle(getTranslatedValue("handle", currentLanguage, ""));
-          setEditableSeoTitle(getTranslatedValue("seo_title", currentLanguage, ""));
-          setEditableMetaDescription(getTranslatedValue("seo_description", currentLanguage, ""));
+          setEditableSeoTitle(getTranslatedValue("meta_title", currentLanguage, ""));
+          setEditableMetaDescription(getTranslatedValue("meta_description", currentLanguage, ""));
         }
       }
       setHasChanges(false);
@@ -677,8 +677,8 @@ export default function ContentPage() {
           const newTitle = translations.find((t: any) => t.key === titleKey)?.value || "";
           const newDesc = translations.find((t: any) => t.key === descKey)?.value || "";
           const newHandle = translations.find((t: any) => t.key === "handle")?.value || "";
-          const newSeoTitle = translations.find((t: any) => t.key === "seo_title")?.value || "";
-          const newMetaDesc = translations.find((t: any) => t.key === "seo_description")?.value || "";
+          const newSeoTitle = translations.find((t: any) => t.key === "meta_title")?.value || "";
+          const newMetaDesc = translations.find((t: any) => t.key === "meta_description")?.value || "";
 
           setEditableTitle(newTitle);
           setEditableDescription(newDesc);
@@ -707,8 +707,8 @@ export default function ContentPage() {
       const titleChanged = editableTitle !== getOriginalValue(titleKey, selectedItem.title);
       const descChanged = editableDescription !== getOriginalValue(descKey, descFallback || "");
       const handleChanged = editableHandle !== getOriginalValue("handle", selectedItem.handle || "");
-      const seoTitleChanged = editableSeoTitle !== getOriginalValue("seo_title", selectedItem.seo?.title || "");
-      const metaDescChanged = editableMetaDescription !== getOriginalValue("seo_description", selectedItem.seo?.description || "");
+      const seoTitleChanged = editableSeoTitle !== getOriginalValue("meta_title", selectedItem.seo?.title || "");
+      const metaDescChanged = editableMetaDescription !== getOriginalValue("meta_description", selectedItem.seo?.description || "");
 
       setHasChanges(titleChanged || descChanged || handleChanged || seoTitleChanged || metaDescChanged);
     }
@@ -938,8 +938,8 @@ export default function ContentPage() {
       if (editableTitle) updateTranslation(titleKey, editableTitle);
       if (editableDescription) updateTranslation(descKey, editableDescription);
       if (editableHandle) updateTranslation("handle", editableHandle);
-      if (editableSeoTitle) updateTranslation("seo_title", editableSeoTitle);
-      if (editableMetaDescription) updateTranslation("seo_description", editableMetaDescription);
+      if (editableSeoTitle) updateTranslation("meta_title", editableSeoTitle);
+      if (editableMetaDescription) updateTranslation("meta_description", editableMetaDescription);
 
       // Update state
       setLoadedTranslations(prev => ({
@@ -1131,13 +1131,6 @@ export default function ContentPage() {
                   ))}
                 </div>
 
-                {/* Translation Debug Panel */}
-                <ContentTranslationDebugPanel
-                  contentItem={selectedItem}
-                  contentType={selectedType}
-                  shopLocales={shopLocales}
-                />
-
                 {/* Header with Save Button */}
                 <InlineStack align="space-between" blockAlign="center">
                   <Text as="p" variant="bodySm" tone="subdued">{t.content.idPrefix} {selectedItem.id.split("/").pop()}</Text>
@@ -1309,12 +1302,12 @@ export default function ContentPage() {
                   </div>
                 )}
 
-                {/* SEO Fields (only for blogs) */}
-                {selectedType === "blogs" && (
+                {/* SEO Fields (only for blogs and collections) */}
+                {(selectedType === "blogs" || selectedType === "collections") && (
                   <>
                     {/* SEO Title */}
                     <div>
-                      <div style={{ background: getFieldBackgroundColor("seo_title"), borderRadius: "8px", padding: "1px" }}>
+                      <div style={{ background: getFieldBackgroundColor("meta_title"), borderRadius: "8px", padding: "1px" }}>
                         <TextField
                           label={`${t.content.seoTitle} (${shopLocales.find((l: any) => l.locale === currentLanguage)?.name || currentLanguage})`}
                           value={editableSeoTitle}
@@ -1347,7 +1340,7 @@ export default function ContentPage() {
 
                     {/* Meta Description */}
                     <div>
-                      <div style={{ background: getFieldBackgroundColor("seo_description"), borderRadius: "8px", padding: "1px" }}>
+                      <div style={{ background: getFieldBackgroundColor("meta_description"), borderRadius: "8px", padding: "1px" }}>
                         <TextField
                           label={`${t.content.metaDescription} (${shopLocales.find((l: any) => l.locale === currentLanguage)?.name || currentLanguage})`}
                           value={editableMetaDescription}
@@ -1380,6 +1373,13 @@ export default function ContentPage() {
                     </div>
                   </>
                 )}
+
+                {/* Translation Debug Panel */}
+                <ContentTranslationDebugPanel
+                  contentItem={selectedItem}
+                  contentType={selectedType}
+                  shopLocales={shopLocales}
+                />
               </BlockStack>
             ) : (
               <div style={{ textAlign: "center", padding: "4rem 2rem" }}>

@@ -53,22 +53,22 @@ export function ContentTranslationDebugPanel({ contentItem, contentType, shopLoc
       body: contentItem.body || "",
     };
   } else if (contentType === "collections") {
-    expectedKeys = ["title", "description", "handle", "seo_title", "seo_description"];
+    expectedKeys = ["title", "description", "handle", "meta_title", "meta_description"];
     primaryData = {
       title: contentItem.title,
       description: contentItem.descriptionHtml || "",
       handle: contentItem.handle || "",
-      seo_title: contentItem.seo?.title || "",
-      seo_description: contentItem.seo?.description || "",
+      meta_title: contentItem.seo?.title || "",
+      meta_description: contentItem.seo?.description || "",
     };
   } else if (contentType === "blogs") {
-    expectedKeys = ["title", "body_html", "handle", "seo_title", "seo_description"];
+    expectedKeys = ["title", "body_html", "handle", "meta_title", "meta_description"];
     primaryData = {
       title: contentItem.title,
       body_html: contentItem.body || "",
       handle: contentItem.handle || "",
-      seo_title: contentItem.seo?.title || "",
-      seo_description: contentItem.seo?.description || "",
+      meta_title: contentItem.seo?.title || "",
+      meta_description: contentItem.seo?.description || "",
     };
   }
 
