@@ -564,6 +564,7 @@ export default function ContentPage() {
   const [editableHandle, setEditableHandle] = useState("");
   const [editableSeoTitle, setEditableSeoTitle] = useState("");
   const [editableMetaDescription, setEditableMetaDescription] = useState("");
+  const [editableMenuItems, setEditableMenuItems] = useState<any[]>([]);
   const [descriptionMode, setDescriptionMode] = useState<"html" | "rendered">("rendered");
   const descriptionEditorRef = useRef<HTMLDivElement>(null);
 
@@ -1128,39 +1129,6 @@ export default function ContentPage() {
           <Card padding="600">
             {selectedItem ? (
               <BlockStack gap="500">
-                {/* Menu Items Display (for menus only) */}
-                {selectedType === "menus" && selectedItem.items && selectedItem.items.length > 0 && (
-                  <Card>
-                    <BlockStack gap="300">
-                      <Text as="h3" variant="headingMd">Menu Items</Text>
-                      {selectedItem.items.map((item: any) => (
-                        <Card key={item.id} background="bg-surface-secondary">
-                          <BlockStack gap="200">
-                            <InlineStack gap="200" blockAlign="center">
-                              <Text as="p" variant="bodyMd" fontWeight="semibold">{item.title}</Text>
-                              <Badge>{item.type}</Badge>
-                            </InlineStack>
-                            <Text as="p" variant="bodySm" tone="subdued">URL: {item.url}</Text>
-                            {item.items && item.items.length > 0 && (
-                              <BlockStack gap="100">
-                                <Text as="p" variant="bodySm" fontWeight="medium">Sub-items:</Text>
-                                {item.items.map((subItem: any) => (
-                                  <div key={subItem.id} style={{ paddingLeft: "1rem" }}>
-                                    <InlineStack gap="100">
-                                      <Text as="span" variant="bodySm">→ {subItem.title}</Text>
-                                      <Text as="span" variant="bodySm" tone="subdued">({subItem.url})</Text>
-                                    </InlineStack>
-                                  </div>
-                                ))}
-                              </BlockStack>
-                            )}
-                          </BlockStack>
-                        </Card>
-                      ))}
-                    </BlockStack>
-                  </Card>
-                )}
-
                 {/* Language Selector */}
                 <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
                   {shopLocales.map((locale: any) => (
