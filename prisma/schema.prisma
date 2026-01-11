@@ -298,10 +298,10 @@ model ContentTranslation {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  // Relations
-  collection   Collection? @relation(fields: [resourceId], references: [id], onDelete: Cascade)
-  article      Article?    @relation(fields: [resourceId], references: [id], onDelete: Cascade)
-  page         Page?       @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+  // Relations - each needs unique constraint name
+  collection   Collection? @relation(fields: [resourceId], references: [id], onDelete: Cascade, map: "ContentTranslation_collection_fkey")
+  article      Article?    @relation(fields: [resourceId], references: [id], onDelete: Cascade, map: "ContentTranslation_article_fkey")
+  page         Page?       @relation(fields: [resourceId], references: [id], onDelete: Cascade, map: "ContentTranslation_page_fkey")
 
   @@unique([resourceId, key, locale])
   @@index([resourceId, locale])

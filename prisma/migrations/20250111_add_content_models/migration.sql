@@ -101,10 +101,10 @@ CREATE INDEX "ContentTranslation_locale_idx" ON "ContentTranslation"("locale");
 CREATE UNIQUE INDEX "ContentTranslation_resourceId_key_locale_key" ON "ContentTranslation"("resourceId", "key", "locale");
 
 -- AddForeignKey
-ALTER TABLE "ContentTranslation" ADD CONSTRAINT "ContentTranslation_resourceId_fkey" FOREIGN KEY ("resourceId") REFERENCES "Collection"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "ContentTranslation" ADD CONSTRAINT "ContentTranslation_collection_fkey" FOREIGN KEY ("resourceId") REFERENCES "Collection"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "ContentTranslation" ADD CONSTRAINT "ContentTranslation_resourceId_fkey" FOREIGN KEY ("resourceId") REFERENCES "Article"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "ContentTranslation" ADD CONSTRAINT "ContentTranslation_article_fkey" FOREIGN KEY ("resourceId") REFERENCES "Article"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "ContentTranslation" ADD CONSTRAINT "ContentTranslation_resourceId_fkey" FOREIGN KEY ("resourceId") REFERENCES "Page"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "ContentTranslation" ADD CONSTRAINT "ContentTranslation_page_fkey" FOREIGN KEY ("resourceId") REFERENCES "Page"("id") ON DELETE CASCADE ON UPDATE CASCADE;
