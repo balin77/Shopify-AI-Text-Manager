@@ -119,11 +119,12 @@ export function ProductList({
                   style={{
                     position: "absolute",
                     left: 0,
-                    top: 0,
-                    bottom: 0,
-                    width: "4px",
+                    top: "10%",
+                    height: "80%",
+                    width: "6px",
                     backgroundColor: getStatusColor(status),
                     zIndex: 1,
+                    borderRadius: "0 3px 3px 0",
                   }}
                 />
                 <ResourceItem
@@ -160,7 +161,11 @@ export function ProductList({
                             left: "50%",
                             transform: "translateX(-50%)",
                             pointerEvents: "none",
-                            zIndex: 10,
+                            zIndex: 100,
+                            backgroundColor: "rgba(255, 255, 255, 0.9)",
+                            borderRadius: "4px",
+                            padding: "2px",
+                            boxShadow: "0 2px 4px rgba(0, 0, 0, 0.2)",
                           }}
                         >
                           <Badge
@@ -168,7 +173,7 @@ export function ProductList({
                               status === "ACTIVE"
                                 ? "success"
                                 : status === "DRAFT"
-                                  ? undefined
+                                  ? "attention"
                                   : "info"
                             }
                           >
