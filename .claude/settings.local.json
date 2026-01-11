@@ -20,7 +20,9 @@
       "Bash(npx prisma generate:*)",
       "Bash(npm run validate:env:*)",
       "Read(//c/Users/guble/OneDrive/Shopify/ImageVariantManager/**)",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "Bash(railway variables:*)",
+      "Bash(railway service:*)"
     ],
     "deny": [],
     "ask": []
