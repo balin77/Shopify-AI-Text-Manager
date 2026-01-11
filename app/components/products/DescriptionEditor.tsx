@@ -1,6 +1,7 @@
 import { useRef } from "react";
 import { Text, Button, ButtonGroup, InlineStack } from "@shopify/polaris";
 import { AISuggestionBox } from "./AISuggestionBox";
+import { useI18n } from "../../contexts/I18nContext";
 
 interface DescriptionEditorProps {
   label: string;
@@ -35,6 +36,7 @@ export function DescriptionEditor({
   onAcceptAndTranslate,
   onRejectSuggestion,
 }: DescriptionEditorProps) {
+  const { t } = useI18n();
   const editorRef = useRef<HTMLDivElement>(null);
 
   const handleFormatText = (command: string) => {
@@ -85,7 +87,7 @@ export function DescriptionEditor({
           {label}
         </Text>
         <Button size="slim" onClick={onToggleMode}>
-          {mode === "html" ? "Vorschau" : "HTML"}
+          {mode === "html" ? t.products.preview : t.products.html}
         </Button>
       </InlineStack>
 
@@ -126,18 +128,18 @@ export function DescriptionEditor({
           </ButtonGroup>
           <ButtonGroup variant="segmented">
             <Button size="slim" onClick={() => handleFormatText("ul")}>
-              Liste
+              {t.products.formatting.list}
             </Button>
             <Button size="slim" onClick={() => handleFormatText("ol")}>
-              Num.
+              {t.products.formatting.numberedList}
             </Button>
           </ButtonGroup>
           <ButtonGroup variant="segmented">
             <Button size="slim" onClick={() => handleFormatText("p")}>
-              Absatz
+              {t.products.formatting.paragraph}
             </Button>
             <Button size="slim" onClick={() => handleFormatText("br")}>
-              Umbruch
+              {t.products.formatting.lineBreak}
             </Button>
           </ButtonGroup>
         </div>
@@ -182,7 +184,7 @@ export function DescriptionEditor({
       </div>
 
       <Text as="p" variant="bodySm" tone="subdued">
-        {value.replace(/<[^>]*>/g, "").length} Zeichen
+        {value.replace(/<[^>]*>/g, "").length} {t.products.characters}
       </Text>
 
       {suggestion && (
@@ -198,11 +200,11 @@ export function DescriptionEditor({
       <div style={{ marginTop: "0.5rem" }}>
         {isPrimaryLocale ? (
           <Button size="slim" onClick={onGenerateAI} loading={isLoading}>
-            ✨ Mit KI generieren / verbessern
+            ✨ {t.products.aiGenerate}
           </Button>
         ) : (
           <Button size="slim" onClick={onTranslate} loading={isLoading}>
-            🌐 Aus Hauptsprache übersetzen
+            🌐 {t.products.translateFromPrimary}
           </Button>
         )}
       </div>
