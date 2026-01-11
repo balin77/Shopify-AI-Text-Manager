@@ -33,12 +33,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
                 digest
                 locale
               }
-              translations {
-                locale
-                key
-                value
-                outdated
-              }
             }
           }
         `;
@@ -263,53 +257,6 @@ export default function TranslatableDebugPage() {
           )}
         </BlockStack>
 
-        <Divider />
-
-        {/* Translations */}
-        <BlockStack gap="300">
-          <InlineStack gap="200" blockAlign="center">
-            <Text as="h4" variant="headingSm">
-              Existing Translations
-            </Text>
-            <Badge tone="attention">
-              {resource.translatable.translations?.length || 0} translations
-            </Badge>
-          </InlineStack>
-
-          {resource.translatable.translations?.length > 0 ? (
-            <BlockStack gap="200">
-              {resource.translatable.translations.map((translation: any, idx: number) => (
-                <Card key={idx} background="bg-surface-tertiary">
-                  <BlockStack gap="200">
-                    <InlineStack gap="300" blockAlign="start">
-                      <div style={{ minWidth: "150px" }}>
-                        <Text as="span" fontWeight="bold">Key:</Text>{" "}
-                        <Badge tone="info">{translation.key}</Badge>
-                      </div>
-                      <div style={{ minWidth: "100px" }}>
-                        <Text as="span" fontWeight="bold">Locale:</Text>{" "}
-                        <Badge>{translation.locale}</Badge>
-                      </div>
-                      {translation.outdated && (
-                        <Badge tone="warning">Outdated</Badge>
-                      )}
-                    </InlineStack>
-                    <div>
-                      <Text as="p" fontWeight="bold">Value:</Text>
-                      <Text as="p" tone="subdued" breakWord>
-                        {translation.value.substring(0, 200)}{translation.value.length > 200 ? "..." : ""}
-                      </Text>
-                    </div>
-                  </BlockStack>
-                </Card>
-              ))}
-            </BlockStack>
-          ) : (
-            <Text as="p" tone="subdued">
-              No translations available
-            </Text>
-          )}
-        </BlockStack>
       </BlockStack>
     </Card>
   );
