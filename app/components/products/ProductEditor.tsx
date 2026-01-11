@@ -7,7 +7,10 @@ import {
   Badge,
   Text,
   Banner,
+  TextField,
+  Icon,
 } from "@shopify/polaris";
+import { CheckIcon, XIcon } from "@shopify/polaris-icons";
 import { FieldEditor } from "./FieldEditor";
 import { DescriptionEditor } from "./DescriptionEditor";
 import { ProductOptions } from "./ProductOptions";
@@ -132,6 +135,9 @@ export function ProductEditor({
 }: ProductEditorProps) {
   const [descriptionMode, setDescriptionMode] = useState<"html" | "rendered">("rendered");
   const [selectedImageIndex, setSelectedImageIndex] = useState(0);
+  const [imageAltTexts, setImageAltTexts] = useState<Record<number, string>>({});
+  const [isGeneratingAltText, setIsGeneratingAltText] = useState(false);
+  const [generatingImageIndex, setGeneratingImageIndex] = useState<number | null>(null);
 
   const isPrimaryLocale = currentLanguage === primaryLocale;
 
@@ -202,58 +208,123 @@ export function ProductEditor({
 
           {/* Image Gallery */}
           {product.images && product.images.length > 0 && (
-            <BlockStack gap="300">
-              {/* Main Image Display */}
-              <div style={{ position: "relative", width: "100%", maxWidth: "300px" }}>
-                <img
-                  src={product.images[selectedImageIndex].url}
-                  alt={product.images[selectedImageIndex].altText || product.title}
-                  style={{
-                    width: "100%",
-                    borderRadius: "8px",
-                    display: "block"
+            <BlockStack gap="400">
+              {/* Auto-generate all button */}
+              <InlineStack align="start">
+                <Button
+                  onClick={() => {
+                    // TODO: Implement auto-generate for all images
+                    setIsGeneratingAltText(true);
+                    setTimeout(() => setIsGeneratingAltText(false), 2000);
                   }}
-                />
-              </div>
+                  loading={isGeneratingAltText && generatingImageIndex === null}
+                >
+                  Alt-Texte für alle Bilder generieren
+                </Button>
+              </InlineStack>
 
-              {/* Thumbnail Navigation - only show if multiple images */}
-              {product.images.length > 1 && (
-                <div style={{
-                  display: "flex",
+              {/* Image Grid */}
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fill, minmax(80px, 1fr))",
                   gap: "8px",
-                  flexWrap: "wrap",
-                  maxWidth: "300px"
-                }}>
-                  {product.images.map((image, index) => (
+                  width: "100%",
+                }}
+              >
+                {product.images.map((image, index) => {
+                  const hasAltText = !!(imageAltTexts[index] || image.altText);
+                  const isMainImage = index === 0;
+                  const isSelected = index === selectedImageIndex;
+
+                  return (
                     <button
                       key={index}
                       onClick={() => setSelectedImageIndex(index)}
                       style={{
-                        width: "50px",
-                        height: "50px",
+                        gridColumn: isMainImage ? "span 3" : "span 1",
+                        gridRow: isMainImage ? "span 3" : "span 1",
+                        position: "relative",
                         padding: 0,
-                        border: selectedImageIndex === index ? "2px solid #005bd3" : "2px solid transparent",
-                        borderRadius: "6px",
+                        border: isSelected ? "3px solid #005bd3" : "2px solid #e1e3e5",
+                        borderRadius: "8px",
                         cursor: "pointer",
                         overflow: "hidden",
                         background: "transparent",
                         transition: "border-color 0.2s ease",
+                        aspectRatio: "1",
                       }}
                     >
                       <img
                         src={image.url}
-                        alt={image.altText || `Bild ${index + 1}`}
+                        alt={imageAltTexts[index] || image.altText || `Bild ${index + 1}`}
                         style={{
                           width: "100%",
                           height: "100%",
                           objectFit: "cover",
-                          borderRadius: "4px",
                         }}
                       />
+                      {/* Alt-text status badge */}
+                      <div
+                        style={{
+                          position: "absolute",
+                          top: "4px",
+                          right: "4px",
+                          backgroundColor: hasAltText ? "#008060" : "#d72c0d",
+                          borderRadius: "50%",
+                          width: isMainImage ? "28px" : "20px",
+                          height: isMainImage ? "28px" : "20px",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          boxShadow: "0 2px 4px rgba(0, 0, 0, 0.2)",
+                        }}
+                      >
+                        <div style={{ color: "white", fontSize: isMainImage ? "16px" : "12px" }}>
+                          <Icon source={hasAltText ? CheckIcon : XIcon} tone="base" />
+                        </div>
+                      </div>
                     </button>
-                  ))}
-                </div>
-              )}
+                  );
+                })}
+              </div>
+
+              {/* Alt-text input for selected image */}
+              <BlockStack gap="300">
+                <Text as="h3" variant="headingSm">
+                  Alt-Text für Bild {selectedImageIndex + 1}
+                </Text>
+                <InlineStack gap="200" blockAlign="end">
+                  <div style={{ flex: 1 }}>
+                    <TextField
+                      label=""
+                      value={imageAltTexts[selectedImageIndex] || product.images[selectedImageIndex]?.altText || ""}
+                      onChange={(value) => {
+                        setImageAltTexts((prev) => ({
+                          ...prev,
+                          [selectedImageIndex]: value,
+                        }));
+                      }}
+                      placeholder="Alt-Text für dieses Bild eingeben..."
+                      autoComplete="off"
+                    />
+                  </div>
+                  <Button
+                    onClick={() => {
+                      // TODO: Implement auto-generate for single image
+                      setGeneratingImageIndex(selectedImageIndex);
+                      setIsGeneratingAltText(true);
+                      setTimeout(() => {
+                        setIsGeneratingAltText(false);
+                        setGeneratingImageIndex(null);
+                      }, 2000);
+                    }}
+                    loading={isGeneratingAltText && generatingImageIndex === selectedImageIndex}
+                  >
+                    Generieren
+                  </Button>
+                </InlineStack>
+              </BlockStack>
             </BlockStack>
           )}
 
