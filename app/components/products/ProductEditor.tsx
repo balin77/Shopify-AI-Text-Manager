@@ -14,6 +14,7 @@ import { CheckIcon, XIcon } from "@shopify/polaris-icons";
 import { FieldEditor } from "./FieldEditor";
 import { DescriptionEditor } from "./DescriptionEditor";
 import { ProductOptions } from "./ProductOptions";
+import { useI18n } from "../../contexts/I18nContext";
 
 interface Product {
   id: string;
@@ -139,6 +140,7 @@ export function ProductEditor({
   onGenerateAllAltTexts,
   fetcherData,
 }: ProductEditorProps) {
+  const { t } = useI18n();
   const [descriptionMode, setDescriptionMode] = useState<"html" | "rendered">("rendered");
   const [selectedImageIndex, setSelectedImageIndex] = useState(0);
   const [imageAltTexts, setImageAltTexts] = useState<Record<number, string>>({});
@@ -192,8 +194,8 @@ export function ProductEditor({
     <>
       {showSuccessBanner && (
         <div style={{ marginBottom: "1rem" }}>
-          <Banner title="Erfolg!" tone="success" onDismiss={() => {}}>
-            <p>Änderungen erfolgreich gespeichert!</p>
+          <Banner title={t.products.successTitle} tone="success" onDismiss={() => {}}>
+            <p>{t.products.changesSavedMessage}</p>
           </Banner>
         </div>
       )}
@@ -209,7 +211,7 @@ export function ProductEditor({
                 onClick={() => onLanguageChange(locale.locale)}
                 size="slim"
               >
-                {locale.name} {locale.primary && "(Hauptsprache)"}
+                {locale.name} {locale.primary && t.products.primaryLanguageSuffix}
               </Button>
             ))}
           </div>
@@ -219,7 +221,7 @@ export function ProductEditor({
             <InlineStack gap="200">
               {isPrimaryLocale && (
                 <Button onClick={onTranslateAll} loading={isTranslatingAll}>
-                  In alle Sprachen übersetzen
+                  {t.products.translateAll}
                 </Button>
               )}
               <Button
@@ -228,7 +230,7 @@ export function ProductEditor({
                 disabled={!hasChanges}
                 loading={isSaving}
               >
-                Änderungen speichern
+                {t.products.saveChanges}
               </Button>
             </InlineStack>
           </InlineStack>
@@ -270,7 +272,7 @@ export function ProductEditor({
                     >
                       <img
                         src={image.url}
-                        alt={imageAltTexts[index] || image.altText || `Bild ${index + 1}`}
+                        alt={imageAltTexts[index] || image.altText || `${t.products.image} ${index + 1}`}
                         style={{
                           width: "100%",
                           height: "100%",
@@ -309,14 +311,14 @@ export function ProductEditor({
                   onClick={onGenerateAllAltTexts}
                   loading={isFieldLoading("allAltTexts", "generateAllAltTexts")}
                 >
-                  ✨ Alt-Texte für alle Bilder mit KI generieren
+                  ✨ {t.products.generateAllAltTexts}
                 </Button>
               </InlineStack>
 
               {/* Alt-text input for selected image */}
               <BlockStack gap="300">
                 <Text as="h3" variant="headingSm">
-                  Alt-Text für Bild {selectedImageIndex + 1}
+                  {t.products.altTextForImage} {selectedImageIndex + 1}
                 </Text>
                 <div>
                   <TextField
@@ -336,7 +338,7 @@ export function ProductEditor({
                         });
                       }
                     }}
-                    placeholder="Alt-Text für dieses Bild eingeben..."
+                    placeholder={t.products.altTextPlaceholder}
                     autoComplete="off"
                   />
                 </div>
@@ -354,7 +356,7 @@ export function ProductEditor({
                   >
                     <div style={{ marginBottom: "8px" }}>
                       <Text as="p" variant="bodyMd" fontWeight="semibold">
-                        KI-Vorschlag:
+                        {t.products.aiSuggestion}
                       </Text>
                       <Text as="p" variant="bodyMd">
                         {altTextSuggestions[selectedImageIndex]}
@@ -376,7 +378,7 @@ export function ProductEditor({
                           });
                         }}
                       >
-                        Akzeptieren
+                        {t.products.accept}
                       </Button>
                       <Button
                         size="slim"
@@ -388,7 +390,7 @@ export function ProductEditor({
                           });
                         }}
                       >
-                        Ablehnen
+                        {t.products.decline}
                       </Button>
                     </InlineStack>
                   </div>
@@ -400,7 +402,7 @@ export function ProductEditor({
                     onClick={() => onGenerateAltText(selectedImageIndex)}
                     loading={isFieldLoading(`altText_${selectedImageIndex}`, "generateAltText")}
                   >
-                    ✨ Mit KI generieren
+                    ✨ {t.products.aiGenerateShort}
                   </Button>
                 </div>
               </BlockStack>
