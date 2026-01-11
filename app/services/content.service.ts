@@ -7,7 +7,9 @@ import {
   GET_SHOP_POLICIES,
   GET_SHOP_METADATA,
   GET_MENUS,
-  GET_THEMES
+  GET_THEMES,
+  GET_METAOBJECT_DEFINITIONS,
+  GET_METAOBJECTS
 } from "../graphql/content.queries";
 
 export class ContentService {
@@ -86,7 +88,18 @@ export class ContentService {
     console.log('=== SHOP POLICIES API RESPONSE ===');
     console.log('Raw policies data:', JSON.stringify(data, null, 2));
 
-    return data.data.shop;
+    // Transform policies into an array
+    const shop = data.data.shop;
+    const policies = [];
+
+    if (shop.shippingPolicy) policies.push(shop.shippingPolicy);
+    if (shop.refundPolicy) policies.push(shop.refundPolicy);
+    if (shop.privacyPolicy) policies.push(shop.privacyPolicy);
+    if (shop.termsOfService) policies.push(shop.termsOfService);
+    if (shop.subscriptionPolicy) policies.push(shop.subscriptionPolicy);
+
+    console.log(`Processed policies: ${policies.length}`);
+    return policies;
   }
 
   async getShopMetadata() {
@@ -137,8 +150,70 @@ export class ContentService {
     return themes;
   }
 
+  async getMetaobjectDefinitions(first: number = 50) {
+    try {
+      const response = await this.admin.graphql(GET_METAOBJECT_DEFINITIONS, {
+        variables: { first }
+      });
+      const data = await response.json();
+
+      console.log('=== METAOBJECT DEFINITIONS API RESPONSE ===');
+      console.log('Raw metaobject definitions:', JSON.stringify(data, null, 2));
+
+      const definitions = data.data?.metaobjectDefinitions?.edges?.map((edge: any) => edge.node) || [];
+      console.log('Processed metaobject definitions:', definitions.length);
+      return definitions;
+    } catch (error) {
+      console.error('Error fetching metaobject definitions:', error);
+      return [];
+    }
+  }
+
+  async getMetaobjects(first: number = 50) {
+    try {
+      // First get all metaobject definitions
+      const definitions = await this.getMetaobjectDefinitions(10);
+
+      if (definitions.length === 0) {
+        console.log('No metaobject definitions found');
+        return [];
+      }
+
+      // Then fetch metaobjects for each type
+      const allMetaobjects = [];
+
+      for (const definition of definitions) {
+        try {
+          const response = await this.admin.graphql(GET_METAOBJECTS, {
+            variables: { type: definition.type, first }
+          });
+          const data = await response.json();
+
+          console.log(`=== METAOBJECTS (${definition.type}) API RESPONSE ===`);
+          console.log('Raw metaobjects:', JSON.stringify(data, null, 2));
+
+          const metaobjects = data.data?.metaobjects?.edges?.map((edge: any) => ({
+            ...edge.node,
+            definitionName: definition.name
+          })) || [];
+
+          allMetaobjects.push(...metaobjects);
+          console.log(`Processed ${metaobjects.length} metaobjects for type ${definition.type}`);
+        } catch (error) {
+          console.error(`Error fetching metaobjects for type ${definition.type}:`, error);
+        }
+      }
+
+      console.log('Total metaobjects processed:', allMetaobjects.length);
+      return allMetaobjects;
+    } catch (error) {
+      console.error('Error fetching metaobjects:', error);
+      return [];
+    }
+  }
+
   async getAllContent() {
-    const [shopLocales, blogs, collections, pages, policies, metadata, menus, themes] = await Promise.all([
+    const [shopLocales, blogs, collections, pages, policies, metadata, menus, themes, metaobjects] = await Promise.all([
       this.getShopLocales(),
       this.getBlogs(),
       this.getCollections(),
@@ -146,7 +221,8 @@ export class ContentService {
       this.getShopPolicies(),
       this.getShopMetadata(),
       this.getMenus(),
-      this.getThemes()
+      this.getThemes(),
+      this.getMetaobjects()
     ]);
 
     const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "de";
@@ -160,6 +236,7 @@ export class ContentService {
       metadata,
       menus,
       themes,
+      metaobjects,
       primaryLocale
     };
   }

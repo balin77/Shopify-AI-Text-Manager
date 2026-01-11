@@ -154,10 +154,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       translations: translationsByResource[p.id] || [],
     }));
 
-    // Policies, metadata, menus, themes still loaded on-demand from ContentService
+    // Policies, metadata, menus, themes, metaobjects still loaded on-demand from ContentService
     // (We don't cache these yet - not critical)
     const contentService = new ContentService(admin);
-    const { policies, metadata, menus, themes } = await contentService.getAllContent();
+    const { policies, metadata, menus, themes, metaobjects } = await contentService.getAllContent();
 
     return json({
       blogs,
@@ -167,6 +167,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       metadata,
       menus,
       themes,
+      metaobjects,
       shop: session.shop,
       shopLocales,
       primaryLocale,
@@ -178,10 +179,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       blogs: [],
       collections: [],
       pages: [],
-      policies: {},
+      policies: [],
       metadata: {},
       menus: [],
       themes: [],
+      metaobjects: [],
       shop: session.shop,
       shopLocales: [],
       primaryLocale: "de",
@@ -544,7 +546,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function ContentPage() {
-  const { blogs, collections, pages, policies, metadata, menus, themes, shop, shopLocales, primaryLocale, error } = useLoaderData<typeof loader>();
+  const { blogs, collections, pages, policies, metadata, menus, themes, metaobjects, shop, shopLocales, primaryLocale, error } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const { t } = useI18n();
 
@@ -575,6 +577,14 @@ export default function ContentPage() {
       return collections.map((c: any) => ({ ...c, type: "collections" }));
     } else if (selectedType === "pages") {
       return pages.map((p: any) => ({ ...p, type: "pages" }));
+    } else if (selectedType === "policies") {
+      return policies.map((p: any) => ({ ...p, title: p.title || p.type, type: "policies" }));
+    } else if (selectedType === "menus") {
+      return menus.map((m: any) => ({ ...m, type: "menus" }));
+    } else if (selectedType === "metaobjects") {
+      return metaobjects.map((m: any) => ({ ...m, title: m.displayName, type: "metaobjects" }));
+    } else if (selectedType === "templates") {
+      return themes.map((t: any) => ({ ...t, title: t.name, type: "templates" }));
     }
     return [];
   };

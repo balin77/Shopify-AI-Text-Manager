@@ -86,7 +86,35 @@ export const GET_TRANSLATIONS = `#graphql
 export const GET_SHOP_POLICIES = `#graphql
   query getShopPolicies {
     shop {
-      shopPolicies {
+      shippingPolicy {
+        id
+        title
+        body
+        type
+        url
+      }
+      refundPolicy {
+        id
+        title
+        body
+        type
+        url
+      }
+      privacyPolicy {
+        id
+        title
+        body
+        type
+        url
+      }
+      termsOfService {
+        id
+        title
+        body
+        type
+        url
+      }
+      subscriptionPolicy {
         id
         title
         body
@@ -163,6 +191,43 @@ export const GET_THEMES = `#graphql
           role
           themeStoreId
           createdAt
+          updatedAt
+        }
+      }
+    }
+  }
+`;
+
+export const GET_METAOBJECT_DEFINITIONS = `#graphql
+  query getMetaobjectDefinitions($first: Int!) {
+    metaobjectDefinitions(first: $first) {
+      edges {
+        node {
+          id
+          name
+          type
+          fieldDefinitions {
+            name
+            key
+            type {
+              name
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
+export const GET_METAOBJECTS = `#graphql
+  query getMetaobjects($type: String!, $first: Int!) {
+    metaobjects(type: $type, first: $first) {
+      edges {
+        node {
+          id
+          handle
+          displayName
+          type
           updatedAt
         }
       }
