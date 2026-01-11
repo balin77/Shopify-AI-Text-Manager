@@ -998,6 +998,30 @@ export default function ContentPage() {
     />
   );
 
+  // Recursive function to render menu items with unlimited nesting
+  const renderMenuItem = (item: any, index: number, path: number[]): JSX.Element => {
+    const label = `Menu Item ${path.join('.')}`;
+
+    return (
+      <div key={item.id || index} style={{ marginBottom: "0.5rem" }}>
+        <TextField
+          label={label}
+          value={item.title}
+          onChange={() => {}}
+          disabled
+          autoComplete="off"
+        />
+        {item.items && item.items.length > 0 && (
+          <div style={{ marginLeft: "1.5rem", marginTop: "0.5rem" }}>
+            {item.items.map((subItem: any, subIndex: number) =>
+              renderMenuItem(subItem, subIndex, [...path, subIndex + 1])
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <Page fullWidth>
       <style>{`
@@ -1395,32 +1419,9 @@ export default function ContentPage() {
                       <Text as="h3" variant="headingMd">
                         Menu Items
                       </Text>
-                      {selectedItem.items.map((item: any, index: number) => (
-                        <div key={item.id || index}>
-                          <TextField
-                            label={`Menu Item ${index + 1}`}
-                            value={item.title}
-                            onChange={() => {}}
-                            disabled
-                            autoComplete="off"
-                          />
-                          {item.items && item.items.length > 0 && (
-                            <div style={{ marginLeft: "1.5rem", marginTop: "0.5rem" }}>
-                              {item.items.map((subItem: any, subIndex: number) => (
-                                <div key={subItem.id || subIndex} style={{ marginBottom: "0.5rem" }}>
-                                  <TextField
-                                    label={`Submenu Item ${index + 1}.${subIndex + 1}`}
-                                    value={subItem.title}
-                                    onChange={() => {}}
-                                    disabled
-                                    autoComplete="off"
-                                  />
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      ))}
+                      {selectedItem.items.map((item: any, index: number) =>
+                        renderMenuItem(item, index, [index + 1])
+                      )}
                     </BlockStack>
                   </Card>
                 )}
