@@ -399,7 +399,7 @@ export function ProductEditor({
             fieldType="seoTitle"
             suggestion={aiSuggestions.seoTitle}
             isPrimaryLocale={isPrimaryLocale}
-            backgroundColor={getFieldBackgroundColor("seo_title")}
+            backgroundColor={getFieldBackgroundColor("meta_title")}
             helpText={`${editableSeoTitle.length} Zeichen (empfohlen: 50-60)`}
             isLoading={isFieldLoading("seoTitle", isPrimaryLocale ? "generateAIText" : "translateField")}
             onGenerateAI={() => onGenerateAI("seoTitle")}
@@ -419,7 +419,7 @@ export function ProductEditor({
             fieldType="metaDescription"
             suggestion={aiSuggestions.metaDescription}
             isPrimaryLocale={isPrimaryLocale}
-            backgroundColor={getFieldBackgroundColor("seo_description")}
+            backgroundColor={getFieldBackgroundColor("meta_description")}
             helpText={`${editableMetaDescription.length} Zeichen (empfohlen: 150-160)`}
             multiline={3}
             isLoading={isFieldLoading("metaDescription", isPrimaryLocale ? "generateAIText" : "translateField")}
