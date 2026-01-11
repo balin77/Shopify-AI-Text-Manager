@@ -1,9 +1,10 @@
-import { useLocation } from "@remix-run/react";
+import { useLocation, useNavigate } from "@remix-run/react";
 import { InlineStack, Text } from "@shopify/polaris";
 import { useI18n } from "../contexts/I18nContext";
 
 export function MainNavigation() {
   const location = useLocation();
+  const navigate = useNavigate();
   const { t } = useI18n();
 
   console.log("🧭 [MainNavigation] Current pathname:", location.pathname);
@@ -18,14 +19,14 @@ export function MainNavigation() {
 
   const handleClick = (path: string, tabId: string) => {
     console.log("🖱️ [MainNavigation] Tab clicked:", tabId, "->", path);
+    console.log("🎯 [MainNavigation] Using client-side navigation (SPA)");
 
-    // Preserve URL parameters for embedded app
-    const url = new URL(window.location.href);
-    const searchParams = url.searchParams;
-    const newUrl = `${path}?${searchParams.toString()}`;
+    // Preserve critical URL parameters for Shopify embedded app session
+    const searchParams = new URLSearchParams(location.search);
+    const newPath = `${path}?${searchParams.toString()}`;
 
-    console.log("🖱️ [MainNavigation] Navigating to:", newUrl);
-    window.location.href = newUrl;
+    console.log("🖱️ [MainNavigation] Navigating to:", newPath);
+    navigate(newPath);
   };
 
   return (
