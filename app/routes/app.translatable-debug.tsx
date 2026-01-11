@@ -139,22 +139,34 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const menus = menusData.data?.menus?.edges?.map((e: any) => e.node) || [];
     const menusTranslatable = await fetchTranslatable(menus.map((m: any) => m.id));
 
+    // Create lookup maps for translatable resources
+    const collectionsMap = new Map(collectionsTranslatable.map(t => [t.id, t.translatable]));
+    const pagesMap = new Map(pagesTranslatable.map(t => [t.id, t.translatable]));
+    const blogsMap = new Map(blogsTranslatable.map(t => [t.id, t.translatable]));
+    const menusMap = new Map(menusTranslatable.map(t => [t.id, t.translatable]));
+
+    console.log('=== TRANSLATABLE DEBUG COUNTS ===');
+    console.log('Collections:', collections.length, 'translatable:', collectionsTranslatable.length);
+    console.log('Pages:', pages.length, 'translatable:', pagesTranslatable.length);
+    console.log('Blogs:', blogs.length, 'translatable:', blogsTranslatable.length);
+    console.log('Menus:', menus.length, 'translatable:', menusTranslatable.length);
+
     return json({
-      collections: collections.map((c: any, i: number) => ({
+      collections: collections.map((c: any) => ({
         ...c,
-        translatable: collectionsTranslatable[i]?.translatable
+        translatable: collectionsMap.get(c.id)
       })).filter((c: any) => c.translatable),
-      pages: pages.map((p: any, i: number) => ({
+      pages: pages.map((p: any) => ({
         ...p,
-        translatable: pagesTranslatable[i]?.translatable
+        translatable: pagesMap.get(p.id)
       })).filter((p: any) => p.translatable),
-      blogs: blogs.map((b: any, i: number) => ({
+      blogs: blogs.map((b: any) => ({
         ...b,
-        translatable: blogsTranslatable[i]?.translatable
+        translatable: blogsMap.get(b.id)
       })).filter((b: any) => b.translatable),
-      menus: menus.map((m: any, i: number) => ({
+      menus: menus.map((m: any) => ({
         ...m,
-        translatable: menusTranslatable[i]?.translatable
+        translatable: menusMap.get(m.id)
       })).filter((m: any) => m.translatable),
       shop: session.shop
     });
