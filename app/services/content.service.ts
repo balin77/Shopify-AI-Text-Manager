@@ -142,14 +142,51 @@ export class ContentService {
       console.log('Raw menus data:', JSON.stringify(data, null, 2));
       console.log('Number of menus:', data.data?.menus?.edges?.length || 0);
 
-      // For each menu, fetch translations for each locale
+      // For each menu, fetch translations using both methods
       const menusWithTranslations = [];
 
       for (const edge of data.data?.menus?.edges || []) {
         const menu = edge.node;
         const allTranslations = [];
 
-        // Fetch translations for each non-primary locale
+        // Method 1: Try translatableResource to get all translatable content
+        try {
+          const translatableQuery = `#graphql
+            query getTranslatableMenu($id: ID!) {
+              translatableResource(resourceId: $id) {
+                resourceId
+                translatableContent {
+                  key
+                  value
+                  digest
+                  locale
+                }
+                translations {
+                  locale
+                  key
+                  value
+                  outdated
+                }
+              }
+            }
+          `;
+
+          const translatableResponse = await this.admin.graphql(translatableQuery, {
+            variables: { id: menu.id }
+          });
+          const translatableData = await translatableResponse.json();
+
+          console.log(`\n=== TRANSLATABLE RESOURCE for menu ${menu.id} ===`);
+          console.log('Translatable content:', JSON.stringify(translatableData.data?.translatableResource?.translatableContent, null, 2));
+          console.log('All translations:', JSON.stringify(translatableData.data?.translatableResource?.translations, null, 2));
+
+          const translations = translatableData.data?.translatableResource?.translations || [];
+          allTranslations.push(...translations);
+        } catch (error) {
+          console.error(`Error fetching translatable resource for menu ${menu.id}:`, error);
+        }
+
+        // Method 2: Fetch translations for each non-primary locale
         for (const locale of locales) {
           try {
             const translationsQuery = `#graphql
@@ -173,7 +210,12 @@ export class ContentService {
             const translations = transData.data?.menu?.translations || [];
             console.log(`Translations for menu ${menu.id} (${locale}):`, translations.length);
 
-            allTranslations.push(...translations);
+            // Only add if not already added by translatableResource
+            for (const trans of translations) {
+              if (!allTranslations.find(t => t.locale === trans.locale && t.key === trans.key)) {
+                allTranslations.push(trans);
+              }
+            }
           } catch (error) {
             console.error(`Error fetching translations for menu ${menu.id} in locale ${locale}:`, error);
           }
