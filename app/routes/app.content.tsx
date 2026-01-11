@@ -580,38 +580,7 @@ export default function ContentPage() {
     } else if (selectedType === "policies") {
       return policies.map((p: any) => ({ ...p, title: p.title || p.type, type: "policies" }));
     } else if (selectedType === "menus") {
-      // Flatten menu items into individual entries
-      const menuItems: any[] = [];
-      menus.forEach((menu: any) => {
-        if (menu.items && menu.items.length > 0) {
-          menu.items.forEach((item: any) => {
-            menuItems.push({
-              id: item.id,
-              title: item.title,
-              url: item.url,
-              menuTitle: menu.title,
-              menuHandle: menu.handle,
-              type: "menus",
-              translations: []
-            });
-            // Add sub-items if they exist
-            if (item.items && item.items.length > 0) {
-              item.items.forEach((subItem: any) => {
-                menuItems.push({
-                  id: subItem.id,
-                  title: `${item.title} → ${subItem.title}`,
-                  url: subItem.url,
-                  menuTitle: menu.title,
-                  menuHandle: menu.handle,
-                  type: "menus",
-                  translations: []
-                });
-              });
-            }
-          });
-        }
-      });
-      return menuItems;
+      return menus.map((m: any) => ({ ...m, type: "menus" }));
     } else if (selectedType === "metaobjects") {
       return metaobjects.map((m: any) => ({ ...m, title: m.displayName, type: "metaobjects" }));
     } else if (selectedType === "templates") {
@@ -1124,11 +1093,6 @@ export default function ContentPage() {
                               {t.content.blogPrefix} {item.blogTitle}
                             </Text>
                           )}
-                          {selectedType === "menus" && item.menuTitle && (
-                            <Text as="p" variant="bodySm" tone="subdued">
-                              Menu: {item.menuTitle}
-                            </Text>
-                          )}
                         </BlockStack>
                       </ResourceItem>
                     );
@@ -1164,6 +1128,39 @@ export default function ContentPage() {
           <Card padding="600">
             {selectedItem ? (
               <BlockStack gap="500">
+                {/* Menu Items Display (for menus only) */}
+                {selectedType === "menus" && selectedItem.items && selectedItem.items.length > 0 && (
+                  <Card>
+                    <BlockStack gap="300">
+                      <Text as="h3" variant="headingMd">Menu Items</Text>
+                      {selectedItem.items.map((item: any) => (
+                        <Card key={item.id} background="bg-surface-secondary">
+                          <BlockStack gap="200">
+                            <InlineStack gap="200" blockAlign="center">
+                              <Text as="p" variant="bodyMd" fontWeight="semibold">{item.title}</Text>
+                              <Badge>{item.type}</Badge>
+                            </InlineStack>
+                            <Text as="p" variant="bodySm" tone="subdued">URL: {item.url}</Text>
+                            {item.items && item.items.length > 0 && (
+                              <BlockStack gap="100">
+                                <Text as="p" variant="bodySm" fontWeight="medium">Sub-items:</Text>
+                                {item.items.map((subItem: any) => (
+                                  <div key={subItem.id} style={{ paddingLeft: "1rem" }}>
+                                    <InlineStack gap="100">
+                                      <Text as="span" variant="bodySm">→ {subItem.title}</Text>
+                                      <Text as="span" variant="bodySm" tone="subdued">({subItem.url})</Text>
+                                    </InlineStack>
+                                  </div>
+                                ))}
+                              </BlockStack>
+                            )}
+                          </BlockStack>
+                        </Card>
+                      ))}
+                    </BlockStack>
+                  </Card>
+                )}
+
                 {/* Language Selector */}
                 <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
                   {shopLocales.map((locale: any) => (
