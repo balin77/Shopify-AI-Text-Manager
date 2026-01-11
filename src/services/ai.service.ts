@@ -402,6 +402,24 @@ Gib nur die HTML-formatierte Beschreibung zurück, ohne zusätzliche Erklärunge
     return await this.askAI(prompt);
   }
 
+  async generateImageAltText(imageUrl: string, productTitle?: string): Promise<string> {
+    const prompt = `Du bist ein SEO-Experte für E-Commerce. Erstelle einen optimierten Alt-Text für ein Produktbild.
+
+${productTitle ? `Produkt: ${productTitle}` : ''}
+Bild-URL: ${imageUrl}
+
+Der Alt-Text sollte:
+- Präzise beschreiben, was auf dem Bild zu sehen ist
+- SEO-freundlich sein (60-125 Zeichen)
+- Relevant für das Produkt sein
+- Keine Füllwörter enthalten
+- Barrierefrei formuliert sein
+
+Gib nur den Alt-Text zurück, ohne zusätzliche Erklärungen.`;
+
+    return await this.askAI(prompt);
+  }
+
   private parseJSONResponse(text: string): any {
     // Try to extract JSON from markdown code blocks
     const jsonMatch = text.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);

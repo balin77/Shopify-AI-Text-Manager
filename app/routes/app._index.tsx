@@ -511,6 +511,7 @@ export default function Index() {
             translatingOptionId={fetcher.formData?.get("optionId")?.toString()}
             onGenerateAltText={handleGenerateAltText}
             onGenerateAllAltTexts={handleGenerateAllAltTexts}
+            fetcherData={fetcher.data}
           />
 
           {/* Translation Debug Panel */}
