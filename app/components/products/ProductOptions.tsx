@@ -1,5 +1,6 @@
 import { Card, BlockStack, Text, TextField, Button, InlineStack, Divider } from "@shopify/polaris";
 import { useState } from "react";
+import { useI18n } from "../../contexts/I18nContext";
 
 interface ProductOption {
   id: string;
@@ -31,6 +32,8 @@ export function ProductOptions({
   isTranslating,
   translatingOptionId,
 }: ProductOptionsProps) {
+  const { t } = useI18n();
+
   if (!options || options.length === 0) {
     return null;
   }
@@ -46,7 +49,7 @@ export function ProductOptions({
           // Read-only display in primary language
           <BlockStack gap="300">
             <Text as="p" variant="bodySm" tone="subdued">
-              Optionen werden in der Hauptsprache nicht bearbeitet. Wechseln Sie zu einer Fremdsprache, um Übersetzungen hinzuzufügen.
+              {t.products.optionsNotEditableInPrimary}
             </Text>
             {options.map((option, index) => (
               <div key={option.id}>
@@ -138,7 +141,7 @@ export function ProductOptions({
                           onClick={() => onTranslate(option.id)}
                           loading={isTranslating && translatingOptionId === option.id}
                         >
-                          Gesamte Option übersetzen
+                          {t.products.translateEntireOption}
                         </Button>
                       </div>
                     </BlockStack>

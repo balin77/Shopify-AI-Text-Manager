@@ -1,5 +1,6 @@
 import { TextField, Button, Text } from "@shopify/polaris";
 import { AISuggestionBox } from "./AISuggestionBox";
+import { useI18n } from "../../contexts/I18nContext";
 
 interface FieldEditorProps {
   label: string;
@@ -36,6 +37,8 @@ export function FieldEditor({
   onAcceptAndTranslate,
   onRejectSuggestion,
 }: FieldEditorProps) {
+  const { t } = useI18n();
+
   return (
     <div>
       <div style={{ background: backgroundColor, borderRadius: "8px", padding: "1px" }}>
@@ -65,7 +68,7 @@ export function FieldEditor({
             onClick={onGenerateAI}
             loading={isLoading}
           >
-            ✨ Mit KI generieren / verbessern
+            ✨ {t.products.aiGenerate}
           </Button>
         ) : (
           <Button
@@ -73,7 +76,7 @@ export function FieldEditor({
             onClick={onTranslate}
             loading={isLoading}
           >
-            🌐 Aus Hauptsprache übersetzen
+            🌐 {t.products.translateFromPrimary}
           </Button>
         )}
       </div>
