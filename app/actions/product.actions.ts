@@ -792,6 +792,11 @@ async function handleGenerateAltText(
 
   const { db } = await import("../db.server");
 
+  // Load AI instructions
+  const aiInstructions = await db.aIInstructions.findUnique({
+    where: { shop },
+  });
+
   const task = await db.task.create({
     data: {
       shop,
@@ -813,7 +818,23 @@ async function handleGenerateAltText(
       data: { status: "queued", progress: 10 },
     });
 
-    const altText = await aiService.generateImageAltText(imageUrl, productTitle);
+    let prompt = `Erstelle einen optimierten Alt-Text für ein Produktbild.
+Produkt: ${productTitle}
+Bild-URL: ${imageUrl}`;
+
+    if (aiInstructions?.altTextFormat) {
+      prompt += `\n\nFormatbeispiel:\n${aiInstructions.altTextFormat}`;
+    }
+
+    if (aiInstructions?.altTextInstructions) {
+      prompt += `\n\nAnweisungen:\n${aiInstructions.altTextInstructions}`;
+    } else {
+      prompt += `\n\nDer Alt-Text sollte:\n- Präzise beschreiben, was auf dem Bild zu sehen ist\n- SEO-freundlich sein (60-125 Zeichen)\n- Relevant für das Produkt sein\n- Keine Füllwörter enthalten\n- Barrierefrei formuliert sein`;
+    }
+
+    prompt += `\n\nGib nur den Alt-Text zurück, ohne zusätzliche Erklärungen.`;
+
+    const altText = await aiService.generateImageAltText(imageUrl, productTitle, prompt);
 
     await db.task.update({
       where: { id: task.id },
