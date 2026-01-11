@@ -89,7 +89,10 @@ export class ContentService {
       console.log('=== SHOP POLICIES API RESPONSE ===');
       console.log('Raw policies data:', JSON.stringify(data, null, 2));
 
-      const policies = data.data?.shop?.shopPolicies || [];
+      const policies = data.data?.shop?.shopPolicies?.map((policy: any) => ({
+        ...policy,
+        translations: []
+      })) || [];
 
       console.log(`Processed policies: ${policies.length}`);
       return policies;
@@ -100,51 +103,73 @@ export class ContentService {
   }
 
   async getShopMetadata() {
-    const response = await this.admin.graphql(GET_SHOP_METADATA);
-    const data = await response.json();
+    try {
+      const response = await this.admin.graphql(GET_SHOP_METADATA);
+      const data = await response.json();
 
-    console.log('=== SHOP METADATA API RESPONSE ===');
-    console.log('Raw shop metadata:', JSON.stringify(data, null, 2));
+      console.log('=== SHOP METADATA API RESPONSE ===');
+      console.log('Raw shop metadata:', JSON.stringify(data, null, 2));
 
-    const shop = data.data.shop;
-    shop.metafields = shop.metafields?.edges?.map((edge: any) => edge.node) || [];
+      const shop = data.data.shop;
+      shop.metafields = shop.metafields?.edges?.map((edge: any) => ({
+        ...edge.node,
+        translations: []
+      })) || [];
+      shop.translations = [];
 
-    return shop;
+      return shop;
+    } catch (error) {
+      console.error('Error fetching shop metadata:', error);
+      return { metafields: [], translations: [] };
+    }
   }
 
   async getMenus(first: number = 50) {
-    const response = await this.admin.graphql(GET_MENUS, {
-      variables: { first }
-    });
-    const data = await response.json();
+    try {
+      const response = await this.admin.graphql(GET_MENUS, {
+        variables: { first }
+      });
+      const data = await response.json();
 
-    console.log('=== MENUS API RESPONSE ===');
-    console.log('Raw menus data:', JSON.stringify(data, null, 2));
-    console.log('Number of menus:', data.data?.menus?.edges?.length || 0);
+      console.log('=== MENUS API RESPONSE ===');
+      console.log('Raw menus data:', JSON.stringify(data, null, 2));
+      console.log('Number of menus:', data.data?.menus?.edges?.length || 0);
 
-    const menus = data.data.menus.edges.map((edge: any) => ({
-      ...edge.node,
-      translations: []
-    }));
+      const menus = data.data?.menus?.edges?.map((edge: any) => ({
+        ...edge.node,
+        translations: []
+      })) || [];
 
-    console.log('Processed menus:', menus.length);
-    return menus;
+      console.log('Processed menus:', menus.length);
+      return menus;
+    } catch (error) {
+      console.error('Error fetching menus:', error);
+      return [];
+    }
   }
 
   async getThemes(first: number = 50) {
-    const response = await this.admin.graphql(GET_THEMES, {
-      variables: { first }
-    });
-    const data = await response.json();
+    try {
+      const response = await this.admin.graphql(GET_THEMES, {
+        variables: { first }
+      });
+      const data = await response.json();
 
-    console.log('=== THEMES API RESPONSE ===');
-    console.log('Raw themes data:', JSON.stringify(data, null, 2));
-    console.log('Number of themes:', data.data?.themes?.edges?.length || 0);
+      console.log('=== THEMES API RESPONSE ===');
+      console.log('Raw themes data:', JSON.stringify(data, null, 2));
+      console.log('Number of themes:', data.data?.themes?.edges?.length || 0);
 
-    const themes = data.data.themes.edges.map((edge: any) => edge.node);
+      const themes = data.data?.themes?.edges?.map((edge: any) => ({
+        ...edge.node,
+        translations: []
+      })) || [];
 
-    console.log('Processed themes:', themes.length);
-    return themes;
+      console.log('Processed themes:', themes.length);
+      return themes;
+    } catch (error) {
+      console.error('Error fetching themes:', error);
+      return [];
+    }
   }
 
   async getMetaobjectDefinitions(first: number = 50) {
@@ -191,7 +216,8 @@ export class ContentService {
 
           const metaobjects = data.data?.metaobjects?.edges?.map((edge: any) => ({
             ...edge.node,
-            definitionName: definition.name
+            definitionName: definition.name,
+            translations: []
           })) || [];
 
           allMetaobjects.push(...metaobjects);

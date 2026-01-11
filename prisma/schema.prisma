@@ -111,10 +111,12 @@ model Task {
   completedAt    DateTime?
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
+  expiresAt      DateTime? // Automatic deletion timestamp (set to createdAt + 3 days)
 
   @@index([shop, status])
   @@index([shop, createdAt])
   @@index([shop, queuePosition])
+  @@index([expiresAt])
 }
 
 model Product {
