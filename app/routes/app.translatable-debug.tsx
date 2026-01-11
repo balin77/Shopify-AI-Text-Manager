@@ -9,40 +9,22 @@ import {
   Badge,
   Layout,
   Divider,
+  Tabs,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
+import { useState } from "react";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
 
-  try {
-    // First, get all menus
-    const menusQuery = `#graphql
-      query getMenus {
-        menus(first: 10) {
-          edges {
-            node {
-              id
-              title
-              handle
-            }
-          }
-        }
-      }
-    `;
+  const fetchTranslatable = async (resourceIds: string[]) => {
+    const results = [];
 
-    const menusResponse = await admin.graphql(menusQuery);
-    const menusData = await menusResponse.json();
-    const menus = menusData.data?.menus?.edges?.map((edge: any) => edge.node) || [];
-
-    // For each menu, fetch its translatableResource
-    const translatableResources = [];
-
-    for (const menu of menus) {
+    for (const id of resourceIds) {
       try {
         const translatableQuery = `#graphql
-          query getTranslatableMenu($id: ID!) {
+          query getTranslatable($id: ID!) {
             translatableResource(resourceId: $id) {
               resourceId
               translatableContent {
@@ -61,30 +43,128 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
           }
         `;
 
-        const translatableResponse = await admin.graphql(translatableQuery, {
-          variables: { id: menu.id }
+        const response = await admin.graphql(translatableQuery, {
+          variables: { id }
         });
-        const translatableData = await translatableResponse.json();
+        const data = await response.json();
 
-        if (translatableData.data?.translatableResource) {
-          translatableResources.push({
-            menu,
-            translatable: translatableData.data.translatableResource
+        if (data.data?.translatableResource) {
+          results.push({
+            id,
+            translatable: data.data.translatableResource
           });
         }
       } catch (error) {
-        console.error(`Error fetching translatable resource for menu ${menu.id}:`, error);
+        console.error(`Error fetching translatable resource for ${id}:`, error);
       }
     }
 
+    return results;
+  };
+
+  try {
+    // Fetch Collections
+    const collectionsQuery = `#graphql
+      query {
+        collections(first: 10) {
+          edges {
+            node {
+              id
+              title
+              handle
+            }
+          }
+        }
+      }
+    `;
+    const collResponse = await admin.graphql(collectionsQuery);
+    const collData = await collResponse.json();
+    const collections = collData.data?.collections?.edges?.map((e: any) => e.node) || [];
+    const collectionsTranslatable = await fetchTranslatable(collections.map((c: any) => c.id));
+
+    // Fetch Pages
+    const pagesQuery = `#graphql
+      query {
+        pages(first: 10) {
+          edges {
+            node {
+              id
+              title
+              handle
+            }
+          }
+        }
+      }
+    `;
+    const pagesResponse = await admin.graphql(pagesQuery);
+    const pagesData = await pagesResponse.json();
+    const pages = pagesData.data?.pages?.edges?.map((e: any) => e.node) || [];
+    const pagesTranslatable = await fetchTranslatable(pages.map((p: any) => p.id));
+
+    // Fetch Blogs/Articles
+    const blogsQuery = `#graphql
+      query {
+        articles(first: 10) {
+          edges {
+            node {
+              id
+              title
+              handle
+            }
+          }
+        }
+      }
+    `;
+    const blogsResponse = await admin.graphql(blogsQuery);
+    const blogsData = await blogsResponse.json();
+    const blogs = blogsData.data?.articles?.edges?.map((e: any) => e.node) || [];
+    const blogsTranslatable = await fetchTranslatable(blogs.map((b: any) => b.id));
+
+    // Fetch Menus
+    const menusQuery = `#graphql
+      query {
+        menus(first: 10) {
+          edges {
+            node {
+              id
+              title
+              handle
+            }
+          }
+        }
+      }
+    `;
+    const menusResponse = await admin.graphql(menusQuery);
+    const menusData = await menusResponse.json();
+    const menus = menusData.data?.menus?.edges?.map((e: any) => e.node) || [];
+    const menusTranslatable = await fetchTranslatable(menus.map((m: any) => m.id));
+
     return json({
-      translatableResources,
+      collections: collections.map((c: any, i: number) => ({
+        ...c,
+        translatable: collectionsTranslatable[i]?.translatable
+      })).filter((c: any) => c.translatable),
+      pages: pages.map((p: any, i: number) => ({
+        ...p,
+        translatable: pagesTranslatable[i]?.translatable
+      })).filter((p: any) => p.translatable),
+      blogs: blogs.map((b: any, i: number) => ({
+        ...b,
+        translatable: blogsTranslatable[i]?.translatable
+      })).filter((b: any) => b.translatable),
+      menus: menus.map((m: any, i: number) => ({
+        ...m,
+        translatable: menusTranslatable[i]?.translatable
+      })).filter((m: any) => m.translatable),
       shop: session.shop
     });
   } catch (error) {
     console.error('Error in translatable debug loader:', error);
     return json({
-      translatableResources: [],
+      collections: [],
+      pages: [],
+      blogs: [],
+      menus: [],
       shop: session.shop,
       error: String(error)
     });
@@ -92,14 +172,142 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 };
 
 export default function TranslatableDebugPage() {
-  const { translatableResources, shop, error } = useLoaderData<typeof loader>();
+  const { collections, pages, blogs, menus, shop, error } = useLoaderData<typeof loader>();
+  const [selectedTab, setSelectedTab] = useState(0);
+
+  const tabs = [
+    { id: "collections", content: `Collections (${collections.length})`, panel: collections },
+    { id: "pages", content: `Pages (${pages.length})`, panel: pages },
+    { id: "blogs", content: `Blogs (${blogs.length})`, panel: blogs },
+    { id: "menus", content: `Menus (${menus.length})`, panel: menus },
+  ];
+
+  const renderResource = (resource: any) => (
+    <Card key={resource.id}>
+      <BlockStack gap="500">
+        {/* Header */}
+        <BlockStack gap="100">
+          <Text as="h3" variant="headingMd">
+            {resource.title}
+          </Text>
+          <Text as="p" tone="subdued" variant="bodySm">
+            ID: {resource.id}
+          </Text>
+          {resource.handle && (
+            <Text as="p" tone="subdued" variant="bodySm">
+              Handle: {resource.handle}
+            </Text>
+          )}
+        </BlockStack>
+
+        <Divider />
+
+        {/* Translatable Content */}
+        <BlockStack gap="300">
+          <InlineStack gap="200" blockAlign="center">
+            <Text as="h4" variant="headingSm">
+              Translatable Content (Available Fields)
+            </Text>
+            <Badge tone="success">
+              {resource.translatable.translatableContent?.length || 0} fields
+            </Badge>
+          </InlineStack>
+
+          {resource.translatable.translatableContent?.length > 0 ? (
+            <BlockStack gap="200">
+              {resource.translatable.translatableContent.map((content: any, idx: number) => (
+                <Card key={idx} background="bg-surface-secondary">
+                  <BlockStack gap="200">
+                    <InlineStack gap="300" blockAlign="start">
+                      <div style={{ minWidth: "150px" }}>
+                        <Text as="span" fontWeight="bold">Key:</Text>{" "}
+                        <Badge tone="info">{content.key}</Badge>
+                      </div>
+                      <div style={{ minWidth: "100px" }}>
+                        <Text as="span" fontWeight="bold">Locale:</Text>{" "}
+                        <Badge>{content.locale}</Badge>
+                      </div>
+                    </InlineStack>
+                    <div>
+                      <Text as="p" fontWeight="bold">Value:</Text>
+                      <Text as="p" tone="subdued" breakWord>
+                        {content.value.substring(0, 200)}{content.value.length > 200 ? "..." : ""}
+                      </Text>
+                    </div>
+                    <div>
+                      <Text as="p" fontWeight="bold" variant="bodySm">Digest:</Text>
+                      <Text as="p" tone="subdued" variant="bodySm" breakWord>
+                        {content.digest.substring(0, 50)}...
+                      </Text>
+                    </div>
+                  </BlockStack>
+                </Card>
+              ))}
+            </BlockStack>
+          ) : (
+            <Text as="p" tone="subdued">
+              No translatable content available
+            </Text>
+          )}
+        </BlockStack>
+
+        <Divider />
+
+        {/* Translations */}
+        <BlockStack gap="300">
+          <InlineStack gap="200" blockAlign="center">
+            <Text as="h4" variant="headingSm">
+              Existing Translations
+            </Text>
+            <Badge tone="attention">
+              {resource.translatable.translations?.length || 0} translations
+            </Badge>
+          </InlineStack>
+
+          {resource.translatable.translations?.length > 0 ? (
+            <BlockStack gap="200">
+              {resource.translatable.translations.map((translation: any, idx: number) => (
+                <Card key={idx} background="bg-surface-tertiary">
+                  <BlockStack gap="200">
+                    <InlineStack gap="300" blockAlign="start">
+                      <div style={{ minWidth: "150px" }}>
+                        <Text as="span" fontWeight="bold">Key:</Text>{" "}
+                        <Badge tone="info">{translation.key}</Badge>
+                      </div>
+                      <div style={{ minWidth: "100px" }}>
+                        <Text as="span" fontWeight="bold">Locale:</Text>{" "}
+                        <Badge>{translation.locale}</Badge>
+                      </div>
+                      {translation.outdated && (
+                        <Badge tone="warning">Outdated</Badge>
+                      )}
+                    </InlineStack>
+                    <div>
+                      <Text as="p" fontWeight="bold">Value:</Text>
+                      <Text as="p" tone="subdued" breakWord>
+                        {translation.value.substring(0, 200)}{translation.value.length > 200 ? "..." : ""}
+                      </Text>
+                    </div>
+                  </BlockStack>
+                </Card>
+              ))}
+            </BlockStack>
+          ) : (
+            <Text as="p" tone="subdued">
+              No translations available
+            </Text>
+          )}
+        </BlockStack>
+      </BlockStack>
+    </Card>
+  );
 
   return (
     <>
       <MainNavigation />
       <Page
         title="Translatable Resources Debug"
-        subtitle={`Shop: ${shop} - Direct link: /app/translatable-debug`}
+        subtitle={`Shop: ${shop}`}
         backAction={{ content: "Content", url: "/app/content" }}
       >
         <Layout>
@@ -119,143 +327,30 @@ export default function TranslatableDebugPage() {
                     Overview
                   </Text>
                   <Text as="p">
-                    This page shows all translatable content that Shopify provides for Menu resources.
-                    It queries the <code>translatableResource</code> API for each menu to see what fields
+                    This page shows all translatable content that Shopify provides for all content types (except Products).
+                    It queries the <code>translatableResource</code> API for each item to see what fields
                     are available for translation.
                   </Text>
-                  <InlineStack gap="300">
-                    <Badge tone="info">Total Menus: {translatableResources.length}</Badge>
-                  </InlineStack>
                 </BlockStack>
               </Card>
 
-              {translatableResources.map((resource: any, index: number) => (
-                <Card key={index}>
-                  <BlockStack gap="500">
-                    {/* Menu Header */}
-                    <InlineStack align="space-between" blockAlign="center">
-                      <BlockStack gap="100">
-                        <Text as="h3" variant="headingMd">
-                          {resource.menu.title}
-                        </Text>
-                        <Text as="p" tone="subdued" variant="bodySm">
-                          ID: {resource.menu.id}
-                        </Text>
-                        <Text as="p" tone="subdued" variant="bodySm">
-                          Handle: {resource.menu.handle}
-                        </Text>
-                      </BlockStack>
-                    </InlineStack>
-
-                    <Divider />
-
-                    {/* Translatable Content */}
-                    <BlockStack gap="300">
-                      <InlineStack gap="200" blockAlign="center">
-                        <Text as="h4" variant="headingSm">
-                          Translatable Content (Available Fields)
-                        </Text>
-                        <Badge tone="success">
-                          {resource.translatable.translatableContent?.length || 0} fields
-                        </Badge>
-                      </InlineStack>
-
-                      {resource.translatable.translatableContent?.length > 0 ? (
-                        <BlockStack gap="200">
-                          {resource.translatable.translatableContent.map((content: any, idx: number) => (
-                            <Card key={idx} background="bg-surface-secondary">
-                              <BlockStack gap="200">
-                                <InlineStack gap="300" blockAlign="start">
-                                  <div style={{ minWidth: "150px" }}>
-                                    <Text as="span" fontWeight="bold">Key:</Text>{" "}
-                                    <Badge tone="info">{content.key}</Badge>
-                                  </div>
-                                  <div style={{ minWidth: "100px" }}>
-                                    <Text as="span" fontWeight="bold">Locale:</Text>{" "}
-                                    <Badge>{content.locale}</Badge>
-                                  </div>
-                                </InlineStack>
-                                <div>
-                                  <Text as="p" fontWeight="bold">Value:</Text>
-                                  <Text as="p" tone="subdued" breakWord>
-                                    {content.value}
-                                  </Text>
-                                </div>
-                                <div>
-                                  <Text as="p" fontWeight="bold" variant="bodySm">Digest:</Text>
-                                  <Text as="p" tone="subdued" variant="bodySm" breakWord>
-                                    {content.digest}
-                                  </Text>
-                                </div>
-                              </BlockStack>
-                            </Card>
-                          ))}
-                        </BlockStack>
+              <Tabs tabs={tabs} selected={selectedTab} onSelect={setSelectedTab}>
+                <BlockStack gap="400" inlineAlign="stretch">
+                  <div style={{ marginTop: "1rem" }}>
+                    <BlockStack gap="400">
+                      {tabs[selectedTab].panel.length > 0 ? (
+                        tabs[selectedTab].panel.map((resource: any) => renderResource(resource))
                       ) : (
-                        <Text as="p" tone="subdued">
-                          No translatable content available
-                        </Text>
+                        <Card>
+                          <Text as="p" tone="subdued">
+                            No {tabs[selectedTab].id} found or no translatable resources available.
+                          </Text>
+                        </Card>
                       )}
                     </BlockStack>
-
-                    <Divider />
-
-                    {/* Translations */}
-                    <BlockStack gap="300">
-                      <InlineStack gap="200" blockAlign="center">
-                        <Text as="h4" variant="headingSm">
-                          Existing Translations
-                        </Text>
-                        <Badge tone="attention">
-                          {resource.translatable.translations?.length || 0} translations
-                        </Badge>
-                      </InlineStack>
-
-                      {resource.translatable.translations?.length > 0 ? (
-                        <BlockStack gap="200">
-                          {resource.translatable.translations.map((translation: any, idx: number) => (
-                            <Card key={idx} background="bg-surface-tertiary">
-                              <BlockStack gap="200">
-                                <InlineStack gap="300" blockAlign="start">
-                                  <div style={{ minWidth: "150px" }}>
-                                    <Text as="span" fontWeight="bold">Key:</Text>{" "}
-                                    <Badge tone="info">{translation.key}</Badge>
-                                  </div>
-                                  <div style={{ minWidth: "100px" }}>
-                                    <Text as="span" fontWeight="bold">Locale:</Text>{" "}
-                                    <Badge>{translation.locale}</Badge>
-                                  </div>
-                                  {translation.outdated && (
-                                    <Badge tone="warning">Outdated</Badge>
-                                  )}
-                                </InlineStack>
-                                <div>
-                                  <Text as="p" fontWeight="bold">Value:</Text>
-                                  <Text as="p" tone="subdued" breakWord>
-                                    {translation.value}
-                                  </Text>
-                                </div>
-                              </BlockStack>
-                            </Card>
-                          ))}
-                        </BlockStack>
-                      ) : (
-                        <Text as="p" tone="subdued">
-                          No translations available
-                        </Text>
-                      )}
-                    </BlockStack>
-                  </BlockStack>
-                </Card>
-              ))}
-
-              {translatableResources.length === 0 && !error && (
-                <Card>
-                  <Text as="p" tone="subdued">
-                    No menus found or no translatable resources available.
-                  </Text>
-                </Card>
-              )}
+                  </div>
+                </BlockStack>
+              </Tabs>
             </BlockStack>
           </Layout.Section>
         </Layout>

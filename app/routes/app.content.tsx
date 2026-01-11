@@ -23,6 +23,7 @@ import { ContentTranslationDebugPanel } from "../components/debug/ContentTransla
 import { AIService } from "../../src/services/ai.service";
 import { TranslationService } from "../../src/services/translation.service";
 import { useI18n } from "../contexts/I18nContext";
+import { useDevMode } from "../contexts/DevModeContext";
 import { GET_TRANSLATIONS } from "../graphql/content.queries";
 import {
   TRANSLATE_CONTENT,
@@ -549,6 +550,7 @@ export default function ContentPage() {
   const { blogs, collections, pages, policies, metadata, menus, themes, metaobjects, shop, shopLocales, primaryLocale, error } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const { t } = useI18n();
+  const { isDevMode } = useDevMode();
 
   const CONTENT_TYPES = getContentTypes(t);
   const [selectedType, setSelectedType] = useState<ContentType>("blogs");
@@ -1426,12 +1428,14 @@ export default function ContentPage() {
                   </Card>
                 )}
 
-                {/* Translation Debug Panel */}
-                <ContentTranslationDebugPanel
-                  contentItem={selectedItem}
-                  contentType={selectedType}
-                  shopLocales={shopLocales}
-                />
+                {/* Translation Debug Panel - Only show in Dev Mode */}
+                {isDevMode && (
+                  <ContentTranslationDebugPanel
+                    contentItem={selectedItem}
+                    contentType={selectedType}
+                    shopLocales={shopLocales}
+                  />
+                )}
               </BlockStack>
             ) : (
               <div style={{ textAlign: "center", padding: "4rem 2rem" }}>

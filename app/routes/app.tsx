@@ -5,6 +5,7 @@ import { AppProvider } from "@shopify/polaris";
 import "@shopify/polaris/build/esm/styles.css";
 import { authenticate } from "../shopify.server";
 import { I18nProvider } from "../contexts/I18nContext";
+import { DevModeProvider } from "../contexts/DevModeContext";
 import type { Locale } from "../i18n";
 
 
@@ -62,7 +63,9 @@ export default function App() {
   return (
     <AppProvider i18n={{}}>
       <I18nProvider locale={appLanguage}>
-        <Outlet />
+        <DevModeProvider>
+          <Outlet />
+        </DevModeProvider>
       </I18nProvider>
     </AppProvider>
   );
