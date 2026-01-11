@@ -145,6 +145,24 @@ export const GET_MENUS = `#graphql
               title
               url
               type
+              items {
+                id
+                title
+                url
+                type
+                items {
+                  id
+                  title
+                  url
+                  type
+                  items {
+                    id
+                    title
+                    url
+                    type
+                  }
+                }
+              }
             }
           }
         }

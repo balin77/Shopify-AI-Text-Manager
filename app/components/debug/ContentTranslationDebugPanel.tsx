@@ -7,6 +7,14 @@ interface Translation {
   locale: string;
 }
 
+interface MenuItem {
+  id: string;
+  title: string;
+  url?: string;
+  type?: string;
+  items?: MenuItem[];
+}
+
 interface ContentItem {
   id: string;
   title: string;
@@ -17,12 +25,13 @@ interface ContentItem {
     title?: string | null;
     description?: string | null;
   };
+  items?: MenuItem[];
   translations: Translation[];
 }
 
 interface ContentTranslationDebugPanelProps {
   contentItem: ContentItem;
-  contentType: "collections" | "blogs" | "pages";
+  contentType: "collections" | "blogs" | "pages" | "menus";
   shopLocales: Array<{ locale: string; name: string; primary: boolean }>;
 }
 
@@ -41,6 +50,23 @@ export function ContentTranslationDebugPanel({ contentItem, contentType, shopLoc
 
   // Primary locale data (not in translations table)
   const primaryLocale = shopLocales.find(l => l.primary);
+
+  // Helper function to collect all menu item titles recursively
+  const collectMenuItemTitles = (items: MenuItem[] | undefined, prefix = ""): Record<string, string> => {
+    const result: Record<string, string> = {};
+    if (!items) return result;
+
+    items.forEach((item, index) => {
+      const key = prefix ? `${prefix}.${index + 1}` : `${index + 1}`;
+      result[`menu_item_${key}_title`] = item.title;
+
+      if (item.items && item.items.length > 0) {
+        Object.assign(result, collectMenuItemTitles(item.items, key));
+      }
+    });
+
+    return result;
+  };
 
   // Define expected keys based on content type
   let expectedKeys: string[] = [];
@@ -70,6 +96,13 @@ export function ContentTranslationDebugPanel({ contentItem, contentType, shopLoc
       handle: contentItem.handle || "",
       meta_title: contentItem.seo?.title || "",
       meta_description: contentItem.seo?.description || "",
+    };
+  } else if (contentType === "menus") {
+    const menuItemTitles = collectMenuItemTitles(contentItem.items);
+    expectedKeys = ["title", ...Object.keys(menuItemTitles)];
+    primaryData = {
+      title: contentItem.title,
+      ...menuItemTitles,
     };
   }
 
