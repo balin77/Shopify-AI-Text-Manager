@@ -423,6 +423,10 @@ export default function Index() {
             onProductSelect={setSelectedProductId}
             searchPlaceholder={t.products.search}
             countLabel={t.products.count}
+            resourceName={t.products.resourceName}
+            paginationOf={t.products.pagination.of}
+            paginationPrevious={t.products.pagination.previous}
+            paginationNext={t.products.pagination.next}
           />
         </div>
 
