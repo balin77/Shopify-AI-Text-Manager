@@ -1,8 +1,7 @@
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
-import { Link, Outlet, useLoaderData, useRouteError } from "@remix-run/react";
+import { Outlet, useLoaderData, useRouteError } from "@remix-run/react";
 import { boundary } from "@shopify/shopify-app-remix/server";
 import { AppProvider } from "@shopify/polaris";
-import { AppProvider as ShopifyAppProvider } from "@shopify/shopify-app-remix/react";
 import "@shopify/polaris/build/esm/styles.css";
 import { authenticate } from "../shopify.server";
 import { I18nProvider } from "../contexts/I18nContext";
@@ -23,8 +22,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     console.log("⚡ [APP.TSX LOADER] Prefetch request detected - returning default language");
     // Return default data for prefetch - no auth needed
     return json({
-      appLanguage: "de" as Locale,
-      apiKey: process.env.SHOPIFY_API_KEY || ""
+      appLanguage: "de" as Locale
     });
   }
 
@@ -47,8 +45,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     console.log("✅ [APP.TSX LOADER] App language:", appLanguage);
 
     return json({
-      appLanguage,
-      apiKey: process.env.SHOPIFY_API_KEY || ""
+      appLanguage
     });
   } catch (error) {
     console.error("❌ [APP.TSX LOADER] Error:", error);
@@ -58,18 +55,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 };
 
 export default function App() {
-  const { appLanguage, apiKey } = useLoaderData<typeof loader>();
+  const { appLanguage } = useLoaderData<typeof loader>();
 
   console.log("🎨 [APP.TSX] Rendering App component with language:", appLanguage);
 
   return (
-    <ShopifyAppProvider apiKey={apiKey}>
-      <AppProvider i18n={{}}>
-        <I18nProvider locale={appLanguage}>
-          <Outlet />
-        </I18nProvider>
-      </AppProvider>
-    </ShopifyAppProvider>
+    <AppProvider i18n={{}}>
+      <I18nProvider locale={appLanguage}>
+        <Outlet />
+      </I18nProvider>
+    </AppProvider>
   );
 }
 

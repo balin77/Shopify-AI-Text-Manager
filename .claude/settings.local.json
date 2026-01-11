@@ -19,7 +19,8 @@
       "Bash(npx prisma migrate dev:*)",
       "Bash(npx prisma generate:*)",
       "Bash(npm run validate:env:*)",
-      "Read(//c/Users/guble/OneDrive/Shopify/ImageVariantManager/**)"
+      "Read(//c/Users/guble/OneDrive/Shopify/ImageVariantManager/**)",
+      "Bash(cat:*)"
     ],
     "deny": [],
     "ask": []
