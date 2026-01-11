@@ -1183,7 +1183,7 @@ export default function SettingsPage() {
                     {/* Title */}
                     <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
                       <BlockStack gap="400">
-                        <Text as="h3" variant="headingMd">{t.settings.title}</Text>
+                        <Text as="h3" variant="headingMd">{t.settings.fieldTitle}</Text>
                         <TextField
                           label={t.settings.formatExample}
                           value={titleFormat}
@@ -1191,7 +1191,7 @@ export default function SettingsPage() {
                           multiline={3}
                           autoComplete="off"
                           placeholder="z.B. Premium Leder Geldbörse - Elegant & Stilvoll"
-                          helpText={`${titleFormat.length} Zeichen - ${t.settings.formatExampleHelp.replace('{field}', t.settings.title)}`}
+                          helpText={`${titleFormat.length} Zeichen - ${t.settings.formatExampleHelp.replace('{field}', t.settings.fieldTitle)}`}
                         />
                         <TextField
                           label={t.settings.instructions}
@@ -1209,7 +1209,7 @@ export default function SettingsPage() {
                     <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
                       <BlockStack gap="400">
                         <InlineStack align="space-between" blockAlign="center">
-                          <Text as="h3" variant="headingMd">{t.settings.description}</Text>
+                          <Text as="h3" variant="headingMd">{t.settings.fieldDescription}</Text>
                           <Button size="slim" onClick={toggleDescriptionFormatMode}>
                             {descriptionFormatMode === "html" ? t.settings.previewMode : t.settings.htmlMode}
                           </Button>
@@ -1276,7 +1276,7 @@ export default function SettingsPage() {
                             />
                           )}
                           <Text as="p" variant="bodySm" tone="subdued">
-                            {descriptionFormat.replace(/<[^>]*>/g, "").length} Zeichen - {t.settings.formatExampleHelp.replace('{field}', t.settings.description)}
+                            {descriptionFormat.replace(/<[^>]*>/g, "").length} Zeichen - {t.settings.formatExampleHelp.replace('{field}', t.settings.fieldDescription)}
                           </Text>
                         </div>
 
@@ -1295,7 +1295,7 @@ export default function SettingsPage() {
                     {/* Handle */}
                     <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
                       <BlockStack gap="400">
-                        <Text as="h3" variant="headingMd">{t.settings.handle}</Text>
+                        <Text as="h3" variant="headingMd">{t.settings.fieldHandle}</Text>
                         <TextField
                           label={t.settings.formatExample}
                           value={handleFormat}
@@ -1303,7 +1303,7 @@ export default function SettingsPage() {
                           multiline={2}
                           autoComplete="off"
                           placeholder="z.B. premium-leder-geldboerse-elegant"
-                          helpText={`${handleFormat.length} Zeichen - ${t.settings.formatExampleHelp.replace('{field}', t.settings.handle)}`}
+                          helpText={`${handleFormat.length} Zeichen - ${t.settings.formatExampleHelp.replace('{field}', t.settings.fieldHandle)}`}
                         />
                         <TextField
                           label={t.settings.instructions}
@@ -1320,7 +1320,7 @@ export default function SettingsPage() {
                     {/* SEO Title */}
                     <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
                       <BlockStack gap="400">
-                        <Text as="h3" variant="headingMd">{t.settings.seoTitle}</Text>
+                        <Text as="h3" variant="headingMd">{t.settings.fieldSeoTitle}</Text>
                         <TextField
                           label={t.settings.formatExample}
                           value={seoTitleFormat}
@@ -1328,7 +1328,7 @@ export default function SettingsPage() {
                           multiline={2}
                           autoComplete="off"
                           placeholder="z.B. Premium Leder Geldbörse kaufen | Handgefertigt & Elegant"
-                          helpText={`${seoTitleFormat.length} Zeichen - ${t.settings.formatExampleHelp.replace('{field}', t.settings.seoTitle)}`}
+                          helpText={`${seoTitleFormat.length} Zeichen - ${t.settings.formatExampleHelp.replace('{field}', t.settings.fieldSeoTitle)}`}
                         />
                         <TextField
                           label={t.settings.instructions}
@@ -1345,7 +1345,7 @@ export default function SettingsPage() {
                     {/* Meta Description */}
                     <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
                       <BlockStack gap="400">
-                        <Text as="h3" variant="headingMd">{t.settings.metaDescription}</Text>
+                        <Text as="h3" variant="headingMd">{t.settings.fieldMetaDescription}</Text>
                         <TextField
                           label={t.settings.formatExample}
                           value={metaDescFormat}
@@ -1353,7 +1353,7 @@ export default function SettingsPage() {
                           multiline={3}
                           autoComplete="off"
                           placeholder="z.B. Entdecken Sie unsere handgefertigten Premium Leder Geldbörsen. Elegant, langlebig und zeitlos. Jetzt kaufen!"
-                          helpText={`${metaDescFormat.length} Zeichen - ${t.settings.formatExampleHelp.replace('{field}', t.settings.metaDescription)}`}
+                          helpText={`${metaDescFormat.length} Zeichen - ${t.settings.formatExampleHelp.replace('{field}', t.settings.fieldMetaDescription)}`}
                         />
                         <TextField
                           label={t.settings.instructions}
