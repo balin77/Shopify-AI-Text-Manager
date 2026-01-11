@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useFetcher } from "@remix-run/react";
+import { useLoaderData, useFetcher, useRevalidator } from "@remix-run/react";
 import { Page, Banner } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
@@ -131,6 +131,7 @@ export const action = async (args: ActionFunctionArgs) => {
 export default function Index() {
   const { products, shop, shopLocales, primaryLocale, error } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
+  const revalidator = useRevalidator();
   const { t } = useI18n();
 
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
@@ -159,6 +160,23 @@ export default function Index() {
   });
 
   const { aiSuggestions, removeSuggestion } = useAISuggestions(fetcher.data);
+
+  // Auto-refresh: Reload data when actions complete successfully
+  // This ensures that webhook updates in the background are reflected in the UI
+  useEffect(() => {
+    if (fetcher.state === "idle" && fetcher.data?.success) {
+      // Don't reload for AI suggestions (they're just displayed, not saved yet)
+      if ('generatedContent' in fetcher.data || 'translatedValue' in fetcher.data) {
+        return; // Skip reload for suggestions
+      }
+
+      console.log('[AUTO-REFRESH] Reloading product data from database');
+      // Small delay to ensure database transaction is complete
+      setTimeout(() => {
+        revalidator.revalidate();
+      }, 300);
+    }
+  }, [fetcher.state, fetcher.data]);
 
   // Handle language change (no more loading needed - all translations pre-loaded!)
   const handleLanguageChange = (newLanguage: string) => {
