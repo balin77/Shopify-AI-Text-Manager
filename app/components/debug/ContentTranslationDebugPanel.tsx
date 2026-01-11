@@ -53,10 +53,10 @@ export function ContentTranslationDebugPanel({ contentItem, contentType, shopLoc
       body: contentItem.body || "",
     };
   } else if (contentType === "collections") {
-    expectedKeys = ["title", "description", "handle", "meta_title", "meta_description"];
+    expectedKeys = ["title", "body_html", "handle", "meta_title", "meta_description"];
     primaryData = {
       title: contentItem.title,
-      description: contentItem.descriptionHtml || "",
+      body_html: contentItem.descriptionHtml || "",
       handle: contentItem.handle || "",
       meta_title: contentItem.seo?.title || "",
       meta_description: contentItem.seo?.description || "",

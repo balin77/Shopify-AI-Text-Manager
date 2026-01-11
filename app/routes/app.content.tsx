@@ -348,7 +348,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           if (description) translationsInput.push({ key: "body", value: description, locale });
         } else if (contentType === "collections") {
           if (title) translationsInput.push({ key: "title", value: title, locale });
-          if (description) translationsInput.push({ key: "description", value: description, locale });
+          if (description) translationsInput.push({ key: "body_html", value: description, locale });
           if (handle) translationsInput.push({ key: "handle", value: handle, locale });
           if (seoTitle) translationsInput.push({ key: "meta_title", value: seoTitle, locale });
           if (metaDescription) translationsInput.push({ key: "meta_description", value: metaDescription, locale });
@@ -640,7 +640,7 @@ export default function ContentPage() {
         } else {
           // Translations are already loaded, update the fields
           const titleKey = "title";
-          const descKey = selectedType === "pages" ? "body" : selectedType === "blogs" ? "body_html" : "description";
+          const descKey = selectedType === "pages" ? "body" : "body_html"; // Collections and Blogs both use body_html
 
           setEditableTitle(getTranslatedValue(titleKey, currentLanguage, ""));
           setEditableDescription(getTranslatedValue(descKey, currentLanguage, ""));
@@ -671,7 +671,7 @@ export default function ContentPage() {
         // Only update fields if this is for the current language
         if (loadedLocale === currentLanguage) {
           const titleKey = "title";
-          const descKey = selectedType === "pages" ? "body" : selectedType === "blogs" ? "body_html" : "description";
+          const descKey = selectedType === "pages" ? "body" : "body_html"; // Collections and Blogs both use body_html
 
           // Get values from the newly loaded translations
           const newTitle = translations.find((t: any) => t.key === titleKey)?.value || "";
@@ -701,7 +701,7 @@ export default function ContentPage() {
       };
 
       const titleKey = "title";
-      const descKey = selectedType === "pages" ? "body" : selectedType === "blogs" ? "body_html" : "description";
+      const descKey = selectedType === "pages" ? "body" : "body_html"; // Collections and Blogs both use body_html
       const descFallback = selectedType === "pages" ? (selectedItem.body || "") : selectedType === "blogs" ? (selectedItem.body || "") : (selectedItem.descriptionHtml || "");
 
       const titleChanged = editableTitle !== getOriginalValue(titleKey, selectedItem.title);
@@ -918,7 +918,7 @@ export default function ContentPage() {
       // This was a successful updateContent action for a translation
       const itemKey = `${selectedItem.id}_${currentLanguage}`;
       const titleKey = "title";
-      const descKey = selectedType === "pages" ? "body" : selectedType === "blogs" ? "body_html" : "description";
+      const descKey = selectedType === "pages" ? "body" : "body_html"; // Collections and Blogs both use body_html
 
       // Build updated translations array
       const existingTranslations = loadedTranslations[itemKey] || [];
