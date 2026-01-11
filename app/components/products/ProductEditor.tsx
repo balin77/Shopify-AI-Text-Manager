@@ -317,7 +317,7 @@ export function ProductEditor({
 
               {/* Alt-text input for selected image */}
               <BlockStack gap="300">
-                <Text as="h3" variant="headingSm">
+                <Text as="h3" variant="headingSm" fontWeight="bold">
                   {t.products.altTextForImage} {selectedImageIndex + 1}
                 </Text>
                 <div>

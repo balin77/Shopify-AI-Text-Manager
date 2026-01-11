@@ -41,6 +41,7 @@ export const de = {
     altTextForImage: "Alt-Text für Bild",
     altTextPlaceholder: "Alt-Text für dieses Bild eingeben...",
     image: "Bild",
+    productOptions: "Produktoptionen",
     optionsNotEditableInPrimary: "Optionen werden in der Hauptsprache nicht bearbeitet. Wechseln Sie zu einer Fremdsprache, um Übersetzungen hinzuzufügen.",
     translateEntireOption: "Gesamte Option übersetzen",
     resourceName: {

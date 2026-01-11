@@ -41,8 +41,8 @@ export function ProductOptions({
   return (
     <Card>
       <BlockStack gap="400">
-        <Text as="h3" variant="headingMd">
-          Produktoptionen
+        <Text as="h3" variant="headingMd" fontWeight="bold">
+          {t.products.productOptions}
         </Text>
 
         {isPrimaryLocale ? (

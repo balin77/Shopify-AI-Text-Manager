@@ -43,6 +43,7 @@ export const en: Translation = {
     altTextForImage: "Alt text for image",
     altTextPlaceholder: "Enter alt text for this image...",
     image: "Image",
+    productOptions: "Product options",
     optionsNotEditableInPrimary: "Options cannot be edited in the primary language. Switch to a foreign language to add translations.",
     translateEntireOption: "Translate entire option",
     resourceName: {
