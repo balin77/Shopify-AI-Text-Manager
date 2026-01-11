@@ -196,9 +196,147 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 - [GitHub Issue #529 - Suspense Boundary Problem](https://github.com/Shopify/shopify-app-js/issues/529)
 - Diese Probleme sind bekannt und dokumentiert, aber noch nicht von Shopify gefixt
 
+### App Bridge Setup und POST-Request-Authentifizierung
+
+**KRITISCH:** Die App verwendet Shopify App Bridge für automatische Authentifizierung aller API-Requests.
+
+#### Problem: POST Requests werden vom iframe blockiert
+
+In Shopify Embedded Apps (die im Shopify Admin iframe laufen) werden POST/PUT/DELETE Requests standardmäßig blockiert, weil Browser third-party cookies im iframe einschränken.
+
+**Symptome:**
+- POST Requests kommen nicht am Backend an
+- Buttons (z.B. "Setup Webhooks") haben keine Wirkung
+- Keine Network-Requests sichtbar in Browser DevTools
+- Formulare werden nicht abgeschickt
+
+#### Lösung: App Bridge mit automatischer Session Token-Injektion
+
+App Bridge **v4+** löst dieses Problem, indem es automatisch Session Tokens in alle `fetch()` Requests injiziert.
+
+**Setup in [app/root.tsx](app/root.tsx):**
+
+```typescript
+export const loader = async ({ request }: LoaderFunctionArgs) => {
+  const apiKey = process.env.SHOPIFY_API_KEY || "";
+  return json({ apiKey });
+};
+
+export default function App() {
+  const { apiKey } = useLoaderData<typeof loader>();
+
+  return (
+    <html lang="de">
+      <head>
+        <meta charSet="utf-8" />
+        <meta name="viewport" content="width=device-width,initial-scale=1" />
+
+        {/* KRITISCH: API Key als Meta-Tag für App Bridge Auto-Init */}
+        <meta name="shopify-api-key" content={apiKey} />
+
+        <Meta />
+        <Links />
+
+        {/* App Bridge CDN Script - lädt automatisch und initialisiert sich */}
+        <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js" />
+      </head>
+      <body>
+        <Outlet />
+        <Scripts />
+      </body>
+    </html>
+  );
+}
+```
+
+**Wie es funktioniert:**
+
+1. **Meta-Tag lesen**: App Bridge liest automatisch `<meta name="shopify-api-key">` beim Page Load
+2. **Auto-Initialisierung**: Kein manueller JavaScript-Code nötig
+3. **Global Fetch Injection**: App Bridge überschreibt die globale `fetch()` Funktion
+4. **Session Token**: Jeder Request bekommt automatisch einen Authorization Header mit Session Token
+
+**In deinen Components - Keine Änderungen nötig:**
+
+```typescript
+// Einfach normales fetch() verwenden - App Bridge authentifiziert automatisch!
+const handleSetupWebhooks = async () => {
+  const response = await fetch("/api/setup-webhooks", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+  });
+  const data = await response.json();
+  // Works! 🎉
+};
+```
+
+#### Wichtige Hinweise:
+
+✅ **Was funktioniert:**
+- Alle `fetch()` Requests (GET, POST, PUT, DELETE, etc.)
+- Formulare mit JavaScript-Submit
+- AJAX-Requests
+- GraphQL-Requests mit fetch()
+
+❌ **Was NICHT funktioniert:**
+- Native HTML Form-Submit (ohne JavaScript)
+- `useFetcher()` von Remix (verwende stattdessen direktes `fetch()`)
+- Requests von Web Workers (laufen außerhalb des App Bridge Contexts)
+
+#### Backend Session Token-Validierung:
+
+Das Backend validiert automatisch die Session Tokens dank `@shopify/shopify-app-remix`:
+
+```typescript
+// In app/shopify.server.ts - Bereits konfiguriert
+export const authenticate = {
+  admin: async (request: Request) => {
+    // Validiert automatisch den Session Token aus dem Authorization Header
+    // Wirft Error bei ungültigem/fehlendem Token
+    const { session, admin } = await shopify.authenticate.admin(request);
+    return { session, admin };
+  }
+};
+```
+
+#### Debugging:
+
+**1. Prüfe ob App Bridge geladen ist:**
+```javascript
+// In Browser Console:
+console.log(window.shopify); // Sollte Object zeigen, nicht undefined
+```
+
+**2. Prüfe Meta-Tag:**
+```javascript
+// In Browser Console:
+document.querySelector('meta[name="shopify-api-key"]')?.content
+// Sollte deinen API Key zeigen
+```
+
+**3. Prüfe Network-Requests:**
+- Öffne DevTools → Network Tab
+- Führe POST Request aus
+- Klicke auf Request → Headers Tab
+- Suche nach `Authorization: Bearer ...` Header
+- Token sollte vorhanden sein!
+
+**4. Backend Logs checken:**
+```bash
+# Railway Logs sollten zeigen:
+🔍 [APP.TSX LOADER] Authentication successful
+✅ Session validated for shop: your-shop.myshopify.com
+```
+
+#### Referenzen:
+
+- [Shopify App Bridge Documentation](https://shopify.dev/docs/api/app-bridge-library)
+- [Session Tokens Guide](https://shopify.dev/docs/apps/build/authentication-authorization/session-tokens)
+- [Embedded App Authorization](https://shopify.dev/docs/apps/build/authentication-authorization/set-embedded-app-authorization)
+
 ### Authentication Strategy
 
-Die App verwendet die Standard-Authentifizierung von `@shopify/shopify-app-remix`. Falls Probleme auftreten, checke die Railway Logs für Authentication-Fehler.
+Die App verwendet die Standard-Authentifizierung von `@shopify/shopify-app-remix` kombiniert mit App Bridge für iframe-sichere POST Requests. Falls Probleme auftreten, checke die Railway Logs für Authentication-Fehler.
 
 ## 📦 Projektstruktur
 
