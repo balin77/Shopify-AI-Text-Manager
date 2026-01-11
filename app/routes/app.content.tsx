@@ -19,6 +19,7 @@ import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
 import { SeoSidebar } from "../components/SeoSidebar";
 import { AISuggestionBanner } from "../components/AISuggestionBanner";
+import { ContentTranslationDebugPanel } from "../components/debug/ContentTranslationDebugPanel";
 import { AIService } from "../../src/services/ai.service";
 import { TranslationService } from "../../src/services/translation.service";
 import { useI18n } from "../contexts/I18nContext";
@@ -1129,6 +1130,13 @@ export default function ContentPage() {
                     </Button>
                   ))}
                 </div>
+
+                {/* Translation Debug Panel */}
+                <ContentTranslationDebugPanel
+                  contentItem={selectedItem}
+                  contentType={selectedType}
+                  shopLocales={shopLocales}
+                />
 
                 {/* Header with Save Button */}
                 <InlineStack align="space-between" blockAlign="center">
