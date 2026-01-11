@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Card,
   BlockStack,
@@ -92,6 +92,9 @@ interface ProductEditorProps {
   onTranslateOption: (optionId: string) => void;
   isTranslatingOption: boolean;
   translatingOptionId?: string;
+  onGenerateAltText: (imageIndex: number) => void;
+  onGenerateAllAltTexts: () => void;
+  fetcherData: any;
 }
 
 export function ProductEditor({
@@ -132,14 +135,38 @@ export function ProductEditor({
   onTranslateOption,
   isTranslatingOption,
   translatingOptionId,
+  onGenerateAltText,
+  onGenerateAllAltTexts,
+  fetcherData,
 }: ProductEditorProps) {
   const [descriptionMode, setDescriptionMode] = useState<"html" | "rendered">("rendered");
   const [selectedImageIndex, setSelectedImageIndex] = useState(0);
   const [imageAltTexts, setImageAltTexts] = useState<Record<number, string>>({});
-  const [isGeneratingAltText, setIsGeneratingAltText] = useState(false);
-  const [generatingImageIndex, setGeneratingImageIndex] = useState<number | null>(null);
+  const [altTextSuggestions, setAltTextSuggestions] = useState<Record<number, string>>({});
 
   const isPrimaryLocale = currentLanguage === primaryLocale;
+
+  // Handle alt-text generation responses
+  useEffect(() => {
+    if (fetcherData?.success && 'altText' in fetcherData && 'imageIndex' in fetcherData) {
+      const { altText, imageIndex } = fetcherData;
+      setAltTextSuggestions(prev => ({
+        ...prev,
+        [imageIndex]: altText
+      }));
+    }
+  }, [fetcherData]);
+
+  // Handle bulk alt-text generation responses
+  useEffect(() => {
+    if (fetcherData?.success && 'generatedAltTexts' in fetcherData) {
+      const { generatedAltTexts } = fetcherData;
+      setAltTextSuggestions(prev => ({
+        ...prev,
+        ...generatedAltTexts
+      }));
+    }
+  }, [fetcherData]);
 
   const isFieldLoading = (fieldType: string, action: string) => {
     return (
@@ -209,20 +236,6 @@ export function ProductEditor({
           {/* Image Gallery */}
           {product.images && product.images.length > 0 && (
             <BlockStack gap="400">
-              {/* Auto-generate all button */}
-              <InlineStack align="start">
-                <Button
-                  onClick={() => {
-                    // TODO: Implement auto-generate for all images
-                    setIsGeneratingAltText(true);
-                    setTimeout(() => setIsGeneratingAltText(false), 2000);
-                  }}
-                  loading={isGeneratingAltText && generatingImageIndex === null}
-                >
-                  Alt-Texte für alle Bilder generieren
-                </Button>
-              </InlineStack>
-
               {/* Image Grid */}
               <div
                 style={{
@@ -289,41 +302,107 @@ export function ProductEditor({
                 })}
               </div>
 
+              {/* Auto-generate all button - below images */}
+              <InlineStack align="start">
+                <Button
+                  size="slim"
+                  onClick={onGenerateAllAltTexts}
+                  loading={isFieldLoading("allAltTexts", "generateAllAltTexts")}
+                >
+                  ✨ Alt-Texte für alle Bilder mit KI generieren
+                </Button>
+              </InlineStack>
+
               {/* Alt-text input for selected image */}
               <BlockStack gap="300">
                 <Text as="h3" variant="headingSm">
                   Alt-Text für Bild {selectedImageIndex + 1}
                 </Text>
-                <InlineStack gap="200" blockAlign="end">
-                  <div style={{ flex: 1 }}>
-                    <TextField
-                      label=""
-                      value={imageAltTexts[selectedImageIndex] || product.images[selectedImageIndex]?.altText || ""}
-                      onChange={(value) => {
-                        setImageAltTexts((prev) => ({
-                          ...prev,
-                          [selectedImageIndex]: value,
-                        }));
-                      }}
-                      placeholder="Alt-Text für dieses Bild eingeben..."
-                      autoComplete="off"
-                    />
-                  </div>
-                  <Button
-                    onClick={() => {
-                      // TODO: Implement auto-generate for single image
-                      setGeneratingImageIndex(selectedImageIndex);
-                      setIsGeneratingAltText(true);
-                      setTimeout(() => {
-                        setIsGeneratingAltText(false);
-                        setGeneratingImageIndex(null);
-                      }, 2000);
+                <div>
+                  <TextField
+                    label=""
+                    value={imageAltTexts[selectedImageIndex] || product.images[selectedImageIndex]?.altText || ""}
+                    onChange={(value) => {
+                      setImageAltTexts((prev) => ({
+                        ...prev,
+                        [selectedImageIndex]: value,
+                      }));
+                      // Clear suggestion when user manually edits
+                      if (altTextSuggestions[selectedImageIndex]) {
+                        setAltTextSuggestions((prev) => {
+                          const newSuggestions = { ...prev };
+                          delete newSuggestions[selectedImageIndex];
+                          return newSuggestions;
+                        });
+                      }
                     }}
-                    loading={isGeneratingAltText && generatingImageIndex === selectedImageIndex}
+                    placeholder="Alt-Text für dieses Bild eingeben..."
+                    autoComplete="off"
+                  />
+                </div>
+
+                {/* AI Suggestion Box for Alt Text */}
+                {altTextSuggestions[selectedImageIndex] && (
+                  <div
+                    style={{
+                      background: "linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%)",
+                      border: "2px solid #0ea5e9",
+                      borderRadius: "8px",
+                      padding: "12px",
+                      marginTop: "8px",
+                    }}
                   >
-                    Generieren
+                    <div style={{ marginBottom: "8px" }}>
+                      <Text as="p" variant="bodyMd" fontWeight="semibold">
+                        KI-Vorschlag:
+                      </Text>
+                      <Text as="p" variant="bodyMd">
+                        {altTextSuggestions[selectedImageIndex]}
+                      </Text>
+                    </div>
+                    <InlineStack gap="200">
+                      <Button
+                        size="slim"
+                        variant="primary"
+                        onClick={() => {
+                          setImageAltTexts((prev) => ({
+                            ...prev,
+                            [selectedImageIndex]: altTextSuggestions[selectedImageIndex],
+                          }));
+                          setAltTextSuggestions((prev) => {
+                            const newSuggestions = { ...prev };
+                            delete newSuggestions[selectedImageIndex];
+                            return newSuggestions;
+                          });
+                        }}
+                      >
+                        Akzeptieren
+                      </Button>
+                      <Button
+                        size="slim"
+                        onClick={() => {
+                          setAltTextSuggestions((prev) => {
+                            const newSuggestions = { ...prev };
+                            delete newSuggestions[selectedImageIndex];
+                            return newSuggestions;
+                          });
+                        }}
+                      >
+                        Ablehnen
+                      </Button>
+                    </InlineStack>
+                  </div>
+                )}
+
+                <div style={{ marginTop: "0.5rem" }}>
+                  <Button
+                    size="slim"
+                    onClick={() => onGenerateAltText(selectedImageIndex)}
+                    loading={isFieldLoading(`altText_${selectedImageIndex}`, "generateAltText")}
+                  >
+                    ✨ Mit KI generieren
                   </Button>
-                </InlineStack>
+                </div>
               </BlockStack>
             </BlockStack>
           )}

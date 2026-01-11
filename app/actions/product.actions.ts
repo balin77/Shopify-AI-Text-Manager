@@ -84,6 +84,16 @@ export async function handleProductActions({ request }: ActionFunctionArgs) {
     return handleTranslateOption(provider, config, formData, session.shop);
   }
 
+  if (action === "generateAltText") {
+    console.log('🖼️ [PRODUCT.ACTIONS] Generating alt text for image:', formData.get("imageIndex"));
+    return handleGenerateAltText(provider, config, formData, session.shop, productId);
+  }
+
+  if (action === "generateAllAltTexts") {
+    console.log('🖼️ [PRODUCT.ACTIONS] Generating alt texts for all images');
+    return handleGenerateAllAltTexts(admin, provider, config, formData, session.shop, productId);
+  }
+
   console.error('❌ [PRODUCT.ACTIONS] Unknown action:', action);
   return json({ success: false, error: "Unknown action" }, { status: 400 });
   } catch (error) {
@@ -765,6 +775,146 @@ async function handleTranslateOption(
       targetLocale
     });
   } catch (error: any) {
+    return json({ success: false, error: error.message }, { status: 500 });
+  }
+}
+
+async function handleGenerateAltText(
+  provider: any,
+  config: any,
+  formData: FormData,
+  shop: string,
+  productId: string
+) {
+  const imageIndex = parseInt(formData.get("imageIndex") as string);
+  const imageUrl = formData.get("imageUrl") as string;
+  const productTitle = formData.get("productTitle") as string;
+
+  const { db } = await import("../db.server");
+
+  const task = await db.task.create({
+    data: {
+      shop,
+      type: "aiGeneration",
+      status: "pending",
+      resourceType: "product",
+      resourceId: productId,
+      resourceTitle: productTitle,
+      fieldType: `altText_${imageIndex}`,
+      progress: 0,
+    },
+  });
+
+  try {
+    const aiService = new AIService(provider, config, shop, task.id);
+
+    await db.task.update({
+      where: { id: task.id },
+      data: { status: "queued", progress: 10 },
+    });
+
+    const altText = await aiService.generateImageAltText(imageUrl, productTitle);
+
+    await db.task.update({
+      where: { id: task.id },
+      data: {
+        status: "completed",
+        progress: 100,
+        completedAt: new Date(),
+        result: JSON.stringify({ altText, imageIndex }),
+      },
+    });
+
+    return json({ success: true, altText, imageIndex });
+  } catch (error: any) {
+    await db.task.update({
+      where: { id: task.id },
+      data: {
+        status: "failed",
+        completedAt: new Date(),
+        error: error.message,
+      },
+    });
+
+    return json({ success: false, error: error.message }, { status: 500 });
+  }
+}
+
+async function handleGenerateAllAltTexts(
+  admin: any,
+  provider: any,
+  config: any,
+  formData: FormData,
+  shop: string,
+  productId: string
+) {
+  const imagesDataStr = formData.get("imagesData") as string;
+  const productTitle = formData.get("productTitle") as string;
+
+  const { db } = await import("../db.server");
+
+  const task = await db.task.create({
+    data: {
+      shop,
+      type: "bulkAIGeneration",
+      status: "pending",
+      resourceType: "product",
+      resourceId: productId,
+      resourceTitle: productTitle,
+      fieldType: "allAltTexts",
+      progress: 0,
+    },
+  });
+
+  try {
+    const imagesData = JSON.parse(imagesDataStr);
+    const totalImages = imagesData.length;
+    const generatedAltTexts: Record<number, string> = {};
+
+    await db.task.update({
+      where: { id: task.id },
+      data: { status: "queued", progress: 10, total: totalImages, processed: 0 },
+    });
+
+    const aiService = new AIService(provider, config, shop, task.id);
+
+    for (let i = 0; i < imagesData.length; i++) {
+      const image = imagesData[i];
+      try {
+        const altText = await aiService.generateImageAltText(image.url, productTitle);
+        generatedAltTexts[i] = altText;
+
+        const progressPercent = Math.round(10 + ((i + 1) / totalImages) * 90);
+        await db.task.update({
+          where: { id: task.id },
+          data: { progress: progressPercent, processed: i + 1 },
+        });
+      } catch (error: any) {
+        console.error(`Failed to generate alt text for image ${i}:`, error);
+      }
+    }
+
+    await db.task.update({
+      where: { id: task.id },
+      data: {
+        status: "completed",
+        progress: 100,
+        completedAt: new Date(),
+        result: JSON.stringify({ generatedAltTexts }),
+      },
+    });
+
+    return json({ success: true, generatedAltTexts });
+  } catch (error: any) {
+    await db.task.update({
+      where: { id: task.id },
+      data: {
+        status: "failed",
+        completedAt: new Date(),
+        error: error.message,
+      },
+    });
+
     return json({ success: false, error: error.message }, { status: 500 });
   }
 }
