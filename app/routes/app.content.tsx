@@ -1189,96 +1189,98 @@ export default function ContentPage() {
                   </div>
                 </div>
 
-                {/* Editable Description/Body */}
-                <div>
-                  <InlineStack align="space-between" blockAlign="center">
-                    <Text as="p" variant="bodyMd" fontWeight="semibold">
-                      {selectedType === "pages" ? t.content.content : t.content.description} ({shopLocales.find((l: any) => l.locale === currentLanguage)?.name || currentLanguage})
-                    </Text>
-                    <Button size="slim" onClick={toggleDescriptionMode}>{descriptionMode === "html" ? t.content.preview : t.content.html}</Button>
-                  </InlineStack>
+                {/* Editable Description/Body - NOT for menus */}
+                {selectedType !== "menus" && (
+                  <div>
+                    <InlineStack align="space-between" blockAlign="center">
+                      <Text as="p" variant="bodyMd" fontWeight="semibold">
+                        {selectedType === "pages" ? t.content.content : t.content.description} ({shopLocales.find((l: any) => l.locale === currentLanguage)?.name || currentLanguage})
+                      </Text>
+                      <Button size="slim" onClick={toggleDescriptionMode}>{descriptionMode === "html" ? t.content.preview : t.content.html}</Button>
+                    </InlineStack>
 
-                  {descriptionMode === "rendered" && (
-                    <div style={{ marginTop: "0.5rem", display: "flex", gap: "0.25rem", flexWrap: "wrap", padding: "0.5rem", background: "#f6f6f7", border: "1px solid #c9cccf", borderRadius: "8px 8px 0 0" }}>
-                      <ButtonGroup variant="segmented">
-                        <Button size="slim" onClick={() => handleFormatText("bold")}>B</Button>
-                        <Button size="slim" onClick={() => handleFormatText("italic")}>I</Button>
-                        <Button size="slim" onClick={() => handleFormatText("underline")}>U</Button>
-                      </ButtonGroup>
-                      <ButtonGroup variant="segmented">
-                        <Button size="slim" onClick={() => handleFormatText("h1")}>H1</Button>
-                        <Button size="slim" onClick={() => handleFormatText("h2")}>H2</Button>
-                        <Button size="slim" onClick={() => handleFormatText("h3")}>H3</Button>
-                      </ButtonGroup>
-                      <ButtonGroup variant="segmented">
-                        <Button size="slim" onClick={() => handleFormatText("ul")}>{t.content.formatting.list}</Button>
-                        <Button size="slim" onClick={() => handleFormatText("ol")}>{t.content.formatting.numberedList}</Button>
-                      </ButtonGroup>
-                      <ButtonGroup variant="segmented">
-                        <Button size="slim" onClick={() => handleFormatText("p")}>{t.content.formatting.paragraph}</Button>
-                        <Button size="slim" onClick={() => handleFormatText("br")}>{t.content.formatting.lineBreak}</Button>
-                      </ButtonGroup>
+                    {descriptionMode === "rendered" && (
+                      <div style={{ marginTop: "0.5rem", display: "flex", gap: "0.25rem", flexWrap: "wrap", padding: "0.5rem", background: "#f6f6f7", border: "1px solid #c9cccf", borderRadius: "8px 8px 0 0" }}>
+                        <ButtonGroup variant="segmented">
+                          <Button size="slim" onClick={() => handleFormatText("bold")}>B</Button>
+                          <Button size="slim" onClick={() => handleFormatText("italic")}>I</Button>
+                          <Button size="slim" onClick={() => handleFormatText("underline")}>U</Button>
+                        </ButtonGroup>
+                        <ButtonGroup variant="segmented">
+                          <Button size="slim" onClick={() => handleFormatText("h1")}>H1</Button>
+                          <Button size="slim" onClick={() => handleFormatText("h2")}>H2</Button>
+                          <Button size="slim" onClick={() => handleFormatText("h3")}>H3</Button>
+                        </ButtonGroup>
+                        <ButtonGroup variant="segmented">
+                          <Button size="slim" onClick={() => handleFormatText("ul")}>{t.content.formatting.list}</Button>
+                          <Button size="slim" onClick={() => handleFormatText("ol")}>{t.content.formatting.numberedList}</Button>
+                        </ButtonGroup>
+                        <ButtonGroup variant="segmented">
+                          <Button size="slim" onClick={() => handleFormatText("p")}>{t.content.formatting.paragraph}</Button>
+                          <Button size="slim" onClick={() => handleFormatText("br")}>{t.content.formatting.lineBreak}</Button>
+                        </ButtonGroup>
+                      </div>
+                    )}
+
+                    <div style={{ background: getFieldBackgroundColor(selectedType === "pages" ? "body" : selectedType === "blogs" ? "body_html" : "description"), borderRadius: "8px", padding: "1px" }}>
+                      {descriptionMode === "html" ? (
+                        <textarea
+                          value={editableDescription}
+                          onChange={(e) => setEditableDescription(e.target.value)}
+                          style={{
+                            width: "100%",
+                            minHeight: "200px",
+                            padding: "12px",
+                            border: "1px solid #c9cccf",
+                            borderRadius: "8px",
+                            fontFamily: "monospace",
+                            fontSize: "14px",
+                            marginTop: "0.5rem",
+                          }}
+                        />
+                      ) : (
+                        <div
+                          ref={descriptionEditorRef}
+                          contentEditable
+                          onInput={(e) => setEditableDescription(e.currentTarget.innerHTML)}
+                          dangerouslySetInnerHTML={{ __html: editableDescription }}
+                          style={{
+                            width: "100%",
+                            minHeight: "200px",
+                            padding: "12px",
+                            border: "1px solid #c9cccf",
+                            borderTop: "none",
+                            borderRadius: "0 0 8px 8px",
+                            lineHeight: "1.6",
+                          }}
+                          className="description-editor"
+                        />
+                      )}
                     </div>
-                  )}
-
-                  <div style={{ background: getFieldBackgroundColor(selectedType === "pages" ? "body" : selectedType === "blogs" ? "body_html" : "description"), borderRadius: "8px", padding: "1px" }}>
-                    {descriptionMode === "html" ? (
-                      <textarea
-                        value={editableDescription}
-                        onChange={(e) => setEditableDescription(e.target.value)}
-                        style={{
-                          width: "100%",
-                          minHeight: "200px",
-                          padding: "12px",
-                          border: "1px solid #c9cccf",
-                          borderRadius: "8px",
-                          fontFamily: "monospace",
-                          fontSize: "14px",
-                          marginTop: "0.5rem",
-                        }}
-                      />
-                    ) : (
-                      <div
-                        ref={descriptionEditorRef}
-                        contentEditable
-                        onInput={(e) => setEditableDescription(e.currentTarget.innerHTML)}
-                        dangerouslySetInnerHTML={{ __html: editableDescription }}
-                        style={{
-                          width: "100%",
-                          minHeight: "200px",
-                          padding: "12px",
-                          border: "1px solid #c9cccf",
-                          borderTop: "none",
-                          borderRadius: "0 0 8px 8px",
-                          lineHeight: "1.6",
-                        }}
-                        className="description-editor"
-                      />
-                    )}
+                    <Text as="p" variant="bodySm" tone="subdued">{editableDescription.replace(/<[^>]*>/g, "").length} {t.content.characters}</Text>
+                    {aiSuggestions.description && renderAISuggestion("description", aiSuggestions.description)}
+                    {aiSuggestions.body && renderAISuggestion("body", aiSuggestions.body)}
+                    <div style={{ marginTop: "0.5rem" }}>
+                      {currentLanguage === primaryLocale ? (
+                        <Button
+                          size="slim"
+                          onClick={() => handleGenerateAI(selectedType === "pages" ? "body" : "description")}
+                          loading={fetcher.state !== "idle" && (fetcher.formData?.get("fieldType") === "description" || fetcher.formData?.get("fieldType") === "body") && fetcher.formData?.get("action") === "generateAIText"}
+                        >
+                          {t.content.generateWithAI}
+                        </Button>
+                      ) : (
+                        <Button
+                          size="slim"
+                          onClick={() => handleTranslateField(selectedType === "pages" ? "body" : "description")}
+                          loading={fetcher.state !== "idle" && (fetcher.formData?.get("fieldType") === "description" || fetcher.formData?.get("fieldType") === "body") && fetcher.formData?.get("action") === "translateField"}
+                        >
+                          {t.content.translateFromPrimary}
+                        </Button>
+                      )}
+                    </div>
                   </div>
-                  <Text as="p" variant="bodySm" tone="subdued">{editableDescription.replace(/<[^>]*>/g, "").length} {t.content.characters}</Text>
-                  {aiSuggestions.description && renderAISuggestion("description", aiSuggestions.description)}
-                  {aiSuggestions.body && renderAISuggestion("body", aiSuggestions.body)}
-                  <div style={{ marginTop: "0.5rem" }}>
-                    {currentLanguage === primaryLocale ? (
-                      <Button
-                        size="slim"
-                        onClick={() => handleGenerateAI(selectedType === "pages" ? "body" : "description")}
-                        loading={fetcher.state !== "idle" && (fetcher.formData?.get("fieldType") === "description" || fetcher.formData?.get("fieldType") === "body") && fetcher.formData?.get("action") === "generateAIText"}
-                      >
-                        {t.content.generateWithAI}
-                      </Button>
-                    ) : (
-                      <Button
-                        size="slim"
-                        onClick={() => handleTranslateField(selectedType === "pages" ? "body" : "description")}
-                        loading={fetcher.state !== "idle" && (fetcher.formData?.get("fieldType") === "description" || fetcher.formData?.get("fieldType") === "body") && fetcher.formData?.get("action") === "translateField"}
-                      >
-                        {t.content.translateFromPrimary}
-                      </Button>
-                    )}
-                  </div>
-                </div>
+                )}
 
                 {/* URL Slug */}
                 {(selectedType === "pages" || selectedType === "collections" || selectedType === "blogs") && (
@@ -1384,6 +1386,43 @@ export default function ContentPage() {
                       </div>
                     </div>
                   </>
+                )}
+
+                {/* Menu Items Section (only for menus) */}
+                {selectedType === "menus" && selectedItem.items && (
+                  <Card>
+                    <BlockStack gap="400">
+                      <Text as="h3" variant="headingMd">
+                        Menu Items
+                      </Text>
+                      {selectedItem.items.map((item: any, index: number) => (
+                        <div key={item.id || index}>
+                          <TextField
+                            label={`Menu Item ${index + 1}`}
+                            value={item.title}
+                            onChange={() => {}}
+                            disabled
+                            autoComplete="off"
+                          />
+                          {item.items && item.items.length > 0 && (
+                            <div style={{ marginLeft: "1.5rem", marginTop: "0.5rem" }}>
+                              {item.items.map((subItem: any, subIndex: number) => (
+                                <div key={subItem.id || subIndex} style={{ marginBottom: "0.5rem" }}>
+                                  <TextField
+                                    label={`Submenu Item ${index + 1}.${subIndex + 1}`}
+                                    value={subItem.title}
+                                    onChange={() => {}}
+                                    disabled
+                                    autoComplete="off"
+                                  />
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </BlockStack>
+                  </Card>
                 )}
 
                 {/* Translation Debug Panel */}
