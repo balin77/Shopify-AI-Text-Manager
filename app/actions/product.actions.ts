@@ -572,6 +572,38 @@ async function handleTranslateAll(
           }
         }
 
+        // 🔥 DIRECT DB UPDATE: Update local database immediately after Shopify success
+        console.log(`[TranslateAll] Updating DB translations for product ${productId}, locale ${locale}`);
+
+        // Get the shop from the product
+        const product = await db.product.findFirst({
+          where: { id: productId },
+          select: { shop: true }
+        });
+
+        if (product && translationsInput.length > 0) {
+          // Delete existing translations for this locale and product
+          await db.productTranslation.deleteMany({
+            where: {
+              productId: productId,
+              locale: locale,
+            },
+          });
+
+          // Insert new translations
+          await db.productTranslation.createMany({
+            data: translationsInput.map(t => ({
+              productId: productId,
+              key: t.key,
+              value: t.value,
+              locale: locale,
+              digest: t.translatableContentDigest || null,
+              shop: product.shop,
+            })),
+          });
+          console.log(`[TranslateAll] ✓ Saved ${translationsInput.length} translations to DB for ${locale}`);
+        }
+
         processedLocales++;
         console.log(`[TranslateAll] Completed locale ${locale}. Progress: ${processedLocales}/${totalLocales}`);
 
@@ -655,6 +687,8 @@ async function handleUpdateProduct(admin: any, formData: FormData, productId: st
   const imageAltTextsStr = formData.get("imageAltTexts") as string;
 
   try {
+    const { db } = await import("../db.server");
+
     // Parse alt-texts if provided
     let imageAltTexts: Record<number, string> = {};
     if (imageAltTextsStr) {
@@ -740,6 +774,7 @@ async function handleUpdateProduct(admin: any, formData: FormData, productId: st
       if (seoTitle) translationsInput.push({ key: "meta_title", value: seoTitle, locale });
       if (metaDescription) translationsInput.push({ key: "meta_description", value: metaDescription, locale });
 
+      // Save to Shopify
       for (const translation of translationsInput) {
         await admin.graphql(
           `#graphql
@@ -763,6 +798,40 @@ async function handleUpdateProduct(admin: any, formData: FormData, productId: st
             },
           }
         );
+      }
+
+      // 🔥 DIRECT DB UPDATE: Update local database immediately after Shopify success
+      console.log(`[UPDATE-PRODUCT] Updating DB translations for product ${productId}`);
+
+      // Get the shop from the product ID or extract from context
+      const product = await db.product.findFirst({
+        where: { id: productId },
+        select: { shop: true }
+      });
+
+      if (product) {
+        // Delete existing translations for this locale and product
+        await db.productTranslation.deleteMany({
+          where: {
+            productId: productId,
+            locale: locale,
+          },
+        });
+
+        // Insert new translations
+        if (translationsInput.length > 0) {
+          await db.productTranslation.createMany({
+            data: translationsInput.map(t => ({
+              productId: productId,
+              key: t.key,
+              value: t.value,
+              locale: t.locale,
+              digest: null,
+              shop: product.shop,
+            })),
+          });
+          console.log(`[UPDATE-PRODUCT] ✓ Saved ${translationsInput.length} translations to DB`);
+        }
       }
 
       return json({ success: true });
