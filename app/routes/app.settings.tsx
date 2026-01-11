@@ -65,8 +65,28 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     });
   }
 
+  // Get counts for App Setup section
+  const productCount = await db.product.count({
+    where: { shop: session.shop },
+  });
+
+  const translationCount = await db.translation.count({
+    where: {
+      product: {
+        shop: session.shop,
+      },
+    },
+  });
+
+  const webhookCount = await db.webhookLog.count({
+    where: { shop: session.shop },
+  });
+
   return json({
     shop: session.shop,
+    productCount,
+    translationCount,
+    webhookCount,
     settings: {
       huggingfaceApiKey: settings.huggingfaceApiKey || "",
       geminiApiKey: settings.geminiApiKey || "",
@@ -226,7 +246,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function SettingsPage() {
-  const { shop, settings, instructions } = useLoaderData<typeof loader>();
+  const { shop, settings, instructions, productCount, translationCount, webhookCount } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const { t } = useI18n();
 
@@ -242,7 +262,7 @@ export default function SettingsPage() {
     { label: t.settings.languages.en, value: "en" },
   ];
 
-  const [selectedSection, setSelectedSection] = useState<"language" | "ai" | "instructions">("language");
+  const [selectedSection, setSelectedSection] = useState<"setup" | "ai" | "instructions" | "language">("setup");
   const [huggingfaceKey, setHuggingfaceKey] = useState(settings.huggingfaceApiKey);
   const [geminiKey, setGeminiKey] = useState(settings.geminiApiKey);
   const [claudeKey, setClaudeKey] = useState(settings.claudeApiKey);
@@ -283,6 +303,14 @@ export default function SettingsPage() {
   const [descriptionFormatMode, setDescriptionFormatMode] = useState<"html" | "rendered">("rendered");
   const descriptionFormatEditorRef = useRef<HTMLDivElement>(null);
 
+  // App Setup state
+  const [webhookStatus, setWebhookStatus] = useState<string>("");
+  const [syncStatus, setSyncStatus] = useState<string>("");
+  const [webhookLoading, setWebhookLoading] = useState(false);
+  const [syncLoading, setSyncLoading] = useState(false);
+  const [webhookData, setWebhookData] = useState<any>(null);
+  const [syncErrors, setSyncErrors] = useState<string[]>([]);
+
   useEffect(() => {
     if (selectedSection === "instructions") {
       const changed =
@@ -297,6 +325,8 @@ export default function SettingsPage() {
         metaDescFormat !== instructions.metaDescFormat ||
         metaDescInstructions !== instructions.metaDescInstructions;
       setHasChanges(changed);
+    } else if (selectedSection === "setup") {
+      setHasChanges(false);
     } else {
       const changed =
         huggingfaceKey !== settings.huggingfaceApiKey ||
@@ -423,6 +453,70 @@ export default function SettingsPage() {
     }
   };
 
+  const handleSetupWebhooks = async () => {
+    setWebhookStatus("Setting up webhooks...");
+    setWebhookLoading(true);
+    setWebhookData(null);
+
+    try {
+      const response = await fetch("/api/setup-webhooks", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        setWebhookStatus(`✓ ${data.message}`);
+        setWebhookData(data);
+      } else {
+        setWebhookStatus(`✗ Error: ${data.error}`);
+      }
+    } catch (error: any) {
+      setWebhookStatus(`✗ Error: ${error.message}`);
+    } finally {
+      setWebhookLoading(false);
+    }
+  };
+
+  const handleSyncProducts = async (force: boolean = false) => {
+    setSyncStatus("Syncing products...");
+    setSyncLoading(true);
+    setSyncErrors([]);
+
+    try {
+      const url = force ? "/api/sync-products?force=true" : "/api/sync-products";
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        setSyncStatus(`✓ ${data.message}`);
+        if (data.errors) {
+          setSyncErrors(data.errors);
+        }
+        // Refresh counts
+        if (data.synced > 0) {
+          // Reload page to get fresh counts
+          window.location.reload();
+        }
+      } else {
+        setSyncStatus(`✗ Error: ${data.error}`);
+      }
+    } catch (error: any) {
+      setSyncStatus(`✗ Error: ${error.message}`);
+    } finally {
+      setSyncLoading(false);
+    }
+  };
+
   return (
     <Page fullWidth>
       <style>{`
@@ -456,20 +550,20 @@ export default function SettingsPage() {
           <div style={{ width: "250px", flexShrink: 0 }}>
             <Card padding="0">
               <button
-                onClick={() => setSelectedSection("language")}
+                onClick={() => setSelectedSection("setup")}
                 style={{
                   width: "100%",
                   padding: "1rem",
-                  background: selectedSection === "language" ? "#f1f8f5" : "white",
-                  borderLeft: selectedSection === "language" ? "3px solid #008060" : "3px solid transparent",
+                  background: selectedSection === "setup" ? "#f1f8f5" : "white",
+                  borderLeft: selectedSection === "setup" ? "3px solid #008060" : "3px solid transparent",
                   border: "none",
                   textAlign: "left",
                   cursor: "pointer",
                   transition: "all 0.2s",
                 }}
               >
-                <Text as="p" variant="bodyMd" fontWeight={selectedSection === "language" ? "semibold" : "regular"}>
-                  {t.settings.appLanguage}
+                <Text as="p" variant="bodyMd" fontWeight={selectedSection === "setup" ? "semibold" : "regular"}>
+                  {t.settings.appSetup}
                 </Text>
               </button>
               <button
@@ -505,7 +599,25 @@ export default function SettingsPage() {
                 }}
               >
                 <Text as="p" variant="bodyMd" fontWeight={selectedSection === "instructions" ? "semibold" : "regular"}>
-                  KI-Anweisungen
+                  {t.settings.aiInstructions}
+                </Text>
+              </button>
+              <button
+                onClick={() => setSelectedSection("language")}
+                style={{
+                  width: "100%",
+                  padding: "1rem",
+                  background: selectedSection === "language" ? "#f1f8f5" : "white",
+                  borderLeft: selectedSection === "language" ? "3px solid #008060" : "3px solid transparent",
+                  border: "none",
+                  borderTop: "1px solid #e1e3e5",
+                  textAlign: "left",
+                  cursor: "pointer",
+                  transition: "all 0.2s",
+                }}
+              >
+                <Text as="p" variant="bodyMd" fontWeight={selectedSection === "language" ? "semibold" : "regular"}>
+                  {t.settings.appLanguage}
                 </Text>
               </button>
             </Card>
@@ -526,37 +638,125 @@ export default function SettingsPage() {
                 </Banner>
               )}
 
-              {/* Language Settings */}
-              {selectedSection === "language" && (
-                <Card>
-                  <BlockStack gap="500">
-                    <Text as="h2" variant="headingLg">
-                      {t.settings.appLanguage}
-                    </Text>
+              {/* App Setup Section */}
+              {selectedSection === "setup" && (
+                <>
+                  <Banner title={t.settings.setupInstructions} tone="info">
+                    <p>{t.settings.setupDescription}</p>
+                    <ol>
+                      <li>{t.settings.setupStep1}</li>
+                      <li>{t.settings.setupStep2}</li>
+                    </ol>
+                  </Banner>
 
-                    <Text as="p" variant="bodyMd" tone="subdued">
-                      {t.settings.appLanguageDescription}
-                    </Text>
+                  <Card>
+                    <BlockStack gap="400">
+                      <Text as="h2" variant="headingMd">
+                        {t.settings.currentStatus}
+                      </Text>
+                      <BlockStack gap="200">
+                        <Text as="p">{t.settings.shop}: {shop}</Text>
+                        <Text as="p">{t.settings.productsInDb}: {productCount}</Text>
+                        <Text as="p">{t.settings.translationsInDb}: {translationCount}</Text>
+                        <Text as="p">{t.settings.webhookEventsReceived}: {webhookCount}</Text>
+                      </BlockStack>
+                    </BlockStack>
+                  </Card>
 
-                    <Select
-                      label=""
-                      options={APP_LANGUAGES}
-                      value={appLanguage}
-                      onChange={setAppLanguage}
-                    />
-
-                    <InlineStack align="end">
+                  <Card>
+                    <BlockStack gap="400">
+                      <Text as="h2" variant="headingMd">
+                        1. {t.settings.setupWebhooks}
+                      </Text>
+                      <Text as="p">
+                        {t.settings.setupWebhooksDescription}
+                      </Text>
                       <Button
-                        variant={hasChanges ? "primary" : undefined}
-                        onClick={handleSave}
-                        disabled={!hasChanges}
-                        loading={fetcher.state !== "idle"}
+                        onClick={handleSetupWebhooks}
+                        loading={webhookLoading}
                       >
-                        {t.products.saveChanges}
+                        {t.settings.setupWebhooks}
                       </Button>
-                    </InlineStack>
-                  </BlockStack>
-                </Card>
+                      {webhookStatus && (
+                        <Banner
+                          tone={
+                            webhookStatus.startsWith("✓") ? "success" : "critical"
+                          }
+                        >
+                          {webhookStatus}
+                        </Banner>
+                      )}
+                      {webhookData?.webhooks && (
+                        <BlockStack gap="200">
+                          <Text as="p" variant="bodyMd" fontWeight="bold">
+                            {t.settings.registeredWebhooks}
+                          </Text>
+                          {webhookData.webhooks.map((w: any, i: number) => (
+                            <Text as="p" key={i}>
+                              • {w.topic} → {w.callbackUrl}
+                            </Text>
+                          ))}
+                        </BlockStack>
+                      )}
+                    </BlockStack>
+                  </Card>
+
+                  <Card>
+                    <BlockStack gap="400">
+                      <Text as="h2" variant="headingMd">
+                        2. {t.settings.syncProducts}
+                      </Text>
+                      <Text as="p">
+                        {t.settings.syncProductsDescription}
+                      </Text>
+                      <BlockStack gap="200">
+                        <Button
+                          onClick={() => handleSyncProducts(false)}
+                          loading={syncLoading}
+                          variant="primary"
+                        >
+                          {t.settings.syncProducts}
+                        </Button>
+                        {productCount > 0 && (
+                          <Button
+                            onClick={() => handleSyncProducts(true)}
+                            loading={syncLoading}
+                            variant="secondary"
+                          >
+                            {t.settings.forceResync}
+                          </Button>
+                        )}
+                      </BlockStack>
+                      {syncStatus && (
+                        <Banner
+                          tone={syncStatus.startsWith("✓") ? "success" : "critical"}
+                        >
+                          {syncStatus}
+                        </Banner>
+                      )}
+                      {syncErrors.length > 0 && (
+                        <BlockStack gap="200">
+                          <Text as="p" variant="bodyMd" fontWeight="bold">
+                            {t.settings.errors}
+                          </Text>
+                          {syncErrors.map((err: string, i: number) => (
+                            <Text as="p" key={i} tone="critical">
+                              • {err}
+                            </Text>
+                          ))}
+                        </BlockStack>
+                      )}
+                    </BlockStack>
+                  </Card>
+
+                  {productCount > 0 && (
+                    <Banner title={t.settings.setupComplete} tone="success">
+                      <p>
+                        {t.settings.setupCompleteDescription}
+                      </p>
+                    </Banner>
+                  )}
+                </>
               )}
 
               {/* AI Settings */}
@@ -888,11 +1088,11 @@ export default function SettingsPage() {
                 <Card>
                   <BlockStack gap="500">
                     <Text as="h2" variant="headingLg">
-                      KI-Anweisungen für Produktfelder
+                      {t.settings.aiInstructionsTitle}
                     </Text>
 
                     <Text as="p" variant="bodyMd" tone="subdued">
-                      Geben Sie für jedes Feld ein Formatbeispiel und spezifische Anweisungen an, an denen sich die KI orientieren soll.
+                      {t.settings.aiInstructionsDescription}
                     </Text>
 
                     <InlineStack align="end">
@@ -909,24 +1109,24 @@ export default function SettingsPage() {
                     {/* Title */}
                     <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
                       <BlockStack gap="400">
-                        <Text as="h3" variant="headingMd">Titel</Text>
+                        <Text as="h3" variant="headingMd">{t.settings.title}</Text>
                         <TextField
-                          label="Formatbeispiel"
+                          label={t.settings.formatExample}
                           value={titleFormat}
                           onChange={setTitleFormat}
                           multiline={3}
                           autoComplete="off"
                           placeholder="z.B. Premium Leder Geldbörse - Elegant & Stilvoll"
-                          helpText={`${titleFormat.length} Zeichen - Kopieren Sie ein Beispiel eines idealen Titels hier hinein`}
+                          helpText={`${titleFormat.length} Zeichen - ${t.settings.formatExampleHelp.replace('{field}', t.settings.title)}`}
                         />
                         <TextField
-                          label="Anweisungen"
+                          label={t.settings.instructions}
                           value={titleInstructions}
                           onChange={setTitleInstructions}
                           multiline={3}
                           autoComplete="off"
                           placeholder="z.B. Nicht länger als 60 Zeichen, gehobene Ausdrucksweise, Material und Hauptmerkmal nennen"
-                          helpText={`${titleInstructions.length} Zeichen - Spezifische Anweisungen für die KI`}
+                          helpText={`${titleInstructions.length} Zeichen - ${t.settings.instructionsHelp}`}
                         />
                       </BlockStack>
                     </div>
@@ -935,14 +1135,14 @@ export default function SettingsPage() {
                     <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
                       <BlockStack gap="400">
                         <InlineStack align="space-between" blockAlign="center">
-                          <Text as="h3" variant="headingMd">Beschreibung</Text>
+                          <Text as="h3" variant="headingMd">{t.settings.description}</Text>
                           <Button size="slim" onClick={toggleDescriptionFormatMode}>
-                            {descriptionFormatMode === "html" ? "Vorschau" : "HTML"}
+                            {descriptionFormatMode === "html" ? t.settings.previewMode : t.settings.htmlMode}
                           </Button>
                         </InlineStack>
 
                         <div>
-                          <Text as="p" variant="bodyMd" fontWeight="medium">Formatbeispiel</Text>
+                          <Text as="p" variant="bodyMd" fontWeight="medium">{t.settings.formatExample}</Text>
                           {descriptionFormatMode === "rendered" && (
                             <div style={{ marginTop: "0.5rem", display: "flex", gap: "0.25rem", flexWrap: "wrap", padding: "0.5rem", background: "white", border: "1px solid #c9cccf", borderRadius: "8px 8px 0 0" }}>
                               <ButtonGroup variant="segmented">
@@ -1002,18 +1202,18 @@ export default function SettingsPage() {
                             />
                           )}
                           <Text as="p" variant="bodySm" tone="subdued">
-                            {descriptionFormat.replace(/<[^>]*>/g, "").length} Zeichen - Kopieren Sie ein Beispiel einer idealen Beschreibung hier hinein
+                            {descriptionFormat.replace(/<[^>]*>/g, "").length} Zeichen - {t.settings.formatExampleHelp.replace('{field}', t.settings.description)}
                           </Text>
                         </div>
 
                         <TextField
-                          label="Anweisungen"
+                          label={t.settings.instructions}
                           value={descriptionInstructions}
                           onChange={setDescriptionInstructions}
                           multiline={3}
                           autoComplete="off"
                           placeholder="z.B. 150-200 Wörter, gehobene Ausdrucksweise, Vorteile hervorheben, Storytelling verwenden"
-                          helpText={`${descriptionInstructions.length} Zeichen - Spezifische Anweisungen für die KI`}
+                          helpText={`${descriptionInstructions.length} Zeichen - ${t.settings.instructionsHelp}`}
                         />
                       </BlockStack>
                     </div>
@@ -1021,24 +1221,24 @@ export default function SettingsPage() {
                     {/* Handle */}
                     <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
                       <BlockStack gap="400">
-                        <Text as="h3" variant="headingMd">URL-Slug (Handle)</Text>
+                        <Text as="h3" variant="headingMd">{t.settings.handle}</Text>
                         <TextField
-                          label="Formatbeispiel"
+                          label={t.settings.formatExample}
                           value={handleFormat}
                           onChange={setHandleFormat}
                           multiline={2}
                           autoComplete="off"
                           placeholder="z.B. premium-leder-geldboerse-elegant"
-                          helpText={`${handleFormat.length} Zeichen - Kopieren Sie ein Beispiel eines idealen URL-Slugs hier hinein`}
+                          helpText={`${handleFormat.length} Zeichen - ${t.settings.formatExampleHelp.replace('{field}', t.settings.handle)}`}
                         />
                         <TextField
-                          label="Anweisungen"
+                          label={t.settings.instructions}
                           value={handleInstructions}
                           onChange={setHandleInstructions}
                           multiline={3}
                           autoComplete="off"
                           placeholder="z.B. Nur Kleinbuchstaben und Bindestriche, keine Umlaute, max. 50 Zeichen, SEO-optimiert"
-                          helpText={`${handleInstructions.length} Zeichen - Spezifische Anweisungen für die KI`}
+                          helpText={`${handleInstructions.length} Zeichen - ${t.settings.instructionsHelp}`}
                         />
                       </BlockStack>
                     </div>
@@ -1046,24 +1246,24 @@ export default function SettingsPage() {
                     {/* SEO Title */}
                     <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
                       <BlockStack gap="400">
-                        <Text as="h3" variant="headingMd">SEO-Titel</Text>
+                        <Text as="h3" variant="headingMd">{t.settings.seoTitle}</Text>
                         <TextField
-                          label="Formatbeispiel"
+                          label={t.settings.formatExample}
                           value={seoTitleFormat}
                           onChange={setSeoTitleFormat}
                           multiline={2}
                           autoComplete="off"
                           placeholder="z.B. Premium Leder Geldbörse kaufen | Handgefertigt & Elegant"
-                          helpText={`${seoTitleFormat.length} Zeichen - Kopieren Sie ein Beispiel eines idealen SEO-Titels hier hinein`}
+                          helpText={`${seoTitleFormat.length} Zeichen - ${t.settings.formatExampleHelp.replace('{field}', t.settings.seoTitle)}`}
                         />
                         <TextField
-                          label="Anweisungen"
+                          label={t.settings.instructions}
                           value={seoTitleInstructions}
                           onChange={setSeoTitleInstructions}
                           multiline={3}
                           autoComplete="off"
                           placeholder="z.B. 50-60 Zeichen, Keywords am Anfang, Call-to-Action verwenden"
-                          helpText={`${seoTitleInstructions.length} Zeichen - Spezifische Anweisungen für die KI`}
+                          helpText={`${seoTitleInstructions.length} Zeichen - ${t.settings.instructionsHelp}`}
                         />
                       </BlockStack>
                     </div>
@@ -1071,27 +1271,60 @@ export default function SettingsPage() {
                     {/* Meta Description */}
                     <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
                       <BlockStack gap="400">
-                        <Text as="h3" variant="headingMd">Meta-Beschreibung</Text>
+                        <Text as="h3" variant="headingMd">{t.settings.metaDescription}</Text>
                         <TextField
-                          label="Formatbeispiel"
+                          label={t.settings.formatExample}
                           value={metaDescFormat}
                           onChange={setMetaDescFormat}
                           multiline={3}
                           autoComplete="off"
                           placeholder="z.B. Entdecken Sie unsere handgefertigten Premium Leder Geldbörsen. Elegant, langlebig und zeitlos. Jetzt kaufen!"
-                          helpText={`${metaDescFormat.length} Zeichen - Kopieren Sie ein Beispiel einer idealen Meta-Beschreibung hier hinein`}
+                          helpText={`${metaDescFormat.length} Zeichen - ${t.settings.formatExampleHelp.replace('{field}', t.settings.metaDescription)}`}
                         />
                         <TextField
-                          label="Anweisungen"
+                          label={t.settings.instructions}
                           value={metaDescInstructions}
                           onChange={setMetaDescInstructions}
                           multiline={3}
                           autoComplete="off"
                           placeholder="z.B. 150-160 Zeichen, Keywords verwenden, zum Klicken anregen, USP hervorheben"
-                          helpText={`${metaDescInstructions.length} Zeichen - Spezifische Anweisungen für die KI`}
+                          helpText={`${metaDescInstructions.length} Zeichen - ${t.settings.instructionsHelp}`}
                         />
                       </BlockStack>
                     </div>
+
+                    <InlineStack align="end">
+                      <Button
+                        variant={hasChanges ? "primary" : undefined}
+                        onClick={handleSave}
+                        disabled={!hasChanges}
+                        loading={fetcher.state !== "idle"}
+                      >
+                        {t.products.saveChanges}
+                      </Button>
+                    </InlineStack>
+                  </BlockStack>
+                </Card>
+              )}
+
+              {/* Language Settings */}
+              {selectedSection === "language" && (
+                <Card>
+                  <BlockStack gap="500">
+                    <Text as="h2" variant="headingLg">
+                      {t.settings.appLanguage}
+                    </Text>
+
+                    <Text as="p" variant="bodyMd" tone="subdued">
+                      {t.settings.appLanguageDescription}
+                    </Text>
+
+                    <Select
+                      label=""
+                      options={APP_LANGUAGES}
+                      value={appLanguage}
+                      onChange={setAppLanguage}
+                    />
 
                     <InlineStack align="end">
                       <Button
