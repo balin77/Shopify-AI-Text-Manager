@@ -48,13 +48,110 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
 
   try {
+    const { db } = await import("../db.server");
+
+    // Load shopLocales from Shopify (still needed for UI)
+    const localesResponse = await admin.graphql(
+      `#graphql
+        query getShopLocales {
+          shopLocales {
+            locale
+            name
+            primary
+            published
+          }
+        }`
+    );
+
+    const localesData = await localesResponse.json();
+    const shopLocales = localesData.data?.shopLocales || [];
+    const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "de";
+
+    // Load content from DATABASE (not from Shopify!)
+    const [collections, articles, dbPages] = await Promise.all([
+      // Collections with translations
+      db.collection.findMany({
+        where: { shop: session.shop },
+        include: {
+          translations: true,
+        },
+        orderBy: { title: 'asc' },
+      }),
+      // Articles with translations
+      db.article.findMany({
+        where: { shop: session.shop },
+        include: {
+          translations: true,
+        },
+        orderBy: { title: 'asc' },
+      }),
+      // Pages with translations
+      db.page.findMany({
+        where: { shop: session.shop },
+        include: {
+          translations: true,
+        },
+        orderBy: { title: 'asc' },
+      }),
+    ]);
+
+    // Transform DB data to match frontend expectations
+    // Group articles by blog
+    const blogMap = new Map<string, any>();
+    for (const article of articles) {
+      if (!blogMap.has(article.blogId)) {
+        blogMap.set(article.blogId, {
+          id: article.blogId,
+          title: article.blogTitle,
+          articles: [],
+        });
+      }
+      blogMap.get(article.blogId)!.articles.push({
+        id: article.id,
+        title: article.title,
+        handle: article.handle,
+        body: article.body,
+        seo: {
+          title: article.seoTitle,
+          description: article.seoDescription,
+        },
+        translations: article.translations,
+      });
+    }
+
+    const blogs = Array.from(blogMap.values());
+
+    // Transform collections
+    const transformedCollections = collections.map(c => ({
+      id: c.id,
+      title: c.title,
+      handle: c.handle,
+      descriptionHtml: c.descriptionHtml,
+      seo: {
+        title: c.seoTitle,
+        description: c.seoDescription,
+      },
+      translations: c.translations,
+    }));
+
+    // Transform pages
+    const transformedPages = dbPages.map(p => ({
+      id: p.id,
+      title: p.title,
+      handle: p.handle,
+      body: p.body,
+      translations: p.translations,
+    }));
+
+    // Policies, metadata, menus, themes still loaded on-demand from ContentService
+    // (We don't cache these yet - not critical)
     const contentService = new ContentService(admin);
-    const { shopLocales, blogs, collections, pages, policies, metadata, menus, themes, primaryLocale } = await contentService.getAllContent();
+    const { policies, metadata, menus, themes } = await contentService.getAllContent();
 
     return json({
       blogs,
-      collections,
-      pages,
+      collections: transformedCollections,
+      pages: transformedPages,
       policies,
       metadata,
       menus,
@@ -65,6 +162,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       error: null
     });
   } catch (error: any) {
+    console.error("[CONTENT-LOADER] Error:", error);
     return json({
       blogs: [],
       collections: [],
@@ -228,6 +326,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const primaryLocale = formData.get("primaryLocale") as string;
 
     try {
+      const { db } = await import("../db.server");
+
       if (locale !== primaryLocale) {
         // Handle translations for non-primary locales
         const translationsInput = [];
@@ -249,6 +349,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           if (metaDescription) translationsInput.push({ key: "seo_description", value: metaDescription, locale });
         }
 
+        // Save to Shopify
         for (const translation of translationsInput) {
           await admin.graphql(TRANSLATE_CONTENT, {
             variables: {
@@ -256,6 +357,35 @@ export const action = async ({ request }: ActionFunctionArgs) => {
               translations: [translation]
             }
           });
+        }
+
+        // 🔥 DIRECT DB UPDATE: Update local database immediately after Shopify success
+        console.log(`[CONTENT-UPDATE] Updating DB translations for ${contentType} ${itemId}`);
+
+        const resourceType = contentType === "pages" ? "Page" : contentType === "collections" ? "Collection" : "Article";
+
+        // Delete existing translations for this locale and resource
+        await db.contentTranslation.deleteMany({
+          where: {
+            resourceId: itemId,
+            resourceType,
+            locale,
+          },
+        });
+
+        // Insert new translations
+        if (translationsInput.length > 0) {
+          await db.contentTranslation.createMany({
+            data: translationsInput.map(t => ({
+              resourceId: itemId,
+              resourceType,
+              key: t.key,
+              value: t.value,
+              locale: t.locale,
+              digest: null,
+            })),
+          });
+          console.log(`[CONTENT-UPDATE] ✓ Saved ${translationsInput.length} translations to DB`);
         }
 
         return json({ success: true });
@@ -280,6 +410,24 @@ export const action = async ({ request }: ActionFunctionArgs) => {
               error: data.data.pageUpdate.userErrors[0].message
             }, { status: 500 });
           }
+
+          // 🔥 DIRECT DB UPDATE: Update local database immediately
+          console.log(`[CONTENT-UPDATE] Updating DB for page ${itemId}`);
+          await db.page.update({
+            where: {
+              shop_id: {
+                shop: session.shop,
+                id: itemId,
+              },
+            },
+            data: {
+              title,
+              handle,
+              body: description,
+              lastSyncedAt: new Date(),
+            },
+          });
+          console.log(`[CONTENT-UPDATE] ✓ Updated page in DB`);
 
           return json({ success: true, item: data.data.pageUpdate.page });
         } else if (contentType === "collections") {
@@ -306,6 +454,26 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             }, { status: 500 });
           }
 
+          // 🔥 DIRECT DB UPDATE: Update local database immediately
+          console.log(`[CONTENT-UPDATE] Updating DB for collection ${itemId}`);
+          await db.collection.update({
+            where: {
+              shop_id: {
+                shop: session.shop,
+                id: itemId,
+              },
+            },
+            data: {
+              title,
+              handle,
+              descriptionHtml: description,
+              seoTitle,
+              seoDescription: metaDescription,
+              lastSyncedAt: new Date(),
+            },
+          });
+          console.log(`[CONTENT-UPDATE] ✓ Updated collection in DB`);
+
           return json({ success: true, item: data.data.collectionUpdate.collection });
         } else if (contentType === "blogs") {
           const response = await admin.graphql(UPDATE_ARTICLE, {
@@ -331,10 +499,31 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             }, { status: 500 });
           }
 
+          // 🔥 DIRECT DB UPDATE: Update local database immediately
+          console.log(`[CONTENT-UPDATE] Updating DB for article ${itemId}`);
+          await db.article.update({
+            where: {
+              shop_id: {
+                shop: session.shop,
+                id: itemId,
+              },
+            },
+            data: {
+              title,
+              handle,
+              body: description,
+              seoTitle,
+              seoDescription: metaDescription,
+              lastSyncedAt: new Date(),
+            },
+          });
+          console.log(`[CONTENT-UPDATE] ✓ Updated article in DB`);
+
           return json({ success: true, item: data.data.articleUpdate.article });
         }
       }
     } catch (error: any) {
+      console.error("[CONTENT-UPDATE] Error:", error);
       return json({ success: false, error: error.message }, { status: 500 });
     }
   }
