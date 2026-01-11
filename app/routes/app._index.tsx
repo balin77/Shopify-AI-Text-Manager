@@ -7,6 +7,7 @@ import { MainNavigation } from "../components/MainNavigation";
 import { SeoSidebar } from "../components/SeoSidebar";
 import { ProductList } from "../components/products/ProductList";
 import { ProductEditor } from "../components/products/ProductEditor";
+import { TranslationDebugPanel } from "../components/debug/TranslationDebugPanel";
 import { useI18n } from "../contexts/I18nContext";
 import { useProductFields } from "../hooks/useProductFields";
 import { useAISuggestions } from "../hooks/useAISuggestions";
@@ -454,6 +455,16 @@ export default function Index() {
             isTranslatingOption={fetcher.state !== "idle" && fetcher.formData?.get("action") === "translateOption"}
             translatingOptionId={fetcher.formData?.get("optionId")?.toString()}
           />
+
+          {/* Translation Debug Panel */}
+          {selectedProduct && (
+            <div style={{ marginTop: "1rem" }}>
+              <TranslationDebugPanel
+                product={selectedProduct}
+                shopLocales={shopLocales}
+              />
+            </div>
+          )}
         </div>
 
         {/* Right: SEO Sidebar */}
