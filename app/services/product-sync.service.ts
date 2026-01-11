@@ -37,7 +37,8 @@ export class ProductSyncService {
       // 3. Fetch translations for all non-primary locales
       const allTranslations = await this.fetchAllTranslations(
         productId,
-        locales.filter(l => !l.primary)
+        locales.filter(l => !l.primary),
+        productData // Pass product data for fallback values
       );
       console.log(`[ProductSync] Fetched ${allTranslations.length} translations`);
 
@@ -130,7 +131,7 @@ export class ProductSyncService {
   /**
    * Fetch translations for all locales
    */
-  private async fetchAllTranslations(productId: string, locales: any[]) {
+  private async fetchAllTranslations(productId: string, locales: any[], productData: any) {
     const allTranslations = [];
     const digestMap = new Map<string, string>();
 
@@ -210,6 +211,18 @@ export class ProductSyncService {
       // Keep Shopify's field names as-is (meta_title, meta_description)
       for (const translation of translatableFieldsMap.values()) {
         allTranslations.push(translation);
+      }
+
+      // IMPORTANT: Shopify doesn't always return 'handle' in translatableContent
+      // Add it manually as a fallback if missing
+      if (!translatableFieldsMap.has('handle') && productData.handle) {
+        console.log(`[ProductSync] Adding missing 'handle' field for ${locale.locale} with fallback value`);
+        allTranslations.push({
+          key: 'handle',
+          value: productData.handle, // Use primary locale handle as fallback
+          locale: locale.locale,
+          digest: null, // No digest available for manually added fields
+        });
       }
 
       console.log(`[ProductSync] Found ${translatableFieldsMap.size} translatable fields for ${locale.locale}`);
