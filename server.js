@@ -51,6 +51,16 @@ app.all(
 );
 
 const port = process.env.PORT || 8080;
-app.listen(port, () => {
+app.listen(port, async () => {
   console.log(`Express server listening at http://localhost:${port}`);
+
+  // Start task cleanup service
+  try {
+    const { TaskCleanupService } = await import("./src/services/task-cleanup.service.ts");
+    const cleanupService = TaskCleanupService.getInstance();
+    cleanupService.start();
+    console.log("✅ Task cleanup service started");
+  } catch (error) {
+    console.error("❌ Failed to start task cleanup service:", error);
+  }
 });

@@ -580,7 +580,38 @@ export default function ContentPage() {
     } else if (selectedType === "policies") {
       return policies.map((p: any) => ({ ...p, title: p.title || p.type, type: "policies" }));
     } else if (selectedType === "menus") {
-      return menus.map((m: any) => ({ ...m, type: "menus" }));
+      // Flatten menu items into individual entries
+      const menuItems: any[] = [];
+      menus.forEach((menu: any) => {
+        if (menu.items && menu.items.length > 0) {
+          menu.items.forEach((item: any) => {
+            menuItems.push({
+              id: item.id,
+              title: item.title,
+              url: item.url,
+              menuTitle: menu.title,
+              menuHandle: menu.handle,
+              type: "menus",
+              translations: []
+            });
+            // Add sub-items if they exist
+            if (item.items && item.items.length > 0) {
+              item.items.forEach((subItem: any) => {
+                menuItems.push({
+                  id: subItem.id,
+                  title: `${item.title} → ${subItem.title}`,
+                  url: subItem.url,
+                  menuTitle: menu.title,
+                  menuHandle: menu.handle,
+                  type: "menus",
+                  translations: []
+                });
+              });
+            }
+          });
+        }
+      });
+      return menuItems;
     } else if (selectedType === "metaobjects") {
       return metaobjects.map((m: any) => ({ ...m, title: m.displayName, type: "metaobjects" }));
     } else if (selectedType === "templates") {
@@ -1091,6 +1122,11 @@ export default function ContentPage() {
                           {selectedType === "blogs" && (
                             <Text as="p" variant="bodySm" tone="subdued">
                               {t.content.blogPrefix} {item.blogTitle}
+                            </Text>
+                          )}
+                          {selectedType === "menus" && item.menuTitle && (
+                            <Text as="p" variant="bodySm" tone="subdued">
+                              Menu: {item.menuTitle}
                             </Text>
                           )}
                         </BlockStack>

@@ -2,6 +2,7 @@ import { json, type ActionFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import { AIService } from "../../src/services/ai.service";
 import { TranslationService } from "../../src/services/translation.service";
+import { getTaskExpirationDate } from "../../src/utils/task.utils";
 
 export async function handleProductActions({ request }: ActionFunctionArgs) {
   console.log('📮 [PRODUCT.ACTIONS] === PRODUCT ACTION HANDLER CALLED ===');
@@ -174,6 +175,7 @@ async function handleGenerateAIText(
       resourceTitle: contextTitle,
       fieldType,
       progress: 0,
+      expiresAt: getTaskExpirationDate(),
     },
   });
 
@@ -307,6 +309,7 @@ async function handleTranslateField(
       fieldType,
       targetLocale,
       progress: 0,
+      expiresAt: getTaskExpirationDate(),
     },
   });
 
@@ -397,6 +400,7 @@ async function handleTranslateAll(
       resourceTitle: title,
       fieldType: "all",
       progress: 0,
+      expiresAt: getTaskExpirationDate(),
     },
   });
 
@@ -885,6 +889,7 @@ async function handleGenerateAltText(
       resourceTitle: productTitle,
       fieldType: `altText_${imageIndex}`,
       progress: 0,
+      expiresAt: getTaskExpirationDate(),
     },
   });
 
@@ -962,6 +967,7 @@ async function handleGenerateAllAltTexts(
       resourceTitle: productTitle,
       fieldType: "allAltTexts",
       progress: 0,
+      expiresAt: getTaskExpirationDate(),
     },
   });
 

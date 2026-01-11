@@ -1,6 +1,6 @@
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useFetcher, useRevalidator } from "@remix-run/react";
-import { useEffect } from "react";
+import { useLoaderData, useFetcher, useRevalidator, useSearchParams } from "@remix-run/react";
+import { useEffect, useState, useCallback } from "react";
 import {
   Page,
   Card,
@@ -11,10 +11,13 @@ import {
   Button,
   ProgressBar,
   EmptyState,
+  Select,
+  Pagination,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
 import { useI18n } from "../contexts/I18nContext";
+import { getTaskDateRange } from "../../src/utils/task.utils";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -22,11 +25,36 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   try {
     const { db } = await import("../db.server");
 
-    // Get all tasks for this shop, ordered by creation date (newest first)
+    // Parse query parameters for filtering and pagination
+    const url = new URL(request.url);
+    const statusFilter = url.searchParams.get("status") || "all"; // all, completed, failed
+    const daysFilter = parseInt(url.searchParams.get("days") || "3"); // 1, 2, 3
+    const page = parseInt(url.searchParams.get("page") || "1");
+    const pageSize = 20;
+
+    // Build where clause
+    const where: any = { shop: session.shop };
+
+    // Status filter
+    if (statusFilter === "completed") {
+      where.status = "completed";
+    } else if (statusFilter === "failed") {
+      where.status = "failed";
+    }
+
+    // Date range filter (max 3 days)
+    const dateFrom = getTaskDateRange(daysFilter);
+    where.createdAt = { gte: dateFrom };
+
+    // Get total count for pagination
+    const totalCount = await db.task.count({ where });
+
+    // Get tasks with pagination
     const tasks = await db.task.findMany({
-      where: { shop: session.shop },
+      where,
       orderBy: { createdAt: "desc" },
-      take: 50, // Limit to last 50 tasks
+      skip: (page - 1) * pageSize,
+      take: pageSize,
     });
 
     // Sanitize tasks to prevent JSON serialization errors
@@ -38,11 +66,31 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       completedAt: task.completedAt ? task.completedAt.toISOString() : null,
       createdAt: task.createdAt.toISOString(),
       updatedAt: task.updatedAt.toISOString(),
+      expiresAt: task.expiresAt ? task.expiresAt.toISOString() : null,
     }));
 
-    return json({ tasks: sanitizedTasks, shop: session.shop });
+    return json({
+      tasks: sanitizedTasks,
+      shop: session.shop,
+      pagination: {
+        page,
+        pageSize,
+        totalCount,
+        totalPages: Math.ceil(totalCount / pageSize),
+      },
+      filters: {
+        status: statusFilter,
+        days: daysFilter,
+      }
+    });
   } catch (error: any) {
-    return json({ tasks: [], shop: session.shop, error: error.message }, { status: 500 });
+    return json({
+      tasks: [],
+      shop: session.shop,
+      error: error.message,
+      pagination: { page: 1, pageSize: 20, totalCount: 0, totalPages: 0 },
+      filters: { status: "all", days: 3 }
+    }, { status: 500 });
   }
 };
 
@@ -81,10 +129,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function TasksPage() {
-  const { tasks, shop, error } = useLoaderData<typeof loader>();
+  const { tasks, shop, error, pagination, filters } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
   const { t } = useI18n();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   // Auto-refresh every 3 seconds if there are running tasks
   useEffect(() => {
@@ -100,6 +149,29 @@ export default function TasksPage() {
       return () => clearInterval(interval);
     }
   }, [tasks, revalidator]);
+
+  // Handle filter changes
+  const handleStatusFilterChange = useCallback((value: string) => {
+    const params = new URLSearchParams(searchParams);
+    params.set("status", value);
+    params.set("page", "1"); // Reset to first page
+    setSearchParams(params);
+  }, [searchParams, setSearchParams]);
+
+  const handleDaysFilterChange = useCallback((value: string) => {
+    const params = new URLSearchParams(searchParams);
+    params.set("days", value);
+    params.set("page", "1"); // Reset to first page
+    setSearchParams(params);
+  }, [searchParams, setSearchParams]);
+
+  const handlePageChange = useCallback((direction: "previous" | "next") => {
+    const params = new URLSearchParams(searchParams);
+    const currentPage = pagination.page;
+    const newPage = direction === "next" ? currentPage + 1 : currentPage - 1;
+    params.set("page", newPage.toString());
+    setSearchParams(params);
+  }, [searchParams, setSearchParams, pagination.page]);
 
   const handleCancelTask = (taskId: string) => {
     fetcher.submit({ action: "cancel", taskId }, { method: "POST" });
@@ -152,6 +224,45 @@ export default function TasksPage() {
           <Text as="h1" variant="headingLg">
             {t.tasks.title}
           </Text>
+
+          {/* Filters */}
+          <Card>
+            <BlockStack gap="400">
+              <InlineStack gap="400" wrap={false}>
+                <div style={{ minWidth: "200px" }}>
+                  <Select
+                    label="Status"
+                    options={[
+                      { label: "Alle Tasks", value: "all" },
+                      { label: "Erfolgreich", value: "completed" },
+                      { label: "Fehlgeschlagen", value: "failed" },
+                    ]}
+                    value={filters.status}
+                    onChange={handleStatusFilterChange}
+                  />
+                </div>
+                <div style={{ minWidth: "200px" }}>
+                  <Select
+                    label="Zeitraum"
+                    options={[
+                      { label: "Letzter Tag", value: "1" },
+                      { label: "Letzte 2 Tage", value: "2" },
+                      { label: "Letzte 3 Tage", value: "3" },
+                    ]}
+                    value={filters.days.toString()}
+                    onChange={handleDaysFilterChange}
+                  />
+                </div>
+              </InlineStack>
+
+              {/* Pagination Info */}
+              {pagination.totalCount > 0 && (
+                <Text as="p" variant="bodySm" tone="subdued">
+                  {pagination.totalCount} Task(s) gefunden - Seite {pagination.page} von {pagination.totalPages}
+                </Text>
+              )}
+            </BlockStack>
+          </Card>
 
           {tasks.length === 0 ? (
             <Card>
@@ -262,6 +373,21 @@ export default function TasksPage() {
                   </BlockStack>
                 </Card>
               ))}
+
+              {/* Pagination */}
+              {pagination.totalPages > 1 && (
+                <Card>
+                  <div style={{ display: "flex", justifyContent: "center" }}>
+                    <Pagination
+                      hasPrevious={pagination.page > 1}
+                      onPrevious={() => handlePageChange("previous")}
+                      hasNext={pagination.page < pagination.totalPages}
+                      onNext={() => handlePageChange("next")}
+                      label={`Seite ${pagination.page} von ${pagination.totalPages}`}
+                    />
+                  </div>
+                </Card>
+              )}
             </BlockStack>
           )}
         </BlockStack>
