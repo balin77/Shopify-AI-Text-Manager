@@ -170,22 +170,62 @@ export class ProductSyncService {
         continue;
       }
 
-      // Store digests (needed for future updates)
+      // Build a map of all translatable fields
+      const translatableFieldsMap = new Map<string, any>();
+
       if (resource.translatableContent) {
+        console.log(`[ProductSync] Available translatable keys for ${locale.locale}:`,
+          resource.translatableContent.map((c: any) => c.key).join(', '));
+
         for (const content of resource.translatableContent) {
+          // Store digest for future updates
           digestMap.set(content.key, content.digest);
+
+          // Store translatable field with default value from primary locale
+          translatableFieldsMap.set(content.key, {
+            key: content.key,
+            value: content.value, // Default value from primary locale
+            locale: locale.locale,
+            digest: content.digest,
+          });
         }
       }
 
-      // Collect translations
+      // Override with actual translations if they exist
       if (resource.translations) {
+        console.log(`[ProductSync] Existing translations for ${locale.locale}:`,
+          resource.translations.map((t: any) => t.key).join(', '));
+
         for (const translation of resource.translations) {
-          allTranslations.push({
-            ...translation,
+          translatableFieldsMap.set(translation.key, {
+            key: translation.key,
+            value: translation.value, // Actual translated value
+            locale: translation.locale,
             digest: digestMap.get(translation.key),
           });
         }
       }
+
+      // Collect all translations (both existing and translatable fields)
+      // Also normalize Shopify's field names to match our database schema
+      for (const translation of translatableFieldsMap.values()) {
+        // Normalize meta_title -> seo_title and meta_description -> seo_description
+        let normalizedKey = translation.key;
+        if (translation.key === 'meta_title') {
+          normalizedKey = 'seo_title';
+          console.log(`[ProductSync] Normalizing meta_title -> seo_title for ${locale.locale}`);
+        } else if (translation.key === 'meta_description') {
+          normalizedKey = 'seo_description';
+          console.log(`[ProductSync] Normalizing meta_description -> seo_description for ${locale.locale}`);
+        }
+
+        allTranslations.push({
+          ...translation,
+          key: normalizedKey,
+        });
+      }
+
+      console.log(`[ProductSync] Found ${translatableFieldsMap.size} translatable fields for ${locale.locale}`);
     }
 
     return allTranslations;
