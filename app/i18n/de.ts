@@ -215,6 +215,28 @@ export const de = {
     title: "Aufgaben",
     noTasks: "Keine laufenden Aufgaben",
     noTasksDescription: "Alle Aufgaben werden hier angezeigt, wenn Sie KI-Generierungen oder Übersetzungen starten.",
+    // Filters
+    filters: "Filter",
+    statusFilter: "Status",
+    timeRangeFilter: "Zeitraum",
+    statusOptions: {
+      all: "Alle Tasks",
+      completed: "Erfolgreich",
+      failed: "Fehlgeschlagen",
+    },
+    timeRangeOptions: {
+      lastHour: "Letzte Stunde",
+      last6Hours: "Letzte 6 Stunden",
+      last12Hours: "Letzte 12 Stunden",
+      lastDay: "Letzter Tag",
+      last2Days: "Letzte 2 Tage",
+      last3Days: "Letzte 3 Tage",
+    },
+    // Pagination
+    tasksFound: "{count} Task(s) gefunden",
+    page: "Seite",
+    of: "von",
+    // Task Types
     taskType: {
       translation: "Übersetzung",
       aiGeneration: "KI-Generierung",

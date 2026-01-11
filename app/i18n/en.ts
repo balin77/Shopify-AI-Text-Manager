@@ -217,6 +217,28 @@ export const en: Translation = {
     title: "Tasks",
     noTasks: "No running tasks",
     noTasksDescription: "All tasks will appear here when you start AI generations or translations.",
+    // Filters
+    filters: "Filters",
+    statusFilter: "Status",
+    timeRangeFilter: "Time Range",
+    statusOptions: {
+      all: "All Tasks",
+      completed: "Successful",
+      failed: "Failed",
+    },
+    timeRangeOptions: {
+      lastHour: "Last Hour",
+      last6Hours: "Last 6 Hours",
+      last12Hours: "Last 12 Hours",
+      lastDay: "Last Day",
+      last2Days: "Last 2 Days",
+      last3Days: "Last 3 Days",
+    },
+    // Pagination
+    tasksFound: "{count} task(s) found",
+    page: "Page",
+    of: "of",
+    // Task Types
     taskType: {
       translation: "Translation",
       aiGeneration: "AI Generation",

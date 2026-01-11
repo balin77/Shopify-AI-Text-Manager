@@ -14,11 +14,11 @@ export function getTaskExpirationDate(): Date {
 
 /**
  * Get date range for filtering tasks
- * @param days Number of days to look back (max 3)
+ * @param hours Number of hours to look back (1, 6, 12, 24, 48, 72 - max 72 = 3 days)
  */
-export function getTaskDateRange(days: number = 3): Date {
-  const maxDays = Math.min(days, 3); // Enforce max 3 days
+export function getTaskDateRange(hours: number = 72): Date {
+  const maxHours = Math.min(hours, 72); // Enforce max 72 hours (3 days)
   const dateFrom = new Date();
-  dateFrom.setDate(dateFrom.getDate() - maxDays);
+  dateFrom.setHours(dateFrom.getHours() - maxHours);
   return dateFrom;
 }

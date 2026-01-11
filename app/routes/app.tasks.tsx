@@ -28,7 +28,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // Parse query parameters for filtering and pagination
     const url = new URL(request.url);
     const statusFilter = url.searchParams.get("status") || "all"; // all, completed, failed
-    const daysFilter = parseInt(url.searchParams.get("days") || "3"); // 1, 2, 3
+    const hoursFilter = parseInt(url.searchParams.get("hours") || "72"); // 1, 6, 12, 24, 48, 72
     const page = parseInt(url.searchParams.get("page") || "1");
     const pageSize = 20;
 
@@ -42,8 +42,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       where.status = "failed";
     }
 
-    // Date range filter (max 3 days)
-    const dateFrom = getTaskDateRange(daysFilter);
+    // Date range filter (max 72 hours = 3 days)
+    const dateFrom = getTaskDateRange(hoursFilter);
     where.createdAt = { gte: dateFrom };
 
     // Get total count for pagination
@@ -80,7 +80,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       },
       filters: {
         status: statusFilter,
-        days: daysFilter,
+        hours: hoursFilter,
       }
     });
   } catch (error: any) {
@@ -89,7 +89,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       shop: session.shop,
       error: error.message,
       pagination: { page: 1, pageSize: 20, totalCount: 0, totalPages: 0 },
-      filters: { status: "all", days: 3 }
+      filters: { status: "all", hours: 72 }
     }, { status: 500 });
   }
 };
@@ -158,9 +158,9 @@ export default function TasksPage() {
     setSearchParams(params);
   }, [searchParams, setSearchParams]);
 
-  const handleDaysFilterChange = useCallback((value: string) => {
+  const handleHoursFilterChange = useCallback((value: string) => {
     const params = new URLSearchParams(searchParams);
-    params.set("days", value);
+    params.set("hours", value);
     params.set("page", "1"); // Reset to first page
     setSearchParams(params);
   }, [searchParams, setSearchParams]);
@@ -231,11 +231,11 @@ export default function TasksPage() {
               <InlineStack gap="400" wrap={false}>
                 <div style={{ minWidth: "200px" }}>
                   <Select
-                    label="Status"
+                    label={t.tasks.statusFilter}
                     options={[
-                      { label: "Alle Tasks", value: "all" },
-                      { label: "Erfolgreich", value: "completed" },
-                      { label: "Fehlgeschlagen", value: "failed" },
+                      { label: t.tasks.statusOptions.all, value: "all" },
+                      { label: t.tasks.statusOptions.completed, value: "completed" },
+                      { label: t.tasks.statusOptions.failed, value: "failed" },
                     ]}
                     value={filters.status}
                     onChange={handleStatusFilterChange}
@@ -243,14 +243,17 @@ export default function TasksPage() {
                 </div>
                 <div style={{ minWidth: "200px" }}>
                   <Select
-                    label="Zeitraum"
+                    label={t.tasks.timeRangeFilter}
                     options={[
-                      { label: "Letzter Tag", value: "1" },
-                      { label: "Letzte 2 Tage", value: "2" },
-                      { label: "Letzte 3 Tage", value: "3" },
+                      { label: t.tasks.timeRangeOptions.lastHour, value: "1" },
+                      { label: t.tasks.timeRangeOptions.last6Hours, value: "6" },
+                      { label: t.tasks.timeRangeOptions.last12Hours, value: "12" },
+                      { label: t.tasks.timeRangeOptions.lastDay, value: "24" },
+                      { label: t.tasks.timeRangeOptions.last2Days, value: "48" },
+                      { label: t.tasks.timeRangeOptions.last3Days, value: "72" },
                     ]}
-                    value={filters.days.toString()}
-                    onChange={handleDaysFilterChange}
+                    value={filters.hours.toString()}
+                    onChange={handleHoursFilterChange}
                   />
                 </div>
               </InlineStack>
@@ -258,7 +261,7 @@ export default function TasksPage() {
               {/* Pagination Info */}
               {pagination.totalCount > 0 && (
                 <Text as="p" variant="bodySm" tone="subdued">
-                  {pagination.totalCount} Task(s) gefunden - Seite {pagination.page} von {pagination.totalPages}
+                  {t.tasks.tasksFound.replace('{count}', pagination.totalCount.toString())} - {t.tasks.page} {pagination.page} {t.tasks.of} {pagination.totalPages}
                 </Text>
               )}
             </BlockStack>
@@ -383,7 +386,7 @@ export default function TasksPage() {
                       onPrevious={() => handlePageChange("previous")}
                       hasNext={pagination.page < pagination.totalPages}
                       onNext={() => handlePageChange("next")}
-                      label={`Seite ${pagination.page} von ${pagination.totalPages}`}
+                      label={`${t.tasks.page} ${pagination.page} ${t.tasks.of} ${pagination.totalPages}`}
                     />
                   </div>
                 </Card>
