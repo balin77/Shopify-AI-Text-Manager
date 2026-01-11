@@ -169,16 +169,28 @@ export default function Index() {
   // This ensures that webhook updates in the background are reflected in the UI
   useEffect(() => {
     if (fetcher.state === "idle" && fetcher.data?.success) {
-      // Don't reload for AI suggestions (they're just displayed, not saved yet)
-      if ('generatedContent' in fetcher.data || 'translatedValue' in fetcher.data) {
+      // Check if this is a "translateAll" response (which saves to Shopify)
+      const isTranslateAll = 'translations' in fetcher.data &&
+                            !('locale' in fetcher.data) &&
+                            !('fieldType' in fetcher.data);
+
+      // Don't reload for AI suggestions or single field translations (they're just displayed, not saved yet)
+      if ('generatedContent' in fetcher.data ||
+          ('translatedValue' in fetcher.data && !isTranslateAll) ||
+          ('translatedName' in fetcher.data) || // Option translations
+          ('altText' in fetcher.data) || // Single alt-text generation
+          ('generatedAltTexts' in fetcher.data)) { // Bulk alt-text generation
         return; // Skip reload for suggestions
       }
 
-      console.log('[AUTO-REFRESH] Reloading product data from database');
-      // Small delay to ensure database transaction is complete
+      console.log('[AUTO-REFRESH] Reloading product data from database after save operation');
+      // Longer delay to ensure:
+      // 1. Shopify has processed the update
+      // 2. Webhook has been triggered (if registered)
+      // 3. Database transaction is complete
       setTimeout(() => {
         revalidator.revalidate();
-      }, 300);
+      }, 1500);
     }
   }, [fetcher.state, fetcher.data]);
 
