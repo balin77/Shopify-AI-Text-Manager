@@ -29,6 +29,10 @@ interface ProductListProps {
   onProductSelect: (productId: string) => void;
   searchPlaceholder: string;
   countLabel: string;
+  resourceName: { singular: string; plural: string };
+  paginationOf: string;
+  paginationPrevious: string;
+  paginationNext: string;
 }
 
 export function ProductList({
@@ -37,6 +41,10 @@ export function ProductList({
   onProductSelect,
   searchPlaceholder,
   countLabel,
+  resourceName,
+  paginationOf,
+  paginationPrevious,
+  paginationNext,
 }: ProductListProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
@@ -106,7 +114,7 @@ export function ProductList({
 
       <div style={{ maxHeight: "calc(100vh - 250px)", overflowY: "auto" }}>
         <ResourceList
-          resourceName={{ singular: "Produkt", plural: "Produkte" }}
+          resourceName={resourceName}
           items={paginatedProducts}
           renderItem={(item: Product) => {
             const { id, title, featuredImage, status } = item;
@@ -198,7 +206,7 @@ export function ProductList({
         <div style={{ padding: "1rem", borderTop: "1px solid #e1e3e5" }}>
           <InlineStack align="space-between" blockAlign="center">
             <Text as="p" variant="bodySm" tone="subdued">
-              {startIndex + 1}-{Math.min(startIndex + productsPerPage, filteredProducts.length)} von{" "}
+              {startIndex + 1}-{Math.min(startIndex + productsPerPage, filteredProducts.length)} {paginationOf}{" "}
               {filteredProducts.length}
             </Text>
             <InlineStack gap="200">
@@ -206,7 +214,7 @@ export function ProductList({
                 icon={ChevronLeftIcon}
                 onClick={() => setCurrentPage(currentPage - 1)}
                 disabled={currentPage === 1}
-                accessibilityLabel="Vorherige Seite"
+                accessibilityLabel={paginationPrevious}
               />
               <Text as="span" variant="bodySm">
                 {currentPage} / {totalPages}
@@ -215,7 +223,7 @@ export function ProductList({
                 icon={ChevronRightIcon}
                 onClick={() => setCurrentPage(currentPage + 1)}
                 disabled={currentPage === totalPages}
-                accessibilityLabel="Nächste Seite"
+                accessibilityLabel={paginationNext}
               />
             </InlineStack>
           </InlineStack>

@@ -35,6 +35,10 @@ export const en: Translation = {
     accept: "Accept",
     acceptTranslate: "Accept & Translate",
     decline: "Decline",
+    resourceName: {
+      singular: "Product",
+      plural: "Products",
+    },
     status: {
       active: "ACTIVE",
       draft: "DRAFT",
