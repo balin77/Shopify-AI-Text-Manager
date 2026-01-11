@@ -82,24 +82,21 @@ export class ContentService {
   }
 
   async getShopPolicies() {
-    const response = await this.admin.graphql(GET_SHOP_POLICIES);
-    const data = await response.json();
+    try {
+      const response = await this.admin.graphql(GET_SHOP_POLICIES);
+      const data = await response.json();
 
-    console.log('=== SHOP POLICIES API RESPONSE ===');
-    console.log('Raw policies data:', JSON.stringify(data, null, 2));
+      console.log('=== SHOP POLICIES API RESPONSE ===');
+      console.log('Raw policies data:', JSON.stringify(data, null, 2));
 
-    // Transform policies into an array
-    const shop = data.data.shop;
-    const policies = [];
+      const policies = data.data?.shop?.shopPolicies || [];
 
-    if (shop.shippingPolicy) policies.push(shop.shippingPolicy);
-    if (shop.refundPolicy) policies.push(shop.refundPolicy);
-    if (shop.privacyPolicy) policies.push(shop.privacyPolicy);
-    if (shop.termsOfService) policies.push(shop.termsOfService);
-    if (shop.subscriptionPolicy) policies.push(shop.subscriptionPolicy);
-
-    console.log(`Processed policies: ${policies.length}`);
-    return policies;
+      console.log(`Processed policies: ${policies.length}`);
+      return policies;
+    } catch (error) {
+      console.error('Error fetching shop policies:', error);
+      return [];
+    }
   }
 
   async getShopMetadata() {

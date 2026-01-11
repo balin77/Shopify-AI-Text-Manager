@@ -86,35 +86,7 @@ export const GET_TRANSLATIONS = `#graphql
 export const GET_SHOP_POLICIES = `#graphql
   query getShopPolicies {
     shop {
-      shippingPolicy {
-        id
-        title
-        body
-        type
-        url
-      }
-      refundPolicy {
-        id
-        title
-        body
-        type
-        url
-      }
-      privacyPolicy {
-        id
-        title
-        body
-        type
-        url
-      }
-      termsOfService {
-        id
-        title
-        body
-        type
-        url
-      }
-      subscriptionPolicy {
+      shopPolicies {
         id
         title
         body
