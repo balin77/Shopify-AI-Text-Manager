@@ -33,6 +33,10 @@ export const de = {
     accept: "Übernehmen",
     acceptTranslate: "Übernehmen & Übersetzen",
     decline: "Ablehnen",
+    resourceName: {
+      singular: "Produkt",
+      plural: "Produkte",
+    },
     status: {
       active: "AKTIV",
       draft: "ENTWURF",
