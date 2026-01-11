@@ -131,6 +131,7 @@ export function ProductEditor({
   translatingOptionId,
 }: ProductEditorProps) {
   const [descriptionMode, setDescriptionMode] = useState<"html" | "rendered">("rendered");
+  const [selectedImageIndex, setSelectedImageIndex] = useState(0);
 
   const isPrimaryLocale = currentLanguage === primaryLocale;
 
@@ -181,15 +182,7 @@ export function ProductEditor({
           </div>
 
           {/* Header with Save Button */}
-          <InlineStack align="space-between" blockAlign="center">
-            <InlineStack gap="200" blockAlign="center">
-              <Badge tone={product.status === "ACTIVE" ? "success" : undefined}>
-                {product.status}
-              </Badge>
-              <Text as="p" variant="bodySm" tone="subdued">
-                ID: {product.id.split("/").pop()}
-              </Text>
-            </InlineStack>
+          <InlineStack align="end" blockAlign="center">
             <InlineStack gap="200">
               {isPrimaryLocale && (
                 <Button onClick={onTranslateAll} loading={isTranslatingAll}>
@@ -207,12 +200,61 @@ export function ProductEditor({
             </InlineStack>
           </InlineStack>
 
-          {product.featuredImage && (
-            <img
-              src={product.featuredImage.url}
-              alt={product.title}
-              style={{ width: "100%", maxWidth: "300px", borderRadius: "8px" }}
-            />
+          {/* Image Gallery */}
+          {product.images && product.images.length > 0 && (
+            <BlockStack gap="300">
+              {/* Main Image Display */}
+              <div style={{ position: "relative", width: "100%", maxWidth: "300px" }}>
+                <img
+                  src={product.images[selectedImageIndex].url}
+                  alt={product.images[selectedImageIndex].altText || product.title}
+                  style={{
+                    width: "100%",
+                    borderRadius: "8px",
+                    display: "block"
+                  }}
+                />
+              </div>
+
+              {/* Thumbnail Navigation - only show if multiple images */}
+              {product.images.length > 1 && (
+                <div style={{
+                  display: "flex",
+                  gap: "8px",
+                  flexWrap: "wrap",
+                  maxWidth: "300px"
+                }}>
+                  {product.images.map((image, index) => (
+                    <button
+                      key={index}
+                      onClick={() => setSelectedImageIndex(index)}
+                      style={{
+                        width: "50px",
+                        height: "50px",
+                        padding: 0,
+                        border: selectedImageIndex === index ? "2px solid #005bd3" : "2px solid transparent",
+                        borderRadius: "6px",
+                        cursor: "pointer",
+                        overflow: "hidden",
+                        background: "transparent",
+                        transition: "border-color 0.2s ease",
+                      }}
+                    >
+                      <img
+                        src={image.url}
+                        alt={image.altText || `Bild ${index + 1}`}
+                        style={{
+                          width: "100%",
+                          height: "100%",
+                          objectFit: "cover",
+                          borderRadius: "4px",
+                        }}
+                      />
+                    </button>
+                  ))}
+                </div>
+              )}
+            </BlockStack>
           )}
 
           {/* Title Field */}
