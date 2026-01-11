@@ -232,9 +232,6 @@ model Collection {
   shopifyUpdatedAt DateTime
   lastSyncedAt     DateTime @default(now())
 
-  // Relations
-  translations    ContentTranslation[]
-
   @@unique([shop, id])
   @@index([shop])
   @@index([lastSyncedAt])
@@ -255,9 +252,6 @@ model Article {
   shopifyUpdatedAt DateTime
   lastSyncedAt     DateTime @default(now())
 
-  // Relations
-  translations    ContentTranslation[]
-
   @@unique([shop, id])
   @@index([shop])
   @@index([shop, blogId])
@@ -275,9 +269,6 @@ model Page {
   shopifyUpdatedAt DateTime
   lastSyncedAt     DateTime @default(now())
 
-  // Relations
-  translations    ContentTranslation[]
-
   @@unique([shop, id])
   @@index([shop])
   @@index([lastSyncedAt])
@@ -287,6 +278,7 @@ model ContentTranslation {
   id           String  @id @default(cuid())
 
   // Polymorphic relation (can belong to Collection, Article, or Page)
+  // NOTE: No foreign key constraints - we handle this polymorphically in code
   resourceId   String  // The GID of the parent resource
   resourceType String  // "Collection", "Article", or "Page"
 
@@ -297,11 +289,6 @@ model ContentTranslation {
 
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
-
-  // Relations - each needs unique constraint name
-  collection   Collection? @relation(fields: [resourceId], references: [id], onDelete: Cascade, map: "ContentTranslation_collection_fkey")
-  article      Article?    @relation(fields: [resourceId], references: [id], onDelete: Cascade, map: "ContentTranslation_article_fkey")
-  page         Page?       @relation(fields: [resourceId], references: [id], onDelete: Cascade, map: "ContentTranslation_page_fkey")
 
   @@unique([resourceId, key, locale])
   @@index([resourceId, locale])
