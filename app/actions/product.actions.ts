@@ -338,11 +338,17 @@ async function handleTranslateField(
   }
 }
 
-async function handleTranslateSuggestion(translationService: TranslationService, formData: FormData) {
+async function handleTranslateSuggestion(
+  provider: any,
+  config: any,
+  formData: FormData,
+  shop: string
+) {
   const suggestion = formData.get("suggestion") as string;
   const fieldType = formData.get("fieldType") as string;
 
   try {
+    const translationService = new TranslationService(provider, config, shop);
     const changedFields: any = {};
     changedFields[fieldType] = suggestion;
 
@@ -356,7 +362,8 @@ async function handleTranslateSuggestion(translationService: TranslationService,
 
 async function handleTranslateAll(
   admin: any,
-  translationService: TranslationService,
+  provider: any,
+  config: any,
   formData: FormData,
   productId: string,
   shop: string
@@ -369,12 +376,12 @@ async function handleTranslateAll(
 
   const { db } = await import("../db.server");
 
-  // Create task entry
+  // Create task entry first
   const task = await db.task.create({
     data: {
       shop,
       type: "bulkTranslation",
-      status: "running",
+      status: "pending",
       resourceType: "product",
       resourceId: productId,
       resourceTitle: title,
@@ -382,6 +389,9 @@ async function handleTranslateAll(
       progress: 0,
     },
   });
+
+  // Create TranslationService instance with task ID
+  const translationService = new TranslationService(provider, config, shop, task.id);
 
   try {
     const changedFields: any = {};
@@ -717,17 +727,23 @@ async function handleUpdateProduct(admin: any, formData: FormData, productId: st
   }
 }
 
-async function handleTranslateOption(translationService: TranslationService, formData: FormData) {
+async function handleTranslateOption(
+  provider: any,
+  config: any,
+  formData: FormData,
+  shop: string
+) {
   const optionId = formData.get("optionId") as string;
   const optionName = formData.get("optionName") as string;
   const optionValuesStr = formData.get("optionValues") as string;
   const targetLocale = formData.get("targetLocale") as string;
 
   try {
+    const translationService = new TranslationService(provider, config, shop);
     const optionValues = JSON.parse(optionValuesStr);
 
     // Translate the option name
-    const nameTranslations = await translationService.translateProduct({ optionName });
+    const nameTranslations = await translationService.translateProduct({ optionName }, [targetLocale]);
     const translatedName = nameTranslations[targetLocale]?.optionName || "";
 
     // Translate all option values
@@ -736,7 +752,7 @@ async function handleTranslateOption(translationService: TranslationService, for
       valueFields[`value_${index}`] = value;
     });
 
-    const valueTranslations = await translationService.translateProduct(valueFields);
+    const valueTranslations = await translationService.translateProduct(valueFields, [targetLocale]);
     const translatedValues = optionValues.map((_: string, index: number) => {
       return valueTranslations[targetLocale]?.[`value_${index}`] || "";
     });
