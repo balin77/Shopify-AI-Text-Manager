@@ -283,6 +283,18 @@ export class ProductSyncService {
 
     // Insert translations
     if (translations.length > 0) {
+      // Log what we're about to save for debugging
+      const translationsByLocale = translations.reduce((acc: any, t: any) => {
+        if (!acc[t.locale]) acc[t.locale] = [];
+        acc[t.locale].push(t.key);
+        return acc;
+      }, {});
+
+      console.log(`[ProductSync] Saving ${translations.length} translations to database:`);
+      for (const [locale, keys] of Object.entries(translationsByLocale)) {
+        console.log(`[ProductSync]   ${locale}: ${(keys as string[]).join(', ')}`);
+      }
+
       await db.translation.createMany({
         data: translations.map(t => ({
           productId: productData.id,
@@ -292,7 +304,9 @@ export class ProductSyncService {
           digest: t.digest || null,
         })),
       });
-      console.log(`[ProductSync] Saved ${translations.length} translations`);
+      console.log(`[ProductSync] ✓ Successfully saved ${translations.length} translations to database`);
+    } else {
+      console.log(`[ProductSync] No translations to save`);
     }
 
     // Insert images
