@@ -435,17 +435,19 @@ export function ProductEditor({
 
       {/* Product Options */}
       {product.options && product.options.length > 0 && (
-        <ProductOptions
-          options={product.options}
-          isPrimaryLocale={isPrimaryLocale}
-          currentLanguage={currentLanguage}
-          translations={optionTranslations}
-          onTranslate={onTranslateOption}
-          onOptionNameChange={onOptionNameChange}
-          onOptionValueChange={onOptionValueChange}
-          isTranslating={isTranslatingOption}
-          translatingOptionId={translatingOptionId}
-        />
+        <div style={{ marginTop: "1rem" }}>
+          <ProductOptions
+            options={product.options}
+            isPrimaryLocale={isPrimaryLocale}
+            currentLanguage={currentLanguage}
+            translations={optionTranslations}
+            onTranslate={onTranslateOption}
+            onOptionNameChange={onOptionNameChange}
+            onOptionValueChange={onOptionValueChange}
+            isTranslating={isTranslatingOption}
+            translatingOptionId={translatingOptionId}
+          />
+        </div>
       )}
     </>
   );
