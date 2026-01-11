@@ -20,12 +20,14 @@ interface UseProductFieldsProps {
   selectedProduct: Product | null;
   currentLanguage: string;
   primaryLocale: string;
+  imageAltTexts?: Record<number, string>;
 }
 
 export function useProductFields({
   selectedProduct,
   currentLanguage,
   primaryLocale,
+  imageAltTexts = {},
 }: UseProductFieldsProps) {
   const [editableTitle, setEditableTitle] = useState("");
   const [editableDescription, setEditableDescription] = useState("");
@@ -83,9 +85,12 @@ export function useProductFields({
       const seoTitleChanged = editableSeoTitle !== getOriginalValue("meta_title", selectedProduct.seo?.title || "");
       const metaDescChanged = editableMetaDescription !== getOriginalValue("meta_description", selectedProduct.seo?.description || "");
 
-      setHasChanges(titleChanged || descChanged || handleChanged || seoTitleChanged || metaDescChanged);
+      // Check if any alt-texts have changed
+      const altTextsChanged = Object.keys(imageAltTexts).length > 0;
+
+      setHasChanges(titleChanged || descChanged || handleChanged || seoTitleChanged || metaDescChanged || altTextsChanged);
     }
-  }, [editableTitle, editableDescription, editableHandle, editableSeoTitle, editableMetaDescription, selectedProduct, currentLanguage]);
+  }, [editableTitle, editableDescription, editableHandle, editableSeoTitle, editableMetaDescription, selectedProduct, currentLanguage, imageAltTexts]);
 
   // Check if field is translated
   const isFieldTranslated = (key: string) => {

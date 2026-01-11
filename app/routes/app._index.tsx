@@ -141,6 +141,7 @@ export default function Index() {
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
   const [currentLanguage, setCurrentLanguage] = useState(primaryLocale);
   const [optionTranslations, setOptionTranslations] = useState<Record<string, { name: string; values: string[] }>>({});
+  const [imageAltTexts, setImageAltTexts] = useState<Record<number, string>>({});
 
   const selectedProduct = products.find((p: any) => p.id === selectedProductId);
 
@@ -161,6 +162,7 @@ export default function Index() {
     selectedProduct,
     currentLanguage,
     primaryLocale,
+    imageAltTexts,
   });
 
   const { aiSuggestions, removeSuggestion } = useAISuggestions(fetcher.data);
@@ -290,6 +292,24 @@ export default function Index() {
     }
   }, [fetcher.data]);
 
+  // Handle bulk alt-text generation - auto-accept all suggestions
+  useEffect(() => {
+    if (fetcher.data?.success && 'generatedAltTexts' in fetcher.data) {
+      const { generatedAltTexts } = fetcher.data as any;
+      console.log('[ALT-TEXT] Auto-accepting bulk generated alt-texts:', generatedAltTexts);
+      // Automatically accept all generated alt-texts
+      setImageAltTexts(prev => ({
+        ...prev,
+        ...generatedAltTexts
+      }));
+    }
+  }, [fetcher.data]);
+
+  // Reset alt-text state when product changes
+  useEffect(() => {
+    setImageAltTexts({});
+  }, [selectedProductId]);
+
   const handleSaveProduct = () => {
     if (!selectedProductId || !hasChanges) return;
     fetcher.submit(
@@ -303,6 +323,7 @@ export default function Index() {
         handle: editableHandle,
         seoTitle: editableSeoTitle,
         metaDescription: editableMetaDescription,
+        imageAltTexts: JSON.stringify(imageAltTexts),
       },
       { method: "POST" }
     );
@@ -524,6 +545,8 @@ export default function Index() {
             onGenerateAltText={handleGenerateAltText}
             onGenerateAllAltTexts={handleGenerateAllAltTexts}
             fetcherData={fetcher.data}
+            imageAltTexts={imageAltTexts}
+            setImageAltTexts={setImageAltTexts}
           />
 
           {/* Translation Debug Panel */}

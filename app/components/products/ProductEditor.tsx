@@ -96,6 +96,8 @@ interface ProductEditorProps {
   onGenerateAltText: (imageIndex: number) => void;
   onGenerateAllAltTexts: () => void;
   fetcherData: any;
+  imageAltTexts: Record<number, string>;
+  setImageAltTexts: (value: Record<number, string> | ((prev: Record<number, string>) => Record<number, string>)) => void;
 }
 
 export function ProductEditor({
@@ -139,33 +141,23 @@ export function ProductEditor({
   onGenerateAltText,
   onGenerateAllAltTexts,
   fetcherData,
+  imageAltTexts,
+  setImageAltTexts,
 }: ProductEditorProps) {
   const { t } = useI18n();
   const [descriptionMode, setDescriptionMode] = useState<"html" | "rendered">("rendered");
   const [selectedImageIndex, setSelectedImageIndex] = useState(0);
-  const [imageAltTexts, setImageAltTexts] = useState<Record<number, string>>({});
   const [altTextSuggestions, setAltTextSuggestions] = useState<Record<number, string>>({});
 
   const isPrimaryLocale = currentLanguage === primaryLocale;
 
-  // Handle alt-text generation responses
+  // Handle single alt-text generation responses (show suggestion box)
   useEffect(() => {
     if (fetcherData?.success && 'altText' in fetcherData && 'imageIndex' in fetcherData) {
-      const { altText, imageIndex } = fetcherData;
+      const { altText, imageIndex} = fetcherData;
       setAltTextSuggestions(prev => ({
         ...prev,
         [imageIndex]: altText
-      }));
-    }
-  }, [fetcherData]);
-
-  // Handle bulk alt-text generation responses
-  useEffect(() => {
-    if (fetcherData?.success && 'generatedAltTexts' in fetcherData) {
-      const { generatedAltTexts } = fetcherData;
-      setAltTextSuggestions(prev => ({
-        ...prev,
-        ...generatedAltTexts
       }));
     }
   }, [fetcherData]);

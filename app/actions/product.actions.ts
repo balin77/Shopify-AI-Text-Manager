@@ -648,8 +648,86 @@ async function handleUpdateProduct(admin: any, formData: FormData, productId: st
   const handle = formData.get("handle") as string;
   const seoTitle = formData.get("seoTitle") as string;
   const metaDescription = formData.get("metaDescription") as string;
+  const imageAltTextsStr = formData.get("imageAltTexts") as string;
 
   try {
+    // Parse alt-texts if provided
+    let imageAltTexts: Record<number, string> = {};
+    if (imageAltTextsStr) {
+      try {
+        imageAltTexts = JSON.parse(imageAltTextsStr);
+      } catch (e) {
+        console.error('[UPDATE-PRODUCT] Failed to parse imageAltTexts:', e);
+      }
+    }
+
+    // Update alt-texts first (works for both primary and translated locales)
+    if (Object.keys(imageAltTexts).length > 0) {
+      console.log('[UPDATE-PRODUCT] Updating alt-texts:', imageAltTexts);
+
+      // Get product images to update
+      const productResponse = await admin.graphql(
+        `#graphql
+          query getProduct($id: ID!) {
+            product(id: $id) {
+              media(first: 50) {
+                edges {
+                  node {
+                    ... on MediaImage {
+                      id
+                      alt
+                    }
+                  }
+                }
+              }
+            }
+          }`,
+        { variables: { id: productId } }
+      );
+
+      const productData = await productResponse.json();
+      const mediaEdges = productData.data?.product?.media?.edges || [];
+
+      // Update each image with new alt-text
+      for (const [indexStr, altText] of Object.entries(imageAltTexts)) {
+        const index = parseInt(indexStr);
+        if (index < mediaEdges.length) {
+          const imageId = mediaEdges[index].node.id;
+          console.log(`[UPDATE-PRODUCT] Updating alt-text for image ${index} (${imageId}): ${altText}`);
+
+          await admin.graphql(
+            `#graphql
+              mutation updateMedia($media: [UpdateMediaInput!]!) {
+                productUpdateMedia(media: $media, productId: "${productId}") {
+                  media {
+                    alt
+                    mediaErrors {
+                      field
+                      message
+                    }
+                  }
+                  mediaUserErrors {
+                    field
+                    message
+                  }
+                  product {
+                    id
+                  }
+                }
+              }`,
+            {
+              variables: {
+                media: [{
+                  id: imageId,
+                  alt: altText
+                }]
+              }
+            }
+          );
+        }
+      }
+    }
+
     if (locale !== formData.get("primaryLocale")) {
       const translationsInput = [];
       if (title) translationsInput.push({ key: "title", value: title, locale });
