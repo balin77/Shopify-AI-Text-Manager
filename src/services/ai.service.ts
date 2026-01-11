@@ -402,8 +402,8 @@ Gib nur die HTML-formatierte Beschreibung zurück, ohne zusätzliche Erklärunge
     return await this.askAI(prompt);
   }
 
-  async generateImageAltText(imageUrl: string, productTitle?: string): Promise<string> {
-    const prompt = `Du bist ein SEO-Experte für E-Commerce. Erstelle einen optimierten Alt-Text für ein Produktbild.
+  async generateImageAltText(imageUrl: string, productTitle?: string, customPrompt?: string): Promise<string> {
+    const prompt = customPrompt || `Du bist ein SEO-Experte für E-Commerce. Erstelle einen optimierten Alt-Text für ein Produktbild.
 
 ${productTitle ? `Produkt: ${productTitle}` : ''}
 Bild-URL: ${imageUrl}

@@ -122,6 +122,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       seoTitleInstructions: instructions.seoTitleInstructions || "",
       metaDescFormat: instructions.metaDescFormat || "",
       metaDescInstructions: instructions.metaDescInstructions || "",
+      altTextFormat: instructions.altTextFormat || "",
+      altTextInstructions: instructions.altTextInstructions || "",
     },
   });
 };
@@ -147,6 +149,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           seoTitleInstructions: (formData.get("seoTitleInstructions") as string) || null,
           metaDescFormat: (formData.get("metaDescFormat") as string) || null,
           metaDescInstructions: (formData.get("metaDescInstructions") as string) || null,
+          altTextFormat: (formData.get("altTextFormat") as string) || null,
+          altTextInstructions: (formData.get("altTextInstructions") as string) || null,
         },
         create: {
           shop: session.shop,
@@ -160,6 +164,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           seoTitleInstructions: (formData.get("seoTitleInstructions") as string) || null,
           metaDescFormat: (formData.get("metaDescFormat") as string) || null,
           metaDescInstructions: (formData.get("metaDescInstructions") as string) || null,
+          altTextFormat: (formData.get("altTextFormat") as string) || null,
+          altTextInstructions: (formData.get("altTextInstructions") as string) || null,
         },
       });
 
@@ -300,6 +306,8 @@ export default function SettingsPage() {
   const [seoTitleInstructions, setSeoTitleInstructions] = useState(instructions.seoTitleInstructions);
   const [metaDescFormat, setMetaDescFormat] = useState(instructions.metaDescFormat);
   const [metaDescInstructions, setMetaDescInstructions] = useState(instructions.metaDescInstructions);
+  const [altTextFormat, setAltTextFormat] = useState(instructions.altTextFormat);
+  const [altTextInstructions, setAltTextInstructions] = useState(instructions.altTextInstructions);
   const [descriptionFormatMode, setDescriptionFormatMode] = useState<"html" | "rendered">("rendered");
   const descriptionFormatEditorRef = useRef<HTMLDivElement>(null);
 
@@ -310,6 +318,24 @@ export default function SettingsPage() {
   const [syncLoading, setSyncLoading] = useState(false);
   const [webhookData, setWebhookData] = useState<any>(null);
   const [syncErrors, setSyncErrors] = useState<string[]>([]);
+  const [languageChanged, setLanguageChanged] = useState(false);
+
+  // Track if language was changed
+  useEffect(() => {
+    if (appLanguage !== settings.appLanguage) {
+      setLanguageChanged(true);
+    } else {
+      setLanguageChanged(false);
+    }
+  }, [appLanguage, settings.appLanguage]);
+
+  // Reload page after language change is saved
+  useEffect(() => {
+    if (fetcher.state === "idle" && fetcher.data?.success && languageChanged && selectedSection === "language") {
+      // Language was saved successfully, reload to apply new language
+      window.location.reload();
+    }
+  }, [fetcher.state, fetcher.data, languageChanged, selectedSection]);
 
   useEffect(() => {
     if (selectedSection === "instructions") {
@@ -323,7 +349,9 @@ export default function SettingsPage() {
         seoTitleFormat !== instructions.seoTitleFormat ||
         seoTitleInstructions !== instructions.seoTitleInstructions ||
         metaDescFormat !== instructions.metaDescFormat ||
-        metaDescInstructions !== instructions.metaDescInstructions;
+        metaDescInstructions !== instructions.metaDescInstructions ||
+        altTextFormat !== instructions.altTextFormat ||
+        altTextInstructions !== instructions.altTextInstructions;
       setHasChanges(changed);
     } else if (selectedSection === "setup") {
       setHasChanges(false);
@@ -420,6 +448,8 @@ export default function SettingsPage() {
           seoTitleInstructions,
           metaDescFormat,
           metaDescInstructions,
+          altTextFormat,
+          altTextInstructions,
         },
         { method: "POST" }
       );
@@ -1289,6 +1319,31 @@ export default function SettingsPage() {
                           autoComplete="off"
                           placeholder="z.B. 150-160 Zeichen, Keywords verwenden, zum Klicken anregen, USP hervorheben"
                           helpText={`${metaDescInstructions.length} Zeichen - ${t.settings.instructionsHelp}`}
+                        />
+                      </BlockStack>
+                    </div>
+
+                    {/* Alt Text */}
+                    <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
+                      <BlockStack gap="400">
+                        <Text as="h3" variant="headingMd">Alt-Text (Bilder)</Text>
+                        <TextField
+                          label={t.settings.formatExample}
+                          value={altTextFormat}
+                          onChange={setAltTextFormat}
+                          multiline={2}
+                          autoComplete="off"
+                          placeholder="z.B. Premium Leder Geldbörse in eleganter Geschenkverpackung"
+                          helpText={`${altTextFormat.length} Zeichen - Formatbeispiel für Alt-Texte`}
+                        />
+                        <TextField
+                          label={t.settings.instructions}
+                          value={altTextInstructions}
+                          onChange={setAltTextInstructions}
+                          multiline={3}
+                          autoComplete="off"
+                          placeholder="z.B. 60-125 Zeichen, beschreibe was auf dem Bild zu sehen ist, SEO-freundlich, keine Füllwörter"
+                          helpText={`${altTextInstructions.length} Zeichen - ${t.settings.instructionsHelp}`}
                         />
                       </BlockStack>
                     </div>

@@ -80,6 +80,8 @@ model AIInstructions {
   seoTitleInstructions    String?  @db.Text
   metaDescFormat          String?  @db.Text
   metaDescInstructions    String?  @db.Text
+  altTextFormat           String?  @db.Text
+  altTextInstructions     String?  @db.Text
   createdAt               DateTime @default(now())
   updatedAt               DateTime @updatedAt
 }
