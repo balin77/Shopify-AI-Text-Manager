@@ -82,11 +82,26 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     where: { shop: session.shop },
   });
 
+  const collectionCount = await db.collection.count({
+    where: { shop: session.shop },
+  });
+
+  const articleCount = await db.article.count({
+    where: { shop: session.shop },
+  });
+
+  const pageCount = await db.page.count({
+    where: { shop: session.shop },
+  });
+
   return json({
     shop: session.shop,
     productCount,
     translationCount,
     webhookCount,
+    collectionCount,
+    articleCount,
+    pageCount,
     settings: {
       huggingfaceApiKey: settings.huggingfaceApiKey || "",
       geminiApiKey: settings.geminiApiKey || "",
@@ -252,7 +267,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function SettingsPage() {
-  const { shop, settings, instructions, productCount, translationCount, webhookCount } = useLoaderData<typeof loader>();
+  const { shop, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const { t } = useI18n();
 
@@ -512,33 +527,53 @@ export default function SettingsPage() {
   };
 
   const handleSyncProducts = async (force: boolean = false) => {
-    setSyncStatus("Syncing products...");
+    setSyncStatus("Syncing products and content...");
     setSyncLoading(true);
     setSyncErrors([]);
 
     try {
-      const url = force ? "/api/sync-products?force=true" : "/api/sync-products";
-      const response = await fetch(url, {
+      // Sync products first
+      const productsUrl = force ? "/api/sync-products?force=true" : "/api/sync-products";
+      const productsResponse = await fetch(productsUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
       });
 
-      const data = await response.json();
+      const productsData = await productsResponse.json();
 
-      if (data.success) {
-        setSyncStatus(`✓ ${data.message}`);
-        if (data.errors) {
-          setSyncErrors(data.errors);
+      // Sync content (collections, articles, pages)
+      const contentResponse = await fetch("/api/sync-content", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      });
+
+      const contentData = await contentResponse.json();
+
+      // Combine results
+      const productsSynced = productsData.success ? productsData.synced || 0 : 0;
+      const contentSynced = contentData.success ? contentData.stats?.total || 0 : 0;
+
+      if (productsData.success && contentData.success) {
+        setSyncStatus(
+          `✓ Synced ${productsSynced} products, ${contentData.stats?.collections || 0} collections, ${contentData.stats?.articles || 0} articles, ${contentData.stats?.pages || 0} pages`
+        );
+        if (productsData.errors) {
+          setSyncErrors(productsData.errors);
         }
         // Refresh counts
-        if (data.synced > 0) {
+        if (productsSynced > 0 || contentSynced > 0) {
           // Reload page to get fresh counts
           window.location.reload();
         }
       } else {
-        setSyncStatus(`✗ Error: ${data.error}`);
+        const errors = [];
+        if (!productsData.success) errors.push(`Products: ${productsData.error}`);
+        if (!contentData.success) errors.push(`Content: ${contentData.error}`);
+        setSyncStatus(`✗ Error: ${errors.join(", ")}`);
       }
     } catch (error: any) {
       setSyncStatus(`✗ Error: ${error.message}`);
@@ -686,8 +721,14 @@ export default function SettingsPage() {
                       </Text>
                       <BlockStack gap="200">
                         <Text as="p">{t.settings.shop}: {shop}</Text>
+                        <Text as="p" fontWeight="semibold">Products & Content:</Text>
                         <Text as="p">{t.settings.productsInDb}: {productCount}</Text>
+                        <Text as="p">Collections in DB: {collectionCount}</Text>
+                        <Text as="p">Articles in DB: {articleCount}</Text>
+                        <Text as="p">Pages in DB: {pageCount}</Text>
+                        <Text as="p" fontWeight="semibold" style={{ marginTop: "0.5rem" }}>Translations:</Text>
                         <Text as="p">{t.settings.translationsInDb}: {translationCount}</Text>
+                        <Text as="p" fontWeight="semibold" style={{ marginTop: "0.5rem" }}>Webhooks:</Text>
                         <Text as="p">{t.settings.webhookEventsReceived}: {webhookCount}</Text>
                       </BlockStack>
                     </BlockStack>
@@ -739,13 +780,16 @@ export default function SettingsPage() {
                       <Text as="p">
                         {t.settings.syncProductsDescription}
                       </Text>
+                      <Text as="p" tone="subdued">
+                        This will sync all products, collections, articles, and pages from Shopify to the database.
+                      </Text>
                       <BlockStack gap="200">
                         <Button
                           onClick={() => handleSyncProducts(false)}
                           loading={syncLoading}
                           variant="primary"
                         >
-                          {t.settings.syncProducts}
+                          Sync All Content
                         </Button>
                         {productCount > 0 && (
                           <Button
@@ -753,7 +797,7 @@ export default function SettingsPage() {
                             loading={syncLoading}
                             variant="secondary"
                           >
-                            {t.settings.forceResync}
+                            Force Full Re-Sync
                           </Button>
                         )}
                       </BlockStack>

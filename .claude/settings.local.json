@@ -23,7 +23,10 @@
       "Bash(cat:*)",
       "Bash(railway variables:*)",
       "Bash(railway service:*)",
-      "Bash(git reset:*)"
+      "Bash(git reset:*)",
+      "Bash(railway logs:*)",
+      "Bash(railway run:*)",
+      "Bash(railway status:*)"
     ],
     "deny": [],
     "ask": []
