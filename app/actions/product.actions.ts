@@ -496,20 +496,20 @@ async function handleTranslateAll(
             translatableContentDigest: digestMap['handle']
           });
         }
-        if (fields.seoTitle && digestMap['seo_title']) {
+        if (fields.seoTitle && digestMap['meta_title']) {
           translationsInput.push({
-            key: "seo_title",
+            key: "meta_title",
             value: fields.seoTitle,
             locale,
-            translatableContentDigest: digestMap['seo_title']
+            translatableContentDigest: digestMap['meta_title']
           });
         }
-        if (fields.metaDescription && digestMap['seo_description']) {
+        if (fields.metaDescription && digestMap['meta_description']) {
           translationsInput.push({
-            key: "seo_description",
+            key: "meta_description",
             value: fields.metaDescription,
             locale,
-            translatableContentDigest: digestMap['seo_description']
+            translatableContentDigest: digestMap['meta_description']
           });
         }
 
@@ -635,8 +635,8 @@ async function handleUpdateProduct(admin: any, formData: FormData, productId: st
       if (title) translationsInput.push({ key: "title", value: title, locale });
       if (descriptionHtml) translationsInput.push({ key: "body_html", value: descriptionHtml, locale });
       if (handle) translationsInput.push({ key: "handle", value: handle, locale });
-      if (seoTitle) translationsInput.push({ key: "seo_title", value: seoTitle, locale });
-      if (metaDescription) translationsInput.push({ key: "seo_description", value: metaDescription, locale });
+      if (seoTitle) translationsInput.push({ key: "meta_title", value: seoTitle, locale });
+      if (metaDescription) translationsInput.push({ key: "meta_description", value: metaDescription, locale });
 
       for (const translation of translationsInput) {
         await admin.graphql(

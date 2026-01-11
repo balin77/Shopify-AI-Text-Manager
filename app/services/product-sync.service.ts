@@ -207,22 +207,9 @@ export class ProductSyncService {
       }
 
       // Collect all translations (both existing and translatable fields)
-      // Also normalize Shopify's field names to match our database schema
+      // Keep Shopify's field names as-is (meta_title, meta_description)
       for (const translation of translatableFieldsMap.values()) {
-        // Normalize meta_title -> seo_title and meta_description -> seo_description
-        let normalizedKey = translation.key;
-        if (translation.key === 'meta_title') {
-          normalizedKey = 'seo_title';
-          console.log(`[ProductSync] Normalizing meta_title -> seo_title for ${locale.locale}`);
-        } else if (translation.key === 'meta_description') {
-          normalizedKey = 'seo_description';
-          console.log(`[ProductSync] Normalizing meta_description -> seo_description for ${locale.locale}`);
-        }
-
-        allTranslations.push({
-          ...translation,
-          key: normalizedKey,
-        });
+        allTranslations.push(translation);
       }
 
       console.log(`[ProductSync] Found ${translatableFieldsMap.size} translatable fields for ${locale.locale}`);
