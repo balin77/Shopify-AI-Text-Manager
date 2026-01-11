@@ -47,10 +47,11 @@ export function ContentTranslationDebugPanel({ contentItem, contentType, shopLoc
   let primaryData: Record<string, string> = {};
 
   if (contentType === "pages") {
-    expectedKeys = ["title", "body"];
+    expectedKeys = ["title", "body_html", "handle"];
     primaryData = {
       title: contentItem.title,
-      body: contentItem.body || "",
+      body_html: contentItem.body || "",
+      handle: contentItem.handle || "",
     };
   } else if (contentType === "collections") {
     expectedKeys = ["title", "body_html", "handle", "meta_title", "meta_description"];
