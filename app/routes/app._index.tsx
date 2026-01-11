@@ -197,8 +197,8 @@ export default function Index() {
           if (fields.title) newTranslations.push({ key: "title", value: fields.title, locale });
           if (fields.description) newTranslations.push({ key: "body_html", value: fields.description, locale });
           if (fields.handle) newTranslations.push({ key: "handle", value: fields.handle, locale });
-          if (fields.seoTitle) newTranslations.push({ key: "seo_title", value: fields.seoTitle, locale });
-          if (fields.metaDescription) newTranslations.push({ key: "seo_description", value: fields.metaDescription, locale });
+          if (fields.seoTitle) newTranslations.push({ key: "meta_title", value: fields.seoTitle, locale });
+          if (fields.metaDescription) newTranslations.push({ key: "meta_description", value: fields.metaDescription, locale });
 
           // Store directly in product translations
           selectedProduct.translations = [
@@ -235,8 +235,8 @@ export default function Index() {
       if (editableTitle) existingTranslations.push({ key: "title", value: editableTitle, locale: currentLanguage });
       if (editableDescription) existingTranslations.push({ key: "body_html", value: editableDescription, locale: currentLanguage });
       if (editableHandle) existingTranslations.push({ key: "handle", value: editableHandle, locale: currentLanguage });
-      if (editableSeoTitle) existingTranslations.push({ key: "seo_title", value: editableSeoTitle, locale: currentLanguage });
-      if (editableMetaDescription) existingTranslations.push({ key: "seo_description", value: editableMetaDescription, locale: currentLanguage });
+      if (editableSeoTitle) existingTranslations.push({ key: "meta_title", value: editableSeoTitle, locale: currentLanguage });
+      if (editableMetaDescription) existingTranslations.push({ key: "meta_description", value: editableMetaDescription, locale: currentLanguage });
 
       selectedProduct.translations = existingTranslations;
     }

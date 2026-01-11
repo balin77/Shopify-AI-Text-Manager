@@ -40,12 +40,13 @@ export function TranslationDebugPanel({ product, shopLocales }: TranslationDebug
   const primaryLocale = shopLocales.find(l => l.primary);
   const primaryData = {
     title: product.title,
+    body_html: product.descriptionHtml || "",
     handle: product.handle,
-    seo_title: product.seo?.title || "",
-    seo_description: product.seo?.description || "",
+    meta_title: product.seo?.title || "",
+    meta_description: product.seo?.description || "",
   };
 
-  const expectedKeys = ["title", "body_html", "handle", "seo_title", "seo_description"];
+  const expectedKeys = ["title", "body_html", "handle", "meta_title", "meta_description"];
 
   return (
     <Card>

@@ -60,8 +60,8 @@ export function useProductFields({
         setEditableTitle(getTranslatedValue("title", currentLanguage, ""));
         setEditableDescription(getTranslatedValue("body_html", currentLanguage, ""));
         setEditableHandle(getTranslatedValue("handle", currentLanguage, ""));
-        setEditableSeoTitle(getTranslatedValue("seo_title", currentLanguage, ""));
-        setEditableMetaDescription(getTranslatedValue("seo_description", currentLanguage, ""));
+        setEditableSeoTitle(getTranslatedValue("meta_title", currentLanguage, ""));
+        setEditableMetaDescription(getTranslatedValue("meta_description", currentLanguage, ""));
       }
       setHasChanges(false);
     }
@@ -80,8 +80,8 @@ export function useProductFields({
       const titleChanged = editableTitle !== getOriginalValue("title", selectedProduct.title);
       const descChanged = editableDescription !== getOriginalValue("body_html", selectedProduct.descriptionHtml || "");
       const handleChanged = editableHandle !== getOriginalValue("handle", selectedProduct.handle);
-      const seoTitleChanged = editableSeoTitle !== getOriginalValue("seo_title", selectedProduct.seo?.title || "");
-      const metaDescChanged = editableMetaDescription !== getOriginalValue("seo_description", selectedProduct.seo?.description || "");
+      const seoTitleChanged = editableSeoTitle !== getOriginalValue("meta_title", selectedProduct.seo?.title || "");
+      const metaDescChanged = editableMetaDescription !== getOriginalValue("meta_description", selectedProduct.seo?.description || "");
 
       setHasChanges(titleChanged || descChanged || handleChanged || seoTitleChanged || metaDescChanged);
     }
