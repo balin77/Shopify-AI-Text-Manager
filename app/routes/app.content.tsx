@@ -29,7 +29,8 @@ import {
   TRANSLATE_CONTENT,
   UPDATE_PAGE,
   UPDATE_COLLECTION,
-  UPDATE_ARTICLE
+  UPDATE_ARTICLE,
+  UPDATE_SHOP_POLICY
 } from "../graphql/content.mutations";
 import { ContentService } from "../services/content.service";
 
@@ -70,7 +71,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "de";
 
     // Load content from DATABASE (not from Shopify!)
-    const [collections, articles, dbPages, allTranslations] = await Promise.all([
+    const [collections, articles, dbPages, dbPolicies, allTranslations] = await Promise.all([
       // Collections
       db.collection.findMany({
         where: { shop: session.shop },
@@ -86,6 +87,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         where: { shop: session.shop },
         orderBy: { title: 'asc' },
       }),
+      // Policies
+      db.shopPolicy.findMany({
+        where: { shop: session.shop },
+        orderBy: { type: 'asc' },
+      }),
       // Load all ContentTranslations for this shop
       db.contentTranslation.findMany({
         where: {
@@ -93,6 +99,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
             { resourceType: 'Collection' },
             { resourceType: 'Article' },
             { resourceType: 'Page' },
+            { resourceType: 'ShopPolicy' },
           ]
         },
       }),
@@ -155,16 +162,26 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       translations: translationsByResource[p.id] || [],
     }));
 
-    // Policies, metadata, menus, themes, metaobjects still loaded on-demand from ContentService
+    // Transform policies
+    const transformedPolicies = dbPolicies.map(p => ({
+      id: p.id,
+      title: p.title,
+      body: p.body,
+      type: p.type,
+      url: p.url,
+      translations: translationsByResource[p.id] || [],
+    }));
+
+    // metadata, menus, themes, metaobjects still loaded on-demand from ContentService
     // (We don't cache these yet - not critical)
     const contentService = new ContentService(admin);
-    const { policies, metadata, menus, themes, metaobjects } = await contentService.getAllContent();
+    const { metadata, menus, themes, metaobjects } = await contentService.getAllContent();
 
     return json({
       blogs,
       collections: transformedCollections,
       pages: transformedPages,
-      policies,
+      policies: transformedPolicies,
       metadata,
       menus,
       themes,
@@ -368,6 +385,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           if (handle) translationsInput.push({ key: "handle", value: handle, locale });
           if (seoTitle) translationsInput.push({ key: "meta_title", value: seoTitle, locale });
           if (metaDescription) translationsInput.push({ key: "meta_description", value: metaDescription, locale });
+        } else if (contentType === "policies") {
+          if (title) translationsInput.push({ key: "title", value: title, locale });
+          if (description) translationsInput.push({ key: "body", value: description, locale });
         }
 
         // Save to Shopify
@@ -383,7 +403,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         // 🔥 DIRECT DB UPDATE: Update local database immediately after Shopify success
         console.log(`[CONTENT-UPDATE] Updating DB translations for ${contentType} ${itemId}`);
 
-        const resourceType = contentType === "pages" ? "Page" : contentType === "collections" ? "Collection" : "Article";
+        const resourceType = contentType === "pages" ? "Page" :
+                            contentType === "collections" ? "Collection" :
+                            contentType === "policies" ? "ShopPolicy" :
+                            "Article";
 
         // Delete existing translations for this locale and resource
         await db.contentTranslation.deleteMany({
@@ -541,6 +564,43 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           console.log(`[CONTENT-UPDATE] ✓ Updated article in DB`);
 
           return json({ success: true, item: data.data.articleUpdate.article });
+        } else if (contentType === "policies") {
+          const response = await admin.graphql(UPDATE_SHOP_POLICY, {
+            variables: {
+              shopPolicy: {
+                id: itemId,
+                type: selectedItem.type,
+                body: description,
+              },
+            }
+          });
+
+          const data = await response.json();
+          if (data.data.shopPolicyUpdate.userErrors.length > 0) {
+            return json({
+              success: false,
+              error: data.data.shopPolicyUpdate.userErrors[0].message
+            }, { status: 500 });
+          }
+
+          // 🔥 DIRECT DB UPDATE: Update local database immediately
+          console.log(`[CONTENT-UPDATE] Updating DB for policy ${itemId}`);
+          await db.shopPolicy.update({
+            where: {
+              shop_id: {
+                shop: session.shop,
+                id: itemId,
+              },
+            },
+            data: {
+              title,
+              body: description,
+              lastSyncedAt: new Date(),
+            },
+          });
+          console.log(`[CONTENT-UPDATE] ✓ Updated policy in DB`);
+
+          return json({ success: true, item: data.data.shopPolicyUpdate.shopPolicy });
         }
       }
     } catch (error: any) {
@@ -1323,16 +1383,6 @@ export default function ContentPage() {
                   </div>
                 </InlineStack>
 
-                {/* Policies Info Banner */}
-                {selectedType === "policies" && currentLanguage !== primaryLocale && (
-                  <Banner tone="info">
-                    <p>
-                      ⚠️ Policies können aktuell nicht über diese App übersetzt werden. Shopify speichert Policies nicht als translatable resources.
-                      Sie müssen die Übersetzungen direkt in Shopify unter Settings → Policies verwalten.
-                    </p>
-                  </Banner>
-                )}
-
                 {/* Editable Title */}
                 <div>
                   <div style={{ background: getFieldBackgroundColor("title"), borderRadius: "8px", padding: "1px" }}>
@@ -1342,7 +1392,6 @@ export default function ContentPage() {
                       onChange={setEditableTitle}
                       autoComplete="off"
                       helpText={`${editableTitle.length} ${t.content.characters}`}
-                      disabled={selectedType === "policies" && currentLanguage !== primaryLocale}
                     />
                   </div>
                   {aiSuggestions.title && renderAISuggestion("title", aiSuggestions.title)}
@@ -1405,7 +1454,6 @@ export default function ContentPage() {
                         <textarea
                           value={editableDescription}
                           onChange={(e) => setEditableDescription(e.target.value)}
-                          disabled={selectedType === "policies" && currentLanguage !== primaryLocale}
                           style={{
                             width: "100%",
                             minHeight: "200px",
@@ -1420,7 +1468,7 @@ export default function ContentPage() {
                       ) : (
                         <div
                           ref={descriptionEditorRef}
-                          contentEditable={!(selectedType === "policies" && currentLanguage !== primaryLocale)}
+                          contentEditable
                           onInput={(e) => setEditableDescription(e.currentTarget.innerHTML)}
                           dangerouslySetInnerHTML={{ __html: editableDescription }}
                           style={{
@@ -1431,7 +1479,6 @@ export default function ContentPage() {
                             borderTop: "none",
                             borderRadius: "0 0 8px 8px",
                             lineHeight: "1.6",
-                            opacity: (selectedType === "policies" && currentLanguage !== primaryLocale) ? 0.6 : 1,
                           }}
                           className="description-editor"
                         />

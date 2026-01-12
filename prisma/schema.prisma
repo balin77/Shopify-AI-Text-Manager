@@ -276,13 +276,30 @@ model Page {
   @@index([lastSyncedAt])
 }
 
+model ShopPolicy {
+  id       String   @id // Shopify GID (e.g., "gid://shopify/ShopPolicy/123")
+  shop     String
+  title    String
+  body     String?  @db.Text
+  type     String   // "CONTACT_INFORMATION", "LEGAL_NOTICE", "PRIVACY_POLICY", "REFUND_POLICY", "SHIPPING_POLICY", "TERMS_OF_SERVICE"
+  url      String?
+
+  // Shopify Metadata
+  lastSyncedAt DateTime @default(now())
+
+  @@unique([shop, id])
+  @@index([shop])
+  @@index([shop, type])
+  @@index([lastSyncedAt])
+}
+
 model ContentTranslation {
   id           String  @id @default(cuid())
 
-  // Polymorphic relation (can belong to Collection, Article, or Page)
+  // Polymorphic relation (can belong to Collection, Article, Page, or ShopPolicy)
   // NOTE: No foreign key constraints - we handle this polymorphically in code
   resourceId   String  // The GID of the parent resource
-  resourceType String  // "Collection", "Article", or "Page"
+  resourceType String  // "Collection", "Article", "Page", or "ShopPolicy"
 
   key          String  // "title", "body", "description", "handle", "seo_title", "seo_description"
   value        String  @db.Text

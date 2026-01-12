@@ -70,3 +70,21 @@ export const UPDATE_ARTICLE = `#graphql
     }
   }
 `;
+
+export const UPDATE_SHOP_POLICY = `#graphql
+  mutation updateShopPolicy($shopPolicy: ShopPolicyInput!) {
+    shopPolicyUpdate(shopPolicy: $shopPolicy) {
+      shopPolicy {
+        id
+        type
+        title
+        body
+        url
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
