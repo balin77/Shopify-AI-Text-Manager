@@ -7,6 +7,7 @@
 import { useNavigate } from "@remix-run/react";
 import { Page, Card, Text, BlockStack, InlineStack } from "@shopify/polaris";
 import { MainNavigation } from "../components/MainNavigation";
+import { ContentTypeNavigation } from "../components/ContentTypeNavigation";
 import { useI18n } from "../contexts/I18nContext";
 
 export default function ContentOverview() {
@@ -77,6 +78,7 @@ export default function ContentOverview() {
   return (
     <Page fullWidth>
       <MainNavigation />
+      <ContentTypeNavigation />
 
       <div style={{ padding: "2rem" }}>
         <BlockStack gap="600">

@@ -31,13 +31,18 @@ import {
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
+import { ContentTypeNavigation } from "../components/ContentTypeNavigation";
 import { ThemeContentViewer } from "../components/ThemeContentViewer";
 import { useI18n } from "../contexts/I18nContext";
 import { ContentService } from "../services/content.service";
 
-type ContentType = "menus" | "templates" | "metaobjects" | "shopMetadata";
+type ContentType = "collections" | "blogs" | "pages" | "policies" | "menus" | "templates" | "metaobjects" | "shopMetadata";
 
 const getContentTypes = (t: any) => [
+  { id: "collections" as ContentType, label: t.content.collections, icon: "📂", description: t.content.collectionsDescription, path: "/app/collections" },
+  { id: "blogs" as ContentType, label: t.content.blogs, icon: "📝", description: t.content.blogsDescription, path: "/app/blog" },
+  { id: "pages" as ContentType, label: t.content.pages, icon: "📄", description: t.content.pagesDescription, path: "/app/pages" },
+  { id: "policies" as ContentType, label: t.content.policies, icon: "📋", description: t.content.policiesDescription, path: "/app/policies" },
   { id: "menus" as ContentType, label: t.content.menus, icon: "🍔", description: t.content.menusDescription },
   { id: "templates" as ContentType, label: t.content.templates, icon: "🧪", description: "Theme translatable resources..." },
   { id: "metaobjects" as ContentType, label: t.content.metaobjects, icon: "🗂️", description: t.content.metaobjectsDescription, comingSoon: true },
@@ -206,50 +211,7 @@ export default function ContentHub() {
   return (
     <Page fullWidth>
       <MainNavigation />
-
-      {/* Horizontal Sub-Navigation for Content Types */}
-      <div style={{ borderBottom: "1px solid #e1e3e5", background: "white", padding: "1rem" }}>
-        <InlineStack gap="300">
-          {CONTENT_TYPES.map((type: any) => (
-            <button
-              key={type.id}
-              onClick={() => {
-                if (!type.comingSoon) {
-                  setSelectedType(type.id);
-                  setSelectedItemId(null);
-                }
-              }}
-              disabled={type.comingSoon}
-              style={{
-                padding: "0.75rem 1.5rem",
-                border: selectedType === type.id ? "2px solid #008060" : "1px solid #c9cccf",
-                borderRadius: "8px",
-                background: selectedType === type.id ? "#f1f8f5" : type.comingSoon ? "#f6f6f7" : "white",
-                cursor: type.comingSoon ? "not-allowed" : "pointer",
-                transition: "all 0.2s",
-                display: "flex",
-                alignItems: "center",
-                gap: "0.5rem",
-                opacity: type.comingSoon ? 0.5 : 1,
-              }}
-            >
-              <span style={{ fontSize: "1.2rem" }}>{type.icon}</span>
-              <Text
-                as="span"
-                variant="bodyMd"
-                fontWeight={selectedType === type.id ? "semibold" : "regular"}
-              >
-                {type.label}
-              </Text>
-              {type.comingSoon && (
-                <Text as="span" variant="bodySm" tone="subdued">
-                  (Coming Soon)
-                </Text>
-              )}
-            </button>
-          ))}
-        </InlineStack>
-      </div>
+      <ContentTypeNavigation />
 
       {/* Main Content Area */}
       <div style={{ height: "calc(100vh - 120px)", display: "flex", gap: "1rem", padding: "1rem", overflow: "hidden" }}>

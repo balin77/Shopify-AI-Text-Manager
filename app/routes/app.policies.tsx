@@ -14,6 +14,7 @@ import {
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
+import { ContentTypeNavigation } from "../components/ContentTypeNavigation";
 import { AIEditableHTMLField } from "../components/AIEditableHTMLField";
 import { AIService } from "../../src/services/ai.service";
 import { TranslationService } from "../../src/services/translation.service";
@@ -481,6 +482,7 @@ export default function PoliciesPage() {
     <Page fullWidth>
       <style>{contentEditorStyles}</style>
       <MainNavigation />
+      <ContentTypeNavigation />
 
       <div style={{ height: "calc(100vh - 120px)", display: "flex", gap: "1rem", padding: "1rem", overflow: "hidden" }}>
         {/* Left Sidebar - Policies List */}
