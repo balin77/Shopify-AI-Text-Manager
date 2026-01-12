@@ -211,7 +211,7 @@ export class ContentSyncService {
   }
 
   private async fetchAllTranslations(resourceId: string, locales: any[], resourceType: string) {
-    const allTranslations = [];
+    const allTranslationsMap = new Map<string, any>(); // Deduplicate using key::locale
 
     for (const locale of locales) {
       if (!locale.published) {
@@ -276,10 +276,16 @@ export class ContentSyncService {
         }
       }
 
-      allTranslations.push(...translatableFieldsMap.values());
+      // Add to global map with deduplication
+      for (const [key, translation] of translatableFieldsMap) {
+        const uniqueKey = `${translation.key}::${translation.locale}`;
+        if (!allTranslationsMap.has(uniqueKey)) {
+          allTranslationsMap.set(uniqueKey, translation);
+        }
+      }
     }
 
-    return allTranslations;
+    return Array.from(allTranslationsMap.values());
   }
 
   // ============================================

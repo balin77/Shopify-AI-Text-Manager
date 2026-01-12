@@ -557,6 +557,7 @@ export class BackgroundSyncService {
 
               // Fetch translations for this resource
               const allTranslations = [];
+              const seenKeys = new Set<string>(); // Track seen key-locale combinations
 
               for (const locale of nonPrimaryLocales) {
                 try {
@@ -578,12 +579,16 @@ export class BackgroundSyncService {
                   const translationsData = await translationsResponse.json();
                   const translations = translationsData.data?.translatableResource?.translations || [];
 
-                  // Filter translations for this group only
-                  const groupTranslations = translations.filter((t: any) =>
-                    items.some(item => item.key === t.key)
-                  );
-
-                  allTranslations.push(...groupTranslations);
+                  // Filter translations for this group only and deduplicate
+                  for (const t of translations) {
+                    if (items.some(item => item.key === t.key)) {
+                      const uniqueKey = `${t.key}::${t.locale}`;
+                      if (!seenKeys.has(uniqueKey)) {
+                        seenKeys.add(uniqueKey);
+                        allTranslations.push(t);
+                      }
+                    }
+                  }
                 } catch (error) {
                   console.error(`[BackgroundSync] Error fetching theme translations for locale ${locale.locale}:`, error);
                 }
@@ -778,7 +783,7 @@ export class BackgroundSyncService {
   }
 
   private async fetchAllTranslations(resourceId: string, locales: any[], resourceType: string) {
-    const allTranslations = [];
+    const allTranslationsMap = new Map<string, any>(); // Deduplicate using key::locale
 
     for (const locale of locales) {
       if (!locale.published) {
@@ -840,10 +845,16 @@ export class BackgroundSyncService {
         }
       }
 
-      allTranslations.push(...translatableFieldsMap.values());
+      // Add to global map with deduplication
+      for (const [key, translation] of translatableFieldsMap) {
+        const uniqueKey = `${translation.key}::${translation.locale}`;
+        if (!allTranslationsMap.has(uniqueKey)) {
+          allTranslationsMap.set(uniqueKey, translation);
+        }
+      }
     }
 
-    return allTranslations;
+    return Array.from(allTranslationsMap.values());
   }
 
   // ============================================
