@@ -213,6 +213,36 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         const updatedFieldsJson = formData.get("updatedFields") as string;
         const updatedFields = JSON.parse(updatedFieldsJson);
 
+        // STEP 1: Register translations with Shopify FIRST
+        const translationInputs = Object.entries(updatedFields).map(([key, value]) => ({
+          key,
+          value: value as string,
+          locale,
+          translatableContentDigest: ""
+        }));
+
+        if (translationInputs.length > 0) {
+          const response = await admin.graphql(TRANSLATE_CONTENT, {
+            variables: {
+              resourceId,
+              translations: translationInputs
+            }
+          });
+
+          const data = await response.json();
+
+          // Check for errors from Shopify
+          if (data.data?.translationsRegister?.userErrors?.length > 0) {
+            const errors = data.data.translationsRegister.userErrors;
+            console.error("Shopify translation errors:", errors);
+            return json({
+              success: false,
+              error: `Shopify error: ${errors[0].message}`
+            }, { status: 500 });
+          }
+        }
+
+        // STEP 2: Only update database if Shopify succeeded
         if (locale === primaryLocale) {
           // Update primary locale: Update translatableContent in ThemeContent
           for (const group of themeGroups) {
@@ -242,28 +272,6 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
             }
           }
 
-          // Register translations with Shopify for primary locale
-          const translationInputs = Object.entries(updatedFields).map(([key, value]) => ({
-            key,
-            value: value as string,
-            locale: primaryLocale,
-            translatableContentDigest: ""
-          }));
-
-          if (translationInputs.length > 0) {
-            const response = await admin.graphql(TRANSLATE_CONTENT, {
-              variables: {
-                resourceId,
-                translations: translationInputs
-              }
-            });
-
-            const data = await response.json();
-            if (data.data?.translationsRegister?.userErrors?.length > 0) {
-              console.error("Shopify translation errors:", data.data.translationsRegister.userErrors);
-            }
-          }
-
           return json({ success: true });
         } else {
           // Update translation: Use ThemeTranslation table
@@ -290,28 +298,6 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
                 value: value as string
               }
             });
-          }
-
-          // Register translations with Shopify
-          const translationInputs = Object.entries(updatedFields).map(([key, value]) => ({
-            key,
-            value: value as string,
-            locale,
-            translatableContentDigest: ""
-          }));
-
-          if (translationInputs.length > 0) {
-            const response = await admin.graphql(TRANSLATE_CONTENT, {
-              variables: {
-                resourceId,
-                translations: translationInputs
-              }
-            });
-
-            const data = await response.json();
-            if (data.data?.translationsRegister?.userErrors?.length > 0) {
-              console.error("Shopify translation errors:", data.data.translationsRegister.userErrors);
-            }
           }
 
           return json({ success: true });
