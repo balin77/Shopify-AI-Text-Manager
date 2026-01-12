@@ -1423,56 +1423,61 @@ export default function ContentPage() {
           <Card padding="600">
             {selectedItem ? (
               <BlockStack gap="500">
-                {/* Language Selector */}
+                {/* Language Selector - Disabled for menus */}
                 <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
                   {shopLocales.map((locale: any) => (
                     <Button
                       key={locale.locale}
                       variant={currentLanguage === locale.locale ? "primary" : undefined}
                       onClick={() => {
-                        handleNavigationAttempt(() => setCurrentLanguage(locale.locale));
+                        if (selectedType !== "menus") {
+                          handleNavigationAttempt(() => setCurrentLanguage(locale.locale));
+                        }
                       }}
                       size="slim"
+                      disabled={selectedType === "menus" && !locale.primary}
                     >
                       {locale.name} {locale.primary && `(${t.content.primaryLanguageSuffix})`}
                     </Button>
                   ))}
                 </div>
 
-                {/* Header with Save Button */}
-                <InlineStack align="space-between" blockAlign="center">
-                  <Text as="p" variant="bodySm" tone="subdued">{t.content.idPrefix} {selectedItem.id.split("/").pop()}</Text>
-                  <div ref={saveButtonRef}>
-                    <InlineStack gap="200">
-                      {hasChanges && (
-                        <Button
-                          onClick={handleDiscardChanges}
-                          disabled={fetcher.state !== "idle"}
+                {/* Header with Save Button - Not for menus */}
+                {selectedType !== "menus" && (
+                  <InlineStack align="space-between" blockAlign="center">
+                    <Text as="p" variant="bodySm" tone="subdued">{t.content.idPrefix} {selectedItem.id.split("/").pop()}</Text>
+                    <div ref={saveButtonRef}>
+                      <InlineStack gap="200">
+                        {hasChanges && (
+                          <Button
+                            onClick={handleDiscardChanges}
+                            disabled={fetcher.state !== "idle"}
+                          >
+                            {t.content.discardChanges || "Verwerfen"}
+                          </Button>
+                        )}
+                        <div
+                          style={{
+                            animation: highlightSaveButton ? "pulse 1.5s ease-in-out infinite" : "none",
+                            borderRadius: "8px",
+                          }}
                         >
-                          {t.content.discardChanges || "Verwerfen"}
-                        </Button>
-                      )}
-                      <div
-                        style={{
-                          animation: highlightSaveButton ? "pulse 1.5s ease-in-out infinite" : "none",
-                          borderRadius: "8px",
-                        }}
-                      >
-                        <Button
-                          variant={hasChanges ? "primary" : undefined}
-                          onClick={handleSaveContent}
-                          disabled={!hasChanges}
-                          loading={fetcher.state !== "idle" && fetcher.formData?.get("action") === "updateContent"}
-                        >
-                          {t.content.saveChanges}
-                        </Button>
-                      </div>
-                    </InlineStack>
-                  </div>
-                </InlineStack>
+                          <Button
+                            variant={hasChanges ? "primary" : undefined}
+                            onClick={handleSaveContent}
+                            disabled={!hasChanges}
+                            loading={fetcher.state !== "idle" && fetcher.formData?.get("action") === "updateContent"}
+                          >
+                            {t.content.saveChanges}
+                          </Button>
+                        </div>
+                      </InlineStack>
+                    </div>
+                  </InlineStack>
+                )}
 
-                {/* Editable Title - NOT for policies in non-primary languages */}
-                {(selectedType !== "policies" || currentLanguage === primaryLocale) && (
+                {/* Editable Title - NOT for policies in non-primary languages and NOT for menus */}
+                {selectedType !== "menus" && (selectedType !== "policies" || currentLanguage === primaryLocale) && (
                   <div>
                     <div style={{ background: getFieldBackgroundColor("title"), borderRadius: "8px", padding: "1px" }}>
                       <TextField
@@ -1713,6 +1718,11 @@ export default function ContentPage() {
                 {selectedType === "menus" && selectedItem.items && (
                   <Card>
                     <BlockStack gap="400">
+                      {/* Shopify API Limitation Banner */}
+                      <Banner tone="warning">
+                        <p>{t.content.menuLimitation}</p>
+                      </Banner>
+
                       <Text as="h3" variant="headingMd">
                         Menu Items
                       </Text>
