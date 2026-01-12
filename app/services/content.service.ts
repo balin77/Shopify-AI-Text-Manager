@@ -27,10 +27,6 @@ export class ContentService {
     });
     const data = await response.json();
 
-    console.log('=== BLOGS API RESPONSE ===');
-    console.log('Raw blogs data:', JSON.stringify(data, null, 2));
-    console.log('Number of blogs:', data.data?.blogs?.edges?.length || 0);
-
     const blogs = data.data.blogs.edges.map((edge: any) => ({
       ...edge.node,
       articles: edge.node.articles.edges.map((a: any) => ({
@@ -39,7 +35,6 @@ export class ContentService {
       }))
     }));
 
-    console.log('Processed blogs:', blogs.length);
     return blogs;
   }
 
@@ -49,16 +44,11 @@ export class ContentService {
     });
     const data = await response.json();
 
-    console.log('=== COLLECTIONS API RESPONSE ===');
-    console.log('Raw collections data:', JSON.stringify(data, null, 2));
-    console.log('Number of collections:', data.data?.collections?.edges?.length || 0);
-
     const collections = data.data.collections.edges.map((edge: any) => ({
       ...edge.node,
       translations: []
     }));
 
-    console.log('Processed collections:', collections.length);
     return collections;
   }
 
@@ -68,16 +58,11 @@ export class ContentService {
     });
     const data = await response.json();
 
-    console.log('=== PAGES API RESPONSE ===');
-    console.log('Raw pages data:', JSON.stringify(data, null, 2));
-    console.log('Number of pages:', data.data?.pages?.edges?.length || 0);
-
     const pages = data.data.pages.edges.map((edge: any) => ({
       ...edge.node,
       translations: []
     }));
 
-    console.log('Processed pages:', pages.length);
     return pages;
   }
 
@@ -107,9 +92,6 @@ export class ContentService {
       const response = await this.admin.graphql(GET_SHOP_METADATA);
       const data = await response.json();
 
-      console.log('=== SHOP METADATA API RESPONSE ===');
-      console.log('Raw shop metadata:', JSON.stringify(data, null, 2));
-
       const shop = data.data.shop;
       shop.metafields = shop.metafields?.edges?.map((edge: any) => ({
         ...edge.node,
@@ -130,14 +112,10 @@ export class ContentService {
       const shopLocales = await this.getShopLocales();
       const locales = shopLocales.filter((l: any) => !l.primary).map((l: any) => l.locale);
 
-      console.log(`[ContentService] Fetching menus with translations for locales: ${locales.join(', ')}`);
-
       const response = await this.admin.graphql(GET_MENUS, {
         variables: { first }
       });
       const data = await response.json();
-
-      console.log(`[ContentService] Loaded ${data.data?.menus?.edges?.length || 0} menus`);
 
       // For each menu, fetch translations using both methods
       const menusWithTranslations = [];
@@ -173,12 +151,6 @@ export class ContentService {
               variables: { id: menu.id, locale }
             });
             const translatableData = await translatableResponse.json();
-
-            // 🔍 DEBUG: Log translatableContent to see all available keys (including link keys!)
-            if (locale === locales[0]) { // Only log once for first locale
-              const translatableContent = translatableData.data?.translatableResource?.translatableContent || [];
-              console.log(`[Menu ${menu.id}] TranslatableContent keys:`, translatableContent.map((c: any) => c.key).join(', '));
-            }
 
             const translations = translatableData.data?.translatableResource?.translations || [];
 
@@ -227,15 +199,12 @@ export class ContentService {
           }
         }
 
-        console.log(`[Menu ${menu.id}] ✓ Loaded ${allTranslations.length} menu translations`);
-
         menusWithTranslations.push({
           ...menu,
           translations: allTranslations
         });
       }
 
-      console.log('Processed menus with translations:', menusWithTranslations.length);
       return menusWithTranslations;
     } catch (error) {
       console.error('Error fetching menus:', error);
@@ -250,16 +219,11 @@ export class ContentService {
       });
       const data = await response.json();
 
-      console.log('=== THEMES API RESPONSE ===');
-      console.log('Raw themes data:', JSON.stringify(data, null, 2));
-      console.log('Number of themes:', data.data?.themes?.edges?.length || 0);
-
       const themes = data.data?.themes?.edges?.map((edge: any) => ({
         ...edge.node,
         translations: []
       })) || [];
 
-      console.log('Processed themes:', themes.length);
       return themes;
     } catch (error) {
       console.error('Error fetching themes:', error);
@@ -274,11 +238,7 @@ export class ContentService {
       });
       const data = await response.json();
 
-      console.log('=== METAOBJECT DEFINITIONS API RESPONSE ===');
-      console.log('Raw metaobject definitions:', JSON.stringify(data, null, 2));
-
       const definitions = data.data?.metaobjectDefinitions?.edges?.map((edge: any) => edge.node) || [];
-      console.log('Processed metaobject definitions:', definitions.length);
       return definitions;
     } catch (error) {
       console.error('Error fetching metaobject definitions:', error);
@@ -292,7 +252,6 @@ export class ContentService {
       const definitions = await this.getMetaobjectDefinitions(10);
 
       if (definitions.length === 0) {
-        console.log('No metaobject definitions found');
         return [];
       }
 
@@ -306,9 +265,6 @@ export class ContentService {
           });
           const data = await response.json();
 
-          console.log(`=== METAOBJECTS (${definition.type}) API RESPONSE ===`);
-          console.log('Raw metaobjects:', JSON.stringify(data, null, 2));
-
           const metaobjects = data.data?.metaobjects?.edges?.map((edge: any) => ({
             ...edge.node,
             definitionName: definition.name,
@@ -316,13 +272,11 @@ export class ContentService {
           })) || [];
 
           allMetaobjects.push(...metaobjects);
-          console.log(`Processed ${metaobjects.length} metaobjects for type ${definition.type}`);
         } catch (error) {
           console.error(`Error fetching metaobjects for type ${definition.type}:`, error);
         }
       }
 
-      console.log('Total metaobjects processed:', allMetaobjects.length);
       return allMetaobjects;
     } catch (error) {
       console.error('Error fetching metaobjects:', error);
