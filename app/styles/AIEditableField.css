@@ -43,13 +43,13 @@
 
 .ai-field-footer-left {
   flex: 1;
-  text-align: right;
+  text-align: left;
 }
 
 .ai-field-footer-right {
   display: flex;
   gap: 0.5rem;
-  margin-left: 1rem;
+  margin-left: auto;
 }
 
 /* HTML Editor styling */

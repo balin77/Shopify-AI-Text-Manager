@@ -92,34 +92,21 @@ export function AIEditableField({
           )}
         </div>
         <div className="ai-field-footer-right">
-          {isPrimaryLocale ? (
-            <>
-              <Button
-                size="slim"
-                onClick={onGenerateAI}
-                loading={isLoading}
-              >
-                ✨ {t.products.aiGenerate}
-              </Button>
-              {onTranslateAll && (
-                <Button
-                  size="slim"
-                  onClick={onTranslateAll}
-                  loading={isLoading}
-                >
-                  🌍 Übersetzen
-                </Button>
-              )}
-            </>
-          ) : (
-            <Button
-              size="slim"
-              onClick={onTranslate}
-              loading={isLoading}
-            >
-              🌐 {t.products.translateFromPrimary}
-            </Button>
-          )}
+          <Button
+            size="slim"
+            onClick={onGenerateAI}
+            loading={isLoading}
+          >
+            ✨ {t.products.aiGenerate}
+          </Button>
+          <Button
+            size="slim"
+            onClick={isPrimaryLocale ? onTranslateAll : onTranslate}
+            loading={isLoading}
+            disabled={isPrimaryLocale && !onTranslateAll}
+          >
+            🌍 {isPrimaryLocale ? "Übersetzen" : t.products.translateFromPrimary}
+          </Button>
         </div>
       </div>
     </div>

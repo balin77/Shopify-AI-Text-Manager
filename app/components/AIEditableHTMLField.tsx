@@ -191,12 +191,6 @@ export function AIEditableHTMLField({
         />
       )}
 
-      <div style={{ textAlign: "right", marginTop: "0.25rem" }}>
-        <Text as="p" variant="bodySm" tone="subdued">
-          {value.replace(/<[^>]*>/g, "").length} {t.products.characters}
-        </Text>
-      </div>
-
       {suggestion && (
         <AISuggestionBanner
           fieldType={fieldType}
@@ -212,23 +206,25 @@ export function AIEditableHTMLField({
         />
       )}
 
-      <div style={{ marginTop: "0.25rem", display: "flex", gap: "0.5rem" }}>
-        {isPrimaryLocale ? (
-          <>
-            <Button size="slim" onClick={onGenerateAI} loading={isLoading}>
-              ✨ {t.products.aiGenerate}
-            </Button>
-            {onTranslateAll && (
-              <Button size="slim" onClick={onTranslateAll} loading={isLoading}>
-                🌍 Übersetzen
-              </Button>
-            )}
-          </>
-        ) : (
-          <Button size="slim" onClick={onTranslate} loading={isLoading}>
-            🌐 {t.products.translateFromPrimary}
+      <div className="ai-field-footer">
+        <div className="ai-field-footer-left">
+          <span style={{ fontSize: "0.8125rem", color: "#6d7175" }}>
+            {value.replace(/<[^>]*>/g, "").length} {t.products.characters}
+          </span>
+        </div>
+        <div className="ai-field-footer-right">
+          <Button size="slim" onClick={onGenerateAI} loading={isLoading}>
+            ✨ {t.products.aiGenerate}
           </Button>
-        )}
+          <Button
+            size="slim"
+            onClick={isPrimaryLocale ? onTranslateAll : onTranslate}
+            loading={isLoading}
+            disabled={isPrimaryLocale && !onTranslateAll}
+          >
+            🌍 {isPrimaryLocale ? "Übersetzen" : t.products.translateFromPrimary}
+          </Button>
+        </div>
       </div>
     </div>
   );
