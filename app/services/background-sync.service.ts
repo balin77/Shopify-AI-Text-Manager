@@ -34,6 +34,8 @@ export class BackgroundSyncService {
     console.log(`[BackgroundSync] Syncing all pages for shop: ${this.shop}`);
 
     try {
+      const { db } = await import("../db.server");
+
       // 1. Fetch all pages from Shopify
       const pagesResponse = await this.admin.graphql(
         `#graphql
@@ -55,17 +57,51 @@ export class BackgroundSyncService {
       const pagesData = await pagesResponse.json();
       const pages = pagesData.data?.pages?.edges?.map((e: any) => e.node) || [];
 
-      console.log(`[BackgroundSync] Found ${pages.length} pages`);
+      console.log(`[BackgroundSync] Found ${pages.length} pages from Shopify`);
 
-      if (pages.length === 0) {
+      // 2. AGGRESSIVE CLEANUP: Delete pages that no longer exist in Shopify
+      const shopifyPageIds = pages.map((p: any) => p.id);
+
+      if (shopifyPageIds.length > 0) {
+        const deletedPages = await db.page.deleteMany({
+          where: {
+            shop: this.shop,
+            id: { notIn: shopifyPageIds }
+          }
+        });
+
+        if (deletedPages.count > 0) {
+          console.log(`[BackgroundSync] 🗑️ Deleted ${deletedPages.count} pages that no longer exist in Shopify`);
+        }
+
+        // Also delete orphaned translations
+        const deletedTranslations = await db.contentTranslation.deleteMany({
+          where: {
+            resourceType: "Page",
+            resourceId: { notIn: shopifyPageIds }
+          }
+        });
+
+        if (deletedTranslations.count > 0) {
+          console.log(`[BackgroundSync] 🗑️ Deleted ${deletedTranslations.count} orphaned page translations`);
+        }
+      } else {
+        // No pages in Shopify - delete all local pages for this shop
+        const deletedPages = await db.page.deleteMany({
+          where: { shop: this.shop }
+        });
+        const deletedTranslations = await db.contentTranslation.deleteMany({
+          where: { resourceType: "Page" }
+        });
+        console.log(`[BackgroundSync] 🗑️ Deleted all pages (${deletedPages.count}) and translations (${deletedTranslations.count}) - no pages in Shopify`);
         return 0;
       }
 
-      // 2. Fetch shop locales
+      // 3. Fetch shop locales
       const locales = await this.fetchShopLocales();
       const nonPrimaryLocales = locales.filter((l: any) => !l.primary);
 
-      // 3. Sync each page
+      // 4. Sync each page
       for (const page of pages) {
         await this.syncSinglePage(page, nonPrimaryLocales);
       }
@@ -151,6 +187,8 @@ export class BackgroundSyncService {
     console.log(`[BackgroundSync] Syncing all policies for shop: ${this.shop}`);
 
     try {
+      const { db } = await import("../db.server");
+
       // 1. Fetch all policies from Shopify
       const policiesResponse = await this.admin.graphql(
         `#graphql
@@ -170,17 +208,51 @@ export class BackgroundSyncService {
       const policiesData = await policiesResponse.json();
       const policies = policiesData.data?.shop?.shopPolicies || [];
 
-      console.log(`[BackgroundSync] Found ${policies.length} policies`);
+      console.log(`[BackgroundSync] Found ${policies.length} policies from Shopify`);
 
-      if (policies.length === 0) {
+      // 2. AGGRESSIVE CLEANUP: Delete policies that no longer exist in Shopify
+      const shopifyPolicyIds = policies.map((p: any) => p.id);
+
+      if (shopifyPolicyIds.length > 0) {
+        const deletedPolicies = await db.shopPolicy.deleteMany({
+          where: {
+            shop: this.shop,
+            id: { notIn: shopifyPolicyIds }
+          }
+        });
+
+        if (deletedPolicies.count > 0) {
+          console.log(`[BackgroundSync] 🗑️ Deleted ${deletedPolicies.count} policies that no longer exist in Shopify`);
+        }
+
+        // Also delete orphaned translations
+        const deletedTranslations = await db.contentTranslation.deleteMany({
+          where: {
+            resourceType: "ShopPolicy",
+            resourceId: { notIn: shopifyPolicyIds }
+          }
+        });
+
+        if (deletedTranslations.count > 0) {
+          console.log(`[BackgroundSync] 🗑️ Deleted ${deletedTranslations.count} orphaned policy translations`);
+        }
+      } else {
+        // No policies in Shopify - delete all local policies for this shop
+        const deletedPolicies = await db.shopPolicy.deleteMany({
+          where: { shop: this.shop }
+        });
+        const deletedTranslations = await db.contentTranslation.deleteMany({
+          where: { resourceType: "ShopPolicy" }
+        });
+        console.log(`[BackgroundSync] 🗑️ Deleted all policies (${deletedPolicies.count}) and translations (${deletedTranslations.count}) - no policies in Shopify`);
         return 0;
       }
 
-      // 2. Fetch shop locales
+      // 3. Fetch shop locales
       const locales = await this.fetchShopLocales();
       const nonPrimaryLocales = locales.filter((l: any) => !l.primary);
 
-      // 3. Sync each policy
+      // 4. Sync each policy
       for (const policy of policies) {
         await this.syncSinglePolicy(policy, nonPrimaryLocales);
       }
