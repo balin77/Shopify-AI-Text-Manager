@@ -229,7 +229,6 @@ export default function ContentHub() {
         );
         values[item.key] = translation?.value || "";
       });
-      console.log('[CONTENT-TEMPLATES] Translation values loaded:', Object.keys(values).length);
       setEditableValues(values);
       setOriginalValues({ ...values });
     }

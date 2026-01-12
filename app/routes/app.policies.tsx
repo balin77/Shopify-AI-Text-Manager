@@ -26,6 +26,10 @@ import {
   useChangeTracking,
   getTranslatedValue,
   isFieldTranslated as checkFieldTranslated,
+  hasPrimaryContentMissing as checkPrimaryContentMissing,
+  hasLocaleMissingTranslations as checkLocaleMissingTranslations,
+  hasMissingTranslations as checkMissingTranslations,
+  getLocaleButtonStyle as getLocaleButtonStyleUtil,
 } from "../utils/contentEditor.utils";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -425,6 +429,15 @@ export default function PoliciesPage() {
     return checkFieldTranslated(selectedItem, key, currentLanguage, primaryLocale, loadedTranslations);
   };
 
+  const hasMissingTranslations = () => {
+    return checkMissingTranslations(selectedItem, shopLocales, loadedTranslations, 'policies');
+  };
+
+  const getLocaleButtonStyle = (locale: any) => {
+    const isSelected = currentLanguage === locale.locale;
+    return getLocaleButtonStyleUtil(locale, selectedItem, primaryLocale, loadedTranslations, 'policies', isSelected);
+  };
+
   // Map policy types to human-readable names
   const getPolicyTypeName = (type: string) => {
     const typeMap: Record<string, string> = {
@@ -516,16 +529,17 @@ export default function PoliciesPage() {
                 {/* Language Selector */}
                 <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
                   {shopLocales.map((locale: any) => (
-                    <Button
-                      key={locale.locale}
-                      variant={currentLanguage === locale.locale ? "primary" : undefined}
-                      onClick={() => {
-                        handleNavigationAttempt(() => setCurrentLanguage(locale.locale), hasChanges);
-                      }}
-                      size="slim"
-                    >
-                      {locale.name} {locale.primary && `(${t.content.primaryLanguageSuffix})`}
-                    </Button>
+                    <div key={locale.locale} style={getLocaleButtonStyle(locale)}>
+                      <Button
+                        variant={currentLanguage === locale.locale ? "primary" : undefined}
+                        onClick={() => {
+                          handleNavigationAttempt(() => setCurrentLanguage(locale.locale), hasChanges);
+                        }}
+                        size="slim"
+                      >
+                        {locale.name} {locale.primary && `(${t.content.primaryLanguageSuffix})`}
+                      </Button>
+                    </div>
                   ))}
                 </div>
 
@@ -594,6 +608,7 @@ export default function PoliciesPage() {
                   isTranslated={isFieldTranslatedCheck("body")}
                   isLoading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "body"}
                   sourceTextAvailable={!!selectedItem?.body}
+                  hasMissingTranslations={hasMissingTranslations()}
                   onGenerateAI={() => handleGenerateAI("body")}
                   onTranslate={() => handleTranslateField("body")}
                   onTranslateAll={handleTranslateAll}

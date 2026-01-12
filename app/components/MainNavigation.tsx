@@ -9,8 +9,6 @@ export function MainNavigation() {
   const { t } = useI18n();
   const { isDevMode, toggleDevMode } = useDevMode();
 
-  console.log("🧭 [MainNavigation] Current pathname:", location.pathname);
-
   const tabs = [
     { id: "products", label: t.nav.products, path: "/app/products" },
     { id: "content", label: t.nav.otherContent, path: "/app/content" },

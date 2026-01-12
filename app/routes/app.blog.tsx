@@ -660,16 +660,17 @@ export default function BlogPage() {
                 {/* Language Selector */}
                 <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
                   {shopLocales.map((locale: any) => (
-                    <Button
-                      key={locale.locale}
-                      variant={currentLanguage === locale.locale ? "primary" : undefined}
-                      onClick={() => {
-                        handleNavigationAttempt(() => setCurrentLanguage(locale.locale), hasChanges);
-                      }}
-                      size="slim"
-                    >
-                      {locale.name} {locale.primary && `(${t.content.primaryLanguageSuffix})`}
-                    </Button>
+                    <div key={locale.locale} style={getLocaleButtonStyle(locale)}>
+                      <Button
+                        variant={currentLanguage === locale.locale ? "primary" : undefined}
+                        onClick={() => {
+                          handleNavigationAttempt(() => setCurrentLanguage(locale.locale), hasChanges);
+                        }}
+                        size="slim"
+                      >
+                        {locale.name} {locale.primary && `(${t.content.primaryLanguageSuffix})`}
+                      </Button>
+                    </div>
                   ))}
                 </div>
 
