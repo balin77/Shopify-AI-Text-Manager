@@ -43,75 +43,50 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const shopLocales = localesData.data?.shopLocales || [];
     const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "de";
 
-    // Load theme resources from database (synced by background sync)
+    // LAZY LOADING: Only load navigation metadata, not the full content
     const { db } = await import("../db.server");
 
-    const [themeGroups, themeTranslations] = await Promise.all([
-      db.themeContent.findMany({
-        where: { shop: session.shop },
-        orderBy: { groupName: 'asc' }
-      }),
-      db.themeTranslation.findMany({
-        where: { shop: session.shop }
+    // Load only unique groups with their metadata (no translatableContent or translations)
+    const themeGroups = await db.themeContent.findMany({
+      where: { shop: session.shop },
+      select: {
+        groupId: true,
+        groupName: true,
+        groupIcon: true,
+      },
+      distinct: ['groupId'],
+      orderBy: { groupName: 'asc' }
+    });
+
+    // Count content items per group
+    const contentCounts = await Promise.all(
+      themeGroups.map(async (group) => {
+        const count = await db.themeContent.count({
+          where: {
+            shop: session.shop,
+            groupId: group.groupId
+          }
+        });
+        return { groupId: group.groupId, count };
       })
-    ]);
+    );
 
-    // Group translations by resourceId and groupId
-    const translationsByGroup: Record<string, any[]> = {};
-    for (const trans of themeTranslations) {
-      const key = `${trans.resourceId}_${trans.groupId}`;
-      if (!translationsByGroup[key]) {
-        translationsByGroup[key] = [];
-      }
-      translationsByGroup[key].push(trans);
-    }
+    const countMap = Object.fromEntries(
+      contentCounts.map(c => [c.groupId, c.count])
+    );
 
-    // Group theme content by groupId to avoid duplicates
-    const groupedByGroupId = new Map<string, any>();
-
-    for (const group of themeGroups) {
-      const existingGroup = groupedByGroupId.get(group.groupId);
-
-      if (!existingGroup) {
-        // First occurrence of this groupId
-        groupedByGroupId.set(group.groupId, {
-          groupId: group.groupId,
-          groupName: group.groupName,
-          groupIcon: group.groupIcon,
-          resources: [{
-            resourceId: group.resourceId,
-            translatableContent: group.translatableContent as any[],
-            translations: translationsByGroup[`${group.resourceId}_${group.groupId}`] || []
-          }]
-        });
-      } else {
-        // Add to existing group
-        existingGroup.resources.push({
-          resourceId: group.resourceId,
-          translatableContent: group.translatableContent as any[],
-          translations: translationsByGroup[`${group.resourceId}_${group.groupId}`] || []
-        });
-      }
-    }
-
-    // Transform to match frontend structure
-    const themes = Array.from(groupedByGroupId.values()).map(group => {
-      // Merge all translatable content from all resources
-      const allContent = group.resources.flatMap((r: any) => r.translatableContent);
-      const allTranslations = group.resources.flatMap((r: any) => r.translations);
-
-      return {
+    // Create lightweight navigation items (sorted alphabetically)
+    const themes = themeGroups
+      .map(group => ({
         id: `group_${group.groupId}`,
         title: group.groupName,
         name: group.groupName,
         icon: group.groupIcon,
         groupId: group.groupId,
         role: 'THEME_GROUP',
-        translatableContent: allContent,
-        translations: allTranslations,
-        contentCount: allContent.length
-      };
-    });
+        contentCount: countMap[group.groupId] || 0
+      }))
+      .sort((a, b) => a.title.localeCompare(b.title)); // Alphabetical sort
 
     return json({
       themes,
@@ -139,8 +114,52 @@ export default function TemplatesPage() {
 
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [currentLanguage, setCurrentLanguage] = useState(primaryLocale);
+  const [loadedThemes, setLoadedThemes] = useState<Record<string, any>>({});
+  const [isLoading, setIsLoading] = useState(false);
 
-  const selectedItem = themes.find((item: any) => item.id === selectedItemId);
+  // Auto-select and load first item on mount
+  useEffect(() => {
+    if (themes.length > 0 && !selectedItemId) {
+      const firstTheme = themes[0];
+      setSelectedItemId(firstTheme.id);
+      loadThemeData(firstTheme.groupId);
+    }
+  }, [themes]);
+
+  // Function to load theme data on-demand
+  const loadThemeData = async (groupId: string) => {
+    // Check if already loaded
+    if (loadedThemes[groupId]) {
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const response = await fetch(`/api/templates/${groupId}`);
+      if (!response.ok) {
+        throw new Error('Failed to load theme data');
+      }
+      const data = await response.json();
+
+      setLoadedThemes(prev => ({
+        ...prev,
+        [groupId]: data.theme
+      }));
+    } catch (error) {
+      console.error('Error loading theme data:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Handle item click: load data if not loaded, then select
+  const handleItemClick = (itemId: string, groupId: string) => {
+    setSelectedItemId(itemId);
+    loadThemeData(groupId);
+  };
+
+  // Get selected item from loaded themes or navigation data
+  const selectedItem = selectedItemId && loadedThemes[themes.find((t: any) => t.id === selectedItemId)?.groupId];
 
   return (
     <Page fullWidth>
@@ -161,13 +180,13 @@ export default function TemplatesPage() {
                   resourceName={{ singular: "Resource", plural: "Resources" }}
                   items={themes}
                   renderItem={(item: any) => {
-                    const { id, title, icon, contentCount } = item;
+                    const { id, title, icon, contentCount, groupId } = item;
                     const isSelected = selectedItemId === id;
 
                     return (
                       <ResourceItem
                         id={id}
-                        onClick={() => setSelectedItemId(id)}
+                        onClick={() => handleItemClick(id, groupId)}
                       >
                         <BlockStack gap="100">
                           <Text as="p" variant="bodyMd" fontWeight={isSelected ? "bold" : "regular"}>
@@ -202,7 +221,18 @@ export default function TemplatesPage() {
           )}
 
           <Card padding="600">
-            {selectedItem ? (
+            {isLoading ? (
+              <div style={{ textAlign: "center", padding: "4rem 2rem" }}>
+                <BlockStack gap="300">
+                  <Text as="p" variant="headingLg">
+                    Loading...
+                  </Text>
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    Loading theme content data
+                  </Text>
+                </BlockStack>
+              </div>
+            ) : selectedItem ? (
               <BlockStack gap="500">
                 {/* Language Selector */}
                 <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
