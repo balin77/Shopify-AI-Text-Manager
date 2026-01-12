@@ -679,7 +679,8 @@ export default function CollectionsPage() {
   };
 
   const getLocaleButtonStyle = (locale: any) => {
-    return getLocaleButtonStyleUtil(locale, selectedItem, primaryLocale, loadedTranslations, 'collections');
+    const isSelected = currentLanguage === locale.locale;
+    return getLocaleButtonStyleUtil(locale, selectedItem, primaryLocale, loadedTranslations, 'collections', isSelected);
   };
 
   return (

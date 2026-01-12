@@ -362,26 +362,49 @@ export function hasMissingTranslations(
 
 /**
  * Get button style for locale navigation
+ * Returns animation if selected, background color if not selected
  */
 export function getLocaleButtonStyle(
   locale: any,
   selectedItem: any,
   primaryLocale: string,
   loadedTranslations: Record<string, any[]>,
-  contentType: 'pages' | 'blogs' | 'collections' | 'policies'
+  contentType: 'pages' | 'blogs' | 'collections' | 'policies',
+  isSelected: boolean
 ): React.CSSProperties {
-  if (locale.primary && hasPrimaryContentMissing(selectedItem, contentType)) {
-    return {
-      animation: "pulse 1.5s ease-in-out infinite",
-      borderRadius: "8px",
-    };
+  const primaryContentMissing = locale.primary && hasPrimaryContentMissing(selectedItem, contentType);
+  const foreignTranslationMissing = !locale.primary && hasLocaleMissingTranslations(selectedItem, locale.locale, primaryLocale, loadedTranslations, contentType);
+
+  if (primaryContentMissing) {
+    if (isSelected) {
+      // Selected: Show pulsing border animation
+      return {
+        animation: "pulse 1.5s ease-in-out infinite",
+        borderRadius: "8px",
+      };
+    } else {
+      // Not selected: Show orange background
+      return {
+        backgroundColor: "#fff4e5",
+        borderRadius: "8px",
+      };
+    }
   }
 
-  if (!locale.primary && hasLocaleMissingTranslations(selectedItem, locale.locale, primaryLocale, loadedTranslations, contentType)) {
-    return {
-      animation: "pulseBlue 1.5s ease-in-out infinite",
-      borderRadius: "8px",
-    };
+  if (foreignTranslationMissing) {
+    if (isSelected) {
+      // Selected: Show pulsing border animation
+      return {
+        animation: "pulseBlue 1.5s ease-in-out infinite",
+        borderRadius: "8px",
+      };
+    } else {
+      // Not selected: Show blue background
+      return {
+        backgroundColor: "#e0f2fe",
+        borderRadius: "8px",
+      };
+    }
   }
 
   return {};

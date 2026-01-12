@@ -28,6 +28,10 @@ import {
   useChangeTracking,
   getTranslatedValue,
   isFieldTranslated as checkFieldTranslated,
+  hasPrimaryContentMissing as checkPrimaryContentMissing,
+  hasLocaleMissingTranslations as checkLocaleMissingTranslations,
+  hasMissingTranslations as checkMissingTranslations,
+  getLocaleButtonStyle as getLocaleButtonStyleUtil,
 } from "../utils/contentEditor.utils";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -615,50 +619,13 @@ export default function PagesPage() {
     return checkFieldTranslated(selectedItem, key, currentLanguage, primaryLocale, loadedTranslations);
   };
 
-  // Check if primary locale has any missing content
-  const hasPrimaryContentMissing = () => {
-    if (!selectedItem) return false;
-    return !selectedItem.title || !selectedItem.body || !selectedItem.handle;
-  };
-
-  // Check if a specific locale has missing translations
-  const hasLocaleMissingTranslations = (locale: string) => {
-    if (!selectedItem || locale === primaryLocale) return false;
-
-    const itemKey = `${selectedItem.id}_${locale}`;
-    const translations = loadedTranslations[itemKey] || selectedItem.translations?.filter(
-      (t: any) => t.locale === locale
-    ) || [];
-
-    const requiredFields = ["title", "body_html", "handle"];
-    return requiredFields.some(field => {
-      const translation = translations.find((t: any) => t.key === field);
-      return !translation || !translation.value;
-    });
-  };
-
-  // Check if any foreign locale has missing translations
   const hasMissingTranslations = () => {
-    if (!selectedItem) return false;
-    const foreignLocales = shopLocales.filter((l: any) => !l.primary);
-    return foreignLocales.some((locale: any) => hasLocaleMissingTranslations(locale.locale));
+    return checkMissingTranslations(selectedItem, shopLocales, loadedTranslations, 'pages');
   };
 
-  // Get button style for locale navigation
   const getLocaleButtonStyle = (locale: any) => {
-    if (locale.primary && hasPrimaryContentMissing()) {
-      return {
-        animation: "pulse 1.5s ease-in-out infinite",
-        borderRadius: "8px",
-      };
-    }
-    if (!locale.primary && hasLocaleMissingTranslations(locale.locale)) {
-      return {
-        animation: "pulseBlue 1.5s ease-in-out infinite",
-        borderRadius: "8px",
-      };
-    }
-    return {};
+    const isSelected = currentLanguage === locale.locale;
+    return getLocaleButtonStyleUtil(locale, selectedItem, primaryLocale, loadedTranslations, 'pages', isSelected);
   };
 
   return (
