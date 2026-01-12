@@ -20,8 +20,11 @@ interface SyncTimer {
 
 class SyncSchedulerService {
   private activeTimers: Map<string, SyncTimer> = new Map();
+  private cleanupTimer: NodeJS.Timeout | null = null;
   private readonly SYNC_INTERVAL_MS = 40000; // 40 seconds
   private readonly INACTIVITY_THRESHOLD_MINUTES = 5;
+  private readonly CLEANUP_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
+  private lastCleanup: Date | null = null;
 
   /**
    * Starts background sync for a shop
@@ -53,6 +56,9 @@ class SyncSchedulerService {
     this.runSyncCycle(shop, admin).catch(err => {
       console.error(`[SyncScheduler] Initial sync failed for ${shop}:`, err);
     });
+
+    // Start periodic cleanup if not already running
+    this.ensureCleanupTimerRunning();
   }
 
   /**
@@ -164,7 +170,78 @@ class SyncSchedulerService {
     }
 
     this.activeTimers.clear();
+
+    // Stop cleanup timer
+    if (this.cleanupTimer) {
+      clearInterval(this.cleanupTimer);
+      this.cleanupTimer = null;
+      console.log('[SyncScheduler] Stopped cleanup timer');
+    }
+
     console.log('[SyncScheduler] All sync timers stopped');
+  }
+
+  /**
+   * Ensures the periodic cleanup timer is running
+   */
+  private ensureCleanupTimerRunning(): void {
+    if (!this.cleanupTimer) {
+      console.log('[SyncScheduler] Starting periodic database cleanup timer');
+      this.cleanupTimer = setInterval(() => {
+        this.runDatabaseCleanup().catch(err => {
+          console.error('[SyncScheduler] Database cleanup failed:', err);
+        });
+      }, this.CLEANUP_INTERVAL_MS);
+
+      // Run cleanup immediately on first start
+      this.runDatabaseCleanup().catch(err => {
+        console.error('[SyncScheduler] Initial database cleanup failed:', err);
+      });
+    }
+  }
+
+  /**
+   * Runs periodic database cleanup to prevent data accumulation
+   */
+  private async runDatabaseCleanup(): Promise<void> {
+    console.log('[SyncScheduler] Running periodic database cleanup...');
+    this.lastCleanup = new Date();
+
+    try {
+      const { db } = await import("../db.server");
+
+      // 1. Delete expired tasks (older than 3 days)
+      const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+      const expiredTasks = await db.task.deleteMany({
+        where: {
+          OR: [
+            { expiresAt: { lt: new Date() } },
+            {
+              status: { in: ['completed', 'failed', 'cancelled'] },
+              completedAt: { lt: threeDaysAgo }
+            }
+          ]
+        }
+      });
+
+      // 2. Delete old webhook logs (older than 7 days)
+      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+      const webhookLogs = await db.webhookLog.deleteMany({
+        where: {
+          createdAt: { lt: sevenDaysAgo },
+          processed: true
+        }
+      });
+
+      // 3. Delete ALL theme data (theme sync is disabled anyway)
+      const themeTranslations = await db.themeTranslation.deleteMany({});
+      const themeContent = await db.themeContent.deleteMany({});
+
+      console.log(`[SyncScheduler] Cleanup complete: ${expiredTasks.count} tasks, ${webhookLogs.count} logs, ${themeTranslations.count} theme translations, ${themeContent.count} theme content`);
+    } catch (error) {
+      console.error('[SyncScheduler] Cleanup error:', error);
+      throw error;
+    }
   }
 
   /**
@@ -175,12 +252,22 @@ class SyncSchedulerService {
     shops: string[];
     syncIntervalSeconds: number;
     inactivityThresholdMinutes: number;
+    cleanupEnabled: boolean;
+    lastCleanup: Date | null;
+    nextCleanup: Date | null;
   } {
+    const nextCleanup = this.lastCleanup
+      ? new Date(this.lastCleanup.getTime() + this.CLEANUP_INTERVAL_MS)
+      : null;
+
     return {
       activeShops: this.activeTimers.size,
       shops: Array.from(this.activeTimers.keys()),
       syncIntervalSeconds: this.SYNC_INTERVAL_MS / 1000,
       inactivityThresholdMinutes: this.INACTIVITY_THRESHOLD_MINUTES,
+      cleanupEnabled: this.cleanupTimer !== null,
+      lastCleanup: this.lastCleanup,
+      nextCleanup,
     };
   }
 }
