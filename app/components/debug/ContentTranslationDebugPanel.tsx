@@ -99,7 +99,14 @@ export function ContentTranslationDebugPanel({ contentItem, contentType, shopLoc
     };
   } else if (contentType === "menus") {
     const menuItemTitles = collectMenuItemTitles(contentItem.items);
-    expectedKeys = ["title", ...Object.keys(menuItemTitles)];
+
+    // Extract link translation keys from translations
+    const linkKeys = contentItem.translations
+      .filter((t: any) => t.key?.startsWith('link_'))
+      .map((t: any) => t.key)
+      .filter((key: string, index: number, self: string[]) => self.indexOf(key) === index);
+
+    expectedKeys = ["title", ...Object.keys(menuItemTitles), ...linkKeys];
     primaryData = {
       title: contentItem.title,
       ...menuItemTitles,
@@ -234,6 +241,36 @@ export function ContentTranslationDebugPanel({ contentItem, contentType, shopLoc
                 </Card>
               );
             })}
+
+            {/* Link Translations Overview - Only for menus */}
+            {contentType === "menus" && (
+              <Card background="bg-surface-info">
+                <BlockStack gap="300">
+                  <Text as="h3" variant="headingSm">
+                    Link Translations Overview
+                  </Text>
+                  <Text as="p" tone="subdued">
+                    Translations loaded via TranslatableResourceType: LINK
+                  </Text>
+                  {shopLocales.filter(l => !l.primary).map(locale => {
+                    const translations = translationsByLocale[locale.locale] || {};
+                    const linkTranslations = Object.keys(translations).filter(key => key.startsWith('link_'));
+                    const totalLinks = contentItem.translations.filter((t: any) => t.key?.startsWith('link_')).length;
+
+                    return (
+                      <InlineStack key={locale.locale} gap="200" blockAlign="center">
+                        <div style={{ minWidth: "100px" }}>
+                          <Text as="span" fontWeight="semibold">{locale.locale}:</Text>
+                        </div>
+                        <Badge tone={linkTranslations.length > 0 ? "success" : "critical"}>
+                          {linkTranslations.length} / {totalLinks} links translated
+                        </Badge>
+                      </InlineStack>
+                    );
+                  })}
+                </BlockStack>
+              </Card>
+            )}
 
             {/* Summary */}
             <Card background="bg-surface-success">

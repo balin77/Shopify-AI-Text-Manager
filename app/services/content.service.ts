@@ -149,7 +149,7 @@ export class ContentService {
         const menu = edge.node;
         const allTranslations = [];
 
-        // Method 1: Try translatableResource to get all translatable content
+        // Method 1: Try translatableResource to get all translatable content for MENU
         try {
           const translatableQuery = `#graphql
             query getTranslatableMenu($id: ID!) {
@@ -218,6 +218,78 @@ export class ContentService {
             }
           } catch (error) {
             console.error(`Error fetching translations for menu ${menu.id} in locale ${locale}:`, error);
+          }
+        }
+
+        // 🔥 NEW: Fetch translations for each LINK (MenuItem) recursively
+        const collectAllMenuItems = (items: any[], path: string[] = []): any[] => {
+          const result: any[] = [];
+          if (!items) return result;
+
+          items.forEach((item, index) => {
+            const currentPath = [...path, (index + 1).toString()];
+            result.push({ ...item, path: currentPath.join('.') });
+
+            if (item.items && item.items.length > 0) {
+              result.push(...collectAllMenuItems(item.items, currentPath));
+            }
+          });
+
+          return result;
+        };
+
+        const allMenuItems = collectAllMenuItems(menu.items);
+        console.log(`\n=== FETCHING LINK TRANSLATIONS for ${allMenuItems.length} menu items ===`);
+
+        for (const menuItem of allMenuItems) {
+          console.log(`\nProcessing Link ${menuItem.path}: ${menuItem.title} (${menuItem.id})`);
+
+          // Fetch translations for this LINK
+          try {
+            const linkTranslatableQuery = `#graphql
+              query getTranslatableLink($id: ID!) {
+                translatableResource(resourceId: $id) {
+                  resourceId
+                  translatableContent {
+                    key
+                    value
+                    digest
+                    locale
+                  }
+                  translations {
+                    locale
+                    key
+                    value
+                    outdated
+                  }
+                }
+              }
+            `;
+
+            const linkResponse = await this.admin.graphql(linkTranslatableQuery, {
+              variables: { id: menuItem.id }
+            });
+            const linkData = await linkResponse.json();
+
+            console.log(`  Translatable content:`, JSON.stringify(linkData.data?.translatableResource?.translatableContent, null, 2));
+            console.log(`  Translations:`, JSON.stringify(linkData.data?.translatableResource?.translations, null, 2));
+
+            const linkTranslations = linkData.data?.translatableResource?.translations || [];
+
+            // Add link translations with a prefix to distinguish from menu translations
+            for (const trans of linkTranslations) {
+              allTranslations.push({
+                ...trans,
+                key: `link_${menuItem.path}_${trans.key}`,
+                originalKey: trans.key,
+                linkId: menuItem.id,
+                linkPath: menuItem.path
+              });
+            }
+
+            console.log(`  ✓ Added ${linkTranslations.length} translations for link ${menuItem.path}`);
+          } catch (error) {
+            console.error(`  ✗ Error fetching translations for link ${menuItem.id}:`, error);
           }
         }
 
