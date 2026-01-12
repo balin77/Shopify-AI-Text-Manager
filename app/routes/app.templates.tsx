@@ -111,6 +111,14 @@ export default function TemplatesPage() {
   const currentGroupId = selectedItemId ? themes.find((t: any) => t.id === selectedItemId)?.groupId : null;
   const selectedItem = currentGroupId ? loadedThemes[currentGroupId] : null;
 
+  console.log('[TEMPLATES-STATE]', {
+    selectedItemId,
+    currentGroupId,
+    hasSelectedItem: !!selectedItem,
+    loadedThemesKeys: Object.keys(loadedThemes),
+    editableValuesCount: Object.keys(editableValues).length
+  });
+
   // Check for changes
   const hasChanges = Object.keys(editableValues).some(
     key => editableValues[key] !== originalValues[key]
@@ -127,25 +135,35 @@ export default function TemplatesPage() {
 
   // Function to load theme data on-demand
   const loadThemeData = async (groupId: string) => {
+    console.log('[TEMPLATES-LOAD] Starting to load:', groupId);
+
     // Check if already loaded
     if (loadedThemes[groupId]) {
+      console.log('[TEMPLATES-LOAD] Already loaded, skipping');
       return;
     }
 
     setIsLoading(true);
     try {
       const response = await fetch(`/api/templates/${groupId}`);
+      console.log('[TEMPLATES-LOAD] Response status:', response.status);
+
       if (!response.ok) {
         throw new Error('Failed to load theme data');
       }
       const data = await response.json();
+      console.log('[TEMPLATES-LOAD] Data received:', {
+        hasTheme: !!data.theme,
+        contentCount: data.theme?.translatableContent?.length
+      });
 
       setLoadedThemes(prev => ({
         ...prev,
         [groupId]: data.theme
       }));
+      console.log('[TEMPLATES-LOAD] Theme data set in state');
     } catch (error) {
-      console.error('Error loading theme data:', error);
+      console.error('[TEMPLATES-LOAD] Error loading theme data:', error);
     } finally {
       setIsLoading(false);
     }
