@@ -828,7 +828,7 @@ export default function ContentPage() {
       // Scroll to top
       window.scrollTo({ top: 0, behavior: 'smooth' });
 
-      // Highlight save button
+      // Highlight save button ONLY if there are changes
       setHighlightSaveButton(true);
 
       // Scroll save button into view if needed
@@ -839,7 +839,9 @@ export default function ContentPage() {
       return false; // Prevent navigation
     }
 
-    // Allow navigation
+    // Allow navigation - reset highlight if it was set
+    setHighlightSaveButton(false);
+    setPendingNavigation(null);
     navigationAction();
     return true;
   };
