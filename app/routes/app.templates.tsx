@@ -155,12 +155,15 @@ export default function TemplatesPage() {
   useEffect(() => {
     if (!selectedItem || !currentGroupId) return;
 
+    console.log('[TEMPLATES] Loading values for:', { currentLanguage, primaryLocale, hasContent: !!selectedItem.translatableContent });
+
     if (currentLanguage === primaryLocale) {
       // Load primary locale values
       const values: Record<string, string> = {};
       selectedItem.translatableContent?.forEach((item: any) => {
         values[item.key] = item.value || "";
       });
+      console.log('[TEMPLATES] Primary locale values loaded:', Object.keys(values).length);
       setEditableValues(values);
       setOriginalValues({ ...values });
     } else {
@@ -170,6 +173,7 @@ export default function TemplatesPage() {
 
       if (!hasTranslations) {
         // Load translations
+        console.log('[TEMPLATES] Loading translations for:', currentLanguage);
         const formData = new FormData();
         formData.append("action", "loadTranslations");
         formData.append("locale", currentLanguage);
@@ -185,11 +189,12 @@ export default function TemplatesPage() {
           const translation = hasTranslations.find((t: any) => t.key === item.key);
           values[item.key] = translation?.value || "";
         });
+        console.log('[TEMPLATES] Translation values loaded:', Object.keys(values).length);
         setEditableValues(values);
         setOriginalValues({ ...values });
       }
     }
-  }, [selectedItem, currentLanguage, currentGroupId]);
+  }, [selectedItem, currentLanguage, currentGroupId, primaryLocale, loadedTranslations]);
 
   // Handle loaded translations from fetcher
   useEffect(() => {
