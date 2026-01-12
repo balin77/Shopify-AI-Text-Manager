@@ -173,7 +173,6 @@ export function ThemeContentViewer({ themeResource, currentLanguage, shopLocales
               </Card>
               );
             })
-          )
           ) : (
             <Card>
               <Text as="p" variant="bodyMd" tone="subdued" alignment="center">
