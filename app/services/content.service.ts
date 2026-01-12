@@ -421,17 +421,38 @@ export class ContentService {
       ];
 
       // Define key patterns to filter and group by
+      // Each pattern creates a separate navigation item on the left
       const KEY_PATTERNS = [
-        { pattern: /^section\.article\./, name: 'Article Sections', category: 'sections' },
-        { pattern: /^section\.collection\./, name: 'Collection Sections', category: 'sections' },
-        { pattern: /^section\.index\./, name: 'Index/Homepage Sections', category: 'sections' },
-        { pattern: /^section\.password\./, name: 'Password Page Sections', category: 'sections' },
-        { pattern: /^section\.product\./, name: 'Product Sections', category: 'sections' },
-        { pattern: /^section\.page\./, name: 'Page Sections', category: 'sections' },
-        { pattern: /^collections\.json\./, name: 'Collections Template', category: 'templates' },
-        { pattern: /^group\.json\./, name: 'Theme Groups', category: 'groups' },
-        { pattern: /^bar\./, name: 'Announcement Bars', category: 'elements' },
-        { pattern: /^Settings Categories:/, name: 'Settings Categories', category: 'settings' },
+        // Article pages
+        { pattern: /^section\.article\./, name: 'Article', groupId: 'article', icon: '📝' },
+
+        // Collection pages
+        { pattern: /^section\.collection\./, name: 'Collection', groupId: 'collection', icon: '📂' },
+
+        // Homepage/Index
+        { pattern: /^section\.index\./, name: 'Index Page', groupId: 'index', icon: '🏠' },
+
+        // Password page
+        { pattern: /^section\.password\./, name: 'Password Page', groupId: 'password', icon: '🔒' },
+
+        // Product pages
+        { pattern: /^section\.product\./, name: 'Product', groupId: 'product', icon: '🛍️' },
+
+        // Individual page sections (e.g., About, Contact, etc.)
+        // These will be further sub-grouped by page name
+        { pattern: /^section\.page\.([^.]+)\./, name: 'Pages', groupId: 'pages', icon: '📄', extractSubgroup: true },
+
+        // Collections template
+        { pattern: /^collections\.json\./, name: 'Collections Template', groupId: 'collections_template', icon: '📋' },
+
+        // Theme groups
+        { pattern: /^group\.json\./, name: 'Theme Groups', groupId: 'groups', icon: '🎨' },
+
+        // Announcement bars
+        { pattern: /^bar\./, name: 'Announcement Bars', groupId: 'bars', icon: '📢' },
+
+        // Settings
+        { pattern: /^Settings Categories:/, name: 'Settings', groupId: 'settings', icon: '⚙️' },
       ];
 
       console.log(`[THEMES] Loading ${WORKING_RESOURCE_TYPES.length} resource types with translatable content`);
@@ -516,13 +537,56 @@ export class ContentService {
               );
             }
 
-            // Filter translatable content by key patterns
-            const filteredContent = (resource.translatableContent || []).filter((item: any) => {
-              return KEY_PATTERNS.some(pattern => pattern.pattern.test(item.key));
-            });
+            // Group translatable content by key patterns
+            const contentByGroup: Record<string, any[]> = {};
+            const unmatchedContent: any[] = [];
 
-            // Only add resource if it has filtered content
-            if (filteredContent.length > 0) {
+            for (const item of resource.translatableContent || []) {
+              let matched = false;
+
+              for (const patternConfig of KEY_PATTERNS) {
+                const match = item.key.match(patternConfig.pattern);
+                if (match) {
+                  let groupId = patternConfig.groupId;
+
+                  // Handle sub-grouping for pages (e.g., section.page.about, section.page.contact)
+                  if (patternConfig.extractSubgroup && match[1]) {
+                    groupId = `page_${match[1]}`; // e.g., "page_about", "page_contact"
+                  }
+
+                  if (!contentByGroup[groupId]) {
+                    contentByGroup[groupId] = [];
+                  }
+                  contentByGroup[groupId].push({
+                    ...item,
+                    _groupId: groupId,
+                    _groupName: patternConfig.extractSubgroup && match[1] ?
+                      `Page: ${match[1].charAt(0).toUpperCase() + match[1].slice(1)}` :
+                      patternConfig.name,
+                    _groupIcon: patternConfig.icon
+                  });
+                  matched = true;
+                  break;
+                }
+              }
+
+              if (!matched) {
+                unmatchedContent.push({
+                  ...item,
+                  _groupId: 'misc',
+                  _groupName: 'Verschiedenes',
+                  _groupIcon: '📦'
+                });
+              }
+            }
+
+            // Add "Verschiedenes" group if there's unmatched content
+            if (unmatchedContent.length > 0) {
+              contentByGroup['misc'] = unmatchedContent;
+            }
+
+            // Store grouped content for this resource
+            if (Object.keys(contentByGroup).length > 0) {
               allThemeResources.push({
                 id: resource.resourceId,
                 title: resourceTitle,
@@ -530,15 +594,15 @@ export class ContentService {
                 role: 'CONTENT',
                 resourceType: resourceTypeConfig.type,
                 resourceTypeLabel: resourceTypeConfig.label,
-                translatableContent: filteredContent,
+                translatableContent: resource.translatableContent || [], // Keep all for reference
+                contentByGroup, // New: grouped content
                 translations: allTranslations,
-                contentCount: filteredContent.length,
-                keyPatterns: KEY_PATTERNS // Include patterns for UI filtering
+                contentCount: Object.values(contentByGroup).reduce((sum, arr) => sum + arr.length, 0),
+                keyPatterns: KEY_PATTERNS
               });
 
-              console.log(`  → Filtered to ${filteredContent.length} matching keys (from ${resource.translatableContent?.length || 0})`);
-            } else {
-              console.log(`  → No matching keys (skipped)`);
+              const totalMatched = Object.values(contentByGroup).reduce((sum, arr) => sum + arr.length, 0);
+              console.log(`  → Grouped into ${Object.keys(contentByGroup).length} categories (${totalMatched} items)`);
             }
           }
         } catch (error) {
@@ -546,11 +610,48 @@ export class ContentService {
         }
       }
 
-      console.log(`\n=== 🎨 THEMES: Fetch complete ===`);
-      console.log(`Total theme resources: ${allThemeResources.length}`);
-      console.log(`Total translatable fields: ${allThemeResources.reduce((sum, r) => sum + r.contentCount, 0)}`);
+      // Consolidate all groups across all resources
+      const consolidatedGroups: Record<string, any> = {};
 
-      return allThemeResources;
+      for (const resource of allThemeResources) {
+        for (const [groupId, items] of Object.entries(resource.contentByGroup)) {
+          if (!consolidatedGroups[groupId]) {
+            // Use metadata from first item in group
+            const firstItem = items[0];
+            consolidatedGroups[groupId] = {
+              id: `group_${groupId}`,
+              title: firstItem._groupName,
+              name: firstItem._groupName,
+              icon: firstItem._groupIcon,
+              groupId,
+              role: 'THEME_GROUP',
+              translatableContent: [],
+              translations: [],
+              contentCount: 0
+            };
+          }
+
+          // Merge items and translations into consolidated group
+          consolidatedGroups[groupId].translatableContent.push(...items);
+          consolidatedGroups[groupId].translations.push(...resource.translations.filter((t: any) =>
+            items.some(item => item.key === t.key)
+          ));
+          consolidatedGroups[groupId].contentCount += items.length;
+        }
+      }
+
+      const groupedThemes = Object.values(consolidatedGroups);
+
+      console.log(`\n=== 🎨 THEMES: Fetch complete ===`);
+      console.log(`Total theme groups: ${groupedThemes.length}`);
+      console.log(`Total translatable fields: ${groupedThemes.reduce((sum, g) => sum + g.contentCount, 0)}`);
+
+      // Log group summary
+      groupedThemes.forEach(group => {
+        console.log(`  ${group.icon} ${group.title}: ${group.contentCount} fields`);
+      });
+
+      return groupedThemes;
     } catch (error) {
       console.error('❌ [THEMES] Error fetching themes:', error);
       return [];
