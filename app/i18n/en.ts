@@ -103,6 +103,7 @@ export const en: Translation = {
     primaryLanguageSuffix: "Primary language",
     noSourceText: "No text available in the primary language to translate",
     saveChanges: "Save changes",
+    discardChanges: "Discard",
     changesSaved: "Changes saved successfully!",
     error: "Error",
     success: "Success!",

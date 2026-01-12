@@ -101,6 +101,7 @@ export const de = {
     primaryLanguageSuffix: "Hauptsprache",
     noSourceText: "Kein Text in der Hauptsprache vorhanden zum Übersetzen",
     saveChanges: "Änderungen speichern",
+    discardChanges: "Verwerfen",
     changesSaved: "Änderungen erfolgreich gespeichert!",
     error: "Fehler",
     success: "Erfolg!",
