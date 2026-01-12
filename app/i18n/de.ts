@@ -156,6 +156,8 @@ export const de = {
       gemini: "Google Gemini (Kostenlos)",
       claude: "Anthropic Claude",
       openai: "OpenAI GPT",
+      grok: "Grok (X.AI)",
+      deepseek: "DeepSeek",
     },
     languages: {
       de: "Deutsch",

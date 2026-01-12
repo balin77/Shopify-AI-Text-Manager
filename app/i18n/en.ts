@@ -158,6 +158,8 @@ export const en: Translation = {
       gemini: "Google Gemini (Free)",
       claude: "Anthropic Claude",
       openai: "OpenAI GPT",
+      grok: "Grok (X.AI)",
+      deepseek: "DeepSeek",
     },
     languages: {
       de: "Deutsch",

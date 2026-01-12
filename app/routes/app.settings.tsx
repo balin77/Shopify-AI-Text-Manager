@@ -272,6 +272,8 @@ export default function SettingsPage() {
     { label: t.settings.providers.gemini, value: "gemini" },
     { label: t.settings.providers.claude, value: "claude" },
     { label: t.settings.providers.openai, value: "openai" },
+    { label: t.settings.providers.grok, value: "grok" },
+    { label: t.settings.providers.deepseek, value: "deepseek" },
   ];
 
   const APP_LANGUAGES = [
@@ -303,6 +305,14 @@ export default function SettingsPage() {
 
   const [grokKey, setGrokKey] = useState(settings.grokApiKey);
   const [deepseekKey, setDeepseekKey] = useState(settings.deepseekApiKey);
+
+  // Password visibility states
+  const [showHuggingfaceKey, setShowHuggingfaceKey] = useState(false);
+  const [showGeminiKey, setShowGeminiKey] = useState(false);
+  const [showClaudeKey, setShowClaudeKey] = useState(false);
+  const [showOpenaiKey, setShowOpenaiKey] = useState(false);
+  const [showGrokKey, setShowGrokKey] = useState(false);
+  const [showDeepseekKey, setShowDeepseekKey] = useState(false);
 
   const [hasChanges, setHasChanges] = useState(false);
 
@@ -879,26 +889,47 @@ export default function SettingsPage() {
                       <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
                         <BlockStack gap="400">
                           <Text as="h3" variant="headingMd">Hugging Face</Text>
-                          <TextField
-                            label="API Key"
-                            value={huggingfaceKey}
-                            onChange={setHuggingfaceKey}
-                            type="password"
-                            autoComplete="off"
-                            helpText={
-                              <span>
-                                {t.settings.huggingfaceHelp}{" "}
-                                <a
-                                  href="https://huggingface.co/settings/tokens"
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  style={{ color: "#008060" }}
-                                >
-                                  Hugging Face
-                                </a>
-                              </span>
-                            }
-                          />
+                          <div style={{ display: "flex", gap: "0.5rem", alignItems: "flex-start" }}>
+                            <div style={{ flex: 1 }}>
+                              <TextField
+                                label="API Key"
+                                value={huggingfaceKey}
+                                onChange={setHuggingfaceKey}
+                                type={showHuggingfaceKey ? "text" : "password"}
+                                autoComplete="off"
+                                helpText={
+                                  <span>
+                                    {t.settings.huggingfaceHelp}{" "}
+                                    <a
+                                      href="https://huggingface.co/settings/tokens"
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      style={{ color: "#008060" }}
+                                    >
+                                      Hugging Face
+                                    </a>
+                                  </span>
+                                }
+                              />
+                            </div>
+                            <button
+                              onClick={() => setShowHuggingfaceKey(!showHuggingfaceKey)}
+                              style={{
+                                marginTop: "1.75rem",
+                                padding: "0.5rem",
+                                background: "white",
+                                border: "1px solid #c9cccf",
+                                borderRadius: "8px",
+                                cursor: "pointer",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                              }}
+                              type="button"
+                            >
+                              {showHuggingfaceKey ? "👁️" : "👁️‍🗨️"}
+                            </button>
+                          </div>
                           <InlineStack gap="400">
                             <div style={{ flex: 1 }}>
                               <TextField
@@ -926,26 +957,47 @@ export default function SettingsPage() {
                       <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
                         <BlockStack gap="400">
                           <Text as="h3" variant="headingMd">Google Gemini</Text>
-                          <TextField
-                            label="API Key"
-                            value={geminiKey}
-                            onChange={setGeminiKey}
-                            type="password"
-                            autoComplete="off"
-                            helpText={
-                              <span>
-                                {t.settings.geminiHelp}{" "}
-                                <a
-                                  href="https://aistudio.google.com/app/apikey"
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  style={{ color: "#008060" }}
-                                >
-                                  Google AI Studio
-                                </a>
-                              </span>
-                            }
-                          />
+                          <div style={{ display: "flex", gap: "0.5rem", alignItems: "flex-start" }}>
+                            <div style={{ flex: 1 }}>
+                              <TextField
+                                label="API Key"
+                                value={geminiKey}
+                                onChange={setGeminiKey}
+                                type={showGeminiKey ? "text" : "password"}
+                                autoComplete="off"
+                                helpText={
+                                  <span>
+                                    {t.settings.geminiHelp}{" "}
+                                    <a
+                                      href="https://aistudio.google.com/app/apikey"
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      style={{ color: "#008060" }}
+                                    >
+                                      Google AI Studio
+                                    </a>
+                                  </span>
+                                }
+                              />
+                            </div>
+                            <button
+                              onClick={() => setShowGeminiKey(!showGeminiKey)}
+                              style={{
+                                marginTop: "1.75rem",
+                                padding: "0.5rem",
+                                background: "white",
+                                border: "1px solid #c9cccf",
+                                borderRadius: "8px",
+                                cursor: "pointer",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                              }}
+                              type="button"
+                            >
+                              {showGeminiKey ? "👁️" : "👁️‍🗨️"}
+                            </button>
+                          </div>
                           <InlineStack gap="400">
                             <div style={{ flex: 1 }}>
                               <TextField
@@ -973,26 +1025,47 @@ export default function SettingsPage() {
                       <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
                         <BlockStack gap="400">
                           <Text as="h3" variant="headingMd">Anthropic Claude</Text>
-                          <TextField
-                            label="API Key"
-                            value={claudeKey}
-                            onChange={setClaudeKey}
-                            type="password"
-                            autoComplete="off"
-                            helpText={
-                              <span>
-                                {t.settings.claudeHelp}{" "}
-                                <a
-                                  href="https://console.anthropic.com/settings/keys"
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  style={{ color: "#008060" }}
-                                >
-                                  Anthropic Console
-                                </a>
-                              </span>
-                            }
-                          />
+                          <div style={{ display: "flex", gap: "0.5rem", alignItems: "flex-start" }}>
+                            <div style={{ flex: 1 }}>
+                              <TextField
+                                label="API Key"
+                                value={claudeKey}
+                                onChange={setClaudeKey}
+                                type={showClaudeKey ? "text" : "password"}
+                                autoComplete="off"
+                                helpText={
+                                  <span>
+                                    {t.settings.claudeHelp}{" "}
+                                    <a
+                                      href="https://console.anthropic.com/settings/keys"
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      style={{ color: "#008060" }}
+                                    >
+                                      Anthropic Console
+                                    </a>
+                                  </span>
+                                }
+                              />
+                            </div>
+                            <button
+                              onClick={() => setShowClaudeKey(!showClaudeKey)}
+                              style={{
+                                marginTop: "1.75rem",
+                                padding: "0.5rem",
+                                background: "white",
+                                border: "1px solid #c9cccf",
+                                borderRadius: "8px",
+                                cursor: "pointer",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                              }}
+                              type="button"
+                            >
+                              {showClaudeKey ? "👁️" : "👁️‍🗨️"}
+                            </button>
+                          </div>
                           <InlineStack gap="400">
                             <div style={{ flex: 1 }}>
                               <TextField
@@ -1020,26 +1093,47 @@ export default function SettingsPage() {
                       <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
                         <BlockStack gap="400">
                           <Text as="h3" variant="headingMd">OpenAI</Text>
-                          <TextField
-                            label="API Key"
-                            value={openaiKey}
-                            onChange={setOpenaiKey}
-                            type="password"
-                            autoComplete="off"
-                            helpText={
-                              <span>
-                                {t.settings.openaiHelp}{" "}
-                                <a
-                                  href="https://platform.openai.com/api-keys"
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  style={{ color: "#008060" }}
-                                >
-                                  OpenAI Platform
-                                </a>
-                              </span>
-                            }
-                          />
+                          <div style={{ display: "flex", gap: "0.5rem", alignItems: "flex-start" }}>
+                            <div style={{ flex: 1 }}>
+                              <TextField
+                                label="API Key"
+                                value={openaiKey}
+                                onChange={setOpenaiKey}
+                                type={showOpenaiKey ? "text" : "password"}
+                                autoComplete="off"
+                                helpText={
+                                  <span>
+                                    {t.settings.openaiHelp}{" "}
+                                    <a
+                                      href="https://platform.openai.com/api-keys"
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      style={{ color: "#008060" }}
+                                    >
+                                      OpenAI Platform
+                                    </a>
+                                  </span>
+                                }
+                              />
+                            </div>
+                            <button
+                              onClick={() => setShowOpenaiKey(!showOpenaiKey)}
+                              style={{
+                                marginTop: "1.75rem",
+                                padding: "0.5rem",
+                                background: "white",
+                                border: "1px solid #c9cccf",
+                                borderRadius: "8px",
+                                cursor: "pointer",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                              }}
+                              type="button"
+                            >
+                              {showOpenaiKey ? "👁️" : "👁️‍🗨️"}
+                            </button>
+                          </div>
                           <InlineStack gap="400">
                             <div style={{ flex: 1 }}>
                               <TextField
@@ -1067,26 +1161,47 @@ export default function SettingsPage() {
                       <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
                         <BlockStack gap="400">
                           <Text as="h3" variant="headingMd">Grok (X.AI)</Text>
-                          <TextField
-                            label="API Key"
-                            value={grokKey}
-                            onChange={setGrokKey}
-                            type="password"
-                            autoComplete="off"
-                            helpText={
-                              <span>
-                                Get your API key from{" "}
-                                <a
-                                  href="https://console.x.ai"
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  style={{ color: "#008060" }}
-                                >
-                                  X.AI Console
-                                </a>
-                              </span>
-                            }
-                          />
+                          <div style={{ display: "flex", gap: "0.5rem", alignItems: "flex-start" }}>
+                            <div style={{ flex: 1 }}>
+                              <TextField
+                                label="API Key"
+                                value={grokKey}
+                                onChange={setGrokKey}
+                                type={showGrokKey ? "text" : "password"}
+                                autoComplete="off"
+                                helpText={
+                                  <span>
+                                    Get your API key from{" "}
+                                    <a
+                                      href="https://console.x.ai"
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      style={{ color: "#008060" }}
+                                    >
+                                      X.AI Console
+                                    </a>
+                                  </span>
+                                }
+                              />
+                            </div>
+                            <button
+                              onClick={() => setShowGrokKey(!showGrokKey)}
+                              style={{
+                                marginTop: "1.75rem",
+                                padding: "0.5rem",
+                                background: "white",
+                                border: "1px solid #c9cccf",
+                                borderRadius: "8px",
+                                cursor: "pointer",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                              }}
+                              type="button"
+                            >
+                              {showGrokKey ? "👁️" : "👁️‍🗨️"}
+                            </button>
+                          </div>
                           <InlineStack gap="400">
                             <div style={{ flex: 1 }}>
                               <TextField
@@ -1114,26 +1229,47 @@ export default function SettingsPage() {
                       <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
                         <BlockStack gap="400">
                           <Text as="h3" variant="headingMd">DeepSeek</Text>
-                          <TextField
-                            label="API Key"
-                            value={deepseekKey}
-                            onChange={setDeepseekKey}
-                            type="password"
-                            autoComplete="off"
-                            helpText={
-                              <span>
-                                Get your API key from{" "}
-                                <a
-                                  href="https://platform.deepseek.com"
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  style={{ color: "#008060" }}
-                                >
-                                  DeepSeek Platform
-                                </a>
-                              </span>
-                            }
-                          />
+                          <div style={{ display: "flex", gap: "0.5rem", alignItems: "flex-start" }}>
+                            <div style={{ flex: 1 }}>
+                              <TextField
+                                label="API Key"
+                                value={deepseekKey}
+                                onChange={setDeepseekKey}
+                                type={showDeepseekKey ? "text" : "password"}
+                                autoComplete="off"
+                                helpText={
+                                  <span>
+                                    Get your API key from{" "}
+                                    <a
+                                      href="https://platform.deepseek.com"
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      style={{ color: "#008060" }}
+                                    >
+                                      DeepSeek Platform
+                                    </a>
+                                  </span>
+                                }
+                              />
+                            </div>
+                            <button
+                              onClick={() => setShowDeepseekKey(!showDeepseekKey)}
+                              style={{
+                                marginTop: "1.75rem",
+                                padding: "0.5rem",
+                                background: "white",
+                                border: "1px solid #c9cccf",
+                                borderRadius: "8px",
+                                cursor: "pointer",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                              }}
+                              type="button"
+                            >
+                              {showDeepseekKey ? "👁️" : "👁️‍🗨️"}
+                            </button>
+                          </div>
                           <InlineStack gap="400">
                             <div style={{ flex: 1 }}>
                               <TextField
