@@ -66,18 +66,52 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       translationsByGroup[key].push(trans);
     }
 
+    // Group theme content by groupId to avoid duplicates
+    const groupedByGroupId = new Map<string, any>();
+
+    for (const group of themeGroups) {
+      const existingGroup = groupedByGroupId.get(group.groupId);
+
+      if (!existingGroup) {
+        // First occurrence of this groupId
+        groupedByGroupId.set(group.groupId, {
+          groupId: group.groupId,
+          groupName: group.groupName,
+          groupIcon: group.groupIcon,
+          resources: [{
+            resourceId: group.resourceId,
+            translatableContent: group.translatableContent as any[],
+            translations: translationsByGroup[`${group.resourceId}_${group.groupId}`] || []
+          }]
+        });
+      } else {
+        // Add to existing group
+        existingGroup.resources.push({
+          resourceId: group.resourceId,
+          translatableContent: group.translatableContent as any[],
+          translations: translationsByGroup[`${group.resourceId}_${group.groupId}`] || []
+        });
+      }
+    }
+
     // Transform to match frontend structure
-    const themes = themeGroups.map(group => ({
-      id: `group_${group.groupId}`,
-      title: group.groupName,
-      name: group.groupName,
-      icon: group.groupIcon,
-      groupId: group.groupId,
-      role: 'THEME_GROUP',
-      translatableContent: group.translatableContent as any[],
-      translations: translationsByGroup[`${group.resourceId}_${group.groupId}`] || [],
-      contentCount: (group.translatableContent as any[]).length
-    }));
+    const themes = Array.from(groupedByGroupId.values()).map(group => {
+      // Merge all translatable content from all resources
+      const allContent = group.resources.flatMap((r: any) => r.translatableContent);
+      const allTranslations = group.resources.flatMap((r: any) => r.translations);
+
+      return {
+        id: `group_${group.groupId}`,
+        title: group.groupName,
+        name: group.groupName,
+        icon: group.groupIcon,
+        groupId: group.groupId,
+        role: 'THEME_GROUP',
+        translatableContent: allContent,
+        translations: allTranslations,
+        contentCount: allContent.length
+      };
+    });
 
     return json({
       themes,

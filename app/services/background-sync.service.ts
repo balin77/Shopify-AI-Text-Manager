@@ -153,25 +153,51 @@ export class BackgroundSyncService {
       },
     });
 
-    // Delete old translations
-    await db.contentTranslation.deleteMany({
-      where: {
-        resourceId: pageData.id,
-        resourceType: "Page",
-      },
-    });
-
-    // Insert new translations
-    if (allTranslations.length > 0) {
-      await db.contentTranslation.createMany({
-        data: allTranslations.map((t: any) => ({
+    // Upsert translations instead of delete+create to prevent accumulation
+    for (const t of allTranslations) {
+      await db.contentTranslation.upsert({
+        where: {
+          resourceId_key_locale: {
+            resourceId: pageData.id,
+            key: t.key,
+            locale: t.locale,
+          },
+        },
+        create: {
           resourceId: pageData.id,
           resourceType: "Page",
           key: t.key,
           value: t.value,
           locale: t.locale,
           digest: t.digest || null,
-        })),
+        },
+        update: {
+          value: t.value,
+          digest: t.digest || null,
+          updatedAt: new Date(),
+        },
+      });
+    }
+
+    // Delete translations that no longer exist
+    const currentKeys = allTranslations.map((t: any) => ({ key: t.key, locale: t.locale }));
+    if (currentKeys.length > 0) {
+      await db.contentTranslation.deleteMany({
+        where: {
+          resourceId: pageData.id,
+          resourceType: "Page",
+          NOT: {
+            OR: currentKeys.map(({ key, locale }) => ({ key, locale })),
+          },
+        },
+      });
+    } else {
+      // No translations from Shopify - delete all
+      await db.contentTranslation.deleteMany({
+        where: {
+          resourceId: pageData.id,
+          resourceType: "Page",
+        },
       });
     }
   }
@@ -304,25 +330,51 @@ export class BackgroundSyncService {
       },
     });
 
-    // Delete old translations
-    await db.contentTranslation.deleteMany({
-      where: {
-        resourceId: policyData.id,
-        resourceType: "ShopPolicy",
-      },
-    });
-
-    // Insert new translations
-    if (allTranslations.length > 0) {
-      await db.contentTranslation.createMany({
-        data: allTranslations.map((t: any) => ({
+    // Upsert translations instead of delete+create to prevent accumulation
+    for (const t of allTranslations) {
+      await db.contentTranslation.upsert({
+        where: {
+          resourceId_key_locale: {
+            resourceId: policyData.id,
+            key: t.key,
+            locale: t.locale,
+          },
+        },
+        create: {
           resourceId: policyData.id,
           resourceType: "ShopPolicy",
           key: t.key,
           value: t.value,
           locale: t.locale,
           digest: t.digest || null,
-        })),
+        },
+        update: {
+          value: t.value,
+          digest: t.digest || null,
+          updatedAt: new Date(),
+        },
+      });
+    }
+
+    // Delete translations that no longer exist
+    const currentKeys = allTranslations.map((t: any) => ({ key: t.key, locale: t.locale }));
+    if (currentKeys.length > 0) {
+      await db.contentTranslation.deleteMany({
+        where: {
+          resourceId: policyData.id,
+          resourceType: "ShopPolicy",
+          NOT: {
+            OR: currentKeys.map(({ key, locale }) => ({ key, locale })),
+          },
+        },
+      });
+    } else {
+      // No translations from Shopify - delete all
+      await db.contentTranslation.deleteMany({
+        where: {
+          resourceId: policyData.id,
+          resourceType: "ShopPolicy",
+        },
       });
     }
   }
@@ -571,19 +623,33 @@ export class BackgroundSyncService {
                 },
               });
 
-              // Delete old translations for this group
-              await db.themeTranslation.deleteMany({
+              // First, get all existing translation keys for this group
+              const existingTranslations = await db.themeTranslation.findMany({
                 where: {
                   shop: this.shop,
                   resourceId: resource.resourceId,
                   groupId,
                 },
+                select: { key: true, locale: true }
               });
 
-              // Insert new translations
-              if (allTranslations.length > 0) {
-                await db.themeTranslation.createMany({
-                  data: allTranslations.map((t: any) => ({
+              const existingKeys = new Set(
+                existingTranslations.map(t => `${t.key}::${t.locale}`)
+              );
+
+              // Upsert translations (update existing, create new)
+              for (const t of allTranslations) {
+                await db.themeTranslation.upsert({
+                  where: {
+                    shop_resourceId_groupId_key_locale: {
+                      shop: this.shop,
+                      resourceId: resource.resourceId,
+                      groupId,
+                      key: t.key,
+                      locale: t.locale,
+                    },
+                  },
+                  create: {
                     shop: this.shop,
                     resourceId: resource.resourceId,
                     groupId,
@@ -591,8 +657,37 @@ export class BackgroundSyncService {
                     value: t.value,
                     locale: t.locale,
                     outdated: t.outdated || false,
-                  })),
+                  },
+                  update: {
+                    value: t.value,
+                    outdated: t.outdated || false,
+                    updatedAt: new Date(),
+                  },
                 });
+              }
+
+              // Delete translations that no longer exist in Shopify
+              const currentKeys = new Set(
+                allTranslations.map((t: any) => `${t.key}::${t.locale}`)
+              );
+
+              const keysToDelete = Array.from(existingKeys).filter(
+                key => !currentKeys.has(key)
+              );
+
+              if (keysToDelete.length > 0) {
+                for (const keyLocale of keysToDelete) {
+                  const [key, locale] = keyLocale.split('::');
+                  await db.themeTranslation.deleteMany({
+                    where: {
+                      shop: this.shop,
+                      resourceId: resource.resourceId,
+                      groupId,
+                      key,
+                      locale,
+                    },
+                  });
+                }
               }
 
               totalGroups++;
@@ -643,7 +738,17 @@ export class BackgroundSyncService {
         }
       }
 
+      // Log final database statistics
+      const finalStats = await db.themeContent.count({
+        where: { shop: this.shop }
+      });
+      const finalTranslationStats = await db.themeTranslation.count({
+        where: { shop: this.shop }
+      });
+
       console.log(`[BackgroundSync] ✓ Successfully synced ${totalGroups} theme groups`);
+      console.log(`[BackgroundSync] Database stats: ${finalStats} ThemeContent, ${finalTranslationStats} ThemeTranslations`);
+
       return totalGroups;
     } catch (error: any) {
       console.error('[BackgroundSync] Error syncing themes:', error);
