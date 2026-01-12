@@ -808,7 +808,7 @@ export default function ContentPage() {
         } else {
           // Translations are already loaded, update the fields
           const titleKey = "title";
-          const descKey = "body_html"; // All content types use body_html for translations
+          const descKey = selectedType === "policies" ? "body" : "body_html"; // Policies use "body", others use "body_html"
 
           setEditableTitle(getTranslatedValue(titleKey, currentLanguage, ""));
           setEditableDescription(getTranslatedValue(descKey, currentLanguage, ""));
@@ -839,7 +839,7 @@ export default function ContentPage() {
         // Only update fields if this is for the current language
         if (loadedLocale === currentLanguage) {
           const titleKey = "title";
-          const descKey = "body_html"; // All content types use body_html for translations
+          const descKey = selectedType === "policies" ? "body" : "body_html"; // Policies use "body", others use "body_html"
 
           // Get values from the newly loaded translations
           const newTitle = translations.find((t: any) => t.key === titleKey)?.value || "";
@@ -869,7 +869,7 @@ export default function ContentPage() {
       };
 
       const titleKey = "title";
-      const descKey = "body_html"; // All content types use body_html for translations
+      const descKey = selectedType === "policies" ? "body" : "body_html"; // Policies use "body", others use "body_html"
       const descFallback = selectedType === "pages" ? (selectedItem.body || "") :
                            selectedType === "blogs" ? (selectedItem.body || "") :
                            selectedType === "policies" ? (selectedItem.body || "") :
@@ -943,7 +943,7 @@ export default function ContentPage() {
       }
     } else {
       const titleKey = "title";
-      const descKey = "body_html";
+      const descKey = selectedType === "policies" ? "body" : "body_html"; // Policies use "body", others use "body_html"
       setEditableTitle(getTranslatedValue(titleKey, currentLanguage, ""));
       setEditableDescription(getTranslatedValue(descKey, currentLanguage, ""));
       setEditableHandle(getTranslatedValue("handle", currentLanguage, ""));
@@ -1175,7 +1175,7 @@ export default function ContentPage() {
       // This was a successful updateContent action for a translation
       const itemKey = `${selectedItem.id}_${currentLanguage}`;
       const titleKey = "title";
-      const descKey = "body_html"; // All content types use body_html for translations
+      const descKey = selectedType === "policies" ? "body" : "body_html"; // Policies use "body", others use "body_html"
 
       // Build updated translations array
       const existingTranslations = loadedTranslations[itemKey] || [];
