@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useFetcher } from "@remix-run/react";
+import { useLoaderData, useFetcher, useNavigate } from "@remix-run/react";
 import {
   Page,
   Card,
@@ -265,6 +265,7 @@ export default function SettingsPage() {
   const { shop, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const { t } = useI18n();
+  const navigate = useNavigate();
 
   const AI_PROVIDERS = [
     { label: t.settings.providers.huggingface, value: "huggingface" },
@@ -342,8 +343,11 @@ export default function SettingsPage() {
   // Reload page after language change is saved
   useEffect(() => {
     if (fetcher.state === "idle" && fetcher.data?.success && languageChanged && selectedSection === "language") {
-      // Language was saved successfully, reload to apply new language
-      window.location.reload();
+      // Language was saved successfully, navigate to the settings page with a forced reload
+      // This ensures the new language is loaded from the server
+      const currentUrl = new URL(window.location.href);
+      const settingsUrl = `${currentUrl.origin}${currentUrl.pathname}${currentUrl.search}`;
+      window.location.href = settingsUrl;
     }
   }, [fetcher.state, fetcher.data, languageChanged, selectedSection]);
 
