@@ -636,8 +636,9 @@ export class BackgroundSyncService {
     console.log(`[BackgroundSync] Starting full sync for shop: ${this.shop}`);
 
     try {
-      // Sync all content types in parallel for better performance
-      const [pages, policies, themes] = await Promise.all([
+      // TEMPORARY: Theme sync disabled due to DB overflow issues
+      // TODO: Re-enable with incremental sync logic
+      const [pages, policies] = await Promise.all([
         this.syncAllPages().catch(err => {
           console.error('[BackgroundSync] Pages sync failed:', err);
           return 0;
@@ -646,11 +647,10 @@ export class BackgroundSyncService {
           console.error('[BackgroundSync] Policies sync failed:', err);
           return 0;
         }),
-        this.syncAllThemes().catch(err => {
-          console.error('[BackgroundSync] Themes sync failed:', err);
-          return 0;
-        }),
+        // DISABLED: this.syncAllThemes() - causes DB overflow
       ]);
+
+      const themes = 0; // Disabled
 
       const duration = Date.now() - startTime;
       const stats: SyncStats = {
@@ -661,8 +661,8 @@ export class BackgroundSyncService {
         duration,
       };
 
-      console.log(`[BackgroundSync] ✓ Full sync complete in ${duration}ms`);
-      console.log(`[BackgroundSync]   Pages: ${pages}, Policies: ${policies}, Themes: ${themes}`);
+      console.log(`[BackgroundSync] ✓ Full sync complete in ${duration}ms (Themes sync DISABLED)`);
+      console.log(`[BackgroundSync]   Pages: ${pages}, Policies: ${policies}, Themes: ${themes} (disabled)`);
 
       return stats;
     } catch (error: any) {

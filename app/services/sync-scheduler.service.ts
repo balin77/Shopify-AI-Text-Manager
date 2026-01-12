@@ -15,6 +15,7 @@ interface SyncTimer {
   timer: NodeJS.Timeout;
   shop: string;
   startedAt: Date;
+  isRunning: boolean; // Track if sync is currently running
 }
 
 class SyncSchedulerService {
@@ -45,6 +46,7 @@ class SyncSchedulerService {
       timer,
       shop,
       startedAt: new Date(),
+      isRunning: false,
     });
 
     // Run first sync immediately
@@ -58,7 +60,20 @@ class SyncSchedulerService {
    * Checks activity and stops if shop is inactive
    */
   private async runSyncCycle(shop: string, admin: AdminApiContext): Promise<void> {
+    const syncTimer = this.activeTimers.get(shop);
+
+    // Skip if already running (concurrent protection)
+    if (syncTimer?.isRunning) {
+      console.log(`[SyncScheduler] Skipping sync for ${shop} - previous sync still running`);
+      return;
+    }
+
     try {
+      // Mark as running
+      if (syncTimer) {
+        syncTimer.isRunning = true;
+      }
+
       // Check if shop is still active
       const active = await isShopActive(shop, this.INACTIVITY_THRESHOLD_MINUTES);
 
@@ -78,6 +93,12 @@ class SyncSchedulerService {
     } catch (error) {
       console.error(`[SyncScheduler] Sync cycle failed for ${shop}:`, error);
       // Don't stop timer on error - retry next cycle
+    } finally {
+      // Mark as not running
+      const timer = this.activeTimers.get(shop);
+      if (timer) {
+        timer.isRunning = false;
+      }
     }
   }
 
