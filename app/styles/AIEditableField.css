@@ -24,6 +24,14 @@
   border-radius: 8px !important;
 }
 
+/* Blue background when primary locale has content but foreign translation is missing */
+.ai-editable-field-wrapper.bg-missing-translation input,
+.ai-editable-field-wrapper.bg-missing-translation textarea {
+  background-color: #e0f2fe !important;
+  border: 1px solid #c9cccf !important;
+  border-radius: 8px !important;
+}
+
 /* Character counter and helpText positioning - right aligned */
 .ai-editable-field-wrapper .Polaris-TextField__CharacterCount,
 .ai-editable-field-wrapper .Polaris-Text--subdued {
@@ -74,5 +82,11 @@
 .ai-editable-html-field.bg-suggestion textarea,
 .ai-editable-html-field.bg-suggestion [contenteditable] {
   background-color: #f0f9ff !important;
+  border-color: #c9cccf !important;
+}
+
+.ai-editable-html-field.bg-missing-translation textarea,
+.ai-editable-html-field.bg-missing-translation [contenteditable] {
+  background-color: #e0f2fe !important;
   border-color: #c9cccf !important;
 }

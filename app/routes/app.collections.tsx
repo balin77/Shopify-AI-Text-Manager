@@ -29,6 +29,10 @@ import {
   useChangeTracking,
   getTranslatedValue,
   isFieldTranslated as checkFieldTranslated,
+  hasPrimaryContentMissing as checkPrimaryContentMissing,
+  hasLocaleMissingTranslations as checkLocaleMissingTranslations,
+  hasMissingTranslations as checkMissingTranslations,
+  getLocaleButtonStyle as getLocaleButtonStyleUtil,
 } from "../utils/contentEditor.utils";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -670,6 +674,14 @@ export default function CollectionsPage() {
     return checkFieldTranslated(selectedItem, key, currentLanguage, primaryLocale, loadedTranslations);
   };
 
+  const hasMissingTranslations = () => {
+    return checkMissingTranslations(selectedItem, shopLocales, loadedTranslations, 'collections');
+  };
+
+  const getLocaleButtonStyle = (locale: any) => {
+    return getLocaleButtonStyleUtil(locale, selectedItem, primaryLocale, loadedTranslations, 'collections');
+  };
+
   return (
     <Page fullWidth>
       <style>{contentEditorStyles}</style>
@@ -741,16 +753,17 @@ export default function CollectionsPage() {
                 {/* Language Selector */}
                 <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
                   {shopLocales.map((locale: any) => (
-                    <Button
-                      key={locale.locale}
-                      variant={currentLanguage === locale.locale ? "primary" : undefined}
-                      onClick={() => {
-                        handleNavigationAttempt(() => setCurrentLanguage(locale.locale), hasChanges);
-                      }}
-                      size="slim"
-                    >
-                      {locale.name} {locale.primary && `(${t.content.primaryLanguageSuffix})`}
-                    </Button>
+                    <div key={locale.locale} style={getLocaleButtonStyle(locale)}>
+                      <Button
+                        variant={currentLanguage === locale.locale ? "primary" : undefined}
+                        onClick={() => {
+                          handleNavigationAttempt(() => setCurrentLanguage(locale.locale), hasChanges);
+                        }}
+                        size="slim"
+                      >
+                        {locale.name} {locale.primary && `(${t.content.primaryLanguageSuffix})`}
+                      </Button>
+                    </div>
                   ))}
                 </div>
 
@@ -798,6 +811,7 @@ export default function CollectionsPage() {
                   helpText={`${editableTitle.length} ${t.content.characters}`}
                   isLoading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "title"}
                   sourceTextAvailable={!!selectedItem?.title}
+                  hasMissingTranslations={hasMissingTranslations()}
                   onGenerateAI={() => handleGenerateAI("title")}
                   onTranslate={() => handleTranslateField("title")}
                   onTranslateAll={handleTranslateAll}
@@ -818,6 +832,7 @@ export default function CollectionsPage() {
                   isTranslated={isFieldTranslatedCheck("body_html")}
                   isLoading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "description"}
                   sourceTextAvailable={!!selectedItem?.descriptionHtml}
+                  hasMissingTranslations={hasMissingTranslations()}
                   onGenerateAI={() => handleGenerateAI("description")}
                   onTranslate={() => handleTranslateField("description")}
                   onTranslateAll={handleTranslateAll}
@@ -836,6 +851,7 @@ export default function CollectionsPage() {
                   isTranslated={isFieldTranslatedCheck("handle")}
                   isLoading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "handle"}
                   sourceTextAvailable={!!selectedItem?.handle}
+                  hasMissingTranslations={hasMissingTranslations()}
                   onGenerateAI={() => handleGenerateAI("handle")}
                   onTranslate={() => handleTranslateField("handle")}
                   onTranslateAll={handleTranslateAll}
@@ -855,6 +871,7 @@ export default function CollectionsPage() {
                   helpText={`${editableSeoTitle.length} ${t.content.characters} (${t.content.recommended}: 50-60)`}
                   isLoading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "seoTitle"}
                   sourceTextAvailable={!!selectedItem?.seo?.title}
+                  hasMissingTranslations={hasMissingTranslations()}
                   onGenerateAI={() => handleGenerateAI("seoTitle")}
                   onTranslate={() => handleTranslateField("seoTitle")}
                   onTranslateAll={handleTranslateAll}
@@ -875,6 +892,7 @@ export default function CollectionsPage() {
                   multiline={3}
                   isLoading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "metaDescription"}
                   sourceTextAvailable={!!selectedItem?.seo?.description}
+                  hasMissingTranslations={hasMissingTranslations()}
                   onGenerateAI={() => handleGenerateAI("metaDescription")}
                   onTranslate={() => handleTranslateField("metaDescription")}
                   onTranslateAll={handleTranslateAll}

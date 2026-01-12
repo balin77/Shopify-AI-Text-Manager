@@ -293,6 +293,101 @@ export function isFieldTranslated(
 }
 
 /**
+ * Check if primary locale has any missing content
+ */
+export function hasPrimaryContentMissing(
+  selectedItem: any,
+  contentType: 'pages' | 'blogs' | 'collections' | 'policies'
+): boolean {
+  if (!selectedItem) return false;
+
+  // Check required fields based on content type
+  const titleMissing = contentType !== 'policies' && !selectedItem.title;
+  const bodyMissing = contentType === 'collections'
+    ? !selectedItem.descriptionHtml
+    : !selectedItem.body;
+  const handleMissing = contentType !== 'policies' && !selectedItem.handle;
+
+  return titleMissing || bodyMissing || handleMissing;
+}
+
+/**
+ * Check if a specific locale has missing translations
+ */
+export function hasLocaleMissingTranslations(
+  selectedItem: any,
+  locale: string,
+  primaryLocale: string,
+  loadedTranslations: Record<string, any[]>,
+  contentType: 'pages' | 'blogs' | 'collections' | 'policies'
+): boolean {
+  if (!selectedItem || locale === primaryLocale) return false;
+
+  const itemKey = `${selectedItem.id}_${locale}`;
+  const translations = loadedTranslations[itemKey] || selectedItem.translations?.filter(
+    (t: any) => t.locale === locale
+  ) || [];
+
+  // Define required fields based on content type
+  const requiredFields = contentType === 'collections'
+    ? ["title", "body_html", "handle"]
+    : contentType === 'policies'
+    ? ["body"]
+    : ["title", "body_html", "handle"];
+
+  return requiredFields.some(field => {
+    const translation = translations.find((t: any) => t.key === field);
+    return !translation || !translation.value;
+  });
+}
+
+/**
+ * Check if any foreign locale has missing translations
+ */
+export function hasMissingTranslations(
+  selectedItem: any,
+  shopLocales: any[],
+  loadedTranslations: Record<string, any[]>,
+  contentType: 'pages' | 'blogs' | 'collections' | 'policies'
+): boolean {
+  if (!selectedItem) return false;
+
+  const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "de";
+  const foreignLocales = shopLocales.filter((l: any) => !l.primary);
+
+  return foreignLocales.some((locale: any) =>
+    hasLocaleMissingTranslations(selectedItem, locale.locale, primaryLocale, loadedTranslations, contentType)
+  );
+}
+
+/**
+ * Get button style for locale navigation
+ */
+export function getLocaleButtonStyle(
+  locale: any,
+  selectedItem: any,
+  primaryLocale: string,
+  loadedTranslations: Record<string, any[]>,
+  contentType: 'pages' | 'blogs' | 'collections' | 'policies'
+): React.CSSProperties {
+  if (locale.primary && hasPrimaryContentMissing(selectedItem, contentType)) {
+    return {
+      animation: "pulse 1.5s ease-in-out infinite",
+      borderRadius: "8px",
+    };
+  }
+
+  if (!locale.primary && hasLocaleMissingTranslations(selectedItem, locale.locale, primaryLocale, loadedTranslations, contentType)) {
+    return {
+      animation: "pulseBlue 1.5s ease-in-out infinite",
+      borderRadius: "8px",
+    };
+  }
+
+  return {};
+}
+
+/**
  * Common CSS styles for content editor pages
  */
 export const contentEditorStyles = `
@@ -326,6 +421,17 @@ export const contentEditorStyles = `
     }
     50% {
       box-shadow: 0 0 20px 10px rgba(255, 149, 0, 0.3);
+      transform: scale(1.05);
+    }
+  }
+
+  @keyframes pulseBlue {
+    0%, 100% {
+      box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.7);
+      transform: scale(1);
+    }
+    50% {
+      box-shadow: 0 0 20px 10px rgba(59, 130, 246, 0.3);
       transform: scale(1.05);
     }
   }

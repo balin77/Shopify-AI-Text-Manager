@@ -16,6 +16,7 @@ interface AIEditableHTMLFieldProps {
   isTranslated?: boolean;
   isLoading?: boolean;
   sourceTextAvailable?: boolean;
+  hasMissingTranslations?: boolean;
   onGenerateAI: () => void;
   onTranslate: () => void;
   onTranslateAll?: () => void;
@@ -36,6 +37,7 @@ export function AIEditableHTMLField({
   isTranslated = true,
   isLoading = false,
   sourceTextAvailable = true,
+  hasMissingTranslations = false,
   onGenerateAI,
   onTranslate,
   onTranslateAll,
@@ -48,9 +50,20 @@ export function AIEditableHTMLField({
 
   // Determine background color class based on translation state
   const getBackgroundClass = () => {
-    if (suggestion) return "bg-suggestion"; // Light blue when AI suggestion is active
-    if (isPrimaryLocale) return "bg-white"; // White for primary locale
-    return isTranslated ? "bg-white" : "bg-untranslated"; // Orange if not translated
+    // Priority 1: AI suggestion is active (light blue)
+    if (suggestion) return "bg-suggestion";
+
+    // Priority 2: Primary locale is empty (orange)
+    if (isPrimaryLocale && !value) return "bg-untranslated";
+
+    // Priority 3: Primary locale has content but translations are missing (blue)
+    if (isPrimaryLocale && value && hasMissingTranslations) return "bg-missing-translation";
+
+    // Priority 4: Foreign locale - orange if not translated, white if translated
+    if (!isPrimaryLocale) return isTranslated ? "bg-white" : "bg-untranslated";
+
+    // Default: White for primary locale with content
+    return "bg-white";
   };
 
   const handleFormatText = (command: string) => {
