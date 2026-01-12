@@ -18,6 +18,7 @@ interface AIEditableFieldProps {
   isLoading?: boolean;
   onGenerateAI: () => void;
   onTranslate: () => void;
+  onTranslateAll?: () => void;
   onAcceptSuggestion: () => void;
   onAcceptAndTranslate?: () => void;
   onRejectSuggestion: () => void;
@@ -38,6 +39,7 @@ export function AIEditableField({
   isLoading = false,
   onGenerateAI,
   onTranslate,
+  onTranslateAll,
   onAcceptSuggestion,
   onAcceptAndTranslate,
   onRejectSuggestion,
@@ -63,6 +65,7 @@ export function AIEditableField({
           multiline={multiline}
           maxLength={maxLength}
           placeholder={placeholder}
+          showCharacterCount={!!maxLength}
         />
       </div>
 
@@ -81,15 +84,26 @@ export function AIEditableField({
         />
       )}
 
-      <div style={{ marginTop: "0.5rem" }}>
+      <div style={{ marginTop: "0.5rem", display: "flex", gap: "0.5rem" }}>
         {isPrimaryLocale ? (
-          <Button
-            size="slim"
-            onClick={onGenerateAI}
-            loading={isLoading}
-          >
-            ✨ {t.products.aiGenerate}
-          </Button>
+          <>
+            <Button
+              size="slim"
+              onClick={onGenerateAI}
+              loading={isLoading}
+            >
+              ✨ {t.products.aiGenerate}
+            </Button>
+            {onTranslateAll && (
+              <Button
+                size="slim"
+                onClick={onTranslateAll}
+                loading={isLoading}
+              >
+                🌍 Übersetzen
+              </Button>
+            )}
+          </>
         ) : (
           <Button
             size="slim"
