@@ -256,96 +256,22 @@ export class ContentService {
           });
         }
 
-        // Method 3: Try to fetch menu with items in each locale
-        console.log(`\n[MENU] Attempting to fetch menu items in each locale...`);
-
-        for (const locale of locales) {
-          try {
-            const menuInLocaleQuery = `#graphql
-              query getMenuInLocale($id: ID!, $locale: String!) {
-                menu(id: $id) {
-                  translations(locale: $locale) {
-                    locale
-                    key
-                    value
-                  }
-                  items {
-                    id
-                    title
-                    url
-                    translations(locale: $locale) {
-                      locale
-                      key
-                      value
-                    }
-                    items {
-                      id
-                      title
-                      url
-                      translations(locale: $locale) {
-                        locale
-                        key
-                        value
-                      }
-                      items {
-                        id
-                        title
-                        url
-                        translations(locale: $locale) {
-                          locale
-                          key
-                          value
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            `;
-
-            const menuLocaleResponse = await this.admin.graphql(menuInLocaleQuery, {
-              variables: { id: menu.id, locale }
-            });
-            const menuLocaleData = await menuLocaleResponse.json();
-
-            console.log(`  [${locale}] Menu query response:`, JSON.stringify(menuLocaleData.data?.menu, null, 2));
-
-            // Extract item translations if they exist
-            const menuWithTranslations = menuLocaleData.data?.menu;
-            if (menuWithTranslations?.items) {
-              console.log(`  [${locale}] Found ${menuWithTranslations.items.length} items`);
-
-              // Recursive function to merge translations into our menu items
-              const mergeItemTranslations = (ourItems: any[], translatedItems: any[]) => {
-                for (let i = 0; i < ourItems.length; i++) {
-                  const ourItem = ourItems[i];
-                  const translatedItem = translatedItems[i];
-
-                  if (translatedItem?.translations) {
-                    if (!ourItem.translations) {
-                      ourItem.translations = [];
-                    }
-                    for (const trans of translatedItem.translations) {
-                      if (!ourItem.translations.find((t: any) => t.locale === trans.locale && t.key === trans.key)) {
-                        ourItem.translations.push(trans);
-                        console.log(`    [${locale}] Added translation for "${ourItem.title}": ${trans.key} = "${trans.value}"`);
-                      }
-                    }
-                  }
-
-                  // Recursively merge sub-items
-                  if (ourItem.items && translatedItem?.items) {
-                    mergeItemTranslations(ourItem.items, translatedItem.items);
-                  }
-                }
-              };
-
-              mergeItemTranslations(menu.items, menuWithTranslations.items);
-            }
-          } catch (error) {
-            console.error(`  [${locale}] Error fetching menu with items:`, error);
-          }
-        }
+        // LIMITATION: Shopify API does not provide MenuItem translations
+        console.log(`\n[MENU] ⚠️  SHOPIFY API LIMITATION CONFIRMED:`);
+        console.log(`[MENU] MenuItem does NOT have a 'translations' field`);
+        console.log(`[MENU] LINK resource type exists in TranslatableResourceType enum but:`);
+        console.log(`[MENU]   - MenuItem IDs cannot be queried as translatableResources (returns "invalid id")`);
+        console.log(`[MENU]   - MenuItem object has no translations field in GraphQL schema`);
+        console.log(`[MENU] `);
+        console.log(`[MENU] Known Shopify limitation since 2023:`);
+        console.log(`[MENU]   - https://github.com/Shopify/storefront-api-feedback/discussions/156`);
+        console.log(`[MENU]   - https://community.shopify.dev/t/translation-api-menuitem/6227`);
+        console.log(`[MENU] `);
+        console.log(`[MENU] Menu items can only be translated via Shopify Admin "Translate & Adapt" app`);
+        console.log(`[MENU] These translations are NOT accessible via GraphQL Admin API`);
+        console.log(`[MENU] `);
+        console.log(`[MENU] WORKAROUND: Menu items will display in primary language only in this app.`);
+        console.log(`[MENU] Users must translate menu items directly in their Shopify storefront theme.`);
 
         menusWithTranslations.push({
           ...menu,
