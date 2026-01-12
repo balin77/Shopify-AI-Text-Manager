@@ -423,6 +423,7 @@ export function ProductEditor({
             isLoading={isFieldLoading("title", isPrimaryLocale ? "generateAIText" : "translateField")}
             onGenerateAI={() => onGenerateAI("title")}
             onTranslate={() => onTranslateField("title")}
+            onTranslateAll={isPrimaryLocale ? onTranslateAll : undefined}
             onAcceptSuggestion={() => onAcceptSuggestion("title")}
             onAcceptAndTranslate={() => onAcceptAndTranslate("title")}
             onRejectSuggestion={() => onRejectSuggestion("title")}
@@ -446,6 +447,7 @@ export function ProductEditor({
             isLoading={isFieldLoading("description", isPrimaryLocale ? "generateAIText" : "translateField")}
             onGenerateAI={() => onGenerateAI("description")}
             onTranslate={() => onTranslateField("description")}
+            onTranslateAll={isPrimaryLocale ? onTranslateAll : undefined}
             onAcceptSuggestion={() => onAcceptSuggestion("description")}
             onAcceptAndTranslate={() => onAcceptAndTranslate("description")}
             onRejectSuggestion={() => onRejectSuggestion("description")}
@@ -465,6 +467,7 @@ export function ProductEditor({
             isLoading={isFieldLoading("handle", isPrimaryLocale ? "generateAIText" : "translateField")}
             onGenerateAI={() => onGenerateAI("handle")}
             onTranslate={() => onTranslateField("handle")}
+            onTranslateAll={isPrimaryLocale ? onTranslateAll : undefined}
             onAcceptSuggestion={() => onAcceptSuggestion("handle")}
             onAcceptAndTranslate={() => onAcceptAndTranslate("handle")}
             onRejectSuggestion={() => onRejectSuggestion("handle")}
@@ -485,6 +488,7 @@ export function ProductEditor({
             isLoading={isFieldLoading("seoTitle", isPrimaryLocale ? "generateAIText" : "translateField")}
             onGenerateAI={() => onGenerateAI("seoTitle")}
             onTranslate={() => onTranslateField("seoTitle")}
+            onTranslateAll={isPrimaryLocale ? onTranslateAll : undefined}
             onAcceptSuggestion={() => onAcceptSuggestion("seoTitle")}
             onAcceptAndTranslate={() => onAcceptAndTranslate("seoTitle")}
             onRejectSuggestion={() => onRejectSuggestion("seoTitle")}
@@ -506,6 +510,7 @@ export function ProductEditor({
             isLoading={isFieldLoading("metaDescription", isPrimaryLocale ? "generateAIText" : "translateField")}
             onGenerateAI={() => onGenerateAI("metaDescription")}
             onTranslate={() => onTranslateField("metaDescription")}
+            onTranslateAll={isPrimaryLocale ? onTranslateAll : undefined}
             onAcceptSuggestion={() => onAcceptSuggestion("metaDescription")}
             onAcceptAndTranslate={() => onAcceptAndTranslate("metaDescription")}
             onRejectSuggestion={() => onRejectSuggestion("metaDescription")}
