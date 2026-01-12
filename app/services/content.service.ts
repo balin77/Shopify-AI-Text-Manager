@@ -174,6 +174,12 @@ export class ContentService {
             });
             const translatableData = await translatableResponse.json();
 
+            // 🔍 DEBUG: Log translatableContent to see all available keys (including link keys!)
+            if (locale === locales[0]) { // Only log once for first locale
+              const translatableContent = translatableData.data?.translatableResource?.translatableContent || [];
+              console.log(`[Menu ${menu.id}] TranslatableContent keys:`, translatableContent.map((c: any) => c.key).join(', '));
+            }
+
             const translations = translatableData.data?.translatableResource?.translations || [];
 
             // Only add if not already present
@@ -221,82 +227,7 @@ export class ContentService {
           }
         }
 
-        // 🔥 NEW: Fetch translations for each LINK (MenuItem) recursively
-        const collectAllMenuItems = (items: any[], path: string[] = []): any[] => {
-          const result: any[] = [];
-          if (!items) return result;
-
-          items.forEach((item, index) => {
-            const currentPath = [...path, (index + 1).toString()];
-            result.push({ ...item, path: currentPath.join('.') });
-
-            if (item.items && item.items.length > 0) {
-              result.push(...collectAllMenuItems(item.items, currentPath));
-            }
-          });
-
-          return result;
-        };
-
-        const allMenuItems = collectAllMenuItems(menu.items);
-        console.log(`[Menu ${menu.id}] Fetching LINK translations for ${allMenuItems.length} items...`);
-
-        let totalLinkTranslations = 0;
-        let errorCount = 0;
-
-        for (const menuItem of allMenuItems) {
-          // Fetch translations for this LINK for each locale
-          for (const locale of locales) {
-            try {
-              const linkTranslatableQuery = `#graphql
-                query getTranslatableLink($id: ID!, $locale: String!) {
-                  translatableResource(resourceId: $id) {
-                    resourceId
-                    translatableContent {
-                      key
-                      value
-                      digest
-                      locale
-                    }
-                    translations(locale: $locale) {
-                      locale
-                      key
-                      value
-                      outdated
-                    }
-                  }
-                }
-              `;
-
-              const linkResponse = await this.admin.graphql(linkTranslatableQuery, {
-                variables: { id: menuItem.id, locale }
-              });
-              const linkData = await linkResponse.json();
-
-              const linkTranslations = linkData.data?.translatableResource?.translations || [];
-
-              // Add link translations with a prefix to distinguish from menu translations
-              for (const trans of linkTranslations) {
-                // Check if this translation already exists
-                if (!allTranslations.find(t => t.locale === trans.locale && t.key === `link_${menuItem.path}_${trans.key}`)) {
-                  allTranslations.push({
-                    ...trans,
-                    key: `link_${menuItem.path}_${trans.key}`,
-                    originalKey: trans.key,
-                    linkId: menuItem.id,
-                    linkPath: menuItem.path
-                  });
-                  totalLinkTranslations++;
-                }
-              }
-            } catch (error) {
-              errorCount++;
-              console.error(`[Menu ${menu.id}] Error on link ${menuItem.id} (${locale}):`, error);
-            }
-          }
-        }
-
-        console.log(`[Menu ${menu.id}] ✓ Loaded ${totalLinkTranslations} link translations from ${allMenuItems.length} items (${errorCount} errors)`);
+        console.log(`[Menu ${menu.id}] ✓ Loaded ${allTranslations.length} menu translations`);
 
         menusWithTranslations.push({
           ...menu,
