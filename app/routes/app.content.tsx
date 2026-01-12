@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useFetcher } from "@remix-run/react";
+import { useLoaderData, useFetcher, useNavigate, useSearchParams } from "@remix-run/react";
 import {
   Page,
   Card,
@@ -655,18 +655,62 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function ContentPage() {
-  const { blogs, collections, pages, policies, metadata, menus, themes, metaobjects, shop, shopLocales, primaryLocale, error } = useLoaderData<typeof loader>();
+  const { blogs, collections, pages, policies, metadata, menus, themes, metaobjects, shop, shopLocales, primaryLocale, requestedType, error } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { t } = useI18n();
   const { isDevMode } = useDevMode();
 
   const CONTENT_TYPES = getContentTypes(t);
-  const [selectedType, setSelectedType] = useState<ContentType>("blogs");
+
+  // 🚀 Get initial type from URL or localStorage
+  const getInitialType = (): ContentType => {
+    const urlType = searchParams.get("type") as ContentType;
+    if (urlType) return urlType;
+
+    if (typeof window !== "undefined") {
+      const stored = localStorage.getItem("lastContentType");
+      if (stored) return stored as ContentType;
+    }
+
+    return "blogs"; // default
+  };
+
+  const [selectedType, setSelectedType] = useState<ContentType>(getInitialType());
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [currentLanguage, setCurrentLanguage] = useState(primaryLocale);
   const [aiSuggestions, setAiSuggestions] = useState<Record<string, string>>({});
   const [hasChanges, setHasChanges] = useState(false);
   const [loadedTranslations, setLoadedTranslations] = useState<Record<string, any[]>>({});
+
+  // 🚀 LAZY LOADING: Initialize URL on mount if not set
+  useEffect(() => {
+    const urlType = searchParams.get("type");
+    if (!urlType) {
+      // No type in URL, use selected type (from localStorage or default)
+      navigate(`?type=${selectedType}`, { replace: true });
+    }
+  }, []); // Run only once on mount
+
+  // 🚀 LAZY LOADING: Update URL and localStorage when type changes
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("lastContentType", selectedType);
+    }
+    const urlType = searchParams.get("type");
+    if (urlType !== selectedType) {
+      navigate(`?type=${selectedType}`, { replace: true });
+    }
+  }, [selectedType, navigate]);
+
+  // 🚀 LAZY LOADING: Trigger data reload when URL type changes
+  useEffect(() => {
+    const urlType = searchParams.get("type") as ContentType;
+    if (urlType && urlType !== selectedType) {
+      setSelectedType(urlType);
+    }
+  }, [searchParams]);
 
   // Unsaved changes warning state
   const [pendingNavigation, setPendingNavigation] = useState<(() => void) | null>(null);
