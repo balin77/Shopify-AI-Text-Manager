@@ -108,23 +108,53 @@ export class ContentService {
 
   async getMenus(first: number = 50) {
     try {
+      console.log('\n=== 🍔 MENUS: Starting fetch ===');
+
       // First get shop locales to know which languages to fetch
       const shopLocales = await this.getShopLocales();
       const locales = shopLocales.filter((l: any) => !l.primary).map((l: any) => l.locale);
+      console.log(`[MENUS] Shop locales:`, shopLocales.map((l: any) => `${l.name} (${l.locale}${l.primary ? ' - PRIMARY' : ''})`));
+      console.log(`[MENUS] Non-primary locales to fetch translations for:`, locales);
 
       const response = await this.admin.graphql(GET_MENUS, {
         variables: { first }
       });
       const data = await response.json();
 
+      console.log(`[MENUS] Found ${data.data?.menus?.edges?.length || 0} menus`);
+
       // For each menu, fetch translations using both methods
       const menusWithTranslations = [];
 
       for (const edge of data.data?.menus?.edges || []) {
         const menu = edge.node;
+        console.log(`\n--- Menu: "${menu.title}" (${menu.id}) ---`);
+        console.log(`[MENU] Handle: ${menu.handle}`);
+        console.log(`[MENU] Items count: ${menu.items?.length || 0}`);
+
+        // Log menu items structure recursively
+        const logMenuItems = (items: any[], level: number = 0) => {
+          for (const item of items || []) {
+            const indent = '  '.repeat(level);
+            console.log(`${indent}└─ "${item.title}" (${item.id})`);
+            console.log(`${indent}   URL: ${item.url}`);
+            console.log(`${indent}   Type: ${item.type}`);
+            if (item.items && item.items.length > 0) {
+              console.log(`${indent}   Sub-items: ${item.items.length}`);
+              logMenuItems(item.items, level + 1);
+            }
+          }
+        };
+
+        if (menu.items && menu.items.length > 0) {
+          console.log('[MENU] Menu items structure:');
+          logMenuItems(menu.items);
+        }
+
         const allTranslations = [];
 
         // Method 1: Fetch MENU translations for each locale using translatableResource
+        console.log(`[MENU] Fetching translations using translatableResource API...`);
         for (const locale of locales) {
           try {
             const translatableQuery = `#graphql
@@ -153,6 +183,16 @@ export class ContentService {
             const translatableData = await translatableResponse.json();
 
             const translations = translatableData.data?.translatableResource?.translations || [];
+            const translatableContent = translatableData.data?.translatableResource?.translatableContent || [];
+
+            console.log(`  [TRANSLATABLE-${locale}] Translatable content:`, translatableContent);
+            console.log(`  [TRANSLATABLE-${locale}] Found ${translations.length} translations`);
+
+            if (translations.length > 0) {
+              translations.forEach((t: any) => {
+                console.log(`    - key: "${t.key}", value: "${t.value}", outdated: ${t.outdated}`);
+              });
+            }
 
             // Only add if not already present
             for (const trans of translations) {
@@ -161,11 +201,12 @@ export class ContentService {
               }
             }
           } catch (error) {
-            console.error(`Error fetching translatable resource for menu ${menu.id} (${locale}):`, error);
+            console.error(`  [TRANSLATABLE-${locale}] Error:`, error);
           }
         }
 
-        // Method 2: Fetch translations for each non-primary locale
+        // Method 2: Fetch translations for each non-primary locale using menu.translations
+        console.log(`[MENU] Fetching translations using menu.translations API...`);
         for (const locale of locales) {
           try {
             const translationsQuery = `#graphql
@@ -188,6 +229,14 @@ export class ContentService {
 
             const translations = transData.data?.menu?.translations || [];
 
+            console.log(`  [MENU-TRANS-${locale}] Found ${translations.length} translations`);
+
+            if (translations.length > 0) {
+              translations.forEach((t: any) => {
+                console.log(`    - key: "${t.key}", value: "${t.value}", outdated: ${t.outdated}`);
+              });
+            }
+
             // Only add if not already added by translatableResource
             for (const trans of translations) {
               if (!allTranslations.find(t => t.locale === trans.locale && t.key === trans.key)) {
@@ -195,8 +244,16 @@ export class ContentService {
               }
             }
           } catch (error) {
-            console.error(`Error fetching translations for menu ${menu.id} in locale ${locale}:`, error);
+            console.error(`  [MENU-TRANS-${locale}] Error:`, error);
           }
+        }
+
+        console.log(`[MENU] Total translations collected: ${allTranslations.length}`);
+        if (allTranslations.length > 0) {
+          console.log('[MENU] All translations:');
+          allTranslations.forEach((t: any) => {
+            console.log(`  - [${t.locale}] ${t.key} = "${t.value}"`);
+          });
         }
 
         menusWithTranslations.push({
@@ -205,9 +262,10 @@ export class ContentService {
         });
       }
 
+      console.log(`\n=== 🍔 MENUS: Fetch complete - ${menusWithTranslations.length} menus loaded ===\n`);
       return menusWithTranslations;
     } catch (error) {
-      console.error('Error fetching menus:', error);
+      console.error('❌ [MENUS] Error fetching menus:', error);
       return [];
     }
   }

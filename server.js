@@ -56,7 +56,7 @@ app.listen(port, async () => {
 
   // Start task cleanup service
   try {
-    const { TaskCleanupService } = await import("./build/server/services/task-cleanup.service.js");
+    const { TaskCleanupService } = await import("./task-cleanup.service.js");
     const cleanupService = TaskCleanupService.getInstance();
     cleanupService.start();
     console.log("✅ Task cleanup service started");

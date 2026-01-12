@@ -1,33 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "Bash(ForEach-Object { Stop-Process -Id $_d -Force -ErrorAction SilentlyContinue })",
-      "Bash(npm run build:*)",
-      "Bash(npm run dev:*)",
-      "Bash(git add:*)",
-      "Bash(git commit -m \"$(cat <<''EOF''\nfix: Implement full \"Translate to All Languages\" functionality\n\n- Server now automatically saves all translations to Shopify\n- Client uses current editable field values (including AI-generated content)\n- UI updates to reflect new translations after successful translation\n- Only non-empty fields are translated\n- Added error handling for empty field sets\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")",
-      "Bash(git push:*)",
-      "Bash(git log:*)",
-      "Bash(git commit -m \"$(cat <<''EOF''\nfix: Replace contentHtml with content for blog articles\n\nUpdated all GraphQL queries and mutations to use the correct ''content'' field instead of ''contentHtml'' for blog articles. The contentHtml field doesn''t exist in Shopify''s Article type, causing GraphQL errors.\n\nChanges:\n- GraphQL query: contentHtml → content\n- GraphQL mutation: contentHtml → content  \n- Frontend references updated to use content field\n- Translation key updated from ''contentHtml'' to ''body_html''\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")",
-      "Bash(git commit:*)",
-      "Bash(powershell -Command:*)",
-      "Bash(powershell -ExecutionPolicy Bypass -File update-content-types.ps1)",
-      "Bash(powershell.exe -ExecutionPolicy Bypass -File \"C:\\Users\\guble\\OneDrive\\Shopify\\Shopify API Connector\\fix-content-types.ps1\")",
-      "Bash(Remove-Item \"C:\\Users\\guble\\OneDrive\\Shopify\\Shopify API Connector\\fix-content-types.ps1\" -Force)",
-      "Bash(Remove-Item \"C:\\Users\\guble\\OneDrive\\Shopify\\Shopify API Connector\\update-content-types.ps1\" -Force -ErrorAction SilentlyContinue)",
-      "Bash(powershell.exe -Command \"Remove-Item ''C:\\Users\\guble\\OneDrive\\Shopify\\Shopify API Connector\\fix-content-types.ps1'' -Force; Remove-Item ''C:\\Users\\guble\\OneDrive\\Shopify\\Shopify API Connector\\update-content-types.ps1'' -Force -ErrorAction SilentlyContinue\")",
-      "Bash(npx prisma migrate dev:*)",
-      "Bash(npx prisma generate:*)",
-      "Bash(npm run validate:env:*)",
-      "Read(//c/Users/guble/OneDrive/Shopify/ImageVariantManager/**)",
-      "Bash(cat:*)",
-      "Bash(railway variables:*)",
-      "Bash(railway service:*)",
-      "Bash(git reset:*)",
-      "Bash(railway logs:*)",
-      "Bash(railway run:*)",
-      "Bash(railway status:*)",
-      "Bash(git revert:*)"
+      "Bash(taskkill:*)",
+      "Bash(git add:*)"
     ],
     "deny": [],
     "ask": []
