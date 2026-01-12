@@ -13,12 +13,13 @@ import {
   Button,
   TextField,
   Banner,
-  ButtonGroup,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
 import { SeoSidebar } from "../components/SeoSidebar";
 import { AISuggestionBanner } from "../components/AISuggestionBanner";
+import { AIEditableField } from "../components/AIEditableField";
+import { AIEditableHTMLField } from "../components/AIEditableHTMLField";
 import { ContentTranslationDebugPanel } from "../components/debug/ContentTranslationDebugPanel";
 import { ThemeContentViewer } from "../components/ThemeContentViewer";
 import { AIService } from "../../src/services/ai.service";
@@ -714,7 +715,6 @@ export default function ContentPage() {
   const [editableMetaDescription, setEditableMetaDescription] = useState("");
   const [editableMenuItems, setEditableMenuItems] = useState<any[]>([]);
   const [descriptionMode, setDescriptionMode] = useState<"html" | "rendered">("rendered");
-  const descriptionEditorRef = useRef<HTMLDivElement>(null);
 
   // Get current items based on selected type
   const getCurrentItems = () => {
@@ -1093,47 +1093,6 @@ export default function ContentPage() {
     });
   };
 
-  const handleFormatText = (command: string) => {
-    if (descriptionMode !== "rendered" || !descriptionEditorRef.current) return;
-
-    descriptionEditorRef.current.focus();
-
-    switch (command) {
-      case "bold":
-        document.execCommand("bold", false);
-        break;
-      case "italic":
-        document.execCommand("italic", false);
-        break;
-      case "underline":
-        document.execCommand("underline", false);
-        break;
-      case "h1":
-        document.execCommand("formatBlock", false, "<h1>");
-        break;
-      case "h2":
-        document.execCommand("formatBlock", false, "<h2>");
-        break;
-      case "h3":
-        document.execCommand("formatBlock", false, "<h3>");
-        break;
-      case "p":
-        document.execCommand("formatBlock", false, "<p>");
-        break;
-      case "ul":
-        document.execCommand("insertUnorderedList", false);
-        break;
-      case "ol":
-        document.execCommand("insertOrderedList", false);
-        break;
-      case "br":
-        document.execCommand("insertHTML", false, "<br>");
-        break;
-    }
-
-    setEditableDescription(descriptionEditorRef.current.innerHTML);
-  };
-
   const toggleDescriptionMode = () => {
     setDescriptionMode(descriptionMode === "html" ? "rendered" : "html");
   };
@@ -1235,27 +1194,6 @@ export default function ContentPage() {
     return !!translation && !!translation.value;
   };
 
-  const getFieldBackgroundColor = (key: string) => {
-    if (currentLanguage === primaryLocale) return "white";
-    return isFieldTranslated(key) ? "white" : "#fff4e5";
-  };
-
-  const renderAISuggestion = (fieldType: string, suggestionText: string) => (
-    <AISuggestionBanner
-      fieldType={fieldType}
-      suggestionText={suggestionText}
-      isHtml={fieldType === "description" || fieldType === "body"}
-      onAccept={() => handleAcceptSuggestion(fieldType)}
-      onDecline={() => setAiSuggestions(prev => {
-        const newSuggestions = { ...prev };
-        delete newSuggestions[fieldType];
-        return newSuggestions;
-      })}
-      acceptLabel={t.content.accept}
-      declineLabel={t.content.decline}
-      titleLabel={t.content.aiSuggestion}
-    />
-  );
 
   // Recursive function to render menu items with unlimited nesting
   const renderMenuItem = (item: any, index: number, path: number[]): JSX.Element => {
@@ -1482,239 +1420,98 @@ export default function ContentPage() {
 
                 {/* Editable Title - NOT for policies in non-primary languages, NOT for menus, NOT for templates */}
                 {selectedType !== "menus" && selectedType !== "templates" && (selectedType !== "policies" || currentLanguage === primaryLocale) && (
-                  <div>
-                    <div style={{ background: getFieldBackgroundColor("title"), borderRadius: "8px", padding: "1px" }}>
-                      <TextField
-                        label={`${t.content.title} (${shopLocales.find((l: any) => l.locale === currentLanguage)?.name || currentLanguage})`}
-                        value={editableTitle}
-                        onChange={setEditableTitle}
-                        autoComplete="off"
-                        helpText={`${editableTitle.length} ${t.content.characters}`}
-                        disabled={selectedType === "policies" && currentLanguage === primaryLocale}
-                      />
-                    </div>
-                    {aiSuggestions.title && renderAISuggestion("title", aiSuggestions.title)}
-                    {currentLanguage === primaryLocale && selectedType !== "policies" && (
-                      <div style={{ marginTop: "0.5rem" }}>
-                        <Button
-                          size="slim"
-                          onClick={() => handleGenerateAI("title")}
-                          loading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "title" && fetcher.formData?.get("action") === "generateAIText"}
-                        >
-                          {t.content.generateWithAI}
-                        </Button>
-                      </div>
-                    )}
-                    {currentLanguage !== primaryLocale && selectedType !== "policies" && (
-                      <div style={{ marginTop: "0.5rem" }}>
-                        <Button
-                          size="slim"
-                          onClick={() => handleTranslateField("title")}
-                          loading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "title" && fetcher.formData?.get("action") === "translateField"}
-                        >
-                          {t.content.translateFromPrimary}
-                        </Button>
-                      </div>
-                    )}
-                  </div>
+                  <AIEditableField
+                    label={`${t.content.title} (${shopLocales.find((l: any) => l.locale === currentLanguage)?.name || currentLanguage})`}
+                    value={editableTitle}
+                    onChange={setEditableTitle}
+                    fieldType="title"
+                    suggestion={aiSuggestions.title}
+                    isPrimaryLocale={currentLanguage === primaryLocale}
+                    isTranslated={isFieldTranslated("title")}
+                    helpText={`${editableTitle.length} ${t.content.characters}`}
+                    isLoading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "title" && (fetcher.formData?.get("action") === "generateAIText" || fetcher.formData?.get("action") === "translateField")}
+                    onGenerateAI={() => handleGenerateAI("title")}
+                    onTranslate={() => handleTranslateField("title")}
+                    onAcceptSuggestion={() => handleAcceptSuggestion("title")}
+                    onRejectSuggestion={() => setAiSuggestions(prev => { const newSuggestions = {...prev}; delete newSuggestions["title"]; return newSuggestions; })}
+                  />
                 )}
 
                 {/* Editable Description/Body - NOT for menus or templates */}
                 {selectedType !== "menus" && selectedType !== "templates" && (
-                  <div>
-                    <InlineStack align="space-between" blockAlign="center">
-                      <Text as="p" variant="bodyMd" fontWeight="semibold">
-                        {selectedType === "pages" ? t.content.content : t.content.description} ({shopLocales.find((l: any) => l.locale === currentLanguage)?.name || currentLanguage})
-                      </Text>
-                      <Button size="slim" onClick={toggleDescriptionMode}>{descriptionMode === "html" ? t.content.preview : t.content.html}</Button>
-                    </InlineStack>
-
-                    {descriptionMode === "rendered" && (
-                      <div style={{ marginTop: "0.5rem", display: "flex", gap: "0.25rem", flexWrap: "wrap", padding: "0.5rem", background: "#f6f6f7", border: "1px solid #c9cccf", borderRadius: "8px 8px 0 0" }}>
-                        <ButtonGroup variant="segmented">
-                          <Button size="slim" onClick={() => handleFormatText("bold")}>B</Button>
-                          <Button size="slim" onClick={() => handleFormatText("italic")}>I</Button>
-                          <Button size="slim" onClick={() => handleFormatText("underline")}>U</Button>
-                        </ButtonGroup>
-                        <ButtonGroup variant="segmented">
-                          <Button size="slim" onClick={() => handleFormatText("h1")}>H1</Button>
-                          <Button size="slim" onClick={() => handleFormatText("h2")}>H2</Button>
-                          <Button size="slim" onClick={() => handleFormatText("h3")}>H3</Button>
-                        </ButtonGroup>
-                        <ButtonGroup variant="segmented">
-                          <Button size="slim" onClick={() => handleFormatText("ul")}>{t.content.formatting.list}</Button>
-                          <Button size="slim" onClick={() => handleFormatText("ol")}>{t.content.formatting.numberedList}</Button>
-                        </ButtonGroup>
-                        <ButtonGroup variant="segmented">
-                          <Button size="slim" onClick={() => handleFormatText("p")}>{t.content.formatting.paragraph}</Button>
-                          <Button size="slim" onClick={() => handleFormatText("br")}>{t.content.formatting.lineBreak}</Button>
-                        </ButtonGroup>
-                      </div>
-                    )}
-
-                    <div style={{ background: getFieldBackgroundColor(selectedType === "pages" ? "body" : selectedType === "blogs" ? "body_html" : "description"), borderRadius: "8px", padding: "1px" }}>
-                      {descriptionMode === "html" ? (
-                        <textarea
-                          value={editableDescription}
-                          onChange={(e) => setEditableDescription(e.target.value)}
-                          style={{
-                            width: "100%",
-                            minHeight: "200px",
-                            padding: "12px",
-                            border: "1px solid #c9cccf",
-                            borderRadius: "8px",
-                            fontFamily: "monospace",
-                            fontSize: "14px",
-                            marginTop: "0.5rem",
-                          }}
-                        />
-                      ) : (
-                        <div
-                          ref={descriptionEditorRef}
-                          contentEditable
-                          onInput={(e) => setEditableDescription(e.currentTarget.innerHTML)}
-                          dangerouslySetInnerHTML={{ __html: editableDescription }}
-                          style={{
-                            width: "100%",
-                            minHeight: "200px",
-                            padding: "12px",
-                            border: "1px solid #c9cccf",
-                            borderTop: "none",
-                            borderRadius: "0 0 8px 8px",
-                            lineHeight: "1.6",
-                          }}
-                          className="description-editor"
-                        />
-                      )}
-                    </div>
-                    <Text as="p" variant="bodySm" tone="subdued">{editableDescription.replace(/<[^>]*>/g, "").length} {t.content.characters}</Text>
-                    {aiSuggestions.description && renderAISuggestion("description", aiSuggestions.description)}
-                    {aiSuggestions.body && renderAISuggestion("body", aiSuggestions.body)}
-                    <div style={{ marginTop: "0.5rem" }}>
-                      {currentLanguage === primaryLocale ? (
-                        <Button
-                          size="slim"
-                          onClick={() => handleGenerateAI(selectedType === "pages" ? "body" : "description")}
-                          loading={fetcher.state !== "idle" && (fetcher.formData?.get("fieldType") === "description" || fetcher.formData?.get("fieldType") === "body") && fetcher.formData?.get("action") === "generateAIText"}
-                        >
-                          {t.content.generateWithAI}
-                        </Button>
-                      ) : (
-                        <Button
-                          size="slim"
-                          onClick={() => handleTranslateField(selectedType === "pages" ? "body" : "description")}
-                          loading={fetcher.state !== "idle" && (fetcher.formData?.get("fieldType") === "description" || fetcher.formData?.get("fieldType") === "body") && fetcher.formData?.get("action") === "translateField"}
-                        >
-                          {t.content.translateFromPrimary}
-                        </Button>
-                      )}
-                    </div>
-                  </div>
+                  <AIEditableHTMLField
+                    label={selectedType === "pages" ? t.content.content : t.content.description}
+                    value={editableDescription}
+                    onChange={setEditableDescription}
+                    mode={descriptionMode}
+                    onToggleMode={toggleDescriptionMode}
+                    fieldType={selectedType === "pages" ? "body" : "description"}
+                    suggestion={aiSuggestions.description || aiSuggestions.body}
+                    isPrimaryLocale={currentLanguage === primaryLocale}
+                    isTranslated={isFieldTranslated(selectedType === "pages" ? "body" : selectedType === "blogs" ? "body_html" : "description")}
+                    isLoading={fetcher.state !== "idle" && (fetcher.formData?.get("fieldType") === "description" || fetcher.formData?.get("fieldType") === "body") && (fetcher.formData?.get("action") === "generateAIText" || fetcher.formData?.get("action") === "translateField")}
+                    onGenerateAI={() => handleGenerateAI(selectedType === "pages" ? "body" : "description")}
+                    onTranslate={() => handleTranslateField(selectedType === "pages" ? "body" : "description")}
+                    onAcceptSuggestion={() => handleAcceptSuggestion(selectedType === "pages" ? "body" : "description")}
+                    onRejectSuggestion={() => setAiSuggestions(prev => { const newSuggestions = {...prev}; delete newSuggestions["description"]; delete newSuggestions["body"]; return newSuggestions; })}
+                  />
                 )}
 
                 {/* URL Slug */}
                 {(selectedType === "pages" || selectedType === "collections" || selectedType === "blogs") && (
-                  <div>
-                    <div style={{ background: getFieldBackgroundColor("handle"), borderRadius: "8px", padding: "1px" }}>
-                      <TextField
-                        label={`${t.content.urlSlug} (${shopLocales.find((l: any) => l.locale === currentLanguage)?.name || currentLanguage})`}
-                        value={editableHandle}
-                        onChange={setEditableHandle}
-                        autoComplete="off"
-                      />
-                    </div>
-                    {aiSuggestions.handle && renderAISuggestion("handle", aiSuggestions.handle)}
-                    <div style={{ marginTop: "0.5rem" }}>
-                      {currentLanguage === primaryLocale ? (
-                        <Button
-                          size="slim"
-                          onClick={() => handleGenerateAI("handle")}
-                          loading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "handle" && fetcher.formData?.get("action") === "generateAIText"}
-                        >
-                          {t.content.generateWithAIShort}
-                        </Button>
-                      ) : (
-                        <Button
-                          size="slim"
-                          onClick={() => handleTranslateField("handle")}
-                          loading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "handle" && fetcher.formData?.get("action") === "translateField"}
-                        >
-                          {t.content.translateFromPrimary}
-                        </Button>
-                      )}
-                    </div>
-                  </div>
+                  <AIEditableField
+                    label={`${t.content.urlSlug} (${shopLocales.find((l: any) => l.locale === currentLanguage)?.name || currentLanguage})`}
+                    value={editableHandle}
+                    onChange={setEditableHandle}
+                    fieldType="handle"
+                    suggestion={aiSuggestions.handle}
+                    isPrimaryLocale={currentLanguage === primaryLocale}
+                    isTranslated={isFieldTranslated("handle")}
+                    isLoading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "handle" && (fetcher.formData?.get("action") === "generateAIText" || fetcher.formData?.get("action") === "translateField")}
+                    onGenerateAI={() => handleGenerateAI("handle")}
+                    onTranslate={() => handleTranslateField("handle")}
+                    onAcceptSuggestion={() => handleAcceptSuggestion("handle")}
+                    onRejectSuggestion={() => setAiSuggestions(prev => { const newSuggestions = {...prev}; delete newSuggestions["handle"]; return newSuggestions; })}
+                  />
                 )}
 
                 {/* SEO Fields (only for blogs and collections) */}
                 {(selectedType === "blogs" || selectedType === "collections") && (
                   <>
                     {/* SEO Title */}
-                    <div>
-                      <div style={{ background: getFieldBackgroundColor("meta_title"), borderRadius: "8px", padding: "1px" }}>
-                        <TextField
-                          label={`${t.content.seoTitle} (${shopLocales.find((l: any) => l.locale === currentLanguage)?.name || currentLanguage})`}
-                          value={editableSeoTitle}
-                          onChange={setEditableSeoTitle}
-                          autoComplete="off"
-                          helpText={`${editableSeoTitle.length} ${t.content.characters} (${t.content.recommended}: 50-60)`}
-                        />
-                      </div>
-                      {aiSuggestions.seoTitle && renderAISuggestion("seoTitle", aiSuggestions.seoTitle)}
-                      <div style={{ marginTop: "0.5rem" }}>
-                        {currentLanguage === primaryLocale ? (
-                          <Button
-                            size="slim"
-                            onClick={() => handleGenerateAI("seoTitle")}
-                            loading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "seoTitle" && fetcher.formData?.get("action") === "generateAIText"}
-                          >
-                            {t.content.generateWithAIShort}
-                          </Button>
-                        ) : (
-                          <Button
-                            size="slim"
-                            onClick={() => handleTranslateField("seoTitle")}
-                            loading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "seoTitle" && fetcher.formData?.get("action") === "translateField"}
-                          >
-                            {t.content.translateFromPrimary}
-                          </Button>
-                        )}
-                      </div>
-                    </div>
+                    <AIEditableField
+                      label={`${t.content.seoTitle} (${shopLocales.find((l: any) => l.locale === currentLanguage)?.name || currentLanguage})`}
+                      value={editableSeoTitle}
+                      onChange={setEditableSeoTitle}
+                      fieldType="seoTitle"
+                      suggestion={aiSuggestions.seoTitle}
+                      isPrimaryLocale={currentLanguage === primaryLocale}
+                      isTranslated={isFieldTranslated("meta_title")}
+                      helpText={`${editableSeoTitle.length} ${t.content.characters} (${t.content.recommended}: 50-60)`}
+                      isLoading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "seoTitle" && (fetcher.formData?.get("action") === "generateAIText" || fetcher.formData?.get("action") === "translateField")}
+                      onGenerateAI={() => handleGenerateAI("seoTitle")}
+                      onTranslate={() => handleTranslateField("seoTitle")}
+                      onAcceptSuggestion={() => handleAcceptSuggestion("seoTitle")}
+                      onRejectSuggestion={() => setAiSuggestions(prev => { const newSuggestions = {...prev}; delete newSuggestions["seoTitle"]; return newSuggestions; })}
+                    />
 
                     {/* Meta Description */}
-                    <div>
-                      <div style={{ background: getFieldBackgroundColor("meta_description"), borderRadius: "8px", padding: "1px" }}>
-                        <TextField
-                          label={`${t.content.metaDescription} (${shopLocales.find((l: any) => l.locale === currentLanguage)?.name || currentLanguage})`}
-                          value={editableMetaDescription}
-                          onChange={setEditableMetaDescription}
-                          multiline={3}
-                          autoComplete="off"
-                          helpText={`${editableMetaDescription.length} ${t.content.characters} (${t.content.recommended}: 150-160)`}
-                        />
-                      </div>
-                      {aiSuggestions.metaDescription && renderAISuggestion("metaDescription", aiSuggestions.metaDescription)}
-                      <div style={{ marginTop: "0.5rem" }}>
-                        {currentLanguage === primaryLocale ? (
-                          <Button
-                            size="slim"
-                            onClick={() => handleGenerateAI("metaDescription")}
-                            loading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "metaDescription" && fetcher.formData?.get("action") === "generateAIText"}
-                          >
-                            {t.content.generateWithAIShort}
-                          </Button>
-                        ) : (
-                          <Button
-                            size="slim"
-                            onClick={() => handleTranslateField("metaDescription")}
-                            loading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "metaDescription" && fetcher.formData?.get("action") === "translateField"}
-                          >
-                            {t.content.translateFromPrimary}
-                          </Button>
-                        )}
-                      </div>
-                    </div>
+                    <AIEditableField
+                      label={`${t.content.metaDescription} (${shopLocales.find((l: any) => l.locale === currentLanguage)?.name || currentLanguage})`}
+                      value={editableMetaDescription}
+                      onChange={setEditableMetaDescription}
+                      fieldType="metaDescription"
+                      suggestion={aiSuggestions.metaDescription}
+                      isPrimaryLocale={currentLanguage === primaryLocale}
+                      isTranslated={isFieldTranslated("meta_description")}
+                      helpText={`${editableMetaDescription.length} ${t.content.characters} (${t.content.recommended}: 150-160)`}
+                      multiline={3}
+                      isLoading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "metaDescription" && (fetcher.formData?.get("action") === "generateAIText" || fetcher.formData?.get("action") === "translateField")}
+                      onGenerateAI={() => handleGenerateAI("metaDescription")}
+                      onTranslate={() => handleTranslateField("metaDescription")}
+                      onAcceptSuggestion={() => handleAcceptSuggestion("metaDescription")}
+                      onRejectSuggestion={() => setAiSuggestions(prev => { const newSuggestions = {...prev}; delete newSuggestions["metaDescription"]; return newSuggestions; })}
+                    />
                   </>
                 )}
 

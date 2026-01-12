@@ -11,8 +11,8 @@ import {
   Icon,
 } from "@shopify/polaris";
 import { CheckIcon, XIcon } from "@shopify/polaris-icons";
-import { FieldEditor } from "./FieldEditor";
-import { DescriptionEditor } from "./DescriptionEditor";
+import { AIEditableField } from "../AIEditableField";
+import { AIEditableHTMLField } from "../AIEditableHTMLField";
 import { ProductOptions } from "./ProductOptions";
 import { useI18n } from "../../contexts/I18nContext";
 
@@ -150,6 +150,13 @@ export function ProductEditor({
   const [altTextSuggestions, setAltTextSuggestions] = useState<Record<number, string>>({});
 
   const isPrimaryLocale = currentLanguage === primaryLocale;
+
+  // Helper to determine if a field is translated
+  const isFieldTranslated = (fieldKey: string) => {
+    if (isPrimaryLocale) return true;
+    const bgColor = getFieldBackgroundColor(fieldKey);
+    return bgColor === "white" || bgColor === "#ffffff";
+  };
 
   // Handle single alt-text generation responses (show suggestion box)
   useEffect(() => {
@@ -402,7 +409,7 @@ export function ProductEditor({
           )}
 
           {/* Title Field */}
-          <FieldEditor
+          <AIEditableField
             label={`${t.products.productTitle} (${
               shopLocales.find((l) => l.locale === currentLanguage)?.name || currentLanguage
             })`}
@@ -411,7 +418,7 @@ export function ProductEditor({
             fieldType="title"
             suggestion={aiSuggestions.title}
             isPrimaryLocale={isPrimaryLocale}
-            backgroundColor={getFieldBackgroundColor("title")}
+            isTranslated={isFieldTranslated("title")}
             helpText={`${editableTitle.length} ${t.products.characters}`}
             isLoading={isFieldLoading("title", isPrimaryLocale ? "generateAIText" : "translateField")}
             onGenerateAI={() => onGenerateAI("title")}
@@ -422,7 +429,7 @@ export function ProductEditor({
           />
 
           {/* Description Field */}
-          <DescriptionEditor
+          <AIEditableHTMLField
             label={`${t.products.productDescription} (${
               shopLocales.find((l) => l.locale === currentLanguage)?.name || currentLanguage
             })`}
@@ -432,9 +439,10 @@ export function ProductEditor({
             onToggleMode={() =>
               setDescriptionMode(descriptionMode === "html" ? "rendered" : "html")
             }
+            fieldType="description"
             suggestion={aiSuggestions.description}
             isPrimaryLocale={isPrimaryLocale}
-            backgroundColor={getFieldBackgroundColor("body_html")}
+            isTranslated={isFieldTranslated("body_html")}
             isLoading={isFieldLoading("description", isPrimaryLocale ? "generateAIText" : "translateField")}
             onGenerateAI={() => onGenerateAI("description")}
             onTranslate={() => onTranslateField("description")}
@@ -444,7 +452,7 @@ export function ProductEditor({
           />
 
           {/* Handle Field */}
-          <FieldEditor
+          <AIEditableField
             label={`${t.products.urlSlug} (${
               shopLocales.find((l) => l.locale === currentLanguage)?.name || currentLanguage
             })`}
@@ -453,7 +461,7 @@ export function ProductEditor({
             fieldType="handle"
             suggestion={aiSuggestions.handle}
             isPrimaryLocale={isPrimaryLocale}
-            backgroundColor={getFieldBackgroundColor("handle")}
+            isTranslated={isFieldTranslated("handle")}
             isLoading={isFieldLoading("handle", isPrimaryLocale ? "generateAIText" : "translateField")}
             onGenerateAI={() => onGenerateAI("handle")}
             onTranslate={() => onTranslateField("handle")}
@@ -463,7 +471,7 @@ export function ProductEditor({
           />
 
           {/* SEO Title Field */}
-          <FieldEditor
+          <AIEditableField
             label={`${t.products.seoTitle} (${
               shopLocales.find((l) => l.locale === currentLanguage)?.name || currentLanguage
             })`}
@@ -472,7 +480,7 @@ export function ProductEditor({
             fieldType="seoTitle"
             suggestion={aiSuggestions.seoTitle}
             isPrimaryLocale={isPrimaryLocale}
-            backgroundColor={getFieldBackgroundColor("meta_title")}
+            isTranslated={isFieldTranslated("meta_title")}
             helpText={`${editableSeoTitle.length} ${t.products.characters} (${t.products.recommended}: 50-60)`}
             isLoading={isFieldLoading("seoTitle", isPrimaryLocale ? "generateAIText" : "translateField")}
             onGenerateAI={() => onGenerateAI("seoTitle")}
@@ -483,7 +491,7 @@ export function ProductEditor({
           />
 
           {/* Meta Description Field */}
-          <FieldEditor
+          <AIEditableField
             label={`${t.products.metaDescription} (${
               shopLocales.find((l) => l.locale === currentLanguage)?.name || currentLanguage
             })`}
@@ -492,7 +500,7 @@ export function ProductEditor({
             fieldType="metaDescription"
             suggestion={aiSuggestions.metaDescription}
             isPrimaryLocale={isPrimaryLocale}
-            backgroundColor={getFieldBackgroundColor("meta_description")}
+            isTranslated={isFieldTranslated("meta_description")}
             helpText={`${editableMetaDescription.length} ${t.products.characters} (${t.products.recommended}: 150-160)`}
             multiline={3}
             isLoading={isFieldLoading("metaDescription", isPrimaryLocale ? "generateAIText" : "translateField")}

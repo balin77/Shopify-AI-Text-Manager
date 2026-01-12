@@ -1,0 +1,42 @@
+/* AI Editable Field Styling - Background colors for translation states */
+
+/* White background for primary locale or translated fields */
+.ai-editable-field-wrapper.bg-white input,
+.ai-editable-field-wrapper.bg-white textarea {
+  background-color: white !important;
+}
+
+/* Orange background for untranslated fields */
+.ai-editable-field-wrapper.bg-untranslated input,
+.ai-editable-field-wrapper.bg-untranslated textarea {
+  background-color: #fff4e5 !important;
+}
+
+/* Light blue background when AI suggestion is active */
+.ai-editable-field-wrapper.bg-suggestion input,
+.ai-editable-field-wrapper.bg-suggestion textarea {
+  background-color: #f0f9ff !important;
+  border-color: #0891b2 !important;
+}
+
+/* HTML Editor styling */
+.ai-editable-html-field textarea,
+.ai-editable-html-field [contenteditable] {
+  background-color: white;
+}
+
+.ai-editable-html-field.bg-white textarea,
+.ai-editable-html-field.bg-white [contenteditable] {
+  background-color: white !important;
+}
+
+.ai-editable-html-field.bg-untranslated textarea,
+.ai-editable-html-field.bg-untranslated [contenteditable] {
+  background-color: #fff4e5 !important;
+}
+
+.ai-editable-html-field.bg-suggestion textarea,
+.ai-editable-html-field.bg-suggestion [contenteditable] {
+  background-color: #f0f9ff !important;
+  border-color: #0891b2 !important;
+}

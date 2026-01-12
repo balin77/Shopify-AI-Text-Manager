@@ -6,8 +6,10 @@ interface AISuggestionBannerProps {
   isHtml?: boolean;
   onAccept: () => void;
   onDecline: () => void;
+  onAcceptAndTranslate?: () => void;
   acceptLabel: string;
   declineLabel: string;
+  acceptAndTranslateLabel?: string;
   titleLabel: string;
 }
 
@@ -17,8 +19,10 @@ export function AISuggestionBanner({
   isHtml = false,
   onAccept,
   onDecline,
+  onAcceptAndTranslate,
   acceptLabel,
   declineLabel,
+  acceptAndTranslateLabel,
   titleLabel
 }: AISuggestionBannerProps) {
   return (
@@ -46,6 +50,11 @@ export function AISuggestionBanner({
           <Button size="slim" variant="primary" onClick={onAccept}>
             {acceptLabel}
           </Button>
+          {onAcceptAndTranslate && acceptAndTranslateLabel && (
+            <Button size="slim" onClick={onAcceptAndTranslate}>
+              {acceptAndTranslateLabel}
+            </Button>
+          )}
           <Button size="slim" onClick={onDecline}>
             {declineLabel}
           </Button>
