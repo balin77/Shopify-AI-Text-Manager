@@ -53,6 +53,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   try {
     const { db } = await import("../db.server");
 
+    // Get requested content type from URL query parameter
+    const url = new URL(request.url);
+    const requestedType = url.searchParams.get("type") as ContentType | null;
+
     // Load shopLocales from Shopify (still needed for UI)
     const localesResponse = await admin.graphql(
       `#graphql
@@ -70,40 +74,66 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const shopLocales = localesData.data?.shopLocales || [];
     const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "de";
 
-    // Load content from DATABASE (not from Shopify!)
-    const [collections, articles, dbPages, dbPolicies, allTranslations] = await Promise.all([
-      // Collections
-      db.collection.findMany({
-        where: { shop: session.shop },
-        orderBy: { title: 'asc' },
-      }),
-      // Articles
-      db.article.findMany({
-        where: { shop: session.shop },
-        orderBy: { title: 'asc' },
-      }),
-      // Pages
-      db.page.findMany({
-        where: { shop: session.shop },
-        orderBy: { title: 'asc' },
-      }),
-      // Policies
-      db.shopPolicy.findMany({
-        where: { shop: session.shop },
-        orderBy: { type: 'asc' },
-      }),
-      // Load all ContentTranslations for this shop
-      db.contentTranslation.findMany({
-        where: {
-          OR: [
-            { resourceType: 'Collection' },
-            { resourceType: 'Article' },
-            { resourceType: 'Page' },
-            { resourceType: 'ShopPolicy' },
-          ]
-        },
-      }),
-    ]);
+    // 🚀 LAZY LOADING: Only load the requested content type
+    let collections = [];
+    let articles = [];
+    let dbPages = [];
+    let dbPolicies = [];
+    let allTranslations = [];
+    let metadata = {};
+    let menus: any[] = [];
+    let themes: any[] = [];
+    let metaobjects: any[] = [];
+
+    if (requestedType === "collections") {
+      [collections, allTranslations] = await Promise.all([
+        db.collection.findMany({
+          where: { shop: session.shop },
+          orderBy: { title: 'asc' },
+        }),
+        db.contentTranslation.findMany({
+          where: { resourceType: 'Collection' }
+        }),
+      ]);
+    } else if (requestedType === "blogs") {
+      [articles, allTranslations] = await Promise.all([
+        db.article.findMany({
+          where: { shop: session.shop },
+          orderBy: { title: 'asc' },
+        }),
+        db.contentTranslation.findMany({
+          where: { resourceType: 'Article' }
+        }),
+      ]);
+    } else if (requestedType === "pages") {
+      [dbPages, allTranslations] = await Promise.all([
+        db.page.findMany({
+          where: { shop: session.shop },
+          orderBy: { title: 'asc' },
+        }),
+        db.contentTranslation.findMany({
+          where: { resourceType: 'Page' }
+        }),
+      ]);
+    } else if (requestedType === "policies") {
+      [dbPolicies, allTranslations] = await Promise.all([
+        db.shopPolicy.findMany({
+          where: { shop: session.shop },
+          orderBy: { type: 'asc' },
+        }),
+        db.contentTranslation.findMany({
+          where: { resourceType: 'ShopPolicy' }
+        }),
+      ]);
+    } else if (requestedType === "menus" || requestedType === "shopMetadata" || requestedType === "templates" || requestedType === "metaobjects") {
+      // Load these from ContentService (not DB-cached)
+      const contentService = new ContentService(admin);
+      const data = await contentService.getAllContent();
+      metadata = data.metadata;
+      menus = data.menus;
+      themes = data.themes;
+      metaobjects = data.metaobjects;
+    }
 
     // Group translations by resourceId for easy lookup
     const translationsByResource = allTranslations.reduce((acc: Record<string, any[]>, trans) => {
@@ -172,11 +202,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       translations: translationsByResource[p.id] || [],
     }));
 
-    // metadata, menus, themes, metaobjects still loaded on-demand from ContentService
-    // (We don't cache these yet - not critical)
-    const contentService = new ContentService(admin);
-    const { metadata, menus, themes, metaobjects } = await contentService.getAllContent();
-
     return json({
       blogs,
       collections: transformedCollections,
@@ -189,6 +214,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       shop: session.shop,
       shopLocales,
       primaryLocale,
+      requestedType, // Send back which type was loaded
       error: null
     });
   } catch (error: any) {
@@ -242,21 +268,37 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const locale = formData.get("locale") as string;
 
     try {
-      console.log(`[LOAD-TRANSLATIONS] Loading translations for ${contentType} ${itemId} in locale ${locale}`);
+      // Only log for policies
+      if (contentType === "policies") {
+        console.log(`[POLICIES-TRANSLATIONS] Loading translations for policy ${itemId} in locale ${locale}`);
+      }
 
       const translationsResponse = await admin.graphql(GET_TRANSLATIONS, {
         variables: { resourceId: itemId, locale }
       });
 
       const translationsData = await translationsResponse.json();
-      console.log(`[LOAD-TRANSLATIONS] Response:`, JSON.stringify(translationsData, null, 2));
+
+      // Only log for policies
+      if (contentType === "policies") {
+        console.log(`[POLICIES-TRANSLATIONS] GraphQL Query:`, GET_TRANSLATIONS);
+        console.log(`[POLICIES-TRANSLATIONS] Variables:`, { resourceId: itemId, locale });
+        console.log(`[POLICIES-TRANSLATIONS] Response:`, JSON.stringify(translationsData, null, 2));
+      }
 
       const translations = translationsData.data?.translatableResource?.translations || [];
-      console.log(`[LOAD-TRANSLATIONS] Found ${translations.length} translations for ${contentType} ${itemId}`);
+
+      // Only log for policies
+      if (contentType === "policies") {
+        console.log(`[POLICIES-TRANSLATIONS] Found ${translations.length} translations for policy ${itemId}`);
+        console.log(`[POLICIES-TRANSLATIONS] Translation keys:`, translations.map((t: any) => t.key).join(', '));
+      }
 
       return json({ success: true, translations, locale });
     } catch (error: any) {
-      console.error(`[LOAD-TRANSLATIONS] Error:`, error);
+      if (contentType === "policies") {
+        console.error(`[POLICIES-TRANSLATIONS] Error:`, error);
+      }
       return json({ success: false, error: error.message }, { status: 500 });
     }
   }
