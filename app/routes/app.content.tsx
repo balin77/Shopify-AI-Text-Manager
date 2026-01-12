@@ -267,6 +267,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   if (action === "loadTranslations") {
     const locale = formData.get("locale") as string;
 
+    console.log(`[LOAD-TRANSLATIONS] Action called - contentType: ${contentType}, itemId: ${itemId}, locale: ${locale}`);
+
     try {
       // Only log for policies
       if (contentType === "policies") {
