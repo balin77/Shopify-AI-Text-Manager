@@ -862,9 +862,9 @@ export default function ContentPage() {
     }
   }, [fetcher.data]);
 
-  // Track changes
+  // Track changes - NOT for menus (read-only)
   useEffect(() => {
-    if (selectedItem) {
+    if (selectedItem && selectedType !== "menus") {
       const getOriginalValue = (key: string, fallback: string) => {
         if (currentLanguage === primaryLocale) {
           return fallback;
@@ -887,8 +887,11 @@ export default function ContentPage() {
       const metaDescChanged = editableMetaDescription !== getOriginalValue("meta_description", selectedItem.seo?.description || "");
 
       setHasChanges(titleChanged || descChanged || handleChanged || seoTitleChanged || metaDescChanged);
+    } else if (selectedType === "menus") {
+      // Menus are always read-only, no changes possible
+      setHasChanges(false);
     }
-  }, [editableTitle, editableDescription, editableHandle, editableSeoTitle, editableMetaDescription, selectedItem, currentLanguage]);
+  }, [editableTitle, editableDescription, editableHandle, editableSeoTitle, editableMetaDescription, selectedItem, currentLanguage, selectedType]);
 
   const handleSaveContent = () => {
     if (!selectedItemId || !hasChanges) return;
