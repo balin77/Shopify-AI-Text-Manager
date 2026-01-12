@@ -370,6 +370,9 @@ export class BackgroundSyncService {
 
       let totalGroups = 0;
 
+      // Track all synced theme content combinations for cleanup
+      const syncedCombinations = new Set<string>();
+
       // Fetch resources for each working resource type
       for (const resourceTypeConfig of WORKING_RESOURCE_TYPES) {
         try {
@@ -534,6 +537,10 @@ export class BackgroundSyncService {
                 }
               }
 
+              // Track this combination for cleanup
+              const combinationKey = `${resource.resourceId}::${groupId}`;
+              syncedCombinations.add(combinationKey);
+
               // Upsert theme content
               await db.themeContent.upsert({
                 where: {
@@ -593,6 +600,46 @@ export class BackgroundSyncService {
           }
         } catch (error) {
           console.error(`[BackgroundSync] Error syncing theme type ${resourceTypeConfig.type}:`, error);
+        }
+      }
+
+      // AGGRESSIVE CLEANUP: Delete theme content that no longer exists in Shopify
+      if (syncedCombinations.size > 0) {
+        // Get all existing theme content for this shop
+        const existingThemeContent = await db.themeContent.findMany({
+          where: { shop: this.shop },
+          select: { resourceId: true, groupId: true }
+        });
+
+        // Find combinations that should be deleted
+        const toDelete = existingThemeContent.filter(item => {
+          const combinationKey = `${item.resourceId}::${item.groupId}`;
+          return !syncedCombinations.has(combinationKey);
+        });
+
+        if (toDelete.length > 0) {
+          console.log(`[BackgroundSync] 🗑️ Deleting ${toDelete.length} obsolete theme content groups`);
+
+          // Delete in batches
+          for (const item of toDelete) {
+            await db.themeContent.deleteMany({
+              where: {
+                shop: this.shop,
+                resourceId: item.resourceId,
+                groupId: item.groupId
+              }
+            });
+
+            await db.themeTranslation.deleteMany({
+              where: {
+                shop: this.shop,
+                resourceId: item.resourceId,
+                groupId: item.groupId
+              }
+            });
+          }
+
+          console.log(`[BackgroundSync] 🗑️ Deleted ${toDelete.length} obsolete theme groups and their translations`);
         }
       }
 
@@ -708,9 +755,8 @@ export class BackgroundSyncService {
     console.log(`[BackgroundSync] Starting full sync for shop: ${this.shop}`);
 
     try {
-      // TEMPORARY: Theme sync disabled due to DB overflow issues
-      // TODO: Re-enable with incremental sync logic
-      const [pages, policies] = await Promise.all([
+      // Run all syncs in parallel with aggressive cleanup
+      const [pages, policies, themes] = await Promise.all([
         this.syncAllPages().catch(err => {
           console.error('[BackgroundSync] Pages sync failed:', err);
           return 0;
@@ -719,10 +765,11 @@ export class BackgroundSyncService {
           console.error('[BackgroundSync] Policies sync failed:', err);
           return 0;
         }),
-        // DISABLED: this.syncAllThemes() - causes DB overflow
+        this.syncAllThemes().catch(err => {
+          console.error('[BackgroundSync] Themes sync failed:', err);
+          return 0;
+        }),
       ]);
-
-      const themes = 0; // Disabled
 
       const duration = Date.now() - startTime;
       const stats: SyncStats = {
@@ -733,8 +780,8 @@ export class BackgroundSyncService {
         duration,
       };
 
-      console.log(`[BackgroundSync] ✓ Full sync complete in ${duration}ms (Themes sync DISABLED)`);
-      console.log(`[BackgroundSync]   Pages: ${pages}, Policies: ${policies}, Themes: ${themes} (disabled)`);
+      console.log(`[BackgroundSync] ✓ Full sync complete in ${duration}ms`);
+      console.log(`[BackgroundSync]   Pages: ${pages}, Policies: ${policies}, Themes: ${themes}`);
 
       return stats;
     } catch (error: any) {

@@ -233,11 +233,8 @@ class SyncSchedulerService {
         }
       });
 
-      // 3. Delete ALL theme data (theme sync is disabled anyway)
-      const themeTranslations = await db.themeTranslation.deleteMany({});
-      const themeContent = await db.themeContent.deleteMany({});
-
-      console.log(`[SyncScheduler] Cleanup complete: ${expiredTasks.count} tasks, ${webhookLogs.count} logs, ${themeTranslations.count} theme translations, ${themeContent.count} theme content`);
+      console.log(`[SyncScheduler] Cleanup complete: ${expiredTasks.count} tasks, ${webhookLogs.count} logs`);
+      console.log(`[SyncScheduler] Note: Theme data cleanup is now handled by aggressive sync (every 40s)`);
     } catch (error) {
       console.error('[SyncScheduler] Cleanup error:', error);
       throw error;
