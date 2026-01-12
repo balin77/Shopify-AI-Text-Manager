@@ -153,9 +153,18 @@ export default function TemplatesPage() {
 
   // Load translations when language changes (for non-primary locales)
   useEffect(() => {
-    if (!selectedItem || !currentGroupId) return;
+    if (!selectedItem || !currentGroupId) {
+      console.log('[TEMPLATES] Early return:', { selectedItem: !!selectedItem, currentGroupId });
+      return;
+    }
 
-    console.log('[TEMPLATES] Loading values for:', { currentLanguage, primaryLocale, hasContent: !!selectedItem.translatableContent });
+    console.log('[TEMPLATES] Loading values for:', {
+      currentLanguage,
+      primaryLocale,
+      hasContent: !!selectedItem.translatableContent,
+      contentLength: selectedItem.translatableContent?.length,
+      firstItem: selectedItem.translatableContent?.[0]
+    });
 
     if (currentLanguage === primaryLocale) {
       // Load primary locale values
@@ -163,7 +172,11 @@ export default function TemplatesPage() {
       selectedItem.translatableContent?.forEach((item: any) => {
         values[item.key] = item.value || "";
       });
-      console.log('[TEMPLATES] Primary locale values loaded:', Object.keys(values).length);
+      console.log('[TEMPLATES] Primary locale values loaded:', {
+        count: Object.keys(values).length,
+        firstKey: Object.keys(values)[0],
+        firstValue: Object.values(values)[0]
+      });
       setEditableValues(values);
       setOriginalValues({ ...values });
     } else {

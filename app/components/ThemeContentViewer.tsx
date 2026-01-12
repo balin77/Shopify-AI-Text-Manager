@@ -230,18 +230,6 @@ export function ThemeContentViewer({
                         onRejectSuggestion={() => onRejectSuggestion(fieldKey)}
                       />
                     )}
-
-                    {/* Show original value for non-primary locales */}
-                    {!isPrimaryLocale && sourceText && (
-                      <div style={{ background: "#f6f6f7", padding: "12px", borderRadius: "8px" }}>
-                        <Text as="p" variant="bodySm" tone="subdued">
-                          Original ({shopLocales.find((l: any) => l.locale === primaryLocale)?.name}):
-                        </Text>
-                        <Text as="p" variant="bodyMd">
-                          {sourceText}
-                        </Text>
-                      </div>
-                    )}
                   </BlockStack>
                 </Card>
               );
