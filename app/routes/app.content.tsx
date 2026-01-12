@@ -14,9 +14,9 @@
  * - Policies: /app/policies
  */
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useNavigate, useSearchParams } from "@remix-run/react";
+import { useLoaderData, useNavigate, useSearchParams, useFetcher } from "@remix-run/react";
 import {
   Page,
   Card,
@@ -121,7 +121,9 @@ export default function ContentHub() {
   const { metadata, menus, themes, metaobjects, shop, shopLocales, primaryLocale, requestedType, error } = useLoaderData<typeof loader>();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const fetcher = useFetcher();
   const { t } = useI18n();
+  const saveButtonRef = useRef<HTMLDivElement>(null);
 
   const CONTENT_TYPES = getContentTypes(t);
 
@@ -141,6 +143,18 @@ export default function ContentHub() {
   const [selectedType, setSelectedType] = useState<ContentType>(getInitialType());
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [currentLanguage, setCurrentLanguage] = useState(primaryLocale);
+
+  // Templates editable state
+  const [editableValues, setEditableValues] = useState<Record<string, string>>({});
+  const [originalValues, setOriginalValues] = useState<Record<string, string>>({});
+  const [aiSuggestions, setAiSuggestions] = useState<Record<string, string>>({});
+  const [htmlModes, setHtmlModes] = useState<Record<string, "html" | "rendered">>({});
+  const [loadedTranslations, setLoadedTranslations] = useState<Record<string, any[]>>({});
+
+  // Check for changes
+  const hasChanges = Object.keys(editableValues).some(
+    key => editableValues[key] !== originalValues[key]
+  );
 
   // Initialize URL on mount
   useEffect(() => {
@@ -183,6 +197,90 @@ export default function ContentHub() {
 
   const currentItems = getCurrentItems();
   const selectedItem = currentItems.find((item: any) => item.id === selectedItemId);
+
+  // Load template values when item or language changes
+  useEffect(() => {
+    if (selectedType !== "templates" || !selectedItem) {
+      return;
+    }
+
+    console.log('[CONTENT-TEMPLATES] Loading values for:', {
+      currentLanguage,
+      primaryLocale,
+      hasContent: !!selectedItem.translatableContent,
+      contentLength: selectedItem.translatableContent?.length
+    });
+
+    if (currentLanguage === primaryLocale) {
+      // Load primary locale values
+      const values: Record<string, string> = {};
+      selectedItem.translatableContent?.forEach((item: any) => {
+        values[item.key] = item.value || "";
+      });
+      console.log('[CONTENT-TEMPLATES] Primary values loaded:', Object.keys(values).length);
+      setEditableValues(values);
+      setOriginalValues({ ...values });
+    } else {
+      // For foreign languages, populate from translations if available
+      const values: Record<string, string> = {};
+      selectedItem.translatableContent?.forEach((item: any) => {
+        const translation = selectedItem.translations?.find(
+          (t: any) => t.locale === currentLanguage && t.key === item.key
+        );
+        values[item.key] = translation?.value || "";
+      });
+      console.log('[CONTENT-TEMPLATES] Translation values loaded:', Object.keys(values).length);
+      setEditableValues(values);
+      setOriginalValues({ ...values });
+    }
+  }, [selectedItem, currentLanguage, primaryLocale, selectedType]);
+
+  // Template handlers (placeholder for now - TODO: implement full functionality)
+  const handleValueChange = (key: string, value: string) => {
+    setEditableValues(prev => ({ ...prev, [key]: value }));
+  };
+
+  const handleGenerateAI = (fieldKey: string) => {
+    console.log('[CONTENT-TEMPLATES] Generate AI for:', fieldKey);
+    // TODO: Implement AI generation
+  };
+
+  const handleTranslate = (fieldKey: string) => {
+    console.log('[CONTENT-TEMPLATES] Translate field:', fieldKey);
+    // TODO: Implement translation
+  };
+
+  const handleTranslateAll = () => {
+    console.log('[CONTENT-TEMPLATES] Translate all');
+    // TODO: Implement translate all
+  };
+
+  const handleAcceptSuggestion = (fieldKey: string) => {
+    const suggestion = aiSuggestions[fieldKey];
+    if (suggestion) {
+      setEditableValues(prev => ({ ...prev, [fieldKey]: suggestion }));
+      setAiSuggestions(prev => {
+        const newSuggestions = { ...prev };
+        delete newSuggestions[fieldKey];
+        return newSuggestions;
+      });
+    }
+  };
+
+  const handleRejectSuggestion = (fieldKey: string) => {
+    setAiSuggestions(prev => {
+      const newSuggestions = { ...prev };
+      delete newSuggestions[fieldKey];
+      return newSuggestions;
+    });
+  };
+
+  const handleToggleHtmlMode = (fieldKey: string) => {
+    setHtmlModes(prev => ({
+      ...prev,
+      [fieldKey]: prev[fieldKey] === "html" ? "rendered" : "html"
+    }));
+  };
 
   // Recursive function to render menu items
   const renderMenuItem = (item: any, index: number, path: number[]): JSX.Element => {
@@ -312,6 +410,18 @@ export default function ContentHub() {
                     themeResource={selectedItem}
                     currentLanguage={currentLanguage}
                     shopLocales={shopLocales}
+                    primaryLocale={primaryLocale}
+                    editableValues={editableValues}
+                    onValueChange={handleValueChange}
+                    aiSuggestions={aiSuggestions}
+                    onGenerateAI={handleGenerateAI}
+                    onTranslate={handleTranslate}
+                    onTranslateAll={handleTranslateAll}
+                    onAcceptSuggestion={handleAcceptSuggestion}
+                    onRejectSuggestion={handleRejectSuggestion}
+                    isLoading={fetcher.state === "submitting"}
+                    htmlModes={htmlModes}
+                    onToggleHtmlMode={handleToggleHtmlMode}
                   />
                 )}
 
