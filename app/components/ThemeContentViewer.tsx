@@ -7,6 +7,50 @@ interface ThemeContentViewerProps {
   shopLocales: any[];
 }
 
+// Helper function to extract a human-readable name from a theme key
+function extractReadableName(key: string): string {
+  // Remove common prefixes and IDs
+  let name = key;
+
+  // Remove section prefixes
+  name = name.replace(/^section\.(article|collection|index|password|product|page)\.json\./i, '');
+  name = name.replace(/^section\.(article|collection|index|password|product|page)\./i, '');
+
+  // Remove collections.json prefix
+  name = name.replace(/^collections\.json\./i, '');
+
+  // Remove group.json prefix
+  name = name.replace(/^group\.json\./i, '');
+
+  // Remove bar prefix
+  name = name.replace(/^bar\./i, '');
+
+  // Remove "Settings Categories:" prefix
+  name = name.replace(/^Settings Categories:\s*/i, '');
+
+  // Remove trailing IDs (like :3syj88j, .heading:3jfch, etc.)
+  name = name.replace(/:[a-z0-9]+$/i, '');
+  name = name.replace(/\.[a-z0-9_]+:[a-z0-9]+$/i, '');
+
+  // Remove common suffixes
+  name = name.replace(/\.(heading|text|label|title)$/i, '');
+
+  // Get the last meaningful part
+  const parts = name.split('.');
+  if (parts.length > 1) {
+    // Take the last 2-3 parts for context
+    name = parts.slice(-2).join(' › ');
+  }
+
+  // Convert underscores to spaces and capitalize
+  name = name.replace(/_/g, ' ');
+  name = name.split(' ').map(word =>
+    word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
+  ).join(' ');
+
+  return name || key; // Fallback to original key if parsing fails
+}
+
 export function ThemeContentViewer({ themeResource, currentLanguage, shopLocales }: ThemeContentViewerProps) {
   const [searchTerm, setSearchTerm] = useState("");
 
@@ -76,13 +120,21 @@ export function ThemeContentViewer({ themeResource, currentLanguage, shopLocales
       <div style={{ maxHeight: "600px", overflowY: "auto" }}>
         <BlockStack gap="300">
           {filteredContent.length > 0 ? (
-            filteredContent.map((item: any, index: number) => (
-              <Card key={index}>
-                <BlockStack gap="200">
-                  {/* Key */}
-                  <Text as="p" variant="bodySm" fontWeight="semibold" tone="subdued">
-                    {item.key}
-                  </Text>
+            filteredContent.map((item: any, index: number) => {
+              const readableName = extractReadableName(item.key);
+
+              return (
+                <Card key={index}>
+                  <BlockStack gap="200">
+                    {/* Readable Name */}
+                    <Text as="p" variant="bodyMd" fontWeight="semibold">
+                      {readableName}
+                    </Text>
+
+                    {/* Original Key (smaller, subdued) */}
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      Key: {item.key}
+                    </Text>
 
                   {/* Primary Locale Value */}
                   {isPrimaryLocale && (
@@ -119,7 +171,9 @@ export function ThemeContentViewer({ themeResource, currentLanguage, shopLocales
                   )}
                 </BlockStack>
               </Card>
-            ))
+              );
+            })
+          )
           ) : (
             <Card>
               <Text as="p" variant="bodyMd" tone="subdued" alignment="center">

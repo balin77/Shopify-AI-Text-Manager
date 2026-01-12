@@ -420,6 +420,20 @@ export class ContentService {
         { type: 'ONLINE_STORE_THEME_SETTINGS_CATEGORY', label: 'Settings Categories' },
       ];
 
+      // Define key patterns to filter and group by
+      const KEY_PATTERNS = [
+        { pattern: /^section\.article\./, name: 'Article Sections', category: 'sections' },
+        { pattern: /^section\.collection\./, name: 'Collection Sections', category: 'sections' },
+        { pattern: /^section\.index\./, name: 'Index/Homepage Sections', category: 'sections' },
+        { pattern: /^section\.password\./, name: 'Password Page Sections', category: 'sections' },
+        { pattern: /^section\.product\./, name: 'Product Sections', category: 'sections' },
+        { pattern: /^section\.page\./, name: 'Page Sections', category: 'sections' },
+        { pattern: /^collections\.json\./, name: 'Collections Template', category: 'templates' },
+        { pattern: /^group\.json\./, name: 'Theme Groups', category: 'groups' },
+        { pattern: /^bar\./, name: 'Announcement Bars', category: 'elements' },
+        { pattern: /^Settings Categories:/, name: 'Settings Categories', category: 'settings' },
+      ];
+
       console.log(`[THEMES] Loading ${WORKING_RESOURCE_TYPES.length} resource types with translatable content`);
 
       // Get shop locales to know which languages to fetch translations for
@@ -502,17 +516,30 @@ export class ContentService {
               );
             }
 
-            allThemeResources.push({
-              id: resource.resourceId,
-              title: resourceTitle,
-              name: resourceTitle,
-              role: 'CONTENT',
-              resourceType: resourceTypeConfig.type,
-              resourceTypeLabel: resourceTypeConfig.label,
-              translatableContent: resource.translatableContent || [],
-              translations: allTranslations,
-              contentCount: resource.translatableContent?.length || 0
+            // Filter translatable content by key patterns
+            const filteredContent = (resource.translatableContent || []).filter((item: any) => {
+              return KEY_PATTERNS.some(pattern => pattern.pattern.test(item.key));
             });
+
+            // Only add resource if it has filtered content
+            if (filteredContent.length > 0) {
+              allThemeResources.push({
+                id: resource.resourceId,
+                title: resourceTitle,
+                name: resourceTitle,
+                role: 'CONTENT',
+                resourceType: resourceTypeConfig.type,
+                resourceTypeLabel: resourceTypeConfig.label,
+                translatableContent: filteredContent,
+                translations: allTranslations,
+                contentCount: filteredContent.length,
+                keyPatterns: KEY_PATTERNS // Include patterns for UI filtering
+              });
+
+              console.log(`  → Filtered to ${filteredContent.length} matching keys (from ${resource.translatableContent?.length || 0})`);
+            } else {
+              console.log(`  → No matching keys (skipped)`);
+            }
           }
         } catch (error) {
           console.error(`❌ Exception loading ${resourceTypeConfig.type}:`, error);
