@@ -416,7 +416,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           if (seoTitle) translationsInput.push({ key: "meta_title", value: seoTitle, locale });
           if (metaDescription) translationsInput.push({ key: "meta_description", value: metaDescription, locale });
         } else if (contentType === "policies") {
-          if (title) translationsInput.push({ key: "title", value: title, locale });
+          // Policies only have "body" field - no title translations
           if (description) translationsInput.push({ key: "body", value: description, locale });
         }
 
@@ -807,10 +807,12 @@ export default function ContentPage() {
           );
         } else {
           // Translations are already loaded, update the fields
-          const titleKey = "title";
           const descKey = selectedType === "policies" ? "body" : "body_html"; // Policies use "body", others use "body_html"
 
-          setEditableTitle(getTranslatedValue(titleKey, currentLanguage, ""));
+          // Policies don't have translatable title field
+          if (selectedType !== "policies") {
+            setEditableTitle(getTranslatedValue("title", currentLanguage, ""));
+          }
           setEditableDescription(getTranslatedValue(descKey, currentLanguage, ""));
           setEditableHandle(getTranslatedValue("handle", currentLanguage, ""));
           setEditableSeoTitle(getTranslatedValue("meta_title", currentLanguage, ""));
@@ -838,17 +840,19 @@ export default function ContentPage() {
 
         // Only update fields if this is for the current language
         if (loadedLocale === currentLanguage) {
-          const titleKey = "title";
           const descKey = selectedType === "policies" ? "body" : "body_html"; // Policies use "body", others use "body_html"
 
           // Get values from the newly loaded translations
-          const newTitle = translations.find((t: any) => t.key === titleKey)?.value || "";
           const newDesc = translations.find((t: any) => t.key === descKey)?.value || "";
           const newHandle = translations.find((t: any) => t.key === "handle")?.value || "";
           const newSeoTitle = translations.find((t: any) => t.key === "meta_title")?.value || "";
           const newMetaDesc = translations.find((t: any) => t.key === "meta_description")?.value || "";
 
-          setEditableTitle(newTitle);
+          // Policies don't have translatable title field
+          if (selectedType !== "policies") {
+            const newTitle = translations.find((t: any) => t.key === "title")?.value || "";
+            setEditableTitle(newTitle);
+          }
           setEditableDescription(newDesc);
           setEditableHandle(newHandle);
           setEditableSeoTitle(newSeoTitle);
@@ -868,14 +872,15 @@ export default function ContentPage() {
         return getTranslatedValue(key, currentLanguage, "");
       };
 
-      const titleKey = "title";
       const descKey = selectedType === "policies" ? "body" : "body_html"; // Policies use "body", others use "body_html"
       const descFallback = selectedType === "pages" ? (selectedItem.body || "") :
                            selectedType === "blogs" ? (selectedItem.body || "") :
                            selectedType === "policies" ? (selectedItem.body || "") :
                            (selectedItem.descriptionHtml || "");
 
-      const titleChanged = editableTitle !== getOriginalValue(titleKey, selectedItem.title);
+      // Policies don't have translatable title field
+      const titleChanged = selectedType !== "policies" ?
+        editableTitle !== getOriginalValue("title", selectedItem.title) : false;
       const descChanged = editableDescription !== getOriginalValue(descKey, descFallback || "");
       const handleChanged = editableHandle !== getOriginalValue("handle", selectedItem.handle || "");
       const seoTitleChanged = editableSeoTitle !== getOriginalValue("meta_title", selectedItem.seo?.title || "");
@@ -942,9 +947,12 @@ export default function ContentPage() {
         setEditableMetaDescription("");
       }
     } else {
-      const titleKey = "title";
       const descKey = selectedType === "policies" ? "body" : "body_html"; // Policies use "body", others use "body_html"
-      setEditableTitle(getTranslatedValue(titleKey, currentLanguage, ""));
+
+      // Policies don't have translatable title field
+      if (selectedType !== "policies") {
+        setEditableTitle(getTranslatedValue("title", currentLanguage, ""));
+      }
       setEditableDescription(getTranslatedValue(descKey, currentLanguage, ""));
       setEditableHandle(getTranslatedValue("handle", currentLanguage, ""));
       setEditableSeoTitle(getTranslatedValue("meta_title", currentLanguage, ""));
@@ -1174,7 +1182,6 @@ export default function ContentPage() {
         currentLanguage !== primaryLocale) {
       // This was a successful updateContent action for a translation
       const itemKey = `${selectedItem.id}_${currentLanguage}`;
-      const titleKey = "title";
       const descKey = selectedType === "policies" ? "body" : "body_html"; // Policies use "body", others use "body_html"
 
       // Build updated translations array
@@ -1192,7 +1199,10 @@ export default function ContentPage() {
       };
 
       // Update translations with current editable values
-      if (editableTitle) updateTranslation(titleKey, editableTitle);
+      // Policies don't have translatable title field
+      if (selectedType !== "policies" && editableTitle) {
+        updateTranslation("title", editableTitle);
+      }
       if (editableDescription) updateTranslation(descKey, editableDescription);
       if (editableHandle) updateTranslation("handle", editableHandle);
       if (editableSeoTitle) updateTranslation("meta_title", editableSeoTitle);
@@ -1461,38 +1471,44 @@ export default function ContentPage() {
                   </div>
                 </InlineStack>
 
-                {/* Editable Title */}
-                <div>
-                  <div style={{ background: getFieldBackgroundColor("title"), borderRadius: "8px", padding: "1px" }}>
-                    <TextField
-                      label={`${t.content.title} (${shopLocales.find((l: any) => l.locale === currentLanguage)?.name || currentLanguage})`}
-                      value={editableTitle}
-                      onChange={setEditableTitle}
-                      autoComplete="off"
-                      helpText={`${editableTitle.length} ${t.content.characters}`}
-                    />
-                  </div>
-                  {aiSuggestions.title && renderAISuggestion("title", aiSuggestions.title)}
-                  <div style={{ marginTop: "0.5rem" }}>
-                    {currentLanguage === primaryLocale ? (
-                      <Button
-                        size="slim"
-                        onClick={() => handleGenerateAI("title")}
-                        loading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "title" && fetcher.formData?.get("action") === "generateAIText"}
-                      >
-                        {t.content.generateWithAI}
-                      </Button>
-                    ) : (
-                      <Button
-                        size="slim"
-                        onClick={() => handleTranslateField("title")}
-                        loading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "title" && fetcher.formData?.get("action") === "translateField"}
-                      >
-                        {t.content.translateFromPrimary}
-                      </Button>
+                {/* Editable Title - NOT for policies in non-primary languages */}
+                {(selectedType !== "policies" || currentLanguage === primaryLocale) && (
+                  <div>
+                    <div style={{ background: getFieldBackgroundColor("title"), borderRadius: "8px", padding: "1px" }}>
+                      <TextField
+                        label={`${t.content.title} (${shopLocales.find((l: any) => l.locale === currentLanguage)?.name || currentLanguage})`}
+                        value={editableTitle}
+                        onChange={setEditableTitle}
+                        autoComplete="off"
+                        helpText={`${editableTitle.length} ${t.content.characters}`}
+                        disabled={selectedType === "policies" && currentLanguage === primaryLocale}
+                      />
+                    </div>
+                    {aiSuggestions.title && renderAISuggestion("title", aiSuggestions.title)}
+                    {currentLanguage === primaryLocale && selectedType !== "policies" && (
+                      <div style={{ marginTop: "0.5rem" }}>
+                        <Button
+                          size="slim"
+                          onClick={() => handleGenerateAI("title")}
+                          loading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "title" && fetcher.formData?.get("action") === "generateAIText"}
+                        >
+                          {t.content.generateWithAI}
+                        </Button>
+                      </div>
+                    )}
+                    {currentLanguage !== primaryLocale && selectedType !== "policies" && (
+                      <div style={{ marginTop: "0.5rem" }}>
+                        <Button
+                          size="slim"
+                          onClick={() => handleTranslateField("title")}
+                          loading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "title" && fetcher.formData?.get("action") === "translateField"}
+                        >
+                          {t.content.translateFromPrimary}
+                        </Button>
+                      </div>
                     )}
                   </div>
-                </div>
+                )}
 
                 {/* Editable Description/Body - NOT for menus */}
                 {selectedType !== "menus" && (

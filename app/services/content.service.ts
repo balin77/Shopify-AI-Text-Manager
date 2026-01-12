@@ -256,6 +256,84 @@ export class ContentService {
           });
         }
 
+        // Method 3: Fetch translations for each menu item (LINK resource type)
+        console.log(`\n[MENU] Fetching translations for individual menu items (LINKs)...`);
+
+        const fetchMenuItemTranslations = async (items: any[], level: number = 0): Promise<void> => {
+          for (const item of items || []) {
+            const indent = '  '.repeat(level);
+            console.log(`${indent}[LINK] "${item.title}" (${item.id})`);
+
+            // Fetch translations for this menu item using translatableResource
+            for (const locale of locales) {
+              try {
+                const linkTransQuery = `#graphql
+                  query getTranslatableLink($id: ID!, $locale: String!) {
+                    translatableResource(resourceId: $id) {
+                      resourceId
+                      translatableContent {
+                        key
+                        value
+                        digest
+                        locale
+                      }
+                      translations(locale: $locale) {
+                        locale
+                        key
+                        value
+                        outdated
+                      }
+                    }
+                  }
+                `;
+
+                const linkTransResponse = await this.admin.graphql(linkTransQuery, {
+                  variables: { id: item.id, locale }
+                });
+                const linkTransData = await linkTransResponse.json();
+
+                const linkTranslations = linkTransData.data?.translatableResource?.translations || [];
+                const linkTranslatableContent = linkTransData.data?.translatableResource?.translatableContent || [];
+
+                if (linkTranslatableContent.length > 0 || linkTranslations.length > 0) {
+                  console.log(`${indent}  [${locale}] Translatable content:`, linkTranslatableContent);
+                  console.log(`${indent}  [${locale}] Found ${linkTranslations.length} translations`);
+
+                  if (linkTranslations.length > 0) {
+                    linkTranslations.forEach((t: any) => {
+                      console.log(`${indent}    - key: "${t.key}", value: "${t.value}", outdated: ${t.outdated}`);
+                    });
+                  }
+                }
+
+                // Store translations on the item itself
+                if (!item.translations) {
+                  item.translations = [];
+                }
+                for (const trans of linkTranslations) {
+                  if (!item.translations.find((t: any) => t.locale === trans.locale && t.key === trans.key)) {
+                    item.translations.push(trans);
+                  }
+                }
+              } catch (error) {
+                console.error(`${indent}  [${locale}] Error fetching link translations:`, error);
+              }
+            }
+
+            // Recursively fetch translations for sub-items
+            if (item.items && item.items.length > 0) {
+              await fetchMenuItemTranslations(item.items, level + 1);
+            }
+          }
+        };
+
+        // Fetch translations for all menu items
+        if (menu.items && menu.items.length > 0) {
+          await fetchMenuItemTranslations(menu.items);
+        }
+
+        console.log(`[MENU] Finished fetching all translations for menu "${menu.title}"`);
+
         menusWithTranslations.push({
           ...menu,
           translations: allTranslations
