@@ -16,6 +16,7 @@ interface AIEditableFieldProps {
   maxLength?: number;
   placeholder?: string;
   isLoading?: boolean;
+  sourceTextAvailable?: boolean;
   onGenerateAI: () => void;
   onTranslate: () => void;
   onTranslateAll?: () => void;
@@ -37,6 +38,7 @@ export function AIEditableField({
   maxLength,
   placeholder,
   isLoading = false,
+  sourceTextAvailable = true,
   onGenerateAI,
   onTranslate,
   onTranslateAll,
@@ -103,7 +105,7 @@ export function AIEditableField({
             size="slim"
             onClick={isPrimaryLocale ? onTranslateAll : onTranslate}
             loading={isLoading}
-            disabled={isPrimaryLocale && !onTranslateAll}
+            disabled={(isPrimaryLocale && !onTranslateAll) || (!isPrimaryLocale && !sourceTextAvailable)}
           >
             🌍 {isPrimaryLocale ? "Übersetzen" : t.products.translateFromPrimary}
           </Button>

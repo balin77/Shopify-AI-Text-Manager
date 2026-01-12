@@ -15,6 +15,7 @@ interface AIEditableHTMLFieldProps {
   isPrimaryLocale: boolean;
   isTranslated?: boolean;
   isLoading?: boolean;
+  sourceTextAvailable?: boolean;
   onGenerateAI: () => void;
   onTranslate: () => void;
   onTranslateAll?: () => void;
@@ -34,6 +35,7 @@ export function AIEditableHTMLField({
   isPrimaryLocale,
   isTranslated = true,
   isLoading = false,
+  sourceTextAvailable = true,
   onGenerateAI,
   onTranslate,
   onTranslateAll,
@@ -220,7 +222,7 @@ export function AIEditableHTMLField({
             size="slim"
             onClick={isPrimaryLocale ? onTranslateAll : onTranslate}
             loading={isLoading}
-            disabled={isPrimaryLocale && !onTranslateAll}
+            disabled={(isPrimaryLocale && !onTranslateAll) || (!isPrimaryLocale && !sourceTextAvailable)}
           >
             🌍 {isPrimaryLocale ? "Übersetzen" : t.products.translateFromPrimary}
           </Button>

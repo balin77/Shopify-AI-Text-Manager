@@ -632,6 +632,7 @@ export default function PoliciesPage() {
                   isPrimaryLocale={currentLanguage === primaryLocale}
                   isTranslated={isFieldTranslatedCheck("body")}
                   isLoading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "body"}
+                  sourceTextAvailable={!!selectedItem?.body}
                   onGenerateAI={() => handleGenerateAI("body")}
                   onTranslate={() => handleTranslateField("body")}
                   onAcceptSuggestion={() => handleAcceptSuggestion("body")}

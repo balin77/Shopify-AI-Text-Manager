@@ -695,6 +695,7 @@ export default function BlogPage() {
                   isTranslated={isFieldTranslatedCheck("title")}
                   helpText={`${editableTitle.length} ${t.content.characters}`}
                   isLoading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "title"}
+                  sourceTextAvailable={!!selectedItem?.title}
                   onGenerateAI={() => handleGenerateAI("title")}
                   onTranslate={() => handleTranslateField("title")}
                   onAcceptSuggestion={() => handleAcceptSuggestion("title")}
@@ -713,6 +714,7 @@ export default function BlogPage() {
                   isPrimaryLocale={currentLanguage === primaryLocale}
                   isTranslated={isFieldTranslatedCheck("body")}
                   isLoading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "body"}
+                  sourceTextAvailable={!!selectedItem?.body}
                   onGenerateAI={() => handleGenerateAI("body")}
                   onTranslate={() => handleTranslateField("body")}
                   onAcceptSuggestion={() => handleAcceptSuggestion("body")}
@@ -729,6 +731,7 @@ export default function BlogPage() {
                   isPrimaryLocale={currentLanguage === primaryLocale}
                   isTranslated={isFieldTranslatedCheck("handle")}
                   isLoading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "handle"}
+                  sourceTextAvailable={!!selectedItem?.handle}
                   onGenerateAI={() => handleGenerateAI("handle")}
                   onTranslate={() => handleTranslateField("handle")}
                   onAcceptSuggestion={() => handleAcceptSuggestion("handle")}
@@ -746,6 +749,7 @@ export default function BlogPage() {
                   isTranslated={isFieldTranslatedCheck("meta_title")}
                   helpText={`${editableSeoTitle.length} ${t.content.characters} (${t.content.recommended}: 50-60)`}
                   isLoading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "seoTitle"}
+                  sourceTextAvailable={!!selectedItem?.seo?.title}
                   onGenerateAI={() => handleGenerateAI("seoTitle")}
                   onTranslate={() => handleTranslateField("seoTitle")}
                   onAcceptSuggestion={() => handleAcceptSuggestion("seoTitle")}
@@ -764,6 +768,7 @@ export default function BlogPage() {
                   helpText={`${editableMetaDescription.length} ${t.content.characters} (${t.content.recommended}: 150-160)`}
                   multiline={3}
                   isLoading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "metaDescription"}
+                  sourceTextAvailable={!!selectedItem?.seo?.description}
                   onGenerateAI={() => handleGenerateAI("metaDescription")}
                   onTranslate={() => handleTranslateField("metaDescription")}
                   onAcceptSuggestion={() => handleAcceptSuggestion("metaDescription")}

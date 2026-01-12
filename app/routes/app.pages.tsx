@@ -645,6 +645,7 @@ export default function PagesPage() {
                   isTranslated={isFieldTranslatedCheck("title")}
                   helpText={`${editableTitle.length} ${t.content.characters}`}
                   isLoading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "title"}
+                  sourceTextAvailable={!!selectedItem?.title}
                   onGenerateAI={() => handleGenerateAI("title")}
                   onTranslate={() => handleTranslateField("title")}
                   onAcceptSuggestion={() => handleAcceptSuggestion("title")}
@@ -663,6 +664,7 @@ export default function PagesPage() {
                   isPrimaryLocale={currentLanguage === primaryLocale}
                   isTranslated={isFieldTranslatedCheck("body_html")}
                   isLoading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "description"}
+                  sourceTextAvailable={!!selectedItem?.body}
                   onGenerateAI={() => handleGenerateAI("description")}
                   onTranslate={() => handleTranslateField("description")}
                   onAcceptSuggestion={() => handleAcceptSuggestion("description")}
@@ -679,6 +681,7 @@ export default function PagesPage() {
                   isPrimaryLocale={currentLanguage === primaryLocale}
                   isTranslated={isFieldTranslatedCheck("handle")}
                   isLoading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "handle"}
+                  sourceTextAvailable={!!selectedItem?.handle}
                   onGenerateAI={() => handleGenerateAI("handle")}
                   onTranslate={() => handleTranslateField("handle")}
                   onAcceptSuggestion={() => handleAcceptSuggestion("handle")}
