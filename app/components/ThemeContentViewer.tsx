@@ -1,10 +1,24 @@
 import { Card, Text, BlockStack, Badge, TextField, InlineStack, Banner } from "@shopify/polaris";
 import { useState } from "react";
+import { AIEditableField } from "./AIEditableField";
+import { AIEditableHTMLField } from "./AIEditableHTMLField";
 
 interface ThemeContentViewerProps {
   themeResource: any;
   currentLanguage: string;
   shopLocales: any[];
+  primaryLocale: string;
+  editableValues: Record<string, string>;
+  onValueChange: (key: string, value: string) => void;
+  aiSuggestions: Record<string, string>;
+  onGenerateAI: (key: string) => void;
+  onTranslate: (key: string) => void;
+  onTranslateAll: () => void;
+  onAcceptSuggestion: (key: string) => void;
+  onRejectSuggestion: (key: string) => void;
+  isLoading?: boolean;
+  htmlModes: Record<string, "html" | "rendered">;
+  onToggleHtmlMode: (key: string) => void;
 }
 
 // Helper function to extract a human-readable name from a theme key
@@ -51,7 +65,29 @@ function extractReadableName(key: string): string {
   return name || key; // Fallback to original key if parsing fails
 }
 
-export function ThemeContentViewer({ themeResource, currentLanguage, shopLocales }: ThemeContentViewerProps) {
+// Helper function to detect if text contains HTML structure
+function hasHtmlStructure(text: string): boolean {
+  if (!text) return false;
+  return /<(p|h[1-6]|div|span|ul|ol|li|br|strong|em|a|b|i|u)\b[^>]*>/i.test(text);
+}
+
+export function ThemeContentViewer({
+  themeResource,
+  currentLanguage,
+  shopLocales,
+  primaryLocale,
+  editableValues,
+  onValueChange,
+  aiSuggestions,
+  onGenerateAI,
+  onTranslate,
+  onTranslateAll,
+  onAcceptSuggestion,
+  onRejectSuggestion,
+  isLoading = false,
+  htmlModes,
+  onToggleHtmlMode,
+}: ThemeContentViewerProps) {
   const [searchTerm, setSearchTerm] = useState("");
 
   if (!themeResource || !themeResource.translatableContent) {
@@ -61,6 +97,8 @@ export function ThemeContentViewer({ themeResource, currentLanguage, shopLocales
       </Banner>
     );
   }
+
+  const isPrimaryLocale = currentLanguage === primaryLocale;
 
   // Filter translatable content by search term
   const filteredContent = themeResource.translatableContent.filter((item: any) =>
@@ -79,8 +117,19 @@ export function ThemeContentViewer({ themeResource, currentLanguage, shopLocales
     return translation?.value || "";
   };
 
+  // Helper to check if field is translated
+  const isTranslated = (key: string) => {
+    if (isPrimaryLocale) return true;
+    return !!getTranslation(key);
+  };
+
+  // Helper to get source text (from primary locale)
+  const getSourceText = (key: string) => {
+    const item = themeResource.translatableContent.find((item: any) => item.key === key);
+    return item?.value || "";
+  };
+
   const currentLocaleName = shopLocales.find((l: any) => l.locale === currentLanguage)?.name || currentLanguage;
-  const isPrimaryLocale = shopLocales.find((l: any) => l.locale === currentLanguage)?.primary || false;
 
   return (
     <BlockStack gap="400">
@@ -90,7 +139,7 @@ export function ThemeContentViewer({ themeResource, currentLanguage, shopLocales
           <Text as="p" fontWeight="semibold">Theme Resource: {themeResource.resourceTypeLabel}</Text>
           <Text as="p" variant="bodySm">
             This resource contains {themeResource.contentCount} translatable fields from your theme.
-            These are theme-level translations (labels, defaults, etc.) - not merchant-entered content.
+            All fields are now editable with AI-enhanced tools.
           </Text>
         </BlockStack>
       </Banner>
@@ -122,6 +171,12 @@ export function ThemeContentViewer({ themeResource, currentLanguage, shopLocales
           {filteredContent.length > 0 ? (
             filteredContent.map((item: any, index: number) => {
               const readableName = extractReadableName(item.key);
+              const fieldKey = item.key;
+              const sourceText = getSourceText(fieldKey);
+              const currentValue = editableValues[fieldKey] || "";
+              const suggestion = aiSuggestions[fieldKey];
+              const isHtml = hasHtmlStructure(sourceText); // Primary locale determines HTML mode
+              const htmlMode = htmlModes[fieldKey] || "rendered";
 
               return (
                 <Card key={index}>
@@ -133,44 +188,62 @@ export function ThemeContentViewer({ themeResource, currentLanguage, shopLocales
 
                     {/* Original Key (smaller, subdued) */}
                     <Text as="p" variant="bodySm" tone="subdued">
-                      Key: {item.key}
+                      Key: {fieldKey}
                     </Text>
 
-                  {/* Primary Locale Value */}
-                  {isPrimaryLocale && (
-                    <div style={{ background: "#f6f6f7", padding: "12px", borderRadius: "8px" }}>
-                      <Text as="p" variant="bodyMd">
-                        {item.value || <Text as="span" tone="subdued">(empty)</Text>}
-                      </Text>
-                    </div>
-                  )}
+                    {/* Editable Field - HTML or Text based on primary locale content */}
+                    {isHtml ? (
+                      <AIEditableHTMLField
+                        label={isPrimaryLocale ? "Primary Value" : `Translation (${currentLocaleName})`}
+                        value={currentValue}
+                        onChange={(value) => onValueChange(fieldKey, value)}
+                        mode={htmlMode}
+                        onToggleMode={() => onToggleHtmlMode(fieldKey)}
+                        fieldType={fieldKey}
+                        suggestion={suggestion}
+                        isPrimaryLocale={isPrimaryLocale}
+                        isTranslated={isTranslated(fieldKey)}
+                        isLoading={isLoading}
+                        sourceTextAvailable={!!sourceText}
+                        onGenerateAI={() => onGenerateAI(fieldKey)}
+                        onTranslate={() => onTranslate(fieldKey)}
+                        onTranslateAll={isPrimaryLocale ? onTranslateAll : undefined}
+                        onAcceptSuggestion={() => onAcceptSuggestion(fieldKey)}
+                        onRejectSuggestion={() => onRejectSuggestion(fieldKey)}
+                      />
+                    ) : (
+                      <AIEditableField
+                        label={isPrimaryLocale ? "Primary Value" : `Translation (${currentLocaleName})`}
+                        value={currentValue}
+                        onChange={(value) => onValueChange(fieldKey, value)}
+                        fieldType={fieldKey}
+                        suggestion={suggestion}
+                        isPrimaryLocale={isPrimaryLocale}
+                        isTranslated={isTranslated(fieldKey)}
+                        multiline={3}
+                        isLoading={isLoading}
+                        sourceTextAvailable={!!sourceText}
+                        onGenerateAI={() => onGenerateAI(fieldKey)}
+                        onTranslate={() => onTranslate(fieldKey)}
+                        onTranslateAll={isPrimaryLocale ? onTranslateAll : undefined}
+                        onAcceptSuggestion={() => onAcceptSuggestion(fieldKey)}
+                        onRejectSuggestion={() => onRejectSuggestion(fieldKey)}
+                      />
+                    )}
 
-                  {/* Translation Value (Non-Primary Locales) */}
-                  {!isPrimaryLocale && (
-                    <div style={{ background: getTranslation(item.key) ? "#f1f8f5" : "#fff4e5", padding: "12px", borderRadius: "8px" }}>
-                      {getTranslation(item.key) ? (
-                        <>
-                          <Text as="p" variant="bodyMd">
-                            {getTranslation(item.key)}
-                          </Text>
-                          <Text as="p" variant="bodySm" tone="subdued" fontWeight="regular">
-                            Original: {item.value}
-                          </Text>
-                        </>
-                      ) : (
-                        <>
-                          <Text as="p" variant="bodyMd" tone="subdued">
-                            <em>Not translated</em>
-                          </Text>
-                          <Text as="p" variant="bodySm" tone="subdued">
-                            Original: {item.value}
-                          </Text>
-                        </>
-                      )}
-                    </div>
-                  )}
-                </BlockStack>
-              </Card>
+                    {/* Show original value for non-primary locales */}
+                    {!isPrimaryLocale && sourceText && (
+                      <div style={{ background: "#f6f6f7", padding: "12px", borderRadius: "8px" }}>
+                        <Text as="p" variant="bodySm" tone="subdued">
+                          Original ({shopLocales.find((l: any) => l.locale === primaryLocale)?.name}):
+                        </Text>
+                        <Text as="p" variant="bodyMd">
+                          {sourceText}
+                        </Text>
+                      </div>
+                    )}
+                  </BlockStack>
+                </Card>
               );
             })
           ) : (
@@ -182,14 +255,6 @@ export function ThemeContentViewer({ themeResource, currentLanguage, shopLocales
           )}
         </BlockStack>
       </div>
-
-      {/* Read-Only Notice */}
-      <Banner tone="warning">
-        <p>
-          <strong>Read-Only View:</strong> Theme translations are currently displayed for reference only.
-          To edit these translations, use Shopify's "Translate & Adapt" app or edit the theme's locale files directly.
-        </p>
-      </Banner>
     </BlockStack>
   );
 }

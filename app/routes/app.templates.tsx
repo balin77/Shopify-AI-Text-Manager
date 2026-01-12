@@ -1,12 +1,12 @@
 /**
  * Theme Templates Management - View and manage theme translatable content
  *
- * Displays theme content grouped by resource type (Articles, Collections, Pages, etc.)
+ * Displays theme content grouped by resource type with full editing capabilities
  */
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useNavigate, useSearchParams } from "@remix-run/react";
+import { useLoaderData, useFetcher } from "@remix-run/react";
 import {
   Page,
   Card,
@@ -16,6 +16,7 @@ import {
   ResourceItem,
   Button,
   Banner,
+  InlineStack,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
@@ -90,13 +91,30 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
 export default function TemplatesPage() {
   const { themes, shop, shopLocales, primaryLocale, error } = useLoaderData<typeof loader>();
-  const navigate = useNavigate();
+  const fetcher = useFetcher();
   const { t } = useI18n();
+  const saveButtonRef = useRef<HTMLDivElement>(null);
 
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [currentLanguage, setCurrentLanguage] = useState(primaryLocale);
   const [loadedThemes, setLoadedThemes] = useState<Record<string, any>>({});
   const [isLoading, setIsLoading] = useState(false);
+
+  // Editable state
+  const [editableValues, setEditableValues] = useState<Record<string, string>>({});
+  const [originalValues, setOriginalValues] = useState<Record<string, string>>({});
+  const [aiSuggestions, setAiSuggestions] = useState<Record<string, string>>({});
+  const [htmlModes, setHtmlModes] = useState<Record<string, "html" | "rendered">>({});
+  const [loadedTranslations, setLoadedTranslations] = useState<Record<string, any[]>>({});
+
+  // Get current group ID
+  const currentGroupId = selectedItemId ? themes.find((t: any) => t.id === selectedItemId)?.groupId : null;
+  const selectedItem = currentGroupId ? loadedThemes[currentGroupId] : null;
+
+  // Check for changes
+  const hasChanges = Object.keys(editableValues).some(
+    key => editableValues[key] !== originalValues[key]
+  );
 
   // Auto-select and load first item on mount
   useEffect(() => {
@@ -133,14 +151,249 @@ export default function TemplatesPage() {
     }
   };
 
+  // Load translations when language changes (for non-primary locales)
+  useEffect(() => {
+    if (!selectedItem || !currentGroupId) return;
+
+    if (currentLanguage === primaryLocale) {
+      // Load primary locale values
+      const values: Record<string, string> = {};
+      selectedItem.translatableContent?.forEach((item: any) => {
+        values[item.key] = item.value || "";
+      });
+      setEditableValues(values);
+      setOriginalValues({ ...values });
+    } else {
+      // Check if translations are already loaded
+      const translationKey = `${currentGroupId}_${currentLanguage}`;
+      const hasTranslations = loadedTranslations[translationKey];
+
+      if (!hasTranslations) {
+        // Load translations
+        const formData = new FormData();
+        formData.append("action", "loadTranslations");
+        formData.append("locale", currentLanguage);
+
+        fetcher.submit(formData, {
+          method: "POST",
+          action: `/api/templates/${currentGroupId}`
+        });
+      } else {
+        // Use loaded translations
+        const values: Record<string, string> = {};
+        selectedItem.translatableContent?.forEach((item: any) => {
+          const translation = hasTranslations.find((t: any) => t.key === item.key);
+          values[item.key] = translation?.value || "";
+        });
+        setEditableValues(values);
+        setOriginalValues({ ...values });
+      }
+    }
+  }, [selectedItem, currentLanguage, currentGroupId]);
+
+  // Handle loaded translations from fetcher
+  useEffect(() => {
+    if (fetcher.data?.success && 'translations' in fetcher.data && 'locale' in fetcher.data) {
+      const { translations, locale } = fetcher.data as any;
+      const translationKey = `${currentGroupId}_${locale}`;
+
+      setLoadedTranslations(prev => ({
+        ...prev,
+        [translationKey]: translations
+      }));
+
+      // Update editable values if this is the current language
+      if (locale === currentLanguage && selectedItem) {
+        const values: Record<string, string> = {};
+        selectedItem.translatableContent?.forEach((item: any) => {
+          const translation = translations.find((t: any) => t.key === item.key);
+          values[item.key] = translation?.value || "";
+        });
+        setEditableValues(values);
+        setOriginalValues({ ...values });
+      }
+    }
+  }, [fetcher.data, currentLanguage, currentGroupId, selectedItem]);
+
+  // Handle AI generation response
+  useEffect(() => {
+    if (fetcher.data?.success && 'generatedContent' in fetcher.data && 'fieldKey' in fetcher.data) {
+      const { generatedContent, fieldKey } = fetcher.data as any;
+      setAiSuggestions(prev => ({
+        ...prev,
+        [fieldKey]: generatedContent
+      }));
+    }
+  }, [fetcher.data]);
+
+  // Handle translated field response
+  useEffect(() => {
+    if (fetcher.data?.success && 'translatedValue' in fetcher.data && 'fieldKey' in fetcher.data) {
+      const { translatedValue, fieldKey } = fetcher.data as any;
+      setEditableValues(prev => ({
+        ...prev,
+        [fieldKey]: translatedValue
+      }));
+    }
+  }, [fetcher.data]);
+
+  // Handle translateAll response
+  useEffect(() => {
+    if (fetcher.data?.success && 'translatedFields' in fetcher.data) {
+      const { translatedFields } = fetcher.data as any;
+      setEditableValues(prev => ({
+        ...prev,
+        ...translatedFields
+      }));
+    }
+  }, [fetcher.data]);
+
   // Handle item click: load data if not loaded, then select
   const handleItemClick = (itemId: string, groupId: string) => {
+    if (hasChanges) {
+      if (!confirm(t.content?.unsavedChanges || "You have unsaved changes. Do you want to discard them?")) {
+        return;
+      }
+    }
+
     setSelectedItemId(itemId);
+    setAiSuggestions({});
+    setEditableValues({});
+    setOriginalValues({});
     loadThemeData(groupId);
   };
 
-  // Get selected item from loaded themes or navigation data
-  const selectedItem = selectedItemId && loadedThemes[themes.find((t: any) => t.id === selectedItemId)?.groupId];
+  const handleLanguageChange = (locale: string) => {
+    if (hasChanges) {
+      if (!confirm(t.content?.unsavedChanges || "You have unsaved changes. Do you want to discard them?")) {
+        return;
+      }
+    }
+
+    setCurrentLanguage(locale);
+    setAiSuggestions({});
+  };
+
+  const handleValueChange = (key: string, value: string) => {
+    setEditableValues(prev => ({
+      ...prev,
+      [key]: value
+    }));
+  };
+
+  const handleGenerateAI = (fieldKey: string) => {
+    if (!currentGroupId) return;
+
+    const formData = new FormData();
+    formData.append("action", "generateAIText");
+    formData.append("fieldKey", fieldKey);
+    formData.append("currentValue", editableValues[fieldKey] || "");
+
+    fetcher.submit(formData, {
+      method: "POST",
+      action: `/api/templates/${currentGroupId}`
+    });
+  };
+
+  const handleTranslate = (fieldKey: string) => {
+    if (!currentGroupId || !selectedItem) return;
+
+    // Get source text from primary locale
+    const sourceItem = selectedItem.translatableContent?.find((item: any) => item.key === fieldKey);
+    const sourceText = sourceItem?.value || "";
+
+    if (!sourceText) {
+      alert(t.content?.noSourceText || "No source text available for translation");
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append("action", "translateField");
+    formData.append("fieldKey", fieldKey);
+    formData.append("sourceText", sourceText);
+    formData.append("targetLocale", currentLanguage);
+    formData.append("primaryLocale", primaryLocale);
+
+    fetcher.submit(formData, {
+      method: "POST",
+      action: `/api/templates/${currentGroupId}`
+    });
+  };
+
+  const handleTranslateAll = () => {
+    if (!currentGroupId) return;
+
+    const formData = new FormData();
+    formData.append("action", "translateAll");
+    formData.append("primaryLocale", primaryLocale);
+    formData.append("targetLocale", currentLanguage);
+
+    fetcher.submit(formData, {
+      method: "POST",
+      action: `/api/templates/${currentGroupId}`
+    });
+  };
+
+  const handleAcceptSuggestion = (fieldKey: string) => {
+    const suggestion = aiSuggestions[fieldKey];
+    if (suggestion) {
+      setEditableValues(prev => ({
+        ...prev,
+        [fieldKey]: suggestion
+      }));
+      setAiSuggestions(prev => {
+        const newSuggestions = { ...prev };
+        delete newSuggestions[fieldKey];
+        return newSuggestions;
+      });
+    }
+  };
+
+  const handleRejectSuggestion = (fieldKey: string) => {
+    setAiSuggestions(prev => {
+      const newSuggestions = { ...prev };
+      delete newSuggestions[fieldKey];
+      return newSuggestions;
+    });
+  };
+
+  const handleToggleHtmlMode = (fieldKey: string) => {
+    setHtmlModes(prev => ({
+      ...prev,
+      [fieldKey]: prev[fieldKey] === "html" ? "rendered" : "html"
+    }));
+  };
+
+  const handleSave = () => {
+    if (!currentGroupId || !hasChanges) return;
+
+    // Collect only changed fields
+    const changedFields: Record<string, string> = {};
+    Object.keys(editableValues).forEach(key => {
+      if (editableValues[key] !== originalValues[key]) {
+        changedFields[key] = editableValues[key];
+      }
+    });
+
+    const formData = new FormData();
+    formData.append("action", "updateContent");
+    formData.append("locale", currentLanguage);
+    formData.append("primaryLocale", primaryLocale);
+    formData.append("updatedFields", JSON.stringify(changedFields));
+
+    fetcher.submit(formData, {
+      method: "POST",
+      action: `/api/templates/${currentGroupId}`
+    });
+
+    // Update original values
+    setOriginalValues({ ...editableValues });
+  };
+
+  const handleDiscard = () => {
+    setEditableValues({ ...originalValues });
+    setAiSuggestions({});
+  };
 
   return (
     <Page fullWidth>
@@ -215,30 +468,68 @@ export default function TemplatesPage() {
               </div>
             ) : selectedItem ? (
               <BlockStack gap="500">
-                {/* Language Selector */}
-                <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
-                  {shopLocales.map((locale: any) => (
-                    <Button
-                      key={locale.locale}
-                      variant={currentLanguage === locale.locale ? "primary" : undefined}
-                      onClick={() => setCurrentLanguage(locale.locale)}
-                      size="slim"
-                    >
-                      {locale.name} {locale.primary && `(${t.content?.primaryLanguageSuffix || "Primary"})`}
-                    </Button>
-                  ))}
-                </div>
+                {/* Language Selector & Save Buttons */}
+                <InlineStack align="space-between" blockAlign="center">
+                  <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+                    {shopLocales.map((locale: any) => (
+                      <Button
+                        key={locale.locale}
+                        variant={currentLanguage === locale.locale ? "primary" : undefined}
+                        onClick={() => handleLanguageChange(locale.locale)}
+                        size="slim"
+                      >
+                        {locale.name} {locale.primary && `(${t.content?.primaryLanguageSuffix || "Primary"})`}
+                      </Button>
+                    ))}
+                  </div>
+
+                  {/* Save/Discard Buttons */}
+                  {hasChanges && (
+                    <div ref={saveButtonRef} style={{ display: "flex", gap: "0.5rem" }}>
+                      <Button onClick={handleDiscard} size="slim">
+                        {t.content?.discard || "Discard"}
+                      </Button>
+                      <Button
+                        variant="primary"
+                        onClick={handleSave}
+                        loading={fetcher.state === "submitting"}
+                        size="slim"
+                      >
+                        {t.content?.save || "Save"}
+                      </Button>
+                    </div>
+                  )}
+                </InlineStack>
 
                 {/* Item ID */}
                 <Text as="p" variant="bodySm" tone="subdued">
                   {t.content?.idPrefix || "ID:"} {selectedItem.id.split("/").pop()}
                 </Text>
 
+                {/* Success Banner */}
+                {fetcher.data?.success && fetcher.state === "idle" && !('translations' in fetcher.data) && !('generatedContent' in fetcher.data) && !('translatedValue' in fetcher.data) && !('translatedFields' in fetcher.data) && (
+                  <Banner tone="success">
+                    <p>{t.content?.saveSuccess || "Changes saved successfully!"}</p>
+                  </Banner>
+                )}
+
                 {/* Theme Content Viewer */}
                 <ThemeContentViewer
                   themeResource={selectedItem}
                   currentLanguage={currentLanguage}
                   shopLocales={shopLocales}
+                  primaryLocale={primaryLocale}
+                  editableValues={editableValues}
+                  onValueChange={handleValueChange}
+                  aiSuggestions={aiSuggestions}
+                  onGenerateAI={handleGenerateAI}
+                  onTranslate={handleTranslate}
+                  onTranslateAll={handleTranslateAll}
+                  onAcceptSuggestion={handleAcceptSuggestion}
+                  onRejectSuggestion={handleRejectSuggestion}
+                  isLoading={fetcher.state === "submitting"}
+                  htmlModes={htmlModes}
+                  onToggleHtmlMode={handleToggleHtmlMode}
                 />
               </BlockStack>
             ) : (
