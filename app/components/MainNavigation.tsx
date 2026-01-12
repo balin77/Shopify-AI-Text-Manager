@@ -12,7 +12,7 @@ export function MainNavigation() {
   console.log("🧭 [MainNavigation] Current pathname:", location.pathname);
 
   const tabs = [
-    { id: "products", label: t.nav.products, path: "/app" },
+    { id: "products", label: t.nav.products, path: "/app/products" },
     { id: "content", label: t.nav.otherContent, path: "/app/content" },
     { id: "tasks", label: t.nav.tasks, path: "/app/tasks" },
     { id: "settings", label: t.nav.settings, path: "/app/settings" },
@@ -41,10 +41,7 @@ export function MainNavigation() {
       <InlineStack gap="400" align="space-between" blockAlign="center">
         <InlineStack gap="400">
           {tabs.map((tab) => {
-            const isActive =
-              tab.path === "/app"
-                ? location.pathname === "/app" || location.pathname === "/app/"
-                : location.pathname.startsWith(tab.path);
+            const isActive = location.pathname.startsWith(tab.path);
 
             return (
               <button
