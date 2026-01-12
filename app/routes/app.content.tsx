@@ -78,7 +78,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     let collections = [];
     let articles = [];
     let dbPages = [];
-    let dbPolicies = [];
+    let policies: any[] = [];
     let allTranslations = [];
     let metadata = {};
     let menus: any[] = [];
@@ -116,15 +116,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         }),
       ]);
     } else if (requestedType === "policies") {
-      [dbPolicies, allTranslations] = await Promise.all([
-        db.shopPolicy.findMany({
-          where: { shop: session.shop },
-          orderBy: { type: 'asc' },
-        }),
-        db.contentTranslation.findMany({
-          where: { resourceType: 'ShopPolicy' }
-        }),
-      ]);
+      // 🔥 Policies: Load directly from Shopify (no DB caching, no webhooks available)
+      const contentService = new ContentService(admin);
+      policies = await contentService.getShopPolicies();
     } else if (requestedType === "menus" || requestedType === "shopMetadata" || requestedType === "templates" || requestedType === "metaobjects") {
       // Load these from ContentService (not DB-cached)
       const contentService = new ContentService(admin);
@@ -192,21 +186,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       translations: translationsByResource[p.id] || [],
     }));
 
-    // Transform policies
-    const transformedPolicies = dbPolicies.map(p => ({
-      id: p.id,
-      title: p.title,
-      body: p.body,
-      type: p.type,
-      url: p.url,
-      translations: translationsByResource[p.id] || [],
-    }));
+    // Policies are already transformed from ContentService (no DB caching)
 
     return json({
       blogs,
       collections: transformedCollections,
       pages: transformedPages,
-      policies: transformedPolicies,
+      policies, // Already transformed from ContentService
       metadata,
       menus,
       themes,
