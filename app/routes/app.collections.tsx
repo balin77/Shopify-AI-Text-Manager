@@ -18,6 +18,7 @@ import { ContentTypeNavigation } from "../components/ContentTypeNavigation";
 import { SeoSidebar } from "../components/SeoSidebar";
 import { AIEditableField } from "../components/AIEditableField";
 import { AIEditableHTMLField } from "../components/AIEditableHTMLField";
+import { LocaleNavigationButtons } from "../components/LocaleNavigationButtons";
 import { AIService } from "../../src/services/ai.service";
 import { TranslationService } from "../../src/services/translation.service";
 import { useI18n } from "../contexts/I18nContext";
@@ -29,10 +30,7 @@ import {
   useChangeTracking,
   getTranslatedValue,
   isFieldTranslated as checkFieldTranslated,
-  hasPrimaryContentMissing as checkPrimaryContentMissing,
-  hasLocaleMissingTranslations as checkLocaleMissingTranslations,
   hasMissingTranslations as checkMissingTranslations,
-  getLocaleButtonStyle as getLocaleButtonStyleUtil,
 } from "../utils/contentEditor.utils";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -678,11 +676,6 @@ export default function CollectionsPage() {
     return checkMissingTranslations(selectedItem, shopLocales, loadedTranslations, 'collections');
   };
 
-  const getLocaleButtonStyle = (locale: any) => {
-    const isSelected = currentLanguage === locale.locale;
-    return getLocaleButtonStyleUtil(locale, selectedItem, primaryLocale, loadedTranslations, 'collections', isSelected);
-  };
-
   return (
     <Page fullWidth>
       <style>{contentEditorStyles}</style>
@@ -752,21 +745,17 @@ export default function CollectionsPage() {
             {selectedItem ? (
               <BlockStack gap="500">
                 {/* Language Selector */}
-                <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
-                  {shopLocales.map((locale: any) => (
-                    <div key={locale.locale} style={getLocaleButtonStyle(locale)}>
-                      <Button
-                        variant={currentLanguage === locale.locale ? "primary" : undefined}
-                        onClick={() => {
-                          handleNavigationAttempt(() => setCurrentLanguage(locale.locale), hasChanges);
-                        }}
-                        size="slim"
-                      >
-                        {locale.name} {locale.primary && `(${t.content.primaryLanguageSuffix})`}
-                      </Button>
-                    </div>
-                  ))}
-                </div>
+                <LocaleNavigationButtons
+                  shopLocales={shopLocales}
+                  currentLanguage={currentLanguage}
+                  primaryLocaleSuffix={t.content.primaryLanguageSuffix}
+                  selectedItem={selectedItem}
+                  primaryLocale={primaryLocale}
+                  loadedTranslations={loadedTranslations}
+                  contentType="collections"
+                  hasChanges={hasChanges}
+                  onLanguageChange={(locale) => handleNavigationAttempt(() => setCurrentLanguage(locale), hasChanges)}
+                />
 
                 {/* Save Button */}
                 <InlineStack align="space-between" blockAlign="center">

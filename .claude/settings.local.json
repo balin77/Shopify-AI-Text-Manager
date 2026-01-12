@@ -23,7 +23,11 @@
       "Bash(npx tsx:*)",
       "Bash(node -e:*)",
       "Bash(npm run dev:*)",
-      "Bash(node --require dotenv/config --loader tsx:*)"
+      "Bash(node --require dotenv/config --loader tsx:*)",
+      "Bash(git reset:*)",
+      "Bash(npx tsc:*)",
+      "Bash(git pull:*)",
+      "Bash(git stash:*)"
     ],
     "deny": [],
     "ask": []
