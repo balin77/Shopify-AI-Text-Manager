@@ -242,6 +242,95 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
   }
 
+  if (action === "translateAll") {
+    const title = formData.get("title") as string;
+    const description = formData.get("description") as string;
+    const handle = formData.get("handle") as string;
+    const seoTitle = formData.get("seoTitle") as string;
+    const metaDescription = formData.get("metaDescription") as string;
+
+    try {
+      const changedFields: any = {};
+      if (title) changedFields.title = title;
+      if (description) changedFields.description = description;
+      if (handle) changedFields.handle = handle;
+      if (seoTitle) changedFields.seoTitle = seoTitle;
+      if (metaDescription) changedFields.metaDescription = metaDescription;
+
+      if (Object.keys(changedFields).length === 0) {
+        return json({ success: false, error: "No fields to translate" }, { status: 400 });
+      }
+
+      const localesResponse = await admin.graphql(
+        `#graphql
+          query getShopLocales {
+            shopLocales {
+              locale
+              primary
+              published
+            }
+          }`
+      );
+      const localesData = await localesResponse.json();
+      const shopLocales = localesData.data?.shopLocales || [];
+      const targetLocales = shopLocales
+        .filter((l: any) => !l.primary && l.published)
+        .map((l: any) => l.locale);
+
+      const allTranslations: Record<string, any> = {};
+
+      for (const locale of targetLocales) {
+        try {
+          const localeTranslations = await translationService.translateProduct(changedFields, [locale]);
+          const fields = localeTranslations[locale];
+
+          if (fields) {
+            allTranslations[locale] = fields;
+
+            const translationsInput = [];
+            if (fields.title) translationsInput.push({ key: "title", value: fields.title, locale });
+            if (fields.description) translationsInput.push({ key: "body_html", value: fields.description, locale });
+            if (fields.handle) translationsInput.push({ key: "handle", value: fields.handle, locale });
+            if (fields.seoTitle) translationsInput.push({ key: "meta_title", value: fields.seoTitle, locale });
+            if (fields.metaDescription) translationsInput.push({ key: "meta_description", value: fields.metaDescription, locale });
+
+            for (const translation of translationsInput) {
+              await admin.graphql(TRANSLATE_CONTENT, {
+                variables: {
+                  resourceId: itemId,
+                  translations: [translation]
+                }
+              });
+            }
+
+            await db.contentTranslation.deleteMany({
+              where: { resourceId: itemId, resourceType: 'Collection', locale },
+            });
+
+            if (translationsInput.length > 0) {
+              await db.contentTranslation.createMany({
+                data: translationsInput.map(t => ({
+                  resourceId: itemId,
+                  resourceType: 'Collection',
+                  key: t.key,
+                  value: t.value,
+                  locale: t.locale,
+                  digest: null,
+                })),
+              });
+            }
+          }
+        } catch (localeError: any) {
+          console.error(`Failed to translate to ${locale}:`, localeError);
+        }
+      }
+
+      return json({ success: true, translations: allTranslations });
+    } catch (error: any) {
+      return json({ success: false, error: error.message }, { status: 500 });
+    }
+  }
+
   if (action === "updateContent") {
     const locale = formData.get("locale") as string;
     const title = formData.get("title") as string;
@@ -543,6 +632,22 @@ export default function CollectionsPage() {
     );
   };
 
+  const handleTranslateAll = () => {
+    if (!selectedItemId || !selectedItem) return;
+    fetcher.submit(
+      {
+        action: "translateAll",
+        itemId: selectedItemId,
+        title: selectedItem.title,
+        description: selectedItem.descriptionHtml || "",
+        handle: selectedItem.handle,
+        seoTitle: selectedItem.seo?.title || "",
+        metaDescription: selectedItem.seo?.description || "",
+      },
+      { method: "POST" }
+    );
+  };
+
   const handleAcceptSuggestion = (fieldType: string) => {
     const suggestion = aiSuggestions[fieldType];
     if (!suggestion) return;
@@ -695,6 +800,7 @@ export default function CollectionsPage() {
                   sourceTextAvailable={!!selectedItem?.title}
                   onGenerateAI={() => handleGenerateAI("title")}
                   onTranslate={() => handleTranslateField("title")}
+                  onTranslateAll={handleTranslateAll}
                   onAcceptSuggestion={() => handleAcceptSuggestion("title")}
                   onRejectSuggestion={() => setAiSuggestions(prev => { const newSuggestions = {...prev}; delete newSuggestions["title"]; return newSuggestions; })}
                 />
@@ -714,6 +820,7 @@ export default function CollectionsPage() {
                   sourceTextAvailable={!!selectedItem?.descriptionHtml}
                   onGenerateAI={() => handleGenerateAI("description")}
                   onTranslate={() => handleTranslateField("description")}
+                  onTranslateAll={handleTranslateAll}
                   onAcceptSuggestion={() => handleAcceptSuggestion("description")}
                   onRejectSuggestion={() => setAiSuggestions(prev => { const newSuggestions = {...prev}; delete newSuggestions["description"]; return newSuggestions; })}
                 />
@@ -731,6 +838,7 @@ export default function CollectionsPage() {
                   sourceTextAvailable={!!selectedItem?.handle}
                   onGenerateAI={() => handleGenerateAI("handle")}
                   onTranslate={() => handleTranslateField("handle")}
+                  onTranslateAll={handleTranslateAll}
                   onAcceptSuggestion={() => handleAcceptSuggestion("handle")}
                   onRejectSuggestion={() => setAiSuggestions(prev => { const newSuggestions = {...prev}; delete newSuggestions["handle"]; return newSuggestions; })}
                 />
@@ -749,6 +857,7 @@ export default function CollectionsPage() {
                   sourceTextAvailable={!!selectedItem?.seo?.title}
                   onGenerateAI={() => handleGenerateAI("seoTitle")}
                   onTranslate={() => handleTranslateField("seoTitle")}
+                  onTranslateAll={handleTranslateAll}
                   onAcceptSuggestion={() => handleAcceptSuggestion("seoTitle")}
                   onRejectSuggestion={() => setAiSuggestions(prev => { const newSuggestions = {...prev}; delete newSuggestions["seoTitle"]; return newSuggestions; })}
                 />
@@ -768,6 +877,7 @@ export default function CollectionsPage() {
                   sourceTextAvailable={!!selectedItem?.seo?.description}
                   onGenerateAI={() => handleGenerateAI("metaDescription")}
                   onTranslate={() => handleTranslateField("metaDescription")}
+                  onTranslateAll={handleTranslateAll}
                   onAcceptSuggestion={() => handleAcceptSuggestion("metaDescription")}
                   onRejectSuggestion={() => setAiSuggestions(prev => { const newSuggestions = {...prev}; delete newSuggestions["metaDescription"]; return newSuggestions; })}
                 />

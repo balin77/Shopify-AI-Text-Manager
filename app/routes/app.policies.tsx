@@ -189,6 +189,83 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
   }
 
+  if (action === "translateAll") {
+    const body = formData.get("body") as string;
+
+    try {
+      const changedFields: any = {};
+      if (body) changedFields.body = body;
+
+      if (Object.keys(changedFields).length === 0) {
+        return json({ success: false, error: "No fields to translate" }, { status: 400 });
+      }
+
+      const localesResponse = await admin.graphql(
+        `#graphql
+          query getShopLocales {
+            shopLocales {
+              locale
+              primary
+              published
+            }
+          }`
+      );
+      const localesData = await localesResponse.json();
+      const shopLocales = localesData.data?.shopLocales || [];
+      const targetLocales = shopLocales
+        .filter((l: any) => !l.primary && l.published)
+        .map((l: any) => l.locale);
+
+      const allTranslations: Record<string, any> = {};
+
+      for (const locale of targetLocales) {
+        try {
+          const localeTranslations = await translationService.translateProduct(changedFields, [locale]);
+          const fields = localeTranslations[locale];
+
+          if (fields) {
+            allTranslations[locale] = fields;
+
+            const translationsInput = [];
+            if (fields.body) translationsInput.push({ key: "body", value: fields.body, locale });
+
+            for (const translation of translationsInput) {
+              await admin.graphql(TRANSLATE_CONTENT, {
+                variables: {
+                  resourceId: itemId,
+                  translations: [translation]
+                }
+              });
+            }
+
+            await db.contentTranslation.deleteMany({
+              where: { resourceId: itemId, resourceType: 'ShopPolicy', locale },
+            });
+
+            if (translationsInput.length > 0) {
+              await db.contentTranslation.createMany({
+                data: translationsInput.map(t => ({
+                  resourceId: itemId,
+                  resourceType: 'ShopPolicy',
+                  key: t.key,
+                  value: t.value,
+                  locale: t.locale,
+                  digest: null,
+                })),
+              });
+            }
+          }
+        } catch (localeError: any) {
+          console.error(`Failed to translate to ${locale}:`, localeError);
+        }
+      }
+
+      return json({ success: true, translations: allTranslations });
+    } catch (error: any) {
+      return json({ success: false, error: error.message }, { status: 500 });
+    }
+  }
+
   if (action === "updateContent") {
     const locale = formData.get("locale") as string;
     const body = formData.get("body") as string;
@@ -447,6 +524,18 @@ export default function PoliciesPage() {
     );
   };
 
+  const handleTranslateAll = () => {
+    if (!selectedItemId || !selectedItem) return;
+    fetcher.submit(
+      {
+        action: "translateAll",
+        itemId: selectedItemId,
+        body: selectedItem.body || "",
+      },
+      { method: "POST" }
+    );
+  };
+
   const handleAcceptSuggestion = (fieldType: string) => {
     const suggestion = aiSuggestions[fieldType];
     if (!suggestion) return;
@@ -635,6 +724,7 @@ export default function PoliciesPage() {
                   sourceTextAvailable={!!selectedItem?.body}
                   onGenerateAI={() => handleGenerateAI("body")}
                   onTranslate={() => handleTranslateField("body")}
+                  onTranslateAll={handleTranslateAll}
                   onAcceptSuggestion={() => handleAcceptSuggestion("body")}
                   onRejectSuggestion={() => setAiSuggestions(prev => { const newSuggestions = {...prev}; delete newSuggestions["body"]; return newSuggestions; })}
                 />
