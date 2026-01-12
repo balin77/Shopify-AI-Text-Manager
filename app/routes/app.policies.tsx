@@ -18,9 +18,8 @@ import { ContentTypeNavigation } from "../components/ContentTypeNavigation";
 import { AIEditableHTMLField } from "../components/AIEditableHTMLField";
 import { AIService } from "../../src/services/ai.service";
 import { TranslationService } from "../../src/services/translation.service";
+import { ShopifyContentService } from "../../src/services/shopify-content.service";
 import { useI18n } from "../contexts/I18nContext";
-import { TRANSLATE_CONTENT, UPDATE_SHOP_POLICY } from "../graphql/content.mutations";
-import { GET_TRANSLATIONS } from "../graphql/content.queries";
 import {
   contentEditorStyles,
   useNavigationGuard,
@@ -127,18 +126,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   const aiService = new AIService(provider, config);
   const translationService = new TranslationService(provider, config);
+  const shopifyContentService = new ShopifyContentService(admin);
 
   if (action === "loadTranslations") {
     const locale = formData.get("locale") as string;
 
     try {
-      const translationsResponse = await admin.graphql(GET_TRANSLATIONS, {
-        variables: { resourceId: itemId, locale }
-      });
-
-      const translationsData = await translationsResponse.json();
-      const translations = translationsData.data?.translatableResource?.translations || [];
-
+      const translations = await shopifyContentService.loadTranslations(itemId, locale);
       return json({ success: true, translations, locale });
     } catch (error: any) {
       return json({ success: false, error: error.message }, { status: 500 });
@@ -200,65 +194,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         return json({ success: false, error: "No fields to translate" }, { status: 400 });
       }
 
-      const localesResponse = await admin.graphql(
-        `#graphql
-          query getShopLocales {
-            shopLocales {
-              locale
-              primary
-              published
-            }
-          }`
-      );
-      const localesData = await localesResponse.json();
-      const shopLocales = localesData.data?.shopLocales || [];
-      const targetLocales = shopLocales
-        .filter((l: any) => !l.primary && l.published)
-        .map((l: any) => l.locale);
-
-      const allTranslations: Record<string, any> = {};
-
-      for (const locale of targetLocales) {
-        try {
-          const localeTranslations = await translationService.translateProduct(changedFields, [locale]);
-          const fields = localeTranslations[locale];
-
-          if (fields) {
-            allTranslations[locale] = fields;
-
-            const translationsInput = [];
-            if (fields.body) translationsInput.push({ key: "body", value: fields.body, locale });
-
-            for (const translation of translationsInput) {
-              await admin.graphql(TRANSLATE_CONTENT, {
-                variables: {
-                  resourceId: itemId,
-                  translations: [translation]
-                }
-              });
-            }
-
-            await db.contentTranslation.deleteMany({
-              where: { resourceId: itemId, resourceType: 'ShopPolicy', locale },
-            });
-
-            if (translationsInput.length > 0) {
-              await db.contentTranslation.createMany({
-                data: translationsInput.map(t => ({
-                  resourceId: itemId,
-                  resourceType: 'ShopPolicy',
-                  key: t.key,
-                  value: t.value,
-                  locale: t.locale,
-                  digest: null,
-                })),
-              });
-            }
-          }
-        } catch (localeError: any) {
-          console.error(`Failed to translate to ${locale}:`, localeError);
-        }
-      }
+      const allTranslations = await shopifyContentService.translateAllContent({
+        resourceId: itemId,
+        resourceType: 'ShopPolicy',
+        fields: changedFields,
+        translationService,
+        db,
+      });
 
       return json({ success: true, translations: allTranslations });
     } catch (error: any) {
@@ -273,88 +215,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const primaryLocale = formData.get("primaryLocale") as string;
 
     try {
-      if (locale !== primaryLocale) {
-        // Handle translations
-        const translationsInput = [];
-        if (body) translationsInput.push({ key: "body", value: body, locale });
+      const result = await shopifyContentService.updateContent({
+        resourceId: itemId,
+        resourceType: 'ShopPolicy',
+        locale,
+        primaryLocale,
+        updates: { body },
+        db,
+        shop: session.shop,
+        policyType,
+      });
 
-        // Save to Shopify
-        for (const translation of translationsInput) {
-          await admin.graphql(TRANSLATE_CONTENT, {
-            variables: {
-              resourceId: itemId,
-              translations: [translation]
-            }
-          });
-        }
-
-        // Update database
-        await db.contentTranslation.deleteMany({
-          where: { resourceId: itemId, resourceType: 'ShopPolicy', locale },
-        });
-
-        if (translationsInput.length > 0) {
-          await db.contentTranslation.createMany({
-            data: translationsInput.map(t => ({
-              resourceId: itemId,
-              resourceType: 'ShopPolicy',
-              key: t.key,
-              value: t.value,
-              locale: t.locale,
-              digest: null,
-            })),
-          });
-        }
-
-        return json({ success: true });
-      } else {
-        // Update primary locale using shopPolicyUpdate mutation
-        const response = await admin.graphql(UPDATE_SHOP_POLICY, {
-          variables: {
-            shopPolicy: {
-              type: policyType,
-              body: body,
-            },
-          }
-        });
-
-        const data = await response.json();
-        if (data.data.shopPolicyUpdate.userErrors.length > 0) {
-          return json({
-            success: false,
-            error: data.data.shopPolicyUpdate.userErrors[0].message
-          }, { status: 500 });
-        }
-
-        // Update database
-        const updatedPolicy = data.data.shopPolicyUpdate.shopPolicy;
-        await db.shopPolicy.upsert({
-          where: {
-            shop_id: {
-              shop: session.shop,
-              id: updatedPolicy.id,
-            },
-          },
-          create: {
-            id: updatedPolicy.id,
-            shop: session.shop,
-            title: updatedPolicy.title,
-            body: updatedPolicy.body,
-            type: updatedPolicy.type,
-            url: updatedPolicy.url,
-            lastSyncedAt: new Date(),
-          },
-          update: {
-            title: updatedPolicy.title,
-            body: updatedPolicy.body,
-            type: updatedPolicy.type,
-            url: updatedPolicy.url,
-            lastSyncedAt: new Date(),
-          },
-        });
-
-        return json({ success: true, item: updatedPolicy });
-      }
+      return json(result);
     } catch (error: any) {
       console.error("[POLICIES-UPDATE] Error:", error);
       return json({ success: false, error: error.message }, { status: 500 });
