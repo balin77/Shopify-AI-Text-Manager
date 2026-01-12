@@ -224,3 +224,48 @@ export const GET_METAOBJECTS = `#graphql
     }
   }
 `;
+
+export const GET_THEME_TRANSLATABLE_RESOURCES = `#graphql
+  query getThemeTranslatableResources($first: Int!) {
+    translatableResources(
+      first: $first
+      resourceType: ONLINE_STORE_THEME_SETTINGS_DATA_SECTIONS
+    ) {
+      edges {
+        node {
+          resourceId
+          translatableContent {
+            key
+            value
+            digest
+            locale
+          }
+        }
+      }
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+    }
+  }
+`;
+
+export const GET_THEME_TRANSLATIONS = `#graphql
+  query getThemeTranslations($resourceId: ID!, $locale: String!) {
+    translatableResource(resourceId: $resourceId) {
+      resourceId
+      translatableContent {
+        key
+        value
+        digest
+        locale
+      }
+      translations(locale: $locale) {
+        key
+        value
+        locale
+        outdated
+      }
+    }
+  }
+`;

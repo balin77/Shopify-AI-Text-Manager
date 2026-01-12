@@ -9,7 +9,9 @@ import {
   GET_MENUS,
   GET_THEMES,
   GET_METAOBJECT_DEFINITIONS,
-  GET_METAOBJECTS
+  GET_METAOBJECTS,
+  GET_THEME_TRANSLATABLE_RESOURCES,
+  GET_THEME_TRANSLATIONS
 } from "../graphql/content.queries";
 
 export class ContentService {
@@ -306,19 +308,86 @@ export class ContentService {
 
   async getThemes(first: number = 50) {
     try {
-      const response = await this.admin.graphql(GET_THEMES, {
+      console.log('\n=== 🎨 THEMES: Fetching theme translatable resources ===');
+
+      // First, get all themes
+      const themesResponse = await this.admin.graphql(GET_THEMES, {
         variables: { first }
       });
-      const data = await response.json();
+      const themesData = await themesResponse.json();
 
-      const themes = data.data?.themes?.edges?.map((edge: any) => ({
-        ...edge.node,
-        translations: []
-      })) || [];
+      const themes = themesData.data?.themes?.edges?.map((edge: any) => edge.node) || [];
+      console.log(`[THEMES] Found ${themes.length} themes`);
 
-      return themes;
+      // Then, fetch all translatable resources for ONLINE_STORE_THEME_SETTINGS_DATA_SECTIONS
+      const translatableResponse = await this.admin.graphql(GET_THEME_TRANSLATABLE_RESOURCES, {
+        variables: { first: 250 }
+      });
+      const translatableData = await translatableResponse.json();
+
+      const translatableResources = translatableData.data?.translatableResources?.edges?.map((edge: any) => edge.node) || [];
+      console.log(`[THEMES] Found ${translatableResources.length} translatable theme resources`);
+
+      // Log translatable content structure
+      if (translatableResources.length > 0) {
+        console.log('[THEMES] Translatable content sample:');
+        translatableResources.slice(0, 3).forEach((resource: any, index: number) => {
+          console.log(`  Resource ${index + 1}:`);
+          console.log(`    ID: ${resource.resourceId}`);
+          console.log(`    Translatable content count: ${resource.translatableContent?.length || 0}`);
+          if (resource.translatableContent && resource.translatableContent.length > 0) {
+            console.log(`    Sample keys:`, resource.translatableContent.slice(0, 3).map((c: any) => c.key));
+          }
+        });
+      }
+
+      // Get shop locales to know which languages to fetch translations for
+      const shopLocales = await this.getShopLocales();
+      const nonPrimaryLocales = shopLocales.filter((l: any) => !l.primary).map((l: any) => l.locale);
+      console.log(`[THEMES] Non-primary locales to fetch translations for:`, nonPrimaryLocales);
+
+      // For each translatable resource, fetch translations for all non-primary locales
+      const themesWithContent = [];
+
+      for (const resource of translatableResources) {
+        const allTranslations = [];
+
+        // Fetch translations for each non-primary locale
+        for (const locale of nonPrimaryLocales) {
+          try {
+            const translationsResponse = await this.admin.graphql(GET_THEME_TRANSLATIONS, {
+              variables: { resourceId: resource.resourceId, locale }
+            });
+            const translationsData = await translationsResponse.json();
+
+            const translations = translationsData.data?.translatableResource?.translations || [];
+
+            if (translations.length > 0) {
+              console.log(`  [THEME-${locale}] Found ${translations.length} translations for resource ${resource.resourceId}`);
+              allTranslations.push(...translations);
+            }
+          } catch (error) {
+            console.error(`  [THEME-${locale}] Error fetching translations:`, error);
+          }
+        }
+
+        // Create a theme content object
+        themesWithContent.push({
+          id: resource.resourceId,
+          title: resource.translatableContent?.[0]?.key || `Theme Resource ${resource.resourceId.split('/').pop()}`,
+          name: resource.translatableContent?.[0]?.value || 'Theme Settings',
+          role: 'CONTENT',
+          translatableContent: resource.translatableContent || [],
+          translations: allTranslations
+        });
+      }
+
+      console.log(`\n=== 🎨 THEMES: Fetch complete - ${themesWithContent.length} translatable resources loaded ===\n`);
+
+      // Return both regular themes and translatable theme content
+      return [...themes.map((t: any) => ({ ...t, translations: [] })), ...themesWithContent];
     } catch (error) {
-      console.error('Error fetching themes:', error);
+      console.error('❌ [THEMES] Error fetching themes:', error);
       return [];
     }
   }
