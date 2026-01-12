@@ -20,6 +20,7 @@ import { MainNavigation } from "../components/MainNavigation";
 import { SeoSidebar } from "../components/SeoSidebar";
 import { AISuggestionBanner } from "../components/AISuggestionBanner";
 import { ContentTranslationDebugPanel } from "../components/debug/ContentTranslationDebugPanel";
+import { ThemeContentViewer } from "../components/ThemeContentViewer";
 import { AIService } from "../../src/services/ai.service";
 import { TranslationService } from "../../src/services/translation.service";
 import { useI18n } from "../contexts/I18nContext";
@@ -1445,8 +1446,8 @@ export default function ContentPage() {
                   ))}
                 </div>
 
-                {/* Header with Save Button - Not for menus */}
-                {selectedType !== "menus" && (
+                {/* Header with Save Button - Not for menus or templates */}
+                {selectedType !== "menus" && selectedType !== "templates" && (
                   <InlineStack align="space-between" blockAlign="center">
                     <Text as="p" variant="bodySm" tone="subdued">{t.content.idPrefix} {selectedItem.id.split("/").pop()}</Text>
                     <div ref={saveButtonRef}>
@@ -1479,8 +1480,8 @@ export default function ContentPage() {
                   </InlineStack>
                 )}
 
-                {/* Editable Title - NOT for policies in non-primary languages and NOT for menus */}
-                {selectedType !== "menus" && (selectedType !== "policies" || currentLanguage === primaryLocale) && (
+                {/* Editable Title - NOT for policies in non-primary languages, NOT for menus, NOT for templates */}
+                {selectedType !== "menus" && selectedType !== "templates" && (selectedType !== "policies" || currentLanguage === primaryLocale) && (
                   <div>
                     <div style={{ background: getFieldBackgroundColor("title"), borderRadius: "8px", padding: "1px" }}>
                       <TextField
@@ -1518,8 +1519,8 @@ export default function ContentPage() {
                   </div>
                 )}
 
-                {/* Editable Description/Body - NOT for menus */}
-                {selectedType !== "menus" && (
+                {/* Editable Description/Body - NOT for menus or templates */}
+                {selectedType !== "menus" && selectedType !== "templates" && (
                   <div>
                     <InlineStack align="space-between" blockAlign="center">
                       <Text as="p" variant="bodyMd" fontWeight="semibold">
@@ -1734,6 +1735,15 @@ export default function ContentPage() {
                       )}
                     </BlockStack>
                   </Card>
+                )}
+
+                {/* Theme Content Viewer (only for templates) */}
+                {selectedType === "templates" && selectedItem && (
+                  <ThemeContentViewer
+                    themeResource={selectedItem}
+                    currentLanguage={currentLanguage}
+                    shopLocales={shopLocales}
+                  />
                 )}
 
                 {/* Translation Debug Panel - Only show in Dev Mode */}
