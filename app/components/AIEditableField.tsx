@@ -61,7 +61,6 @@ export function AIEditableField({
           value={value}
           onChange={onChange}
           autoComplete="off"
-          helpText={helpText}
           multiline={multiline}
           maxLength={maxLength}
           placeholder={placeholder}
@@ -84,35 +83,44 @@ export function AIEditableField({
         />
       )}
 
-      <div style={{ marginTop: "0.25rem", display: "flex", gap: "0.5rem" }}>
-        {isPrimaryLocale ? (
-          <>
-            <Button
-              size="slim"
-              onClick={onGenerateAI}
-              loading={isLoading}
-            >
-              ✨ {t.products.aiGenerate}
-            </Button>
-            {onTranslateAll && (
+      <div className="ai-field-footer">
+        <div className="ai-field-footer-left">
+          {helpText && (
+            <span style={{ fontSize: "0.8125rem", color: "#6d7175" }}>
+              {helpText}
+            </span>
+          )}
+        </div>
+        <div className="ai-field-footer-right">
+          {isPrimaryLocale ? (
+            <>
               <Button
                 size="slim"
-                onClick={onTranslateAll}
+                onClick={onGenerateAI}
                 loading={isLoading}
               >
-                🌍 Übersetzen
+                ✨ {t.products.aiGenerate}
               </Button>
-            )}
-          </>
-        ) : (
-          <Button
-            size="slim"
-            onClick={onTranslate}
-            loading={isLoading}
-          >
-            🌐 {t.products.translateFromPrimary}
-          </Button>
-        )}
+              {onTranslateAll && (
+                <Button
+                  size="slim"
+                  onClick={onTranslateAll}
+                  loading={isLoading}
+                >
+                  🌍 Übersetzen
+                </Button>
+              )}
+            </>
+          ) : (
+            <Button
+              size="slim"
+              onClick={onTranslate}
+              loading={isLoading}
+            >
+              🌐 {t.products.translateFromPrimary}
+            </Button>
+          )}
+        </div>
       </div>
     </div>
   );

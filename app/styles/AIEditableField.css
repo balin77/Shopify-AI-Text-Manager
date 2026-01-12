@@ -24,12 +24,32 @@
   border-radius: 8px !important;
 }
 
-/* Character counter positioning - right aligned */
+/* Character counter and helpText positioning - right aligned */
 .ai-editable-field-wrapper .Polaris-TextField__CharacterCount,
-.ai-editable-field-wrapper .Polaris-TextField__CharacterCount {
+.ai-editable-field-wrapper .Polaris-Text--subdued {
   text-align: right !important;
   display: block !important;
   margin-top: 4px !important;
+}
+
+/* Buttons container aligned with helpText */
+.ai-field-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 0.25rem;
+  min-height: 28px;
+}
+
+.ai-field-footer-left {
+  flex: 1;
+  text-align: right;
+}
+
+.ai-field-footer-right {
+  display: flex;
+  gap: 0.5rem;
+  margin-left: 1rem;
 }
 
 /* HTML Editor styling */
