@@ -108,7 +108,39 @@ export class ContentService {
 
   async getMenus(first: number = 50) {
     try {
-      console.log('\n=== 🍔 MENUS: Starting fetch ===');
+      console.log('\n=== 🍔 MENUS: Fetching (simplified - no translations) ===');
+
+      const response = await this.admin.graphql(GET_MENUS, {
+        variables: { first }
+      });
+      const data = await response.json();
+
+      const menus = data.data?.menus?.edges?.map((edge: any) => ({
+        ...edge.node,
+        translations: [] // Menus cannot be translated via API
+      })) || [];
+
+      console.log(`[MENUS] Found ${menus.length} menus`);
+      console.log('[MENUS] ⚠️  Translation API calls disabled due to Shopify API limitation');
+      console.log('[MENUS] MenuItems cannot be translated via GraphQL API');
+
+      return menus;
+
+      /* ========================================================================
+       * COMMENTED OUT: Full translation implementation for when Shopify fixes API
+       * ========================================================================
+       *
+       * DO NOT DELETE THIS CODE!
+       * This implementation should be restored when Shopify adds proper API support
+       * for MenuItem translations.
+       *
+       * Current issues (as of 2025):
+       * - MenuItem does not have a 'translations' field
+       * - MenuItem IDs cannot be queried as translatableResources
+       * - See: https://github.com/Shopify/storefront-api-feedback/discussions/156
+       * - See: https://community.shopify.dev/t/translation-api-menuitem/6227
+       *
+       * ========================================================================
 
       // First get shop locales to know which languages to fetch
       const shopLocales = await this.getShopLocales();
@@ -256,23 +288,6 @@ export class ContentService {
           });
         }
 
-        // LIMITATION: Shopify API does not provide MenuItem translations
-        console.log(`\n[MENU] ⚠️  SHOPIFY API LIMITATION CONFIRMED:`);
-        console.log(`[MENU] MenuItem does NOT have a 'translations' field`);
-        console.log(`[MENU] LINK resource type exists in TranslatableResourceType enum but:`);
-        console.log(`[MENU]   - MenuItem IDs cannot be queried as translatableResources (returns "invalid id")`);
-        console.log(`[MENU]   - MenuItem object has no translations field in GraphQL schema`);
-        console.log(`[MENU] `);
-        console.log(`[MENU] Known Shopify limitation since 2023:`);
-        console.log(`[MENU]   - https://github.com/Shopify/storefront-api-feedback/discussions/156`);
-        console.log(`[MENU]   - https://community.shopify.dev/t/translation-api-menuitem/6227`);
-        console.log(`[MENU] `);
-        console.log(`[MENU] Menu items can only be translated via Shopify Admin "Translate & Adapt" app`);
-        console.log(`[MENU] These translations are NOT accessible via GraphQL Admin API`);
-        console.log(`[MENU] `);
-        console.log(`[MENU] WORKAROUND: Menu items will display in primary language only in this app.`);
-        console.log(`[MENU] Users must translate menu items directly in their Shopify storefront theme.`);
-
         menusWithTranslations.push({
           ...menu,
           translations: allTranslations
@@ -281,6 +296,8 @@ export class ContentService {
 
       console.log(`\n=== 🍔 MENUS: Fetch complete - ${menusWithTranslations.length} menus loaded ===\n`);
       return menusWithTranslations;
+
+       * ======================================================================== */
     } catch (error) {
       console.error('❌ [MENUS] Error fetching menus:', error);
       return [];

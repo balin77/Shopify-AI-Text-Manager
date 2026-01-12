@@ -4,7 +4,11 @@
       "Bash(taskkill:*)",
       "Bash(git add:*)",
       "Bash(git commit:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(diese App übersetzt werden. Bitte übersetzen Sie Ihre Menüs direkt im)",
+      "Bash(Shopify Admin unter 'Translate & Adapt'.\"\n- en: \"Menu links cannot be translated through this app due to a Shopify API)",
+      "Bash(limitation. Please translate your menus directly in Shopify Admin under)",
+      "Bash('Translate & Adapt'.\"\n\nThis provides clear UX feedback about the Shopify limitation documented in:\n- https://github.com/Shopify/storefront-api-feedback/discussions/156\n- https://community.shopify.dev/t/translation-api-menuitem/6227\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")"
     ],
     "deny": [],
     "ask": []
