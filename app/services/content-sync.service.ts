@@ -648,4 +648,174 @@ export class ContentSyncService {
 
     return pages.length;
   }
+
+  // ============================================
+  // SHOP POLICY SYNC
+  // ============================================
+
+  /**
+   * Sync a single shop policy with all its translations
+   */
+  async syncPolicy(policyId: string): Promise<void> {
+    console.log(`[ContentSync] Starting sync for policy: ${policyId}`);
+
+    try {
+      // 1. Fetch policy data
+      const policyData = await this.fetchPolicyData(policyId);
+
+      if (!policyData) {
+        console.warn(`[ContentSync] Policy not found: ${policyId}`);
+        return;
+      }
+
+      // 2. Fetch all available locales
+      const locales = await this.fetchShopLocales();
+
+      // 3. Fetch translations
+      const allTranslations = await this.fetchAllTranslations(
+        policyId,
+        locales.filter(l => !l.primary),
+        "ShopPolicy"
+      );
+
+      // 4. Save to database
+      await this.savePolicyToDatabase(policyData, allTranslations);
+
+      console.log(`[ContentSync] Successfully synced policy: ${policyId}`);
+    } catch (error) {
+      console.error(`[ContentSync] Error syncing policy ${policyId}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Delete a policy from the database
+   */
+  async deletePolicy(policyId: string): Promise<void> {
+    console.log(`[ContentSync] Deleting policy: ${policyId}`);
+
+    const { db } = await import("../db.server");
+
+    await db.shopPolicy.delete({
+      where: {
+        shop_id: {
+          shop: this.shop,
+          id: policyId,
+        },
+      },
+    });
+
+    console.log(`[ContentSync] Successfully deleted policy: ${policyId}`);
+  }
+
+  /**
+   * Sync all shop policies
+   */
+  async syncAllPolicies(): Promise<number> {
+    console.log(`[ContentSync] Syncing all shop policies...`);
+
+    const response = await this.admin.graphql(
+      `#graphql
+        query getShopPolicies {
+          shop {
+            shopPolicies {
+              id
+              title
+              body
+              type
+              url
+            }
+          }
+        }`
+    );
+
+    const data = await response.json();
+    const policies = data.data?.shop?.shopPolicies || [];
+
+    console.log(`[ContentSync] Found ${policies.length} policies to sync`);
+
+    for (const policy of policies) {
+      await this.syncPolicy(policy.id);
+    }
+
+    return policies.length;
+  }
+
+  private async fetchPolicyData(policyId: string) {
+    const response = await this.admin.graphql(
+      `#graphql
+        query getShopPolicies {
+          shop {
+            shopPolicies {
+              id
+              title
+              body
+              type
+              url
+            }
+          }
+        }`
+    );
+
+    const data = await response.json();
+    const policies = data.data?.shop?.shopPolicies || [];
+
+    // Find the specific policy by ID
+    return policies.find((p: any) => p.id === policyId) || null;
+  }
+
+  private async savePolicyToDatabase(policyData: any, translations: any[]) {
+    const { db } = await import("../db.server");
+
+    console.log(`[ContentSync] Saving policy to database: ${policyData.id}`);
+
+    // Upsert policy
+    await db.shopPolicy.upsert({
+      where: {
+        shop_id: {
+          shop: this.shop,
+          id: policyData.id,
+        },
+      },
+      create: {
+        id: policyData.id,
+        shop: this.shop,
+        title: policyData.title,
+        body: policyData.body || "",
+        type: policyData.type,
+        url: policyData.url || null,
+        lastSyncedAt: new Date(),
+      },
+      update: {
+        title: policyData.title,
+        body: policyData.body || "",
+        type: policyData.type,
+        url: policyData.url || null,
+        lastSyncedAt: new Date(),
+      },
+    });
+
+    // Delete old translations
+    await db.contentTranslation.deleteMany({
+      where: {
+        resourceId: policyData.id,
+        resourceType: "ShopPolicy",
+      },
+    });
+
+    // Insert new translations
+    if (translations.length > 0) {
+      await db.contentTranslation.createMany({
+        data: translations.map(t => ({
+          resourceId: policyData.id,
+          resourceType: "ShopPolicy",
+          key: t.key,
+          value: t.value,
+          locale: t.locale,
+          digest: t.digest || null,
+        })),
+      });
+      console.log(`[ContentSync] ✓ Saved ${translations.length} translations`);
+    }
+  }
 }

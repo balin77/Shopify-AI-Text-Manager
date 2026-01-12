@@ -22,16 +22,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const syncService = new ContentSyncService(admin, session.shop);
 
     // Sync all content types in parallel for better performance
-    const [collectionsCount, articlesCount, pagesCount] = await Promise.all([
+    const [collectionsCount, articlesCount, pagesCount, policiesCount] = await Promise.all([
       syncService.syncAllCollections(),
       syncService.syncAllArticles(),
       syncService.syncAllPages(),
+      syncService.syncAllPolicies(),
     ]);
 
     console.log(`[SYNC-CONTENT] ✓ Sync complete!`);
     console.log(`[SYNC-CONTENT]   Collections: ${collectionsCount}`);
     console.log(`[SYNC-CONTENT]   Articles: ${articlesCount}`);
     console.log(`[SYNC-CONTENT]   Pages: ${pagesCount}`);
+    console.log(`[SYNC-CONTENT]   Policies: ${policiesCount}`);
 
     return json({
       success: true,
@@ -40,7 +42,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         collections: collectionsCount,
         articles: articlesCount,
         pages: pagesCount,
-        total: collectionsCount + articlesCount + pagesCount,
+        policies: policiesCount,
+        total: collectionsCount + articlesCount + pagesCount + policiesCount,
       },
     });
   } catch (error: any) {
