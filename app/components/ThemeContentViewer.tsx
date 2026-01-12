@@ -173,10 +173,10 @@ export function ThemeContentViewer({
               const readableName = extractReadableName(item.key);
               const fieldKey = item.key;
               const sourceText = getSourceText(fieldKey);
-              const currentValue = editableValues[fieldKey] || "";
-              const suggestion = aiSuggestions[fieldKey];
+              const currentValue = editableValues?.[fieldKey] || "";
+              const suggestion = aiSuggestions?.[fieldKey];
               const isHtml = hasHtmlStructure(sourceText); // Primary locale determines HTML mode
-              const htmlMode = htmlModes[fieldKey] || "rendered";
+              const htmlMode = htmlModes?.[fieldKey] || "rendered";
 
               return (
                 <Card key={index}>
