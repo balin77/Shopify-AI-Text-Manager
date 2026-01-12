@@ -252,10 +252,26 @@ export function ContentTranslationDebugPanel({ contentItem, contentType, shopLoc
                   <Text as="p" tone="subdued">
                     Translations loaded via TranslatableResourceType: LINK
                   </Text>
+
+                  {/* Debug Info */}
+                  <Text as="p" tone="subdued">
+                    Total translations loaded: {contentItem.translations.length}
+                  </Text>
+                  <Text as="p" tone="subdued">
+                    Link translations: {contentItem.translations.filter((t: any) => t.key?.startsWith('link_')).length}
+                  </Text>
+
                   {shopLocales.filter(l => !l.primary).map(locale => {
                     const translations = translationsByLocale[locale.locale] || {};
                     const linkTranslations = Object.keys(translations).filter(key => key.startsWith('link_'));
-                    const totalLinks = contentItem.translations.filter((t: any) => t.key?.startsWith('link_')).length;
+
+                    // Get unique link keys (remove duplicates across locales)
+                    const allLinkKeys = new Set(
+                      contentItem.translations
+                        .filter((t: any) => t.key?.startsWith('link_'))
+                        .map((t: any) => t.key)
+                    );
+                    const totalLinkKeys = allLinkKeys.size;
 
                     return (
                       <InlineStack key={locale.locale} gap="200" blockAlign="center">
@@ -263,11 +279,25 @@ export function ContentTranslationDebugPanel({ contentItem, contentType, shopLoc
                           <Text as="span" fontWeight="semibold">{locale.locale}:</Text>
                         </div>
                         <Badge tone={linkTranslations.length > 0 ? "success" : "critical"}>
-                          {linkTranslations.length} / {totalLinks} links translated
+                          {linkTranslations.length} / {totalLinkKeys} links translated
                         </Badge>
                       </InlineStack>
                     );
                   })}
+
+                  {/* Show all translation keys for debugging */}
+                  <details style={{ marginTop: '1rem' }}>
+                    <summary style={{ cursor: 'pointer', userSelect: 'none' }}>
+                      <Text as="span" tone="subdued">Show all translation keys</Text>
+                    </summary>
+                    <div style={{ marginTop: '0.5rem', maxHeight: '200px', overflow: 'auto', background: '#f6f6f7', padding: '0.5rem', borderRadius: '4px', fontSize: '0.75rem', fontFamily: 'monospace' }}>
+                      {contentItem.translations.map((t, i) => (
+                        <div key={i}>
+                          [{t.locale}] {t.key}: {t.value?.substring(0, 40)}...
+                        </div>
+                      ))}
+                    </div>
+                  </details>
                 </BlockStack>
               </Card>
             )}

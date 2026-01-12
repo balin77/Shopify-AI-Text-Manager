@@ -130,17 +130,14 @@ export class ContentService {
       const shopLocales = await this.getShopLocales();
       const locales = shopLocales.filter((l: any) => !l.primary).map((l: any) => l.locale);
 
-      console.log('=== FETCHING MENUS WITH TRANSLATIONS ===');
-      console.log('Non-primary locales:', locales);
+      console.log(`[ContentService] Fetching menus with translations for locales: ${locales.join(', ')}`);
 
       const response = await this.admin.graphql(GET_MENUS, {
         variables: { first }
       });
       const data = await response.json();
 
-      console.log('=== MENUS API RESPONSE ===');
-      console.log('Raw menus data:', JSON.stringify(data, null, 2));
-      console.log('Number of menus:', data.data?.menus?.edges?.length || 0);
+      console.log(`[ContentService] Loaded ${data.data?.menus?.edges?.length || 0} menus`);
 
       // For each menu, fetch translations using both methods
       const menusWithTranslations = [];
@@ -176,10 +173,6 @@ export class ContentService {
           });
           const translatableData = await translatableResponse.json();
 
-          console.log(`\n=== TRANSLATABLE RESOURCE for menu ${menu.id} ===`);
-          console.log('Translatable content:', JSON.stringify(translatableData.data?.translatableResource?.translatableContent, null, 2));
-          console.log('All translations:', JSON.stringify(translatableData.data?.translatableResource?.translations, null, 2));
-
           const translations = translatableData.data?.translatableResource?.translations || [];
           allTranslations.push(...translations);
         } catch (error) {
@@ -208,7 +201,6 @@ export class ContentService {
             const transData = await transResponse.json();
 
             const translations = transData.data?.menu?.translations || [];
-            console.log(`Translations for menu ${menu.id} (${locale}):`, translations.length);
 
             // Only add if not already added by translatableResource
             for (const trans of translations) {
@@ -239,11 +231,12 @@ export class ContentService {
         };
 
         const allMenuItems = collectAllMenuItems(menu.items);
-        console.log(`\n=== FETCHING LINK TRANSLATIONS for ${allMenuItems.length} menu items ===`);
+        console.log(`[Menu ${menu.id}] Fetching LINK translations for ${allMenuItems.length} items...`);
+
+        let totalLinkTranslations = 0;
+        let errorCount = 0;
 
         for (const menuItem of allMenuItems) {
-          console.log(`\nProcessing Link ${menuItem.path}: ${menuItem.title} (${menuItem.id})`);
-
           // Fetch translations for this LINK
           try {
             const linkTranslatableQuery = `#graphql
@@ -271,9 +264,6 @@ export class ContentService {
             });
             const linkData = await linkResponse.json();
 
-            console.log(`  Translatable content:`, JSON.stringify(linkData.data?.translatableResource?.translatableContent, null, 2));
-            console.log(`  Translations:`, JSON.stringify(linkData.data?.translatableResource?.translations, null, 2));
-
             const linkTranslations = linkData.data?.translatableResource?.translations || [];
 
             // Add link translations with a prefix to distinguish from menu translations
@@ -287,11 +277,14 @@ export class ContentService {
               });
             }
 
-            console.log(`  ✓ Added ${linkTranslations.length} translations for link ${menuItem.path}`);
+            totalLinkTranslations += linkTranslations.length;
           } catch (error) {
-            console.error(`  ✗ Error fetching translations for link ${menuItem.id}:`, error);
+            errorCount++;
+            console.error(`[Menu ${menu.id}] Error on link ${menuItem.id}:`, error);
           }
         }
+
+        console.log(`[Menu ${menu.id}] ✓ Loaded ${totalLinkTranslations} link translations from ${allMenuItems.length} items (${errorCount} errors)`);
 
         menusWithTranslations.push({
           ...menu,
