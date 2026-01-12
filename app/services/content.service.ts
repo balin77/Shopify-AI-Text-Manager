@@ -571,18 +571,82 @@ export class ContentService {
               }
 
               if (!matched) {
-                unmatchedContent.push({
-                  ...item,
-                  _groupId: 'misc',
-                  _groupName: 'Verschiedenes',
-                  _groupIcon: '📦'
-                });
+                unmatchedContent.push(item);
               }
             }
 
-            // Add "Verschiedenes" group if there's unmatched content
+            // Instead of lumping all unmatched content into one group,
+            // create intelligent sub-groups based on key prefixes
             if (unmatchedContent.length > 0) {
-              contentByGroup['misc'] = unmatchedContent;
+              console.log(`  [DEBUG] Found ${unmatchedContent.length} unmatched items`);
+              console.log(`  [DEBUG] Sample unmatched keys:`, unmatchedContent.slice(0, 10).map(c => c.key));
+
+              // Group unmatched content by their top-level prefix
+              const unmatchedByPrefix: Record<string, any[]> = {};
+
+              for (const item of unmatchedContent) {
+                // Extract the first meaningful part of the key
+                let prefix = 'other';
+                const key = item.key;
+
+                // Try to extract a meaningful prefix
+                if (key.startsWith('section.')) {
+                  // e.g., "section.cart" -> "cart"
+                  const parts = key.split('.');
+                  if (parts.length >= 2 && parts[1]) {
+                    prefix = `section_${parts[1]}`;
+                  }
+                } else if (key.includes('.')) {
+                  // Take the first part before the dot
+                  prefix = key.split('.')[0];
+                } else {
+                  // Single-word keys
+                  prefix = key.split(/[:\s]/)[0] || 'other';
+                }
+
+                if (!unmatchedByPrefix[prefix]) {
+                  unmatchedByPrefix[prefix] = [];
+                }
+                unmatchedByPrefix[prefix].push(item);
+              }
+
+              // Create separate groups for each prefix
+              for (const [prefix, items] of Object.entries(unmatchedByPrefix)) {
+                // Generate a human-readable group name
+                let groupName = prefix
+                  .replace(/^section_/, '')
+                  .replace(/_/g, ' ')
+                  .split(' ')
+                  .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+                  .join(' ');
+
+                const groupId = `misc_${prefix}`;
+
+                // Choose an appropriate icon
+                let icon = '📦';
+                if (prefix.includes('cart')) icon = '🛒';
+                else if (prefix.includes('search')) icon = '🔍';
+                else if (prefix.includes('footer')) icon = '🦶';
+                else if (prefix.includes('header')) icon = '🎯';
+                else if (prefix.includes('nav')) icon = '🧭';
+                else if (prefix.includes('blog')) icon = '📝';
+                else if (prefix.includes('list')) icon = '📋';
+                else if (prefix.includes('form')) icon = '📝';
+                else if (prefix.includes('contact')) icon = '📧';
+                else if (prefix.includes('image')) icon = '🖼️';
+                else if (prefix.includes('video')) icon = '🎥';
+                else if (prefix.includes('slideshow')) icon = '🎞️';
+                else if (prefix.includes('featured')) icon = '⭐';
+
+                contentByGroup[groupId] = items.map(item => ({
+                  ...item,
+                  _groupId: groupId,
+                  _groupName: groupName,
+                  _groupIcon: icon
+                }));
+
+                console.log(`  → Created group "${groupName}" (${items.length} items)`);
+              }
             }
 
             // Store grouped content for this resource
