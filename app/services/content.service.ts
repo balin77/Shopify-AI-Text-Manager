@@ -256,9 +256,96 @@ export class ContentService {
           });
         }
 
-        console.log(`[MENU] Note: Menu item translations are handled at the menu level in Shopify.`);
-        console.log(`[MENU] Individual MenuItem (LINK) IDs cannot be queried as translatableResources.`);
-        console.log(`[MENU] Menu items will display in the primary language only unless translated via Shopify admin.`);
+        // Method 3: Try to fetch menu with items in each locale
+        console.log(`\n[MENU] Attempting to fetch menu items in each locale...`);
+
+        for (const locale of locales) {
+          try {
+            const menuInLocaleQuery = `#graphql
+              query getMenuInLocale($id: ID!, $locale: String!) {
+                menu(id: $id) {
+                  translations(locale: $locale) {
+                    locale
+                    key
+                    value
+                  }
+                  items {
+                    id
+                    title
+                    url
+                    translations(locale: $locale) {
+                      locale
+                      key
+                      value
+                    }
+                    items {
+                      id
+                      title
+                      url
+                      translations(locale: $locale) {
+                        locale
+                        key
+                        value
+                      }
+                      items {
+                        id
+                        title
+                        url
+                        translations(locale: $locale) {
+                          locale
+                          key
+                          value
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            `;
+
+            const menuLocaleResponse = await this.admin.graphql(menuInLocaleQuery, {
+              variables: { id: menu.id, locale }
+            });
+            const menuLocaleData = await menuLocaleResponse.json();
+
+            console.log(`  [${locale}] Menu query response:`, JSON.stringify(menuLocaleData.data?.menu, null, 2));
+
+            // Extract item translations if they exist
+            const menuWithTranslations = menuLocaleData.data?.menu;
+            if (menuWithTranslations?.items) {
+              console.log(`  [${locale}] Found ${menuWithTranslations.items.length} items`);
+
+              // Recursive function to merge translations into our menu items
+              const mergeItemTranslations = (ourItems: any[], translatedItems: any[]) => {
+                for (let i = 0; i < ourItems.length; i++) {
+                  const ourItem = ourItems[i];
+                  const translatedItem = translatedItems[i];
+
+                  if (translatedItem?.translations) {
+                    if (!ourItem.translations) {
+                      ourItem.translations = [];
+                    }
+                    for (const trans of translatedItem.translations) {
+                      if (!ourItem.translations.find((t: any) => t.locale === trans.locale && t.key === trans.key)) {
+                        ourItem.translations.push(trans);
+                        console.log(`    [${locale}] Added translation for "${ourItem.title}": ${trans.key} = "${trans.value}"`);
+                      }
+                    }
+                  }
+
+                  // Recursively merge sub-items
+                  if (ourItem.items && translatedItem?.items) {
+                    mergeItemTranslations(ourItem.items, translatedItem.items);
+                  }
+                }
+              };
+
+              mergeItemTranslations(menu.items, menuWithTranslations.items);
+            }
+          } catch (error) {
+            console.error(`  [${locale}] Error fetching menu with items:`, error);
+          }
+        }
 
         menusWithTranslations.push({
           ...menu,
