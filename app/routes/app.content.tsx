@@ -225,15 +225,21 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const locale = formData.get("locale") as string;
 
     try {
+      console.log(`[LOAD-TRANSLATIONS] Loading translations for ${contentType} ${itemId} in locale ${locale}`);
+
       const translationsResponse = await admin.graphql(GET_TRANSLATIONS, {
         variables: { resourceId: itemId, locale }
       });
 
       const translationsData = await translationsResponse.json();
+      console.log(`[LOAD-TRANSLATIONS] Response:`, JSON.stringify(translationsData, null, 2));
+
       const translations = translationsData.data?.translatableResource?.translations || [];
+      console.log(`[LOAD-TRANSLATIONS] Found ${translations.length} translations for ${contentType} ${itemId}`);
 
       return json({ success: true, translations, locale });
     } catch (error: any) {
+      console.error(`[LOAD-TRANSLATIONS] Error:`, error);
       return json({ success: false, error: error.message }, { status: 500 });
     }
   }
@@ -1317,6 +1323,16 @@ export default function ContentPage() {
                   </div>
                 </InlineStack>
 
+                {/* Policies Info Banner */}
+                {selectedType === "policies" && currentLanguage !== primaryLocale && (
+                  <Banner tone="info">
+                    <p>
+                      ⚠️ Policies können aktuell nicht über diese App übersetzt werden. Shopify speichert Policies nicht als translatable resources.
+                      Sie müssen die Übersetzungen direkt in Shopify unter Settings → Policies verwalten.
+                    </p>
+                  </Banner>
+                )}
+
                 {/* Editable Title */}
                 <div>
                   <div style={{ background: getFieldBackgroundColor("title"), borderRadius: "8px", padding: "1px" }}>
@@ -1326,6 +1342,7 @@ export default function ContentPage() {
                       onChange={setEditableTitle}
                       autoComplete="off"
                       helpText={`${editableTitle.length} ${t.content.characters}`}
+                      disabled={selectedType === "policies" && currentLanguage !== primaryLocale}
                     />
                   </div>
                   {aiSuggestions.title && renderAISuggestion("title", aiSuggestions.title)}
@@ -1388,6 +1405,7 @@ export default function ContentPage() {
                         <textarea
                           value={editableDescription}
                           onChange={(e) => setEditableDescription(e.target.value)}
+                          disabled={selectedType === "policies" && currentLanguage !== primaryLocale}
                           style={{
                             width: "100%",
                             minHeight: "200px",
@@ -1402,7 +1420,7 @@ export default function ContentPage() {
                       ) : (
                         <div
                           ref={descriptionEditorRef}
-                          contentEditable
+                          contentEditable={!(selectedType === "policies" && currentLanguage !== primaryLocale)}
                           onInput={(e) => setEditableDescription(e.currentTarget.innerHTML)}
                           dangerouslySetInnerHTML={{ __html: editableDescription }}
                           style={{
@@ -1413,6 +1431,7 @@ export default function ContentPage() {
                             borderTop: "none",
                             borderRadius: "0 0 8px 8px",
                             lineHeight: "1.6",
+                            opacity: (selectedType === "policies" && currentLanguage !== primaryLocale) ? 0.6 : 1,
                           }}
                           className="description-editor"
                         />
