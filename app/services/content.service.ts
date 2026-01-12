@@ -238,9 +238,28 @@ export class ContentService {
       });
       const data = await response.json();
 
+      // Check for GraphQL errors (like access denied)
+      if (data.errors && data.errors.length > 0) {
+        const accessDeniedError = data.errors.find((err: any) =>
+          err.message?.includes('Access denied') || err.message?.includes('metaobjectDefinitions')
+        );
+
+        if (accessDeniedError) {
+          console.warn('⚠️ Metaobjects access denied - feature requires additional Shopify permissions');
+          return [];
+        }
+
+        throw new Error(data.errors[0].message);
+      }
+
       const definitions = data.data?.metaobjectDefinitions?.edges?.map((edge: any) => edge.node) || [];
       return definitions;
-    } catch (error) {
+    } catch (error: any) {
+      // Gracefully handle permission errors
+      if (error.message?.includes('Access denied') || error.message?.includes('metaobjectDefinitions')) {
+        console.warn('⚠️ Metaobjects access denied - feature requires additional Shopify permissions');
+        return [];
+      }
       console.error('Error fetching metaobject definitions:', error);
       return [];
     }
