@@ -95,7 +95,7 @@ export function AIEditableHTMLField({
   return (
     <div className={`ai-editable-html-field ${getBackgroundClass()}`}>
       <InlineStack align="space-between" blockAlign="center">
-        <Text as="p" variant="bodyMd" fontWeight="semibold">
+        <Text as="p" variant="bodyMd" fontWeight="bold">
           {label}
         </Text>
         <Button size="slim" onClick={onToggleMode}>
@@ -212,7 +212,7 @@ export function AIEditableHTMLField({
         />
       )}
 
-      <div style={{ marginTop: "0.5rem", display: "flex", gap: "0.5rem" }}>
+      <div style={{ marginTop: "0.25rem", display: "flex", gap: "0.5rem" }}>
         {isPrimaryLocale ? (
           <>
             <Button size="slim" onClick={onGenerateAI} loading={isLoading}>

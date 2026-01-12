@@ -315,96 +315,49 @@ export function ProductEditor({
               </InlineStack>
 
               {/* Alt-text input for selected image */}
-              <BlockStack gap="300">
-                <Text as="h3" variant="headingSm" fontWeight="bold">
-                  {t.products.altTextForImage} {selectedImageIndex + 1}
-                </Text>
-                <div>
-                  <TextField
-                    label=""
-                    value={imageAltTexts[selectedImageIndex] || product.images[selectedImageIndex]?.altText || ""}
-                    onChange={(value) => {
-                      setImageAltTexts((prev) => ({
-                        ...prev,
-                        [selectedImageIndex]: value,
-                      }));
-                      // Clear suggestion when user manually edits
-                      if (altTextSuggestions[selectedImageIndex]) {
-                        setAltTextSuggestions((prev) => {
-                          const newSuggestions = { ...prev };
-                          delete newSuggestions[selectedImageIndex];
-                          return newSuggestions;
-                        });
-                      }
-                    }}
-                    placeholder={t.products.altTextPlaceholder}
-                    autoComplete="off"
-                  />
-                </div>
-
-                {/* AI Suggestion Box for Alt Text */}
-                {altTextSuggestions[selectedImageIndex] && (
-                  <div
-                    style={{
-                      background: "linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%)",
-                      border: "2px solid #0ea5e9",
-                      borderRadius: "8px",
-                      padding: "12px",
-                      marginTop: "8px",
-                    }}
-                  >
-                    <div style={{ marginBottom: "8px" }}>
-                      <Text as="p" variant="bodyMd" fontWeight="semibold">
-                        {t.products.aiSuggestion}
-                      </Text>
-                      <Text as="p" variant="bodyMd">
-                        {altTextSuggestions[selectedImageIndex]}
-                      </Text>
-                    </div>
-                    <InlineStack gap="200">
-                      <Button
-                        size="slim"
-                        variant="primary"
-                        onClick={() => {
-                          setImageAltTexts((prev) => ({
-                            ...prev,
-                            [selectedImageIndex]: altTextSuggestions[selectedImageIndex],
-                          }));
-                          setAltTextSuggestions((prev) => {
-                            const newSuggestions = { ...prev };
-                            delete newSuggestions[selectedImageIndex];
-                            return newSuggestions;
-                          });
-                        }}
-                      >
-                        {t.products.accept}
-                      </Button>
-                      <Button
-                        size="slim"
-                        onClick={() => {
-                          setAltTextSuggestions((prev) => {
-                            const newSuggestions = { ...prev };
-                            delete newSuggestions[selectedImageIndex];
-                            return newSuggestions;
-                          });
-                        }}
-                      >
-                        {t.products.decline}
-                      </Button>
-                    </InlineStack>
-                  </div>
-                )}
-
-                <div style={{ marginTop: "0.5rem" }}>
-                  <Button
-                    size="slim"
-                    onClick={() => onGenerateAltText(selectedImageIndex)}
-                    loading={isFieldLoading(`altText_${selectedImageIndex}`, "generateAltText")}
-                  >
-                    ✨ {t.products.aiGenerateShort}
-                  </Button>
-                </div>
-              </BlockStack>
+              <AIEditableField
+                label={`${t.products.altTextForImage} ${selectedImageIndex + 1}`}
+                value={imageAltTexts[selectedImageIndex] || product.images[selectedImageIndex]?.altText || ""}
+                onChange={(value) => {
+                  setImageAltTexts((prev) => ({
+                    ...prev,
+                    [selectedImageIndex]: value,
+                  }));
+                  // Clear suggestion when user manually edits
+                  if (altTextSuggestions[selectedImageIndex]) {
+                    setAltTextSuggestions((prev) => {
+                      const newSuggestions = { ...prev };
+                      delete newSuggestions[selectedImageIndex];
+                      return newSuggestions;
+                    });
+                  }
+                }}
+                fieldType={`altText_${selectedImageIndex}`}
+                suggestion={altTextSuggestions[selectedImageIndex]}
+                isPrimaryLocale={true}
+                placeholder={t.products.altTextPlaceholder}
+                isLoading={isFieldLoading(`altText_${selectedImageIndex}`, "generateAltText")}
+                onGenerateAI={() => onGenerateAltText(selectedImageIndex)}
+                onTranslate={() => {}} // Not needed for alt texts
+                onAcceptSuggestion={() => {
+                  setImageAltTexts((prev) => ({
+                    ...prev,
+                    [selectedImageIndex]: altTextSuggestions[selectedImageIndex],
+                  }));
+                  setAltTextSuggestions((prev) => {
+                    const newSuggestions = { ...prev };
+                    delete newSuggestions[selectedImageIndex];
+                    return newSuggestions;
+                  });
+                }}
+                onRejectSuggestion={() => {
+                  setAltTextSuggestions((prev) => {
+                    const newSuggestions = { ...prev };
+                    delete newSuggestions[selectedImageIndex];
+                    return newSuggestions;
+                  });
+                }}
+              />
             </BlockStack>
           )}
 

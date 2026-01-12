@@ -24,12 +24,12 @@
   border-radius: 8px !important;
 }
 
-/* Character counter positioning */
+/* Character counter positioning - right aligned */
+.ai-editable-field-wrapper .Polaris-TextField__CharacterCount,
 .ai-editable-field-wrapper .Polaris-TextField__CharacterCount {
-  position: absolute;
-  bottom: 8px;
-  right: 12px;
-  z-index: 1;
+  text-align: right !important;
+  display: block !important;
+  margin-top: 4px !important;
 }
 
 /* HTML Editor styling */

@@ -57,7 +57,7 @@ export function AIEditableField({
     <div>
       <div className={`ai-editable-field-wrapper ${getBackgroundClass()}`}>
         <TextField
-          label={label}
+          label={<span style={{ fontWeight: 600 }}>{label}</span>}
           value={value}
           onChange={onChange}
           autoComplete="off"
@@ -84,7 +84,7 @@ export function AIEditableField({
         />
       )}
 
-      <div style={{ marginTop: "0.5rem", display: "flex", gap: "0.5rem" }}>
+      <div style={{ marginTop: "0.25rem", display: "flex", gap: "0.5rem" }}>
         {isPrimaryLocale ? (
           <>
             <Button
