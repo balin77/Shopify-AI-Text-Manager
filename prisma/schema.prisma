@@ -25,6 +25,7 @@ model Session {
   emailVerified        Boolean?  @default(false)
   refreshToken         String?
   refreshTokenExpires  DateTime?
+  lastActivityAt       DateTime? @default(now())
 }
 
 model AISettings {
@@ -312,5 +313,45 @@ model ContentTranslation {
   @@unique([resourceId, key, locale])
   @@index([resourceId, locale])
   @@index([resourceType])
+  @@index([locale])
+}
+
+// ============================================
+// THEME CONTENT MODELS (Background Sync)
+// ============================================
+
+model ThemeContent {
+  id                String   @id @default(cuid())
+  shop              String
+  resourceId        String   // Shopify GID
+  resourceType      String   // "ONLINE_STORE_THEME", "ONLINE_STORE_THEME_JSON_TEMPLATE", etc.
+  resourceTypeLabel String   // "Theme Content", "JSON Templates", etc.
+  groupId           String   // "article", "collection", "product", "misc_cart", etc.
+  groupName         String   // "Article", "Collection", "Cart", etc.
+  groupIcon         String   // "📝", "📂", "🛒", etc.
+  translatableContent Json   // Array of translatable items with keys and values
+  lastSyncedAt      DateTime @default(now())
+
+  @@unique([shop, resourceId, groupId])
+  @@index([shop])
+  @@index([shop, groupId])
+  @@index([lastSyncedAt])
+}
+
+model ThemeTranslation {
+  id         String   @id @default(cuid())
+  shop       String
+  resourceId String   // Links to ThemeContent
+  groupId    String   // For faster queries
+  key        String   // Translation key
+  value      String   @db.Text
+  locale     String   // "en", "fr", "es", "it", etc.
+  outdated   Boolean  @default(false)
+
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([shop, resourceId, groupId, key, locale])
+  @@index([shop, resourceId, groupId])
   @@index([locale])
 }

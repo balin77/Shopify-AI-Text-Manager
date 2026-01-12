@@ -53,10 +53,36 @@ const shopify = shopifyApp({
 
 console.log("✅ [SHOPIFY.SERVER] Shopify App initialized");
 
+// Import activity tracking and sync scheduler
+import { trackActivity } from "./middleware/activity-tracker.middleware";
+import { syncScheduler } from "./services/sync-scheduler.service";
+
+// Wrap authenticate.admin to add activity tracking and scheduler management
+const originalAuthenticateAdmin = shopify.authenticate.admin;
+
+const enhancedAuthenticate = {
+  ...shopify.authenticate,
+  admin: async (request: Request) => {
+    // Call original authentication
+    const { admin, session } = await originalAuthenticateAdmin(request);
+
+    // Track activity for this shop
+    await trackActivity(session.shop);
+
+    // Start sync scheduler if not already active
+    if (!syncScheduler.isShopActive(session.shop)) {
+      console.log(`[SHOPIFY.SERVER] Starting background sync for shop: ${session.shop}`);
+      syncScheduler.startSyncForShop(session.shop, admin);
+    }
+
+    return { admin, session };
+  }
+};
+
 export default shopify;
 export const apiVersion = ApiVersion.October24;
 export const addDocumentResponseHeaders = shopify.addDocumentResponseHeaders;
-export const authenticate = shopify.authenticate;
+export const authenticate = enhancedAuthenticate;
 export const unauthenticated = shopify.unauthenticated;
 export const login = shopify.login;
 export const registerWebhooks = shopify.registerWebhooks;

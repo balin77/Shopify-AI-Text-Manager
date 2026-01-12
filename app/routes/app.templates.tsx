@@ -21,7 +21,6 @@ import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
 import { ThemeContentViewer } from "../components/ThemeContentViewer";
 import { useI18n } from "../contexts/I18nContext";
-import { ContentService } from "../services/content.service";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
@@ -44,9 +43,41 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const shopLocales = localesData.data?.shopLocales || [];
     const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "de";
 
-    // Load theme resources
-    const contentService = new ContentService(admin);
-    const themes = await contentService.getThemes();
+    // Load theme resources from database (synced by background sync)
+    const { db } = await import("../db.server");
+
+    const [themeGroups, themeTranslations] = await Promise.all([
+      db.themeContent.findMany({
+        where: { shop: session.shop },
+        orderBy: { groupName: 'asc' }
+      }),
+      db.themeTranslation.findMany({
+        where: { shop: session.shop }
+      })
+    ]);
+
+    // Group translations by resourceId and groupId
+    const translationsByGroup: Record<string, any[]> = {};
+    for (const trans of themeTranslations) {
+      const key = `${trans.resourceId}_${trans.groupId}`;
+      if (!translationsByGroup[key]) {
+        translationsByGroup[key] = [];
+      }
+      translationsByGroup[key].push(trans);
+    }
+
+    // Transform to match frontend structure
+    const themes = themeGroups.map(group => ({
+      id: `group_${group.groupId}`,
+      title: group.groupName,
+      name: group.groupName,
+      icon: group.groupIcon,
+      groupId: group.groupId,
+      role: 'THEME_GROUP',
+      translatableContent: group.translatableContent as any[],
+      translations: translationsByGroup[`${group.resourceId}_${group.groupId}`] || [],
+      contentCount: (group.translatableContent as any[]).length
+    }));
 
     return json({
       themes,

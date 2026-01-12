@@ -18,7 +18,6 @@ import { ContentTypeNavigation } from "../components/ContentTypeNavigation";
 import { AIEditableHTMLField } from "../components/AIEditableHTMLField";
 import { AIService } from "../../src/services/ai.service";
 import { TranslationService } from "../../src/services/translation.service";
-import { ContentService } from "../services/content.service";
 import { useI18n } from "../contexts/I18nContext";
 import { TRANSLATE_CONTENT, UPDATE_SHOP_POLICY } from "../graphql/content.mutations";
 import { GET_TRANSLATIONS } from "../graphql/content.queries";
@@ -53,14 +52,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const shopLocales = localesData.data?.shopLocales || [];
     const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "de";
 
-    // Load policies from ContentService (NOT from database)
-    const contentService = new ContentService(admin);
-    const policies = await contentService.getShopPolicies();
-
-    // Load all translations for policies
-    const allTranslations = await db.contentTranslation.findMany({
-      where: { resourceType: 'ShopPolicy' }
-    });
+    // Load policies from database (synced by background sync)
+    const [policies, allTranslations] = await Promise.all([
+      db.shopPolicy.findMany({
+        where: { shop: session.shop },
+        orderBy: { type: 'asc' },
+      }),
+      db.contentTranslation.findMany({
+        where: { resourceType: 'ShopPolicy' }
+      }),
+    ]);
 
     // Group translations by resourceId
     const translationsByResource = allTranslations.reduce((acc: Record<string, any[]>, trans) => {

@@ -4,8 +4,24 @@ import { createReadableStreamFromReadable } from "@remix-run/node";
 import { RemixServer } from "@remix-run/react";
 import { renderToPipeableStream } from "react-dom/server";
 import { addDocumentResponseHeaders } from "./shopify.server";
+import { syncScheduler } from "./services/sync-scheduler.service";
 
 const ABORT_DELAY = 5000;
+
+// Graceful shutdown handlers for sync scheduler
+process.on('SIGTERM', () => {
+  console.log('[ENTRY.SERVER] SIGTERM received - stopping all sync schedulers...');
+  syncScheduler.stopAll();
+  console.log('[ENTRY.SERVER] All sync schedulers stopped');
+  process.exit(0);
+});
+
+process.on('SIGINT', () => {
+  console.log('[ENTRY.SERVER] SIGINT received - stopping all sync schedulers...');
+  syncScheduler.stopAll();
+  console.log('[ENTRY.SERVER] All sync schedulers stopped');
+  process.exit(0);
+});
 
 export default async function handleRequest(
   request: Request,
