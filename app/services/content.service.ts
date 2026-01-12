@@ -479,6 +479,27 @@ export class ContentService {
               if (firstKey && firstKey.length < 100) {
                 resourceTitle = `${resourceTypeConfig.label}: ${firstKey}`;
               }
+
+              // 🔍 DEBUG: Log sample translatable content structure
+              if (resource.translatableContent.length > 0) {
+                console.log(`  [DEBUG] Sample translatable content (first 3):`,
+                  resource.translatableContent.slice(0, 3).map((c: any) => ({
+                    key: c.key,
+                    value: c.value?.substring(0, 50)
+                  }))
+                );
+              }
+            }
+
+            // 🔍 DEBUG: Log translations structure
+            if (allTranslations.length > 0) {
+              console.log(`  [DEBUG] Sample translations (first 3):`,
+                allTranslations.slice(0, 3).map((t: any) => ({
+                  locale: t.locale,
+                  key: t.key,
+                  value: t.value?.substring(0, 50)
+                }))
+              );
             }
 
             allThemeResources.push({
