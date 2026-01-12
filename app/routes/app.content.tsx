@@ -801,9 +801,13 @@ export default function ContentPage() {
       } else {
         // Check if translations for this locale are already loaded
         const itemKey = `${selectedItem.id}_${currentLanguage}`;
-        const hasTranslations = loadedTranslations[itemKey] || selectedItem.translations?.some(
-          (t: any) => t.locale === currentLanguage
-        );
+
+        // 🔍 FOR POLICIES: Always fetch from Shopify to see what's available
+        const hasTranslations = selectedType === "policies" ?
+          loadedTranslations[itemKey] :
+          (loadedTranslations[itemKey] || selectedItem.translations?.some(
+            (t: any) => t.locale === currentLanguage
+          ));
 
         if (!hasTranslations) {
           fetcher.submit(
