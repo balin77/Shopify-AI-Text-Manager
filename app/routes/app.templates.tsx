@@ -46,37 +46,18 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // LAZY LOADING: Only load navigation metadata, not the full content
     const { db } = await import("../db.server");
 
-    // Load only unique groups with their metadata (no translatableContent or translations)
-    const themeGroups = await db.themeContent.findMany({
+    // OPTIMIZED: Use groupBy to get unique groups with counts in a single efficient query
+    // This uses Prisma's aggregation which is executed at the database level
+    const groupsWithCounts = await db.themeContent.groupBy({
+      by: ['groupId', 'groupName', 'groupIcon'],
       where: { shop: session.shop },
-      select: {
-        groupId: true,
-        groupName: true,
-        groupIcon: true,
-      },
-      distinct: ['groupId'],
-      orderBy: { groupName: 'asc' }
+      _count: {
+        groupId: true
+      }
     });
 
-    // Count content items per group
-    const contentCounts = await Promise.all(
-      themeGroups.map(async (group) => {
-        const count = await db.themeContent.count({
-          where: {
-            shop: session.shop,
-            groupId: group.groupId
-          }
-        });
-        return { groupId: group.groupId, count };
-      })
-    );
-
-    const countMap = Object.fromEntries(
-      contentCounts.map(c => [c.groupId, c.count])
-    );
-
     // Create lightweight navigation items (sorted alphabetically)
-    const themes = themeGroups
+    const themes = groupsWithCounts
       .map(group => ({
         id: `group_${group.groupId}`,
         title: group.groupName,
@@ -84,7 +65,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         icon: group.groupIcon,
         groupId: group.groupId,
         role: 'THEME_GROUP',
-        contentCount: countMap[group.groupId] || 0
+        contentCount: group._count.groupId
       }))
       .sort((a, b) => a.title.localeCompare(b.title)); // Alphabetical sort
 
