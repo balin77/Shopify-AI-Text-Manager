@@ -309,6 +309,9 @@ export class ContentService {
   async getThemes(first: number = 50) {
     try {
       console.log('\n=== 🎨 THEMES: Fetching theme translatable resources ===');
+      console.log('[THEMES] ⚠️  API LIMITATION: ONLINE_STORE_THEME_SETTINGS_DATA_SECTIONS returns empty content');
+      console.log('[THEMES] Shopify Translation API cannot access settings_data.json (merchant inputs)');
+      console.log('[THEMES] Only schema-level translations are accessible, not dynamic section content');
 
       // First, get all themes
       const themesResponse = await this.admin.graphql(GET_THEMES, {
