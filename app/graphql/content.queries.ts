@@ -226,10 +226,10 @@ export const GET_METAOBJECTS = `#graphql
 `;
 
 export const GET_THEME_TRANSLATABLE_RESOURCES = `#graphql
-  query getThemeTranslatableResources($first: Int!) {
+  query getThemeTranslatableResources($first: Int!, $resourceType: TranslatableResourceType!) {
     translatableResources(
       first: $first
-      resourceType: ONLINE_STORE_THEME_SETTINGS_DATA_SECTIONS
+      resourceType: $resourceType
     ) {
       edges {
         node {
