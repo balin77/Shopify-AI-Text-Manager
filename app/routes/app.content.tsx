@@ -44,7 +44,7 @@ const getContentTypes = (t: any) => [
   { id: "policies" as ContentType, label: t.content.policies, icon: "📋", description: t.content.policiesDescription, comingSoon: true },
   { id: "shopMetadata" as ContentType, label: t.content.shopMetadata, icon: "🏷️", description: t.content.shopMetadataDescription, comingSoon: true },
   { id: "menus" as ContentType, label: t.content.menus, icon: "🍔", description: t.content.menusDescription, comingSoon: true },
-  { id: "templates" as ContentType, label: t.content.templates, icon: "🎨", description: t.content.templatesDescription, comingSoon: true },
+  { id: "templates" as ContentType, label: t.content.templates, icon: "🧪", description: "Testing all theme resource types...", comingSoon: false },
 ];
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
