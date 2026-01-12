@@ -90,14 +90,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     where: { shop: session.shop },
   });
 
-  const pageCount = await db.page.count({
-    where: { shop: session.shop },
-  });
-
-  const policyCount = await db.shopPolicy.count({
-    where: { shop: session.shop },
-  });
-
   return json({
     shop: session.shop,
     productCount,
@@ -105,8 +97,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     webhookCount,
     collectionCount,
     articleCount,
-    pageCount,
-    policyCount,
     settings: {
       huggingfaceApiKey: settings.huggingfaceApiKey || "",
       geminiApiKey: settings.geminiApiKey || "",
@@ -272,7 +262,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function SettingsPage() {
-  const { shop, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, policyCount } = useLoaderData<typeof loader>();
+  const { shop, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const { t } = useI18n();
 
@@ -564,7 +554,7 @@ export default function SettingsPage() {
 
       if (productsData.success && contentData.success) {
         setSyncStatus(
-          `✓ Synced ${productsSynced} products, ${contentData.stats?.collections || 0} collections, ${contentData.stats?.articles || 0} articles, ${contentData.stats?.pages || 0} pages, ${contentData.stats?.policies || 0} policies`
+          `✓ Synced ${productsSynced} products, ${contentData.stats?.collections || 0} collections, ${contentData.stats?.articles || 0} articles`
         );
         if (productsData.errors) {
           setSyncErrors(productsData.errors);
@@ -730,8 +720,6 @@ export default function SettingsPage() {
                         <Text as="p">{t.settings.productsInDb}: {productCount}</Text>
                         <Text as="p">Collections in DB: {collectionCount}</Text>
                         <Text as="p">Articles in DB: {articleCount}</Text>
-                        <Text as="p">Pages in DB: {pageCount}</Text>
-                        <Text as="p">Policies in DB: {policyCount}</Text>
                         <Text as="p" fontWeight="semibold" style={{ marginTop: "0.5rem" }}>Translations:</Text>
                         <Text as="p">{t.settings.translationsInDb}: {translationCount}</Text>
                         <Text as="p" fontWeight="semibold" style={{ marginTop: "0.5rem" }}>Webhooks:</Text>
@@ -768,11 +756,29 @@ export default function SettingsPage() {
                           <Text as="p" variant="bodyMd" fontWeight="bold">
                             {t.settings.registeredWebhooks}
                           </Text>
-                          {webhookData.webhooks.map((w: any, i: number) => (
-                            <Text as="p" key={i}>
-                              • {w.topic} → {w.callbackUrl}
-                            </Text>
-                          ))}
+                          <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
+                            <BlockStack gap="100">
+                              {webhookData.webhooks.filter((w: any) => w.topic.includes('PRODUCTS')).length > 0 && (
+                                <Text as="p" fontWeight="semibold">Products: {webhookData.webhooks.filter((w: any) => w.topic.includes('PRODUCTS')).length} webhooks</Text>
+                              )}
+                              {webhookData.webhooks.filter((w: any) => w.topic.includes('COLLECTIONS')).length > 0 && (
+                                <Text as="p" fontWeight="semibold">Collections: {webhookData.webhooks.filter((w: any) => w.topic.includes('COLLECTIONS')).length} webhooks</Text>
+                              )}
+                              {webhookData.webhooks.filter((w: any) => w.topic.includes('ARTICLES')).length > 0 && (
+                                <Text as="p" fontWeight="semibold">Articles: {webhookData.webhooks.filter((w: any) => w.topic.includes('ARTICLES')).length} webhooks</Text>
+                              )}
+                            </BlockStack>
+                          </div>
+                          <details>
+                            <summary style={{ cursor: "pointer", padding: "0.5rem 0" }}>Show all webhook details</summary>
+                            <BlockStack gap="100" >
+                              {webhookData.webhooks.map((w: any, i: number) => (
+                                <Text as="p" key={i} tone="subdued">
+                                  • {w.topic}
+                                </Text>
+                              ))}
+                            </BlockStack>
+                          </details>
                         </BlockStack>
                       )}
                     </BlockStack>
@@ -787,7 +793,7 @@ export default function SettingsPage() {
                         {t.settings.syncProductsDescription}
                       </Text>
                       <Text as="p" tone="subdued">
-                        This will sync all products, collections, articles, pages, and policies from Shopify to the database.
+                        This will sync all products, collections, and articles from Shopify to the database. Auto-updates via webhooks.
                       </Text>
                       <BlockStack gap="200">
                         <Button

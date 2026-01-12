@@ -1,8 +1,10 @@
 /**
  * Content Sync Service
  *
- * Synchronizes content data (Collections, Articles, Pages) from Shopify to local PostgreSQL database
+ * Synchronizes content data (Collections, Articles) from Shopify to local PostgreSQL database
  * including all translations for all available locales.
+ *
+ * Note: Pages and Policies are NOT cached as they don't have webhook support and are rarely modified.
  */
 
 interface ShopifyGraphQLClient {
@@ -135,64 +137,6 @@ export class ContentSyncService {
     console.log(`[ContentSync] Successfully deleted article: ${articleId}`);
   }
 
-  // ============================================
-  // PAGE SYNC
-  // ============================================
-
-  /**
-   * Sync a single page with all its translations
-   */
-  async syncPage(pageId: string): Promise<void> {
-    console.log(`[ContentSync] Starting sync for page: ${pageId}`);
-
-    try {
-      // 1. Fetch page data
-      const pageData = await this.fetchPageData(pageId);
-
-      if (!pageData) {
-        console.warn(`[ContentSync] Page not found: ${pageId}`);
-        return;
-      }
-
-      // 2. Fetch all available locales
-      const locales = await this.fetchShopLocales();
-
-      // 3. Fetch translations
-      const allTranslations = await this.fetchAllTranslations(
-        pageId,
-        locales.filter(l => !l.primary),
-        "Page"
-      );
-
-      // 4. Save to database
-      await this.savePageToDatabase(pageData, allTranslations);
-
-      console.log(`[ContentSync] Successfully synced page: ${pageId}`);
-    } catch (error) {
-      console.error(`[ContentSync] Error syncing page ${pageId}:`, error);
-      throw error;
-    }
-  }
-
-  /**
-   * Delete a page from the database
-   */
-  async deletePage(pageId: string): Promise<void> {
-    console.log(`[ContentSync] Deleting page: ${pageId}`);
-
-    const { db } = await import("../db.server");
-
-    await db.page.delete({
-      where: {
-        shop_id: {
-          shop: this.shop,
-          id: pageId,
-        },
-      },
-    });
-
-    console.log(`[ContentSync] Successfully deleted page: ${pageId}`);
-  }
 
   // ============================================
   // FETCH DATA FROM SHOPIFY
@@ -248,24 +192,6 @@ export class ContentSyncService {
     return data.data?.article || null;
   }
 
-  private async fetchPageData(pageId: string) {
-    const response = await this.admin.graphql(
-      `#graphql
-        query getPage($id: ID!) {
-          page(id: $id) {
-            id
-            title
-            handle
-            body
-            updatedAt
-          }
-        }`,
-      { variables: { id: pageId } }
-    );
-
-    const data = await response.json();
-    return data.data?.page || null;
-  }
 
   private async fetchShopLocales() {
     const response = await this.admin.graphql(
@@ -482,60 +408,6 @@ export class ContentSyncService {
     }
   }
 
-  private async savePageToDatabase(pageData: any, translations: any[]) {
-    const { db } = await import("../db.server");
-
-    console.log(`[ContentSync] Saving page to database: ${pageData.id}`);
-
-    // Upsert page
-    await db.page.upsert({
-      where: {
-        shop_id: {
-          shop: this.shop,
-          id: pageData.id,
-        },
-      },
-      create: {
-        id: pageData.id,
-        shop: this.shop,
-        title: pageData.title,
-        body: pageData.body || "",
-        handle: pageData.handle,
-        shopifyUpdatedAt: new Date(pageData.updatedAt),
-        lastSyncedAt: new Date(),
-      },
-      update: {
-        title: pageData.title,
-        body: pageData.body || "",
-        handle: pageData.handle,
-        shopifyUpdatedAt: new Date(pageData.updatedAt),
-        lastSyncedAt: new Date(),
-      },
-    });
-
-    // Delete old translations
-    await db.contentTranslation.deleteMany({
-      where: {
-        resourceId: pageData.id,
-        resourceType: "Page",
-      },
-    });
-
-    // Insert new translations
-    if (translations.length > 0) {
-      await db.contentTranslation.createMany({
-        data: translations.map(t => ({
-          resourceId: pageData.id,
-          resourceType: "Page",
-          key: t.key,
-          value: t.value,
-          locale: t.locale,
-          digest: t.digest || null,
-        })),
-      });
-      console.log(`[ContentSync] ✓ Saved ${translations.length} translations`);
-    }
-  }
 
   // ============================================
   // BULK SYNC
@@ -618,204 +490,4 @@ export class ContentSyncService {
     return allArticles.length;
   }
 
-  /**
-   * Sync all pages
-   */
-  async syncAllPages(): Promise<number> {
-    console.log(`[ContentSync] Syncing all pages...`);
-
-    const response = await this.admin.graphql(
-      `#graphql
-        query getPages {
-          pages(first: 250) {
-            edges {
-              node {
-                id
-              }
-            }
-          }
-        }`
-    );
-
-    const data = await response.json();
-    const pages = data.data?.pages?.edges?.map((e: any) => e.node) || [];
-
-    console.log(`[ContentSync] Found ${pages.length} pages to sync`);
-
-    for (const page of pages) {
-      await this.syncPage(page.id);
-    }
-
-    return pages.length;
-  }
-
-  // ============================================
-  // SHOP POLICY SYNC
-  // ============================================
-
-  /**
-   * Sync a single shop policy with all its translations
-   */
-  async syncPolicy(policyId: string): Promise<void> {
-    console.log(`[ContentSync] Starting sync for policy: ${policyId}`);
-
-    try {
-      // 1. Fetch policy data
-      const policyData = await this.fetchPolicyData(policyId);
-
-      if (!policyData) {
-        console.warn(`[ContentSync] Policy not found: ${policyId}`);
-        return;
-      }
-
-      // 2. Fetch all available locales
-      const locales = await this.fetchShopLocales();
-
-      // 3. Fetch translations
-      const allTranslations = await this.fetchAllTranslations(
-        policyId,
-        locales.filter(l => !l.primary),
-        "ShopPolicy"
-      );
-
-      // 4. Save to database
-      await this.savePolicyToDatabase(policyData, allTranslations);
-
-      console.log(`[ContentSync] Successfully synced policy: ${policyId}`);
-    } catch (error) {
-      console.error(`[ContentSync] Error syncing policy ${policyId}:`, error);
-      throw error;
-    }
-  }
-
-  /**
-   * Delete a policy from the database
-   */
-  async deletePolicy(policyId: string): Promise<void> {
-    console.log(`[ContentSync] Deleting policy: ${policyId}`);
-
-    const { db } = await import("../db.server");
-
-    await db.shopPolicy.delete({
-      where: {
-        shop_id: {
-          shop: this.shop,
-          id: policyId,
-        },
-      },
-    });
-
-    console.log(`[ContentSync] Successfully deleted policy: ${policyId}`);
-  }
-
-  /**
-   * Sync all shop policies
-   */
-  async syncAllPolicies(): Promise<number> {
-    console.log(`[ContentSync] Syncing all shop policies...`);
-
-    const response = await this.admin.graphql(
-      `#graphql
-        query getShopPolicies {
-          shop {
-            shopPolicies {
-              id
-              title
-              body
-              type
-              url
-            }
-          }
-        }`
-    );
-
-    const data = await response.json();
-    const policies = data.data?.shop?.shopPolicies || [];
-
-    console.log(`[ContentSync] Found ${policies.length} policies to sync`);
-
-    for (const policy of policies) {
-      await this.syncPolicy(policy.id);
-    }
-
-    return policies.length;
-  }
-
-  private async fetchPolicyData(policyId: string) {
-    const response = await this.admin.graphql(
-      `#graphql
-        query getShopPolicies {
-          shop {
-            shopPolicies {
-              id
-              title
-              body
-              type
-              url
-            }
-          }
-        }`
-    );
-
-    const data = await response.json();
-    const policies = data.data?.shop?.shopPolicies || [];
-
-    // Find the specific policy by ID
-    return policies.find((p: any) => p.id === policyId) || null;
-  }
-
-  private async savePolicyToDatabase(policyData: any, translations: any[]) {
-    const { db } = await import("../db.server");
-
-    console.log(`[ContentSync] Saving policy to database: ${policyData.id}`);
-
-    // Upsert policy
-    await db.shopPolicy.upsert({
-      where: {
-        shop_id: {
-          shop: this.shop,
-          id: policyData.id,
-        },
-      },
-      create: {
-        id: policyData.id,
-        shop: this.shop,
-        title: policyData.title,
-        body: policyData.body || "",
-        type: policyData.type,
-        url: policyData.url || null,
-        lastSyncedAt: new Date(),
-      },
-      update: {
-        title: policyData.title,
-        body: policyData.body || "",
-        type: policyData.type,
-        url: policyData.url || null,
-        lastSyncedAt: new Date(),
-      },
-    });
-
-    // Delete old translations
-    await db.contentTranslation.deleteMany({
-      where: {
-        resourceId: policyData.id,
-        resourceType: "ShopPolicy",
-      },
-    });
-
-    // Insert new translations
-    if (translations.length > 0) {
-      await db.contentTranslation.createMany({
-        data: translations.map(t => ({
-          resourceId: policyData.id,
-          resourceType: "ShopPolicy",
-          key: t.key,
-          value: t.value,
-          locale: t.locale,
-          digest: t.digest || null,
-        })),
-      });
-      console.log(`[ContentSync] ✓ Saved ${translations.length} translations`);
-    }
-  }
 }
