@@ -560,6 +560,11 @@ export default function ContentPage() {
   const [hasChanges, setHasChanges] = useState(false);
   const [loadedTranslations, setLoadedTranslations] = useState<Record<string, any[]>>({});
 
+  // Unsaved changes warning state
+  const [pendingNavigation, setPendingNavigation] = useState<(() => void) | null>(null);
+  const [highlightSaveButton, setHighlightSaveButton] = useState(false);
+  const saveButtonRef = useRef<HTMLDivElement>(null);
+
   // Editable fields
   const [editableTitle, setEditableTitle] = useState("");
   const [editableDescription, setEditableDescription] = useState("");
@@ -631,6 +636,11 @@ export default function ContentPage() {
         } else if (selectedType === "pages") {
           setEditableDescription(selectedItem.body || "");
           setEditableHandle(selectedItem.handle || "");
+          setEditableSeoTitle("");
+          setEditableMetaDescription("");
+        } else if (selectedType === "policies") {
+          setEditableDescription(selectedItem.body || "");
+          setEditableHandle("");
           setEditableSeoTitle("");
           setEditableMetaDescription("");
         }
@@ -716,7 +726,10 @@ export default function ContentPage() {
 
       const titleKey = "title";
       const descKey = "body_html"; // All content types use body_html for translations
-      const descFallback = selectedType === "pages" ? (selectedItem.body || "") : selectedType === "blogs" ? (selectedItem.body || "") : (selectedItem.descriptionHtml || "");
+      const descFallback = selectedType === "pages" ? (selectedItem.body || "") :
+                           selectedType === "blogs" ? (selectedItem.body || "") :
+                           selectedType === "policies" ? (selectedItem.body || "") :
+                           (selectedItem.descriptionHtml || "");
 
       const titleChanged = editableTitle !== getOriginalValue(titleKey, selectedItem.title);
       const descChanged = editableDescription !== getOriginalValue(descKey, descFallback || "");
@@ -746,6 +759,89 @@ export default function ContentPage() {
       },
       { method: "POST" }
     );
+
+    // After save, execute pending navigation if any
+    if (pendingNavigation) {
+      setTimeout(() => {
+        pendingNavigation();
+        setPendingNavigation(null);
+        setHighlightSaveButton(false);
+      }, 500);
+    }
+  };
+
+  const handleDiscardChanges = () => {
+    if (!selectedItem) return;
+
+    // Reset to original values
+    if (currentLanguage === primaryLocale) {
+      setEditableTitle(selectedItem.title);
+      if (selectedType === "blogs") {
+        setEditableDescription(selectedItem.body || "");
+        setEditableHandle(selectedItem.handle);
+        setEditableSeoTitle("");
+        setEditableMetaDescription("");
+      } else if (selectedType === "collections") {
+        setEditableDescription(selectedItem.descriptionHtml || "");
+        setEditableHandle(selectedItem.handle);
+        setEditableSeoTitle(selectedItem.seo?.title || "");
+        setEditableMetaDescription(selectedItem.seo?.description || "");
+      } else if (selectedType === "pages") {
+        setEditableDescription(selectedItem.body || "");
+        setEditableHandle(selectedItem.handle || "");
+        setEditableSeoTitle("");
+        setEditableMetaDescription("");
+      } else if (selectedType === "policies") {
+        setEditableDescription(selectedItem.body || "");
+        setEditableHandle("");
+        setEditableSeoTitle("");
+        setEditableMetaDescription("");
+      }
+    } else {
+      const titleKey = "title";
+      const descKey = "body_html";
+      setEditableTitle(getTranslatedValue(titleKey, currentLanguage, ""));
+      setEditableDescription(getTranslatedValue(descKey, currentLanguage, ""));
+      setEditableHandle(getTranslatedValue("handle", currentLanguage, ""));
+      setEditableSeoTitle(getTranslatedValue("meta_title", currentLanguage, ""));
+      setEditableMetaDescription(getTranslatedValue("meta_description", currentLanguage, ""));
+    }
+
+    setHasChanges(false);
+
+    // Execute pending navigation if any
+    if (pendingNavigation) {
+      setTimeout(() => {
+        pendingNavigation();
+        setPendingNavigation(null);
+        setHighlightSaveButton(false);
+      }, 100);
+    }
+  };
+
+  // Handle navigation attempts when there are unsaved changes
+  const handleNavigationAttempt = (navigationAction: () => void) => {
+    if (hasChanges) {
+      // Prevent navigation
+      setPendingNavigation(() => navigationAction);
+
+      // Scroll to top
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+
+      // Highlight save button
+      setHighlightSaveButton(true);
+
+      // Scroll save button into view if needed
+      if (saveButtonRef.current) {
+        saveButtonRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+
+      return false; // Prevent navigation
+    }
+
+    // Allow navigation
+    navigationAction();
+    return true;
   };
 
   const handleGenerateAI = (fieldType: string) => {
@@ -781,6 +877,7 @@ export default function ContentPage() {
       title: selectedItem.title || "",
       description: selectedType === "pages" ? (selectedItem.body || "") :
                    selectedType === "blogs" ? (selectedItem.body || "") :
+                   selectedType === "policies" ? (selectedItem.body || "") :
                    (selectedItem.descriptionHtml || ""),
       body: selectedItem.body || "",
       handle: selectedItem.handle || "",
@@ -1049,6 +1146,17 @@ export default function ContentPage() {
           margin: 1em 0;
           padding-left: 40px;
         }
+
+        @keyframes pulse {
+          0%, 100% {
+            box-shadow: 0 0 0 0 rgba(255, 149, 0, 0.7);
+            transform: scale(1);
+          }
+          50% {
+            box-shadow: 0 0 20px 10px rgba(255, 149, 0, 0.3);
+            transform: scale(1.05);
+          }
+        }
       `}</style>
       <MainNavigation />
 
@@ -1059,8 +1167,10 @@ export default function ContentPage() {
             <button
               key={type.id}
               onClick={() => {
-                setSelectedType(type.id);
-                setSelectedItemId(null);
+                handleNavigationAttempt(() => {
+                  setSelectedType(type.id);
+                  setSelectedItemId(null);
+                });
               }}
               style={{
                 padding: "0.75rem 1.5rem",
@@ -1109,7 +1219,9 @@ export default function ContentPage() {
                     return (
                       <ResourceItem
                         id={id}
-                        onClick={() => setSelectedItemId(id)}
+                        onClick={() => {
+                          handleNavigationAttempt(() => setSelectedItemId(id));
+                        }}
                       >
                         <BlockStack gap="100">
                           <Text as="p" variant="bodyMd" fontWeight={isSelected ? "bold" : "regular"}>
@@ -1161,7 +1273,9 @@ export default function ContentPage() {
                     <Button
                       key={locale.locale}
                       variant={currentLanguage === locale.locale ? "primary" : undefined}
-                      onClick={() => setCurrentLanguage(locale.locale)}
+                      onClick={() => {
+                        handleNavigationAttempt(() => setCurrentLanguage(locale.locale));
+                      }}
                       size="slim"
                     >
                       {locale.name} {locale.primary && `(${t.content.primaryLanguageSuffix})`}
@@ -1172,14 +1286,33 @@ export default function ContentPage() {
                 {/* Header with Save Button */}
                 <InlineStack align="space-between" blockAlign="center">
                   <Text as="p" variant="bodySm" tone="subdued">{t.content.idPrefix} {selectedItem.id.split("/").pop()}</Text>
-                  <Button
-                    variant={hasChanges ? "primary" : undefined}
-                    onClick={handleSaveContent}
-                    disabled={!hasChanges}
-                    loading={fetcher.state !== "idle" && fetcher.formData?.get("action") === "updateContent"}
-                  >
-                    {t.content.saveChanges}
-                  </Button>
+                  <div ref={saveButtonRef}>
+                    <InlineStack gap="200">
+                      {hasChanges && (
+                        <Button
+                          onClick={handleDiscardChanges}
+                          disabled={fetcher.state !== "idle"}
+                        >
+                          {t.content.discardChanges || "Verwerfen"}
+                        </Button>
+                      )}
+                      <div
+                        style={{
+                          animation: highlightSaveButton ? "pulse 1.5s ease-in-out infinite" : "none",
+                          borderRadius: "8px",
+                        }}
+                      >
+                        <Button
+                          variant={hasChanges ? "primary" : undefined}
+                          onClick={handleSaveContent}
+                          disabled={!hasChanges}
+                          loading={fetcher.state !== "idle" && fetcher.formData?.get("action") === "updateContent"}
+                        >
+                          {t.content.saveChanges}
+                        </Button>
+                      </div>
+                    </InlineStack>
+                  </div>
                 </InlineStack>
 
                 {/* Editable Title */}
