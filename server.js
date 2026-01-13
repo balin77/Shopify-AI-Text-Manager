@@ -119,8 +119,10 @@ app.all(
 );
 
 const port = process.env.PORT || 8080;
-app.listen(port, async () => {
-  console.log(`Express server listening at http://localhost:${port}`);
+const host = process.env.HOST || '0.0.0.0';
+
+app.listen(port, host, async () => {
+  console.log(`Express server listening at http://${host}:${port}`);
 
   // Start task cleanup service
   try {
