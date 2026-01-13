@@ -4,7 +4,8 @@
  */
 
 import { db } from "../db.server";
-import { getPlanLimits, type Plan } from "../config/plans";
+import { type Plan } from "../config/plans";
+import { getPlanLimits } from "./planUtils";
 
 export interface CleanupStats {
   deletedProducts: number;
