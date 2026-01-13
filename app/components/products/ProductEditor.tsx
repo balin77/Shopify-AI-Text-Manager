@@ -152,6 +152,11 @@ export function ProductEditor({
 
   const isPrimaryLocale = currentLanguage === primaryLocale;
 
+  // Reset selected image when product changes
+  useEffect(() => {
+    setSelectedImageIndex(0);
+  }, [product?.id]);
+
   // Helper to determine if a field is translated
   const isFieldTranslated = (fieldKey: string) => {
     if (isPrimaryLocale) return true;
@@ -236,70 +241,133 @@ export function ProductEditor({
           {/* Image Gallery */}
           {product.images && product.images.length > 0 && (
             <BlockStack gap="400">
-              {/* Image Grid */}
+              {/* Image Layout: Preview left, Grid right */}
               <div
                 style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(auto-fill, minmax(80px, 1fr))",
-                  gap: "8px",
+                  display: "flex",
+                  gap: "16px",
                   width: "100%",
                 }}
               >
-                {product.images.map((image, index) => {
-                  const hasAltText = !!(imageAltTexts[index] || image.altText);
-                  const isMainImage = index === 0;
-                  const isSelected = index === selectedImageIndex;
-
-                  return (
-                    <button
-                      key={index}
-                      onClick={() => setSelectedImageIndex(index)}
+                {/* Large Preview Image */}
+                <div
+                  style={{
+                    flex: "0 0 400px",
+                    position: "relative",
+                  }}
+                >
+                  <div
+                    style={{
+                      position: "relative",
+                      width: "100%",
+                      paddingBottom: "100%",
+                      border: "2px solid #e1e3e5",
+                      borderRadius: "8px",
+                      overflow: "hidden",
+                      backgroundColor: "#f6f6f7",
+                    }}
+                  >
+                    <img
+                      src={product.images[selectedImageIndex].url}
+                      alt={imageAltTexts[selectedImageIndex] || product.images[selectedImageIndex].altText || `${t.products.image} ${selectedImageIndex + 1}`}
                       style={{
-                        gridColumn: isMainImage ? "span 3" : "span 1",
-                        gridRow: isMainImage ? "span 3" : "span 1",
-                        position: "relative",
-                        padding: 0,
-                        border: isSelected ? "3px solid #005bd3" : "2px solid #e1e3e5",
-                        borderRadius: "8px",
-                        cursor: "pointer",
-                        overflow: "hidden",
-                        background: "transparent",
-                        transition: "border-color 0.2s ease",
-                        aspectRatio: "1",
+                        position: "absolute",
+                        top: 0,
+                        left: 0,
+                        width: "100%",
+                        height: "100%",
+                        objectFit: "cover",
+                      }}
+                    />
+                    {/* Alt-text status badge on preview */}
+                    <div
+                      style={{
+                        position: "absolute",
+                        top: "8px",
+                        right: "8px",
+                        backgroundColor: !!(imageAltTexts[selectedImageIndex] || product.images[selectedImageIndex].altText) ? "#008060" : "#d72c0d",
+                        borderRadius: "50%",
+                        width: "32px",
+                        height: "32px",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        boxShadow: "0 2px 4px rgba(0, 0, 0, 0.2)",
                       }}
                     >
-                      <img
-                        src={image.url}
-                        alt={imageAltTexts[index] || image.altText || `${t.products.image} ${index + 1}`}
+                      <div style={{ color: "white", fontSize: "18px" }}>
+                        <Icon source={!!(imageAltTexts[selectedImageIndex] || product.images[selectedImageIndex].altText) ? CheckIcon : XIcon} tone="base" />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Image Grid */}
+                <div
+                  style={{
+                    flex: "1",
+                    display: "grid",
+                    gridTemplateColumns: "repeat(auto-fill, minmax(80px, 1fr))",
+                    gap: "8px",
+                    alignContent: "start",
+                    maxHeight: "400px",
+                    overflowY: "auto",
+                    overflowX: "hidden",
+                  }}
+                >
+                  {product.images.map((image, index) => {
+                    const hasAltText = !!(imageAltTexts[index] || image.altText);
+                    const isSelected = index === selectedImageIndex;
+
+                    return (
+                      <button
+                        key={index}
+                        onClick={() => setSelectedImageIndex(index)}
                         style={{
-                          width: "100%",
-                          height: "100%",
-                          objectFit: "cover",
-                        }}
-                      />
-                      {/* Alt-text status badge */}
-                      <div
-                        style={{
-                          position: "absolute",
-                          top: "4px",
-                          right: "4px",
-                          backgroundColor: hasAltText ? "#008060" : "#d72c0d",
-                          borderRadius: "50%",
-                          width: isMainImage ? "28px" : "20px",
-                          height: isMainImage ? "28px" : "20px",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          boxShadow: "0 2px 4px rgba(0, 0, 0, 0.2)",
+                          position: "relative",
+                          padding: 0,
+                          border: isSelected ? "3px solid #005bd3" : "2px solid #e1e3e5",
+                          borderRadius: "8px",
+                          cursor: "pointer",
+                          overflow: "hidden",
+                          background: "transparent",
+                          transition: "border-color 0.2s ease",
+                          aspectRatio: "1",
                         }}
                       >
-                        <div style={{ color: "white", fontSize: isMainImage ? "16px" : "12px" }}>
-                          <Icon source={hasAltText ? CheckIcon : XIcon} tone="base" />
+                        <img
+                          src={image.url}
+                          alt={imageAltTexts[index] || image.altText || `${t.products.image} ${index + 1}`}
+                          style={{
+                            width: "100%",
+                            height: "100%",
+                            objectFit: "cover",
+                          }}
+                        />
+                        {/* Alt-text status badge */}
+                        <div
+                          style={{
+                            position: "absolute",
+                            top: "4px",
+                            right: "4px",
+                            backgroundColor: hasAltText ? "#008060" : "#d72c0d",
+                            borderRadius: "50%",
+                            width: "20px",
+                            height: "20px",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            boxShadow: "0 2px 4px rgba(0, 0, 0, 0.2)",
+                          }}
+                        >
+                          <div style={{ color: "white", fontSize: "12px" }}>
+                            <Icon source={hasAltText ? CheckIcon : XIcon} tone="base" />
+                          </div>
                         </div>
-                      </div>
-                    </button>
-                  );
-                })}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
               {/* Auto-generate all button - below images */}

@@ -171,8 +171,8 @@ export function ProductList({
                             pointerEvents: "none",
                             zIndex: 100,
                             backgroundColor: "rgba(255, 255, 255, 0.9)",
-                            borderRadius: "4px",
-                            padding: "2px",
+                            borderRadius: "999px",
+                            padding: "1px 2px",
                             boxShadow: "0 2px 4px rgba(0, 0, 0, 0.2)",
                           }}
                         >
