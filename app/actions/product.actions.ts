@@ -61,6 +61,11 @@ export async function handleProductActions({ request }: ActionFunctionArgs) {
     return handleGenerateAIText(provider, config, aiInstructions, formData, session.shop, productId);
   }
 
+  if (action === "formatAIText") {
+    console.log('🎨 [PRODUCT.ACTIONS] Formatting AI text for field:', formData.get("fieldType"));
+    return handleFormatAIText(provider, config, aiInstructions, formData, session.shop, productId);
+  }
+
   if (action === "translateField") {
     console.log('🌐 [PRODUCT.ACTIONS] Translating field:', formData.get("fieldType"), 'to locale:', formData.get("targetLocale"));
     return handleTranslateField(provider, config, formData, session.shop);
@@ -280,6 +285,138 @@ async function handleGenerateAIText(
     return json({ success: true, generatedContent, fieldType });
   } catch (error: any) {
     // Update task to failed
+    const errorMessage = (error.message || String(error)).substring(0, 1000);
+    await db.task.update({
+      where: { id: task.id },
+      data: {
+        status: "failed",
+        completedAt: new Date(),
+        error: errorMessage,
+      },
+    });
+
+    return json({ success: false, error: error.message }, { status: 500 });
+  }
+}
+
+async function handleFormatAIText(
+  provider: any,
+  config: any,
+  aiInstructions: any,
+  formData: FormData,
+  shop: string,
+  productId: string
+) {
+  const fieldType = formData.get("fieldType") as string;
+  const currentValue = formData.get("currentValue") as string;
+  const contextTitle = formData.get("contextTitle") as string;
+  const contextDescription = formData.get("contextDescription") as string;
+
+  const { db } = await import("../db.server");
+
+  // Create task entry
+  const task = await db.task.create({
+    data: {
+      shop,
+      type: "aiFormatting",
+      status: "pending",
+      resourceType: "product",
+      resourceId: productId,
+      resourceTitle: contextTitle,
+      fieldType,
+      progress: 0,
+      expiresAt: getTaskExpirationDate(),
+    },
+  });
+
+  try {
+    const aiService = new AIService(provider, config, shop, task.id);
+
+    let formattedContent = "";
+
+    await db.task.update({
+      where: { id: task.id },
+      data: { status: "queued", progress: 10 },
+    });
+
+    if (fieldType === "title") {
+      let prompt = `Formatiere den folgenden Produkttitel gemäß den Formatierungsrichtlinien:\n\nAktueller Titel:\n${currentValue}`;
+      if (aiInstructions?.productTitleFormat) {
+        prompt += `\n\nFormatbeispiel:\n${aiInstructions.productTitleFormat}`;
+      }
+      if (aiInstructions?.productTitleInstructions) {
+        prompt += `\n\nFormatierungsanweisungen:\n${aiInstructions.productTitleInstructions}`;
+      }
+      prompt += `\n\nBehalte den Inhalt und die Kernaussage bei, formatiere aber den Text gemäß den Richtlinien. Gib nur den formatierten Titel zurück, ohne Erklärungen.`;
+      formattedContent = await aiService.generateProductTitle(prompt);
+    } else if (fieldType === "description") {
+      let prompt = `Formatiere die folgende Produktbeschreibung gemäß den Formatierungsrichtlinien:\n\nAktuelle Beschreibung:\n${currentValue}`;
+      if (aiInstructions?.productDescriptionFormat) {
+        prompt += `\n\nFormatbeispiel:\n${aiInstructions.productDescriptionFormat}`;
+      }
+      if (aiInstructions?.productDescriptionInstructions) {
+        prompt += `\n\nFormatierungsanweisungen:\n${aiInstructions.productDescriptionInstructions}`;
+      }
+      prompt += `\n\nBehalte den Inhalt und die Kernaussagen bei, formatiere aber den Text gemäß den Richtlinien (Struktur, HTML-Tags, Überschriften, etc.). Gib nur den formatierten Text zurück, ohne Erklärungen.`;
+      formattedContent = await aiService.generateProductDescription(currentValue, prompt);
+    } else if (fieldType === "handle") {
+      let prompt = `Formatiere den folgenden URL-Slug gemäß den Formatierungsrichtlinien:\n\nAktueller Slug:\n${currentValue}\n\nKontext - Titel: ${contextTitle}`;
+      if (aiInstructions?.productHandleFormat) {
+        prompt += `\n\nFormatbeispiel:\n${aiInstructions.productHandleFormat}`;
+      }
+      if (aiInstructions?.productHandleInstructions) {
+        prompt += `\n\nFormatierungsanweisungen:\n${aiInstructions.productHandleInstructions}`;
+      } else {
+        prompt += `\n\nDer Slug sollte:\n- Nur Kleinbuchstaben und Bindestriche enthalten\n- Keine Sonderzeichen oder Umlaute haben\n- Kurz und prägnant sein (2-5 Wörter)\n- SEO-optimiert sein`;
+      }
+      prompt += `\n\nGib nur den formatierten Slug zurück, ohne Erklärungen.`;
+      formattedContent = await aiService.generateProductTitle(prompt);
+      formattedContent = formattedContent.toLowerCase().trim();
+    } else if (fieldType === "seoTitle") {
+      let prompt = `Formatiere den folgenden SEO-Titel gemäß den Formatierungsrichtlinien:\n\nAktueller SEO-Titel:\n${currentValue}\n\nKontext - Titel: ${contextTitle}\nBeschreibung: ${contextDescription}`;
+      if (aiInstructions?.productSeoTitleFormat) {
+        prompt += `\n\nFormatbeispiel:\n${aiInstructions.productSeoTitleFormat}`;
+      }
+      if (aiInstructions?.productSeoTitleInstructions) {
+        prompt += `\n\nFormatierungsanweisungen:\n${aiInstructions.productSeoTitleInstructions}`;
+      } else {
+        prompt += `\n\nDer SEO-Titel sollte:\n- Max. 60 Zeichen lang sein\n- Keywords enthalten\n- Zum Klicken anregen\n- Den Produktnutzen kommunizieren`;
+      }
+      prompt += `\n\nBehalte die Kernaussage bei, formatiere aber den Text gemäß den Richtlinien. Gib nur den formatierten SEO-Titel zurück, ohne Erklärungen.`;
+      formattedContent = await aiService.generateProductTitle(prompt);
+    } else if (fieldType === "metaDescription") {
+      let prompt = `Formatiere die folgende Meta-Description gemäß den Formatierungsrichtlinien:\n\nAktuelle Meta-Description:\n${currentValue}\n\nKontext - Titel: ${contextTitle}\nBeschreibung: ${contextDescription}`;
+      if (aiInstructions?.productMetaDescFormat) {
+        prompt += `\n\nFormatbeispiel:\n${aiInstructions.productMetaDescFormat}`;
+      }
+      if (aiInstructions?.productMetaDescInstructions) {
+        prompt += `\n\nFormatierungsanweisungen:\n${aiInstructions.productMetaDescInstructions}`;
+      } else {
+        prompt += `\n\nDie Meta-Description sollte:\n- 150-160 Zeichen lang sein\n- Keywords enthalten\n- Zum Klicken anregen\n- Den Produktnutzen klar kommunizieren\n- Einen Call-to-Action enthalten`;
+      }
+      prompt += `\n\nBehalte die Kernaussage bei, formatiere aber den Text gemäß den Richtlinien. Gib nur die formatierte Meta-Description als reinen Text zurück, ohne HTML-Tags und ohne Erklärungen.`;
+      formattedContent = await aiService.generateProductTitle(prompt);
+    }
+
+    let resultString = "";
+    try {
+      resultString = JSON.stringify({ formattedContent: formattedContent.substring(0, 500), fieldType });
+    } catch (e) {
+      resultString = JSON.stringify({ fieldType, success: true });
+    }
+
+    await db.task.update({
+      where: { id: task.id },
+      data: {
+        status: "completed",
+        progress: 100,
+        completedAt: new Date(),
+        result: resultString,
+      },
+    });
+
+    return json({ success: true, generatedContent: formattedContent, fieldType });
+  } catch (error: any) {
     const errorMessage = (error.message || String(error)).substring(0, 1000);
     await db.task.update({
       where: { id: task.id },

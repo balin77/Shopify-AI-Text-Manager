@@ -525,6 +525,19 @@ export default function Products() {
     );
   };
 
+  const handleFormatAI = (fieldType: string) => {
+    if (!selectedProductId) return;
+    const currentValue = { title: editableTitle, description: editableDescription, handle: editableHandle, seoTitle: editableSeoTitle, metaDescription: editableMetaDescription }[fieldType] || "";
+    if (!currentValue) {
+      showInfoBox("Kein Inhalt zum Formatieren vorhanden", "warning", "Warnung");
+      return;
+    }
+    fetcher.submit(
+      { action: "formatAIText", productId: selectedProductId, fieldType, currentValue, contextTitle: editableTitle, contextDescription: editableDescription },
+      { method: "POST" }
+    );
+  };
+
   const handleTranslateField = (fieldType: string) => {
     if (!selectedProductId || !selectedProduct) return;
     const sourceMap: Record<string, string> = {
@@ -770,6 +783,7 @@ export default function Products() {
             onSave={handleSaveProduct}
             onTranslateAll={handleTranslateAll}
             onGenerateAI={handleGenerateAI}
+            onFormatAI={handleFormatAI}
             onTranslateField={handleTranslateField}
             onAcceptSuggestion={handleAcceptSuggestion}
             onAcceptAndTranslate={handleAcceptAndTranslate}
