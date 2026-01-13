@@ -96,6 +96,11 @@ export async function handleProductActions({ request }: ActionFunctionArgs) {
     return handleGenerateAllAltTexts(admin, provider, config, formData, session.shop, productId);
   }
 
+  if (action === "translateAltText") {
+    console.log('🌐 [PRODUCT.ACTIONS] Translating alt text for image:', formData.get("imageIndex"), 'to locale:', formData.get("targetLocale"));
+    return handleTranslateAltText(provider, config, formData, session.shop);
+  }
+
   console.error('❌ [PRODUCT.ACTIONS] Unknown action:', action);
   return json({ success: false, error: "Unknown action" }, { status: 400 });
   } catch (error) {
@@ -1089,6 +1094,72 @@ async function handleGenerateAllAltTexts(
     });
 
     return json({ success: true, generatedAltTexts });
+  } catch (error: any) {
+    await db.task.update({
+      where: { id: task.id },
+      data: {
+        status: "failed",
+        completedAt: new Date(),
+        error: error.message,
+      },
+    });
+
+    return json({ success: false, error: error.message }, { status: 500 });
+  }
+}
+
+async function handleTranslateAltText(
+  provider: any,
+  config: any,
+  formData: FormData,
+  shop: string
+) {
+  const imageIndex = parseInt(formData.get("imageIndex") as string);
+  const sourceAltText = formData.get("sourceAltText") as string;
+  const targetLocale = formData.get("targetLocale") as string;
+  const productId = formData.get("productId") as string;
+
+  const { db } = await import("../db.server");
+
+  // Create task entry
+  const task = await db.task.create({
+    data: {
+      shop,
+      type: "translation",
+      status: "pending",
+      resourceType: "product",
+      resourceId: productId,
+      fieldType: `altText_${imageIndex}`,
+      targetLocale,
+      progress: 0,
+      expiresAt: getTaskExpirationDate(),
+    },
+  });
+
+  try {
+    const translationService = new TranslationService(provider, config, shop, task.id);
+
+    const changedFields: any = {};
+    changedFields[`altText_${imageIndex}`] = sourceAltText;
+
+    await db.task.update({
+      where: { id: task.id },
+      data: { status: "queued", progress: 10 },
+    });
+
+    const translations = await translationService.translateProduct(changedFields, [targetLocale]);
+    const translatedAltText = translations[targetLocale]?.[`altText_${imageIndex}`] || "";
+
+    await db.task.update({
+      where: { id: task.id },
+      data: {
+        status: "completed",
+        progress: 100,
+        completedAt: new Date(),
+      },
+    });
+
+    return json({ success: true, translatedAltText, imageIndex, targetLocale });
   } catch (error: any) {
     await db.task.update({
       where: { id: task.id },

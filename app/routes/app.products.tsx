@@ -304,6 +304,18 @@ export default function Products() {
     }
   }, [fetcher.data]);
 
+  // Handle translated alt-text response
+  useEffect(() => {
+    if (fetcher.data?.success && 'translatedAltText' in fetcher.data) {
+      const { translatedAltText, imageIndex } = fetcher.data as any;
+      console.log('[ALT-TEXT] Setting translated alt-text for image', imageIndex, ':', translatedAltText);
+      setImageAltTexts(prev => ({
+        ...prev,
+        [imageIndex]: translatedAltText
+      }));
+    }
+  }, [fetcher.data]);
+
   // Reset alt-text state when product changes
   useEffect(() => {
     setImageAltTexts({});
@@ -491,6 +503,29 @@ export default function Products() {
     );
   };
 
+  const handleTranslateAltText = (imageIndex: number) => {
+    if (!selectedProduct || !selectedProduct.images || !selectedProduct.images[imageIndex]) return;
+
+    // Get the source alt-text from the primary locale (original product data)
+    const sourceAltText = selectedProduct.images[imageIndex].altText;
+
+    if (!sourceAltText) {
+      alert("Kein Alt-Text in der Hauptsprache vorhanden zum Übersetzen");
+      return;
+    }
+
+    fetcher.submit(
+      {
+        action: "translateAltText",
+        productId: selectedProduct.id,
+        imageIndex: imageIndex.toString(),
+        sourceAltText,
+        targetLocale: currentLanguage,
+      },
+      { method: "POST" }
+    );
+  };
+
   return (
     <Page fullWidth>
       <style>{`
@@ -583,6 +618,7 @@ export default function Products() {
             translatingOptionId={fetcher.formData?.get("optionId")?.toString()}
             onGenerateAltText={handleGenerateAltText}
             onGenerateAllAltTexts={handleGenerateAllAltTexts}
+            onTranslateAltText={handleTranslateAltText}
             fetcherData={fetcher.data}
             imageAltTexts={imageAltTexts}
             setImageAltTexts={setImageAltTexts}

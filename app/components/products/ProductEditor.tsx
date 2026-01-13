@@ -97,6 +97,7 @@ interface ProductEditorProps {
   translatingOptionId?: string;
   onGenerateAltText: (imageIndex: number) => void;
   onGenerateAllAltTexts: () => void;
+  onTranslateAltText: (imageIndex: number) => void;
   fetcherData: any;
   imageAltTexts: Record<number, string>;
   setImageAltTexts: (value: Record<number, string> | ((prev: Record<number, string>) => Record<number, string>)) => void;
@@ -144,6 +145,7 @@ export function ProductEditor({
   translatingOptionId,
   onGenerateAltText,
   onGenerateAllAltTexts,
+  onTranslateAltText,
   fetcherData,
   imageAltTexts,
   setImageAltTexts,
@@ -472,11 +474,12 @@ export function ProductEditor({
                 }}
                 fieldType={`altText_${selectedImageIndex}`}
                 suggestion={altTextSuggestions[selectedImageIndex]}
-                isPrimaryLocale={true}
+                isPrimaryLocale={isPrimaryLocale}
+                isTranslated={true}
                 placeholder={t.products.altTextPlaceholder}
-                isLoading={isFieldLoading(`altText_${selectedImageIndex}`, "generateAltText")}
+                isLoading={isFieldLoading(`altText_${selectedImageIndex}`, isPrimaryLocale ? "generateAltText" : "translateAltText")}
                 onGenerateAI={() => onGenerateAltText(selectedImageIndex)}
-                onTranslate={() => {}} // Not needed for alt texts
+                onTranslate={() => onTranslateAltText(selectedImageIndex)}
                 onAcceptSuggestion={() => {
                   setImageAltTexts((prev) => ({
                     ...prev,

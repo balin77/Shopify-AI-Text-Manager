@@ -44,6 +44,7 @@ export const de = {
     productOptions: "Produktoptionen",
     optionsNotEditableInPrimary: "Optionen werden in der Hauptsprache nicht bearbeitet. Wechseln Sie zu einer Fremdsprache, um Übersetzungen hinzuzufügen.",
     translateEntireOption: "Gesamte Option übersetzen",
+    discardChanges: "Verwerfen",
     resourceName: {
       singular: "Produkt",
       plural: "Produkte",
