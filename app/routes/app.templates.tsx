@@ -157,8 +157,16 @@ export default function TemplatesPage() {
   // Load translations when language changes (for non-primary locales)
   useEffect(() => {
     if (!selectedItem || !currentGroupId) {
+      console.log('[TEMPLATES] Skipping load - no selectedItem or currentGroupId');
       return;
     }
+
+    console.log('[TEMPLATES] Loading content for:', {
+      currentGroupId,
+      currentLanguage,
+      isPrimary: currentLanguage === primaryLocale,
+      contentCount: selectedItem.translatableContent?.length
+    });
 
     if (currentLanguage === primaryLocale) {
       // Load primary locale values
@@ -167,11 +175,14 @@ export default function TemplatesPage() {
         values[item.key] = item.value || "";
       });
 
+      console.log('[TEMPLATES] Primary locale - loaded', Object.keys(values).length, 'fields');
+
       // Only update if values actually changed (prevent infinite loop)
       const hasChanged = Object.keys(values).length !== Object.keys(editableValues).length ||
         Object.keys(values).some(key => values[key] !== editableValues[key]);
 
       if (hasChanged) {
+        console.log('[TEMPLATES] Updating editableValues for primary locale');
         setEditableValues(values);
         setOriginalValues({ ...values });
       }
@@ -180,9 +191,17 @@ export default function TemplatesPage() {
       const translationKey = `${currentGroupId}_${currentLanguage}`;
       const hasTranslations = loadedTranslations[translationKey];
 
+      console.log('[TEMPLATES] Non-primary locale:', {
+        translationKey,
+        hasTranslations: !!hasTranslations,
+        translationCount: hasTranslations?.length || 0,
+        fetcherState: fetcher.state
+      });
+
       if (!hasTranslations) {
         // Only load if not already loading
         if (fetcher.state === 'idle') {
+          console.log('[TEMPLATES] Fetching translations for', currentLanguage);
           // Load translations
           const formData = new FormData();
           formData.append("action", "loadTranslations");
@@ -201,11 +220,14 @@ export default function TemplatesPage() {
           values[item.key] = translation?.value || "";
         });
 
+        console.log('[TEMPLATES] Using cached translations - loaded', Object.keys(values).length, 'fields');
+
         // Only update if values actually changed (prevent infinite loop)
         const hasChanged = Object.keys(values).length !== Object.keys(editableValues).length ||
           Object.keys(values).some(key => values[key] !== editableValues[key]);
 
         if (hasChanged) {
+          console.log('[TEMPLATES] Updating editableValues from cached translations');
           setEditableValues(values);
           setOriginalValues({ ...values });
         }
@@ -221,6 +243,14 @@ export default function TemplatesPage() {
       const { translations, locale } = fetcher.data as any;
       const translationKey = `${currentGroupId}_${locale}`;
 
+      console.log('[TEMPLATES] Fetcher returned translations:', {
+        translationKey,
+        translationCount: translations.length,
+        locale,
+        currentLanguage,
+        isCurrentLanguage: locale === currentLanguage
+      });
+
       setLoadedTranslations(prev => ({
         ...prev,
         [translationKey]: translations
@@ -233,6 +263,7 @@ export default function TemplatesPage() {
           const translation = translations.find((t: any) => t.key === item.key);
           values[item.key] = translation?.value || "";
         });
+        console.log('[TEMPLATES] Directly updating editableValues from fetcher:', Object.keys(values).length, 'fields');
         setEditableValues(values);
         setOriginalValues({ ...values });
       }
@@ -283,17 +314,28 @@ export default function TemplatesPage() {
     // If clicking the same item, force reload by clearing state
     const isSameItem = selectedItemId === itemId;
 
+    console.log('[TEMPLATES] handleItemClick:', {
+      itemId,
+      groupId,
+      isSameItem,
+      currentLanguage,
+      primaryLocale,
+      isDataLoaded: !!loadedThemes[groupId]
+    });
+
     setSelectedItemId(itemId);
     setAiSuggestions({});
 
     if (isSameItem) {
       // Force reload: clear state but keep the theme data to trigger useEffect
+      console.log('[TEMPLATES] Same item clicked - clearing state and resetting to primary locale');
       setEditableValues({});
       setOriginalValues({});
       // Reset language to primary to force data reload
       setCurrentLanguage(primaryLocale);
     } else {
       // Different item: clear state and load new data
+      console.log('[TEMPLATES] Different item clicked - clearing state and loading data');
       setEditableValues({});
       setOriginalValues({});
       loadThemeData(groupId);
