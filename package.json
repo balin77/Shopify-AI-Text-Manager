@@ -14,7 +14,7 @@
     "typecheck": "tsc",
     "prisma:generate": "prisma generate",
     "prisma:push": "prisma db push",
-    "prisma:migrate": "prisma migrate deploy",
+    "prisma:migrate": "node scripts/migrate-baseline.js",
     "db:cleanup": "node scripts/cleanup-database.js",
     "shopify": "shopify app dev",
     "deploy": "shopify app deploy",
