@@ -1,7 +1,8 @@
 import { useRef } from "react";
-import { Text, Button, ButtonGroup, InlineStack } from "@shopify/polaris";
+import { Text, Button, ButtonGroup, InlineStack, Tooltip } from "@shopify/polaris";
 import { AISuggestionBanner } from "./AISuggestionBanner";
 import { useI18n } from "../contexts/I18nContext";
+import { useHtmlFormatting } from "../hooks/useHtmlFormatting";
 import "../styles/AIEditableField.css";
 
 interface AIEditableHTMLFieldProps {
@@ -53,6 +54,7 @@ export function AIEditableHTMLField({
 }: AIEditableHTMLFieldProps) {
   const { t } = useI18n();
   const editorRef = useRef<HTMLDivElement>(null);
+  const { executeCommand } = useHtmlFormatting({ editorRef, onChange });
 
   // Determine background color class based on translation state
   const getBackgroundClass = () => {
@@ -77,45 +79,9 @@ export function AIEditableHTMLField({
     return "bg-white";
   };
 
-  const handleFormatText = (command: string) => {
-    if (mode !== "rendered" || !editorRef.current) return;
-
-    editorRef.current.focus();
-
-    switch (command) {
-      case "bold":
-        document.execCommand("bold", false);
-        break;
-      case "italic":
-        document.execCommand("italic", false);
-        break;
-      case "underline":
-        document.execCommand("underline", false);
-        break;
-      case "h1":
-        document.execCommand("formatBlock", false, "<h1>");
-        break;
-      case "h2":
-        document.execCommand("formatBlock", false, "<h2>");
-        break;
-      case "h3":
-        document.execCommand("formatBlock", false, "<h3>");
-        break;
-      case "p":
-        document.execCommand("formatBlock", false, "<p>");
-        break;
-      case "ul":
-        document.execCommand("insertUnorderedList", false);
-        break;
-      case "ol":
-        document.execCommand("insertOrderedList", false);
-        break;
-      case "br":
-        document.execCommand("insertHTML", false, "<br>");
-        break;
-    }
-
-    onChange(editorRef.current.innerHTML);
+  const handleFormatText = (command: Parameters<typeof executeCommand>[0]) => {
+    if (mode !== "rendered") return;
+    executeCommand(command);
   };
 
   return (
@@ -142,43 +108,126 @@ export function AIEditableHTMLField({
             borderRadius: "8px 8px 0 0",
           }}
         >
+          {/* Text Formatting */}
           <ButtonGroup variant="segmented">
-            <Button size="slim" onClick={() => handleFormatText("bold")}>
-              B
-            </Button>
-            <Button size="slim" onClick={() => handleFormatText("italic")}>
-              I
-            </Button>
-            <Button size="slim" onClick={() => handleFormatText("underline")}>
-              U
-            </Button>
+            <Tooltip content="Fett">
+              <Button size="slim" onClick={() => handleFormatText("bold")}>
+                <strong>B</strong>
+              </Button>
+            </Tooltip>
+            <Tooltip content="Kursiv">
+              <Button size="slim" onClick={() => handleFormatText("italic")}>
+                <em>I</em>
+              </Button>
+            </Tooltip>
+            <Tooltip content="Unterstrichen">
+              <Button size="slim" onClick={() => handleFormatText("underline")}>
+                <u>U</u>
+              </Button>
+            </Tooltip>
+            <Tooltip content="Durchgestrichen">
+              <Button size="slim" onClick={() => handleFormatText("strikethrough")}>
+                <s>S</s>
+              </Button>
+            </Tooltip>
           </ButtonGroup>
+
+          {/* Headings & Normal Text */}
           <ButtonGroup variant="segmented">
-            <Button size="slim" onClick={() => handleFormatText("h1")}>
-              H1
-            </Button>
-            <Button size="slim" onClick={() => handleFormatText("h2")}>
-              H2
-            </Button>
-            <Button size="slim" onClick={() => handleFormatText("h3")}>
-              H3
-            </Button>
+            <Tooltip content="Überschrift 1">
+              <Button size="slim" onClick={() => handleFormatText("h1")}>
+                H1
+              </Button>
+            </Tooltip>
+            <Tooltip content="Überschrift 2">
+              <Button size="slim" onClick={() => handleFormatText("h2")}>
+                H2
+              </Button>
+            </Tooltip>
+            <Tooltip content="Überschrift 3">
+              <Button size="slim" onClick={() => handleFormatText("h3")}>
+                H3
+              </Button>
+            </Tooltip>
+            <Tooltip content="Normaler Text / Absatz">
+              <Button size="slim" onClick={() => handleFormatText("p")}>
+                Text
+              </Button>
+            </Tooltip>
           </ButtonGroup>
+
+          {/* Lists */}
           <ButtonGroup variant="segmented">
-            <Button size="slim" onClick={() => handleFormatText("ul")}>
-              {t.products.formatting.list}
-            </Button>
-            <Button size="slim" onClick={() => handleFormatText("ol")}>
-              {t.products.formatting.numberedList}
-            </Button>
+            <Tooltip content="Aufzählungsliste">
+              <Button size="slim" onClick={() => handleFormatText("ul")}>
+                {t.products.formatting.list}
+              </Button>
+            </Tooltip>
+            <Tooltip content="Nummerierte Liste">
+              <Button size="slim" onClick={() => handleFormatText("ol")}>
+                {t.products.formatting.numberedList}
+              </Button>
+            </Tooltip>
           </ButtonGroup>
+
+          {/* Special Formats */}
           <ButtonGroup variant="segmented">
-            <Button size="slim" onClick={() => handleFormatText("p")}>
-              {t.products.formatting.paragraph}
-            </Button>
-            <Button size="slim" onClick={() => handleFormatText("br")}>
-              {t.products.formatting.lineBreak}
-            </Button>
+            <Tooltip content="Zitat-Block">
+              <Button size="slim" onClick={() => handleFormatText("blockquote")}>
+                ""
+              </Button>
+            </Tooltip>
+            <Tooltip content="Code-Block">
+              <Button size="slim" onClick={() => handleFormatText("code")}>
+                {"</>"}
+              </Button>
+            </Tooltip>
+          </ButtonGroup>
+
+          {/* Links */}
+          <ButtonGroup variant="segmented">
+            <Tooltip content="Link einfügen">
+              <Button size="slim" onClick={() => handleFormatText("link")}>
+                🔗
+              </Button>
+            </Tooltip>
+            <Tooltip content="Link entfernen">
+              <Button size="slim" onClick={() => handleFormatText("unlink")}>
+                🔗✖
+              </Button>
+            </Tooltip>
+          </ButtonGroup>
+
+          {/* Line Break */}
+          <ButtonGroup variant="segmented">
+            <Tooltip content="Zeilenumbruch">
+              <Button size="slim" onClick={() => handleFormatText("br")}>
+                {t.products.formatting.lineBreak}
+              </Button>
+            </Tooltip>
+          </ButtonGroup>
+
+          {/* Undo/Redo */}
+          <ButtonGroup variant="segmented">
+            <Tooltip content="Rückgängig">
+              <Button size="slim" onClick={() => handleFormatText("undo")}>
+                ↶
+              </Button>
+            </Tooltip>
+            <Tooltip content="Wiederholen">
+              <Button size="slim" onClick={() => handleFormatText("redo")}>
+                ↷
+              </Button>
+            </Tooltip>
+          </ButtonGroup>
+
+          {/* Clear Formatting */}
+          <ButtonGroup variant="segmented">
+            <Tooltip content="Formatierung entfernen">
+              <Button size="slim" onClick={() => handleFormatText("removeFormat")} tone="critical">
+                ✖
+              </Button>
+            </Tooltip>
           </ButtonGroup>
         </div>
       )}

@@ -1,5 +1,6 @@
-import { BlockStack, Text, TextField, Button, InlineStack, ButtonGroup } from "@shopify/polaris";
+import { BlockStack, Text, TextField, Button, InlineStack, ButtonGroup, Tooltip } from "@shopify/polaris";
 import { useRef } from "react";
+import { useHtmlFormatting } from "../hooks/useHtmlFormatting";
 
 interface AIInstructionFieldGroupProps {
   fieldName: string;
@@ -15,8 +16,6 @@ interface AIInstructionFieldGroupProps {
   isHtmlField?: boolean;
   htmlMode?: "html" | "rendered";
   onToggleHtmlMode?: () => void;
-  onFormatHtml?: (command: string) => void;
-  editorRef?: React.RefObject<HTMLDivElement>;
 }
 
 export function AIInstructionFieldGroup({
@@ -33,9 +32,9 @@ export function AIInstructionFieldGroup({
   isHtmlField = false,
   htmlMode = "rendered",
   onToggleHtmlMode,
-  onFormatHtml,
-  editorRef,
 }: AIInstructionFieldGroupProps) {
+  const editorRef = useRef<HTMLDivElement>(null);
+  const { executeCommand } = useHtmlFormatting({ editorRef, onChange: onFormatChange });
   return (
     <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px", overflow: "visible" }}>
       <BlockStack gap="400">
@@ -71,7 +70,7 @@ export function AIInstructionFieldGroup({
 
           {isHtmlField && (
             <>
-              {htmlMode === "rendered" && onFormatHtml && (
+              {htmlMode === "rendered" && (
                 <div style={{
                   marginTop: "0.5rem",
                   display: "flex",
@@ -83,23 +82,98 @@ export function AIInstructionFieldGroup({
                   borderRadius: "8px 8px 0 0",
                   minHeight: "52px"
                 }}>
+                  {/* Text Formatting */}
                   <ButtonGroup variant="segmented">
-                    <Button size="slim" onClick={() => onFormatHtml("bold")}>B</Button>
-                    <Button size="slim" onClick={() => onFormatHtml("italic")}>I</Button>
-                    <Button size="slim" onClick={() => onFormatHtml("underline")}>U</Button>
+                    <Tooltip content="Fett">
+                      <Button size="slim" onClick={() => executeCommand("bold")}>
+                        <strong>B</strong>
+                      </Button>
+                    </Tooltip>
+                    <Tooltip content="Kursiv">
+                      <Button size="slim" onClick={() => executeCommand("italic")}>
+                        <em>I</em>
+                      </Button>
+                    </Tooltip>
+                    <Tooltip content="Unterstrichen">
+                      <Button size="slim" onClick={() => executeCommand("underline")}>
+                        <u>U</u>
+                      </Button>
+                    </Tooltip>
+                    <Tooltip content="Durchgestrichen">
+                      <Button size="slim" onClick={() => executeCommand("strikethrough")}>
+                        <s>S</s>
+                      </Button>
+                    </Tooltip>
                   </ButtonGroup>
+
+                  {/* Headings & Normal Text */}
                   <ButtonGroup variant="segmented">
-                    <Button size="slim" onClick={() => onFormatHtml("h1")}>H1</Button>
-                    <Button size="slim" onClick={() => onFormatHtml("h2")}>H2</Button>
-                    <Button size="slim" onClick={() => onFormatHtml("h3")}>H3</Button>
+                    <Tooltip content="Überschrift 1">
+                      <Button size="slim" onClick={() => executeCommand("h1")}>H1</Button>
+                    </Tooltip>
+                    <Tooltip content="Überschrift 2">
+                      <Button size="slim" onClick={() => executeCommand("h2")}>H2</Button>
+                    </Tooltip>
+                    <Tooltip content="Überschrift 3">
+                      <Button size="slim" onClick={() => executeCommand("h3")}>H3</Button>
+                    </Tooltip>
+                    <Tooltip content="Normaler Text / Absatz">
+                      <Button size="slim" onClick={() => executeCommand("p")}>Text</Button>
+                    </Tooltip>
                   </ButtonGroup>
+
+                  {/* Lists */}
                   <ButtonGroup variant="segmented">
-                    <Button size="slim" onClick={() => onFormatHtml("ul")}>Liste</Button>
-                    <Button size="slim" onClick={() => onFormatHtml("ol")}>Num.</Button>
+                    <Tooltip content="Aufzählungsliste">
+                      <Button size="slim" onClick={() => executeCommand("ul")}>Liste</Button>
+                    </Tooltip>
+                    <Tooltip content="Nummerierte Liste">
+                      <Button size="slim" onClick={() => executeCommand("ol")}>Num.</Button>
+                    </Tooltip>
                   </ButtonGroup>
+
+                  {/* Special Formats */}
                   <ButtonGroup variant="segmented">
-                    <Button size="slim" onClick={() => onFormatHtml("p")}>Absatz</Button>
-                    <Button size="slim" onClick={() => onFormatHtml("br")}>Umbruch</Button>
+                    <Tooltip content="Zitat-Block">
+                      <Button size="slim" onClick={() => executeCommand("blockquote")}>""</Button>
+                    </Tooltip>
+                    <Tooltip content="Code-Block">
+                      <Button size="slim" onClick={() => executeCommand("code")}>{"</>"}</Button>
+                    </Tooltip>
+                  </ButtonGroup>
+
+                  {/* Links */}
+                  <ButtonGroup variant="segmented">
+                    <Tooltip content="Link einfügen">
+                      <Button size="slim" onClick={() => executeCommand("link")}>🔗</Button>
+                    </Tooltip>
+                    <Tooltip content="Link entfernen">
+                      <Button size="slim" onClick={() => executeCommand("unlink")}>🔗✖</Button>
+                    </Tooltip>
+                  </ButtonGroup>
+
+                  {/* Line Break */}
+                  <ButtonGroup variant="segmented">
+                    <Tooltip content="Zeilenumbruch">
+                      <Button size="slim" onClick={() => executeCommand("br")}>Umbruch</Button>
+                    </Tooltip>
+                  </ButtonGroup>
+
+                  {/* Undo/Redo */}
+                  <ButtonGroup variant="segmented">
+                    <Tooltip content="Rückgängig">
+                      <Button size="slim" onClick={() => executeCommand("undo")}>↶</Button>
+                    </Tooltip>
+                    <Tooltip content="Wiederholen">
+                      <Button size="slim" onClick={() => executeCommand("redo")}>↷</Button>
+                    </Tooltip>
+                  </ButtonGroup>
+
+                  {/* Clear Formatting */}
+                  <ButtonGroup variant="segmented">
+                    <Tooltip content="Formatierung entfernen">
+                      <Button size="slim" onClick={() => executeCommand("removeFormat")} tone="critical">✖</Button>
+                    </Tooltip>
                   </ButtonGroup>
                 </div>
               )}
