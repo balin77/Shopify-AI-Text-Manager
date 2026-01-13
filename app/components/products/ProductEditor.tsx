@@ -308,6 +308,7 @@ export function ProductEditor({
                     flex: "1",
                     display: "grid",
                     gridTemplateColumns: "repeat(4, 1fr)",
+                    gridAutoRows: "minmax(0, max-content)",
                     gap: "12px",
                     maxHeight: "400px",
                     overflowY: "auto",
@@ -325,6 +326,7 @@ export function ProductEditor({
                         onClick={() => setSelectedImageIndex(index)}
                         style={{
                           position: "relative",
+                          width: "100%",
                           padding: 0,
                           border: isSelected ? "3px solid #005bd3" : "2px solid #e1e3e5",
                           borderRadius: "8px",
