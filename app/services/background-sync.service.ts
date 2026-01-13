@@ -559,6 +559,8 @@ export class BackgroundSyncService {
               const allTranslations = [];
               const seenKeys = new Set<string>(); // Track seen key-locale combinations
 
+              console.log(`[BackgroundSync-Themes] 🔍 Fetching translations for group "${groupName}" (${items.length} fields, ${nonPrimaryLocales.length} locales)`);
+
               // Parallelize locale queries
               const translationPromises = nonPrimaryLocales.map(async (locale: any) => {
                 try {
@@ -578,7 +580,11 @@ export class BackgroundSyncService {
                   );
 
                   const translationsData = await translationsResponse.json();
-                  return translationsData.data?.translatableResource?.translations || [];
+                  const translations = translationsData.data?.translatableResource?.translations || [];
+                  if (translations.length > 0) {
+                    console.log(`[BackgroundSync-Themes]   ✅ Locale ${locale.locale}: ${translations.length} translations from Shopify API`);
+                  }
+                  return translations;
                 } catch (error) {
                   console.error(`[BackgroundSync] Error fetching theme translations for locale ${locale.locale}:`, error);
                   return [];
@@ -599,6 +605,11 @@ export class BackgroundSyncService {
                     }
                   }
                 }
+              }
+
+              console.log(`[BackgroundSync-Themes] 💾 Saving ${allTranslations.length} translations for group "${groupName}" to database`);
+              if (allTranslations.length === 0 && nonPrimaryLocales.length > 0) {
+                console.log(`[BackgroundSync-Themes] ⚠️  NO TRANSLATIONS found! Either they don't exist in Shopify or the API call failed`);
               }
 
               // Track this combination for cleanup
