@@ -82,11 +82,6 @@ async function fetchAndStoreImageTranslations(
             nodes(ids: $ids) {
               ... on MediaImage {
                 id
-                translatableContent {
-                  key
-                  value
-                  locale
-                }
                 translations(locale: "${locale.locale}") {
                   key
                   value
