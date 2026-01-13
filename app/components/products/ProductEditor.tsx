@@ -308,12 +308,11 @@ export function ProductEditor({
                     flex: "1",
                     display: "grid",
                     gridTemplateColumns: "repeat(4, 1fr)",
-                    gridAutoRows: "1fr",
                     gap: "12px",
-                    alignContent: "start",
                     maxHeight: "400px",
                     overflowY: "auto",
                     overflowX: "hidden",
+                    alignContent: "start",
                   }}
                 >
                   {product.images.map((image, index) => {
