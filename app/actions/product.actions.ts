@@ -958,7 +958,7 @@ async function handleUpdateProduct(admin: any, formData: FormData, productId: st
 
       // Save to Shopify using Gateway
       for (const translation of translationsInput) {
-        await gateway.graphql(
+        const response = await gateway.graphql(
           `#graphql
             mutation translateProduct($resourceId: ID!, $translations: [TranslationInput!]!) {
               translationsRegister(resourceId: $resourceId, translations: $translations) {
@@ -980,6 +980,16 @@ async function handleUpdateProduct(admin: any, formData: FormData, productId: st
             },
           }
         );
+
+        // Check for errors - only update DB if Shopify confirms success
+        const responseData = await response.json();
+        if (responseData.data?.translationsRegister?.userErrors?.length > 0) {
+          console.error(`[UPDATE-PRODUCT] Shopify API error for translation:`, responseData.data.translationsRegister.userErrors);
+          return json({
+            success: false,
+            error: responseData.data.translationsRegister.userErrors[0].message
+          }, { status: 500 });
+        }
       }
 
       // 🔥 DIRECT DB UPDATE: Update local database immediately after Shopify success
@@ -1060,6 +1070,31 @@ async function handleUpdateProduct(admin: any, formData: FormData, productId: st
           success: false,
           error: data.data.productUpdate.userErrors[0].message
         }, { status: 500 });
+      }
+
+      // 🔥 UPDATE LOCAL DATABASE: Update the Product table with the saved values
+      console.log(`[UPDATE-PRODUCT] Updating DB for primary locale product ${productId}`);
+
+      try {
+        const updateData: any = {};
+        if (title) updateData.title = title;
+        if (descriptionHtml) updateData.descriptionHtml = descriptionHtml;
+        if (handle) updateData.handle = handle;
+        if (seoTitle !== undefined) updateData.seoTitle = seoTitle || null;
+        if (metaDescription !== undefined) updateData.seoDescription = metaDescription || null;
+
+        // Always update lastSyncedAt
+        updateData.lastSyncedAt = new Date();
+
+        await db.product.update({
+          where: { id: productId },
+          data: updateData,
+        });
+
+        console.log(`[UPDATE-PRODUCT] ✓ Updated Product DB for ${productId}:`, Object.keys(updateData));
+      } catch (dbError: any) {
+        console.error(`[UPDATE-PRODUCT] Failed to update DB for ${productId}:`, dbError);
+        // Don't fail the entire request if DB update fails - Shopify is the source of truth
       }
 
       return json({ success: true, product: data.data.productUpdate.product });

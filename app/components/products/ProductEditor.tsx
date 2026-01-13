@@ -310,10 +310,23 @@ export function ProductEditor({
                           objectFit: "cover",
                         }}
                       />
-                    ) : product.images && product.images[selectedImageIndex] ? (
+                    ) : product.images && product.images.length > 0 && product.images[selectedImageIndex] ? (
                       <img
                         src={product.images[selectedImageIndex].url}
                         alt={imageAltTexts[selectedImageIndex] || product.images[selectedImageIndex].altText || `${t.products.image} ${selectedImageIndex + 1}`}
+                        style={{
+                          position: "absolute",
+                          top: 0,
+                          left: 0,
+                          width: "100%",
+                          height: "100%",
+                          objectFit: "cover",
+                        }}
+                      />
+                    ) : product.featuredImage ? (
+                      <img
+                        src={product.featuredImage.url}
+                        alt={product.featuredImage.altText || t.products.featuredImage}
                         style={{
                           position: "absolute",
                           top: 0,
