@@ -18,6 +18,7 @@ import { ContentTypeNavigation } from "../components/ContentTypeNavigation";
 import { AIEditableField } from "../components/AIEditableField";
 import { AIEditableHTMLField } from "../components/AIEditableHTMLField";
 import { LocaleNavigationButtons } from "../components/LocaleNavigationButtons";
+import { SaveDiscardButtons } from "../components/SaveDiscardButtons";
 import { AIService } from "../../src/services/ai.service";
 import { TranslationService } from "../../src/services/translation.service";
 import { ShopifyContentService } from "../../src/services/shopify-content.service";
@@ -545,33 +546,17 @@ export default function PagesPage() {
                 {/* Save Button */}
                 <InlineStack align="space-between" blockAlign="center">
                   <Text as="p" variant="bodySm" tone="subdued">{t.content.idPrefix} {selectedItem.id.split("/").pop()}</Text>
-                  <div ref={saveButtonRef}>
-                    <InlineStack gap="200">
-                      {hasChanges && (
-                        <Button
-                          onClick={handleDiscardChanges}
-                          disabled={fetcher.state !== "idle"}
-                        >
-                          {t.content.discardChanges || "Verwerfen"}
-                        </Button>
-                      )}
-                      <div
-                        style={{
-                          animation: highlightSaveButton ? "pulse 1.5s ease-in-out infinite" : "none",
-                          borderRadius: "8px",
-                        }}
-                      >
-                        <Button
-                          variant={hasChanges ? "primary" : undefined}
-                          onClick={handleSaveContent}
-                          disabled={!hasChanges}
-                          loading={fetcher.state !== "idle" && fetcher.formData?.get("action") === "updateContent"}
-                        >
-                          {t.content.saveChanges}
-                        </Button>
-                      </div>
-                    </InlineStack>
-                  </div>
+                  <SaveDiscardButtons
+                    hasChanges={hasChanges}
+                    onSave={handleSaveContent}
+                    onDiscard={handleDiscardChanges}
+                    highlightSaveButton={highlightSaveButton}
+                    saveText={t.content.saveChanges}
+                    discardText={t.content.discardChanges || "Verwerfen"}
+                    action="updateContent"
+                    fetcherState={fetcher.state}
+                    fetcherFormData={fetcher.formData}
+                  />
                 </InlineStack>
 
                 {/* Title */}

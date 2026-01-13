@@ -22,6 +22,7 @@ import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
 import { ContentTypeNavigation } from "../components/ContentTypeNavigation";
 import { ThemeContentViewer } from "../components/ThemeContentViewer";
+import { SaveDiscardButtons } from "../components/SaveDiscardButtons";
 import { useI18n } from "../contexts/I18nContext";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -545,21 +546,17 @@ export default function TemplatesPage() {
                   </div>
 
                   {/* Save/Discard Buttons */}
-                  {hasChanges && (
-                    <div ref={saveButtonRef} style={{ display: "flex", gap: "0.5rem" }}>
-                      <Button onClick={handleDiscard} size="slim">
-                        {t.content?.discard || "Discard"}
-                      </Button>
-                      <Button
-                        variant="primary"
-                        onClick={handleSave}
-                        loading={fetcher.state === "submitting"}
-                        size="slim"
-                      >
-                        {t.content?.save || "Save"}
-                      </Button>
-                    </div>
-                  )}
+                  <SaveDiscardButtons
+                    hasChanges={hasChanges}
+                    onSave={handleSave}
+                    onDiscard={handleDiscard}
+                    highlightSaveButton={false}
+                    saveText={t.content?.saveChanges || "Save Changes"}
+                    discardText={t.content?.discardChanges || "Discard"}
+                    action="updateContent"
+                    fetcherState={fetcher.state}
+                    fetcherFormData={fetcher.formData}
+                  />
                 </InlineStack>
 
                 {/* Item ID */}

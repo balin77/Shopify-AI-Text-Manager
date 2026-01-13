@@ -378,6 +378,28 @@ export default function Products() {
     fetcher.submit({ action: "translateSuggestion", suggestion, fieldType }, { method: "POST" });
   };
 
+  const handleDiscardChanges = () => {
+    if (!selectedProduct) return;
+
+    if (currentLanguage === primaryLocale) {
+      setEditableTitle(selectedProduct.title);
+      setEditableDescription(selectedProduct.descriptionHtml || "");
+      setEditableHandle(selectedProduct.handle);
+      setEditableSeoTitle(selectedProduct.seo?.title || "");
+      setEditableMetaDescription(selectedProduct.seo?.description || "");
+    } else {
+      const getTranslation = (key: string) => {
+        return selectedProduct.translations.find((t: any) => t.key === key && t.locale === currentLanguage)?.value || "";
+      };
+      setEditableTitle(getTranslation("title"));
+      setEditableDescription(getTranslation("body_html"));
+      setEditableHandle(getTranslation("handle"));
+      setEditableSeoTitle(getTranslation("meta_title"));
+      setEditableMetaDescription(getTranslation("meta_description"));
+    }
+    setImageAltTexts({});
+  };
+
   const handleTranslateAll = () => {
     if (!selectedProductId || !selectedProduct) return;
     // Always use the primary locale values (original product data), not the current editable values
@@ -564,6 +586,8 @@ export default function Products() {
             fetcherData={fetcher.data}
             imageAltTexts={imageAltTexts}
             setImageAltTexts={setImageAltTexts}
+            onDiscardChanges={handleDiscardChanges}
+            fetcherState={fetcher.state}
           />
         </div>
 
