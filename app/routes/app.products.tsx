@@ -285,10 +285,6 @@ export default function Products() {
   const { t, locale } = useI18n();
   const { showInfoBox } = useInfoBox();
 
-  console.log('[PRODUCTS] Current locale:', locale);
-  console.log('[PRODUCTS] t.products.resourceName:', t.products.resourceName);
-  console.log('[PRODUCTS] t.products.pagination:', t.products.pagination);
-
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
   const [currentLanguage, setCurrentLanguage] = useState(primaryLocale);
   const [optionTranslations, setOptionTranslations] = useState<Record<string, { name: string; values: string[] }>>({});
@@ -480,14 +476,14 @@ export default function Products() {
     } else if (fetcher.data && !fetcher.data.success && 'error' in fetcher.data) {
       showInfoBox(fetcher.data.error as string, "critical", t.common?.error || "Error");
     }
-  }, [fetcher.data, showInfoBox, t]);
+  }, [fetcher.data, showInfoBox]);
 
   // Show loader error
   useEffect(() => {
     if (error) {
       showInfoBox(error, "critical", t.common?.error || "Error");
     }
-  }, [error, showInfoBox, t]);
+  }, [error, showInfoBox]);
 
   // Reset alt-text state when product changes
   useEffect(() => {

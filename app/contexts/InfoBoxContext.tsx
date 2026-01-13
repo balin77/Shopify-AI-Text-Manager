@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useRef, ReactNode } from "react";
+import { createContext, useContext, useState, useRef, useCallback, ReactNode } from "react";
 
 export type InfoBoxTone = "success" | "info" | "warning" | "critical";
 
@@ -22,7 +22,7 @@ export function InfoBoxProvider({ children }: { children: ReactNode }) {
   const dismissedMessages = useRef<Set<string>>(new Set());
   const autoHideTimer = useRef<NodeJS.Timeout | null>(null);
 
-  const showInfoBox = (message: string, tone: InfoBoxTone = "success", title?: string) => {
+  const showInfoBox = useCallback((message: string, tone: InfoBoxTone = "success", title?: string) => {
     // Create unique ID based on message + tone + timestamp
     const id = `${message}-${tone}-${Date.now()}`;
 
@@ -47,9 +47,9 @@ export function InfoBoxProvider({ children }: { children: ReactNode }) {
         dismissedMessages.current.clear();
       }, 10000);
     }
-  };
+  }, []);
 
-  const hideInfoBox = () => {
+  const hideInfoBox = useCallback(() => {
     if (infoBox) {
       // Mark this message as dismissed
       const messageKey = `${infoBox.message}-${infoBox.tone}`;
@@ -68,7 +68,7 @@ export function InfoBoxProvider({ children }: { children: ReactNode }) {
     }
 
     setInfoBox(null);
-  };
+  }, [infoBox]);
 
   return (
     <InfoBoxContext.Provider value={{ infoBox, showInfoBox, hideInfoBox }}>

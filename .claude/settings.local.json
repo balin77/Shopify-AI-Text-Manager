@@ -34,7 +34,9 @@
       "Bash(node check-translations.cjs:*)",
       "Bash(npx prisma format:*)",
       "Bash(railway login:*)",
-      "Bash(tee:*)"
+      "Bash(tee:*)",
+      "Bash(git diff:*)",
+      "Bash(git fetch:*)"
     ],
     "deny": [],
     "ask": []
