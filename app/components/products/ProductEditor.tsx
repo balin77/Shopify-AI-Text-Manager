@@ -587,7 +587,11 @@ export function ProductEditor({
             isPrimaryLocale={isPrimaryLocale}
             isTranslated={isFieldTranslated("title")}
             helpText={`${editableTitle.length} ${t.products.characters}`}
-            isLoading={isFieldLoading("title", isPrimaryLocale ? "generateAIText" : "translateField")}
+            isLoading={
+              isFieldLoading("title", "generateAIText") ||
+              isFieldLoading("title", "formatAIText") ||
+              isFieldLoading("title", "translateField")
+            }
             onGenerateAI={() => onGenerateAI("title")}
             onFormatAI={onFormatAI ? () => onFormatAI("title") : undefined}
             onTranslate={() => onTranslateField("title")}
@@ -612,7 +616,11 @@ export function ProductEditor({
             suggestion={aiSuggestions.description}
             isPrimaryLocale={isPrimaryLocale}
             isTranslated={isFieldTranslated("body_html")}
-            isLoading={isFieldLoading("description", isPrimaryLocale ? "generateAIText" : "translateField")}
+            isLoading={
+              isFieldLoading("description", "generateAIText") ||
+              isFieldLoading("description", "formatAIText") ||
+              isFieldLoading("description", "translateField")
+            }
             onGenerateAI={() => onGenerateAI("description")}
             onFormatAI={onFormatAI ? () => onFormatAI("description") : undefined}
             onTranslate={() => onTranslateField("description")}
@@ -633,7 +641,11 @@ export function ProductEditor({
             suggestion={aiSuggestions.handle}
             isPrimaryLocale={isPrimaryLocale}
             isTranslated={isFieldTranslated("handle")}
-            isLoading={isFieldLoading("handle", isPrimaryLocale ? "generateAIText" : "translateField")}
+            isLoading={
+              isFieldLoading("handle", "generateAIText") ||
+              isFieldLoading("handle", "formatAIText") ||
+              isFieldLoading("handle", "translateField")
+            }
             onGenerateAI={() => onGenerateAI("handle")}
             onFormatAI={onFormatAI ? () => onFormatAI("handle") : undefined}
             onTranslate={() => onTranslateField("handle")}
@@ -655,7 +667,11 @@ export function ProductEditor({
             isPrimaryLocale={isPrimaryLocale}
             isTranslated={isFieldTranslated("meta_title")}
             helpText={`${editableSeoTitle.length} ${t.products.characters} (${t.products.recommended}: 50-60)`}
-            isLoading={isFieldLoading("seoTitle", isPrimaryLocale ? "generateAIText" : "translateField")}
+            isLoading={
+              isFieldLoading("seoTitle", "generateAIText") ||
+              isFieldLoading("seoTitle", "formatAIText") ||
+              isFieldLoading("seoTitle", "translateField")
+            }
             onGenerateAI={() => onGenerateAI("seoTitle")}
             onFormatAI={onFormatAI ? () => onFormatAI("seoTitle") : undefined}
             onTranslate={() => onTranslateField("seoTitle")}
@@ -678,7 +694,11 @@ export function ProductEditor({
             isTranslated={isFieldTranslated("meta_description")}
             helpText={`${editableMetaDescription.length} ${t.products.characters} (${t.products.recommended}: 150-160)`}
             multiline={3}
-            isLoading={isFieldLoading("metaDescription", isPrimaryLocale ? "generateAIText" : "translateField")}
+            isLoading={
+              isFieldLoading("metaDescription", "generateAIText") ||
+              isFieldLoading("metaDescription", "formatAIText") ||
+              isFieldLoading("metaDescription", "translateField")
+            }
             onGenerateAI={() => onGenerateAI("metaDescription")}
             onFormatAI={onFormatAI ? () => onFormatAI("metaDescription") : undefined}
             onTranslate={() => onTranslateField("metaDescription")}

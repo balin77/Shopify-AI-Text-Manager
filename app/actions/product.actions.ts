@@ -214,7 +214,12 @@ async function handleGenerateAIText(
       if (aiInstructions?.productTitleInstructions) {
         prompt += `\n\nAnweisungen:\n${aiInstructions.productTitleInstructions}`;
       }
-      prompt += `\n\nKontext:\n${contextDescription || currentValue}\n\nGib nur den Titel zurück, ohne Erklärungen.`;
+      prompt += `\n\nKontext:\n${contextDescription || currentValue}`;
+      prompt += `\n\n⚠️ WICHTIG: Gib NUR den fertigen Produkttitel zurück.`;
+      prompt += `\n- KEINE Überschriften wie "Titel:" oder "Produkttitel:"`;
+      prompt += `\n- KEINE Markdown-Formatierung`;
+      prompt += `\n- KEINE Erklärungen oder Begründungen`;
+      prompt += `\n- NUR der reine Titel-Text`;
       generatedContent = await aiService.generateProductTitle(prompt);
     } else if (fieldType === "description") {
       let prompt = `Erstelle eine optimierte Produktbeschreibung für: ${contextTitle}`;
@@ -224,7 +229,12 @@ async function handleGenerateAIText(
       if (aiInstructions?.productDescriptionInstructions) {
         prompt += `\n\nAnweisungen:\n${aiInstructions.productDescriptionInstructions}`;
       }
-      prompt += `\n\nAktueller Inhalt:\n${currentValue}\n\nGib nur die Beschreibung zurück, ohne Erklärungen.`;
+      prompt += `\n\nAktueller Inhalt:\n${currentValue}`;
+      prompt += `\n\n⚠️ WICHTIG: Gib NUR die fertige HTML-Produktbeschreibung zurück.`;
+      prompt += `\n- KEINE Überschriften wie "Beschreibung:" oder "Produktbeschreibung:"`;
+      prompt += `\n- KEINE Markdown-Formatierung (**, ##, etc.)`;
+      prompt += `\n- KEINE Erklärungen oder Begründungen`;
+      prompt += `\n- NUR der reine HTML-Text`;
       generatedContent = await aiService.generateProductDescription(contextTitle, prompt);
     } else if (fieldType === "handle") {
       let prompt = `Erstelle einen SEO-freundlichen URL-Slug (handle) für dieses Produkt:\nTitel: ${contextTitle}\nBeschreibung: ${contextDescription}`;
@@ -259,7 +269,11 @@ async function handleGenerateAIText(
       } else {
         prompt += `\n\nDer SEO-Titel sollte:\n- Max. 60 Zeichen lang sein\n- Keywords enthalten\n- Zum Klicken anregen\n- Den Produktnutzen kommunizieren`;
       }
-      prompt += `\n\nGib nur den SEO-Titel zurück, ohne Erklärungen.`;
+      prompt += `\n\n⚠️ WICHTIG: Gib NUR den fertigen SEO-Titel zurück.`;
+      prompt += `\n- KEINE Überschriften wie "SEO-Titel:" oder "Titel:"`;
+      prompt += `\n- KEINE Markdown-Formatierung`;
+      prompt += `\n- KEINE Erklärungen`;
+      prompt += `\n- NUR der reine Titel-Text`;
       generatedContent = await aiService.generateProductTitle(prompt);
     } else if (fieldType === "metaDescription") {
       let prompt = `Erstelle eine optimierte Meta-Description für dieses Produkt:\nTitel: ${contextTitle}\nBeschreibung: ${contextDescription}`;
@@ -271,7 +285,13 @@ async function handleGenerateAIText(
       } else {
         prompt += `\n\nDie Meta-Description sollte:\n- 150-160 Zeichen lang sein\n- Keywords enthalten\n- Zum Klicken anregen\n- Den Produktnutzen klar kommunizieren\n- Einen Call-to-Action enthalten`;
       }
-      prompt += `\n\nGib nur die Meta-Description als reinen Text zurück, ohne HTML-Tags und ohne Erklärungen.`;
+      prompt += `\n\n⚠️ WICHTIG: Gib NUR die Meta-Description als reinen Text zurück.`;
+      prompt += `\n- KEIN Titel`;
+      prompt += `\n- KEINE Überschriften wie "Meta-Description:" oder "Titel:"`;
+      prompt += `\n- KEINE Markdown-Formatierung (**, ##, etc.)`;
+      prompt += `\n- KEINE HTML-Tags`;
+      prompt += `\n- KEINE zusätzlichen Erklärungen`;
+      prompt += `\n- NUR der reine Meta-Description-Text`;
       generatedContent = await aiService.generateProductTitle(prompt);
     }
 
@@ -358,7 +378,12 @@ async function handleFormatAIText(
       if (aiInstructions?.productTitleInstructions) {
         prompt += `\n\nFormatierungsanweisungen:\n${aiInstructions.productTitleInstructions}`;
       }
-      prompt += `\n\nBehalte den Inhalt und die Kernaussage bei, formatiere aber den Text gemäß den Richtlinien. Gib nur den formatierten Titel zurück, ohne Erklärungen.`;
+      prompt += `\n\nBehalte den Inhalt und die Kernaussage bei, formatiere aber den Text gemäß den Richtlinien.`;
+      prompt += `\n\n⚠️ WICHTIG: Gib NUR den formatierten Titel zurück.`;
+      prompt += `\n- KEINE Überschriften wie "Formatierter Titel:" oder "Titel:"`;
+      prompt += `\n- KEINE Markdown-Formatierung`;
+      prompt += `\n- KEINE Erklärungen`;
+      prompt += `\n- NUR der reine formatierte Titel-Text`;
       formattedContent = await aiService.generateProductTitle(prompt);
     } else if (fieldType === "description") {
       let prompt = `Formatiere die folgende Produktbeschreibung gemäß den Formatierungsrichtlinien:\n\nAktuelle Beschreibung:\n${currentValue}`;
@@ -368,7 +393,12 @@ async function handleFormatAIText(
       if (aiInstructions?.productDescriptionInstructions) {
         prompt += `\n\nFormatierungsanweisungen:\n${aiInstructions.productDescriptionInstructions}`;
       }
-      prompt += `\n\nBehalte den Inhalt und die Kernaussagen bei, formatiere aber den Text gemäß den Richtlinien (Struktur, HTML-Tags, Überschriften, etc.). Gib nur den formatierten Text zurück, ohne Erklärungen.`;
+      prompt += `\n\nBehalte den Inhalt und die Kernaussagen bei, formatiere aber den Text gemäß den Richtlinien (Struktur, HTML-Tags, Überschriften, etc.).`;
+      prompt += `\n\n⚠️ WICHTIG: Gib NUR die formatierte HTML-Beschreibung zurück.`;
+      prompt += `\n- KEINE Überschriften wie "Formatierte Beschreibung:" oder "Beschreibung:"`;
+      prompt += `\n- KEINE Markdown-Formatierung (**, ##, etc.)`;
+      prompt += `\n- KEINE Erklärungen`;
+      prompt += `\n- NUR der reine HTML-Text`;
       formattedContent = await aiService.generateProductDescription(currentValue, prompt);
     } else if (fieldType === "handle") {
       let prompt = `Formatiere den folgenden URL-Slug gemäß den Formatierungsrichtlinien:\n\nAktueller Slug:\n${currentValue}\n\nKontext - Titel: ${contextTitle}`;
@@ -403,7 +433,12 @@ async function handleFormatAIText(
       } else {
         prompt += `\n\nDer SEO-Titel sollte:\n- Max. 60 Zeichen lang sein\n- Keywords enthalten\n- Zum Klicken anregen\n- Den Produktnutzen kommunizieren`;
       }
-      prompt += `\n\nBehalte die Kernaussage bei, formatiere aber den Text gemäß den Richtlinien. Gib nur den formatierten SEO-Titel zurück, ohne Erklärungen.`;
+      prompt += `\n\nBehalte die Kernaussage bei, formatiere aber den Text gemäß den Richtlinien.`;
+      prompt += `\n\n⚠️ WICHTIG: Gib NUR den formatierten SEO-Titel zurück.`;
+      prompt += `\n- KEINE Überschriften wie "SEO-Titel:" oder "Formatiert:"`;
+      prompt += `\n- KEINE Markdown-Formatierung`;
+      prompt += `\n- KEINE Erklärungen`;
+      prompt += `\n- NUR der reine formatierte Titel-Text`;
       formattedContent = await aiService.generateProductTitle(prompt);
     } else if (fieldType === "metaDescription") {
       let prompt = `Formatiere die folgende Meta-Description gemäß den Formatierungsrichtlinien:\n\nAktuelle Meta-Description:\n${currentValue}\n\nKontext - Titel: ${contextTitle}\nBeschreibung: ${contextDescription}`;
@@ -415,7 +450,14 @@ async function handleFormatAIText(
       } else {
         prompt += `\n\nDie Meta-Description sollte:\n- 150-160 Zeichen lang sein\n- Keywords enthalten\n- Zum Klicken anregen\n- Den Produktnutzen klar kommunizieren\n- Einen Call-to-Action enthalten`;
       }
-      prompt += `\n\nBehalte die Kernaussage bei, formatiere aber den Text gemäß den Richtlinien. Gib nur die formatierte Meta-Description als reinen Text zurück, ohne HTML-Tags und ohne Erklärungen.`;
+      prompt += `\n\nBehalte die Kernaussage bei, formatiere aber den Text gemäß den Richtlinien.`;
+      prompt += `\n\n⚠️ WICHTIG: Gib NUR die formatierte Meta-Description als reinen Text zurück.`;
+      prompt += `\n- KEIN Titel`;
+      prompt += `\n- KEINE Überschriften wie "Meta-Description:" oder "Formatiert:"`;
+      prompt += `\n- KEINE Markdown-Formatierung (**, ##, etc.)`;
+      prompt += `\n- KEINE HTML-Tags`;
+      prompt += `\n- KEINE Erklärungen`;
+      prompt += `\n- NUR der reine Meta-Description-Text`;
       formattedContent = await aiService.generateProductTitle(prompt);
     }
 
