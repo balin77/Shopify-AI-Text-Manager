@@ -8,6 +8,7 @@ import { SeoSidebar } from "../components/SeoSidebar";
 import { ProductList } from "../components/products/ProductList";
 import { ProductEditor } from "../components/products/ProductEditor";
 import { useI18n } from "../contexts/I18nContext";
+import { useInfoBox } from "../contexts/InfoBoxContext";
 import { useProductFields } from "../hooks/useProductFields";
 import { useAISuggestions } from "../hooks/useAISuggestions";
 import { handleProductActions } from "../actions/product.actions";
@@ -263,6 +264,7 @@ export default function Products() {
   const fetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
   const { t, locale } = useI18n();
+  const { showInfoBox } = useInfoBox();
 
   console.log('[PRODUCTS] Current locale:', locale);
   console.log('[PRODUCTS] t.products.resourceName:', t.products.resourceName);
@@ -446,6 +448,27 @@ export default function Products() {
       }));
     }
   }, [fetcher.data]);
+
+  // Show global InfoBox for success/error messages
+  useEffect(() => {
+    if (fetcher.data?.success &&
+        !(fetcher.data as any).generatedContent &&
+        !(fetcher.data as any).translatedValue &&
+        !(fetcher.data as any).translatedName &&
+        !(fetcher.data as any).altText &&
+        !(fetcher.data as any).generatedAltTexts) {
+      showInfoBox(t.common?.changesSaved || "Changes saved successfully!", "success", t.common?.success || "Success");
+    } else if (fetcher.data && !fetcher.data.success && 'error' in fetcher.data) {
+      showInfoBox(fetcher.data.error as string, "critical", t.common?.error || "Error");
+    }
+  }, [fetcher.data, showInfoBox, t]);
+
+  // Show loader error
+  useEffect(() => {
+    if (error) {
+      showInfoBox(error, "critical", t.common?.error || "Error");
+    }
+  }, [error, showInfoBox, t]);
 
   // Reset alt-text state when product changes
   useEffect(() => {
@@ -725,12 +748,6 @@ export default function Products() {
 
         {/* Middle: Product Editor */}
         <div style={{ flex: 1, overflow: "auto", minWidth: 0 }}>
-          {error && (
-            <div style={{ marginBottom: "1rem" }}>
-              <Banner title="Fehler" tone="critical"><p>{error}</p></Banner>
-            </div>
-          )}
-
           <ProductEditor
             product={selectedProduct}
             shopLocales={shopLocales}

@@ -23,6 +23,7 @@ import { AIService } from "../../src/services/ai.service";
 import { TranslationService } from "../../src/services/translation.service";
 import { ShopifyContentService } from "../../src/services/shopify-content.service";
 import { useI18n } from "../contexts/I18nContext";
+import { useInfoBox } from "../contexts/InfoBoxContext";
 import {
   contentEditorStyles,
   useNavigationGuard,
@@ -275,6 +276,7 @@ export default function PagesPage() {
   const fetcher = useFetcher<typeof action>();
   const navigate = useNavigate();
   const { t } = useI18n();
+  const { showInfoBox } = useInfoBox();
 
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [currentLanguage, setCurrentLanguage] = useState(primaryLocale);
@@ -354,6 +356,22 @@ export default function PagesPage() {
       setters[fieldType]?.(translatedValue);
     }
   }, [fetcher.data]);
+
+  // Show global InfoBox for success/error messages
+  useEffect(() => {
+    if (fetcher.data?.success && !(fetcher.data as any).generatedContent && !(fetcher.data as any).translatedValue) {
+      showInfoBox(t.content?.changesSaved || "Changes saved successfully!", "success", t.content?.success || "Success");
+    } else if (fetcher.data && !fetcher.data.success && 'error' in fetcher.data) {
+      showInfoBox(fetcher.data.error as string, "critical", t.content?.error || "Error");
+    }
+  }, [fetcher.data, showInfoBox, t]);
+
+  // Show loader error
+  useEffect(() => {
+    if (error) {
+      showInfoBox(error, "critical", t.content?.error || "Error");
+    }
+  }, [error, showInfoBox, t]);
 
   const handleSaveContent = () => {
     if (!selectedItemId || !hasChanges) return;
@@ -514,20 +532,6 @@ export default function PagesPage() {
 
         {/* Middle: Page Editor */}
         <div style={{ flex: 1, overflow: "auto", minWidth: 0 }}>
-          {error && (
-            <div style={{ marginBottom: "1rem" }}>
-              <Banner title={t.content.error} tone="critical"><p>{error}</p></Banner>
-            </div>
-          )}
-
-          {fetcher.data?.success && !(fetcher.data as any).generatedContent && (
-            <div style={{ marginBottom: "1rem" }}>
-              <Banner title={t.content.success} tone="success">
-                <p>{t.content.changesSaved}</p>
-              </Banner>
-            </div>
-          )}
-
           <Card padding="600">
             {selectedItem ? (
               <BlockStack gap="500">

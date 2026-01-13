@@ -24,6 +24,7 @@ import { ContentTypeNavigation } from "../components/ContentTypeNavigation";
 import { ThemeContentViewer } from "../components/ThemeContentViewer";
 import { SaveDiscardButtons } from "../components/SaveDiscardButtons";
 import { useI18n } from "../contexts/I18nContext";
+import { useInfoBox } from "../contexts/InfoBoxContext";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
@@ -95,6 +96,7 @@ export default function TemplatesPage() {
   const { themes, shop, shopLocales, primaryLocale, error } = useLoaderData<typeof loader>();
   const fetcher = useFetcher();
   const { t } = useI18n();
+  const { showInfoBox } = useInfoBox();
   const saveButtonRef = useRef<HTMLDivElement>(null);
 
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
@@ -272,6 +274,22 @@ export default function TemplatesPage() {
       }));
     }
   }, [fetcher.data]);
+
+  // Show global InfoBox for success/error messages
+  useEffect(() => {
+    if (fetcher.data?.success && !(fetcher.data as any).generatedContent && !(fetcher.data as any).translatedValue) {
+      showInfoBox(t.content?.changesSaved || "Changes saved successfully!", "success", t.content?.success || "Success");
+    } else if (fetcher.data && !fetcher.data.success && 'error' in fetcher.data) {
+      showInfoBox(fetcher.data.error as string, "critical", t.content?.error || "Error");
+    }
+  }, [fetcher.data, showInfoBox, t]);
+
+  // Show loader error
+  useEffect(() => {
+    if (error) {
+      showInfoBox(error, "critical", t.content?.error || "Error");
+    }
+  }, [error, showInfoBox, t]);
 
   // Handle item click: load data if not loaded, then select
   const handleItemClick = (itemId: string, groupId: string) => {
@@ -510,12 +528,6 @@ export default function TemplatesPage() {
 
         {/* Middle: Theme Content Viewer */}
         <div style={{ flex: 1, overflow: "auto", minWidth: 0 }}>
-          {error && (
-            <div style={{ marginBottom: "1rem" }}>
-              <Banner title={t.content?.error || "Error"} tone="critical"><p>{error}</p></Banner>
-            </div>
-          )}
-
           <Card padding="600">
             {isLoading ? (
               <div style={{ textAlign: "center", padding: "4rem 2rem" }}>
@@ -563,13 +575,6 @@ export default function TemplatesPage() {
                 <Text as="p" variant="bodySm" tone="subdued">
                   {t.content?.idPrefix || "ID:"} {selectedItem.id.split("/").pop()}
                 </Text>
-
-                {/* Success Banner */}
-                {fetcher.data?.success && fetcher.state === "idle" && !('translations' in fetcher.data) && !('generatedContent' in fetcher.data) && !('translatedValue' in fetcher.data) && !('translatedFields' in fetcher.data) && (
-                  <Banner tone="success">
-                    <p>{t.content?.saveSuccess || "Changes saved successfully!"}</p>
-                  </Banner>
-                )}
 
                 {/* Theme Content Viewer */}
                 <ThemeContentViewer
