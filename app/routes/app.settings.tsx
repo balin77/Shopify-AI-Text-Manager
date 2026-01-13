@@ -17,6 +17,9 @@ import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
 import { db } from "../db.server";
 import { useI18n } from "../contexts/I18nContext";
+import { sanitizeFormatExample } from "../utils/sanitizer";
+import { AISettingsSchema, AIInstructionsSchema, parseFormData } from "../utils/validation";
+import { toSafeErrorResponse } from "../utils/error-handler";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
@@ -145,119 +148,109 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   try {
     if (actionType === "saveInstructions") {
-      // Save AI instructions
+      // Validate and sanitize AI instructions
+      const validationResult = parseFormData(formData, AIInstructionsSchema);
+
+      if (!validationResult.success) {
+        return json({ success: false, error: validationResult.error }, { status: 400 });
+      }
+
+      const data = validationResult.data;
+
+      // Sanitize HTML content in format examples
+      const sanitizedData = {
+        titleFormat: data.titleFormat || null,
+        titleInstructions: data.titleInstructions || null,
+        descriptionFormat: data.descriptionFormat ? sanitizeFormatExample(data.descriptionFormat) : null,
+        descriptionInstructions: data.descriptionInstructions || null,
+        handleFormat: data.handleFormat || null,
+        handleInstructions: data.handleInstructions || null,
+        seoTitleFormat: data.seoTitleFormat || null,
+        seoTitleInstructions: data.seoTitleInstructions || null,
+        metaDescFormat: data.metaDescFormat || null,
+        metaDescInstructions: data.metaDescInstructions || null,
+        altTextFormat: data.altTextFormat || null,
+        altTextInstructions: data.altTextInstructions || null,
+      };
+
       await db.aIInstructions.upsert({
         where: { shop: session.shop },
-        update: {
-          titleFormat: (formData.get("titleFormat") as string) || null,
-          titleInstructions: (formData.get("titleInstructions") as string) || null,
-          descriptionFormat: (formData.get("descriptionFormat") as string) || null,
-          descriptionInstructions: (formData.get("descriptionInstructions") as string) || null,
-          handleFormat: (formData.get("handleFormat") as string) || null,
-          handleInstructions: (formData.get("handleInstructions") as string) || null,
-          seoTitleFormat: (formData.get("seoTitleFormat") as string) || null,
-          seoTitleInstructions: (formData.get("seoTitleInstructions") as string) || null,
-          metaDescFormat: (formData.get("metaDescFormat") as string) || null,
-          metaDescInstructions: (formData.get("metaDescInstructions") as string) || null,
-          altTextFormat: (formData.get("altTextFormat") as string) || null,
-          altTextInstructions: (formData.get("altTextInstructions") as string) || null,
-        },
+        update: sanitizedData,
         create: {
           shop: session.shop,
-          titleFormat: (formData.get("titleFormat") as string) || null,
-          titleInstructions: (formData.get("titleInstructions") as string) || null,
-          descriptionFormat: (formData.get("descriptionFormat") as string) || null,
-          descriptionInstructions: (formData.get("descriptionInstructions") as string) || null,
-          handleFormat: (formData.get("handleFormat") as string) || null,
-          handleInstructions: (formData.get("handleInstructions") as string) || null,
-          seoTitleFormat: (formData.get("seoTitleFormat") as string) || null,
-          seoTitleInstructions: (formData.get("seoTitleInstructions") as string) || null,
-          metaDescFormat: (formData.get("metaDescFormat") as string) || null,
-          metaDescInstructions: (formData.get("metaDescInstructions") as string) || null,
-          altTextFormat: (formData.get("altTextFormat") as string) || null,
-          altTextInstructions: (formData.get("altTextInstructions") as string) || null,
+          ...sanitizedData,
         },
       });
 
       return json({ success: true });
     } else {
-      // Save AI settings
-      const huggingfaceApiKey = formData.get("huggingfaceApiKey") as string;
-      const geminiApiKey = formData.get("geminiApiKey") as string;
-      const claudeApiKey = formData.get("claudeApiKey") as string;
-      const openaiApiKey = formData.get("openaiApiKey") as string;
-      const grokApiKey = formData.get("grokApiKey") as string;
-      const deepseekApiKey = formData.get("deepseekApiKey") as string;
-      const preferredProvider = formData.get("preferredProvider") as string;
-      const appLanguage = formData.get("appLanguage") as string;
+      // Validate and save AI settings
+      const validationResult = parseFormData(formData, AISettingsSchema);
 
-      // Rate limits
-      const hfMaxTokensPerMinute = parseInt(formData.get("hfMaxTokensPerMinute") as string) || null;
-      const hfMaxRequestsPerMinute = parseInt(formData.get("hfMaxRequestsPerMinute") as string) || null;
-      const geminiMaxTokensPerMinute = parseInt(formData.get("geminiMaxTokensPerMinute") as string) || null;
-      const geminiMaxRequestsPerMinute = parseInt(formData.get("geminiMaxRequestsPerMinute") as string) || null;
-      const claudeMaxTokensPerMinute = parseInt(formData.get("claudeMaxTokensPerMinute") as string) || null;
-      const claudeMaxRequestsPerMinute = parseInt(formData.get("claudeMaxRequestsPerMinute") as string) || null;
-      const openaiMaxTokensPerMinute = parseInt(formData.get("openaiMaxTokensPerMinute") as string) || null;
-      const openaiMaxRequestsPerMinute = parseInt(formData.get("openaiMaxRequestsPerMinute") as string) || null;
-      const grokMaxTokensPerMinute = parseInt(formData.get("grokMaxTokensPerMinute") as string) || null;
-      const grokMaxRequestsPerMinute = parseInt(formData.get("grokMaxRequestsPerMinute") as string) || null;
-      const deepseekMaxTokensPerMinute = parseInt(formData.get("deepseekMaxTokensPerMinute") as string) || null;
-      const deepseekMaxRequestsPerMinute = parseInt(formData.get("deepseekMaxRequestsPerMinute") as string) || null;
+      if (!validationResult.success) {
+        return json({ success: false, error: validationResult.error }, { status: 400 });
+      }
+
+      const data = validationResult.data;
 
       await db.aISettings.upsert({
         where: { shop: session.shop },
         update: {
-          huggingfaceApiKey: huggingfaceApiKey || null,
-          geminiApiKey: geminiApiKey || null,
-          claudeApiKey: claudeApiKey || null,
-          openaiApiKey: openaiApiKey || null,
-          grokApiKey: grokApiKey || null,
-          deepseekApiKey: deepseekApiKey || null,
-          preferredProvider,
-          appLanguage,
-          hfMaxTokensPerMinute,
-          hfMaxRequestsPerMinute,
-          geminiMaxTokensPerMinute,
-          geminiMaxRequestsPerMinute,
-          claudeMaxTokensPerMinute,
-          claudeMaxRequestsPerMinute,
-          openaiMaxTokensPerMinute,
-          openaiMaxRequestsPerMinute,
-          grokMaxTokensPerMinute,
-          grokMaxRequestsPerMinute,
-          deepseekMaxTokensPerMinute,
-          deepseekMaxRequestsPerMinute,
+          huggingfaceApiKey: data.huggingfaceApiKey || null,
+          geminiApiKey: data.geminiApiKey || null,
+          claudeApiKey: data.claudeApiKey || null,
+          openaiApiKey: data.openaiApiKey || null,
+          grokApiKey: data.grokApiKey || null,
+          deepseekApiKey: data.deepseekApiKey || null,
+          preferredProvider: data.preferredProvider,
+          appLanguage: data.appLanguage,
+          hfMaxTokensPerMinute: data.hfMaxTokensPerMinute,
+          hfMaxRequestsPerMinute: data.hfMaxRequestsPerMinute,
+          geminiMaxTokensPerMinute: data.geminiMaxTokensPerMinute,
+          geminiMaxRequestsPerMinute: data.geminiMaxRequestsPerMinute,
+          claudeMaxTokensPerMinute: data.claudeMaxTokensPerMinute,
+          claudeMaxRequestsPerMinute: data.claudeMaxRequestsPerMinute,
+          openaiMaxTokensPerMinute: data.openaiMaxTokensPerMinute,
+          openaiMaxRequestsPerMinute: data.openaiMaxRequestsPerMinute,
+          grokMaxTokensPerMinute: data.grokMaxTokensPerMinute,
+          grokMaxRequestsPerMinute: data.grokMaxRequestsPerMinute,
+          deepseekMaxTokensPerMinute: data.deepseekMaxTokensPerMinute,
+          deepseekMaxRequestsPerMinute: data.deepseekMaxRequestsPerMinute,
         },
         create: {
           shop: session.shop,
-          huggingfaceApiKey: huggingfaceApiKey || null,
-          geminiApiKey: geminiApiKey || null,
-          claudeApiKey: claudeApiKey || null,
-          openaiApiKey: openaiApiKey || null,
-          grokApiKey: grokApiKey || null,
-          deepseekApiKey: deepseekApiKey || null,
-          preferredProvider,
-          appLanguage,
-          hfMaxTokensPerMinute,
-          hfMaxRequestsPerMinute,
-          geminiMaxTokensPerMinute,
-          geminiMaxRequestsPerMinute,
-          claudeMaxTokensPerMinute,
-          claudeMaxRequestsPerMinute,
-          openaiMaxTokensPerMinute,
-          openaiMaxRequestsPerMinute,
-          grokMaxTokensPerMinute,
-          grokMaxRequestsPerMinute,
-          deepseekMaxTokensPerMinute,
-          deepseekMaxRequestsPerMinute,
+          huggingfaceApiKey: data.huggingfaceApiKey || null,
+          geminiApiKey: data.geminiApiKey || null,
+          claudeApiKey: data.claudeApiKey || null,
+          openaiApiKey: data.openaiApiKey || null,
+          grokApiKey: data.grokApiKey || null,
+          deepseekApiKey: data.deepseekApiKey || null,
+          preferredProvider: data.preferredProvider,
+          appLanguage: data.appLanguage,
+          hfMaxTokensPerMinute: data.hfMaxTokensPerMinute,
+          hfMaxRequestsPerMinute: data.hfMaxRequestsPerMinute,
+          geminiMaxTokensPerMinute: data.geminiMaxTokensPerMinute,
+          geminiMaxRequestsPerMinute: data.geminiMaxRequestsPerMinute,
+          claudeMaxTokensPerMinute: data.claudeMaxTokensPerMinute,
+          claudeMaxRequestsPerMinute: data.claudeMaxRequestsPerMinute,
+          openaiMaxTokensPerMinute: data.openaiMaxTokensPerMinute,
+          openaiMaxRequestsPerMinute: data.openaiMaxRequestsPerMinute,
+          grokMaxTokensPerMinute: data.grokMaxTokensPerMinute,
+          grokMaxRequestsPerMinute: data.grokMaxRequestsPerMinute,
+          deepseekMaxTokensPerMinute: data.deepseekMaxTokensPerMinute,
+          deepseekMaxRequestsPerMinute: data.deepseekMaxRequestsPerMinute,
         },
       });
 
       return json({ success: true });
     }
-  } catch (error: any) {
-    return json({ success: false, error: error.message }, { status: 500 });
+  } catch (error: unknown) {
+    // Use safe error handler to prevent information leakage
+    const safeError = toSafeErrorResponse(error, {
+      shop: session.shop,
+      actionType,
+    });
+    return json({ success: false, error: safeError.message }, { status: safeError.statusCode });
   }
 };
 

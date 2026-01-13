@@ -35,7 +35,7 @@ const shopify = shopifyApp({
       console.log("🔐 [SHOPIFY.SERVER] afterAuth hook triggered");
       console.log("  - Shop:", session.shop);
       console.log("  - Session ID:", session.id);
-      console.log("  - Access Token:", session.accessToken ? "✅ Present" : "❌ Missing");
+      console.log("  - Has Access Token:", session.accessToken ? true : false);
       console.log("  - Scopes:", session.scope);
 
       try {

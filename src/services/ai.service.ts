@@ -3,6 +3,7 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import { AIQueueService } from './ai-queue.service';
+import { sanitizePromptInput } from '../../app/utils/prompt-sanitizer';
 
 export type AIProvider = 'huggingface' | 'gemini' | 'claude' | 'openai' | 'grok' | 'deepseek';
 
@@ -77,10 +78,17 @@ export class AIService {
     metaDescription: string;
     reasoning: string;
   }> {
+    // Sanitize inputs to prevent prompt injection
+    const sanitizedTitle = sanitizePromptInput(productTitle, { fieldType: 'title' });
+    const sanitizedDescription = sanitizePromptInput(productDescription, {
+      fieldType: 'description',
+      allowNewlines: true
+    });
+
     const prompt = `Du bist ein SEO-Experte für E-Commerce. Optimiere die folgenden Produktinformationen für Suchmaschinen.
 
-Produkttitel: ${productTitle}
-Produktbeschreibung: ${productDescription}
+Produkttitel: ${sanitizedTitle}
+Produktbeschreibung: ${sanitizedDescription}
 
 Erstelle:
 1. Einen optimierten SEO-Titel (max. 60 Zeichen)
@@ -103,9 +111,15 @@ Antworte im folgenden JSON-Format:
     fromLang: string,
     toLang: string
   ): Promise<string> {
+    // Sanitize content before translation
+    const sanitizedContent = sanitizePromptInput(content, {
+      maxLength: 5000,
+      allowNewlines: true
+    });
+
     const prompt = `Übersetze den folgenden Text von ${fromLang} nach ${toLang}. Behalte HTML-Tags bei.
 
-Text: ${content}
+Text: ${sanitizedContent}
 
 Gib nur die Übersetzung zurück, ohne zusätzliche Erklärungen.`;
 
@@ -117,6 +131,10 @@ Gib nur die Übersetzung zurück, ohne zusätzliche Erklärungen.`;
     metaDescription: string,
     targetLocales: string[]
   ): Promise<Record<string, { seoTitle: string; metaDescription: string }>> {
+    // Sanitize SEO fields
+    const sanitizedTitle = sanitizePromptInput(seoTitle, { fieldType: 'seoTitle' });
+    const sanitizedDescription = sanitizePromptInput(metaDescription, { fieldType: 'metaDescription' });
+
     const localeNames: Record<string, string> = {
       en: 'Englisch',
       fr: 'Französisch',
@@ -128,8 +146,8 @@ Gib nur die Übersetzung zurück, ohne zusätzliche Erklärungen.`;
 
     const prompt = `Übersetze diese SEO-Texte von Deutsch in ${targetLanguages}.
 
-SEO-Titel (DE): ${seoTitle}
-Meta-Description (DE): ${metaDescription}
+SEO-Titel (DE): ${sanitizedTitle}
+Meta-Description (DE): ${sanitizedDescription}
 
 Achte darauf, dass die Zeichenlängen ähnlich bleiben und die Übersetzungen natürlich klingen.
 
@@ -167,6 +185,24 @@ Antworte im JSON-Format:
       locale: string;
     }
   ): Promise<{ content: string; reasoning: string }> {
+    // Sanitize all context fields
+    const sanitizedContext = {
+      productTitle: sanitizePromptInput(context.productTitle, { fieldType: 'title' }),
+      productDescription: sanitizePromptInput(context.productDescription, {
+        fieldType: 'description',
+        allowNewlines: true
+      }),
+      productType: sanitizePromptInput(context.productType, { maxLength: 100 }),
+      locale: context.locale,
+    };
+
+    const sanitizedCurrentValue = currentValue
+      ? sanitizePromptInput(currentValue, {
+          fieldType: fieldType as any,
+          allowNewlines: true
+        })
+      : '';
+
     const localeNames: Record<string, string> = {
       de: 'Deutsch',
       en: 'Englisch',
@@ -175,20 +211,20 @@ Antworte im JSON-Format:
       it: 'Italienisch',
     };
 
-    const language = localeNames[context.locale] || 'Deutsch';
+    const language = localeNames[sanitizedContext.locale] || 'Deutsch';
     const isTitle = fieldType === 'title';
     const fieldLabel = isTitle ? 'Titel' : 'Beschreibung';
 
     let prompt = '';
 
-    if (!currentValue || currentValue.trim().length === 0) {
+    if (!sanitizedCurrentValue || sanitizedCurrentValue.trim().length === 0) {
       // Generate new content from scratch
       prompt = `Du bist ein E-Commerce-Experte und Content-Writer. Generiere einen ${fieldLabel} für ein Produkt.
 
 Produktkontext:
-- Titel: ${context.productTitle}
-- Produkttyp: ${context.productType}
-${!isTitle ? `- Beschreibung: ${context.productDescription}` : ''}
+- Titel: ${sanitizedContext.productTitle}
+- Produkttyp: ${sanitizedContext.productType}
+${!isTitle ? `- Beschreibung: ${sanitizedContext.productDescription}` : ''}
 
 Aufgabe: Erstelle einen ${isTitle ? 'prägnanten, verkaufsstarken Produkttitel (max. 80 Zeichen)' : 'detaillierten, ansprechenden Produktbeschreibung (200-400 Wörter) mit HTML-Formatierung (<p>, <strong>, <ul>, <li>)'} in ${language}.
 
@@ -211,11 +247,11 @@ Antworte im folgenden JSON-Format:
       // Improve existing content
       prompt = `Du bist ein E-Commerce-Experte und Content-Writer. Verbessere den folgenden ${fieldLabel}.
 
-Aktueller ${fieldLabel}: ${currentValue}
+Aktueller ${fieldLabel}: ${sanitizedCurrentValue}
 
 Produktkontext:
-- Titel: ${context.productTitle}
-- Produkttyp: ${context.productType}
+- Titel: ${sanitizedContext.productTitle}
+- Produkttyp: ${sanitizedContext.productType}
 
 Aufgabe: Verbessere und optimiere den ${fieldLabel} in ${language}.
 
@@ -246,6 +282,15 @@ Antworte im folgenden JSON-Format:
     fields: Record<string, string>,
     targetLocales: string[]
   ): Promise<Record<string, Record<string, string>>> {
+    // Sanitize all field values
+    const sanitizedFields: Record<string, string> = {};
+    for (const [key, value] of Object.entries(fields)) {
+      sanitizedFields[key] = sanitizePromptInput(value, {
+        fieldType: key as any,
+        allowNewlines: key === 'description',
+      });
+    }
+
     const localeNames: Record<string, string> = {
       en: 'Englisch',
       fr: 'Französisch',
@@ -264,7 +309,7 @@ Antworte im folgenden JSON-Format:
     const targetLanguages = targetLocales.map((loc) => localeNames[loc] || loc).join(', ');
 
     // Build the fields section for the prompt
-    const fieldsText = Object.entries(fields)
+    const fieldsText = Object.entries(sanitizedFields)
       .map(([key, value]) => `${fieldNames[key] || key} (DE): ${value}`)
       .join('\n');
 
@@ -370,9 +415,15 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
   }
 
   async generateProductTitle(description: string): Promise<string> {
+    // Sanitize description input
+    const sanitizedDescription = sanitizePromptInput(description, {
+      fieldType: 'description',
+      allowNewlines: true
+    });
+
     const prompt = `Du bist ein E-Commerce-Experte. Erstelle einen prägnanten, verkaufsstarken Produkttitel basierend auf dieser Beschreibung:
 
-${description}
+${sanitizedDescription}
 
 Der Titel sollte:
 - Max. 80 Zeichen lang sein
@@ -386,9 +437,18 @@ Gib nur den Titel zurück, ohne zusätzliche Erklärungen.`;
   }
 
   async generateProductDescription(title: string, currentDescription: string): Promise<string> {
-    const prompt = `Du bist ein E-Commerce-Experte. ${currentDescription ? 'Verbessere' : 'Erstelle'} eine detaillierte Produktbeschreibung für: ${title}
+    // Sanitize inputs
+    const sanitizedTitle = sanitizePromptInput(title, { fieldType: 'title' });
+    const sanitizedCurrentDescription = currentDescription
+      ? sanitizePromptInput(currentDescription, {
+          fieldType: 'description',
+          allowNewlines: true
+        })
+      : '';
 
-${currentDescription ? `Aktuelle Beschreibung: ${currentDescription}` : ''}
+    const prompt = `Du bist ein E-Commerce-Experte. ${sanitizedCurrentDescription ? 'Verbessere' : 'Erstelle'} eine detaillierte Produktbeschreibung für: ${sanitizedTitle}
+
+${sanitizedCurrentDescription ? `Aktuelle Beschreibung: ${sanitizedCurrentDescription}` : ''}
 
 Die Beschreibung sollte:
 - 200-400 Wörter umfassen
@@ -403,9 +463,14 @@ Gib nur die HTML-formatierte Beschreibung zurück, ohne zusätzliche Erklärunge
   }
 
   async generateImageAltText(imageUrl: string, productTitle?: string, customPrompt?: string): Promise<string> {
+    // Sanitize product title if provided
+    const sanitizedTitle = productTitle
+      ? sanitizePromptInput(productTitle, { fieldType: 'title' })
+      : '';
+
     const prompt = customPrompt || `Du bist ein SEO-Experte für E-Commerce. Erstelle einen optimierten Alt-Text für ein Produktbild.
 
-${productTitle ? `Produkt: ${productTitle}` : ''}
+${sanitizedTitle ? `Produkt: ${sanitizedTitle}` : ''}
 Bild-URL: ${imageUrl}
 
 Der Alt-Text sollte:
