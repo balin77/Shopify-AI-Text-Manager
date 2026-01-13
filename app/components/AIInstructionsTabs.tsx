@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { BlockStack, Text, Button, InlineStack } from "@shopify/polaris";
 import { AIInstructionFieldGroup } from "./AIInstructionFieldGroup";
 import {
@@ -72,6 +72,8 @@ interface AIInstructionsTabsProps {
 export function AIInstructionsTabs({ instructions, fetcher }: AIInstructionsTabsProps) {
   const [selectedTab, setSelectedTab] = useState(0);
   const [localInstructions, setLocalInstructions] = useState<Instructions>(instructions);
+  const [htmlModes, setHtmlModes] = useState<Record<string, "html" | "rendered">>({});
+  const editorRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   const tabs = [
     {
@@ -127,6 +129,56 @@ export function AIInstructionsTabs({ instructions, fetcher }: AIInstructionsTabs
     });
 
     fetcher.submit(formData, { method: "POST" });
+  };
+
+  const handleToggleHtmlMode = (fieldName: string) => {
+    setHtmlModes((prev) => ({
+      ...prev,
+      [fieldName]: prev[fieldName] === "html" ? "rendered" : "html",
+    }));
+  };
+
+  const handleFormatHtml = (fieldName: string, command: string) => {
+    const editor = editorRefs.current[fieldName];
+    if (!editor) return;
+
+    editor.focus();
+
+    switch (command) {
+      case "bold":
+        document.execCommand("bold", false);
+        break;
+      case "italic":
+        document.execCommand("italic", false);
+        break;
+      case "underline":
+        document.execCommand("underline", false);
+        break;
+      case "h1":
+        document.execCommand("formatBlock", false, "<h1>");
+        break;
+      case "h2":
+        document.execCommand("formatBlock", false, "<h2>");
+        break;
+      case "h3":
+        document.execCommand("formatBlock", false, "<h3>");
+        break;
+      case "ul":
+        document.execCommand("insertUnorderedList", false);
+        break;
+      case "ol":
+        document.execCommand("insertOrderedList", false);
+        break;
+      case "p":
+        document.execCommand("formatBlock", false, "<p>");
+        break;
+      case "br":
+        document.execCommand("insertHTML", false, "<br>");
+        break;
+    }
+
+    // Update the field value after formatting
+    handleFieldChange(fieldName, editor.innerHTML);
   };
 
   // Check if there are unsaved changes
@@ -238,6 +290,10 @@ export function AIInstructionsTabs({ instructions, fetcher }: AIInstructionsTabs
                   formatLabel="Formatbeispiel"
                   instructionsLabel="Anweisungen"
                   isHtmlField={true}
+                  htmlMode={htmlModes['productDescriptionFormat'] || 'rendered'}
+                  onToggleHtmlMode={() => handleToggleHtmlMode('productDescriptionFormat')}
+                  onFormatHtml={(cmd) => handleFormatHtml('productDescriptionFormat', cmd)}
+                  editorRef={(el) => { editorRefs.current['productDescriptionFormat'] = el; return { current: el }; }}
                 />
 
                 <AIInstructionFieldGroup
@@ -309,6 +365,10 @@ export function AIInstructionsTabs({ instructions, fetcher }: AIInstructionsTabs
                   formatLabel="Formatbeispiel"
                   instructionsLabel="Anweisungen"
                   isHtmlField={true}
+                  htmlMode={htmlModes['collectionDescriptionFormat'] || 'rendered'}
+                  onToggleHtmlMode={() => handleToggleHtmlMode('collectionDescriptionFormat')}
+                  onFormatHtml={(cmd) => handleFormatHtml('collectionDescriptionFormat', cmd)}
+                  editorRef={(el) => { editorRefs.current['collectionDescriptionFormat'] = el; return { current: el }; }}
                 />
 
                 <AIInstructionFieldGroup
@@ -380,6 +440,10 @@ export function AIInstructionsTabs({ instructions, fetcher }: AIInstructionsTabs
                   formatLabel="Formatbeispiel"
                   instructionsLabel="Anweisungen"
                   isHtmlField={true}
+                  htmlMode={htmlModes['blogDescriptionFormat'] || 'rendered'}
+                  onToggleHtmlMode={() => handleToggleHtmlMode('blogDescriptionFormat')}
+                  onFormatHtml={(cmd) => handleFormatHtml('blogDescriptionFormat', cmd)}
+                  editorRef={(el) => { editorRefs.current['blogDescriptionFormat'] = el; return { current: el }; }}
                 />
 
                 <AIInstructionFieldGroup
@@ -451,6 +515,10 @@ export function AIInstructionsTabs({ instructions, fetcher }: AIInstructionsTabs
                   formatLabel="Formatbeispiel"
                   instructionsLabel="Anweisungen"
                   isHtmlField={true}
+                  htmlMode={htmlModes['pageDescriptionFormat'] || 'rendered'}
+                  onToggleHtmlMode={() => handleToggleHtmlMode('pageDescriptionFormat')}
+                  onFormatHtml={(cmd) => handleFormatHtml('pageDescriptionFormat', cmd)}
+                  editorRef={(el) => { editorRefs.current['pageDescriptionFormat'] = el; return { current: el }; }}
                 />
 
                 <AIInstructionFieldGroup
@@ -487,6 +555,10 @@ export function AIInstructionsTabs({ instructions, fetcher }: AIInstructionsTabs
                   formatLabel="Formatbeispiel"
                   instructionsLabel="Anweisungen"
                   isHtmlField={true}
+                  htmlMode={htmlModes['policyDescriptionFormat'] || 'rendered'}
+                  onToggleHtmlMode={() => handleToggleHtmlMode('policyDescriptionFormat')}
+                  onFormatHtml={(cmd) => handleFormatHtml('policyDescriptionFormat', cmd)}
+                  editorRef={(el) => { editorRefs.current['policyDescriptionFormat'] = el; return { current: el }; }}
                 />
               </>
             )}
