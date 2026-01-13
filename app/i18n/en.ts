@@ -25,7 +25,7 @@ export const en: Translation = {
     seoTitle: "SEO title",
     metaDescription: "Meta description",
     primaryLanguage: "Primary language",
-    primaryLanguageSuffix: "(Primary language)",
+    primaryLanguageSuffix: "Primary language",
     characters: "characters",
     recommended: "recommended",
     preview: "Preview",

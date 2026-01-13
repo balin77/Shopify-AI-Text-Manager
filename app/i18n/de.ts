@@ -23,7 +23,7 @@ export const de = {
     seoTitle: "SEO-Titel",
     metaDescription: "Meta-Beschreibung",
     primaryLanguage: "Hauptsprache",
-    primaryLanguageSuffix: "(Hauptsprache)",
+    primaryLanguageSuffix: "Hauptsprache",
     characters: "Zeichen",
     recommended: "empfohlen",
     preview: "Vorschau",
