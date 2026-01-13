@@ -6,7 +6,9 @@ import "@shopify/polaris/build/esm/styles.css";
 import { authenticate } from "../shopify.server";
 import { I18nProvider } from "../contexts/I18nContext";
 import { InfoBoxProvider } from "../contexts/InfoBoxContext";
+import { PlanProvider } from "../contexts/PlanContext";
 import type { Locale } from "../i18n";
+import type { Plan } from "../config/plans";
 
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -23,7 +25,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     console.log("⚡ [APP.TSX LOADER] Prefetch request detected - returning default language");
     // Return default data for prefetch - no auth needed
     return json({
-      appLanguage: "de" as Locale
+      appLanguage: "de" as Locale,
+      subscriptionPlan: "basic" as Plan,
     });
   }
 
@@ -43,10 +46,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     console.log("✅ [APP.TSX LOADER] Settings loaded:", settings ? "Found" : "Not found");
 
     const appLanguage = (settings?.appLanguage || "de") as Locale;
+    const subscriptionPlan = (settings?.subscriptionPlan || "basic") as Plan;
     console.log("✅ [APP.TSX LOADER] App language:", appLanguage);
+    console.log("✅ [APP.TSX LOADER] Subscription plan:", subscriptionPlan);
 
     return json({
-      appLanguage
+      appLanguage,
+      subscriptionPlan,
     });
   } catch (error) {
     console.error("❌ [APP.TSX LOADER] Error:", error);
@@ -56,16 +62,19 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 };
 
 export default function App() {
-  const { appLanguage } = useLoaderData<typeof loader>();
+  const { appLanguage, subscriptionPlan } = useLoaderData<typeof loader>();
 
   console.log("🎨 [APP.TSX] Rendering App component with language:", appLanguage);
+  console.log("🎨 [APP.TSX] Rendering App component with plan:", subscriptionPlan);
 
   return (
     <AppProvider i18n={{}}>
       <I18nProvider locale={appLanguage}>
-        <InfoBoxProvider>
-          <Outlet />
-        </InfoBoxProvider>
+        <PlanProvider plan={subscriptionPlan}>
+          <InfoBoxProvider>
+            <Outlet />
+          </InfoBoxProvider>
+        </PlanProvider>
       </I18nProvider>
     </AppProvider>
   );

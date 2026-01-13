@@ -142,6 +142,19 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   console.log("[LOADER] Loading products from DATABASE for shop:", session.shop);
 
   try {
+    const { db } = await import("../db.server");
+    const { getPlanLimits } = await import("../utils/planUtils");
+
+    // Load plan settings
+    const settings = await db.aISettings.findUnique({
+      where: { shop: session.shop },
+    });
+    const plan = (settings?.subscriptionPlan || "basic") as "free" | "basic" | "pro" | "max";
+    const planLimits = getPlanLimits(plan);
+
+    console.log("[LOADER] Current plan:", plan);
+    console.log("[LOADER] Max products:", planLimits.maxProducts);
+
     // 1. Fetch shop locales (still from Shopify, as this changes rarely)
     const localesResponse = await admin.graphql(
       `#graphql
@@ -162,8 +175,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     console.log("[LOADER] Primary locale:", primaryLocale);
     console.log("[LOADER] Available locales:", shopLocales.length);
 
-    // 2. Fetch products from DATABASE (much faster!)
-    const { db } = await import("../db.server");
+    // 2. Fetch products from DATABASE with plan-based limit
+    const takeLimit = planLimits.maxProducts === Infinity ? 50 : Math.min(planLimits.maxProducts, 50);
 
     const dbProducts = await db.product.findMany({
       where: {
@@ -171,21 +184,21 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       },
       include: {
         translations: true,
-        images: {
+        images: planLimits.cacheEnabled.productImages ? {
           include: {
             altTextTranslations: true,
           },
-        },
-        options: true,
-        metafields: true,
+        } : false, // Don't load images if not cached in free plan
+        options: planLimits.cacheEnabled.productOptions,
+        metafields: planLimits.cacheEnabled.productMetafields,
       },
       orderBy: {
         title: "asc",
       },
-      take: 50,
+      take: takeLimit,
     });
 
-    console.log("[LOADER] Loaded", dbProducts.length, "products from database");
+    console.log("[LOADER] Loaded", dbProducts.length, "products from database (limit:", takeLimit, ")");
 
     // 3. Transform to frontend format
     const products = dbProducts.map((p) => ({
@@ -198,31 +211,31 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         url: p.featuredImageUrl,
         altText: p.featuredImageAlt,
       },
-      images: p.images.map((img) => ({
+      images: p.images ? p.images.map((img) => ({
         url: img.url,
         altText: img.altText,
-        altTextTranslations: img.altTextTranslations.map((t) => ({
+        altTextTranslations: img.altTextTranslations ? img.altTextTranslations.map((t) => ({
           locale: t.locale,
           altText: t.altText,
-        })),
-      })),
+        })) : [],
+      })) : [],
       seo: {
         title: p.seoTitle,
         description: p.seoDescription,
       },
-      options: p.options.map((opt) => ({
+      options: p.options ? p.options.map((opt) => ({
         id: opt.id,
         name: opt.name,
         position: opt.position,
         values: JSON.parse(opt.values),
-      })),
-      metafields: p.metafields.map((mf) => ({
+      })) : [],
+      metafields: p.metafields ? p.metafields.map((mf) => ({
         id: mf.id,
         namespace: mf.namespace,
         key: mf.key,
         value: mf.value,
         type: mf.type,
-      })),
+      })) : [],
       // IMPORTANT: All translations are already loaded!
       translations: p.translations.map((t) => ({
         key: t.key,
@@ -239,6 +252,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       shopLocales,
       primaryLocale,
       error: null,
+      plan,
+      maxProducts: planLimits.maxProducts,
+      productCount: dbProducts.length,
     });
   } catch (error: any) {
     console.error("[LOADER] Error:", error);
@@ -249,6 +265,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         shopLocales: [],
         primaryLocale: "de",
         error: error.message,
+        plan: "basic",
+        maxProducts: 100,
+        productCount: 0,
       },
       { status: 500 }
     );

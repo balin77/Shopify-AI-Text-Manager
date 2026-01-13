@@ -1,13 +1,19 @@
-import { useLocation, useNavigate } from "@remix-run/react";
-import { InlineStack, Text, Banner } from "@shopify/polaris";
+import { useLocation, useNavigate, useFetcher } from "@remix-run/react";
+import { InlineStack, Text, Banner, ButtonGroup, Button } from "@shopify/polaris";
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
+import { usePlan } from "../contexts/PlanContext";
+import { type Plan } from "../config/plans";
+import { useState } from "react";
 
 export function MainNavigation() {
   const location = useLocation();
   const navigate = useNavigate();
   const { t } = useI18n();
   const { infoBox, hideInfoBox } = useInfoBox();
+  const { plan, getPlanDisplayName } = usePlan();
+  const fetcher = useFetcher();
+  const [isChangingPlan, setIsChangingPlan] = useState(false);
 
   const tabs = [
     { id: "products", label: t.nav.products, path: "/app/products" },
@@ -28,6 +34,30 @@ export function MainNavigation() {
     navigate(newPath);
   };
 
+  const handlePlanChange = async (newPlan: Plan) => {
+    if (newPlan === plan || isChangingPlan) return;
+
+    console.log("🔄 [MainNavigation] Changing plan:", plan, "->", newPlan);
+    setIsChangingPlan(true);
+
+    try {
+      fetcher.submit(
+        { plan: newPlan },
+        { method: "POST", action: "/api/update-plan", encType: "application/json" }
+      );
+
+      // Reload the page after plan change to refresh all data
+      setTimeout(() => {
+        window.location.reload();
+      }, 1000);
+    } catch (error) {
+      console.error("❌ [MainNavigation] Error changing plan:", error);
+      setIsChangingPlan(false);
+    }
+  };
+
+  const plans: Plan[] = ["free", "basic", "pro", "max"];
+
   return (
     <>
       {/* Navigation und InfoBox */}
@@ -37,7 +67,7 @@ export function MainNavigation() {
           borderBottom: "1px solid #e1e3e5",
         }}
       >
-        {/* Einzeilige Leiste mit Navigation und InfoBox */}
+        {/* Einzeilige Leiste mit Navigation, Plan Selector und InfoBox */}
         <div style={{ display: "flex", alignItems: "center", padding: "1rem", gap: "2rem" }}>
           {/* Navigation Tabs */}
           <InlineStack gap="400">
@@ -71,16 +101,69 @@ export function MainNavigation() {
             })}
           </InlineStack>
 
-          {/* InfoBox auf gleicher Ebene */}
+          {/* Plan Selector */}
+          <div style={{ marginLeft: "auto" }}>
+            <ButtonGroup variant="segmented">
+              {plans.map((planOption) => (
+                <Button
+                  key={planOption}
+                  pressed={plan === planOption}
+                  onClick={() => handlePlanChange(planOption)}
+                  disabled={isChangingPlan}
+                  size="slim"
+                >
+                  {planOption.charAt(0).toUpperCase() + planOption.slice(1)}
+                </Button>
+              ))}
+            </ButtonGroup>
+          </div>
+
+          {/* InfoBox auf gleicher Ebene - schlanke Variante */}
           {infoBox && (
-            <div style={{ flex: 1, maxWidth: "600px" }}>
-              <Banner
-                title={infoBox.title}
-                tone={infoBox.tone}
-                onDismiss={hideInfoBox}
-              >
+            <div
+              style={{
+                flex: 1,
+                maxWidth: "600px",
+                display: "flex",
+                alignItems: "center",
+                padding: "0.5rem 1rem",
+                borderRadius: "4px",
+                backgroundColor:
+                  infoBox.tone === "success" ? "#e8f5e9" :
+                  infoBox.tone === "critical" ? "#ffebee" :
+                  infoBox.tone === "warning" ? "#fff3e0" :
+                  "#e3f2fd",
+                border: `1px solid ${
+                  infoBox.tone === "success" ? "#4caf50" :
+                  infoBox.tone === "critical" ? "#f44336" :
+                  infoBox.tone === "warning" ? "#ff9800" :
+                  "#2196f3"
+                }`,
+                fontSize: "14px",
+                gap: "0.5rem"
+              }}
+            >
+              <span style={{ flex: 1, color: "#202223" }}>
                 {infoBox.message}
-              </Banner>
+              </span>
+              <button
+                onClick={hideInfoBox}
+                style={{
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  padding: "0.25rem",
+                  display: "flex",
+                  alignItems: "center",
+                  color: "#202223",
+                  opacity: 0.6,
+                  fontSize: "18px",
+                  lineHeight: 1
+                }}
+                aria-label="Schließen"
+              >
+                ×
+              </button>
             </div>
           )}
         </div>

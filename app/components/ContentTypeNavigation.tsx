@@ -5,8 +5,10 @@
  */
 
 import { useNavigate, useLocation } from "@remix-run/react";
-import { InlineStack, Text } from "@shopify/polaris";
+import { InlineStack, Text, Tooltip } from "@shopify/polaris";
 import { useI18n } from "../contexts/I18nContext";
+import { usePlan } from "../contexts/PlanContext";
+import { type ContentType as PlanContentType } from "../config/plans";
 
 type ContentType = "collections" | "blogs" | "pages" | "policies" | "menus" | "templates" | "metaobjects" | "shopMetadata";
 
@@ -17,22 +19,24 @@ interface ContentTypeConfig {
   description: string;
   path: string;
   comingSoon?: boolean;
+  planContentType: PlanContentType; // Maps to plan config
 }
 
 export function ContentTypeNavigation() {
   const navigate = useNavigate();
   const location = useLocation();
   const { t } = useI18n();
+  const { canAccessContentType, getPlanDisplayName, getNextPlanUpgrade } = usePlan();
 
   const contentTypes: ContentTypeConfig[] = [
-    { id: "collections", label: t.content.collections, icon: "📂", description: t.content.collectionsDescription, path: "/app/collections" },
-    { id: "blogs", label: t.content.blogs, icon: "📝", description: t.content.blogsDescription, path: "/app/blog" },
-    { id: "pages", label: t.content.pages, icon: "📄", description: t.content.pagesDescription, path: "/app/pages" },
-    { id: "policies", label: t.content.policies, icon: "📋", description: t.content.policiesDescription, path: "/app/policies" },
-    { id: "menus", label: t.content.menus, icon: "🍔", description: t.content.menusDescription, path: "/app/content?type=menus" },
-    { id: "templates", label: t.content.templates, icon: "🧪", description: "Theme translatable resources...", path: "/app/templates" },
-    { id: "metaobjects", label: t.content.metaobjects, icon: "🗂️", description: t.content.metaobjectsDescription, path: "/app/content?type=metaobjects", comingSoon: true },
-    { id: "shopMetadata", label: t.content.shopMetadata, icon: "🏷️", description: t.content.shopMetadataDescription, path: "/app/content?type=shopMetadata", comingSoon: true },
+    { id: "collections", label: t.content.collections, icon: "📂", description: t.content.collectionsDescription, path: "/app/collections", planContentType: "collections" },
+    { id: "blogs", label: t.content.blogs, icon: "📝", description: t.content.blogsDescription, path: "/app/blog", planContentType: "articles" },
+    { id: "pages", label: t.content.pages, icon: "📄", description: t.content.pagesDescription, path: "/app/pages", planContentType: "pages" },
+    { id: "policies", label: t.content.policies, icon: "📋", description: t.content.policiesDescription, path: "/app/policies", planContentType: "policies" },
+    { id: "menus", label: t.content.menus, icon: "🍔", description: t.content.menusDescription, path: "/app/content?type=menus", planContentType: "menus" },
+    { id: "templates", label: t.content.templates, icon: "🧪", description: "Theme translatable resources...", path: "/app/templates", planContentType: "themes" },
+    { id: "metaobjects", label: t.content.metaobjects, icon: "🗂️", description: t.content.metaobjectsDescription, path: "/app/content?type=metaobjects", comingSoon: true, planContentType: "metaobjects" },
+    { id: "shopMetadata", label: t.content.shopMetadata, icon: "🏷️", description: t.content.shopMetadataDescription, path: "/app/content?type=shopMetadata", comingSoon: true, planContentType: "metadata" },
   ];
 
   // Determine which tab is currently active based on the location
@@ -54,43 +58,64 @@ export function ContentTypeNavigation() {
   return (
     <div style={{ borderBottom: "1px solid #e1e3e5", background: "white", padding: "1rem" }}>
       <InlineStack gap="300">
-        {contentTypes.map((type) => (
-          <button
-            key={type.id}
-            onClick={() => {
-              if (!type.comingSoon) {
-                navigate(type.path);
-              }
-            }}
-            disabled={type.comingSoon}
-            style={{
-              padding: "0.75rem 1.5rem",
-              border: activeType === type.id ? "2px solid #008060" : "1px solid #c9cccf",
-              borderRadius: "8px",
-              background: activeType === type.id ? "#f1f8f5" : type.comingSoon ? "#f6f6f7" : "white",
-              cursor: type.comingSoon ? "not-allowed" : "pointer",
-              transition: "all 0.2s",
-              display: "flex",
-              alignItems: "center",
-              gap: "0.5rem",
-              opacity: type.comingSoon ? 0.5 : 1,
-            }}
-          >
-            <span style={{ fontSize: "1.2rem" }}>{type.icon}</span>
-            <Text
-              as="span"
-              variant="bodyMd"
-              fontWeight={activeType === type.id ? "semibold" : "regular"}
+        {contentTypes.map((type) => {
+          const hasAccess = canAccessContentType(type.planContentType);
+          const isDisabled = type.comingSoon || !hasAccess;
+          const nextPlan = getNextPlanUpgrade();
+
+          const button = (
+            <button
+              key={type.id}
+              onClick={() => {
+                if (!isDisabled) {
+                  navigate(type.path);
+                }
+              }}
+              disabled={isDisabled}
+              style={{
+                padding: "0.75rem 1.5rem",
+                border: activeType === type.id ? "2px solid #008060" : "1px solid #c9cccf",
+                borderRadius: "8px",
+                background: activeType === type.id ? "#f1f8f5" : isDisabled ? "#f6f6f7" : "white",
+                cursor: isDisabled ? "not-allowed" : "pointer",
+                transition: "all 0.2s",
+                display: "flex",
+                alignItems: "center",
+                gap: "0.5rem",
+                opacity: isDisabled ? 0.5 : 1,
+              }}
             >
-              {type.label}
-            </Text>
-            {type.comingSoon && (
-              <Text as="span" variant="bodySm" tone="subdued">
-                (Coming Soon)
+              <span style={{ fontSize: "1.2rem" }}>{type.icon}</span>
+              <Text
+                as="span"
+                variant="bodyMd"
+                fontWeight={activeType === type.id ? "semibold" : "regular"}
+              >
+                {type.label}
               </Text>
-            )}
-          </button>
-        ))}
+              {!hasAccess && !type.comingSoon && (
+                <span style={{ marginLeft: "0.25rem" }}>🔒</span>
+              )}
+              {type.comingSoon && (
+                <Text as="span" variant="bodySm" tone="subdued">
+                  (Coming Soon)
+                </Text>
+              )}
+            </button>
+          );
+
+          // Wrap with tooltip if locked by plan
+          if (!hasAccess && !type.comingSoon && nextPlan) {
+            const nextPlanName = nextPlan.charAt(0).toUpperCase() + nextPlan.slice(1);
+            return (
+              <Tooltip key={type.id} content={`Available in ${nextPlanName} plan`}>
+                {button}
+              </Tooltip>
+            );
+          }
+
+          return button;
+        })}
       </InlineStack>
     </div>
   );

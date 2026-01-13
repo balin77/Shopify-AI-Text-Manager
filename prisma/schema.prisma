@@ -39,6 +39,7 @@ model AISettings {
   deepseekApiKey    String?
   preferredProvider String  @default("huggingface")
   appLanguage       String  @default("de")
+  subscriptionPlan  String  @default("basic") // "free", "basic", "pro", "max"
 
   // Rate Limiting - Hugging Face
   hfMaxTokensPerMinute   Int? @default(1000000)
