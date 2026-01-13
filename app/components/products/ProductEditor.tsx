@@ -15,6 +15,7 @@ import { AIEditableField } from "../AIEditableField";
 import { AIEditableHTMLField } from "../AIEditableHTMLField";
 import { ProductOptions } from "./ProductOptions";
 import { LocaleNavigationButtons } from "../LocaleNavigationButtons";
+import { SaveDiscardButtons } from "../SaveDiscardButtons";
 import { useI18n } from "../../contexts/I18nContext";
 
 interface Product {
@@ -99,6 +100,8 @@ interface ProductEditorProps {
   fetcherData: any;
   imageAltTexts: Record<number, string>;
   setImageAltTexts: (value: Record<number, string> | ((prev: Record<number, string>) => Record<number, string>)) => void;
+  onDiscardChanges?: () => void;
+  fetcherState?: string;
 }
 
 export function ProductEditor({
@@ -144,6 +147,8 @@ export function ProductEditor({
   fetcherData,
   imageAltTexts,
   setImageAltTexts,
+  onDiscardChanges,
+  fetcherState = "idle",
 }: ProductEditorProps) {
   const { t } = useI18n();
   const [descriptionMode, setDescriptionMode] = useState<"html" | "rendered">("rendered");
@@ -220,22 +225,25 @@ export function ProductEditor({
           />
 
           {/* Header with Save Button */}
-          <InlineStack align="end" blockAlign="center">
-            <InlineStack gap="200">
+          <InlineStack align="space-between" blockAlign="center">
+            <div>
               {isPrimaryLocale && (
                 <Button onClick={onTranslateAll} loading={isTranslatingAll}>
                   {t.products.translateAll}
                 </Button>
               )}
-              <Button
-                variant={hasChanges ? "primary" : undefined}
-                onClick={onSave}
-                disabled={!hasChanges}
-                loading={isSaving}
-              >
-                {t.products.saveChanges}
-              </Button>
-            </InlineStack>
+            </div>
+            <SaveDiscardButtons
+              hasChanges={hasChanges}
+              onSave={onSave}
+              onDiscard={onDiscardChanges || (() => {})}
+              highlightSaveButton={false}
+              saveText={t.products.saveChanges}
+              discardText={t.products.discardChanges || "Verwerfen"}
+              action="updateProduct"
+              fetcherState={fetcherState}
+              fetcherFormData={fetcherFormData}
+            />
           </InlineStack>
 
           {/* Image Gallery */}
@@ -302,20 +310,22 @@ export function ProductEditor({
                   </div>
                 </div>
 
-                {/* Image Grid */}
+                {/* Image Grid - Scrollable Container */}
                 <div
                   style={{
                     flex: "1",
-                    display: "grid",
-                    gridTemplateColumns: "repeat(4, 1fr)",
-                    gridAutoRows: "minmax(0, max-content)",
-                    gap: "12px",
                     maxHeight: "400px",
                     overflowY: "auto",
                     overflowX: "hidden",
-                    alignContent: "start",
                   }}
                 >
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "repeat(4, 1fr)",
+                      gap: "12px",
+                    }}
+                  >
                   {product.images.map((image, index) => {
                     const hasAltText = !!(imageAltTexts[index] || image.altText);
                     const isSelected = index === selectedImageIndex;
@@ -369,6 +379,7 @@ export function ProductEditor({
                       </button>
                     );
                   })}
+                  </div>
                 </div>
               </div>
 
