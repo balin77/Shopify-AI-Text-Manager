@@ -481,22 +481,18 @@ export default function Products() {
         @keyframes pulse {
           0%, 100% {
             box-shadow: 0 0 0 0 rgba(255, 149, 0, 0.7);
-            transform: scale(1);
           }
           50% {
             box-shadow: 0 0 20px 10px rgba(255, 149, 0, 0.3);
-            transform: scale(1.05);
           }
         }
 
         @keyframes pulseBlue {
           0%, 100% {
             box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.7);
-            transform: scale(1);
           }
           50% {
             box-shadow: 0 0 20px 10px rgba(59, 130, 246, 0.3);
-            transform: scale(1.05);
           }
         }
       `}</style>
