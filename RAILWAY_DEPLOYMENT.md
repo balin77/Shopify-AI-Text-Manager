@@ -1,22 +1,34 @@
 # Railway Deployment Guide
 
+> ⚠️ **WICHTIG:** Verwende nur **Pre-deploy Commands** für Migrations. Custom Start Commands sind nicht zuverlässig!
+
 ## Datenbank-Migration auf Railway ausführen
 
-### Methode 1: Custom Start Command (Empfohlen)
+### Methode 1: Pre-deploy Command (⭐ NUR DIESE METHODE FUNKTIONIERT)
 
-Setze den **Custom Start Command** in Railway auf:
+Setze den **Pre-deploy Command** in Railway auf:
 
 ```bash
-node scripts/run-migration.js && npm run start
+node scripts/run-migration.js
 ```
 
-Das Script führt automatisch folgendes aus:
+**Wo einstellen:**
+1. Railway Dashboard öffnen
+2. Dein Projekt → **Settings**
+3. **Deploy** → **Pre-deploy Command**
+4. Eingeben: `node scripts/run-migration.js`
+5. **Save Changes**
+
+Das Script führt automatisch VOR dem App-Start folgendes aus:
 1. ✅ Überprüft ob `DATABASE_URL` gesetzt ist
 2. 📦 Führt die Datenbank-Migration aus
 3. 🔨 Generiert den Prisma Client
-4. 🚀 Startet die Anwendung
 
-### Methode 2: Manuell mit Railway CLI
+Die App startet dann automatisch **nach** erfolgreicher Migration.
+
+**Siehe auch:** [PRISMA_MIGRATION_GUIDE.md](PRISMA_MIGRATION_GUIDE.md) für detaillierte Anleitung.
+
+### Methode 2: Manuell mit Railway CLI (Nur für Testing)
 
 Wenn du die Railway CLI installiert hast:
 

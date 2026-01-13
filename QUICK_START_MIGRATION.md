@@ -1,32 +1,31 @@
 # Quick Start: Migration ausführen
 
+> ⚠️ **WICHTIG:** Nur **Pre-deploy Commands** funktionieren auf Railway!
+
 ## 🚀 Für Railway (Empfohlen)
 
-### Option 1: Custom Start Command (Einfachste Methode)
+### ⭐ Pre-deploy Command (DIE einzige funktionierende Methode)
 
 1. Gehe zu deinem Railway Projekt
 2. Öffne **Settings** → **Deploy**
-3. Setze den **Custom Start Command** auf:
+3. Scrolle zu **Pre-deploy Command**
+4. Gib ein:
    ```bash
-   npm run start:railway
+   node scripts/run-migration.js
    ```
-4. Speichern und Railway wird automatisch neu deployen
+5. **Save Changes**
+6. Railway deployt automatisch neu
 
-Das war's! Die Migration wird automatisch bei jedem Deployment ausgeführt.
+Das war's! Die Migration wird **vor** jedem App-Start automatisch ausgeführt.
+
+**📚 Für detaillierte Anleitung siehe:** [PRISMA_MIGRATION_GUIDE.md](PRISMA_MIGRATION_GUIDE.md)
 
 ---
 
-### Option 2: Einmalig manuell ausführen
-
-Wenn du die Migration nur einmal ausführen willst:
+### Option 2: Manuell via Railway CLI (Nur zum Testen)
 
 ```bash
-npm run prisma:migrate:new
-```
-
-Dann normale start command verwenden:
-```bash
-npm run start
+railway run node scripts/run-migration.js
 ```
 
 ---
