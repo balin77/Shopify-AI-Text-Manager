@@ -274,20 +274,20 @@ export function hasPrimaryContentMissing(
 
   // Check required fields based on content type
   if (contentType === 'products') {
-    const titleMissing = !selectedItem.title;
-    const descriptionMissing = !selectedItem.descriptionHtml;
-    const handleMissing = !selectedItem.handle;
-    const seoTitleMissing = !selectedItem.seo?.title;
-    const seoDescriptionMissing = !selectedItem.seo?.description;
+    const titleMissing = !selectedItem.title || selectedItem.title.trim() === '';
+    const descriptionMissing = !selectedItem.descriptionHtml || selectedItem.descriptionHtml.trim() === '';
+    const handleMissing = !selectedItem.handle || selectedItem.handle.trim() === '';
+    const seoTitleMissing = !selectedItem.seo?.title || selectedItem.seo.title.trim() === '';
+    const seoDescriptionMissing = !selectedItem.seo?.description || selectedItem.seo.description.trim() === '';
     return titleMissing || descriptionMissing || handleMissing || seoTitleMissing || seoDescriptionMissing;
   }
 
   if (contentType === 'collections') {
-    const titleMissing = !selectedItem.title;
-    const descriptionMissing = !selectedItem.descriptionHtml;
-    const handleMissing = !selectedItem.handle;
-    const seoTitleMissing = !selectedItem.seo?.title;
-    const seoDescriptionMissing = !selectedItem.seo?.description;
+    const titleMissing = !selectedItem.title || selectedItem.title.trim() === '';
+    const descriptionMissing = !selectedItem.descriptionHtml || selectedItem.descriptionHtml.trim() === '';
+    const handleMissing = !selectedItem.handle || selectedItem.handle.trim() === '';
+    const seoTitleMissing = !selectedItem.seo?.title || selectedItem.seo.title.trim() === '';
+    const seoDescriptionMissing = !selectedItem.seo?.description || selectedItem.seo.description.trim() === '';
     return titleMissing || descriptionMissing || handleMissing || seoTitleMissing || seoDescriptionMissing;
   }
 
