@@ -42,14 +42,15 @@ try {
   // Try to apply migrations normally first
   console.log('🔄 Attempting normal migration...');
   try {
-    execSync('npx prisma migrate deploy', { stdio: 'inherit' });
+    execSync('npx prisma migrate deploy', { stdio: 'pipe' });
     console.log('✅ Migrations applied successfully!');
     process.exit(0);
   } catch (migrateError) {
-    const errorOutput = migrateError.toString();
+    // Get error output from stderr and stdout
+    const errorOutput = migrateError.stderr?.toString() || migrateError.stdout?.toString() || migrateError.message || '';
 
     // Check if it's a P3005 error (non-empty database)
-    if (errorOutput.includes('P3005')) {
+    if (errorOutput.includes('P3005') || errorOutput.includes('database schema is not empty')) {
       console.log('⚠️ Database is not empty (P3005). Baselining existing migrations...');
 
       // Mark all migrations as applied (baseline)
@@ -61,7 +62,7 @@ try {
           });
           console.log(`✅ Marked ${migration} as applied`);
         } catch (resolveError) {
-          const resolveOutput = resolveError.toString();
+          const resolveOutput = resolveError.stderr?.toString() || resolveError.message || '';
           // Ignore if already applied
           if (resolveOutput.includes('already') || resolveOutput.includes('recorded')) {
             console.log(`ℹ️  ${migration} already marked as applied`);
@@ -75,6 +76,8 @@ try {
       console.log('ℹ️  Future migrations will be applied normally.');
       process.exit(0);
     } else {
+      // Log the actual error for debugging
+      console.error('❌ Unexpected migration error:', errorOutput);
       throw migrateError;
     }
   }
