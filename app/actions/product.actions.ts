@@ -3,6 +3,7 @@ import { authenticate } from "../shopify.server";
 import { AIService } from "../../src/services/ai.service";
 import { TranslationService } from "../../src/services/translation.service";
 import { getTaskExpirationDate } from "../../src/utils/task.utils";
+import { ShopifyApiGateway } from "../services/shopify-api-gateway.service";
 
 export async function handleProductActions({ request }: ActionFunctionArgs) {
   console.log('📮 [PRODUCT.ACTIONS] === PRODUCT ACTION HANDLER CALLED ===');
@@ -77,7 +78,7 @@ export async function handleProductActions({ request }: ActionFunctionArgs) {
 
   if (action === "updateProduct") {
     console.log('💾 [PRODUCT.ACTIONS] Updating product:', productId, 'for locale:', formData.get("locale"));
-    return handleUpdateProduct(admin, formData, productId);
+    return handleUpdateProduct(admin, formData, productId, session.shop);
   }
 
   if (action === "translateOption") {
@@ -104,7 +105,7 @@ export async function handleProductActions({ request }: ActionFunctionArgs) {
   }
 }
 
-async function handleLoadTranslations(admin: any, formData: FormData, productId: string) {
+async function handleLoadTranslations(admin: any, formData: FormData, productId: string, shop: string) {
   const locale = formData.get("locale") as string;
 
   try {
@@ -112,7 +113,10 @@ async function handleLoadTranslations(admin: any, formData: FormData, productId:
     console.log('Product ID:', productId);
     console.log('Locale:', locale);
 
-    const translationsResponse = await admin.graphql(
+    // Initialize Gateway for rate-limited requests
+    const gateway = new ShopifyApiGateway(admin, shop);
+
+    const translationsResponse = await gateway.graphql(
       `#graphql
         query getProductTranslations($resourceId: ID!, $locale: String!) {
           translatableResource(resourceId: $resourceId) {
@@ -407,6 +411,10 @@ async function handleTranslateAll(
   // Create TranslationService instance with task ID
   const translationService = new TranslationService(provider, config, shop, task.id);
 
+  // Initialize Gateway for rate-limited requests
+  const gateway = new ShopifyApiGateway(admin, shop);
+  console.log('[TranslateAll] Using Shopify API Gateway for rate limiting');
+
   try {
     const changedFields: any = {};
     if (title) changedFields.title = title;
@@ -443,9 +451,9 @@ async function handleTranslateAll(
       data: { progress: 10, total: totalLocales, processed: 0 },
     });
 
-    // First, get the translatableContent for this product
+    // First, get the translatableContent for this product using Gateway
     console.log(`[TranslateAll] Fetching translatableContent for product ${productId}`);
-    const translatableResponse = await admin.graphql(
+    const translatableResponse = await gateway.graphql(
       `#graphql
         query getTranslatableContent($resourceId: ID!) {
           translatableResource(resourceId: $resourceId) {
@@ -541,7 +549,7 @@ async function handleTranslateAll(
 
         for (const translation of translationsInput) {
           console.log(`[TranslateAll] Saving field ${translation.key} for ${locale} with digest ${translation.translatableContentDigest}`);
-          const response = await admin.graphql(
+          const response = await gateway.graphql(
             `#graphql
               mutation translateProduct($resourceId: ID!, $translations: [TranslationInput!]!) {
                 translationsRegister(resourceId: $resourceId, translations: $translations) {
@@ -676,7 +684,7 @@ async function handleTranslateAll(
   }
 }
 
-async function handleUpdateProduct(admin: any, formData: FormData, productId: string) {
+async function handleUpdateProduct(admin: any, formData: FormData, productId: string, shop: string) {
   const locale = formData.get("locale") as string;
   const title = formData.get("title") as string;
   const descriptionHtml = formData.get("descriptionHtml") as string;
@@ -687,6 +695,10 @@ async function handleUpdateProduct(admin: any, formData: FormData, productId: st
 
   try {
     const { db } = await import("../db.server");
+
+    // Initialize Gateway for rate-limited requests
+    const gateway = new ShopifyApiGateway(admin, shop);
+    console.log('[UPDATE-PRODUCT] Using Shopify API Gateway for rate limiting');
 
     // Parse alt-texts if provided
     let imageAltTexts: Record<number, string> = {};
@@ -703,7 +715,7 @@ async function handleUpdateProduct(admin: any, formData: FormData, productId: st
       console.log('[UPDATE-PRODUCT] Updating alt-texts:', imageAltTexts);
 
       // Get product images to update
-      const productResponse = await admin.graphql(
+      const productResponse = await gateway.graphql(
         `#graphql
           query getProduct($id: ID!) {
             product(id: $id) {
@@ -732,7 +744,7 @@ async function handleUpdateProduct(admin: any, formData: FormData, productId: st
           const imageId = mediaEdges[index].node.id;
           console.log(`[UPDATE-PRODUCT] Updating alt-text for image ${index} (${imageId}): ${altText}`);
 
-          await admin.graphql(
+          await gateway.graphql(
             `#graphql
               mutation updateMedia($media: [UpdateMediaInput!]!) {
                 productUpdateMedia(media: $media, productId: "${productId}") {
@@ -773,9 +785,9 @@ async function handleUpdateProduct(admin: any, formData: FormData, productId: st
       if (seoTitle) translationsInput.push({ key: "meta_title", value: seoTitle, locale });
       if (metaDescription) translationsInput.push({ key: "meta_description", value: metaDescription, locale });
 
-      // Save to Shopify
+      // Save to Shopify using Gateway
       for (const translation of translationsInput) {
-        await admin.graphql(
+        await gateway.graphql(
           `#graphql
             mutation translateProduct($resourceId: ID!, $translations: [TranslationInput!]!) {
               translationsRegister(resourceId: $resourceId, translations: $translations) {
@@ -834,7 +846,7 @@ async function handleUpdateProduct(admin: any, formData: FormData, productId: st
 
       return json({ success: true });
     } else {
-      const response = await admin.graphql(
+      const response = await gateway.graphql(
         `#graphql
           mutation updateProduct($input: ProductInput!) {
             productUpdate(input: $input) {
