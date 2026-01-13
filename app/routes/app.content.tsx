@@ -141,7 +141,7 @@ export default function ContentHub() {
       if (stored) return stored as ContentType;
     }
 
-    return "collections"; // default
+    return "menus"; // default
   };
 
   const [selectedType, setSelectedType] = useState<ContentType>(getInitialType());
