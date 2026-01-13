@@ -159,31 +159,31 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
       if (fieldType === "title") {
         let prompt = `Erstelle einen optimierten Artikel-Titel.`;
-        if (aiInstructions?.titleFormat) {
-          prompt += `\n\nFormatbeispiel:\n${aiInstructions.titleFormat}`;
+        if (aiInstructions?.blogTitleFormat) {
+          prompt += `\n\nFormatbeispiel:\n${aiInstructions.blogTitleFormat}`;
         }
-        if (aiInstructions?.titleInstructions) {
-          prompt += `\n\nAnweisungen:\n${aiInstructions.titleInstructions}`;
+        if (aiInstructions?.blogTitleInstructions) {
+          prompt += `\n\nAnweisungen:\n${aiInstructions.blogTitleInstructions}`;
         }
         prompt += `\n\nKontext:\n${contextDescription || currentValue}\n\nGib nur den Titel zurück, ohne Erklärungen.`;
         generatedContent = await aiService.generateProductTitle(prompt);
       } else if (fieldType === "body") {
         let prompt = `Erstelle einen optimierten Artikel-Text für: ${contextTitle}`;
-        if (aiInstructions?.descriptionFormat) {
-          prompt += `\n\nFormatbeispiel:\n${aiInstructions.descriptionFormat}`;
+        if (aiInstructions?.blogDescriptionFormat) {
+          prompt += `\n\nFormatbeispiel:\n${aiInstructions.blogDescriptionFormat}`;
         }
-        if (aiInstructions?.descriptionInstructions) {
-          prompt += `\n\nAnweisungen:\n${aiInstructions.descriptionInstructions}`;
+        if (aiInstructions?.blogDescriptionInstructions) {
+          prompt += `\n\nAnweisungen:\n${aiInstructions.blogDescriptionInstructions}`;
         }
         prompt += `\n\nAktueller Inhalt:\n${currentValue}\n\nGib nur den Artikel-Text zurück, ohne Erklärungen.`;
         generatedContent = await aiService.generateProductDescription(contextTitle, prompt);
       } else if (fieldType === "handle") {
         let prompt = `Erstelle einen SEO-freundlichen URL-Slug (handle) für:\nTitel: ${contextTitle}\nInhalt: ${contextDescription}`;
-        if (aiInstructions?.handleFormat) {
-          prompt += `\n\nFormatbeispiel:\n${aiInstructions.handleFormat}`;
+        if (aiInstructions?.blogHandleFormat) {
+          prompt += `\n\nFormatbeispiel:\n${aiInstructions.blogHandleFormat}`;
         }
-        if (aiInstructions?.handleInstructions) {
-          prompt += `\n\nAnweisungen:\n${aiInstructions.handleInstructions}`;
+        if (aiInstructions?.blogHandleInstructions) {
+          prompt += `\n\nAnweisungen:\n${aiInstructions.blogHandleInstructions}`;
         } else {
           prompt += `\n\nDer Slug sollte:\n- Nur Kleinbuchstaben und Bindestriche enthalten\n- Keine Sonderzeichen oder Umlaute haben\n- Kurz und prägnant sein (2-5 Wörter)\n- SEO-optimiert sein`;
         }
@@ -192,11 +192,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         generatedContent = generatedContent.toLowerCase().trim();
       } else if (fieldType === "seoTitle") {
         let prompt = `Erstelle einen optimierten SEO-Titel für:\nTitel: ${contextTitle}\nInhalt: ${contextDescription}`;
-        if (aiInstructions?.seoTitleFormat) {
-          prompt += `\n\nFormatbeispiel:\n${aiInstructions.seoTitleFormat}`;
+        if (aiInstructions?.blogSeoTitleFormat) {
+          prompt += `\n\nFormatbeispiel:\n${aiInstructions.blogSeoTitleFormat}`;
         }
-        if (aiInstructions?.seoTitleInstructions) {
-          prompt += `\n\nAnweisungen:\n${aiInstructions.seoTitleInstructions}`;
+        if (aiInstructions?.blogSeoTitleInstructions) {
+          prompt += `\n\nAnweisungen:\n${aiInstructions.blogSeoTitleInstructions}`;
         } else {
           prompt += `\n\nDer SEO-Titel sollte:\n- Max. 60 Zeichen lang sein\n- Keywords enthalten\n- Zum Klicken anregen`;
         }
@@ -204,11 +204,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         generatedContent = await aiService.generateProductTitle(prompt);
       } else if (fieldType === "metaDescription") {
         let prompt = `Erstelle eine optimierte Meta-Description für:\nTitel: ${contextTitle}\nInhalt: ${contextDescription}`;
-        if (aiInstructions?.metaDescFormat) {
-          prompt += `\n\nFormatbeispiel:\n${aiInstructions.metaDescFormat}`;
+        if (aiInstructions?.blogMetaDescFormat) {
+          prompt += `\n\nFormatbeispiel:\n${aiInstructions.blogMetaDescFormat}`;
         }
-        if (aiInstructions?.metaDescInstructions) {
-          prompt += `\n\nAnweisungen:\n${aiInstructions.metaDescInstructions}`;
+        if (aiInstructions?.blogMetaDescInstructions) {
+          prompt += `\n\nAnweisungen:\n${aiInstructions.blogMetaDescInstructions}`;
         } else {
           prompt += `\n\nDie Meta-Description sollte:\n- 150-160 Zeichen lang sein\n- Keywords enthalten\n- Zum Klicken anregen`;
         }

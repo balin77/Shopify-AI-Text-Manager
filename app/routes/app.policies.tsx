@@ -151,11 +151,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
       if (fieldType === "body") {
         let prompt = `Erstelle einen optimierten Richtlinientext für: ${contextTitle}`;
-        if (aiInstructions?.descriptionFormat) {
-          prompt += `\n\nFormatbeispiel:\n${aiInstructions.descriptionFormat}`;
+        if (aiInstructions?.policyDescriptionFormat) {
+          prompt += `\n\nFormatbeispiel:\n${aiInstructions.policyDescriptionFormat}`;
         }
-        if (aiInstructions?.descriptionInstructions) {
-          prompt += `\n\nAnweisungen:\n${aiInstructions.descriptionInstructions}`;
+        if (aiInstructions?.policyDescriptionInstructions) {
+          prompt += `\n\nAnweisungen:\n${aiInstructions.policyDescriptionInstructions}`;
         }
         prompt += `\n\nAktueller Inhalt:\n${currentValue}\n\nGib nur den Richtlinientext zurück, ohne Erklärungen.`;
         generatedContent = await aiService.generateProductDescription(contextTitle, prompt);

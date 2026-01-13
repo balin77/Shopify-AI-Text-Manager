@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher, useNavigate } from "@remix-run/react";
 import {
@@ -15,11 +15,13 @@ import {
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
+import { AIInstructionsTabs } from "../components/AIInstructionsTabs";
 import { db } from "../db.server";
 import { useI18n } from "../contexts/I18nContext";
 import { sanitizeFormatExample } from "../utils/sanitizer";
 import { AISettingsSchema, AIInstructionsSchema, parseFormData } from "../utils/validation";
 import { toSafeErrorResponse } from "../utils/error-handler";
+import { getDefaultInstructions, type EntityType } from "../constants/aiInstructionsDefaults";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
@@ -125,18 +127,59 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       deepseekMaxRequestsPerMinute: settings.deepseekMaxRequestsPerMinute || 60,
     },
     instructions: {
-      titleFormat: instructions.titleFormat || "",
-      titleInstructions: instructions.titleInstructions || "",
-      descriptionFormat: instructions.descriptionFormat || "",
-      descriptionInstructions: instructions.descriptionInstructions || "",
-      handleFormat: instructions.handleFormat || "",
-      handleInstructions: instructions.handleInstructions || "",
-      seoTitleFormat: instructions.seoTitleFormat || "",
-      seoTitleInstructions: instructions.seoTitleInstructions || "",
-      metaDescFormat: instructions.metaDescFormat || "",
-      metaDescInstructions: instructions.metaDescInstructions || "",
-      altTextFormat: instructions.altTextFormat || "",
-      altTextInstructions: instructions.altTextInstructions || "",
+      // Products
+      productTitleFormat: instructions.productTitleFormat || "",
+      productTitleInstructions: instructions.productTitleInstructions || "",
+      productDescriptionFormat: instructions.productDescriptionFormat || "",
+      productDescriptionInstructions: instructions.productDescriptionInstructions || "",
+      productHandleFormat: instructions.productHandleFormat || "",
+      productHandleInstructions: instructions.productHandleInstructions || "",
+      productSeoTitleFormat: instructions.productSeoTitleFormat || "",
+      productSeoTitleInstructions: instructions.productSeoTitleInstructions || "",
+      productMetaDescFormat: instructions.productMetaDescFormat || "",
+      productMetaDescInstructions: instructions.productMetaDescInstructions || "",
+      productAltTextFormat: instructions.productAltTextFormat || "",
+      productAltTextInstructions: instructions.productAltTextInstructions || "",
+
+      // Collections
+      collectionTitleFormat: instructions.collectionTitleFormat || "",
+      collectionTitleInstructions: instructions.collectionTitleInstructions || "",
+      collectionDescriptionFormat: instructions.collectionDescriptionFormat || "",
+      collectionDescriptionInstructions: instructions.collectionDescriptionInstructions || "",
+      collectionHandleFormat: instructions.collectionHandleFormat || "",
+      collectionHandleInstructions: instructions.collectionHandleInstructions || "",
+      collectionSeoTitleFormat: instructions.collectionSeoTitleFormat || "",
+      collectionSeoTitleInstructions: instructions.collectionSeoTitleInstructions || "",
+      collectionMetaDescFormat: instructions.collectionMetaDescFormat || "",
+      collectionMetaDescInstructions: instructions.collectionMetaDescInstructions || "",
+
+      // Blogs
+      blogTitleFormat: instructions.blogTitleFormat || "",
+      blogTitleInstructions: instructions.blogTitleInstructions || "",
+      blogDescriptionFormat: instructions.blogDescriptionFormat || "",
+      blogDescriptionInstructions: instructions.blogDescriptionInstructions || "",
+      blogHandleFormat: instructions.blogHandleFormat || "",
+      blogHandleInstructions: instructions.blogHandleInstructions || "",
+      blogSeoTitleFormat: instructions.blogSeoTitleFormat || "",
+      blogSeoTitleInstructions: instructions.blogSeoTitleInstructions || "",
+      blogMetaDescFormat: instructions.blogMetaDescFormat || "",
+      blogMetaDescInstructions: instructions.blogMetaDescInstructions || "",
+
+      // Pages
+      pageTitleFormat: instructions.pageTitleFormat || "",
+      pageTitleInstructions: instructions.pageTitleInstructions || "",
+      pageDescriptionFormat: instructions.pageDescriptionFormat || "",
+      pageDescriptionInstructions: instructions.pageDescriptionInstructions || "",
+      pageHandleFormat: instructions.pageHandleFormat || "",
+      pageHandleInstructions: instructions.pageHandleInstructions || "",
+      pageSeoTitleFormat: instructions.pageSeoTitleFormat || "",
+      pageSeoTitleInstructions: instructions.pageSeoTitleInstructions || "",
+      pageMetaDescFormat: instructions.pageMetaDescFormat || "",
+      pageMetaDescInstructions: instructions.pageMetaDescInstructions || "",
+
+      // Policies (description only)
+      policyDescriptionFormat: instructions.policyDescriptionFormat || "",
+      policyDescriptionInstructions: instructions.policyDescriptionInstructions || "",
     },
   });
 };
@@ -157,20 +200,61 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
       const data = validationResult.data;
 
-      // Sanitize HTML content in format examples
+      // Sanitize HTML content in format examples (for description fields)
       const sanitizedData = {
-        titleFormat: data.titleFormat || null,
-        titleInstructions: data.titleInstructions || null,
-        descriptionFormat: data.descriptionFormat ? sanitizeFormatExample(data.descriptionFormat) : null,
-        descriptionInstructions: data.descriptionInstructions || null,
-        handleFormat: data.handleFormat || null,
-        handleInstructions: data.handleInstructions || null,
-        seoTitleFormat: data.seoTitleFormat || null,
-        seoTitleInstructions: data.seoTitleInstructions || null,
-        metaDescFormat: data.metaDescFormat || null,
-        metaDescInstructions: data.metaDescInstructions || null,
-        altTextFormat: data.altTextFormat || null,
-        altTextInstructions: data.altTextInstructions || null,
+        // Products
+        productTitleFormat: data.productTitleFormat || null,
+        productTitleInstructions: data.productTitleInstructions || null,
+        productDescriptionFormat: data.productDescriptionFormat ? sanitizeFormatExample(data.productDescriptionFormat) : null,
+        productDescriptionInstructions: data.productDescriptionInstructions || null,
+        productHandleFormat: data.productHandleFormat || null,
+        productHandleInstructions: data.productHandleInstructions || null,
+        productSeoTitleFormat: data.productSeoTitleFormat || null,
+        productSeoTitleInstructions: data.productSeoTitleInstructions || null,
+        productMetaDescFormat: data.productMetaDescFormat || null,
+        productMetaDescInstructions: data.productMetaDescInstructions || null,
+        productAltTextFormat: data.productAltTextFormat || null,
+        productAltTextInstructions: data.productAltTextInstructions || null,
+
+        // Collections
+        collectionTitleFormat: data.collectionTitleFormat || null,
+        collectionTitleInstructions: data.collectionTitleInstructions || null,
+        collectionDescriptionFormat: data.collectionDescriptionFormat ? sanitizeFormatExample(data.collectionDescriptionFormat) : null,
+        collectionDescriptionInstructions: data.collectionDescriptionInstructions || null,
+        collectionHandleFormat: data.collectionHandleFormat || null,
+        collectionHandleInstructions: data.collectionHandleInstructions || null,
+        collectionSeoTitleFormat: data.collectionSeoTitleFormat || null,
+        collectionSeoTitleInstructions: data.collectionSeoTitleInstructions || null,
+        collectionMetaDescFormat: data.collectionMetaDescFormat || null,
+        collectionMetaDescInstructions: data.collectionMetaDescInstructions || null,
+
+        // Blogs
+        blogTitleFormat: data.blogTitleFormat || null,
+        blogTitleInstructions: data.blogTitleInstructions || null,
+        blogDescriptionFormat: data.blogDescriptionFormat ? sanitizeFormatExample(data.blogDescriptionFormat) : null,
+        blogDescriptionInstructions: data.blogDescriptionInstructions || null,
+        blogHandleFormat: data.blogHandleFormat || null,
+        blogHandleInstructions: data.blogHandleInstructions || null,
+        blogSeoTitleFormat: data.blogSeoTitleFormat || null,
+        blogSeoTitleInstructions: data.blogSeoTitleInstructions || null,
+        blogMetaDescFormat: data.blogMetaDescFormat || null,
+        blogMetaDescInstructions: data.blogMetaDescInstructions || null,
+
+        // Pages
+        pageTitleFormat: data.pageTitleFormat || null,
+        pageTitleInstructions: data.pageTitleInstructions || null,
+        pageDescriptionFormat: data.pageDescriptionFormat ? sanitizeFormatExample(data.pageDescriptionFormat) : null,
+        pageDescriptionInstructions: data.pageDescriptionInstructions || null,
+        pageHandleFormat: data.pageHandleFormat || null,
+        pageHandleInstructions: data.pageHandleInstructions || null,
+        pageSeoTitleFormat: data.pageSeoTitleFormat || null,
+        pageSeoTitleInstructions: data.pageSeoTitleInstructions || null,
+        pageMetaDescFormat: data.pageMetaDescFormat || null,
+        pageMetaDescInstructions: data.pageMetaDescInstructions || null,
+
+        // Policies
+        policyDescriptionFormat: data.policyDescriptionFormat ? sanitizeFormatExample(data.policyDescriptionFormat) : null,
+        policyDescriptionInstructions: data.policyDescriptionInstructions || null,
       };
 
       await db.aIInstructions.upsert({
@@ -309,22 +393,6 @@ export default function SettingsPage() {
 
   const [hasChanges, setHasChanges] = useState(false);
 
-  // AI Instructions state
-  const [titleFormat, setTitleFormat] = useState(instructions.titleFormat);
-  const [titleInstructions, setTitleInstructions] = useState(instructions.titleInstructions);
-  const [descriptionFormat, setDescriptionFormat] = useState(instructions.descriptionFormat);
-  const [descriptionInstructions, setDescriptionInstructions] = useState(instructions.descriptionInstructions);
-  const [handleFormat, setHandleFormat] = useState(instructions.handleFormat);
-  const [handleInstructions, setHandleInstructions] = useState(instructions.handleInstructions);
-  const [seoTitleFormat, setSeoTitleFormat] = useState(instructions.seoTitleFormat);
-  const [seoTitleInstructions, setSeoTitleInstructions] = useState(instructions.seoTitleInstructions);
-  const [metaDescFormat, setMetaDescFormat] = useState(instructions.metaDescFormat);
-  const [metaDescInstructions, setMetaDescInstructions] = useState(instructions.metaDescInstructions);
-  const [altTextFormat, setAltTextFormat] = useState(instructions.altTextFormat);
-  const [altTextInstructions, setAltTextInstructions] = useState(instructions.altTextInstructions);
-  const [descriptionFormatMode, setDescriptionFormatMode] = useState<"html" | "rendered">("rendered");
-  const descriptionFormatEditorRef = useRef<HTMLDivElement>(null);
-
   // App Setup state
   const [webhookStatus, setWebhookStatus] = useState<string>("");
   const [syncStatus, setSyncStatus] = useState<string>("");
@@ -355,22 +423,7 @@ export default function SettingsPage() {
   }, [fetcher.state, fetcher.data, languageChanged, selectedSection]);
 
   useEffect(() => {
-    if (selectedSection === "instructions") {
-      const changed =
-        titleFormat !== instructions.titleFormat ||
-        titleInstructions !== instructions.titleInstructions ||
-        descriptionFormat !== instructions.descriptionFormat ||
-        descriptionInstructions !== instructions.descriptionInstructions ||
-        handleFormat !== instructions.handleFormat ||
-        handleInstructions !== instructions.handleInstructions ||
-        seoTitleFormat !== instructions.seoTitleFormat ||
-        seoTitleInstructions !== instructions.seoTitleInstructions ||
-        metaDescFormat !== instructions.metaDescFormat ||
-        metaDescInstructions !== instructions.metaDescInstructions ||
-        altTextFormat !== instructions.altTextFormat ||
-        altTextInstructions !== instructions.altTextInstructions;
-      setHasChanges(changed);
-    } else if (selectedSection === "setup") {
+    if (selectedSection === "setup" || selectedSection === "instructions") {
       setHasChanges(false);
     } else {
       const changed =
@@ -397,107 +450,45 @@ export default function SettingsPage() {
       setHasChanges(changed);
     }
   }, [
-    huggingfaceKey, geminiKey, claudeKey, openaiKey, provider, appLanguage, settings,
-    titleFormat, titleInstructions, descriptionFormat, descriptionInstructions,
-    handleFormat, handleInstructions, seoTitleFormat, seoTitleInstructions,
-    metaDescFormat, metaDescInstructions, instructions, selectedSection
+    huggingfaceKey, geminiKey, claudeKey, openaiKey, grokKey, deepseekKey, provider, appLanguage,
+    hfMaxTokensPerMinute, hfMaxRequestsPerMinute,
+    geminiMaxTokensPerMinute, geminiMaxRequestsPerMinute,
+    claudeMaxTokensPerMinute, claudeMaxRequestsPerMinute,
+    openaiMaxTokensPerMinute, openaiMaxRequestsPerMinute,
+    grokMaxTokensPerMinute, grokMaxRequestsPerMinute,
+    deepseekMaxTokensPerMinute, deepseekMaxRequestsPerMinute,
+    settings, selectedSection
   ]);
-
-  const handleFormatText = (command: string) => {
-    if (descriptionFormatMode !== "rendered" || !descriptionFormatEditorRef.current) return;
-
-    descriptionFormatEditorRef.current.focus();
-
-    switch (command) {
-      case "bold":
-        document.execCommand("bold", false);
-        break;
-      case "italic":
-        document.execCommand("italic", false);
-        break;
-      case "underline":
-        document.execCommand("underline", false);
-        break;
-      case "h1":
-        document.execCommand("formatBlock", false, "<h1>");
-        break;
-      case "h2":
-        document.execCommand("formatBlock", false, "<h2>");
-        break;
-      case "h3":
-        document.execCommand("formatBlock", false, "<h3>");
-        break;
-      case "p":
-        document.execCommand("formatBlock", false, "<p>");
-        break;
-      case "ul":
-        document.execCommand("insertUnorderedList", false);
-        break;
-      case "ol":
-        document.execCommand("insertOrderedList", false);
-        break;
-      case "br":
-        document.execCommand("insertHTML", false, "<br>");
-        break;
-    }
-
-    setDescriptionFormat(descriptionFormatEditorRef.current.innerHTML);
-  };
-
-  const toggleDescriptionFormatMode = () => {
-    setDescriptionFormatMode(descriptionFormatMode === "html" ? "rendered" : "html");
-  };
 
   const handleSave = () => {
     if (!hasChanges) return;
 
-    if (selectedSection === "instructions") {
-      fetcher.submit(
-        {
-          actionType: "saveInstructions",
-          titleFormat,
-          titleInstructions,
-          descriptionFormat,
-          descriptionInstructions,
-          handleFormat,
-          handleInstructions,
-          seoTitleFormat,
-          seoTitleInstructions,
-          metaDescFormat,
-          metaDescInstructions,
-          altTextFormat,
-          altTextInstructions,
-        },
-        { method: "POST" }
-      );
-    } else {
-      fetcher.submit(
-        {
-          actionType: "saveSettings",
-          huggingfaceApiKey: huggingfaceKey,
-          geminiApiKey: geminiKey,
-          claudeApiKey: claudeKey,
-          openaiApiKey: openaiKey,
-          grokApiKey: grokKey,
-          deepseekApiKey: deepseekKey,
-          preferredProvider: provider,
-          appLanguage: appLanguage,
-          hfMaxTokensPerMinute,
-          hfMaxRequestsPerMinute,
-          geminiMaxTokensPerMinute,
-          geminiMaxRequestsPerMinute,
-          claudeMaxTokensPerMinute,
-          claudeMaxRequestsPerMinute,
-          openaiMaxTokensPerMinute,
-          openaiMaxRequestsPerMinute,
-          grokMaxTokensPerMinute,
-          grokMaxRequestsPerMinute,
-          deepseekMaxTokensPerMinute,
-          deepseekMaxRequestsPerMinute,
-        },
-        { method: "POST" }
-      );
-    }
+    fetcher.submit(
+      {
+        actionType: "saveSettings",
+        huggingfaceApiKey: huggingfaceKey,
+        geminiApiKey: geminiKey,
+        claudeApiKey: claudeKey,
+        openaiApiKey: openaiKey,
+        grokApiKey: grokKey,
+        deepseekApiKey: deepseekKey,
+        preferredProvider: provider,
+        appLanguage: appLanguage,
+        hfMaxTokensPerMinute,
+        hfMaxRequestsPerMinute,
+        geminiMaxTokensPerMinute,
+        geminiMaxRequestsPerMinute,
+        claudeMaxTokensPerMinute,
+        claudeMaxRequestsPerMinute,
+        openaiMaxTokensPerMinute,
+        openaiMaxRequestsPerMinute,
+        grokMaxTokensPerMinute,
+        grokMaxRequestsPerMinute,
+        deepseekMaxTokensPerMinute,
+        deepseekMaxRequestsPerMinute,
+      },
+      { method: "POST" }
+    );
   };
 
   const handleSetupWebhooks = async () => {
@@ -586,30 +577,6 @@ export default function SettingsPage() {
 
   return (
     <Page fullWidth>
-      <style>{`
-        .description-editor h1 {
-          font-size: 2em;
-          font-weight: bold;
-          margin: 0.67em 0;
-        }
-        .description-editor h2 {
-          font-size: 1.5em;
-          font-weight: bold;
-          margin: 0.75em 0;
-        }
-        .description-editor h3 {
-          font-size: 1.17em;
-          font-weight: bold;
-          margin: 0.83em 0;
-        }
-        .description-editor p {
-          margin: 1em 0;
-        }
-        .description-editor ul, .description-editor ol {
-          margin: 1em 0;
-          padding-left: 40px;
-        }
-      `}</style>
       <MainNavigation />
       <div style={{ padding: "1rem" }}>
         <div style={{ display: "flex", gap: "1rem" }}>
@@ -727,9 +694,13 @@ export default function SettingsPage() {
                         <Text as="p">{t.settings.productsInDb}: {productCount}</Text>
                         <Text as="p">Collections in DB: {collectionCount}</Text>
                         <Text as="p">Articles in DB: {articleCount}</Text>
-                        <Text as="p" fontWeight="semibold" style={{ marginTop: "0.5rem" }}>Translations:</Text>
+                        <div style={{ marginTop: "0.5rem" }}>
+                          <Text as="p" fontWeight="semibold">Translations:</Text>
+                        </div>
                         <Text as="p">{t.settings.translationsInDb}: {translationCount}</Text>
-                        <Text as="p" fontWeight="semibold" style={{ marginTop: "0.5rem" }}>Webhooks:</Text>
+                        <div style={{ marginTop: "0.5rem" }}>
+                          <Text as="p" fontWeight="semibold">Webhooks:</Text>
+                        </div>
                         <Text as="p">{t.settings.webhookEventsReceived}: {webhookCount}</Text>
                       </BlockStack>
                     </BlockStack>
@@ -1304,251 +1275,10 @@ export default function SettingsPage() {
 
               {/* AI Instructions */}
               {selectedSection === "instructions" && (
-                <Card>
-                  <BlockStack gap="500">
-                    <Text as="h2" variant="headingLg">
-                      {t.settings.aiInstructionsTitle}
-                    </Text>
-
-                    <Text as="p" variant="bodyMd" tone="subdued">
-                      {t.settings.aiInstructionsDescription}
-                    </Text>
-
-                    <InlineStack align="end">
-                      <Button
-                        variant={hasChanges ? "primary" : undefined}
-                        onClick={handleSave}
-                        disabled={!hasChanges}
-                        loading={fetcher.state !== "idle"}
-                      >
-                        {t.products.saveChanges}
-                      </Button>
-                    </InlineStack>
-
-                    {/* Title */}
-                    <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
-                      <BlockStack gap="400">
-                        <Text as="h3" variant="headingMd">{t.settings.fieldTitle}</Text>
-                        <TextField
-                          label={t.settings.formatExample}
-                          value={titleFormat}
-                          onChange={setTitleFormat}
-                          multiline={3}
-                          autoComplete="off"
-                          placeholder="z.B. Premium Leder Geldbörse - Elegant & Stilvoll"
-                          helpText={`${titleFormat.length} Zeichen - ${t.settings.formatExampleHelp.replace('{field}', t.settings.fieldTitle)}`}
-                        />
-                        <TextField
-                          label={t.settings.instructions}
-                          value={titleInstructions}
-                          onChange={setTitleInstructions}
-                          multiline={3}
-                          autoComplete="off"
-                          placeholder="z.B. Nicht länger als 60 Zeichen, gehobene Ausdrucksweise, Material und Hauptmerkmal nennen"
-                          helpText={`${titleInstructions.length} Zeichen - ${t.settings.instructionsHelp}`}
-                        />
-                      </BlockStack>
-                    </div>
-
-                    {/* Description */}
-                    <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
-                      <BlockStack gap="400">
-                        <InlineStack align="space-between" blockAlign="center">
-                          <Text as="h3" variant="headingMd">{t.settings.fieldDescription}</Text>
-                          <Button size="slim" onClick={toggleDescriptionFormatMode}>
-                            {descriptionFormatMode === "html" ? t.settings.previewMode : t.settings.htmlMode}
-                          </Button>
-                        </InlineStack>
-
-                        <div>
-                          <Text as="p" variant="bodyMd" fontWeight="medium">{t.settings.formatExample}</Text>
-                          {descriptionFormatMode === "rendered" && (
-                            <div style={{ marginTop: "0.5rem", display: "flex", gap: "0.25rem", flexWrap: "wrap", padding: "0.5rem", background: "white", border: "1px solid #c9cccf", borderRadius: "8px 8px 0 0" }}>
-                              <ButtonGroup variant="segmented">
-                                <Button size="slim" onClick={() => handleFormatText("bold")}>B</Button>
-                                <Button size="slim" onClick={() => handleFormatText("italic")}>I</Button>
-                                <Button size="slim" onClick={() => handleFormatText("underline")}>U</Button>
-                              </ButtonGroup>
-                              <ButtonGroup variant="segmented">
-                                <Button size="slim" onClick={() => handleFormatText("h1")}>H1</Button>
-                                <Button size="slim" onClick={() => handleFormatText("h2")}>H2</Button>
-                                <Button size="slim" onClick={() => handleFormatText("h3")}>H3</Button>
-                              </ButtonGroup>
-                              <ButtonGroup variant="segmented">
-                                <Button size="slim" onClick={() => handleFormatText("ul")}>Liste</Button>
-                                <Button size="slim" onClick={() => handleFormatText("ol")}>Num.</Button>
-                              </ButtonGroup>
-                              <ButtonGroup variant="segmented">
-                                <Button size="slim" onClick={() => handleFormatText("p")}>Absatz</Button>
-                                <Button size="slim" onClick={() => handleFormatText("br")}>Umbruch</Button>
-                              </ButtonGroup>
-                            </div>
-                          )}
-
-                          {descriptionFormatMode === "html" ? (
-                            <textarea
-                              value={descriptionFormat}
-                              onChange={(e) => setDescriptionFormat(e.target.value)}
-                              placeholder="z.B. <h2>Entdecken Sie unsere handgefertigte Ledertasche</h2><p>Premium Qualität...</p>"
-                              style={{
-                                width: "100%",
-                                minHeight: "150px",
-                                padding: "12px",
-                                border: "1px solid #c9cccf",
-                                borderRadius: "8px",
-                                fontFamily: "monospace",
-                                fontSize: "14px",
-                                marginTop: "0.5rem",
-                              }}
-                            />
-                          ) : (
-                            <div
-                              ref={descriptionFormatEditorRef}
-                              contentEditable
-                              onInput={(e) => setDescriptionFormat(e.currentTarget.innerHTML)}
-                              dangerouslySetInnerHTML={{ __html: descriptionFormat || '<p>z.B. Entdecken Sie unsere handgefertigte Ledertasche...</p>' }}
-                              style={{
-                                width: "100%",
-                                minHeight: "150px",
-                                padding: "12px",
-                                border: "1px solid #c9cccf",
-                                borderTop: "none",
-                                borderRadius: "0 0 8px 8px",
-                                lineHeight: "1.6",
-                                background: "white",
-                              }}
-                              className="description-editor"
-                            />
-                          )}
-                          <Text as="p" variant="bodySm" tone="subdued">
-                            {descriptionFormat.replace(/<[^>]*>/g, "").length} Zeichen - {t.settings.formatExampleHelp.replace('{field}', t.settings.fieldDescription)}
-                          </Text>
-                        </div>
-
-                        <TextField
-                          label={t.settings.instructions}
-                          value={descriptionInstructions}
-                          onChange={setDescriptionInstructions}
-                          multiline={3}
-                          autoComplete="off"
-                          placeholder="z.B. 150-200 Wörter, gehobene Ausdrucksweise, Vorteile hervorheben, Storytelling verwenden"
-                          helpText={`${descriptionInstructions.length} Zeichen - ${t.settings.instructionsHelp}`}
-                        />
-                      </BlockStack>
-                    </div>
-
-                    {/* Handle */}
-                    <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
-                      <BlockStack gap="400">
-                        <Text as="h3" variant="headingMd">{t.settings.fieldHandle}</Text>
-                        <TextField
-                          label={t.settings.formatExample}
-                          value={handleFormat}
-                          onChange={setHandleFormat}
-                          multiline={2}
-                          autoComplete="off"
-                          placeholder="z.B. premium-leder-geldboerse-elegant"
-                          helpText={`${handleFormat.length} Zeichen - ${t.settings.formatExampleHelp.replace('{field}', t.settings.fieldHandle)}`}
-                        />
-                        <TextField
-                          label={t.settings.instructions}
-                          value={handleInstructions}
-                          onChange={setHandleInstructions}
-                          multiline={3}
-                          autoComplete="off"
-                          placeholder="z.B. Nur Kleinbuchstaben und Bindestriche, keine Umlaute, max. 50 Zeichen, SEO-optimiert"
-                          helpText={`${handleInstructions.length} Zeichen - ${t.settings.instructionsHelp}`}
-                        />
-                      </BlockStack>
-                    </div>
-
-                    {/* SEO Title */}
-                    <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
-                      <BlockStack gap="400">
-                        <Text as="h3" variant="headingMd">{t.settings.fieldSeoTitle}</Text>
-                        <TextField
-                          label={t.settings.formatExample}
-                          value={seoTitleFormat}
-                          onChange={setSeoTitleFormat}
-                          multiline={2}
-                          autoComplete="off"
-                          placeholder="z.B. Premium Leder Geldbörse kaufen | Handgefertigt & Elegant"
-                          helpText={`${seoTitleFormat.length} Zeichen - ${t.settings.formatExampleHelp.replace('{field}', t.settings.fieldSeoTitle)}`}
-                        />
-                        <TextField
-                          label={t.settings.instructions}
-                          value={seoTitleInstructions}
-                          onChange={setSeoTitleInstructions}
-                          multiline={3}
-                          autoComplete="off"
-                          placeholder="z.B. 50-60 Zeichen, Keywords am Anfang, Call-to-Action verwenden"
-                          helpText={`${seoTitleInstructions.length} Zeichen - ${t.settings.instructionsHelp}`}
-                        />
-                      </BlockStack>
-                    </div>
-
-                    {/* Meta Description */}
-                    <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
-                      <BlockStack gap="400">
-                        <Text as="h3" variant="headingMd">{t.settings.fieldMetaDescription}</Text>
-                        <TextField
-                          label={t.settings.formatExample}
-                          value={metaDescFormat}
-                          onChange={setMetaDescFormat}
-                          multiline={3}
-                          autoComplete="off"
-                          placeholder="z.B. Entdecken Sie unsere handgefertigten Premium Leder Geldbörsen. Elegant, langlebig und zeitlos. Jetzt kaufen!"
-                          helpText={`${metaDescFormat.length} Zeichen - ${t.settings.formatExampleHelp.replace('{field}', t.settings.fieldMetaDescription)}`}
-                        />
-                        <TextField
-                          label={t.settings.instructions}
-                          value={metaDescInstructions}
-                          onChange={setMetaDescInstructions}
-                          multiline={3}
-                          autoComplete="off"
-                          placeholder="z.B. 150-160 Zeichen, Keywords verwenden, zum Klicken anregen, USP hervorheben"
-                          helpText={`${metaDescInstructions.length} Zeichen - ${t.settings.instructionsHelp}`}
-                        />
-                      </BlockStack>
-                    </div>
-
-                    {/* Alt Text */}
-                    <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
-                      <BlockStack gap="400">
-                        <Text as="h3" variant="headingMd">Alt-Text (Bilder)</Text>
-                        <TextField
-                          label={t.settings.formatExample}
-                          value={altTextFormat}
-                          onChange={setAltTextFormat}
-                          multiline={2}
-                          autoComplete="off"
-                          placeholder="z.B. Premium Leder Geldbörse in eleganter Geschenkverpackung"
-                          helpText={`${altTextFormat.length} Zeichen - Formatbeispiel für Alt-Texte`}
-                        />
-                        <TextField
-                          label={t.settings.instructions}
-                          value={altTextInstructions}
-                          onChange={setAltTextInstructions}
-                          multiline={3}
-                          autoComplete="off"
-                          placeholder="z.B. 60-125 Zeichen, beschreibe was auf dem Bild zu sehen ist, SEO-freundlich, keine Füllwörter"
-                          helpText={`${altTextInstructions.length} Zeichen - ${t.settings.instructionsHelp}`}
-                        />
-                      </BlockStack>
-                    </div>
-
-                    <InlineStack align="end">
-                      <Button
-                        variant={hasChanges ? "primary" : undefined}
-                        onClick={handleSave}
-                        disabled={!hasChanges}
-                        loading={fetcher.state !== "idle"}
-                      >
-                        {t.products.saveChanges}
-                      </Button>
-                    </InlineStack>
-                  </BlockStack>
-                </Card>
+                <AIInstructionsTabs
+                  instructions={instructions}
+                  fetcher={fetcher}
+                />
               )}
 
               {/* Language Settings */}

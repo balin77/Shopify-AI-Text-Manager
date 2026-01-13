@@ -6,8 +6,9 @@ import {
   getDefaultForField,
   type EntityType
 } from "../constants/aiInstructionsDefaults";
+import type { FetcherWithComponents } from "@remix-run/react";
 
-interface AIInstructionsTabsProps {
+interface Instructions {
   // Products
   productTitleFormat: string;
   productTitleInstructions: string;
@@ -61,15 +62,16 @@ interface AIInstructionsTabsProps {
   // Policies
   policyDescriptionFormat: string;
   policyDescriptionInstructions: string;
-
-  // Setters
-  onFieldChange: (field: string, value: string) => void;
-  onResetField: (field: string, entityType: EntityType) => void;
-  onResetAll: (entityType: EntityType) => void;
 }
 
-export function AIInstructionsTabs(props: AIInstructionsTabsProps) {
+interface AIInstructionsTabsProps {
+  instructions: Instructions;
+  fetcher: FetcherWithComponents<any>;
+}
+
+export function AIInstructionsTabs({ instructions, fetcher }: AIInstructionsTabsProps) {
   const [selectedTab, setSelectedTab] = useState(0);
+  const [localInstructions, setLocalInstructions] = useState<Instructions>(instructions);
 
   const tabs = [
     {
@@ -101,9 +103,34 @@ export function AIInstructionsTabs(props: AIInstructionsTabsProps) {
 
   const currentEntityType = tabs[selectedTab].id as EntityType;
 
-  const handleResetAll = () => {
-    props.onResetAll(currentEntityType);
+  const handleFieldChange = (field: string, value: string) => {
+    setLocalInstructions({ ...localInstructions, [field]: value });
   };
+
+  const handleResetField = (field: string, entityType: EntityType) => {
+    const defaultValue = getDefaultForField(entityType, field as any);
+    setLocalInstructions({ ...localInstructions, [field]: defaultValue });
+  };
+
+  const handleResetAll = () => {
+    const defaults = getDefaultInstructions(currentEntityType);
+    setLocalInstructions({ ...localInstructions, ...defaults });
+  };
+
+  const handleSave = () => {
+    const formData = new FormData();
+    formData.append("actionType", "saveInstructions");
+
+    // Add all instruction fields to FormData
+    Object.entries(localInstructions).forEach(([key, value]) => {
+      formData.append(key, value);
+    });
+
+    fetcher.submit(formData, { method: "POST" });
+  };
+
+  // Check if there are unsaved changes
+  const hasChanges = JSON.stringify(localInstructions) !== JSON.stringify(instructions);
 
   return (
     <BlockStack gap="500">
@@ -113,10 +140,18 @@ export function AIInstructionsTabs(props: AIInstructionsTabsProps) {
 
       <Tabs tabs={tabs} selected={selectedTab} onSelect={setSelectedTab}>
         <div style={{ marginTop: "1rem" }}>
-          {/* Reset All Button */}
-          <InlineStack align="end">
+          {/* Action Buttons */}
+          <InlineStack align="space-between">
             <Button onClick={handleResetAll} tone="critical">
               Alle Felder zurücksetzen
+            </Button>
+            <Button
+              variant={hasChanges ? "primary" : undefined}
+              onClick={handleSave}
+              disabled={!hasChanges}
+              loading={fetcher.state !== "idle"}
+            >
+              Änderungen speichern
             </Button>
           </InlineStack>
 
@@ -126,11 +161,11 @@ export function AIInstructionsTabs(props: AIInstructionsTabsProps) {
               <>
                 <AIInstructionFieldGroup
                   fieldName="Titel"
-                  formatValue={props.productTitleFormat}
-                  instructionsValue={props.productTitleInstructions}
-                  onFormatChange={(v) => props.onFieldChange('productTitleFormat', v)}
-                  onInstructionsChange={(v) => props.onFieldChange('productTitleInstructions', v)}
-                  onReset={() => props.onResetField('productTitleFormat', 'products')}
+                  formatValue={localInstructions.productTitleFormat}
+                  instructionsValue={localInstructions.productTitleInstructions}
+                  onFormatChange={(v) => handleFieldChange('productTitleFormat', v)}
+                  onInstructionsChange={(v) => handleFieldChange('productTitleInstructions', v)}
+                  onReset={() => handleResetField('productTitleFormat', 'products')}
                   formatPlaceholder="z.B. Premium Leder Geldbörse - Elegant & Langlebig"
                   instructionsPlaceholder="z.B. Maximal 60 Zeichen, Material und Hauptmerkmal nennen"
                   formatLabel="Formatbeispiel"
@@ -139,11 +174,11 @@ export function AIInstructionsTabs(props: AIInstructionsTabsProps) {
 
                 <AIInstructionFieldGroup
                   fieldName="Beschreibung"
-                  formatValue={props.productDescriptionFormat}
-                  instructionsValue={props.productDescriptionInstructions}
-                  onFormatChange={(v) => props.onFieldChange('productDescriptionFormat', v)}
-                  onInstructionsChange={(v) => props.onFieldChange('productDescriptionInstructions', v)}
-                  onReset={() => props.onResetField('productDescriptionFormat', 'products')}
+                  formatValue={localInstructions.productDescriptionFormat}
+                  instructionsValue={localInstructions.productDescriptionInstructions}
+                  onFormatChange={(v) => handleFieldChange('productDescriptionFormat', v)}
+                  onInstructionsChange={(v) => handleFieldChange('productDescriptionInstructions', v)}
+                  onReset={() => handleResetField('productDescriptionFormat', 'products')}
                   formatPlaceholder="z.B. <h2>Handwerkskunst in Perfektion</h2><p>Premium Leder...</p>"
                   instructionsPlaceholder="z.B. 150-250 Wörter, H2/H3 nutzen, Storytelling verwenden"
                   formatLabel="Formatbeispiel"
@@ -153,11 +188,11 @@ export function AIInstructionsTabs(props: AIInstructionsTabsProps) {
 
                 <AIInstructionFieldGroup
                   fieldName="URL-Handle"
-                  formatValue={props.productHandleFormat}
-                  instructionsValue={props.productHandleInstructions}
-                  onFormatChange={(v) => props.onFieldChange('productHandleFormat', v)}
-                  onInstructionsChange={(v) => props.onFieldChange('productHandleInstructions', v)}
-                  onReset={() => props.onResetField('productHandleFormat', 'products')}
+                  formatValue={localInstructions.productHandleFormat}
+                  instructionsValue={localInstructions.productHandleInstructions}
+                  onFormatChange={(v) => handleFieldChange('productHandleFormat', v)}
+                  onInstructionsChange={(v) => handleFieldChange('productHandleInstructions', v)}
+                  onReset={() => handleResetField('productHandleFormat', 'products')}
                   formatPlaceholder="z.B. premium-leder-geldboerse"
                   instructionsPlaceholder="z.B. Nur Kleinbuchstaben, Bindestriche, keine Umlaute, max 50 Zeichen"
                   formatLabel="Formatbeispiel"
@@ -166,11 +201,11 @@ export function AIInstructionsTabs(props: AIInstructionsTabsProps) {
 
                 <AIInstructionFieldGroup
                   fieldName="SEO-Titel"
-                  formatValue={props.productSeoTitleFormat}
-                  instructionsValue={props.productSeoTitleInstructions}
-                  onFormatChange={(v) => props.onFieldChange('productSeoTitleFormat', v)}
-                  onInstructionsChange={(v) => props.onFieldChange('productSeoTitleInstructions', v)}
-                  onReset={() => props.onResetField('productSeoTitleFormat', 'products')}
+                  formatValue={localInstructions.productSeoTitleFormat}
+                  instructionsValue={localInstructions.productSeoTitleInstructions}
+                  onFormatChange={(v) => handleFieldChange('productSeoTitleFormat', v)}
+                  onInstructionsChange={(v) => handleFieldChange('productSeoTitleInstructions', v)}
+                  onReset={() => handleResetField('productSeoTitleFormat', 'products')}
                   formatPlaceholder="z.B. Premium Leder Geldbörse kaufen | Handgefertigt"
                   instructionsPlaceholder="z.B. 50-60 Zeichen, Hauptkeyword am Anfang, Call-to-Action"
                   formatLabel="Formatbeispiel"
@@ -179,11 +214,11 @@ export function AIInstructionsTabs(props: AIInstructionsTabsProps) {
 
                 <AIInstructionFieldGroup
                   fieldName="Meta-Beschreibung"
-                  formatValue={props.productMetaDescFormat}
-                  instructionsValue={props.productMetaDescInstructions}
-                  onFormatChange={(v) => props.onFieldChange('productMetaDescFormat', v)}
-                  onInstructionsChange={(v) => props.onFieldChange('productMetaDescInstructions', v)}
-                  onReset={() => props.onResetField('productMetaDescFormat', 'products')}
+                  formatValue={localInstructions.productMetaDescFormat}
+                  instructionsValue={localInstructions.productMetaDescInstructions}
+                  onFormatChange={(v) => handleFieldChange('productMetaDescFormat', v)}
+                  onInstructionsChange={(v) => handleFieldChange('productMetaDescInstructions', v)}
+                  onReset={() => handleResetField('productMetaDescFormat', 'products')}
                   formatPlaceholder="z.B. Handgefertigte Premium Leder Geldbörse. Zeitlos, langlebig..."
                   instructionsPlaceholder="z.B. 150-160 Zeichen, 2-3 Keywords, Handlungsaufforderung"
                   formatLabel="Formatbeispiel"
@@ -192,11 +227,11 @@ export function AIInstructionsTabs(props: AIInstructionsTabsProps) {
 
                 <AIInstructionFieldGroup
                   fieldName="Alt-Text (Bilder)"
-                  formatValue={props.productAltTextFormat}
-                  instructionsValue={props.productAltTextInstructions}
-                  onFormatChange={(v) => props.onFieldChange('productAltTextFormat', v)}
-                  onInstructionsChange={(v) => props.onFieldChange('productAltTextInstructions', v)}
-                  onReset={() => props.onResetField('productAltTextFormat', 'products')}
+                  formatValue={localInstructions.productAltTextFormat}
+                  instructionsValue={localInstructions.productAltTextInstructions}
+                  onFormatChange={(v) => handleFieldChange('productAltTextFormat', v)}
+                  onInstructionsChange={(v) => handleFieldChange('productAltTextInstructions', v)}
+                  onReset={() => handleResetField('productAltTextFormat', 'products')}
                   formatPlaceholder="z.B. Premium Leder Geldbörse aus dunkelbraunem Vollrindleder"
                   instructionsPlaceholder="z.B. 60-125 Zeichen, beschreibe was zu sehen ist, sachlich"
                   formatLabel="Formatbeispiel"
@@ -210,11 +245,11 @@ export function AIInstructionsTabs(props: AIInstructionsTabsProps) {
               <>
                 <AIInstructionFieldGroup
                   fieldName="Titel"
-                  formatValue={props.collectionTitleFormat}
-                  instructionsValue={props.collectionTitleInstructions}
-                  onFormatChange={(v) => props.onFieldChange('collectionTitleFormat', v)}
-                  onInstructionsChange={(v) => props.onFieldChange('collectionTitleInstructions', v)}
-                  onReset={() => props.onResetField('collectionTitleFormat', 'collections')}
+                  formatValue={localInstructions.collectionTitleFormat}
+                  instructionsValue={localInstructions.collectionTitleInstructions}
+                  onFormatChange={(v) => handleFieldChange('collectionTitleFormat', v)}
+                  onInstructionsChange={(v) => handleFieldChange('collectionTitleInstructions', v)}
+                  onReset={() => handleResetField('collectionTitleFormat', 'collections')}
                   formatPlaceholder="z.B. Leder Accessoires - Handgefertigt & Zeitlos"
                   instructionsPlaceholder="z.B. Maximal 50 Zeichen, Kategorie + USP"
                   formatLabel="Formatbeispiel"
@@ -223,11 +258,11 @@ export function AIInstructionsTabs(props: AIInstructionsTabsProps) {
 
                 <AIInstructionFieldGroup
                   fieldName="Beschreibung"
-                  formatValue={props.collectionDescriptionFormat}
-                  instructionsValue={props.collectionDescriptionInstructions}
-                  onFormatChange={(v) => props.onFieldChange('collectionDescriptionFormat', v)}
-                  onInstructionsChange={(v) => props.onFieldChange('collectionDescriptionInstructions', v)}
-                  onReset={() => props.onResetField('collectionDescriptionFormat', 'collections')}
+                  formatValue={localInstructions.collectionDescriptionFormat}
+                  instructionsValue={localInstructions.collectionDescriptionInstructions}
+                  onFormatChange={(v) => handleFieldChange('collectionDescriptionFormat', v)}
+                  onInstructionsChange={(v) => handleFieldChange('collectionDescriptionInstructions', v)}
+                  onReset={() => handleResetField('collectionDescriptionFormat', 'collections')}
                   formatPlaceholder="z.B. <h2>Handgefertigte Leder Accessoires</h2><p>Entdecken Sie...</p>"
                   instructionsPlaceholder="z.B. 100-200 Wörter, Übersicht der Kategorie"
                   formatLabel="Formatbeispiel"
@@ -237,11 +272,11 @@ export function AIInstructionsTabs(props: AIInstructionsTabsProps) {
 
                 <AIInstructionFieldGroup
                   fieldName="URL-Handle"
-                  formatValue={props.collectionHandleFormat}
-                  instructionsValue={props.collectionHandleInstructions}
-                  onFormatChange={(v) => props.onFieldChange('collectionHandleFormat', v)}
-                  onInstructionsChange={(v) => props.onFieldChange('collectionHandleInstructions', v)}
-                  onReset={() => props.onResetField('collectionHandleFormat', 'collections')}
+                  formatValue={localInstructions.collectionHandleFormat}
+                  instructionsValue={localInstructions.collectionHandleInstructions}
+                  onFormatChange={(v) => handleFieldChange('collectionHandleFormat', v)}
+                  onInstructionsChange={(v) => handleFieldChange('collectionHandleInstructions', v)}
+                  onReset={() => handleResetField('collectionHandleFormat', 'collections')}
                   formatPlaceholder="z.B. leder-accessoires"
                   instructionsPlaceholder="z.B. Nur Kleinbuchstaben, keine Umlaute, max 40 Zeichen"
                   formatLabel="Formatbeispiel"
@@ -250,11 +285,11 @@ export function AIInstructionsTabs(props: AIInstructionsTabsProps) {
 
                 <AIInstructionFieldGroup
                   fieldName="SEO-Titel"
-                  formatValue={props.collectionSeoTitleFormat}
-                  instructionsValue={props.collectionSeoTitleInstructions}
-                  onFormatChange={(v) => props.onFieldChange('collectionSeoTitleFormat', v)}
-                  onInstructionsChange={(v) => props.onFieldChange('collectionSeoTitleInstructions', v)}
-                  onReset={() => props.onResetField('collectionSeoTitleFormat', 'collections')}
+                  formatValue={localInstructions.collectionSeoTitleFormat}
+                  instructionsValue={localInstructions.collectionSeoTitleInstructions}
+                  onFormatChange={(v) => handleFieldChange('collectionSeoTitleFormat', v)}
+                  onInstructionsChange={(v) => handleFieldChange('collectionSeoTitleInstructions', v)}
+                  onReset={() => handleResetField('collectionSeoTitleFormat', 'collections')}
                   formatPlaceholder="z.B. Leder Accessoires kaufen | Handgefertigt"
                   instructionsPlaceholder="z.B. 50-60 Zeichen, Category-Keyword am Anfang"
                   formatLabel="Formatbeispiel"
@@ -263,11 +298,11 @@ export function AIInstructionsTabs(props: AIInstructionsTabsProps) {
 
                 <AIInstructionFieldGroup
                   fieldName="Meta-Beschreibung"
-                  formatValue={props.collectionMetaDescFormat}
-                  instructionsValue={props.collectionMetaDescInstructions}
-                  onFormatChange={(v) => props.onFieldChange('collectionMetaDescFormat', v)}
-                  onInstructionsChange={(v) => props.onFieldChange('collectionMetaDescInstructions', v)}
-                  onReset={() => props.onResetField('collectionMetaDescFormat', 'collections')}
+                  formatValue={localInstructions.collectionMetaDescFormat}
+                  instructionsValue={localInstructions.collectionMetaDescInstructions}
+                  onFormatChange={(v) => handleFieldChange('collectionMetaDescFormat', v)}
+                  onInstructionsChange={(v) => handleFieldChange('collectionMetaDescInstructions', v)}
+                  onReset={() => handleResetField('collectionMetaDescFormat', 'collections')}
                   formatPlaceholder="z.B. Hochwertige Leder Accessoires. Geldbörsen, Gürtel & mehr..."
                   instructionsPlaceholder="z.B. 150-160 Zeichen, Kategorie beschreiben, 2-3 Beispiele"
                   formatLabel="Formatbeispiel"
@@ -281,11 +316,11 @@ export function AIInstructionsTabs(props: AIInstructionsTabsProps) {
               <>
                 <AIInstructionFieldGroup
                   fieldName="Titel"
-                  formatValue={props.blogTitleFormat}
-                  instructionsValue={props.blogTitleInstructions}
-                  onFormatChange={(v) => props.onFieldChange('blogTitleFormat', v)}
-                  onInstructionsChange={(v) => props.onFieldChange('blogTitleInstructions', v)}
-                  onReset={() => props.onResetField('blogTitleFormat', 'blogs')}
+                  formatValue={localInstructions.blogTitleFormat}
+                  instructionsValue={localInstructions.blogTitleInstructions}
+                  onFormatChange={(v) => handleFieldChange('blogTitleFormat', v)}
+                  onInstructionsChange={(v) => handleFieldChange('blogTitleInstructions', v)}
+                  onReset={() => handleResetField('blogTitleFormat', 'blogs')}
                   formatPlaceholder="z.B. 5 Tipps für die richtige Pflege Ihrer Lederprodukte"
                   instructionsPlaceholder="z.B. Maximal 60 Zeichen, Zahlen verwenden, Nutzen kommunizieren"
                   formatLabel="Formatbeispiel"
@@ -294,11 +329,11 @@ export function AIInstructionsTabs(props: AIInstructionsTabsProps) {
 
                 <AIInstructionFieldGroup
                   fieldName="Inhalt"
-                  formatValue={props.blogDescriptionFormat}
-                  instructionsValue={props.blogDescriptionInstructions}
-                  onFormatChange={(v) => props.onFieldChange('blogDescriptionFormat', v)}
-                  onInstructionsChange={(v) => props.onFieldChange('blogDescriptionInstructions', v)}
-                  onReset={() => props.onResetField('blogDescriptionFormat', 'blogs')}
+                  formatValue={localInstructions.blogDescriptionFormat}
+                  instructionsValue={localInstructions.blogDescriptionInstructions}
+                  onFormatChange={(v) => handleFieldChange('blogDescriptionFormat', v)}
+                  onInstructionsChange={(v) => handleFieldChange('blogDescriptionInstructions', v)}
+                  onReset={() => handleResetField('blogDescriptionFormat', 'blogs')}
                   formatPlaceholder="z.B. <h2>1. Regelmäßiges Reinigen</h2><p>Entfernen Sie...</p>"
                   instructionsPlaceholder="z.B. 300-800 Wörter, H2/H3 Struktur, informativ"
                   formatLabel="Formatbeispiel"
@@ -308,11 +343,11 @@ export function AIInstructionsTabs(props: AIInstructionsTabsProps) {
 
                 <AIInstructionFieldGroup
                   fieldName="URL-Handle"
-                  formatValue={props.blogHandleFormat}
-                  instructionsValue={props.blogHandleInstructions}
-                  onFormatChange={(v) => props.onFieldChange('blogHandleFormat', v)}
-                  onInstructionsChange={(v) => props.onFieldChange('blogHandleInstructions', v)}
-                  onReset={() => props.onResetField('blogHandleFormat', 'blogs')}
+                  formatValue={localInstructions.blogHandleFormat}
+                  instructionsValue={localInstructions.blogHandleInstructions}
+                  onFormatChange={(v) => handleFieldChange('blogHandleFormat', v)}
+                  onInstructionsChange={(v) => handleFieldChange('blogHandleInstructions', v)}
+                  onReset={() => handleResetField('blogHandleFormat', 'blogs')}
                   formatPlaceholder="z.B. lederpflege-tipps-anleitung"
                   instructionsPlaceholder="z.B. 3-5 Keywords, maximal 60 Zeichen"
                   formatLabel="Formatbeispiel"
@@ -321,11 +356,11 @@ export function AIInstructionsTabs(props: AIInstructionsTabsProps) {
 
                 <AIInstructionFieldGroup
                   fieldName="SEO-Titel"
-                  formatValue={props.blogSeoTitleFormat}
-                  instructionsValue={props.blogSeoTitleInstructions}
-                  onFormatChange={(v) => props.onFieldChange('blogSeoTitleFormat', v)}
-                  onInstructionsChange={(v) => props.onFieldChange('blogSeoTitleInstructions', v)}
-                  onReset={() => props.onResetField('blogSeoTitleFormat', 'blogs')}
+                  formatValue={localInstructions.blogSeoTitleFormat}
+                  instructionsValue={localInstructions.blogSeoTitleInstructions}
+                  onFormatChange={(v) => handleFieldChange('blogSeoTitleFormat', v)}
+                  onInstructionsChange={(v) => handleFieldChange('blogSeoTitleInstructions', v)}
+                  onReset={() => handleResetField('blogSeoTitleFormat', 'blogs')}
                   formatPlaceholder="z.B. Lederpflege: 5 Tipps | Expertenratgeber"
                   instructionsPlaceholder="z.B. 50-60 Zeichen, Zahlen nutzen, Expertise zeigen"
                   formatLabel="Formatbeispiel"
@@ -334,11 +369,11 @@ export function AIInstructionsTabs(props: AIInstructionsTabsProps) {
 
                 <AIInstructionFieldGroup
                   fieldName="Meta-Beschreibung"
-                  formatValue={props.blogMetaDescFormat}
-                  instructionsValue={props.blogMetaDescInstructions}
-                  onFormatChange={(v) => props.onFieldChange('blogMetaDescFormat', v)}
-                  onInstructionsChange={(v) => props.onFieldChange('blogMetaDescInstructions', v)}
-                  onReset={() => props.onResetField('blogMetaDescFormat', 'blogs')}
+                  formatValue={localInstructions.blogMetaDescFormat}
+                  instructionsValue={localInstructions.blogMetaDescInstructions}
+                  onFormatChange={(v) => handleFieldChange('blogMetaDescFormat', v)}
+                  onInstructionsChange={(v) => handleFieldChange('blogMetaDescInstructions', v)}
+                  onReset={() => handleResetField('blogMetaDescFormat', 'blogs')}
                   formatPlaceholder="z.B. Lederpflege leicht gemacht: 5 bewährte Tipps..."
                   instructionsPlaceholder="z.B. 150-160 Zeichen, Artikel-Nutzen zusammenfassen"
                   formatLabel="Formatbeispiel"
@@ -352,11 +387,11 @@ export function AIInstructionsTabs(props: AIInstructionsTabsProps) {
               <>
                 <AIInstructionFieldGroup
                   fieldName="Titel"
-                  formatValue={props.pageTitleFormat}
-                  instructionsValue={props.pageTitleInstructions}
-                  onFormatChange={(v) => props.onFieldChange('pageTitleFormat', v)}
-                  onInstructionsChange={(v) => props.onFieldChange('pageTitleInstructions', v)}
-                  onReset={() => props.onResetField('pageTitleFormat', 'pages')}
+                  formatValue={localInstructions.pageTitleFormat}
+                  instructionsValue={localInstructions.pageTitleInstructions}
+                  onFormatChange={(v) => handleFieldChange('pageTitleFormat', v)}
+                  onInstructionsChange={(v) => handleFieldChange('pageTitleInstructions', v)}
+                  onReset={() => handleResetField('pageTitleFormat', 'pages')}
                   formatPlaceholder="z.B. Über uns - Traditionelle Handwerkskunst seit 1970"
                   instructionsPlaceholder="z.B. Maximal 60 Zeichen, klar und beschreibend"
                   formatLabel="Formatbeispiel"
@@ -365,11 +400,11 @@ export function AIInstructionsTabs(props: AIInstructionsTabsProps) {
 
                 <AIInstructionFieldGroup
                   fieldName="Inhalt"
-                  formatValue={props.pageDescriptionFormat}
-                  instructionsValue={props.pageDescriptionInstructions}
-                  onFormatChange={(v) => props.onFieldChange('pageDescriptionFormat', v)}
-                  onInstructionsChange={(v) => props.onFieldChange('pageDescriptionInstructions', v)}
-                  onReset={() => props.onResetField('pageDescriptionFormat', 'pages')}
+                  formatValue={localInstructions.pageDescriptionFormat}
+                  instructionsValue={localInstructions.pageDescriptionInstructions}
+                  onFormatChange={(v) => handleFieldChange('pageDescriptionFormat', v)}
+                  onInstructionsChange={(v) => handleFieldChange('pageDescriptionInstructions', v)}
+                  onReset={() => handleResetField('pageDescriptionFormat', 'pages')}
                   formatPlaceholder="z.B. <h1>Handwerkskunst mit Tradition</h1><p>Seit über 50 Jahren...</p>"
                   instructionsPlaceholder="z.B. 200-400 Wörter, authentisch, H1/H2 Struktur"
                   formatLabel="Formatbeispiel"
@@ -379,11 +414,11 @@ export function AIInstructionsTabs(props: AIInstructionsTabsProps) {
 
                 <AIInstructionFieldGroup
                   fieldName="URL-Handle"
-                  formatValue={props.pageHandleFormat}
-                  instructionsValue={props.pageHandleInstructions}
-                  onFormatChange={(v) => props.onFieldChange('pageHandleFormat', v)}
-                  onInstructionsChange={(v) => props.onFieldChange('pageHandleInstructions', v)}
-                  onReset={() => props.onResetField('pageHandleFormat', 'pages')}
+                  formatValue={localInstructions.pageHandleFormat}
+                  instructionsValue={localInstructions.pageHandleInstructions}
+                  onFormatChange={(v) => handleFieldChange('pageHandleFormat', v)}
+                  onInstructionsChange={(v) => handleFieldChange('pageHandleInstructions', v)}
+                  onReset={() => handleResetField('pageHandleFormat', 'pages')}
                   formatPlaceholder="z.B. ueber-uns, kontakt, impressum"
                   instructionsPlaceholder="z.B. 2-4 Keywords, maximal 40 Zeichen, Standard-Handles"
                   formatLabel="Formatbeispiel"
@@ -392,11 +427,11 @@ export function AIInstructionsTabs(props: AIInstructionsTabsProps) {
 
                 <AIInstructionFieldGroup
                   fieldName="SEO-Titel"
-                  formatValue={props.pageSeoTitleFormat}
-                  instructionsValue={props.pageSeoTitleInstructions}
-                  onFormatChange={(v) => props.onFieldChange('pageSeoTitleFormat', v)}
-                  onInstructionsChange={(v) => props.onFieldChange('pageSeoTitleInstructions', v)}
-                  onReset={() => props.onResetField('pageSeoTitleFormat', 'pages')}
+                  formatValue={localInstructions.pageSeoTitleFormat}
+                  instructionsValue={localInstructions.pageSeoTitleInstructions}
+                  onFormatChange={(v) => handleFieldChange('pageSeoTitleFormat', v)}
+                  onInstructionsChange={(v) => handleFieldChange('pageSeoTitleInstructions', v)}
+                  onReset={() => handleResetField('pageSeoTitleFormat', 'pages')}
                   formatPlaceholder="z.B. Über uns - Traditionelle Lederverarbeitung"
                   instructionsPlaceholder="z.B. 50-60 Zeichen, Seitentyp am Anfang"
                   formatLabel="Formatbeispiel"
@@ -405,11 +440,11 @@ export function AIInstructionsTabs(props: AIInstructionsTabsProps) {
 
                 <AIInstructionFieldGroup
                   fieldName="Meta-Beschreibung"
-                  formatValue={props.pageMetaDescFormat}
-                  instructionsValue={props.pageMetaDescInstructions}
-                  onFormatChange={(v) => props.onFieldChange('pageMetaDescFormat', v)}
-                  onInstructionsChange={(v) => props.onFieldChange('pageMetaDescInstructions', v)}
-                  onReset={() => props.onResetField('pageMetaDescFormat', 'pages')}
+                  formatValue={localInstructions.pageMetaDescFormat}
+                  instructionsValue={localInstructions.pageMetaDescInstructions}
+                  onFormatChange={(v) => handleFieldChange('pageMetaDescFormat', v)}
+                  onInstructionsChange={(v) => handleFieldChange('pageMetaDescInstructions', v)}
+                  onReset={() => handleResetField('pageMetaDescFormat', 'pages')}
                   formatPlaceholder="z.B. Lernen Sie uns kennen: Seit 1970 fertigen wir..."
                   instructionsPlaceholder="z.B. 150-160 Zeichen, Seiteninhalt beschreiben"
                   formatLabel="Formatbeispiel"
@@ -427,11 +462,11 @@ export function AIInstructionsTabs(props: AIInstructionsTabsProps) {
 
                 <AIInstructionFieldGroup
                   fieldName="Inhalt"
-                  formatValue={props.policyDescriptionFormat}
-                  instructionsValue={props.policyDescriptionInstructions}
-                  onFormatChange={(v) => props.onFieldChange('policyDescriptionFormat', v)}
-                  onInstructionsChange={(v) => props.onFieldChange('policyDescriptionInstructions', v)}
-                  onReset={() => props.onResetField('policyDescriptionFormat', 'policies')}
+                  formatValue={localInstructions.policyDescriptionFormat}
+                  instructionsValue={localInstructions.policyDescriptionInstructions}
+                  onFormatChange={(v) => handleFieldChange('policyDescriptionFormat', v)}
+                  onInstructionsChange={(v) => handleFieldChange('policyDescriptionInstructions', v)}
+                  onReset={() => handleResetField('policyDescriptionFormat', 'policies')}
                   formatPlaceholder="z.B. <h2>Widerrufsrecht</h2><p>Sie haben das Recht...</p>"
                   instructionsPlaceholder="z.B. Rechtssicher formulieren, H2/H3, professionell"
                   formatLabel="Formatbeispiel"

@@ -156,31 +156,31 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
       if (fieldType === "title") {
         let prompt = `Erstelle einen optimierten Titel.`;
-        if (aiInstructions?.titleFormat) {
-          prompt += `\n\nFormatbeispiel:\n${aiInstructions.titleFormat}`;
+        if (aiInstructions?.pageTitleFormat) {
+          prompt += `\n\nFormatbeispiel:\n${aiInstructions.pageTitleFormat}`;
         }
-        if (aiInstructions?.titleInstructions) {
-          prompt += `\n\nAnweisungen:\n${aiInstructions.titleInstructions}`;
+        if (aiInstructions?.pageTitleInstructions) {
+          prompt += `\n\nAnweisungen:\n${aiInstructions.pageTitleInstructions}`;
         }
         prompt += `\n\nKontext:\n${contextDescription || currentValue}\n\nGib nur den Titel zurück, ohne Erklärungen.`;
         generatedContent = await aiService.generateProductTitle(prompt);
       } else if (fieldType === "description") {
         let prompt = `Erstelle eine optimierte Beschreibung für: ${contextTitle}`;
-        if (aiInstructions?.descriptionFormat) {
-          prompt += `\n\nFormatbeispiel:\n${aiInstructions.descriptionFormat}`;
+        if (aiInstructions?.pageDescriptionFormat) {
+          prompt += `\n\nFormatbeispiel:\n${aiInstructions.pageDescriptionFormat}`;
         }
-        if (aiInstructions?.descriptionInstructions) {
-          prompt += `\n\nAnweisungen:\n${aiInstructions.descriptionInstructions}`;
+        if (aiInstructions?.pageDescriptionInstructions) {
+          prompt += `\n\nAnweisungen:\n${aiInstructions.pageDescriptionInstructions}`;
         }
         prompt += `\n\nAktueller Inhalt:\n${currentValue}\n\nGib nur die Beschreibung zurück, ohne Erklärungen.`;
         generatedContent = await aiService.generateProductDescription(contextTitle, prompt);
       } else if (fieldType === "handle") {
         let prompt = `Erstelle einen SEO-freundlichen URL-Slug (handle) für:\nTitel: ${contextTitle}\nBeschreibung: ${contextDescription}`;
-        if (aiInstructions?.handleFormat) {
-          prompt += `\n\nFormatbeispiel:\n${aiInstructions.handleFormat}`;
+        if (aiInstructions?.pageHandleFormat) {
+          prompt += `\n\nFormatbeispiel:\n${aiInstructions.pageHandleFormat}`;
         }
-        if (aiInstructions?.handleInstructions) {
-          prompt += `\n\nAnweisungen:\n${aiInstructions.handleInstructions}`;
+        if (aiInstructions?.pageHandleInstructions) {
+          prompt += `\n\nAnweisungen:\n${aiInstructions.pageHandleInstructions}`;
         } else {
           prompt += `\n\nDer Slug sollte:\n- Nur Kleinbuchstaben und Bindestriche enthalten\n- Keine Sonderzeichen oder Umlaute haben\n- Kurz und prägnant sein (2-5 Wörter)\n- SEO-optimiert sein`;
         }
