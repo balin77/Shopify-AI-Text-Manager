@@ -9,7 +9,6 @@
 
 import { execSync } from 'child_process';
 import { existsSync, readdirSync } from 'fs';
-import { join } from 'path';
 
 console.log('🔄 Starting migration baseline process...');
 
@@ -47,25 +46,37 @@ try {
     console.log('✅ Migrations applied successfully!');
     process.exit(0);
   } catch (migrateError) {
-    console.log('⚠️ Normal migration failed. Attempting baseline...');
+    const errorOutput = migrateError.toString();
 
-    // Mark all migrations as applied (baseline)
-    for (const migration of migrations) {
-      console.log(`📌 Marking migration as applied: ${migration}`);
-      try {
-        execSync(`npx prisma migrate resolve --applied ${migration}`, {
-          stdio: 'inherit'
-        });
-      } catch (resolveError) {
-        console.log(`⚠️ Could not resolve ${migration}, it may already be applied`);
+    // Check if it's a P3005 error (non-empty database)
+    if (errorOutput.includes('P3005')) {
+      console.log('⚠️ Database is not empty (P3005). Baselining existing migrations...');
+
+      // Mark all migrations as applied (baseline)
+      for (const migration of migrations) {
+        console.log(`📌 Marking migration as applied: ${migration}`);
+        try {
+          execSync(`npx prisma migrate resolve --applied "${migration}"`, {
+            stdio: 'pipe'
+          });
+          console.log(`✅ Marked ${migration} as applied`);
+        } catch (resolveError) {
+          const resolveOutput = resolveError.toString();
+          // Ignore if already applied
+          if (resolveOutput.includes('already') || resolveOutput.includes('recorded')) {
+            console.log(`ℹ️  ${migration} already marked as applied`);
+          } else {
+            console.log(`⚠️ Could not resolve ${migration}: ${resolveOutput}`);
+          }
+        }
       }
+
+      console.log('✅ Migration baseline complete! All migrations marked as applied.');
+      console.log('ℹ️  Future migrations will be applied normally.');
+      process.exit(0);
+    } else {
+      throw migrateError;
     }
-
-    // Try to apply any new migrations
-    console.log('🔄 Applying any new migrations...');
-    execSync('npx prisma migrate deploy', { stdio: 'inherit' });
-
-    console.log('✅ Migration baseline complete!');
   }
 
 } catch (error) {
@@ -74,7 +85,7 @@ try {
   // Fallback to db push
   console.log('🔄 Falling back to db push...');
   try {
-    execSync('npx prisma db push --accept-data-loss', { stdio: 'inherit' });
+    execSync('npx prisma db push --skip-generate', { stdio: 'inherit' });
     console.log('✅ Database schema updated via db push!');
   } catch (pushError) {
     console.error('❌ DB push also failed:', pushError.message);
