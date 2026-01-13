@@ -355,6 +355,21 @@ model ShopPolicy {
   @@index([lastSyncedAt])
 }
 
+model Menu {
+  id     String @id // Shopify GID (e.g., "gid://shopify/Menu/123")
+  shop   String
+  title  String
+  handle String
+  items  Json   @db.JsonB // Store the entire menu items structure as JSON
+
+  // Shopify Metadata
+  lastSyncedAt DateTime @default(now())
+
+  @@unique([shop, id])
+  @@index([shop])
+  @@index([lastSyncedAt])
+}
+
 model ContentTranslation {
   id String @id @default(cuid())
 

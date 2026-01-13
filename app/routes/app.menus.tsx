@@ -45,9 +45,35 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const shopLocales = localesData.data?.shopLocales || [];
     const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "de";
 
-    // Load menus
-    const contentService = new ContentService(admin);
-    const menus = await contentService.getMenus();
+    // Try to load menus from database first
+    const { db } = await import("../db.server");
+    let menus = await db.menu.findMany({
+      where: { shop: session.shop },
+      orderBy: { title: "asc" }
+    });
+
+    console.log(`[MENUS-LOADER] Found ${menus.length} menus in database`);
+
+    // If no menus in database, fetch from API and cache them
+    if (menus.length === 0) {
+      console.log("[MENUS-LOADER] No cached menus found, fetching from Shopify API...");
+      const contentService = new ContentService(admin);
+      const apiMenus = await contentService.getMenus();
+
+      // Cache them in database
+      if (apiMenus.length > 0) {
+        const { ContentSyncService } = await import("../services/content-sync.service");
+        const syncService = new ContentSyncService(admin, session.shop);
+        await syncService.syncAllMenus();
+
+        // Re-fetch from database
+        menus = await db.menu.findMany({
+          where: { shop: session.shop },
+          orderBy: { title: "asc" }
+        });
+        console.log(`[MENUS-LOADER] Cached ${menus.length} menus to database`);
+      }
+    }
 
     return json({
       menus,
@@ -73,7 +99,14 @@ export default function MenusPage() {
   const { t } = useI18n();
 
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
-  const selectedItem = menus.find((item: any) => item.id === selectedItemId);
+
+  // Parse menu items from JSON
+  const parsedMenus = menus.map((menu: any) => ({
+    ...menu,
+    items: Array.isArray(menu.items) ? menu.items : []
+  }));
+
+  const selectedItem = parsedMenus.find((item: any) => item.id === selectedItemId);
 
   // Recursive function to render menu items with unlimited nesting
   const renderMenuItem = (item: any, index: number, path: number[]): JSX.Element => {
@@ -109,14 +142,14 @@ export default function MenusPage() {
           <Card padding="0">
             <div style={{ padding: "1rem", borderBottom: "1px solid #e1e3e5" }}>
               <Text as="h2" variant="headingMd">
-                {t.content?.menus || "Menus"} ({menus.length})
+                {t.content?.menus || "Menus"} ({parsedMenus.length})
               </Text>
             </div>
             <div style={{ maxHeight: "calc(100vh - 200px)", overflowY: "auto" }}>
-              {menus.length > 0 ? (
+              {parsedMenus.length > 0 ? (
                 <ResourceList
                   resourceName={{ singular: "Menu", plural: "Menus" }}
-                  items={menus}
+                  items={parsedMenus}
                   renderItem={(item: any) => {
                     const { id, title } = item;
                     const isSelected = selectedItemId === id;

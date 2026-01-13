@@ -53,38 +53,45 @@ async function main() {
 
   log('✅ DATABASE_URL is configured', 'green');
 
-  // Check if migration file exists
-  const migrationPath = path.join(__dirname, '..', 'prisma', 'migrations', 'add_entity_specific_ai_instructions.sql');
+  // Run all migrations in order
+  const migrations = [
+    'add_entity_specific_ai_instructions.sql',
+    '20250113_add_menu_model.sql'
+  ];
 
-  if (fs.existsSync(migrationPath)) {
-    log('📦 Running database migration...', 'blue');
+  for (const migrationFile of migrations) {
+    const migrationPath = path.join(__dirname, '..', 'prisma', 'migrations', migrationFile);
 
-    // Read the migration SQL file
-    const migrationSQL = fs.readFileSync(migrationPath, 'utf8');
+    if (fs.existsSync(migrationPath)) {
+      log(`📦 Running migration: ${migrationFile}...`, 'blue');
 
-    // Use Prisma's db execute command to run the SQL
-    const tempSqlPath = path.join(__dirname, '..', 'temp_migration.sql');
-    fs.writeFileSync(tempSqlPath, migrationSQL);
+      // Read the migration SQL file
+      const migrationSQL = fs.readFileSync(migrationPath, 'utf8');
 
-    const success = runCommand(
-      `npx prisma db execute --file ${tempSqlPath} --schema prisma/schema.prisma`,
-      'Failed to run database migration'
-    );
+      // Use Prisma's db execute command to run the SQL
+      const tempSqlPath = path.join(__dirname, '..', 'temp_migration.sql');
+      fs.writeFileSync(tempSqlPath, migrationSQL);
 
-    // Clean up temp file
-    try {
-      fs.unlinkSync(tempSqlPath);
-    } catch (e) {
-      // Ignore cleanup errors
-    }
+      const success = runCommand(
+        `npx prisma db execute --file ${tempSqlPath} --schema prisma/schema.prisma`,
+        `Failed to run migration: ${migrationFile}`
+      );
 
-    if (success) {
-      log('✅ Migration completed successfully', 'green');
+      // Clean up temp file
+      try {
+        fs.unlinkSync(tempSqlPath);
+      } catch (e) {
+        // Ignore cleanup errors
+      }
+
+      if (success) {
+        log(`✅ Migration ${migrationFile} completed successfully`, 'green');
+      } else {
+        log(`⚠️  Migration ${migrationFile} failed, but continuing...`, 'yellow');
+      }
     } else {
-      log('⚠️  Migration failed, but continuing...', 'yellow');
+      log(`ℹ️  Migration file ${migrationFile} not found, skipping...`, 'blue');
     }
-  } else {
-    log('⚠️  Migration file not found, skipping...', 'yellow');
   }
 
   // Generate Prisma Client

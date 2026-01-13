@@ -137,6 +137,55 @@ export class ContentSyncService {
     console.log(`[ContentSync] Successfully deleted article: ${articleId}`);
   }
 
+  // ============================================
+  // MENU SYNC
+  // ============================================
+
+  /**
+   * Sync a single menu with its items structure
+   */
+  async syncMenu(menuId: string): Promise<void> {
+    console.log(`[ContentSync] Starting sync for menu: ${menuId}`);
+
+    try {
+      // 1. Fetch menu data
+      const menuData = await this.fetchMenuData(menuId);
+
+      if (!menuData) {
+        console.warn(`[ContentSync] Menu not found: ${menuId}`);
+        return;
+      }
+
+      // 2. Save to database (menus don't have translations via API)
+      await this.saveMenuToDatabase(menuData);
+
+      console.log(`[ContentSync] Successfully synced menu: ${menuId}`);
+    } catch (error) {
+      console.error(`[ContentSync] Error syncing menu ${menuId}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Delete a menu from the database
+   */
+  async deleteMenu(menuId: string): Promise<void> {
+    console.log(`[ContentSync] Deleting menu: ${menuId}`);
+
+    const { db } = await import("../db.server");
+
+    await db.menu.delete({
+      where: {
+        shop_id: {
+          shop: this.shop,
+          id: menuId,
+        },
+      },
+    });
+
+    console.log(`[ContentSync] Successfully deleted menu: ${menuId}`);
+  }
+
 
   // ============================================
   // FETCH DATA FROM SHOPIFY
@@ -190,6 +239,47 @@ export class ContentSyncService {
 
     const data = await response.json();
     return data.data?.article || null;
+  }
+
+  private async fetchMenuData(menuId: string) {
+    const response = await this.admin.graphql(
+      `#graphql
+        query getMenu($id: ID!) {
+          menu(id: $id) {
+            id
+            title
+            handle
+            items {
+              id
+              title
+              url
+              type
+              items {
+                id
+                title
+                url
+                type
+                items {
+                  id
+                  title
+                  url
+                  type
+                  items {
+                    id
+                    title
+                    url
+                    type
+                  }
+                }
+              }
+            }
+          }
+        }`,
+      { variables: { id: menuId } }
+    );
+
+    const data = await response.json();
+    return data.data?.menu || null;
   }
 
 
@@ -414,6 +504,38 @@ export class ContentSyncService {
     }
   }
 
+  private async saveMenuToDatabase(menuData: any) {
+    const { db } = await import("../db.server");
+
+    console.log(`[ContentSync] Saving menu to database: ${menuData.id}`);
+
+    // Upsert menu
+    await db.menu.upsert({
+      where: {
+        shop_id: {
+          shop: this.shop,
+          id: menuData.id,
+        },
+      },
+      create: {
+        id: menuData.id,
+        shop: this.shop,
+        title: menuData.title,
+        handle: menuData.handle,
+        items: menuData.items || [],
+        lastSyncedAt: new Date(),
+      },
+      update: {
+        title: menuData.title,
+        handle: menuData.handle,
+        items: menuData.items || [],
+        lastSyncedAt: new Date(),
+      },
+    });
+
+    console.log(`[ContentSync] ✓ Menu saved successfully`);
+  }
+
 
   // ============================================
   // BULK SYNC
@@ -494,6 +616,37 @@ export class ContentSyncService {
     }
 
     return allArticles.length;
+  }
+
+  /**
+   * Sync all menus
+   */
+  async syncAllMenus(): Promise<number> {
+    console.log(`[ContentSync] Syncing all menus...`);
+
+    const response = await this.admin.graphql(
+      `#graphql
+        query getMenus {
+          menus(first: 250) {
+            edges {
+              node {
+                id
+              }
+            }
+          }
+        }`
+    );
+
+    const data = await response.json();
+    const menus = data.data?.menus?.edges?.map((e: any) => e.node) || [];
+
+    console.log(`[ContentSync] Found ${menus.length} menus to sync`);
+
+    for (const menu of menus) {
+      await this.syncMenu(menu.id);
+    }
+
+    return menus.length;
   }
 
 }
