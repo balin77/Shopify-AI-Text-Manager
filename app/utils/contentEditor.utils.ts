@@ -448,7 +448,7 @@ export function hasFieldMissingTranslations(
 
 /**
  * Get button style for locale navigation
- * Pulse animations are disabled
+ * Shows pulsing border animation when translations are missing
  */
 export function getLocaleButtonStyle(
   locale: any,
@@ -456,7 +456,25 @@ export function getLocaleButtonStyle(
   primaryLocale: string,
   contentType: 'pages' | 'blogs' | 'collections' | 'policies' | 'products'
 ): React.CSSProperties {
-  // No pulse animations - return empty style
+  const primaryContentMissing = locale.primary && hasPrimaryContentMissing(selectedItem, contentType);
+  const foreignTranslationMissing = !locale.primary && hasLocaleMissingTranslations(selectedItem, locale.locale, primaryLocale, contentType);
+
+  if (primaryContentMissing) {
+    // Pulsing border animation (orange) when primary content is missing
+    return {
+      animation: "pulse 1.5s ease-in-out infinite",
+      borderRadius: "8px",
+    };
+  }
+
+  if (foreignTranslationMissing) {
+    // Pulsing border animation (blue) when translations are missing
+    return {
+      animation: "pulseBlue 1.5s ease-in-out infinite",
+      borderRadius: "8px",
+    };
+  }
+
   return {};
 }
 
