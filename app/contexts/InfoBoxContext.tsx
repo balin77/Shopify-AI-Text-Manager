@@ -22,11 +22,11 @@ export function InfoBoxProvider({ children }: { children: ReactNode }) {
   const showInfoBox = (message: string, tone: InfoBoxTone = "success", title?: string) => {
     setInfoBox({ message, tone, title });
 
-    // Auto-hide nach 5 Sekunden bei success oder info
+    // Auto-hide nach 10 Sekunden bei success oder info (verlängert für bessere Sichtbarkeit)
     if (tone === "success" || tone === "info") {
       setTimeout(() => {
         setInfoBox(null);
-      }, 5000);
+      }, 10000);
     }
   };
 

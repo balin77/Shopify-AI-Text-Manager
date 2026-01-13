@@ -30,20 +30,50 @@ export function MainNavigation() {
 
   return (
     <>
-      {/* Header mit Titel und InfoBox */}
+      {/* Navigation und InfoBox */}
       <div
         style={{
           background: "white",
           borderBottom: "1px solid #e1e3e5",
-          padding: "1rem",
         }}
       >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
-          <Text as="h1" variant="headingLg" fontWeight="bold">
-            ContentPilot AI Dev
-          </Text>
-          <div style={{ flex: 1, maxWidth: "600px", marginLeft: "2rem" }}>
-            {infoBox && (
+        {/* Einzeilige Leiste mit Navigation und InfoBox */}
+        <div style={{ display: "flex", alignItems: "center", padding: "1rem", gap: "2rem" }}>
+          {/* Navigation Tabs */}
+          <InlineStack gap="400">
+            {tabs.map((tab) => {
+              const isActive = location.pathname.startsWith(tab.path);
+
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => handleClick(tab.path, tab.id)}
+                  style={{
+                    textDecoration: "none",
+                    padding: "1rem 0.5rem",
+                    transition: "border-color 0.2s",
+                    background: "none",
+                    border: "none",
+                    borderBottom: isActive ? "3px solid #303030" : "3px solid transparent",
+                    cursor: "pointer",
+                  }}
+                >
+                  <Text
+                    as="span"
+                    variant="bodyMd"
+                    fontWeight={isActive ? "bold" : "regular"}
+                    tone="base"
+                  >
+                    {tab.label}
+                  </Text>
+                </button>
+              );
+            })}
+          </InlineStack>
+
+          {/* InfoBox auf gleicher Ebene */}
+          {infoBox && (
+            <div style={{ flex: 1, maxWidth: "600px" }}>
               <Banner
                 title={infoBox.title}
                 tone={infoBox.tone}
@@ -51,41 +81,9 @@ export function MainNavigation() {
               >
                 {infoBox.message}
               </Banner>
-            )}
-          </div>
+            </div>
+          )}
         </div>
-
-        {/* Navigation Tabs */}
-        <InlineStack gap="400">
-          {tabs.map((tab) => {
-            const isActive = location.pathname.startsWith(tab.path);
-
-            return (
-              <button
-                key={tab.id}
-                onClick={() => handleClick(tab.path, tab.id)}
-                style={{
-                  textDecoration: "none",
-                  padding: "1rem 0.5rem",
-                  transition: "border-color 0.2s",
-                  background: "none",
-                  border: "none",
-                  borderBottom: isActive ? "3px solid #303030" : "3px solid transparent",
-                  cursor: "pointer",
-                }}
-              >
-                <Text
-                  as="span"
-                  variant="bodyMd"
-                  fontWeight={isActive ? "bold" : "regular"}
-                  tone="base"
-                >
-                  {tab.label}
-                </Text>
-              </button>
-            );
-          })}
-        </InlineStack>
       </div>
     </>
   );
