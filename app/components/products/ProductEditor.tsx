@@ -161,10 +161,14 @@ export function ProductEditor({
 
   const isPrimaryLocale = currentLanguage === primaryLocale;
 
-  // Reset selected image when product changes
+  // Reset selected image when product changes or ensure index is valid
   useEffect(() => {
-    setSelectedImageIndex(0);
-  }, [product?.id]);
+    if (!product?.images || product.images.length === 0) {
+      setSelectedImageIndex(0);
+    } else if (selectedImageIndex >= product.images.length) {
+      setSelectedImageIndex(0);
+    }
+  }, [product?.id, product?.images?.length]);
 
   // Helper to determine if a field is translated
   const isFieldTranslated = (fieldKey: string) => {
@@ -251,7 +255,7 @@ export function ProductEditor({
           </InlineStack>
 
           {/* Image Gallery */}
-          {product.images && product.images.length > 0 && (
+          {product.images && product.images.length > 0 && product.images[selectedImageIndex] && (
             <BlockStack gap="400">
               {/* Image Layout: Preview left, Grid right */}
               <div
