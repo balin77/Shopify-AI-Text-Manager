@@ -122,21 +122,12 @@ export function ThemeContentViewer({
     setCurrentPage(1);
   };
 
-  // Get translations for the current language
-  const currentTranslations = themeResource.translations?.filter(
-    (t: any) => t.locale === currentLanguage
-  ) || [];
-
-  // Helper function to get translation for a key
-  const getTranslation = (key: string) => {
-    const translation = currentTranslations.find((t: any) => t.key === key);
-    return translation?.value || "";
-  };
-
   // Helper to check if field is translated
+  // For primary locale, always true. For translations, check if value exists in editableValues
   const isTranslated = (key: string) => {
     if (isPrimaryLocale) return true;
-    return !!getTranslation(key);
+    // Check if translation exists (not empty)
+    return !!(editableValues[key] && editableValues[key].trim().length > 0);
   };
 
   // Helper to get source text (from primary locale)
