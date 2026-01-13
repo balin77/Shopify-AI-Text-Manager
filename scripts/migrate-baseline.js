@@ -51,30 +51,19 @@ try {
 
     // Check if it's a P3005 error (non-empty database)
     if (errorOutput.includes('P3005') || errorOutput.includes('database schema is not empty')) {
-      console.log('⚠️ Database is not empty (P3005). Baselining existing migrations...');
+      console.log('⚠️ Database is not empty (P3005). Using db push to sync schema...');
 
-      // Mark all migrations as applied (baseline)
-      for (const migration of migrations) {
-        console.log(`📌 Marking migration as applied: ${migration}`);
-        try {
-          execSync(`npx prisma migrate resolve --applied "${migration}"`, {
-            stdio: 'pipe'
-          });
-          console.log(`✅ Marked ${migration} as applied`);
-        } catch (resolveError) {
-          const resolveOutput = resolveError.stderr?.toString() || resolveError.message || '';
-          // Ignore if already applied
-          if (resolveOutput.includes('already') || resolveOutput.includes('recorded')) {
-            console.log(`ℹ️  ${migration} already marked as applied`);
-          } else {
-            console.log(`⚠️ Could not resolve ${migration}: ${resolveOutput}`);
-          }
-        }
+      // For existing databases without migration history, use db push
+      try {
+        console.log('🔄 Running prisma db push to sync schema...');
+        execSync('npx prisma db push --skip-generate', { stdio: 'inherit' });
+        console.log('✅ Database schema synced successfully!');
+        console.log('ℹ️  Note: Migration history was not preserved. Future schema changes will use db push.');
+        process.exit(0);
+      } catch (pushError) {
+        console.error('❌ DB push failed:', pushError.message);
+        throw pushError;
       }
-
-      console.log('✅ Migration baseline complete! All migrations marked as applied.');
-      console.log('ℹ️  Future migrations will be applied normally.');
-      process.exit(0);
     } else {
       // Log the actual error for debugging
       console.error('❌ Unexpected migration error:', errorOutput);
