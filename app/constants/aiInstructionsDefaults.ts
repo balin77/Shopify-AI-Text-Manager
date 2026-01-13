@@ -22,7 +22,7 @@ export interface EntityInstructions {
 
 // PRODUCTS - Optimized for e-commerce SEO
 export const DEFAULT_PRODUCT_INSTRUCTIONS: EntityInstructions = {
-  titleFormat: 'Premium Leder Geldbörse - Elegant & Langlebig | Handgefertigt',
+  titleFormat: 'Premium Leder Geldbörse - Elegant & Langlebig',
   titleInstructions: 'Maximal 60 Zeichen. Nenne Material, Hauptmerkmal und einen Vorteil.',
 
   descriptionFormat: '<h2>Entdecken Sie Handwerkskunst in Perfektion</h2>\n<p>Diese <strong>handgefertigte Leder Geldbörse</strong> vereint zeitloses Design mit außergewöhnlicher Qualität. Jedes Stück wird von erfahrenen Handwerkern aus bestem Vollrindleder gefertigt.</p>\n<h3>Ihre Vorteile</h3>\n<ul>\n<li>Premium Vollrindleder für maximale Langlebigkeit</li>\n<li>Zeitloses Design passend zu jedem Stil</li>\n<li>Praktische Fächeraufteilung für optimale Organisation</li>\n<li>Handgefertigt mit Liebe zum Detail</li>\n</ul>\n<p>Ein treuer Begleiter für viele Jahre - nachhaltig und stilvoll.</p>',
@@ -31,11 +31,11 @@ export const DEFAULT_PRODUCT_INSTRUCTIONS: EntityInstructions = {
   handleFormat: 'premium-leder-geldboerse-handgefertigt',
   handleInstructions: 'Nur Kleinbuchstaben und Bindestriche. Keine Umlaute (ä→a, ö→o, ü→u, ß→ss). 3-5 relevante Keywords.',
 
-  seoTitleFormat: 'Premium Leder Geldbörse kaufen | Handgefertigt & Nachhaltig',
-  seoTitleInstructions: '50-60 Zeichen (Google-optimal). Hauptkeyword am Anfang. Pipe (|) als Trenner. Call-to-Action-Wort einbauen (kaufen, bestellen, entdecken). Markennamen am Ende wenn vorhanden.',
+  seoTitleFormat: 'Premium Leder Geldbörse kaufen | Handgefertigt',
+  seoTitleInstructions: '50-60 Zeichen. Hauptkeyword am Anfang. Pipe (|) als Trenner. Call-to-Action-Wort einbauen (kaufen, bestellen, entdecken). Markennamen am Ende wenn vorhanden.',
 
   metaDescFormat: 'Handgefertigte Premium Leder Geldbörse aus Vollrindleder. Zeitlos, langlebig und stilvoll. Nachhaltige Handwerkskunst für höchste Ansprüche. Jetzt entdecken!',
-  metaDescInstructions: '150-160 Zeichen (Google-optimal). 2-3 relevante Keywords natürlich einbinden. Nutzenversprechen klar kommunizieren. Mit Handlungsaufforderung enden. Keine Füllwörter. Aktive Sprache.',
+  metaDescInstructions: '150-160 Zeichen. 2-3 relevante Keywords natürlich einbinden. Nutzenversprechen klar kommunizieren. Mit Handlungsaufforderung enden. Keine Füllwörter. Aktive Sprache.',
 
   altTextFormat: 'Premium Leder Geldbörse aus dunkelbraunem Vollrindleder auf Holztisch',
   altTextInstructions: '60-125 Zeichen. Beschreibe was auf dem Bild zu sehen ist (nicht was es bewirkt). Nenne Farbe, Material, Kontext. Hauptkeyword einbauen. Keine Marketing-Sprache. Sachlich und präzise für Barrierefreiheit.',
@@ -50,12 +50,12 @@ export const DEFAULT_COLLECTION_INSTRUCTIONS: EntityInstructions = {
   descriptionInstructions: '100-200 Wörter. Übersicht über die Produktkategorie. Beschreibe den gemeinsamen Nenner aller Produkte. Verwende H2/H3 für Struktur. Nutze Aufzählungen. Kommuniziere die Collection-USPs. SEO-Keywords natürlich einbinden. HTML-formatiert.',
 
   handleFormat: 'leder-accessoires-handgefertigt',
-  handleInstructions: 'Nur Kleinbuchstaben und Bindestriche. Keine Umlaute (ä→a, ö→o, ü→u, ß→ss). 2-4 Keywords.',
+  handleInstructions: 'Nur Kleinbuchstaben und Bindestriche. Keine Umlaute (ä→a, ö→o, ü→u, ß→ss). 3-5 relevante Keywords.',
 
-  seoTitleFormat: 'Leder Accessoires handgefertigt kaufen | Nachhaltig & Zeitlos',
+  seoTitleFormat: 'Leder Accessoires handgefertigt kaufen | Nachhaltig',
   seoTitleInstructions: '50-60 Zeichen. Category-Keyword am Anfang. Füge Differenzierungsmerkmal hinzu (handgefertigt, bio, premium). Call-to-Action wenn möglich. Pipe (|) als Trenner.',
 
-  metaDescFormat: 'Hochwertige Leder Accessoires aus traditioneller Handwerkskunst. Geldbörsen, Gürtel & mehr aus nachhaltigem Vollrindleder. Fair produziert in Europa. Entdecken Sie zeitlose Qualität!',
+  metaDescFormat: 'Hochwertige Leder Accessoires aus traditioneller Handwerkskunst. Geldbörsen, Gürtel & mehr aus nachhaltigem Vollrindleder. Fair & nachhaltig. Jetzt entdecken!',
   metaDescInstructions: '150-160 Zeichen. Beschreibe die Produktkategorie. Nenne 2-3 Produktbeispiele. USPs kommunizieren. Keywords natürlich einbauen. Handlungsaufforderung am Ende.',
 };
 
@@ -70,10 +70,10 @@ export const DEFAULT_BLOG_INSTRUCTIONS: EntityInstructions = {
   handleFormat: 'lederpflege-tipps-anleitung',
   handleInstructions: 'Nur Kleinbuchstaben und Bindestriche. Keine Umlaute (ä→a, ö→o, ü→u, ß→ss). 3-5 Keywords.',
 
-  seoTitleFormat: 'Lederpflege: 5 Tipps für lang anhaltende Schönheit | Expertenratgeber',
+  seoTitleFormat: 'Lederpflege: 5 Tipps für langlebige Schönheit',
   seoTitleInstructions: '50-60 Zeichen. Hauptkeyword am Anfang. Nutze Zahlen. Füge "Anleitung", "Tipps", "Ratgeber" hinzu für höhere Klickrate. Kommuniziere Expertise.',
 
-  metaDescFormat: 'Lederpflege leicht gemacht: Entdecken Sie 5 bewährte Tipps für die richtige Pflege Ihrer Lederprodukte. Von der Reinigung bis zur Imprägnierung - so bleibt Leder jahrzehntelang schön.',
+  metaDescFormat: 'Lederpflege leicht gemacht: 5 bewährte Tipps für die richtige Pflege Ihrer Lederprodukte. Von Reinigung bis Imprägnierung - so bleibt Leder jahrzehntelang schön.',
   metaDescInstructions: '150-160 Zeichen. Fasse den Artikel-Nutzen zusammen. Verwende das Hauptkeyword. Wecke Neugier. Sprich den Leser direkt an. Keine Clickbait.',
 };
 
@@ -86,12 +86,12 @@ export const DEFAULT_PAGE_INSTRUCTIONS: EntityInstructions = {
   descriptionInstructions: '200-400 Wörter je nach Seitentyp. Verwende H1/H2 für Struktur. Authentisch und persönlich bei "Über uns". Klar und informativ bei Service-Seiten. Rechtssicher bei rechtlichen Seiten. HTML-formatiert.',
 
   handleFormat: 'ueber-uns-tradition-handwerk',
-  handleInstructions: 'Nur Kleinbuchstaben und Bindestriche. Keine Umlaute (ä→a, ö→o, ü→u, ß→ss). 2-4 Keywords.',
+  handleInstructions: 'Nur Kleinbuchstaben und Bindestriche. Keine Umlaute (ä→a, ö→o, ü→u, ß→ss). 3-5 relevante Keywords.',
 
   seoTitleFormat: 'Über uns - Traditionelle Lederverarbeitung seit 1970',
   seoTitleInstructions: '50-60 Zeichen. Seitentyp am Anfang (Über uns, Kontakt, etc.). USP oder Alleinstellungsmerkmal. Markenname wenn Platz. Keine Keywords-Stuffing.',
 
-  metaDescFormat: 'Lernen Sie uns kennen: Seit 1970 fertigen wir hochwertige Lederprodukte in traditioneller Handwerkskunst. Erfahren Sie mehr über unsere Geschichte, Werte und das Team hinter den Produkten.',
+  metaDescFormat: 'Lernen Sie uns kennen: Seit 1970 fertigen wir hochwertige Lederprodukte in traditioneller Handwerkskunst. Erfahren Sie mehr über unsere Geschichte & Werte.',
   metaDescInstructions: '150-160 Zeichen. Beschreibe den Seiteninhalt. Kommuniziere den Nutzen für den Besucher. Persönlich bei "Über uns", sachlich bei rechtlichen Seiten. Natürliche Sprache.',
 };
 
