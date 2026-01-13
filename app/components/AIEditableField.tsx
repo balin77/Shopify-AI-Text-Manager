@@ -21,6 +21,7 @@ interface AIEditableFieldProps {
   hasMissingTranslations?: boolean;
   hasFieldMissingTranslations?: boolean;
   onGenerateAI: () => void;
+  onFormatAI?: () => void;
   onTranslate: () => void;
   onTranslateAll?: () => void;
   onAcceptSuggestion: () => void;
@@ -46,6 +47,7 @@ export function AIEditableField({
   hasMissingTranslations = false,
   hasFieldMissingTranslations = false,
   onGenerateAI,
+  onFormatAI,
   onTranslate,
   onTranslateAll,
   onAcceptSuggestion,
@@ -123,6 +125,16 @@ export function AIEditableField({
           >
             ✨ {t.products.aiGenerate}
           </Button>
+          {onFormatAI && (
+            <Button
+              size="slim"
+              onClick={onFormatAI}
+              loading={isLoading}
+              disabled={!value}
+            >
+              🎨 Formatieren
+            </Button>
+          )}
           <Button
             size="slim"
             onClick={isPrimaryLocale ? onTranslateAll : onTranslate}

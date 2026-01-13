@@ -223,6 +223,80 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
   }
 
+  if (action === "formatAIText") {
+    const fieldType = formData.get("fieldType") as string;
+    const currentValue = formData.get("currentValue") as string;
+    const contextTitle = formData.get("contextTitle") as string;
+    const contextDescription = formData.get("contextDescription") as string;
+
+    try {
+      let formattedContent = "";
+
+      if (fieldType === "title") {
+        let prompt = `Formatiere den folgenden Artikel-Titel gemäß den Formatierungsrichtlinien:\n\nAktueller Titel:\n${currentValue}`;
+        if (aiInstructions?.blogTitleFormat) {
+          prompt += `\n\nFormatbeispiel:\n${aiInstructions.blogTitleFormat}`;
+        }
+        if (aiInstructions?.blogTitleInstructions) {
+          prompt += `\n\nFormatierungsanweisungen:\n${aiInstructions.blogTitleInstructions}`;
+        }
+        prompt += `\n\nBehalte den Inhalt und die Kernaussage bei, formatiere aber den Text gemäß den Richtlinien. Gib nur den formatierten Titel zurück, ohne Erklärungen.`;
+        formattedContent = await aiService.generateProductTitle(prompt);
+      } else if (fieldType === "body") {
+        let prompt = `Formatiere den folgenden Artikel-Text gemäß den Formatierungsrichtlinien:\n\nAktueller Text:\n${currentValue}`;
+        if (aiInstructions?.blogDescriptionFormat) {
+          prompt += `\n\nFormatbeispiel:\n${aiInstructions.blogDescriptionFormat}`;
+        }
+        if (aiInstructions?.blogDescriptionInstructions) {
+          prompt += `\n\nFormatierungsanweisungen:\n${aiInstructions.blogDescriptionInstructions}`;
+        }
+        prompt += `\n\nBehalte den Inhalt und die Kernaussagen bei, formatiere aber den Text gemäß den Richtlinien (Struktur, HTML-Tags, Überschriften, etc.). Gib nur den formatierten Text zurück, ohne Erklärungen.`;
+        formattedContent = await aiService.generateProductDescription(currentValue, prompt);
+      } else if (fieldType === "handle") {
+        let prompt = `Formatiere den folgenden URL-Slug gemäß den Formatierungsrichtlinien:\n\nAktueller Slug:\n${currentValue}\n\nKontext - Titel: ${contextTitle}`;
+        if (aiInstructions?.blogHandleFormat) {
+          prompt += `\n\nFormatbeispiel:\n${aiInstructions.blogHandleFormat}`;
+        }
+        if (aiInstructions?.blogHandleInstructions) {
+          prompt += `\n\nFormatierungsanweisungen:\n${aiInstructions.blogHandleInstructions}`;
+        } else {
+          prompt += `\n\nDer Slug sollte:\n- Nur Kleinbuchstaben und Bindestriche enthalten\n- Keine Sonderzeichen oder Umlaute haben\n- Kurz und prägnant sein (2-5 Wörter)\n- SEO-optimiert sein`;
+        }
+        prompt += `\n\nGib nur den formatierten Slug zurück, ohne Erklärungen.`;
+        formattedContent = await aiService.generateProductTitle(prompt);
+        formattedContent = formattedContent.toLowerCase().trim();
+      } else if (fieldType === "seoTitle") {
+        let prompt = `Formatiere den folgenden SEO-Titel gemäß den Formatierungsrichtlinien:\n\nAktueller SEO-Titel:\n${currentValue}\n\nKontext - Titel: ${contextTitle}\nInhalt: ${contextDescription}`;
+        if (aiInstructions?.blogSeoTitleFormat) {
+          prompt += `\n\nFormatbeispiel:\n${aiInstructions.blogSeoTitleFormat}`;
+        }
+        if (aiInstructions?.blogSeoTitleInstructions) {
+          prompt += `\n\nFormatierungsanweisungen:\n${aiInstructions.blogSeoTitleInstructions}`;
+        } else {
+          prompt += `\n\nDer SEO-Titel sollte:\n- Max. 60 Zeichen lang sein\n- Keywords enthalten\n- Zum Klicken anregen`;
+        }
+        prompt += `\n\nBehalte die Kernaussage bei, formatiere aber den Text gemäß den Richtlinien. Gib nur den formatierten SEO-Titel zurück, ohne Erklärungen.`;
+        formattedContent = await aiService.generateProductTitle(prompt);
+      } else if (fieldType === "metaDescription") {
+        let prompt = `Formatiere die folgende Meta-Description gemäß den Formatierungsrichtlinien:\n\nAktuelle Meta-Description:\n${currentValue}\n\nKontext - Titel: ${contextTitle}\nInhalt: ${contextDescription}`;
+        if (aiInstructions?.blogMetaDescFormat) {
+          prompt += `\n\nFormatbeispiel:\n${aiInstructions.blogMetaDescFormat}`;
+        }
+        if (aiInstructions?.blogMetaDescInstructions) {
+          prompt += `\n\nFormatierungsanweisungen:\n${aiInstructions.blogMetaDescInstructions}`;
+        } else {
+          prompt += `\n\nDie Meta-Description sollte:\n- 150-160 Zeichen lang sein\n- Keywords enthalten\n- Zum Klicken anregen`;
+        }
+        prompt += `\n\nBehalte die Kernaussage bei, formatiere aber den Text gemäß den Richtlinien. Gib nur die formatierte Meta-Description als reinen Text zurück, ohne HTML-Tags und ohne Erklärungen.`;
+        formattedContent = await aiService.generateProductTitle(prompt);
+      }
+
+      return json({ success: true, generatedContent: formattedContent, fieldType });
+    } catch (error: any) {
+      return json({ success: false, error: error.message }, { status: 500 });
+    }
+  }
+
   if (action === "translateField") {
     const fieldType = formData.get("fieldType") as string;
     const sourceText = formData.get("sourceText") as string;
@@ -458,6 +532,19 @@ export default function BlogPage() {
     );
   };
 
+  const handleFormatAI = (fieldType: string) => {
+    if (!selectedItemId) return;
+    const currentValue = { title: editableTitle, body: editableBody, handle: editableHandle, seoTitle: editableSeoTitle, metaDescription: editableMetaDescription }[fieldType] || "";
+    if (!currentValue) {
+      showInfoBox("Kein Inhalt zum Formatieren vorhanden", "warning", "Warnung");
+      return;
+    }
+    fetcher.submit(
+      { action: "formatAIText", itemId: selectedItemId, fieldType, currentValue, contextTitle: editableTitle, contextDescription: editableBody },
+      { method: "POST" }
+    );
+  };
+
   const handleTranslateField = (fieldType: string) => {
     if (!selectedItemId || !selectedItem) return;
     const sourceMap: Record<string, string> = {
@@ -616,6 +703,7 @@ export default function BlogPage() {
                   isLoading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "title"}
                   sourceTextAvailable={!!selectedItem?.title}
                   onGenerateAI={() => handleGenerateAI("title")}
+                  onFormatAI={() => handleFormatAI("title")}
                   onTranslate={() => handleTranslateField("title")}
                   onTranslateAll={handleTranslateAll}
                   onAcceptSuggestion={() => handleAcceptSuggestion("title")}
@@ -636,6 +724,7 @@ export default function BlogPage() {
                   isLoading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "body"}
                   sourceTextAvailable={!!selectedItem?.body}
                   onGenerateAI={() => handleGenerateAI("body")}
+                  onFormatAI={() => handleFormatAI("body")}
                   onTranslate={() => handleTranslateField("body")}
                   onTranslateAll={handleTranslateAll}
                   onAcceptSuggestion={() => handleAcceptSuggestion("body")}
@@ -654,6 +743,7 @@ export default function BlogPage() {
                   isLoading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "handle"}
                   sourceTextAvailable={!!selectedItem?.handle}
                   onGenerateAI={() => handleGenerateAI("handle")}
+                  onFormatAI={() => handleFormatAI("handle")}
                   onTranslate={() => handleTranslateField("handle")}
                   onTranslateAll={handleTranslateAll}
                   onAcceptSuggestion={() => handleAcceptSuggestion("handle")}
@@ -673,6 +763,7 @@ export default function BlogPage() {
                   isLoading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "seoTitle"}
                   sourceTextAvailable={!!selectedItem?.seo?.title}
                   onGenerateAI={() => handleGenerateAI("seoTitle")}
+                  onFormatAI={() => handleFormatAI("seoTitle")}
                   onTranslate={() => handleTranslateField("seoTitle")}
                   onTranslateAll={handleTranslateAll}
                   onAcceptSuggestion={() => handleAcceptSuggestion("seoTitle")}
@@ -693,6 +784,7 @@ export default function BlogPage() {
                   isLoading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "metaDescription"}
                   sourceTextAvailable={!!selectedItem?.seo?.description}
                   onGenerateAI={() => handleGenerateAI("metaDescription")}
+                  onFormatAI={() => handleFormatAI("metaDescription")}
                   onTranslate={() => handleTranslateField("metaDescription")}
                   onTranslateAll={handleTranslateAll}
                   onAcceptSuggestion={() => handleAcceptSuggestion("metaDescription")}

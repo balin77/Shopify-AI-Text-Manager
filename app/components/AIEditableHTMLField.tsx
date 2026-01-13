@@ -20,6 +20,7 @@ interface AIEditableHTMLFieldProps {
   hasMissingTranslations?: boolean;
   hasFieldMissingTranslations?: boolean;
   onGenerateAI: () => void;
+  onFormatAI?: () => void;
   onTranslate: () => void;
   onTranslateAll?: () => void;
   onAcceptSuggestion: () => void;
@@ -43,6 +44,7 @@ export function AIEditableHTMLField({
   hasMissingTranslations = false,
   hasFieldMissingTranslations = false,
   onGenerateAI,
+  onFormatAI,
   onTranslate,
   onTranslateAll,
   onAcceptSuggestion,
@@ -240,6 +242,16 @@ export function AIEditableHTMLField({
           <Button size="slim" onClick={onGenerateAI} loading={isLoading}>
             ✨ {t.products.aiGenerate}
           </Button>
+          {onFormatAI && (
+            <Button
+              size="slim"
+              onClick={onFormatAI}
+              loading={isLoading}
+              disabled={!value}
+            >
+              🎨 Formatieren
+            </Button>
+          )}
           <Button
             size="slim"
             onClick={isPrimaryLocale ? onTranslateAll : onTranslate}
