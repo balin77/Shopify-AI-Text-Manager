@@ -5,6 +5,8 @@
  * This service is used by the sync scheduler for content types without webhook support.
  */
 
+import { ShopifyApiGateway } from './shopify-api-gateway.service';
+
 interface ShopifyGraphQLClient {
   graphql: (query: string, options?: { variables?: any }) => Promise<any>;
 }
@@ -18,10 +20,15 @@ export interface SyncStats {
 }
 
 export class BackgroundSyncService {
+  private gateway: ShopifyApiGateway;
+
   constructor(
     private admin: ShopifyGraphQLClient,
     private shop: string
-  ) {}
+  ) {
+    // Initialize API gateway for rate-limited requests
+    this.gateway = new ShopifyApiGateway(admin, shop);
+  }
 
   // ============================================
   // PAGES SYNC
@@ -37,7 +44,7 @@ export class BackgroundSyncService {
       const { db } = await import("../db.server");
 
       // 1. Fetch all pages from Shopify
-      const pagesResponse = await this.admin.graphql(
+      const pagesResponse = await this.gateway.graphql(
         `#graphql
           query getPages {
             pages(first: 250) {
@@ -216,7 +223,7 @@ export class BackgroundSyncService {
       const { db } = await import("../db.server");
 
       // 1. Fetch all policies from Shopify
-      const policiesResponse = await this.admin.graphql(
+      const policiesResponse = await this.gateway.graphql(
         `#graphql
           query getShopPolicies {
             shop {
@@ -428,7 +435,7 @@ export class BackgroundSyncService {
       // Fetch resources for each working resource type
       for (const resourceTypeConfig of WORKING_RESOURCE_TYPES) {
         try {
-          const translatableResponse = await this.admin.graphql(
+          const translatableResponse = await this.gateway.graphql(
             `#graphql
               query getThemeTranslatableResources($first: Int!, $resourceType: TranslatableResourceType!) {
                 translatableResources(first: $first, resourceType: $resourceType) {
@@ -555,16 +562,20 @@ export class BackgroundSyncService {
               const groupName = firstItem._groupName;
               const groupIcon = firstItem._groupIcon;
 
-              // Fetch translations for all locales in parallel
+              // Fetch translations for all locales SEQUENTIALLY to avoid rate limiting
               const allTranslations = [];
               const seenKeys = new Set<string>(); // Track seen key-locale combinations
 
               console.log(`[BackgroundSync-Themes] 🔍 Fetching translations for group "${groupName}" (${items.length} fields, ${nonPrimaryLocales.length} locales)`);
 
-              // Parallelize locale queries
-              const translationPromises = nonPrimaryLocales.map(async (locale: any) => {
+              // Process locales sequentially with delay to avoid rate limiting
+              const allLocaleTranslations = [];
+
+              for (const locale of nonPrimaryLocales) {
                 try {
-                  const translationsResponse = await this.admin.graphql(
+                  console.log(`[BackgroundSync-Themes]   🌐 Fetching locale ${locale.locale} for group "${groupName}"...`);
+
+                  const translationsResponse = await this.gateway.graphql(
                     `#graphql
                       query getThemeTranslations($resourceId: ID!, $locale: String!) {
                         translatableResource(resourceId: $resourceId) {
@@ -580,19 +591,29 @@ export class BackgroundSyncService {
                   );
 
                   const translationsData = await translationsResponse.json();
-                  const translations = translationsData.data?.translatableResource?.translations || [];
-                  if (translations.length > 0) {
-                    console.log(`[BackgroundSync-Themes]   ✅ Locale ${locale.locale}: ${translations.length} translations from Shopify API`);
-                  }
-                  return translations;
-                } catch (error) {
-                  console.error(`[BackgroundSync] Error fetching theme translations for locale ${locale.locale}:`, error);
-                  return [];
-                }
-              });
 
-              // Wait for all locale queries to complete
-              const allLocaleTranslations = await Promise.all(translationPromises);
+                  // Check for GraphQL errors
+                  if (translationsData.errors) {
+                    console.error(`[BackgroundSync-Themes]   ❌ GraphQL error for locale ${locale.locale}:`, translationsData.errors[0].message);
+                    allLocaleTranslations.push([]);
+                    continue;
+                  }
+
+                  const translations = translationsData.data?.translatableResource?.translations || [];
+
+                  if (translations.length > 0) {
+                    console.log(`[BackgroundSync-Themes]   ✅ Locale ${locale.locale}: ${translations.length} translations fetched`);
+                  } else {
+                    console.log(`[BackgroundSync-Themes]   ⚠️  Locale ${locale.locale}: NO translations found (might be empty in Shopify)`);
+                  }
+
+                  allLocaleTranslations.push(translations);
+
+                } catch (error: any) {
+                  console.error(`[BackgroundSync-Themes]   ❌ Exception fetching locale ${locale.locale}:`, error.message || error);
+                  allLocaleTranslations.push([]);
+                }
+              }
 
               // Flatten and deduplicate translations for this group
               for (const translations of allLocaleTranslations) {
@@ -784,7 +805,7 @@ export class BackgroundSyncService {
   // ============================================
 
   private async fetchShopLocales() {
-    const response = await this.admin.graphql(
+    const response = await this.gateway.graphql(
       `#graphql
         query getShopLocales {
           shopLocales {
@@ -808,7 +829,7 @@ export class BackgroundSyncService {
         continue;
       }
 
-      const response = await this.admin.graphql(
+      const response = await this.gateway.graphql(
         `#graphql
           query getTranslations($resourceId: ID!, $locale: String!) {
             translatableResource(resourceId: $resourceId) {

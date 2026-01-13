@@ -27,7 +27,11 @@
       "Bash(git reset:*)",
       "Bash(npx tsc:*)",
       "Bash(git pull:*)",
-      "Bash(git stash:*)"
+      "Bash(git stash:*)",
+      "Bash(cat:*)",
+      "Bash(timeout 60 npm run build:*)",
+      "Bash(node check-translations.js:*)",
+      "Bash(node check-translations.cjs:*)"
     ],
     "deny": [],
     "ask": []
