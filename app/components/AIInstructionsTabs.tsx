@@ -67,9 +67,10 @@ interface Instructions {
 interface AIInstructionsTabsProps {
   instructions: Instructions;
   fetcher: FetcherWithComponents<any>;
+  readOnly?: boolean;
 }
 
-export function AIInstructionsTabs({ instructions, fetcher }: AIInstructionsTabsProps) {
+export function AIInstructionsTabs({ instructions, fetcher, readOnly = false }: AIInstructionsTabsProps) {
   const [selectedTab, setSelectedTab] = useState(0);
   const [localInstructions, setLocalInstructions] = useState<Instructions>(instructions);
   const [htmlModes, setHtmlModes] = useState<Record<string, "html" | "rendered">>({});
@@ -105,6 +106,7 @@ export function AIInstructionsTabs({ instructions, fetcher }: AIInstructionsTabs
   const currentEntityType = tabs[selectedTab].id as EntityType;
 
   const handleFieldChange = (field: string, value: string) => {
+    if (readOnly) return; // Prevent changes in read-only mode
     setLocalInstructions({ ...localInstructions, [field]: value });
   };
 
@@ -143,19 +145,21 @@ export function AIInstructionsTabs({ instructions, fetcher }: AIInstructionsTabs
   return (
     <BlockStack gap="500">
       {/* Action Buttons on same level as tabs */}
-      <InlineStack align="space-between" blockAlign="center">
-        <Button onClick={handleResetAll} tone="critical">
-          Alle Felder zurücksetzen
-        </Button>
-        <Button
-          variant={hasChanges ? "primary" : undefined}
-          onClick={handleSave}
-          disabled={!hasChanges}
-          loading={fetcher.state !== "idle"}
-        >
-          Änderungen speichern
-        </Button>
-      </InlineStack>
+      {!readOnly && (
+        <InlineStack align="space-between" blockAlign="center">
+          <Button onClick={handleResetAll} tone="critical">
+            Alle Felder zurücksetzen
+          </Button>
+          <Button
+            variant={hasChanges ? "primary" : undefined}
+            onClick={handleSave}
+            disabled={!hasChanges}
+            loading={fetcher.state !== "idle"}
+          >
+            Änderungen speichern
+          </Button>
+        </InlineStack>
+      )}
 
       {/* Custom Tab Navigation */}
       <div style={{
@@ -196,11 +200,14 @@ export function AIInstructionsTabs({ instructions, fetcher }: AIInstructionsTabs
       </div>
 
       {/* Tab Content */}
-      <div style={{ marginTop: "1rem" }}>
+      <div style={{ marginTop: "1rem", opacity: readOnly ? 0.6 : 1, pointerEvents: readOnly ? "none" : "auto" }}>
         {/* Description text below tabs */}
         <div style={{ marginBottom: "1rem" }}>
           <Text as="p" variant="bodyMd" tone="subdued">
-            Geben Sie für jedes Feld ein Formatbeispiel und spezifische Anweisungen an, an denen sich die KI orientieren soll.
+            {readOnly
+              ? "Default AI Instructions (read-only in Free plan)"
+              : "Geben Sie für jedes Feld ein Formatbeispiel und spezifische Anweisungen an, an denen sich die KI orientieren soll."
+            }
           </Text>
         </div>
 

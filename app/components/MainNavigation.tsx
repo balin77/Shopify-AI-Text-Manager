@@ -1,5 +1,5 @@
-import { useLocation, useNavigate, useFetcher } from "@remix-run/react";
-import { InlineStack, Text, Banner, ButtonGroup, Button } from "@shopify/polaris";
+import { useLocation, useNavigate, useFetcher, useMatches } from "@remix-run/react";
+import { InlineStack, Text, Banner, ButtonGroup, Button, Tooltip } from "@shopify/polaris";
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { usePlan } from "../contexts/PlanContext";
@@ -9,11 +9,17 @@ import { useState } from "react";
 export function MainNavigation() {
   const location = useLocation();
   const navigate = useNavigate();
+  const matches = useMatches();
   const { t } = useI18n();
   const { infoBox, hideInfoBox } = useInfoBox();
-  const { plan, getPlanDisplayName } = usePlan();
+  const { plan, getPlanDisplayName, getMaxProducts } = usePlan();
   const fetcher = useFetcher();
   const [isChangingPlan, setIsChangingPlan] = useState(false);
+
+  // Get product count from products route loader data
+  const productsRouteData = matches.find((match) => match.id === "routes/app.products")?.data as any;
+  const productCount = productsRouteData?.productCount;
+  const maxProducts = getMaxProducts();
 
   const tabs = [
     { id: "products", label: t.nav.products, path: "/app/products" },
@@ -73,8 +79,10 @@ export function MainNavigation() {
           <InlineStack gap="400">
             {tabs.map((tab) => {
               const isActive = location.pathname.startsWith(tab.path);
+              const showProductCount = tab.id === "products" && productCount !== undefined;
+              const isAtLimit = showProductCount && productCount >= maxProducts && maxProducts !== Infinity;
 
-              return (
+              const tabContent = (
                 <button
                   key={tab.id}
                   onClick={() => handleClick(tab.path, tab.id)}
@@ -88,16 +96,38 @@ export function MainNavigation() {
                     cursor: "pointer",
                   }}
                 >
-                  <Text
-                    as="span"
-                    variant="bodyMd"
-                    fontWeight={isActive ? "bold" : "regular"}
-                    tone="base"
-                  >
-                    {tab.label}
-                  </Text>
+                  <InlineStack gap="200" blockAlign="center">
+                    <Text
+                      as="span"
+                      variant="bodyMd"
+                      fontWeight={isActive ? "bold" : "regular"}
+                      tone="base"
+                    >
+                      {tab.label}
+                    </Text>
+                    {showProductCount && (
+                      <Text
+                        as="span"
+                        variant="bodySm"
+                        tone={isAtLimit ? "critical" : "subdued"}
+                      >
+                        ({productCount})
+                      </Text>
+                    )}
+                  </InlineStack>
                 </button>
               );
+
+              // Wrap with tooltip if at product limit
+              if (isAtLimit && plan === "free") {
+                return (
+                  <Tooltip key={tab.id} content="Upgrade to Basic for 100 products">
+                    {tabContent}
+                  </Tooltip>
+                );
+              }
+
+              return tabContent;
             })}
           </InlineStack>
 

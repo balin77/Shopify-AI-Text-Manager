@@ -100,6 +100,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     where: { shop: session.shop },
   });
 
+  // Get subscription plan
+  const subscriptionPlan = settings.subscriptionPlan || "basic";
+
   return json({
     shop: session.shop,
     productCount,
@@ -107,6 +110,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     webhookCount,
     collectionCount,
     articleCount,
+    subscriptionPlan,
     settings: {
       huggingfaceApiKey: settings.huggingfaceApiKey || "",
       geminiApiKey: settings.geminiApiKey || "",
@@ -344,10 +348,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function SettingsPage() {
-  const { shop, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount } = useLoaderData<typeof loader>();
+  const { shop, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, subscriptionPlan } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const { t } = useI18n();
   const { showInfoBox } = useInfoBox();
+  const isFreePlan = subscriptionPlan === "free";
 
   const [selectedSection, setSelectedSection] = useState<"setup" | "ai" | "instructions" | "language">("setup");
 
@@ -469,10 +474,23 @@ export default function SettingsPage() {
 
               {/* AI Instructions */}
               {selectedSection === "instructions" && (
-                <AIInstructionsTabs
-                  instructions={instructions}
-                  fetcher={fetcher}
-                />
+                <>
+                  {isFreePlan && (
+                    <Banner tone="info">
+                      <Text as="p" fontWeight="semibold">
+                        AI Instructions are read-only in the Free plan
+                      </Text>
+                      <Text as="p" variant="bodySm" tone="subdued">
+                        Upgrade to Basic plan to customize AI generation instructions for your products and content.
+                      </Text>
+                    </Banner>
+                  )}
+                  <AIInstructionsTabs
+                    instructions={instructions}
+                    fetcher={fetcher}
+                    readOnly={isFreePlan}
+                  />
+                </>
               )}
 
               {/* Language Settings */}
