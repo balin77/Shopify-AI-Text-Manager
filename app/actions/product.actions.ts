@@ -849,12 +849,23 @@ async function handleTranslateAll(
 
 async function handleUpdateProduct(admin: any, formData: FormData, productId: string, shop: string) {
   const locale = formData.get("locale") as string;
+  const primaryLocale = formData.get("primaryLocale") as string;
   const title = formData.get("title") as string;
   const descriptionHtml = formData.get("descriptionHtml") as string;
   let handle = formData.get("handle") as string;
   const seoTitle = formData.get("seoTitle") as string;
   const metaDescription = formData.get("metaDescription") as string;
   const imageAltTextsStr = formData.get("imageAltTexts") as string;
+
+  console.log('[UPDATE-PRODUCT] ========== UPDATE PRODUCT START ==========');
+  console.log('[UPDATE-PRODUCT] Product ID:', productId);
+  console.log('[UPDATE-PRODUCT] Locale:', locale);
+  console.log('[UPDATE-PRODUCT] Primary Locale:', primaryLocale);
+  console.log('[UPDATE-PRODUCT] Title:', title);
+  console.log('[UPDATE-PRODUCT] SEO Title:', seoTitle);
+  console.log('[UPDATE-PRODUCT] Meta Description:', metaDescription);
+  console.log('[UPDATE-PRODUCT] Handle:', handle);
+  console.log('[UPDATE-PRODUCT] Has alt-texts:', !!imageAltTextsStr);
 
   // Sanitize handle to ensure it's a valid URL slug
   if (handle) {
@@ -885,7 +896,7 @@ async function handleUpdateProduct(admin: any, formData: FormData, productId: st
     if (Object.keys(imageAltTexts).length > 0) {
       console.log('[UPDATE-PRODUCT] Updating alt-texts:', imageAltTexts);
 
-      // Get product images to update
+      // Get product images to update (both from Shopify and DB)
       const productResponse = await gateway.graphql(
         `#graphql
           query getProduct($id: ID!) {
@@ -908,6 +919,12 @@ async function handleUpdateProduct(admin: any, formData: FormData, productId: st
       const productData = await productResponse.json();
       const mediaEdges = productData.data?.product?.media?.edges || [];
 
+      // Get DB product images
+      const dbProduct = await db.product.findUnique({
+        where: { id: productId },
+        include: { images: true }
+      });
+
       // Update each image with new alt-text
       for (const [indexStr, altText] of Object.entries(imageAltTexts)) {
         const index = parseInt(indexStr);
@@ -915,6 +932,7 @@ async function handleUpdateProduct(admin: any, formData: FormData, productId: st
           const imageId = mediaEdges[index].node.id;
           console.log(`[UPDATE-PRODUCT] Updating alt-text for image ${index} (${imageId}): ${altText}`);
 
+          // Save to Shopify
           await gateway.graphql(
             `#graphql
               mutation updateMedia($media: [UpdateMediaInput!]!) {
@@ -944,6 +962,48 @@ async function handleUpdateProduct(admin: any, formData: FormData, productId: st
               }
             }
           );
+
+          // 🔥 NEW: Save to Database
+          const dbImage = dbProduct?.images[index];
+          if (dbImage) {
+            console.log(`[UPDATE-PRODUCT] Saving alt-text to DB for image ${index}, locale: ${locale}`);
+
+            if (locale === primaryLocale) {
+              // Primary locale: Update the ProductImage table directly
+              await db.productImage.update({
+                where: { id: dbImage.id },
+                data: { altText }
+              });
+              console.log(`[UPDATE-PRODUCT] ✓ Updated primary alt-text in DB for image ${index}`);
+            } else {
+              // Translation: Update the ProductImageAltTranslation table
+              // Check for existing translation first
+              const existing = await db.productImageAltTranslation.findUnique({
+                where: {
+                  imageId_locale: {
+                    imageId: dbImage.id,
+                    locale: locale
+                  }
+                }
+              });
+
+              if (existing) {
+                await db.productImageAltTranslation.update({
+                  where: { id: existing.id },
+                  data: { altText }
+                });
+              } else {
+                await db.productImageAltTranslation.create({
+                  data: {
+                    imageId: dbImage.id,
+                    locale: locale,
+                    altText: altText
+                  }
+                });
+              }
+              console.log(`[UPDATE-PRODUCT] ✓ Saved alt-text translation in DB for image ${index}, locale: ${locale}`);
+            }
+          }
         }
       }
     }

@@ -214,14 +214,6 @@ export function ProductEditor({
 
   return (
     <>
-      {showSuccessBanner && (
-        <div style={{ marginBottom: "1rem" }}>
-          <Banner title={t.products.successTitle} tone="success" onDismiss={() => {}}>
-            <p>{t.products.changesSavedMessage}</p>
-          </Banner>
-        </div>
-      )}
-
       <Card padding="600">
         <BlockStack gap="500">
           {/* Language Selector */}

@@ -73,7 +73,7 @@ export function MainNavigation() {
           borderBottom: "1px solid #e1e3e5",
         }}
       >
-        {/* Einzeilige Leiste mit Navigation, Plan Selector und InfoBox */}
+        {/* Einzeilige Leiste mit Navigation, InfoBox und Plan Selector */}
         <div style={{ display: "flex", alignItems: "center", padding: "1rem", gap: "2rem" }}>
           {/* Navigation Tabs */}
           <InlineStack gap="400">
@@ -131,23 +131,6 @@ export function MainNavigation() {
             })}
           </InlineStack>
 
-          {/* Plan Selector */}
-          <div style={{ marginLeft: "auto" }}>
-            <ButtonGroup variant="segmented">
-              {plans.map((planOption) => (
-                <Button
-                  key={planOption}
-                  pressed={plan === planOption}
-                  onClick={() => handlePlanChange(planOption)}
-                  disabled={isChangingPlan}
-                  size="slim"
-                >
-                  {planOption.charAt(0).toUpperCase() + planOption.slice(1)}
-                </Button>
-              ))}
-            </ButtonGroup>
-          </div>
-
           {/* InfoBox auf gleicher Ebene - schlanke Variante */}
           {infoBox && (
             <div
@@ -196,6 +179,23 @@ export function MainNavigation() {
               </button>
             </div>
           )}
+
+          {/* Plan Selector */}
+          <div style={{ marginLeft: "auto" }}>
+            <ButtonGroup variant="segmented">
+              {plans.map((planOption) => (
+                <Button
+                  key={planOption}
+                  pressed={plan === planOption}
+                  onClick={() => handlePlanChange(planOption)}
+                  disabled={isChangingPlan}
+                  size="slim"
+                >
+                  {planOption.charAt(0).toUpperCase() + planOption.slice(1)}
+                </Button>
+              ))}
+            </ButtonGroup>
+          </div>
         </div>
       </div>
     </>
