@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 
 interface Product {
   id: string;
@@ -36,6 +36,9 @@ export function useProductFields({
   const [editableMetaDescription, setEditableMetaDescription] = useState("");
   const [hasChanges, setHasChanges] = useState(false);
 
+  // Memoize alt-texts count to avoid unnecessary re-renders
+  const altTextsCount = useMemo(() => Object.keys(imageAltTexts).length, [JSON.stringify(imageAltTexts)]);
+
   // Helper function to get translated value
   const getTranslatedValue = (key: string, locale: string, fallback: string) => {
     if (!selectedProduct || locale === primaryLocale) {
@@ -67,7 +70,7 @@ export function useProductFields({
       }
       setHasChanges(false);
     }
-  }, [selectedProduct?.id, currentLanguage]);
+  }, [selectedProduct?.id, currentLanguage, primaryLocale]);
 
   // Track changes
   useEffect(() => {
@@ -86,11 +89,11 @@ export function useProductFields({
       const metaDescChanged = editableMetaDescription !== getOriginalValue("meta_description", selectedProduct.seo?.description || "");
 
       // Check if any alt-texts have changed
-      const altTextsChanged = Object.keys(imageAltTexts).length > 0;
+      const altTextsChanged = altTextsCount > 0;
 
       setHasChanges(titleChanged || descChanged || handleChanged || seoTitleChanged || metaDescChanged || altTextsChanged);
     }
-  }, [editableTitle, editableDescription, editableHandle, editableSeoTitle, editableMetaDescription, selectedProduct, currentLanguage, imageAltTexts]);
+  }, [editableTitle, editableDescription, editableHandle, editableSeoTitle, editableMetaDescription, selectedProduct, currentLanguage, primaryLocale, altTextsCount]);
 
   // Check if field is translated
   const isFieldTranslated = (key: string) => {
