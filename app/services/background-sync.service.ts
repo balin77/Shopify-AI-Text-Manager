@@ -27,6 +27,11 @@ export class BackgroundSyncService {
     private shop: string
   ) {
     // Initialize API gateway for rate-limited requests
+    // The gateway handles:
+    // - Rate limiting (10 requests/second)
+    // - Automatic retry with exponential backoff
+    // - Request queuing
+    // - Throttle error detection (THROTTLED, 429)
     this.gateway = new ShopifyApiGateway(admin, shop);
   }
 
@@ -432,40 +437,80 @@ export class BackgroundSyncService {
       // Track all synced theme content combinations for cleanup
       const syncedCombinations = new Set<string>();
 
+      // Track fetched translations to avoid duplicate API calls
+      const translationCache = new Map<string, any[]>();
+
       // Fetch resources for each working resource type
       for (const resourceTypeConfig of WORKING_RESOURCE_TYPES) {
         try {
-          const translatableResponse = await this.gateway.graphql(
-            `#graphql
-              query getThemeTranslatableResources($first: Int!, $resourceType: TranslatableResourceType!) {
-                translatableResources(first: $first, resourceType: $resourceType) {
-                  edges {
-                    node {
-                      resourceId
-                      translatableContent {
-                        key
-                        value
-                        digest
-                        locale
+          // Implement pagination to handle large datasets
+          let hasNextPage = true;
+          let cursor: string | null = null;
+          const allResourcesForType: any[] = [];
+
+          while (hasNextPage) {
+            const translatableResponse = await this.gateway.graphql(
+              `#graphql
+                query getThemeTranslatableResources($first: Int!, $resourceType: TranslatableResourceType!, $after: String) {
+                  translatableResources(first: $first, resourceType: $resourceType, after: $after) {
+                    pageInfo {
+                      hasNextPage
+                      endCursor
+                    }
+                    edges {
+                      cursor
+                      node {
+                        resourceId
+                        translatableContent {
+                          key
+                          value
+                          digest
+                          locale
+                        }
                       }
                     }
                   }
-                }
-              }`,
-            { variables: { first: 250, resourceType: resourceTypeConfig.type } }
-          );
+                }`,
+              { variables: { first: 250, resourceType: resourceTypeConfig.type, after: cursor } }
+            );
 
-          const translatableData = await translatableResponse.json();
+            const translatableData = await translatableResponse.json();
 
-          if (translatableData.errors) {
-            console.error(`[BackgroundSync] Error loading ${resourceTypeConfig.type}:`, translatableData.errors[0].message);
+            if (translatableData.errors) {
+              console.error(`[BackgroundSync] Error loading ${resourceTypeConfig.type}:`, translatableData.errors[0].message);
+              break;
+            }
+
+            const pageInfo = translatableData.data?.translatableResources?.pageInfo;
+            const edges = translatableData.data?.translatableResources?.edges || [];
+
+            allResourcesForType.push(...edges.map((edge: any) => edge.node));
+
+            hasNextPage = pageInfo?.hasNextPage || false;
+            cursor = pageInfo?.endCursor || null;
+
+            if (hasNextPage) {
+              console.log(`[BackgroundSync-Themes] 📄 Fetching next page for ${resourceTypeConfig.type} (cursor: ${cursor})`);
+            }
+          }
+
+          const resources = allResourcesForType;
+
+          // Skip if no resources found
+          if (resources.length === 0) {
+            console.log(`[BackgroundSync-Themes] ⚠️  No resources found for ${resourceTypeConfig.type}, skipping...`);
             continue;
           }
 
-          const resources = translatableData.data?.translatableResources?.edges?.map((edge: any) => edge.node) || [];
+          console.log(`[BackgroundSync-Themes] ✅ Found ${resources.length} resources for ${resourceTypeConfig.type}`);
 
           // Process each resource
           for (const resource of resources) {
+            // Skip resources with no translatable content
+            if (!resource.translatableContent || resource.translatableContent.length === 0) {
+              console.log(`[BackgroundSync-Themes] ⚠️  Resource ${resource.resourceId} has no translatable content, skipping...`);
+              continue;
+            }
             // Group translatable content by key patterns
             const contentByGroup: Record<string, any[]> = {};
             const unmatchedContent: any[] = [];
@@ -562,68 +607,76 @@ export class BackgroundSyncService {
               const groupName = firstItem._groupName;
               const groupIcon = firstItem._groupIcon;
 
-              // Fetch translations for all locales SEQUENTIALLY to avoid rate limiting
+              // Deduplicate translations for this group
               const allTranslations = [];
               const seenKeys = new Set<string>(); // Track seen key-locale combinations
 
-              console.log(`[BackgroundSync-Themes] 🔍 Fetching translations for group "${groupName}" (${items.length} fields, ${nonPrimaryLocales.length} locales)`);
+              // Check cache first to avoid duplicate API calls
+              const cacheKey = `${resource.resourceId}::${nonPrimaryLocales.map(l => l.locale).join(',')}`;
+              let resourceTranslations = translationCache.get(cacheKey);
 
-              // Process locales sequentially with delay to avoid rate limiting
-              const allLocaleTranslations = [];
+              if (!resourceTranslations) {
+                console.log(`[BackgroundSync-Themes] 🔍 Fetching translations for resource ${resource.resourceId} (${items.length} fields, ${nonPrimaryLocales.length} locales)`);
 
-              for (const locale of nonPrimaryLocales) {
-                try {
-                  console.log(`[BackgroundSync-Themes]   🌐 Fetching locale ${locale.locale} for group "${groupName}"...`);
+                // Process locales sequentially with delay to avoid rate limiting
+                resourceTranslations = [];
 
-                  const translationsResponse = await this.gateway.graphql(
-                    `#graphql
-                      query getThemeTranslations($resourceId: ID!, $locale: String!) {
-                        translatableResource(resourceId: $resourceId) {
-                          translations(locale: $locale) {
-                            key
-                            value
-                            locale
-                            outdated
+                for (const locale of nonPrimaryLocales) {
+                  try {
+                    console.log(`[BackgroundSync-Themes]   🌐 Fetching locale ${locale.locale}...`);
+
+                    // Gateway handles rate limiting and retry automatically
+                    const translationsResponse = await this.gateway.graphql(
+                      `#graphql
+                        query getThemeTranslations($resourceId: ID!, $locale: String!) {
+                          translatableResource(resourceId: $resourceId) {
+                            translations(locale: $locale) {
+                              key
+                              value
+                              locale
+                              outdated
+                            }
                           }
-                        }
-                      }`,
-                    { variables: { resourceId: resource.resourceId, locale: locale.locale } }
-                  );
+                        }`,
+                      { variables: { resourceId: resource.resourceId, locale: locale.locale } }
+                    );
 
-                  const translationsData = await translationsResponse.json();
+                    const translationsData = await translationsResponse.json();
 
-                  // Check for GraphQL errors
-                  if (translationsData.errors) {
-                    console.error(`[BackgroundSync-Themes]   ❌ GraphQL error for locale ${locale.locale}:`, translationsData.errors[0].message);
-                    allLocaleTranslations.push([]);
-                    continue;
+                    // Check for GraphQL errors
+                    if (translationsData.errors) {
+                      console.error(`[BackgroundSync-Themes]   ❌ GraphQL error for locale ${locale.locale}:`, translationsData.errors[0].message);
+                      continue;
+                    }
+
+                    const translations = translationsData.data?.translatableResource?.translations || [];
+
+                    if (translations.length > 0) {
+                      console.log(`[BackgroundSync-Themes]   ✅ Locale ${locale.locale}: ${translations.length} translations fetched`);
+                      resourceTranslations.push(...translations);
+                    } else {
+                      console.log(`[BackgroundSync-Themes]   ⚠️  Locale ${locale.locale}: NO translations found (might be empty in Shopify)`);
+                    }
+
+                  } catch (error: any) {
+                    console.error(`[BackgroundSync-Themes]   ❌ Exception fetching locale ${locale.locale}:`, error.message || error);
                   }
-
-                  const translations = translationsData.data?.translatableResource?.translations || [];
-
-                  if (translations.length > 0) {
-                    console.log(`[BackgroundSync-Themes]   ✅ Locale ${locale.locale}: ${translations.length} translations fetched`);
-                  } else {
-                    console.log(`[BackgroundSync-Themes]   ⚠️  Locale ${locale.locale}: NO translations found (might be empty in Shopify)`);
-                  }
-
-                  allLocaleTranslations.push(translations);
-
-                } catch (error: any) {
-                  console.error(`[BackgroundSync-Themes]   ❌ Exception fetching locale ${locale.locale}:`, error.message || error);
-                  allLocaleTranslations.push([]);
                 }
+
+                // Cache the fetched translations
+                translationCache.set(cacheKey, resourceTranslations);
+                console.log(`[BackgroundSync-Themes] 💾 Cached ${resourceTranslations.length} translations for resource ${resource.resourceId}`);
+              } else {
+                console.log(`[BackgroundSync-Themes] ⚡ Using cached translations for resource ${resource.resourceId} (${resourceTranslations.length} translations)`);
               }
 
-              // Flatten and deduplicate translations for this group
-              for (const translations of allLocaleTranslations) {
-                for (const t of translations) {
-                  if (items.some(item => item.key === t.key)) {
-                    const uniqueKey = `${t.key}::${t.locale}`;
-                    if (!seenKeys.has(uniqueKey)) {
-                      seenKeys.add(uniqueKey);
-                      allTranslations.push(t);
-                    }
+              // Filter translations relevant to this group
+              for (const t of resourceTranslations) {
+                if (items.some(item => item.key === t.key)) {
+                  const uniqueKey = `${t.key}::${t.locale}`;
+                  if (!seenKeys.has(uniqueKey)) {
+                    seenKeys.add(uniqueKey);
+                    allTranslations.push(t);
                   }
                 }
               }

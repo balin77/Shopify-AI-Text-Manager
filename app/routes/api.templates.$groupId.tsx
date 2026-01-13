@@ -259,9 +259,10 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
             if (hasChanges) {
               await db.themeContent.update({
                 where: {
-                  shop_resourceId: {
+                  shop_resourceId_groupId: {
                     shop: session.shop,
-                    resourceId: group.resourceId
+                    resourceId: group.resourceId,
+                    groupId: groupId
                   }
                 },
                 data: {

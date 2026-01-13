@@ -407,7 +407,7 @@ export class ContentService {
     return results;
   }
 
-  async getThemes(first: number = 50) {
+  async getThemes(first: number = 250) {
     try {
       console.log('\n=== 🎨 THEMES: Fetching theme translatable resources ===');
 
@@ -419,6 +419,9 @@ export class ContentService {
         { type: 'ONLINE_STORE_THEME_SECTION_GROUP', label: 'Section Groups' },
         { type: 'ONLINE_STORE_THEME_SETTINGS_CATEGORY', label: 'Settings Categories' },
       ];
+
+      // Limit to prevent memory issues - Shopify max is 250 per query
+      const safeLimit = Math.min(first, 250);
 
       // Define key patterns to filter and group by
       // Each pattern creates a separate navigation item on the left
@@ -471,7 +474,7 @@ export class ContentService {
 
         try {
           const translatableResponse = await this.admin.graphql(GET_THEME_TRANSLATABLE_RESOURCES, {
-            variables: { first: 250, resourceType: resourceTypeConfig.type }
+            variables: { first: safeLimit, resourceType: resourceTypeConfig.type }
           });
           const translatableData: any = await translatableResponse.json();
 
