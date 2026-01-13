@@ -46,33 +46,68 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "de";
 
     // Try to load menus from database first
+    console.log(`[MENUS-LOADER] Attempting to load menus from database for shop: ${session.shop}`);
     const { db } = await import("../db.server");
-    let menus = await db.menu.findMany({
-      where: { shop: session.shop },
-      orderBy: { title: "asc" }
-    });
 
-    console.log(`[MENUS-LOADER] Found ${menus.length} menus in database`);
+    let menus = [];
+    try {
+      menus = await db.menu.findMany({
+        where: { shop: session.shop },
+        orderBy: { title: "asc" }
+      });
+      console.log(`[MENUS-LOADER] ✅ Successfully loaded ${menus.length} menus from database`);
+
+      if (menus.length > 0) {
+        console.log(`[MENUS-LOADER] Sample menu:`, {
+          id: menus[0].id,
+          title: menus[0].title,
+          hasItems: !!menus[0].items,
+          itemsType: typeof menus[0].items
+        });
+      }
+    } catch (dbError: any) {
+      console.error(`[MENUS-LOADER] ❌ Database error:`, dbError.message);
+      console.error(`[MENUS-LOADER] Error code:`, dbError.code);
+      // If table doesn't exist, continue to API fallback
+      if (dbError.code === 'P2021') {
+        console.log(`[MENUS-LOADER] Menu table does not exist yet, falling back to API`);
+      }
+    }
 
     // If no menus in database, fetch from API and cache them
     if (menus.length === 0) {
       console.log("[MENUS-LOADER] No cached menus found, fetching from Shopify API...");
       const contentService = new ContentService(admin);
       const apiMenus = await contentService.getMenus();
+      console.log(`[MENUS-LOADER] API returned ${apiMenus.length} menus`);
 
       // Cache them in database
       if (apiMenus.length > 0) {
+        console.log("[MENUS-LOADER] Starting sync to database...");
         const { ContentSyncService } = await import("../services/content-sync.service");
         const syncService = new ContentSyncService(admin, session.shop);
-        await syncService.syncAllMenus();
 
-        // Re-fetch from database
-        menus = await db.menu.findMany({
-          where: { shop: session.shop },
-          orderBy: { title: "asc" }
-        });
-        console.log(`[MENUS-LOADER] Cached ${menus.length} menus to database`);
+        try {
+          await syncService.syncAllMenus();
+          console.log("[MENUS-LOADER] ✅ Sync completed successfully");
+
+          // Re-fetch from database
+          menus = await db.menu.findMany({
+            where: { shop: session.shop },
+            orderBy: { title: "asc" }
+          });
+          console.log(`[MENUS-LOADER] ✅ Successfully cached and re-fetched ${menus.length} menus from database`);
+        } catch (syncError: any) {
+          console.error(`[MENUS-LOADER] ❌ Sync failed:`, syncError.message);
+          console.log(`[MENUS-LOADER] Falling back to API data`);
+          // Use API data as fallback
+          menus = apiMenus;
+        }
+      } else {
+        console.log("[MENUS-LOADER] No menus found in API either");
       }
+    } else {
+      console.log(`[MENUS-LOADER] 🚀 Using cached menus (${menus.length}) - FAST PATH!`);
     }
 
     return json({
