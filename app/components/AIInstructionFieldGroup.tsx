@@ -37,7 +37,7 @@ export function AIInstructionFieldGroup({
   editorRef,
 }: AIInstructionFieldGroupProps) {
   return (
-    <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
+    <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px", overflow: "visible" }}>
       <BlockStack gap="400">
         <InlineStack align="space-between" blockAlign="center">
           <Text as="h3" variant="headingMd">{fieldName}</Text>
@@ -47,7 +47,7 @@ export function AIInstructionFieldGroup({
         </InlineStack>
 
         {/* Format Example Field */}
-        <div>
+        <div style={{ overflow: "visible" }}>
           {isHtmlField && onToggleHtmlMode && (
             <InlineStack align="space-between" blockAlign="center">
               <Text as="p" variant="bodyMd" fontWeight="medium">{formatLabel}</Text>

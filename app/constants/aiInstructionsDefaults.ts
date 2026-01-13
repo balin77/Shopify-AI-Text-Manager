@@ -32,7 +32,7 @@ export const DEFAULT_PRODUCT_INSTRUCTIONS: EntityInstructions = {
   handleInstructions: 'Nur Kleinbuchstaben und Bindestriche. Keine Umlaute (ä→a, ö→o, ü→u, ß→ss). 3-5 relevante Keywords. Maximal 50 Zeichen. SEO-optimiert und sprechend.',
 
   seoTitleFormat: 'Premium Leder Geldbörse kaufen | Handgefertigt & Nachhaltig',
-  seoTitleInstructions: '50-60 Zeichen (Google-optimal). Hauptkeyword am Anfang. Pipe (|) oder Bindestrich (-) als Trenner. Call-to-Action-Wort einbauen (kaufen, bestellen, entdecken). Markennamen am Ende wenn vorhanden.',
+  seoTitleInstructions: '50-60 Zeichen (Google-optimal). Hauptkeyword am Anfang. Pipe (|) als Trenner. Call-to-Action-Wort einbauen (kaufen, bestellen, entdecken). Markennamen am Ende wenn vorhanden.',
 
   metaDescFormat: 'Handgefertigte Premium Leder Geldbörse aus Vollrindleder. Zeitlos, langlebig und stilvoll. Nachhaltige Handwerkskunst für höchste Ansprüche. Jetzt entdecken!',
   metaDescInstructions: '150-160 Zeichen (Google-optimal). 2-3 relevante Keywords natürlich einbinden. Nutzenversprechen klar kommunizieren. Mit Handlungsaufforderung enden. Keine Füllwörter. Aktive Sprache.',

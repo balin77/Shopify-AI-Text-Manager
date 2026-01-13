@@ -157,10 +157,16 @@ export function AIInstructionsTabs({ instructions, fetcher }: AIInstructionsTabs
         <style>{`
           .Polaris-Tabs__Tab {
             background: white !important;
+            font-weight: 400 !important;
+            border-bottom: 3px solid transparent !important;
           }
           .Polaris-Tabs__Tab--selected {
             background: white !important;
+            font-weight: 600 !important;
             border-bottom: 3px solid #008060 !important;
+          }
+          .Polaris-Tabs__Tab:hover {
+            background: #f6f6f7 !important;
           }
         `}</style>
         <Tabs tabs={tabs} selected={selectedTab} onSelect={setSelectedTab}>
