@@ -111,13 +111,6 @@ export default function TemplatesPage() {
   const currentGroupId = selectedItemId ? themes.find((t: any) => t.id === selectedItemId)?.groupId : null;
   const selectedItem = currentGroupId ? loadedThemes[currentGroupId] : null;
 
-  console.log('[TEMPLATES-STATE]', {
-    selectedItemId,
-    currentGroupId,
-    hasSelectedItem: !!selectedItem,
-    loadedThemesKeys: Object.keys(loadedThemes),
-    editableValuesCount: Object.keys(editableValues).length
-  });
 
   // Check for changes
   const hasChanges = Object.keys(editableValues).some(
@@ -135,35 +128,26 @@ export default function TemplatesPage() {
 
   // Function to load theme data on-demand
   const loadThemeData = async (groupId: string) => {
-    console.log('[TEMPLATES-LOAD] Starting to load:', groupId);
-
     // Check if already loaded
     if (loadedThemes[groupId]) {
-      console.log('[TEMPLATES-LOAD] Already loaded, skipping');
       return;
     }
 
     setIsLoading(true);
     try {
       const response = await fetch(`/api/templates/${groupId}`);
-      console.log('[TEMPLATES-LOAD] Response status:', response.status);
 
       if (!response.ok) {
         throw new Error('Failed to load theme data');
       }
       const data = await response.json();
-      console.log('[TEMPLATES-LOAD] Data received:', {
-        hasTheme: !!data.theme,
-        contentCount: data.theme?.translatableContent?.length
-      });
 
       setLoadedThemes(prev => ({
         ...prev,
         [groupId]: data.theme
       }));
-      console.log('[TEMPLATES-LOAD] Theme data set in state');
     } catch (error) {
-      console.error('[TEMPLATES-LOAD] Error loading theme data:', error);
+      console.error('Error loading theme data:', error);
     } finally {
       setIsLoading(false);
     }
@@ -172,28 +156,14 @@ export default function TemplatesPage() {
   // Load translations when language changes (for non-primary locales)
   useEffect(() => {
     if (!selectedItem || !currentGroupId) {
-      console.log('[TEMPLATES] Early return:', { selectedItem: !!selectedItem, currentGroupId });
       return;
     }
-
-    console.log('[TEMPLATES] Loading values for:', {
-      currentLanguage,
-      primaryLocale,
-      hasContent: !!selectedItem.translatableContent,
-      contentLength: selectedItem.translatableContent?.length,
-      firstItem: selectedItem.translatableContent?.[0]
-    });
 
     if (currentLanguage === primaryLocale) {
       // Load primary locale values
       const values: Record<string, string> = {};
       selectedItem.translatableContent?.forEach((item: any) => {
         values[item.key] = item.value || "";
-      });
-      console.log('[TEMPLATES] Primary locale values loaded:', {
-        count: Object.keys(values).length,
-        firstKey: Object.keys(values)[0],
-        firstValue: Object.values(values)[0]
       });
       setEditableValues(values);
       setOriginalValues({ ...values });
@@ -204,7 +174,6 @@ export default function TemplatesPage() {
 
       if (!hasTranslations) {
         // Load translations
-        console.log('[TEMPLATES] Loading translations for:', currentLanguage);
         const formData = new FormData();
         formData.append("action", "loadTranslations");
         formData.append("locale", currentLanguage);
@@ -220,7 +189,6 @@ export default function TemplatesPage() {
           const translation = hasTranslations.find((t: any) => t.key === item.key);
           values[item.key] = translation?.value || "";
         });
-        console.log('[TEMPLATES] Translation values loaded:', Object.keys(values).length);
         setEditableValues(values);
         setOriginalValues({ ...values });
       }
@@ -229,25 +197,9 @@ export default function TemplatesPage() {
 
   // Handle loaded translations from fetcher
   useEffect(() => {
-    console.log('[TEMPLATES-FETCHER] Fetcher data received:', {
-      hasData: !!fetcher.data,
-      success: fetcher.data?.success,
-      hasTranslations: 'translations' in (fetcher.data || {}),
-      hasLocale: 'locale' in (fetcher.data || {}),
-      fetcherState: fetcher.state
-    });
-
     if (fetcher.data?.success && 'translations' in fetcher.data && 'locale' in fetcher.data) {
       const { translations, locale } = fetcher.data as any;
       const translationKey = `${currentGroupId}_${locale}`;
-
-      console.log('[TEMPLATES-FETCHER] Processing translations:', {
-        locale,
-        translationCount: translations?.length,
-        translationKey,
-        currentLanguage,
-        matchesCurrentLanguage: locale === currentLanguage
-      });
 
       setLoadedTranslations(prev => ({
         ...prev,
@@ -260,10 +212,6 @@ export default function TemplatesPage() {
         selectedItem.translatableContent?.forEach((item: any) => {
           const translation = translations.find((t: any) => t.key === item.key);
           values[item.key] = translation?.value || "";
-        });
-        console.log('[TEMPLATES-FETCHER] Setting editable values:', {
-          valuesCount: Object.keys(values).length,
-          sampleKeys: Object.keys(values).slice(0, 3)
         });
         setEditableValues(values);
         setOriginalValues({ ...values });
