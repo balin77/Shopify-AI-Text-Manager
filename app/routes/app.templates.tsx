@@ -211,9 +211,9 @@ export default function TemplatesPage() {
         }
       }
     }
-    // IMPORTANT: Don't add loadedTranslations to dependencies - it causes infinite loop
-    // The second useEffect handles updates when translations are loaded
-  }, [selectedItem, currentLanguage, currentGroupId, primaryLocale, fetcher.state]);
+    // IMPORTANT: We include loadedTranslations in dependencies to trigger when translations are loaded
+    // The hasChanged check prevents infinite loops
+  }, [selectedItem, currentLanguage, currentGroupId, primaryLocale, fetcher.state, loadedTranslations]);
 
   // Handle loaded translations from fetcher
   useEffect(() => {
@@ -280,11 +280,24 @@ export default function TemplatesPage() {
       }
     }
 
+    // If clicking the same item, force reload by clearing state
+    const isSameItem = selectedItemId === itemId;
+
     setSelectedItemId(itemId);
     setAiSuggestions({});
-    setEditableValues({});
-    setOriginalValues({});
-    loadThemeData(groupId);
+
+    if (isSameItem) {
+      // Force reload: clear state but keep the theme data to trigger useEffect
+      setEditableValues({});
+      setOriginalValues({});
+      // Reset language to primary to force data reload
+      setCurrentLanguage(primaryLocale);
+    } else {
+      // Different item: clear state and load new data
+      setEditableValues({});
+      setOriginalValues({});
+      loadThemeData(groupId);
+    }
   };
 
   const handleLanguageChange = (locale: string) => {
