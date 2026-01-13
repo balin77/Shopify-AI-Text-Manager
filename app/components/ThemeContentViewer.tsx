@@ -1,5 +1,5 @@
-import { Card, Text, BlockStack, Badge, TextField, InlineStack, Banner } from "@shopify/polaris";
-import { useState } from "react";
+import { Card, Text, BlockStack, Badge, TextField, InlineStack, Banner, Button, Pagination } from "@shopify/polaris";
+import { useState, useMemo } from "react";
 import { AIEditableField } from "./AIEditableField";
 import { AIEditableHTMLField } from "./AIEditableHTMLField";
 
@@ -89,6 +89,8 @@ export function ThemeContentViewer({
   onToggleHtmlMode,
 }: ThemeContentViewerProps) {
   const [searchTerm, setSearchTerm] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
+  const ITEMS_PER_PAGE = 50; // Render only 50 fields at a time
 
   if (!themeResource || !themeResource.translatableContent) {
     return (
@@ -100,11 +102,25 @@ export function ThemeContentViewer({
 
   const isPrimaryLocale = currentLanguage === primaryLocale;
 
-  // Filter translatable content by search term
-  const filteredContent = themeResource.translatableContent.filter((item: any) =>
-    item.key.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    item.value?.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  // Filter translatable content by search term - use useMemo for performance
+  const filteredContent = useMemo(() => {
+    return themeResource.translatableContent.filter((item: any) =>
+      item.key.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      item.value?.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+  }, [themeResource.translatableContent, searchTerm]);
+
+  // Calculate pagination
+  const totalPages = Math.ceil(filteredContent.length / ITEMS_PER_PAGE);
+  const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
+  const endIndex = startIndex + ITEMS_PER_PAGE;
+  const paginatedContent = filteredContent.slice(startIndex, endIndex);
+
+  // Reset to page 1 when search changes
+  const handleSearchChange = (value: string) => {
+    setSearchTerm(value);
+    setCurrentPage(1);
+  };
 
   // Get translations for the current language
   const currentTranslations = themeResource.translations?.filter(
@@ -148,28 +164,45 @@ export function ThemeContentViewer({
       <TextField
         label="Search translatable content"
         value={searchTerm}
-        onChange={setSearchTerm}
+        onChange={handleSearchChange}
         placeholder="Search by key or value..."
         autoComplete="off"
         clearButton
-        onClearButtonClick={() => setSearchTerm("")}
+        onClearButtonClick={() => handleSearchChange("")}
       />
 
       {/* Stats */}
       <InlineStack gap="200">
         <Badge tone="info">
-          {filteredContent.length} of {themeResource.contentCount} fields
+          Showing {startIndex + 1}-{Math.min(endIndex, filteredContent.length)} of {filteredContent.length} fields
+          {filteredContent.length !== themeResource.contentCount && ` (filtered from ${themeResource.contentCount})`}
         </Badge>
         <Badge tone={isPrimaryLocale ? "success" : "attention"}>
           {currentLocaleName} {isPrimaryLocale && "(Primary)"}
         </Badge>
+        {totalPages > 1 && (
+          <Badge>Page {currentPage} of {totalPages}</Badge>
+        )}
       </InlineStack>
+
+      {/* Pagination - Top */}
+      {totalPages > 1 && (
+        <div style={{ display: "flex", justifyContent: "center" }}>
+          <Pagination
+            hasPrevious={currentPage > 1}
+            onPrevious={() => setCurrentPage(currentPage - 1)}
+            hasNext={currentPage < totalPages}
+            onNext={() => setCurrentPage(currentPage + 1)}
+            label={`Page ${currentPage} of ${totalPages}`}
+          />
+        </div>
+      )}
 
       {/* Content List */}
       <div style={{ maxHeight: "600px", overflowY: "auto" }}>
         <BlockStack gap="300">
-          {filteredContent.length > 0 ? (
-            filteredContent.map((item: any, index: number) => {
+          {paginatedContent.length > 0 ? (
+            paginatedContent.map((item: any, index: number) => {
               const readableName = extractReadableName(item.key);
               const fieldKey = item.key;
               const sourceText = getSourceText(fieldKey);
@@ -243,6 +276,27 @@ export function ThemeContentViewer({
           )}
         </BlockStack>
       </div>
+
+      {/* Pagination - Bottom */}
+      {totalPages > 1 && (
+        <div style={{ display: "flex", justifyContent: "center", paddingTop: "1rem" }}>
+          <Pagination
+            hasPrevious={currentPage > 1}
+            onPrevious={() => {
+              setCurrentPage(currentPage - 1);
+              // Scroll to top of content
+              document.querySelector('[style*="maxHeight"]')?.scrollTo({ top: 0, behavior: 'smooth' });
+            }}
+            hasNext={currentPage < totalPages}
+            onNext={() => {
+              setCurrentPage(currentPage + 1);
+              // Scroll to top of content
+              document.querySelector('[style*="maxHeight"]')?.scrollTo({ top: 0, behavior: 'smooth' });
+            }}
+            label={`Page ${currentPage} of ${totalPages}`}
+          />
+        </div>
+      )}
     </BlockStack>
   );
 }
