@@ -18,6 +18,10 @@ const viteDevServer =
 
 const app = express();
 
+// Trust proxy - required for Railway/Heroku/etc behind reverse proxy
+// This allows express-rate-limit to correctly identify client IPs
+app.set('trust proxy', 1);
+
 app.use(compression());
 
 // http://expressjs.com/en/advanced/best-practice-security.html#at-a-minimum-disable-x-powered-by-header
