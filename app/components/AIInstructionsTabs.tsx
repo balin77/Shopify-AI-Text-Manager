@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { BlockStack, Text, Button, InlineStack, Tabs } from "@shopify/polaris";
+import { BlockStack, Text, Button, InlineStack } from "@shopify/polaris";
 import { AIInstructionFieldGroup } from "./AIInstructionFieldGroup";
 import {
   getDefaultInstructions,
@@ -149,36 +149,54 @@ export function AIInstructionsTabs({ instructions, fetcher }: AIInstructionsTabs
         </Button>
       </InlineStack>
 
+      {/* Custom Tab Navigation */}
       <div style={{
         background: "white",
         borderRadius: "8px",
-        padding: "0.5rem",
+        padding: "1rem",
+        borderBottom: "1px solid #e1e3e5",
       }}>
-        <style>{`
-          .Polaris-Tabs__Tab {
-            background: white !important;
-            font-weight: 400 !important;
-            border-bottom: 3px solid transparent !important;
-          }
-          .Polaris-Tabs__Tab--selected {
-            background: white !important;
-            font-weight: 600 !important;
-            border-bottom: 3px solid #008060 !important;
-          }
-          .Polaris-Tabs__Tab:hover {
-            background: #f6f6f7 !important;
-          }
-        `}</style>
-        <Tabs tabs={tabs} selected={selectedTab} onSelect={setSelectedTab}>
-          <div style={{ marginTop: "1rem" }}>
-          {/* Description text below tabs */}
-          <div style={{ marginBottom: "1rem" }}>
-            <Text as="p" variant="bodyMd" tone="subdued">
-              Geben Sie für jedes Feld ein Formatbeispiel und spezifische Anweisungen an, an denen sich die KI orientieren soll.
-            </Text>
-          </div>
+        <InlineStack gap="400">
+          {tabs.map((tab, index) => {
+            const isActive = selectedTab === index;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setSelectedTab(index)}
+                style={{
+                  textDecoration: "none",
+                  padding: "1rem 0.5rem",
+                  transition: "border-color 0.2s",
+                  background: "none",
+                  border: "none",
+                  borderBottom: isActive ? "3px solid #303030" : "3px solid transparent",
+                  cursor: "pointer",
+                }}
+              >
+                <Text
+                  as="span"
+                  variant="bodyMd"
+                  fontWeight={isActive ? "bold" : "regular"}
+                  tone="base"
+                >
+                  {tab.content}
+                </Text>
+              </button>
+            );
+          })}
+        </InlineStack>
+      </div>
 
-          <BlockStack gap="400" inlineAlign="stretch">
+      {/* Tab Content */}
+      <div style={{ marginTop: "1rem" }}>
+        {/* Description text below tabs */}
+        <div style={{ marginBottom: "1rem" }}>
+          <Text as="p" variant="bodyMd" tone="subdued">
+            Geben Sie für jedes Feld ein Formatbeispiel und spezifische Anweisungen an, an denen sich die KI orientieren soll.
+          </Text>
+        </div>
+
+        <BlockStack gap="400" inlineAlign="stretch">
             {/* PRODUCTS TAB */}
             {selectedTab === 0 && (
               <>
@@ -472,9 +490,7 @@ export function AIInstructionsTabs({ instructions, fetcher }: AIInstructionsTabs
                 />
               </>
             )}
-          </BlockStack>
-        </div>
-      </Tabs>
+        </BlockStack>
       </div>
     </BlockStack>
   );
