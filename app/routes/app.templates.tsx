@@ -165,23 +165,33 @@ export default function TemplatesPage() {
       selectedItem.translatableContent?.forEach((item: any) => {
         values[item.key] = item.value || "";
       });
-      setEditableValues(values);
-      setOriginalValues({ ...values });
+
+      // Only update if values actually changed (prevent infinite loop)
+      const hasChanged = Object.keys(values).length !== Object.keys(editableValues).length ||
+        Object.keys(values).some(key => values[key] !== editableValues[key]);
+
+      if (hasChanged) {
+        setEditableValues(values);
+        setOriginalValues({ ...values });
+      }
     } else {
       // Check if translations are already loaded
       const translationKey = `${currentGroupId}_${currentLanguage}`;
       const hasTranslations = loadedTranslations[translationKey];
 
       if (!hasTranslations) {
-        // Load translations
-        const formData = new FormData();
-        formData.append("action", "loadTranslations");
-        formData.append("locale", currentLanguage);
+        // Only load if not already loading
+        if (fetcher.state === 'idle') {
+          // Load translations
+          const formData = new FormData();
+          formData.append("action", "loadTranslations");
+          formData.append("locale", currentLanguage);
 
-        fetcher.submit(formData, {
-          method: "POST",
-          action: `/api/templates/${currentGroupId}`
-        });
+          fetcher.submit(formData, {
+            method: "POST",
+            action: `/api/templates/${currentGroupId}`
+          });
+        }
       } else {
         // Use loaded translations
         const values: Record<string, string> = {};
@@ -189,13 +199,20 @@ export default function TemplatesPage() {
           const translation = hasTranslations.find((t: any) => t.key === item.key);
           values[item.key] = translation?.value || "";
         });
-        setEditableValues(values);
-        setOriginalValues({ ...values });
+
+        // Only update if values actually changed (prevent infinite loop)
+        const hasChanged = Object.keys(values).length !== Object.keys(editableValues).length ||
+          Object.keys(values).some(key => values[key] !== editableValues[key]);
+
+        if (hasChanged) {
+          setEditableValues(values);
+          setOriginalValues({ ...values });
+        }
       }
     }
     // IMPORTANT: Don't add loadedTranslations to dependencies - it causes infinite loop
     // The second useEffect handles updates when translations are loaded
-  }, [selectedItem, currentLanguage, currentGroupId, primaryLocale]);
+  }, [selectedItem, currentLanguage, currentGroupId, primaryLocale, fetcher.state]);
 
   // Handle loaded translations from fetcher
   useEffect(() => {
