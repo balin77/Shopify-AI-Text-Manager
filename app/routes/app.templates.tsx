@@ -20,6 +20,7 @@ import {
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
+import { ContentTypeNavigation } from "../components/ContentTypeNavigation";
 import { ThemeContentViewer } from "../components/ThemeContentViewer";
 import { useI18n } from "../contexts/I18nContext";
 
@@ -421,6 +422,7 @@ export default function TemplatesPage() {
   return (
     <Page fullWidth>
       <MainNavigation />
+      <ContentTypeNavigation />
 
       <div style={{ height: "calc(100vh - 120px)", display: "flex", gap: "1rem", padding: "1rem", overflow: "hidden" }}>
         {/* Left Sidebar - Theme Resources List */}
