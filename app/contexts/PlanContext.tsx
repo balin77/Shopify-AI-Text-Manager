@@ -3,7 +3,7 @@
  * Provides subscription plan information throughout the app
  */
 
-import { createContext, useContext, type ReactNode } from "react";
+import { createContext, useContext, useMemo, useCallback, type ReactNode } from "react";
 import { type Plan, type ContentType } from "../config/plans";
 import {
   getPlanLimits,
@@ -38,7 +38,7 @@ interface PlanProviderProps {
 }
 
 export function PlanProvider({ plan, children }: PlanProviderProps) {
-  const value: PlanContextValue = {
+  const value: PlanContextValue = useMemo(() => ({
     plan,
     getPlanLimits: () => getPlanLimits(plan),
     canAccessContentType: (contentType: ContentType) => utilCanAccessContentType(plan, contentType),
@@ -49,7 +49,7 @@ export function PlanProvider({ plan, children }: PlanProviderProps) {
     shouldCacheAllProductImages: () => shouldCacheAllProductImages(plan),
     getAccessibleContentTypes: () => getAccessibleContentTypes(plan),
     getMaxProducts: () => getPlanLimits(plan).maxProducts,
-  };
+  }), [plan]);
 
   return <PlanContext.Provider value={value}>{children}</PlanContext.Provider>;
 }

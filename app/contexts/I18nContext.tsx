@@ -1,4 +1,4 @@
-import { createContext, useContext, type ReactNode } from "react";
+import { createContext, useContext, useMemo, type ReactNode } from "react";
 import { getTranslation, type Locale } from "../i18n";
 import type { Translation } from "../i18n/de";
 
@@ -19,10 +19,13 @@ export function I18nProvider({
   locale: Locale;
   children: ReactNode;
 }) {
-  const t = getTranslation(locale);
+  const value = useMemo(() => ({
+    locale,
+    t: getTranslation(locale),
+  }), [locale]);
 
   return (
-    <I18nContext.Provider value={{ locale, t }}>
+    <I18nContext.Provider value={value}>
       {children}
     </I18nContext.Provider>
   );
