@@ -285,10 +285,6 @@ export default function Products() {
   const { t, locale } = useI18n();
   const { showInfoBox } = useInfoBox();
 
-  console.log('[PRODUCTS] Render check - Current locale:', locale);
-  console.log('[PRODUCTS] Render check - t.products.resourceName:', t.products.resourceName);
-  console.log('[PRODUCTS] Render check - timestamp:', new Date().toISOString());
-
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
   const [currentLanguage, setCurrentLanguage] = useState(primaryLocale);
   const [optionTranslations, setOptionTranslations] = useState<Record<string, { name: string; values: string[] }>>({});

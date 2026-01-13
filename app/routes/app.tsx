@@ -64,9 +64,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 export default function App() {
   const { appLanguage, subscriptionPlan } = useLoaderData<typeof loader>();
 
-  console.log("🎨 [APP.TSX] Rendering App component with language:", appLanguage);
-  console.log("🎨 [APP.TSX] Rendering App component with plan:", subscriptionPlan);
-
   return (
     <AppProvider i18n={{}}>
       <I18nProvider locale={appLanguage}>
