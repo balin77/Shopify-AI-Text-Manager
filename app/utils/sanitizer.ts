@@ -5,7 +5,7 @@
  * Uses DOMPurify to clean user-generated HTML content.
  */
 
-import * as DOMPurify from 'isomorphic-dompurify';
+import DOMPurify from 'isomorphic-dompurify';
 
 /**
  * Sanitize HTML content for product descriptions and other rich text fields

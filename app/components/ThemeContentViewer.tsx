@@ -165,14 +165,13 @@ export function ThemeContentViewer({
       {/* Stats */}
       <InlineStack gap="200">
         <Badge tone="info">
-          Showing {startIndex + 1}-{Math.min(endIndex, filteredContent.length)} of {filteredContent.length} fields
-          {filteredContent.length !== themeResource.contentCount && ` (filtered from ${themeResource.contentCount})`}
+          {`Showing ${startIndex + 1}-${Math.min(endIndex, filteredContent.length)} of ${filteredContent.length} fields${filteredContent.length !== themeResource.contentCount ? ` (filtered from ${themeResource.contentCount})` : ''}`}
         </Badge>
         <Badge tone={isPrimaryLocale ? "success" : "attention"}>
-          {currentLocaleName} {isPrimaryLocale && "(Primary)"}
+          {`${currentLocaleName}${isPrimaryLocale ? ' (Primary)' : ''}`}
         </Badge>
         {totalPages > 1 && (
-          <Badge>Page {currentPage} of {totalPages}</Badge>
+          <Badge>{`Page ${currentPage} of ${totalPages}`}</Badge>
         )}
       </InlineStack>
 

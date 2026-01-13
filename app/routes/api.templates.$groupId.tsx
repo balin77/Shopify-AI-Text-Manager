@@ -131,11 +131,29 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         const fieldKey = formData.get("fieldKey") as string;
         const currentValue = formData.get("currentValue") as string;
 
-        const generatedContent = await AIService.generateText({
-          fieldType: fieldKey,
-          currentValue,
-          context: { groupName: firstGroup.groupName }
+        // Load AI settings from database
+        const { db } = await import("../db.server");
+        const settings = await db.aISettings.findUnique({
+          where: { shop: session.shop }
         });
+
+        const aiService = new AIService(
+          settings?.preferredProvider as any || 'huggingface',
+          {
+            huggingfaceApiKey: settings?.huggingfaceApiKey || undefined,
+            geminiApiKey: settings?.geminiApiKey || undefined,
+            claudeApiKey: settings?.claudeApiKey || undefined,
+            openaiApiKey: settings?.openaiApiKey || undefined,
+          }
+        );
+
+        const prompt = `Improve or generate content for this field: ${fieldKey}
+Current value: ${currentValue}
+Context: ${firstGroup.groupName}
+
+Please provide improved content that is clear and concise.`;
+
+        const generatedContent = await aiService['askAI'](prompt);
 
         return json({
           success: true,
@@ -157,11 +175,27 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
           }, { status: 400 });
         }
 
-        const translatedValue = await TranslationService.translateText({
-          text: sourceText,
-          sourceLocale: primaryLocale,
-          targetLocale
+        // Load AI settings from database
+        const { db } = await import("../db.server");
+        const settings = await db.aISettings.findUnique({
+          where: { shop: session.shop }
         });
+
+        const aiService = new AIService(
+          settings?.preferredProvider as any || 'huggingface',
+          {
+            huggingfaceApiKey: settings?.huggingfaceApiKey || undefined,
+            geminiApiKey: settings?.geminiApiKey || undefined,
+            claudeApiKey: settings?.claudeApiKey || undefined,
+            openaiApiKey: settings?.openaiApiKey || undefined,
+          }
+        );
+
+        const translatedValue = await aiService.translateContent(
+          sourceText,
+          primaryLocale,
+          targetLocale
+        );
 
         return json({
           success: true,
@@ -185,15 +219,31 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
           }
         }
 
+        // Load AI settings from database
+        const { db } = await import("../db.server");
+        const settings = await db.aISettings.findUnique({
+          where: { shop: session.shop }
+        });
+
+        const aiService = new AIService(
+          settings?.preferredProvider as any || 'huggingface',
+          {
+            huggingfaceApiKey: settings?.huggingfaceApiKey || undefined,
+            geminiApiKey: settings?.geminiApiKey || undefined,
+            claudeApiKey: settings?.claudeApiKey || undefined,
+            openaiApiKey: settings?.openaiApiKey || undefined,
+          }
+        );
+
         // Translate all fields
         const translatedFields: Record<string, string> = {};
         for (const [key, text] of Object.entries(fieldsToTranslate)) {
           try {
-            const translated = await TranslationService.translateText({
+            const translated = await aiService.translateContent(
               text,
-              sourceLocale: primaryLocale,
+              primaryLocale,
               targetLocale
-            });
+            );
             translatedFields[key] = translated;
           } catch (error) {
             console.error(`Error translating field ${key}:`, error);

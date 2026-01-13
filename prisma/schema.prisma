@@ -8,111 +8,154 @@ datasource db {
 }
 
 model Session {
-  id                   String    @id
-  shop                 String
-  state                String
-  isOnline             Boolean   @default(false)
-  scope                String?
-  expires              DateTime?
-  accessToken          String
-  userId               BigInt?
-  firstName            String?
-  lastName             String?
-  email                String?
-  accountOwner         Boolean   @default(false)
-  locale               String?
-  collaborator         Boolean?  @default(false)
-  emailVerified        Boolean?  @default(false)
-  refreshToken         String?
-  refreshTokenExpires  DateTime?
-  lastActivityAt       DateTime? @default(now())
+  id                  String    @id
+  shop                String
+  state               String
+  isOnline            Boolean   @default(false)
+  scope               String?
+  expires             DateTime?
+  accessToken         String
+  userId              BigInt?
+  firstName           String?
+  lastName            String?
+  email               String?
+  accountOwner        Boolean   @default(false)
+  locale              String?
+  collaborator        Boolean?  @default(false)
+  emailVerified       Boolean?  @default(false)
+  refreshToken        String?
+  refreshTokenExpires DateTime?
+  lastActivityAt      DateTime? @default(now())
 }
 
 model AISettings {
-  id                          String   @id @default(cuid())
-  shop                        String   @unique
-  huggingfaceApiKey           String?
-  geminiApiKey                String?
-  claudeApiKey                String?
-  openaiApiKey                String?
-  grokApiKey                  String?
-  deepseekApiKey              String?
-  preferredProvider           String   @default("huggingface")
-  appLanguage                 String   @default("de")
+  id                String  @id @default(cuid())
+  shop              String  @unique
+  huggingfaceApiKey String?
+  geminiApiKey      String?
+  claudeApiKey      String?
+  openaiApiKey      String?
+  grokApiKey        String?
+  deepseekApiKey    String?
+  preferredProvider String  @default("huggingface")
+  appLanguage       String  @default("de")
 
   // Rate Limiting - Hugging Face
-  hfMaxTokensPerMinute        Int?     @default(1000000)
-  hfMaxRequestsPerMinute      Int?     @default(100)
+  hfMaxTokensPerMinute   Int? @default(1000000)
+  hfMaxRequestsPerMinute Int? @default(100)
 
   // Rate Limiting - Gemini
-  geminiMaxTokensPerMinute    Int?     @default(1000000)
-  geminiMaxRequestsPerMinute  Int?     @default(15)
+  geminiMaxTokensPerMinute   Int? @default(1000000)
+  geminiMaxRequestsPerMinute Int? @default(15)
 
   // Rate Limiting - Claude
-  claudeMaxTokensPerMinute    Int?     @default(40000)
-  claudeMaxRequestsPerMinute  Int?     @default(5)
+  claudeMaxTokensPerMinute   Int? @default(40000)
+  claudeMaxRequestsPerMinute Int? @default(5)
 
   // Rate Limiting - OpenAI
-  openaiMaxTokensPerMinute    Int?     @default(200000)
-  openaiMaxRequestsPerMinute  Int?     @default(500)
+  openaiMaxTokensPerMinute   Int? @default(200000)
+  openaiMaxRequestsPerMinute Int? @default(500)
 
   // Rate Limiting - Grok
-  grokMaxTokensPerMinute      Int?     @default(100000)
-  grokMaxRequestsPerMinute    Int?     @default(60)
+  grokMaxTokensPerMinute   Int? @default(100000)
+  grokMaxRequestsPerMinute Int? @default(60)
 
   // Rate Limiting - DeepSeek
-  deepseekMaxTokensPerMinute  Int?     @default(100000)
-  deepseekMaxRequestsPerMinute Int?    @default(60)
+  deepseekMaxTokensPerMinute   Int? @default(100000)
+  deepseekMaxRequestsPerMinute Int? @default(60)
 
-  createdAt                   DateTime @default(now())
-  updatedAt                   DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model AIInstructions {
-  id                      String   @id @default(cuid())
-  shop                    String   @unique
-  titleFormat             String?  @db.Text
-  titleInstructions       String?  @db.Text
-  descriptionFormat       String?  @db.Text
-  descriptionInstructions String?  @db.Text
-  handleFormat            String?  @db.Text
-  handleInstructions      String?  @db.Text
-  seoTitleFormat          String?  @db.Text
-  seoTitleInstructions    String?  @db.Text
-  metaDescFormat          String?  @db.Text
-  metaDescInstructions    String?  @db.Text
-  altTextFormat           String?  @db.Text
-  altTextInstructions     String?  @db.Text
-  createdAt               DateTime @default(now())
-  updatedAt               DateTime @updatedAt
+  id   String @id @default(cuid())
+  shop String @unique
+
+  // PRODUCTS - All fields available
+  productTitleFormat             String? @db.Text
+  productTitleInstructions       String? @db.Text
+  productDescriptionFormat       String? @db.Text
+  productDescriptionInstructions String? @db.Text
+  productHandleFormat            String? @db.Text
+  productHandleInstructions      String? @db.Text
+  productSeoTitleFormat          String? @db.Text
+  productSeoTitleInstructions    String? @db.Text
+  productMetaDescFormat          String? @db.Text
+  productMetaDescInstructions    String? @db.Text
+  productAltTextFormat           String? @db.Text
+  productAltTextInstructions     String? @db.Text
+
+  // COLLECTIONS - All fields except altText
+  collectionTitleFormat             String? @db.Text
+  collectionTitleInstructions       String? @db.Text
+  collectionDescriptionFormat       String? @db.Text
+  collectionDescriptionInstructions String? @db.Text
+  collectionHandleFormat            String? @db.Text
+  collectionHandleInstructions      String? @db.Text
+  collectionSeoTitleFormat          String? @db.Text
+  collectionSeoTitleInstructions    String? @db.Text
+  collectionMetaDescFormat          String? @db.Text
+  collectionMetaDescInstructions    String? @db.Text
+
+  // BLOGS/ARTICLES - All fields except altText
+  blogTitleFormat             String? @db.Text
+  blogTitleInstructions       String? @db.Text
+  blogDescriptionFormat       String? @db.Text
+  blogDescriptionInstructions String? @db.Text
+  blogHandleFormat            String? @db.Text
+  blogHandleInstructions      String? @db.Text
+  blogSeoTitleFormat          String? @db.Text
+  blogSeoTitleInstructions    String? @db.Text
+  blogMetaDescFormat          String? @db.Text
+  blogMetaDescInstructions    String? @db.Text
+
+  // PAGES - Title, Description (body), Handle only (no SEO fields)
+  pageTitleFormat             String? @db.Text
+  pageTitleInstructions       String? @db.Text
+  pageDescriptionFormat       String? @db.Text
+  pageDescriptionInstructions String? @db.Text
+  pageHandleFormat            String? @db.Text
+  pageHandleInstructions      String? @db.Text
+  pageSeoTitleFormat          String? @db.Text
+  pageSeoTitleInstructions    String? @db.Text
+  pageMetaDescFormat          String? @db.Text
+  pageMetaDescInstructions    String? @db.Text
+
+  // POLICIES - Only body/description is editable
+  policyDescriptionFormat       String? @db.Text
+  policyDescriptionInstructions String? @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model Task {
-  id             String    @id @default(cuid())
-  shop           String
-  type           String    // "translation", "aiGeneration", "bulkTranslation", "bulkAiGeneration"
-  status         String    @default("pending") // "pending", "queued", "running", "completed", "failed", "cancelled"
-  resourceType   String?   // "product", "collection", "blog", "page"
-  resourceId     String?   // Shopify GID
-  resourceTitle  String?   // For display purposes
-  fieldType      String?   // "title", "description", "handle", "seoTitle", "metaDescription", "all"
-  targetLocale   String?   // For translations
-  progress       Int       @default(0) // 0-100
-  total          Int?      // Total number of items (for bulk operations)
-  processed      Int       @default(0) // Number of processed items
-  result         String?   @db.Text // JSON string with results or error message
-  error          String?   @db.Text
+  id            String  @id @default(cuid())
+  shop          String
+  type          String // "translation", "aiGeneration", "bulkTranslation", "bulkAiGeneration"
+  status        String  @default("pending") // "pending", "queued", "running", "completed", "failed", "cancelled"
+  resourceType  String? // "product", "collection", "blog", "page"
+  resourceId    String? // Shopify GID
+  resourceTitle String? // For display purposes
+  fieldType     String? // "title", "description", "handle", "seoTitle", "metaDescription", "all"
+  targetLocale  String? // For translations
+  progress      Int     @default(0) // 0-100
+  total         Int? // Total number of items (for bulk operations)
+  processed     Int     @default(0) // Number of processed items
+  result        String? @db.Text // JSON string with results or error message
+  error         String? @db.Text
 
   // Queue management
-  queuePosition  Int?      // Position in queue (null if not queued)
-  retryCount     Int       @default(0) // Number of retries attempted
-  estimatedTokens Int?     // Estimated tokens for this task
+  queuePosition   Int? // Position in queue (null if not queued)
+  retryCount      Int  @default(0) // Number of retries attempted
+  estimatedTokens Int? // Estimated tokens for this task
 
-  startedAt      DateTime  @default(now())
-  completedAt    DateTime?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
-  expiresAt      DateTime? // Automatic deletion timestamp (set to createdAt + 3 days)
+  startedAt   DateTime  @default(now())
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  expiresAt   DateTime? // Automatic deletion timestamp (set to createdAt + 3 days)
 
   @@index([shop, status])
   @@index([shop, createdAt])
@@ -121,14 +164,14 @@ model Task {
 }
 
 model Product {
-  id              String   @id // Shopify GID (e.g., "gid://shopify/Product/123")
-  shop            String
-  title           String
-  descriptionHtml String?  @db.Text
-  handle          String
-  status          String   // "ACTIVE", "DRAFT", "ARCHIVED"
-  seoTitle        String?
-  seoDescription  String?  @db.Text
+  id               String  @id // Shopify GID (e.g., "gid://shopify/Product/123")
+  shop             String
+  title            String
+  descriptionHtml  String? @db.Text
+  handle           String
+  status           String // "ACTIVE", "DRAFT", "ARCHIVED"
+  seoTitle         String?
+  seoDescription   String? @db.Text
   featuredImageUrl String?
   featuredImageAlt String?
 
@@ -137,10 +180,10 @@ model Product {
   lastSyncedAt     DateTime @default(now())
 
   // Relations
-  translations    Translation[]
-  images          ProductImage[]
-  options         ProductOption[]
-  metafields      ProductMetafield[]
+  translations Translation[]
+  images       ProductImage[]
+  options      ProductOption[]
+  metafields   ProductMetafield[]
 
   @@unique([shop, id])
   @@index([shop])
@@ -149,17 +192,17 @@ model Product {
 }
 
 model Translation {
-  id         String  @id @default(cuid())
-  productId  String
-  product    Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  id        String  @id @default(cuid())
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
-  key        String  // "title", "body_html", "handle", "seo_title", "seo_description"
-  value      String  @db.Text
-  locale     String  // "en", "fr", "es", "it", etc.
-  digest     String? // Shopify digest for updates
+  key    String // "title", "body_html", "handle", "seo_title", "seo_description"
+  value  String  @db.Text
+  locale String // "en", "fr", "es", "it", etc.
+  digest String? // Shopify digest for updates
 
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([productId, key, locale])
   @@index([productId, locale])
@@ -171,9 +214,9 @@ model ProductImage {
   productId String
   product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
-  url       String
-  altText   String?
-  position  Int?
+  url      String
+  altText  String?
+  position Int?
 
   @@index([productId])
 }
@@ -183,9 +226,9 @@ model ProductOption {
   productId String
   product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
-  name      String
-  position  Int
-  values    String  @db.Text // JSON array
+  name     String
+  position Int
+  values   String @db.Text // JSON array
 
   @@index([productId])
 }
@@ -197,7 +240,7 @@ model ProductMetafield {
 
   namespace String
   key       String
-  value     String  @db.Text
+  value     String @db.Text
   type      String
 
   @@index([productId])
@@ -206,7 +249,7 @@ model ProductMetafield {
 model WebhookLog {
   id        String   @id @default(cuid())
   shop      String
-  topic     String   // "products/create", "products/update", "products/delete"
+  topic     String // "products/create", "products/update", "products/delete"
   productId String?
   payload   String   @db.Text // Full webhook payload
   processed Boolean  @default(false)
@@ -223,13 +266,13 @@ model WebhookLog {
 // ============================================
 
 model Collection {
-  id              String   @id // Shopify GID (e.g., "gid://shopify/Collection/123")
+  id              String  @id // Shopify GID (e.g., "gid://shopify/Collection/123")
   shop            String
   title           String
-  descriptionHtml String?  @db.Text
+  descriptionHtml String? @db.Text
   handle          String
   seoTitle        String?
-  seoDescription  String?  @db.Text
+  seoDescription  String? @db.Text
 
   // Shopify Metadata
   shopifyUpdatedAt DateTime
@@ -241,15 +284,15 @@ model Collection {
 }
 
 model Article {
-  id              String   @id // Shopify GID (e.g., "gid://shopify/Article/123")
-  shop            String
-  blogId          String   // Shopify Blog GID
-  blogTitle       String   // For display purposes
-  title           String
-  body            String?  @db.Text
-  handle          String
-  seoTitle        String?
-  seoDescription  String?  @db.Text
+  id             String  @id // Shopify GID (e.g., "gid://shopify/Article/123")
+  shop           String
+  blogId         String // Shopify Blog GID
+  blogTitle      String // For display purposes
+  title          String
+  body           String? @db.Text
+  handle         String
+  seoTitle       String?
+  seoDescription String? @db.Text
 
   // Shopify Metadata
   shopifyUpdatedAt DateTime
@@ -262,11 +305,11 @@ model Article {
 }
 
 model Page {
-  id              String   @id // Shopify GID (e.g., "gid://shopify/Page/123")
-  shop            String
-  title           String
-  body            String?  @db.Text
-  handle          String
+  id     String  @id // Shopify GID (e.g., "gid://shopify/Page/123")
+  shop   String
+  title  String
+  body   String? @db.Text
+  handle String
 
   // Shopify Metadata
   shopifyUpdatedAt DateTime
@@ -278,12 +321,12 @@ model Page {
 }
 
 model ShopPolicy {
-  id       String   @id // Shopify GID (e.g., "gid://shopify/ShopPolicy/123")
-  shop     String
-  title    String
-  body     String?  @db.Text
-  type     String   // "CONTACT_INFORMATION", "LEGAL_NOTICE", "PRIVACY_POLICY", "REFUND_POLICY", "SHIPPING_POLICY", "TERMS_OF_SERVICE"
-  url      String?
+  id    String  @id // Shopify GID (e.g., "gid://shopify/ShopPolicy/123")
+  shop  String
+  title String
+  body  String? @db.Text
+  type  String // "CONTACT_INFORMATION", "LEGAL_NOTICE", "PRIVACY_POLICY", "REFUND_POLICY", "SHIPPING_POLICY", "TERMS_OF_SERVICE"
+  url   String?
 
   // Shopify Metadata
   lastSyncedAt DateTime @default(now())
@@ -295,20 +338,20 @@ model ShopPolicy {
 }
 
 model ContentTranslation {
-  id           String  @id @default(cuid())
+  id String @id @default(cuid())
 
   // Polymorphic relation (can belong to Collection, Article, Page, or ShopPolicy)
   // NOTE: No foreign key constraints - we handle this polymorphically in code
-  resourceId   String  // The GID of the parent resource
-  resourceType String  // "Collection", "Article", "Page", or "ShopPolicy"
+  resourceId   String // The GID of the parent resource
+  resourceType String // "Collection", "Article", "Page", or "ShopPolicy"
 
-  key          String  // "title", "body", "description", "handle", "seo_title", "seo_description"
-  value        String  @db.Text
-  locale       String  // "en", "fr", "es", "it", etc.
-  digest       String? // Shopify digest for updates
+  key    String // "title", "body", "description", "handle", "seo_title", "seo_description"
+  value  String  @db.Text
+  locale String // "en", "fr", "es", "it", etc.
+  digest String? // Shopify digest for updates
 
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([resourceId, key, locale])
   @@index([resourceId, locale])
@@ -321,16 +364,16 @@ model ContentTranslation {
 // ============================================
 
 model ThemeContent {
-  id                String   @id @default(cuid())
-  shop              String
-  resourceId        String   // Shopify GID
-  resourceType      String   // "ONLINE_STORE_THEME", "ONLINE_STORE_THEME_JSON_TEMPLATE", etc.
-  resourceTypeLabel String   // "Theme Content", "JSON Templates", etc.
-  groupId           String   // "article", "collection", "product", "misc_cart", etc.
-  groupName         String   // "Article", "Collection", "Cart", etc.
-  groupIcon         String   // "📝", "📂", "🛒", etc.
-  translatableContent Json   // Array of translatable items with keys and values
-  lastSyncedAt      DateTime @default(now())
+  id                  String   @id @default(cuid())
+  shop                String
+  resourceId          String // Shopify GID
+  resourceType        String // "ONLINE_STORE_THEME", "ONLINE_STORE_THEME_JSON_TEMPLATE", etc.
+  resourceTypeLabel   String // "Theme Content", "JSON Templates", etc.
+  groupId             String // "article", "collection", "product", "misc_cart", etc.
+  groupName           String // "Article", "Collection", "Cart", etc.
+  groupIcon           String // "📝", "📂", "🛒", etc.
+  translatableContent Json // Array of translatable items with keys and values
+  lastSyncedAt        DateTime @default(now())
 
   @@unique([shop, resourceId, groupId])
   @@index([shop])
@@ -339,20 +382,20 @@ model ThemeContent {
 }
 
 model ThemeTranslation {
-  id         String   @id @default(cuid())
+  id         String  @id @default(cuid())
   shop       String
-  resourceId String   // Links to ThemeContent
-  groupId    String   // For faster queries
-  key        String   // Translation key
-  value      String   @db.Text
-  locale     String   // "en", "fr", "es", "it", etc.
-  outdated   Boolean  @default(false)
+  resourceId String // Links to ThemeContent
+  groupId    String // For faster queries
+  key        String // Translation key
+  value      String  @db.Text
+  locale     String // "en", "fr", "es", "it", etc.
+  outdated   Boolean @default(false)
 
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([shop, resourceId, groupId, key, locale])
   @@index([shop, resourceId, groupId])
-  @@index([shop, groupId, locale])  // For efficient locale-specific group queries
+  @@index([shop, groupId, locale]) // For efficient locale-specific group queries
   @@index([locale])
 }
