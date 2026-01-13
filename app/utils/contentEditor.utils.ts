@@ -507,19 +507,23 @@ export const contentEditorStyles = `
 
   @keyframes pulse {
     0%, 100% {
-      box-shadow: 0 0 0 0 rgba(255, 149, 0, 0.7);
+      outline: 2px solid rgba(255, 149, 0, 0.7);
+      outline-offset: 0px;
     }
     50% {
-      box-shadow: 0 0 20px 10px rgba(255, 149, 0, 0.3);
+      outline: 3px solid rgba(255, 149, 0, 1);
+      outline-offset: 2px;
     }
   }
 
   @keyframes pulseBlue {
     0%, 100% {
-      box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.7);
+      outline: 2px solid rgba(59, 130, 246, 0.7);
+      outline-offset: 0px;
     }
     50% {
-      box-shadow: 0 0 20px 10px rgba(59, 130, 246, 0.3);
+      outline: 3px solid rgba(59, 130, 246, 1);
+      outline-offset: 2px;
     }
   }
 `;
