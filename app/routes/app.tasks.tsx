@@ -221,10 +221,6 @@ export default function TasksPage() {
 
       <div style={{ padding: "1rem" }}>
         <BlockStack gap="400">
-          <Text as="h1" variant="headingLg">
-            {t.tasks.title}
-          </Text>
-
           {/* Filters */}
           <Card>
             <BlockStack gap="400">
