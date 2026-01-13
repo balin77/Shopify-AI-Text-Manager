@@ -214,11 +214,29 @@ model ProductImage {
   productId String
   product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
-  url      String
-  altText  String?
-  position Int?
+  url                String
+  altText            String? // Primary locale alt-text
+  mediaId            String? // Shopify Media ID (gid://shopify/MediaImage/123) for translations
+  position           Int?
+  altTextTranslations ProductImageAltTranslation[]
 
   @@index([productId])
+}
+
+model ProductImageAltTranslation {
+  id      String       @id @default(cuid())
+  imageId String
+  image   ProductImage @relation(fields: [imageId], references: [id], onDelete: Cascade)
+
+  locale  String // "en", "fr", "es", "it", etc.
+  altText String @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([imageId, locale])
+  @@index([imageId])
+  @@index([locale])
 }
 
 model ProductOption {

@@ -80,26 +80,62 @@ export const AISettingsSchema = z.object({
 });
 
 /**
- * AI Instructions validation schema
+ * AI Instructions validation schema - Entity-specific fields
  */
 export const AIInstructionsSchema = z.object({
-  titleFormat: z.string().max(500).optional().or(z.literal('')),
-  titleInstructions: z.string().max(2000).optional().or(z.literal('')),
+  // PRODUCTS
+  productTitleFormat: z.string().max(500).optional().or(z.literal('')),
+  productTitleInstructions: z.string().max(2000).optional().or(z.literal('')),
+  productDescriptionFormat: z.string().max(5000).optional().or(z.literal('')),
+  productDescriptionInstructions: z.string().max(2000).optional().or(z.literal('')),
+  productHandleFormat: z.string().max(200).optional().or(z.literal('')),
+  productHandleInstructions: z.string().max(2000).optional().or(z.literal('')),
+  productSeoTitleFormat: z.string().max(200).optional().or(z.literal('')),
+  productSeoTitleInstructions: z.string().max(2000).optional().or(z.literal('')),
+  productMetaDescFormat: z.string().max(500).optional().or(z.literal('')),
+  productMetaDescInstructions: z.string().max(2000).optional().or(z.literal('')),
+  productAltTextFormat: z.string().max(300).optional().or(z.literal('')),
+  productAltTextInstructions: z.string().max(2000).optional().or(z.literal('')),
 
-  descriptionFormat: z.string().max(5000).optional().or(z.literal('')),
-  descriptionInstructions: z.string().max(2000).optional().or(z.literal('')),
+  // COLLECTIONS
+  collectionTitleFormat: z.string().max(500).optional().or(z.literal('')),
+  collectionTitleInstructions: z.string().max(2000).optional().or(z.literal('')),
+  collectionDescriptionFormat: z.string().max(5000).optional().or(z.literal('')),
+  collectionDescriptionInstructions: z.string().max(2000).optional().or(z.literal('')),
+  collectionHandleFormat: z.string().max(200).optional().or(z.literal('')),
+  collectionHandleInstructions: z.string().max(2000).optional().or(z.literal('')),
+  collectionSeoTitleFormat: z.string().max(200).optional().or(z.literal('')),
+  collectionSeoTitleInstructions: z.string().max(2000).optional().or(z.literal('')),
+  collectionMetaDescFormat: z.string().max(500).optional().or(z.literal('')),
+  collectionMetaDescInstructions: z.string().max(2000).optional().or(z.literal('')),
 
-  handleFormat: z.string().max(200).optional().or(z.literal('')),
-  handleInstructions: z.string().max(2000).optional().or(z.literal('')),
+  // BLOGS
+  blogTitleFormat: z.string().max(500).optional().or(z.literal('')),
+  blogTitleInstructions: z.string().max(2000).optional().or(z.literal('')),
+  blogDescriptionFormat: z.string().max(5000).optional().or(z.literal('')),
+  blogDescriptionInstructions: z.string().max(2000).optional().or(z.literal('')),
+  blogHandleFormat: z.string().max(200).optional().or(z.literal('')),
+  blogHandleInstructions: z.string().max(2000).optional().or(z.literal('')),
+  blogSeoTitleFormat: z.string().max(200).optional().or(z.literal('')),
+  blogSeoTitleInstructions: z.string().max(2000).optional().or(z.literal('')),
+  blogMetaDescFormat: z.string().max(500).optional().or(z.literal('')),
+  blogMetaDescInstructions: z.string().max(2000).optional().or(z.literal('')),
 
-  seoTitleFormat: z.string().max(200).optional().or(z.literal('')),
-  seoTitleInstructions: z.string().max(2000).optional().or(z.literal('')),
+  // PAGES
+  pageTitleFormat: z.string().max(500).optional().or(z.literal('')),
+  pageTitleInstructions: z.string().max(2000).optional().or(z.literal('')),
+  pageDescriptionFormat: z.string().max(5000).optional().or(z.literal('')),
+  pageDescriptionInstructions: z.string().max(2000).optional().or(z.literal('')),
+  pageHandleFormat: z.string().max(200).optional().or(z.literal('')),
+  pageHandleInstructions: z.string().max(2000).optional().or(z.literal('')),
+  pageSeoTitleFormat: z.string().max(200).optional().or(z.literal('')),
+  pageSeoTitleInstructions: z.string().max(2000).optional().or(z.literal('')),
+  pageMetaDescFormat: z.string().max(500).optional().or(z.literal('')),
+  pageMetaDescInstructions: z.string().max(2000).optional().or(z.literal('')),
 
-  metaDescFormat: z.string().max(500).optional().or(z.literal('')),
-  metaDescInstructions: z.string().max(2000).optional().or(z.literal('')),
-
-  altTextFormat: z.string().max(300).optional().or(z.literal('')),
-  altTextInstructions: z.string().max(2000).optional().or(z.literal('')),
+  // POLICIES
+  policyDescriptionFormat: z.string().max(5000).optional().or(z.literal('')),
+  policyDescriptionInstructions: z.string().max(2000).optional().or(z.literal('')),
 });
 
 /**

@@ -202,31 +202,31 @@ async function handleGenerateAIText(
 
     if (fieldType === "title") {
       let prompt = `Erstelle einen optimierten Produkttitel.`;
-      if (aiInstructions?.titleFormat) {
-        prompt += `\n\nFormatbeispiel:\n${aiInstructions.titleFormat}`;
+      if (aiInstructions?.productTitleFormat) {
+        prompt += `\n\nFormatbeispiel:\n${aiInstructions.productTitleFormat}`;
       }
-      if (aiInstructions?.titleInstructions) {
-        prompt += `\n\nAnweisungen:\n${aiInstructions.titleInstructions}`;
+      if (aiInstructions?.productTitleInstructions) {
+        prompt += `\n\nAnweisungen:\n${aiInstructions.productTitleInstructions}`;
       }
       prompt += `\n\nKontext:\n${contextDescription || currentValue}\n\nGib nur den Titel zurück, ohne Erklärungen.`;
       generatedContent = await aiService.generateProductTitle(prompt);
     } else if (fieldType === "description") {
       let prompt = `Erstelle eine optimierte Produktbeschreibung für: ${contextTitle}`;
-      if (aiInstructions?.descriptionFormat) {
-        prompt += `\n\nFormatbeispiel:\n${aiInstructions.descriptionFormat}`;
+      if (aiInstructions?.productDescriptionFormat) {
+        prompt += `\n\nFormatbeispiel:\n${aiInstructions.productDescriptionFormat}`;
       }
-      if (aiInstructions?.descriptionInstructions) {
-        prompt += `\n\nAnweisungen:\n${aiInstructions.descriptionInstructions}`;
+      if (aiInstructions?.productDescriptionInstructions) {
+        prompt += `\n\nAnweisungen:\n${aiInstructions.productDescriptionInstructions}`;
       }
       prompt += `\n\nAktueller Inhalt:\n${currentValue}\n\nGib nur die Beschreibung zurück, ohne Erklärungen.`;
       generatedContent = await aiService.generateProductDescription(contextTitle, prompt);
     } else if (fieldType === "handle") {
       let prompt = `Erstelle einen SEO-freundlichen URL-Slug (handle) für dieses Produkt:\nTitel: ${contextTitle}\nBeschreibung: ${contextDescription}`;
-      if (aiInstructions?.handleFormat) {
-        prompt += `\n\nFormatbeispiel:\n${aiInstructions.handleFormat}`;
+      if (aiInstructions?.productHandleFormat) {
+        prompt += `\n\nFormatbeispiel:\n${aiInstructions.productHandleFormat}`;
       }
-      if (aiInstructions?.handleInstructions) {
-        prompt += `\n\nAnweisungen:\n${aiInstructions.handleInstructions}`;
+      if (aiInstructions?.productHandleInstructions) {
+        prompt += `\n\nAnweisungen:\n${aiInstructions.productHandleInstructions}`;
       } else {
         prompt += `\n\nDer Slug sollte:\n- Nur Kleinbuchstaben und Bindestriche enthalten\n- Keine Sonderzeichen oder Umlaute haben\n- Kurz und prägnant sein (2-5 Wörter)\n- SEO-optimiert sein`;
       }
@@ -235,11 +235,11 @@ async function handleGenerateAIText(
       generatedContent = generatedContent.toLowerCase().trim();
     } else if (fieldType === "seoTitle") {
       let prompt = `Erstelle einen optimierten SEO-Titel für dieses Produkt:\nTitel: ${contextTitle}\nBeschreibung: ${contextDescription}`;
-      if (aiInstructions?.seoTitleFormat) {
-        prompt += `\n\nFormatbeispiel:\n${aiInstructions.seoTitleFormat}`;
+      if (aiInstructions?.productSeoTitleFormat) {
+        prompt += `\n\nFormatbeispiel:\n${aiInstructions.productSeoTitleFormat}`;
       }
-      if (aiInstructions?.seoTitleInstructions) {
-        prompt += `\n\nAnweisungen:\n${aiInstructions.seoTitleInstructions}`;
+      if (aiInstructions?.productSeoTitleInstructions) {
+        prompt += `\n\nAnweisungen:\n${aiInstructions.productSeoTitleInstructions}`;
       } else {
         prompt += `\n\nDer SEO-Titel sollte:\n- Max. 60 Zeichen lang sein\n- Keywords enthalten\n- Zum Klicken anregen\n- Den Produktnutzen kommunizieren`;
       }
@@ -247,11 +247,11 @@ async function handleGenerateAIText(
       generatedContent = await aiService.generateProductTitle(prompt);
     } else if (fieldType === "metaDescription") {
       let prompt = `Erstelle eine optimierte Meta-Description für dieses Produkt:\nTitel: ${contextTitle}\nBeschreibung: ${contextDescription}`;
-      if (aiInstructions?.metaDescFormat) {
-        prompt += `\n\nFormatbeispiel:\n${aiInstructions.metaDescFormat}`;
+      if (aiInstructions?.productMetaDescFormat) {
+        prompt += `\n\nFormatbeispiel:\n${aiInstructions.productMetaDescFormat}`;
       }
-      if (aiInstructions?.metaDescInstructions) {
-        prompt += `\n\nAnweisungen:\n${aiInstructions.metaDescInstructions}`;
+      if (aiInstructions?.productMetaDescInstructions) {
+        prompt += `\n\nAnweisungen:\n${aiInstructions.productMetaDescInstructions}`;
       } else {
         prompt += `\n\nDie Meta-Description sollte:\n- 150-160 Zeichen lang sein\n- Keywords enthalten\n- Zum Klicken anregen\n- Den Produktnutzen klar kommunizieren\n- Einen Call-to-Action enthalten`;
       }
@@ -989,12 +989,12 @@ async function handleGenerateAltText(
 Produkt: ${productTitle}
 Bild-URL: ${imageUrl}`;
 
-    if (aiInstructions?.altTextFormat) {
-      prompt += `\n\nFormatbeispiel:\n${aiInstructions.altTextFormat}`;
+    if (aiInstructions?.productAltTextFormat) {
+      prompt += `\n\nFormatbeispiel:\n${aiInstructions.productAltTextFormat}`;
     }
 
-    if (aiInstructions?.altTextInstructions) {
-      prompt += `\n\nAnweisungen:\n${aiInstructions.altTextInstructions}`;
+    if (aiInstructions?.productAltTextInstructions) {
+      prompt += `\n\nAnweisungen:\n${aiInstructions.productAltTextInstructions}`;
     } else {
       prompt += `\n\nDer Alt-Text sollte:\n- Präzise beschreiben, was auf dem Bild zu sehen ist\n- SEO-freundlich sein (60-125 Zeichen)\n- Relevant für das Produkt sein\n- Keine Füllwörter enthalten\n- Barrierefrei formuliert sein`;
     }
