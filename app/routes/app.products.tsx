@@ -12,6 +12,134 @@ import { useProductFields } from "../hooks/useProductFields";
 import { useAISuggestions } from "../hooks/useAISuggestions";
 import { handleProductActions } from "../actions/product.actions";
 
+/**
+ * Fetch and store image alt-text translations from Shopify
+ */
+async function fetchAndStoreImageTranslations(
+  admin: any,
+  db: any,
+  product: any,
+  locales: any[]
+) {
+  // Step 1: Fetch product with media IDs
+  const productResponse = await admin.graphql(
+    `#graphql
+      query getProductMedia($id: ID!) {
+        product(id: $id) {
+          media(first: 250) {
+            edges {
+              node {
+                ... on MediaImage {
+                  id
+                  alt
+                  image {
+                    url
+                  }
+                }
+              }
+            }
+          }
+        }
+      }`,
+    { variables: { id: product.id } }
+  );
+
+  const productData = await productResponse.json();
+  const mediaEdges = productData.data?.product?.media?.edges || [];
+
+  if (mediaEdges.length === 0) {
+    console.log(`[IMAGE-TRANSLATIONS] No media found for product ${product.id}`);
+    return;
+  }
+
+  // Step 2: Update images with mediaId
+  for (let i = 0; i < mediaEdges.length && i < product.images.length; i++) {
+    const mediaNode = mediaEdges[i].node;
+    const dbImage = product.images[i];
+
+    if (mediaNode && dbImage && !dbImage.mediaId) {
+      await db.productImage.update({
+        where: { id: dbImage.id },
+        data: { mediaId: mediaNode.id },
+      });
+    }
+  }
+
+  // Step 3: Fetch alt-text translations for all images at once per locale
+  const mediaIds = mediaEdges.map((edge: any) => edge.node.id).filter(Boolean);
+
+  if (mediaIds.length === 0) return;
+
+  for (const locale of locales) {
+    if (!locale.published) continue;
+
+    console.log(`[IMAGE-TRANSLATIONS] Fetching image translations for locale: ${locale.locale}`);
+
+    try {
+      const translationsResponse = await admin.graphql(
+        `#graphql
+          query getImageTranslations($ids: [ID!]!) {
+            nodes(ids: $ids) {
+              ... on MediaImage {
+                id
+                translatableContent {
+                  key
+                  value
+                  locale
+                }
+                translations(locale: "${locale.locale}") {
+                  key
+                  value
+                  locale
+                }
+              }
+            }
+          }`,
+        { variables: { ids: mediaIds } }
+      );
+
+      const translationsData = await translationsResponse.json();
+      const nodes = translationsData.data?.nodes || [];
+
+      // Step 4: Store translations in database
+      for (let i = 0; i < nodes.length; i++) {
+        const node = nodes[i];
+        if (!node) continue;
+
+        const dbImage = product.images.find((img: any) => img.mediaId === node.id);
+        if (!dbImage) continue;
+
+        // Find the translated alt-text
+        const translation = node.translations?.find((t: any) => t.key === "alt");
+        if (translation && translation.value) {
+          // Check if translation already exists
+          const existing = await db.productImageAltTranslation.findUnique({
+            where: {
+              imageId_locale: {
+                imageId: dbImage.id,
+                locale: locale.locale,
+              },
+            },
+          });
+
+          if (!existing) {
+            await db.productImageAltTranslation.create({
+              data: {
+                imageId: dbImage.id,
+                locale: locale.locale,
+                altText: translation.value,
+              },
+            });
+            console.log(`[IMAGE-TRANSLATIONS] Stored translation for image ${i} in ${locale.locale}`);
+          }
+        }
+      }
+    } catch (error) {
+      console.error(`[IMAGE-TRANSLATIONS] Error fetching translations for ${locale.locale}:`, error);
+    }
+  }
+}
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
 
@@ -47,7 +175,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       },
       include: {
         translations: true,
-        images: true,
+        images: {
+          include: {
+            altTextTranslations: true,
+          },
+        },
         options: true,
         metafields: true,
       },
@@ -59,8 +191,53 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
     console.log("[LOADER] Loaded", dbProducts.length, "products from database");
 
+    // 2b. Fetch and store image alt-text translations if missing
+    for (const product of dbProducts) {
+      // Check if any image is missing mediaId or altTextTranslations
+      const needsImageTranslations = product.images.some(
+        (img) => !img.mediaId || img.altTextTranslations.length === 0
+      );
+
+      if (needsImageTranslations) {
+        console.log(`[LOADER] Fetching image translations for product: ${product.id}`);
+        try {
+          await fetchAndStoreImageTranslations(
+            admin,
+            db,
+            product,
+            shopLocales.filter((l: any) => !l.primary)
+          );
+        } catch (error) {
+          console.error(`[LOADER] Error fetching image translations for ${product.id}:`, error);
+        }
+      }
+    }
+
+    // 2c. Reload products with fresh image translations
+    const dbProductsWithTranslations = await db.product.findMany({
+      where: {
+        shop: session.shop,
+      },
+      include: {
+        translations: true,
+        images: {
+          include: {
+            altTextTranslations: true,
+          },
+        },
+        options: true,
+        metafields: true,
+      },
+      orderBy: {
+        title: "asc",
+      },
+      take: 50,
+    });
+
+    console.log("[LOADER] Reloaded products with image translations");
+
     // 3. Transform to frontend format
-    const products = dbProducts.map((p) => ({
+    const products = dbProductsWithTranslations.map((p) => ({
       id: p.id,
       title: p.title,
       descriptionHtml: p.descriptionHtml,
@@ -73,6 +250,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       images: p.images.map((img) => ({
         url: img.url,
         altText: img.altText,
+        altTextTranslations: img.altTextTranslations.map((t) => ({
+          locale: t.locale,
+          altText: t.altText,
+        })),
       })),
       seo: {
         title: p.seoTitle,
@@ -320,6 +501,28 @@ export default function Products() {
   useEffect(() => {
     setImageAltTexts({});
   }, [selectedProductId]);
+
+  // Load translated alt-texts when language changes
+  useEffect(() => {
+    if (!selectedProduct || !selectedProduct.images) return;
+
+    if (currentLanguage === primaryLocale) {
+      // Reset to primary locale alt-texts
+      setImageAltTexts({});
+    } else {
+      // Load translated alt-texts from DB
+      const translatedAltTexts: Record<number, string> = {};
+      selectedProduct.images.forEach((img: any, index: number) => {
+        const translation = img.altTextTranslations?.find(
+          (t: any) => t.locale === currentLanguage
+        );
+        if (translation) {
+          translatedAltTexts[index] = translation.altText;
+        }
+      });
+      setImageAltTexts(translatedAltTexts);
+    }
+  }, [currentLanguage, selectedProductId, primaryLocale]);
 
   const handleSaveProduct = () => {
     if (!selectedProductId || !hasChanges) return;
