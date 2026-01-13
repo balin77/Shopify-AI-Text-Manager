@@ -31,7 +31,8 @@
       "Bash(cat:*)",
       "Bash(timeout 60 npm run build:*)",
       "Bash(node check-translations.js:*)",
-      "Bash(node check-translations.cjs:*)"
+      "Bash(node check-translations.cjs:*)",
+      "Bash(npx prisma format:*)"
     ],
     "deny": [],
     "ask": []

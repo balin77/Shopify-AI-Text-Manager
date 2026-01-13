@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher } from "@remix-run/react";
 import {
@@ -16,6 +16,7 @@ import { SettingsAITab } from "../components/SettingsAITab";
 import { SettingsLanguageTab } from "../components/SettingsLanguageTab";
 import { db } from "../db.server";
 import { useI18n } from "../contexts/I18nContext";
+import { useInfoBox } from "../contexts/InfoBoxContext";
 import { sanitizeFormatExample } from "../utils/sanitizer";
 import { AISettingsSchema, AIInstructionsSchema, parseFormData } from "../utils/validation";
 import { toSafeErrorResponse } from "../utils/error-handler";
@@ -339,8 +340,18 @@ export default function SettingsPage() {
   const { shop, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const { t } = useI18n();
+  const { showInfoBox } = useInfoBox();
 
   const [selectedSection, setSelectedSection] = useState<"setup" | "ai" | "instructions" | "language">("setup");
+
+  // Show global InfoBox when fetcher returns success or error
+  useEffect(() => {
+    if (fetcher.data?.success) {
+      showInfoBox(t.common.settingsSaved, "success", t.common.success);
+    } else if (fetcher.data && !fetcher.data.success && 'error' in fetcher.data) {
+      showInfoBox(fetcher.data.error as string, "critical", t.common.error);
+    }
+  }, [fetcher.data, showInfoBox, t]);
 
   return (
     <Page fullWidth>
@@ -427,18 +438,6 @@ export default function SettingsPage() {
           {/* Main Content */}
           <div style={{ flex: 1 }}>
             <BlockStack gap="400">
-              {fetcher.data?.success && (
-                <Banner title={t.common.success} tone="success" onDismiss={() => {}}>
-                  {t.common.settingsSaved}
-                </Banner>
-              )}
-
-              {fetcher.data && !fetcher.data.success && 'error' in fetcher.data && (
-                <Banner title={t.common.error} tone="critical">
-                  {fetcher.data.error as string}
-                </Banner>
-              )}
-
               {/* App Setup Section */}
               {selectedSection === "setup" && (
                 <SettingsSetupTab
