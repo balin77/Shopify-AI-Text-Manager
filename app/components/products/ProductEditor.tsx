@@ -260,7 +260,7 @@ export function ProductEditor({
                 {/* Large Preview Image */}
                 <div
                   style={{
-                    flex: "0 0 400px",
+                    flex: "0 0 280px",
                     position: "relative",
                   }}
                 >
@@ -293,19 +293,48 @@ export function ProductEditor({
                         position: "absolute",
                         top: "8px",
                         right: "8px",
-                        backgroundColor: !!(imageAltTexts[selectedImageIndex] || product.images[selectedImageIndex].altText) ? "#008060" : "#d72c0d",
+                        backgroundColor: "rgba(0, 0, 0, 0.5)",
                         borderRadius: "50%",
-                        width: "32px",
-                        height: "32px",
+                        width: "36px",
+                        height: "36px",
                         display: "flex",
                         alignItems: "center",
                         justifyContent: "center",
                         boxShadow: "0 2px 4px rgba(0, 0, 0, 0.2)",
                       }}
                     >
-                      <div style={{ color: "white", fontSize: "18px" }}>
-                        <Icon source={!!(imageAltTexts[selectedImageIndex] || product.images[selectedImageIndex].altText) ? CheckIcon : XIcon} tone="base" />
-                      </div>
+                      <svg
+                        width="20"
+                        height="20"
+                        viewBox="0 0 20 20"
+                        fill="none"
+                        xmlns="http://www.w3.org/2000/svg"
+                      >
+                        {!!(imageAltTexts[selectedImageIndex] || product.images[selectedImageIndex].altText) ? (
+                          <path
+                            d="M16 6L8 14L4 10"
+                            stroke="white"
+                            strokeWidth="2.5"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        ) : (
+                          <>
+                            <path
+                              d="M5 5L15 15"
+                              stroke="white"
+                              strokeWidth="2.5"
+                              strokeLinecap="round"
+                            />
+                            <path
+                              d="M15 5L5 15"
+                              stroke="white"
+                              strokeWidth="2.5"
+                              strokeLinecap="round"
+                            />
+                          </>
+                        )}
+                      </svg>
                     </div>
                   </div>
                 </div>
@@ -314,7 +343,7 @@ export function ProductEditor({
                 <div
                   style={{
                     flex: "1",
-                    maxHeight: "400px",
+                    maxHeight: "280px",
                     overflowY: "auto",
                     overflowX: "hidden",
                   }}
@@ -362,19 +391,48 @@ export function ProductEditor({
                             position: "absolute",
                             top: "4px",
                             right: "4px",
-                            backgroundColor: hasAltText ? "#008060" : "#d72c0d",
+                            backgroundColor: "rgba(0, 0, 0, 0.5)",
                             borderRadius: "50%",
-                            width: "20px",
-                            height: "20px",
+                            width: "24px",
+                            height: "24px",
                             display: "flex",
                             alignItems: "center",
                             justifyContent: "center",
                             boxShadow: "0 2px 4px rgba(0, 0, 0, 0.2)",
                           }}
                         >
-                          <div style={{ color: "white", fontSize: "12px" }}>
-                            <Icon source={hasAltText ? CheckIcon : XIcon} tone="base" />
-                          </div>
+                          <svg
+                            width="14"
+                            height="14"
+                            viewBox="0 0 20 20"
+                            fill="none"
+                            xmlns="http://www.w3.org/2000/svg"
+                          >
+                            {hasAltText ? (
+                              <path
+                                d="M16 6L8 14L4 10"
+                                stroke="white"
+                                strokeWidth="2.5"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              />
+                            ) : (
+                              <>
+                                <path
+                                  d="M5 5L15 15"
+                                  stroke="white"
+                                  strokeWidth="2.5"
+                                  strokeLinecap="round"
+                                />
+                                <path
+                                  d="M15 5L5 15"
+                                  stroke="white"
+                                  strokeWidth="2.5"
+                                  strokeLinecap="round"
+                                />
+                              </>
+                            )}
+                          </svg>
                         </div>
                       </button>
                     );
