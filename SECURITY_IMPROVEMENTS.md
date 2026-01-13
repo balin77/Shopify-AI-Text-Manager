@@ -201,24 +201,36 @@ try {
 - `app/middleware/rate-limit.middleware.ts` (neu erstellt, Backup)
 
 **Was wurde gemacht:**
-- Globales Rate Limiting für alle Routes
-- Strengeres Limiting für teure Operationen
+- Rate Limiting nur für API Routes (nicht global)
+- Shopify-kompatible Konfiguration
+- Skip-Logik für Auth, Assets, Root
 - Standard-konforme Headers
 - IP-basiertes Tracking (In-Memory Store)
 
-**Limit-Konfigurationen:**
+**Limit-Konfiguration:**
 
-| Limiter | Window | Max Requests | Anwendung |
-|---------|--------|--------------|-----------|
-| **General** | 15 Minuten | 100 | Alle Routes |
-| **Strict** | 1 Minute | 10 | Sync, Webhooks, AI |
+| Route Pattern | Window | Max Requests | Anwendung |
+|---------------|--------|--------------|-----------|
+| `/api/*` | 1 Minute | 20 | Alle API Endpoints |
+| `/auth/*` | - | Unlimited | OAuth Flow (skip) |
+| `/assets/*` | - | Unlimited | Static Assets (skip) |
+| `/` | - | Unlimited | Root Path (skip) |
 
-**Geschützte Endpoints:**
+**Implementierung:**
 ```javascript
-'/api/sync-products'   → Strict (10/min)
-'/api/sync-content'    → Strict (10/min)
-'/api/setup-webhooks'  → Strict (10/min)
-'/*' (alle anderen)    → General (100/15min)
+const apiLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 20, // 20 requests per minute
+  skip: (req) => {
+    // Skip rate limiting for auth routes and assets
+    return req.path.startsWith('/auth') ||
+           req.path.startsWith('/assets') ||
+           req.path.startsWith('/_') ||
+           req.path === '/';
+  }
+});
+
+app.use('/api', apiLimiter);
 ```
 
 **Response bei Limit-Überschreitung:**
@@ -226,21 +238,23 @@ try {
 HTTP 429 Too Many Requests
 {
   "success": false,
-  "error": "Too many requests. Please wait before trying again."
+  "error": "Rate limit exceeded. Please wait before trying again."
 }
 
 Headers:
-RateLimit-Limit: 10
+RateLimit-Limit: 20
 RateLimit-Remaining: 0
 RateLimit-Reset: 1673456789
-Retry-After: 60
 ```
 
 **Schutz gegen:**
-- Brute-Force Angriffe
+- Brute-Force Angriffe auf API
 - DoS (Denial of Service)
 - API Missbrauch
 - Resource Exhaustion
+
+**Warum nicht global?**
+Globales Rate Limiting blockierte legitime Shopify App Bridge Requests und den OAuth Flow. Die API-only Variante schützt teure Operationen ohne die App-Funktionalität zu beeinträchtigen.
 
 **Production Hinweis:**
 Für produktive Umgebungen sollte ein Redis Store verwendet werden:
@@ -276,39 +290,54 @@ const limiter = rateLimit({
 
 ---
 
-### 7. Content Security Policy (CSP) Headers
+### 7. Security Headers (CSP entfernt)
 
 **Dateien:**
 - `server.js` (aktualisiert)
 
 **Was wurde gemacht:**
-- Strikte CSP für XSS-Schutz
-- Zusätzliche Security Headers
-- Shopify-kompatible Konfiguration
+- Basic Security Headers implementiert
+- CSP Headers NICHT implementiert (inkompatibel mit Shopify)
+- Trust Proxy für Railway/Cloud Deployments
 
-**CSP Policy:**
-```
-default-src 'self'
-script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.shopify.com
-style-src 'self' 'unsafe-inline' https://cdn.shopify.com
-img-src 'self' data: https: blob:
-font-src 'self' data: https://cdn.shopify.com
-connect-src 'self' https://cdn.shopify.com https://*.myshopify.com
-frame-ancestors 'self' https://*.myshopify.com
-base-uri 'self'
-form-action 'self'
-```
-
-**Zusätzliche Headers:**
+**Implementierte Headers:**
 ```javascript
 X-Content-Type-Options: nosniff
-X-Frame-Options: SAMEORIGIN
-X-XSS-Protection: 1; mode=block
 Referrer-Policy: strict-origin-when-cross-origin
 ```
 
-**Hinweis zu `unsafe-inline`/`unsafe-eval`:**
-Notwendig für Shopify App Bridge und Polaris UI. In einer idealen Welt würden wir CSP Nonces verwenden, aber das ist mit dem aktuellen Shopify-Setup nicht kompatibel.
+**Trust Proxy:**
+```javascript
+app.set('trust proxy', true);
+```
+
+**NICHT implementiert (Gründe):**
+
+| Header | Grund für Entfernung |
+|--------|---------------------|
+| **CSP (Content-Security-Policy)** | Blockiert Shopify App Bridge, verhindert Iframe-Embedding |
+| **X-Frame-Options** | Konflikted mit Shopify Admin Iframe, app lädt nicht |
+| **X-XSS-Protection** | Veraltet, moderne Browser ignorieren es, kann Bugs verursachen |
+
+**Warum keine CSP?**
+```
+CSP frame-ancestors 'self' → ❌ Blockiert Shopify Iframe
+CSP script-src → ❌ Blockiert App Bridge dynamische Scripts
+Result: App lädt nicht im Shopify Admin
+```
+
+**Alternative XSS-Schutz:**
+Da CSP nicht verwendet werden kann, ist HTML Sanitization mit DOMPurify umso wichtiger:
+- ✅ Alle User-Inputs werden mit DOMPurify gereinigt
+- ✅ Nur erlaubte HTML-Tags werden durchgelassen
+- ✅ Event-Handler werden entfernt
+- ✅ `<script>` Tags werden blockiert
+
+**Trust Proxy Wichtigkeit:**
+Für Cloud-Deployments (Railway, Heroku, AWS) ist `trust proxy` essentiell:
+- Erlaubt korrekte Client-IP Identifikation aus `X-Forwarded-For`
+- Benötigt für express-rate-limit
+- Ohne: `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR` Fehler
 
 ---
 
@@ -338,17 +367,22 @@ Notwendig für Shopify App Bridge und Polaris UI. In einer idealen Welt würden 
 
 Vor dem Deployment in Production:
 
-- [ ] `npm install` ausführen (neue Dependencies)
-- [ ] TypeScript Build prüfen: `npm run typecheck`
-- [ ] Remix Build prüfen: `npm run build`
-- [ ] Logs auf Error Messages prüfen
+- [x] `npm install` ausführen (neue Dependencies)
+- [x] TypeScript Build prüfen: `npm run typecheck`
+- [x] Remix Build prüfen: `npm run build`
+- [x] Railway Deployment testen (funktioniert ✅)
 - [ ] Rate Limits testen
-- [ ] CSP Headers validieren (Browser Console)
 - [ ] API Key Validierung testen
 - [ ] HTML Sanitization testen (XSS Payloads)
 
 **Wichtig:**
 Die API Key Format-Validierung ist **strikt**. Wenn bestehende API Keys nicht dem Pattern entsprechen, werden sie abgelehnt. Eventuell müssen die Patterns angepasst werden.
+
+**Railway-spezifische Einstellungen:**
+- ✅ `trust proxy: true` - Für X-Forwarded-For Header
+- ✅ `host: '0.0.0.0'` - Bindet an alle Interfaces
+- ✅ Kein CSP - Würde App Bridge blockieren
+- ✅ Rate Limiting nur auf `/api/*` - Blockiert nicht Auth Flow
 
 ---
 
@@ -449,6 +483,76 @@ Bei Fragen oder Problemen:
 
 ---
 
+## 🔧 Troubleshooting
+
+### Problem: "Connection Refused" auf Railway
+
+**Ursache:** Server bindet nicht an `0.0.0.0`
+
+**Lösung:**
+```javascript
+const host = process.env.HOST || '0.0.0.0';
+app.listen(port, host, ...);
+```
+
+### Problem: `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR`
+
+**Ursache:** `trust proxy` nicht gesetzt
+
+**Lösung:**
+```javascript
+app.set('trust proxy', true);
+```
+
+### Problem: App lädt nicht im Shopify Admin
+
+**Ursache:** CSP oder X-Frame-Options blockieren Iframe
+
+**Lösung:**
+- ❌ Entfernen: `Content-Security-Policy` Header
+- ❌ Entfernen: `X-Frame-Options` Header
+- ✅ Verwenden: HTML Sanitization stattdessen
+
+### Problem: OAuth Flow wird blockiert
+
+**Ursache:** Rate Limiter auf `/auth/*` Routes
+
+**Lösung:**
+```javascript
+skip: (req) => req.path.startsWith('/auth')
+```
+
+### Problem: Assets werden nicht geladen
+
+**Ursache:** Rate Limiter auf `/assets/*`
+
+**Lösung:**
+```javascript
+skip: (req) => req.path.startsWith('/assets')
+```
+
+---
+
+## 📝 Changelog
+
+### v1.1.0 (2026-01-13)
+- ✅ Fixed: Railway deployment issues
+- ✅ Removed: CSP headers (Shopify incompatible)
+- ✅ Changed: Rate limiting to API-only
+- ✅ Added: Trust proxy support
+- ✅ Added: Host binding to 0.0.0.0
+
+### v1.0.0 (2026-01-13)
+- ✅ Initial implementation
+- ✅ HTML Sanitization
+- ✅ Prompt Injection Prevention
+- ✅ Input Validation with Zod
+- ✅ Error Message Sanitization
+- ✅ Session Token Logging removed
+
+---
+
 **Erstellt:** 2026-01-13
-**Version:** 1.0.0
-**Status:** ✅ Vollständig implementiert (exkl. Datenbank-Verschlüsselung)
+**Letztes Update:** 2026-01-13
+**Version:** 1.1.0
+**Status:** ✅ Vollständig implementiert und Railway-tested (exkl. Datenbank-Verschlüsselung)
