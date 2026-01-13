@@ -274,7 +274,21 @@ export function hasPrimaryContentMissing(
 
   // Check required fields based on content type
   if (contentType === 'products') {
-    return !selectedItem.title || !selectedItem.descriptionHtml || !selectedItem.handle;
+    const titleMissing = !selectedItem.title;
+    const descriptionMissing = !selectedItem.descriptionHtml;
+    const handleMissing = !selectedItem.handle;
+    const seoTitleMissing = !selectedItem.seo?.title;
+    const seoDescriptionMissing = !selectedItem.seo?.description;
+    return titleMissing || descriptionMissing || handleMissing || seoTitleMissing || seoDescriptionMissing;
+  }
+
+  if (contentType === 'collections') {
+    const titleMissing = !selectedItem.title;
+    const descriptionMissing = !selectedItem.descriptionHtml;
+    const handleMissing = !selectedItem.handle;
+    const seoTitleMissing = !selectedItem.seo?.title;
+    const seoDescriptionMissing = !selectedItem.seo?.description;
+    return titleMissing || descriptionMissing || handleMissing || seoTitleMissing || seoDescriptionMissing;
   }
 
   const titleMissing = contentType !== 'policies' && !selectedItem.title;
@@ -302,11 +316,15 @@ export function hasLocaleMissingTranslations(
   ) || [];
 
   // Define required fields based on content type
-  const requiredFields = contentType === 'collections' || contentType === 'products'
-    ? ["title", "body_html", "handle"]
-    : contentType === 'policies'
-    ? ["body"]
-    : ["title", "body_html", "handle"];
+  let requiredFields: string[] = [];
+
+  if (contentType === 'collections' || contentType === 'products') {
+    requiredFields = ["title", "body_html", "handle", "meta_title", "meta_description"];
+  } else if (contentType === 'policies') {
+    requiredFields = ["body"];
+  } else {
+    requiredFields = ["title", "body_html", "handle"];
+  }
 
   return requiredFields.some(field => {
     const translation = translations.find((t: any) => t.key === field);
