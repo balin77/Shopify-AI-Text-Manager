@@ -487,24 +487,9 @@ export class ContentService {
 
           // Process each resource
           for (const resource of resources) {
-            // Fetch translations for each non-primary locale
-            const allTranslations = [];
-
-            for (const locale of nonPrimaryLocales) {
-              try {
-                const translationsResponse = await this.admin.graphql(GET_THEME_TRANSLATIONS, {
-                  variables: { resourceId: resource.resourceId, locale }
-                });
-                const translationsData = await translationsResponse.json();
-
-                const translations = translationsData.data?.translatableResource?.translations || [];
-                if (translations.length > 0) {
-                  allTranslations.push(...translations);
-                }
-              } catch (error) {
-                console.error(`  [${locale}] Error fetching translations:`, error);
-              }
-            }
+            // OPTIMIZATION: Skip fetching translations from Shopify API during sync
+            // Translations are already stored in database and loaded on-demand
+            // This dramatically reduces sync time (from 150+ API calls to 0)
 
             // Determine a good title for this resource
             let resourceTitle = resourceTypeConfig.label;
@@ -524,17 +509,6 @@ export class ContentService {
                   }))
                 );
               }
-            }
-
-            // 🔍 DEBUG: Log translations structure
-            if (allTranslations.length > 0) {
-              console.log(`  [DEBUG] Sample translations (first 3):`,
-                allTranslations.slice(0, 3).map((t: any) => ({
-                  locale: t.locale,
-                  key: t.key,
-                  value: t.value?.substring(0, 50)
-                }))
-              );
             }
 
             // Group translatable content by key patterns
@@ -660,7 +634,6 @@ export class ContentService {
                 resourceTypeLabel: resourceTypeConfig.label,
                 translatableContent: resource.translatableContent || [], // Keep all for reference
                 contentByGroup, // New: grouped content
-                translations: allTranslations,
                 contentCount: Object.values(contentByGroup).reduce((sum, arr) => sum + arr.length, 0),
                 keyPatterns: KEY_PATTERNS
               });
@@ -690,16 +663,12 @@ export class ContentService {
               groupId,
               role: 'THEME_GROUP',
               translatableContent: [],
-              translations: [],
               contentCount: 0
             };
           }
 
-          // Merge items and translations into consolidated group
+          // Merge items into consolidated group
           consolidatedGroups[groupId].translatableContent.push(...items);
-          consolidatedGroups[groupId].translations.push(...resource.translations.filter((t: any) =>
-            items.some(item => item.key === t.key)
-          ));
           consolidatedGroups[groupId].contentCount += items.length;
         }
       }

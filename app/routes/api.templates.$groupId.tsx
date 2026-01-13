@@ -21,42 +21,21 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   try {
     const { db } = await import("../db.server");
 
-    // Load theme content and translations for this specific group
-    const [themeGroups, themeTranslations] = await Promise.all([
-      db.themeContent.findMany({
-        where: {
-          shop: session.shop,
-          groupId: groupId
-        }
-      }),
-      db.themeTranslation.findMany({
-        where: {
-          shop: session.shop,
-          groupId: groupId
-        }
-      })
-    ]);
+    // OPTIMIZATION: Only load theme content, NOT translations
+    // Translations will be loaded on-demand when user switches locale
+    const themeGroups = await db.themeContent.findMany({
+      where: {
+        shop: session.shop,
+        groupId: groupId
+      }
+    });
 
     if (themeGroups.length === 0) {
       return json({ error: "Group not found" }, { status: 404 });
     }
 
-    // Build a Map for O(1) lookup by resourceId (more efficient than object)
-    const translationsByResource = new Map<string, any[]>();
-    for (const trans of themeTranslations) {
-      const existing = translationsByResource.get(trans.resourceId);
-      if (existing) {
-        existing.push(trans);
-      } else {
-        translationsByResource.set(trans.resourceId, [trans]);
-      }
-    }
-
     // Merge all translatable content from all resources in this group
     const allContent = themeGroups.flatMap((group) => group.translatableContent as any[]);
-    const allTranslations = themeGroups.flatMap((group) =>
-      translationsByResource.get(group.resourceId) || []
-    );
 
     // Get group metadata from first item
     const firstGroup = themeGroups[0];
@@ -69,9 +48,10 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       groupId: groupId,
       role: 'THEME_GROUP',
       translatableContent: allContent,
-      translations: allTranslations,
       contentCount: allContent.length
     };
+
+    console.log(`[API-TEMPLATES-LOADER] Loaded ${themeGroups.length} resources with ${allContent.length} translatable fields for group ${groupId}`);
 
     return json({ theme: themeData });
   } catch (error: any) {
@@ -113,6 +93,8 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       case "loadTranslations": {
         const locale = formData.get("locale") as string;
 
+        // OPTIMIZATION: Load translations from database (lazy loading)
+        // This is much faster than fetching from Shopify API
         const translations = await db.themeTranslation.findMany({
           where: {
             shop: session.shop,
@@ -120,6 +102,8 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
             locale: locale
           }
         });
+
+        console.log(`[API-TEMPLATES-ACTION] Loaded ${translations.length} translations for locale ${locale} from database`);
 
         return json({
           success: true,
