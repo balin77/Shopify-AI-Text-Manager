@@ -265,7 +265,7 @@ export function ProductEditor({
               {isFreePlan && (
                 <Banner tone="info">
                   <Text as="p" variant="bodySm">
-                    Only featured image is available in Free plan. Upgrade to Basic to access all product images.
+                    {t.products.onlyFeaturedImageAvailable}
                   </Text>
                 </Banner>
               )}
@@ -510,10 +510,10 @@ export function ProductEditor({
                   >
                     <BlockStack gap="300" inlineAlign="center">
                       <Text as="p" variant="bodyMd" alignment="center" tone="subdued">
-                        🔒 Additional images
+                        🔒 {t.products.additionalImagesLocked}
                       </Text>
                       <Text as="p" variant="bodySm" alignment="center" tone="subdued">
-                        Available in Basic plan
+                        {t.products.availableInBasicPlan}
                       </Text>
                     </BlockStack>
                   </div>

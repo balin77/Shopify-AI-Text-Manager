@@ -121,7 +121,7 @@ export function MainNavigation() {
               // Wrap with tooltip if at product limit
               if (isAtLimit && plan === "free") {
                 return (
-                  <Tooltip key={tab.id} content="Upgrade to Basic for 100 products">
+                  <Tooltip key={tab.id} content={t.products.upgradeForMoreProducts}>
                     {tabContent}
                   </Tooltip>
                 );

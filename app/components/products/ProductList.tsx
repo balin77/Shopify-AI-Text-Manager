@@ -14,6 +14,7 @@ import {
 import { SearchIcon, ChevronLeftIcon, ChevronRightIcon } from "@shopify/polaris-icons";
 import { Thumbnail } from "@shopify/polaris";
 import { usePlan } from "../../contexts/PlanContext";
+import { useI18n } from "../../contexts/I18nContext";
 
 interface Product {
   id: string;
@@ -53,6 +54,7 @@ export function ProductList({
   const [hoveredProductId, setHoveredProductId] = useState<string | null>(null);
   const productsPerPage = 10;
 
+  const { t } = useI18n();
   const { plan, getMaxProducts, getNextPlanUpgrade } = usePlan();
   const maxProducts = getMaxProducts();
   const isAtLimit = products.length >= maxProducts && maxProducts !== Infinity;
@@ -87,10 +89,13 @@ export function ProductList({
         <div style={{ padding: "1rem", borderBottom: "1px solid #e1e3e5" }}>
           <Banner tone="warning">
             <Text as="p" fontWeight="semibold">
-              Product limit reached ({products.length}/{maxProducts})
+              {t.products.productLimitReached
+                .replace("{count}", String(products.length))
+                .replace("{max}", String(maxProducts))}
             </Text>
             <Text as="p" variant="bodySm" tone="subdued">
-              Upgrade to {nextPlan.charAt(0).toUpperCase() + nextPlan.slice(1)} plan to add more products.
+              {t.products.upgradeToPlan
+                .replace("{plan}", nextPlan.charAt(0).toUpperCase() + nextPlan.slice(1))}
             </Text>
           </Banner>
         </div>

@@ -478,10 +478,10 @@ export default function SettingsPage() {
                   {isFreePlan && (
                     <Banner tone="info">
                       <Text as="p" fontWeight="semibold">
-                        AI Instructions are read-only in the Free plan
+                        {t.settings.aiInstructionsReadOnly}
                       </Text>
                       <Text as="p" variant="bodySm" tone="subdued">
-                        Upgrade to Basic plan to customize AI generation instructions for your products and content.
+                        {t.settings.aiInstructionsReadOnlyDescription}
                       </Text>
                     </Banner>
                   )}

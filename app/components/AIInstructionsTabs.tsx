@@ -7,6 +7,7 @@ import {
   type EntityType
 } from "../constants/aiInstructionsDefaults";
 import type { FetcherWithComponents } from "@remix-run/react";
+import { useI18n } from "../contexts/I18nContext";
 
 interface Instructions {
   // Products
@@ -71,6 +72,7 @@ interface AIInstructionsTabsProps {
 }
 
 export function AIInstructionsTabs({ instructions, fetcher, readOnly = false }: AIInstructionsTabsProps) {
+  const { t } = useI18n();
   const [selectedTab, setSelectedTab] = useState(0);
   const [localInstructions, setLocalInstructions] = useState<Instructions>(instructions);
   const [htmlModes, setHtmlModes] = useState<Record<string, "html" | "rendered">>({});
@@ -205,8 +207,8 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false }: 
         <div style={{ marginBottom: "1rem" }}>
           <Text as="p" variant="bodyMd" tone="subdued">
             {readOnly
-              ? "Default AI Instructions (read-only in Free plan)"
-              : "Geben Sie für jedes Feld ein Formatbeispiel und spezifische Anweisungen an, an denen sich die KI orientieren soll."
+              ? t.settings.defaultInstructionsReadOnly
+              : t.settings.aiInstructionsDescription
             }
           </Text>
         </div>
