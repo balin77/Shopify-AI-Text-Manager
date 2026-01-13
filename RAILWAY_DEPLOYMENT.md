@@ -1,5 +1,8 @@
 # Railway Deployment Guide
 
+> ⚠️ **SECURITY WARNING:** NEVER commit real API credentials to this file or any Git repository!
+> All credentials must ONLY be stored in Railway Environment Variables.
+
 > ⚠️ **WICHTIG:** Verwende nur **Pre-deploy Commands** für Migrations. Custom Start Commands sind nicht zuverlässig!
 
 ## Datenbank-Migration auf Railway ausführen
@@ -140,14 +143,21 @@ Nach erfolgreicher Migration kannst du:
 
 ## Railway Environment Variables
 
-Stelle sicher dass folgende Variables gesetzt sind:
+⚠️ **SECURITY:** Set these ONLY in Railway Dashboard (Variables Tab), NEVER in code or Git!
+
+Required variables:
 
 ```bash
-DATABASE_URL=postgresql://...       # Automatisch von Railway gesetzt
-SHOPIFY_API_KEY=your_key           # Dein Shopify API Key
-SHOPIFY_API_SECRET=your_secret     # Dein Shopify API Secret
-NODE_ENV=production                # Für Production Mode
+DATABASE_URL=postgresql://...       # Automatically set by Railway
+SHOPIFY_API_KEY=<your_key>         # From Shopify Partner Dashboard
+SHOPIFY_API_SECRET=<your_secret>   # From Shopify Partner Dashboard
+NODE_ENV=production                # For Production Mode
 ```
+
+**How to set:**
+1. Railway Dashboard → Your Project → Variables Tab
+2. Add each variable with its value
+3. Railway will automatically redeploy
 
 ## Rollback (falls nötig)
 
