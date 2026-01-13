@@ -186,53 +186,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
     console.log("[LOADER] Loaded", dbProducts.length, "products from database");
 
-    // 2b. Fetch and store image alt-text translations if missing
-    for (const product of dbProducts) {
-      // Check if any image is missing mediaId or altTextTranslations
-      const needsImageTranslations = product.images.some(
-        (img) => !img.mediaId || img.altTextTranslations.length === 0
-      );
-
-      if (needsImageTranslations) {
-        console.log(`[LOADER] Fetching image translations for product: ${product.id}`);
-        try {
-          await fetchAndStoreImageTranslations(
-            admin,
-            db,
-            product,
-            shopLocales.filter((l: any) => !l.primary)
-          );
-        } catch (error) {
-          console.error(`[LOADER] Error fetching image translations for ${product.id}:`, error);
-        }
-      }
-    }
-
-    // 2c. Reload products with fresh image translations
-    const dbProductsWithTranslations = await db.product.findMany({
-      where: {
-        shop: session.shop,
-      },
-      include: {
-        translations: true,
-        images: {
-          include: {
-            altTextTranslations: true,
-          },
-        },
-        options: true,
-        metafields: true,
-      },
-      orderBy: {
-        title: "asc",
-      },
-      take: 50,
-    });
-
-    console.log("[LOADER] Reloaded products with image translations");
-
     // 3. Transform to frontend format
-    const products = dbProductsWithTranslations.map((p) => ({
+    const products = dbProducts.map((p) => ({
       id: p.id,
       title: p.title,
       descriptionHtml: p.descriptionHtml,
