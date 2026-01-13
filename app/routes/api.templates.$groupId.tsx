@@ -93,6 +93,12 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       case "loadTranslations": {
         const locale = formData.get("locale") as string;
 
+        console.log(`[API-TEMPLATES-ACTION] 🔍 Loading translations for:`, {
+          shop: session.shop,
+          groupId,
+          locale
+        });
+
         // OPTIMIZATION: Load translations from database (lazy loading)
         // This is much faster than fetching from Shopify API
         const translations = await db.themeTranslation.findMany({
@@ -103,7 +109,16 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
           }
         });
 
-        console.log(`[API-TEMPLATES-ACTION] Loaded ${translations.length} translations for locale ${locale} from database`);
+        console.log(`[API-TEMPLATES-ACTION] ✅ Loaded ${translations.length} translations for locale ${locale} from database`);
+
+        if (translations.length > 0) {
+          console.log(`[API-TEMPLATES-ACTION] Sample translation keys:`, translations.slice(0, 3).map(t => t.key));
+        } else {
+          console.log(`[API-TEMPLATES-ACTION] ⚠️  NO TRANSLATIONS FOUND! This means:`);
+          console.log(`  - Either no sync has been run for this locale`);
+          console.log(`  - Or translations don't exist in Shopify for this group`);
+          console.log(`  - Run a content sync to populate translations`);
+        }
 
         return json({
           success: true,

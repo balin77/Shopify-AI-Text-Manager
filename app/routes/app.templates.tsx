@@ -229,9 +229,25 @@ export default function TemplatesPage() {
 
   // Handle loaded translations from fetcher
   useEffect(() => {
+    console.log('[TEMPLATES-FETCHER] Fetcher data received:', {
+      hasData: !!fetcher.data,
+      success: fetcher.data?.success,
+      hasTranslations: 'translations' in (fetcher.data || {}),
+      hasLocale: 'locale' in (fetcher.data || {}),
+      fetcherState: fetcher.state
+    });
+
     if (fetcher.data?.success && 'translations' in fetcher.data && 'locale' in fetcher.data) {
       const { translations, locale } = fetcher.data as any;
       const translationKey = `${currentGroupId}_${locale}`;
+
+      console.log('[TEMPLATES-FETCHER] Processing translations:', {
+        locale,
+        translationCount: translations?.length,
+        translationKey,
+        currentLanguage,
+        matchesCurrentLanguage: locale === currentLanguage
+      });
 
       setLoadedTranslations(prev => ({
         ...prev,
@@ -244,6 +260,10 @@ export default function TemplatesPage() {
         selectedItem.translatableContent?.forEach((item: any) => {
           const translation = translations.find((t: any) => t.key === item.key);
           values[item.key] = translation?.value || "";
+        });
+        console.log('[TEMPLATES-FETCHER] Setting editable values:', {
+          valuesCount: Object.keys(values).length,
+          sampleKeys: Object.keys(values).slice(0, 3)
         });
         setEditableValues(values);
         setOriginalValues({ ...values });
