@@ -302,6 +302,7 @@ export function hasPrimaryContentMissing(
 
 /**
  * Check if a specific locale has missing translations
+ * Only marks a field as missing if the primary locale has content for that field
  */
 export function hasLocaleMissingTranslations(
   selectedItem: any,
@@ -327,8 +328,34 @@ export function hasLocaleMissingTranslations(
   }
 
   return requiredFields.some(field => {
+    // Check if the primary locale has content for this field
+    let primaryHasContent = false;
+
+    if (field === "title") {
+      primaryHasContent = !!selectedItem.title && selectedItem.title.trim() !== '';
+    } else if (field === "body_html") {
+      if (contentType === 'collections' || contentType === 'products') {
+        primaryHasContent = !!selectedItem.descriptionHtml && selectedItem.descriptionHtml.trim() !== '';
+      } else {
+        primaryHasContent = !!selectedItem.body && selectedItem.body.trim() !== '';
+      }
+    } else if (field === "body") {
+      primaryHasContent = !!selectedItem.body && selectedItem.body.trim() !== '';
+    } else if (field === "handle") {
+      primaryHasContent = !!selectedItem.handle && selectedItem.handle.trim() !== '';
+    } else if (field === "meta_title") {
+      primaryHasContent = !!selectedItem.seo?.title && selectedItem.seo.title.trim() !== '';
+    } else if (field === "meta_description") {
+      primaryHasContent = !!selectedItem.seo?.description && selectedItem.seo.description.trim() !== '';
+    }
+
+    // Only check if translation is missing if primary has content
+    if (!primaryHasContent) {
+      return false; // Don't mark as missing if primary is empty
+    }
+
     const translation = translations.find((t: any) => t.key === field);
-    return !translation || !translation.value;
+    return !translation || !translation.value || translation.value.trim() === '';
   });
 }
 
@@ -412,22 +439,18 @@ export const contentEditorStyles = `
   @keyframes pulse {
     0%, 100% {
       box-shadow: 0 0 0 0 rgba(255, 149, 0, 0.7);
-      transform: scale(1);
     }
     50% {
       box-shadow: 0 0 20px 10px rgba(255, 149, 0, 0.3);
-      transform: scale(1.05);
     }
   }
 
   @keyframes pulseBlue {
     0%, 100% {
       box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.7);
-      transform: scale(1);
     }
     50% {
       box-shadow: 0 0 20px 10px rgba(59, 130, 246, 0.3);
-      transform: scale(1.05);
     }
   }
 `;
