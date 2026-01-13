@@ -307,7 +307,8 @@ export function ProductEditor({
                   style={{
                     flex: "1",
                     display: "grid",
-                    gridTemplateColumns: "repeat(auto-fill, minmax(80px, 1fr))",
+                    gridTemplateColumns: "repeat(4, 1fr)",
+                    gridAutoRows: "minmax(80px, auto)",
                     gap: "8px",
                     alignContent: "start",
                     maxHeight: "400px",
