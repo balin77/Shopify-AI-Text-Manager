@@ -33,7 +33,8 @@
       "Bash(node check-translations.js:*)",
       "Bash(node check-translations.cjs:*)",
       "Bash(npx prisma format:*)",
-      "Bash(railway login:*)"
+      "Bash(railway login:*)",
+      "Bash(tee:*)"
     ],
     "deny": [],
     "ask": []
