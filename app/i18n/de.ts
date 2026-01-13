@@ -128,6 +128,10 @@ export const de = {
       lineBreak: "Umbruch",
     },
     menuLimitation: "Menü-Links können aufgrund einer Shopify API-Einschränkung nicht über diese App übersetzt werden. Bitte übersetzen Sie Ihre Menüs direkt im Shopify Admin unter \"Translate & Adapt\".",
+    unsavedChanges: "Ungespeicherte Änderungen",
+    discard: "Verwerfen",
+    save: "Speichern",
+    saveSuccess: "Erfolgreich gespeichert!",
   },
 
   // Settings Page

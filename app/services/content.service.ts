@@ -347,7 +347,7 @@ export class ContentService {
           variables: { first: 10, resourceType }
         });
 
-        const data = await response.json();
+        const data: any = await response.json();
 
         if (data.errors) {
           console.log(`❌ ERROR:`, data.errors[0].message);
@@ -473,7 +473,7 @@ export class ContentService {
           const translatableResponse = await this.admin.graphql(GET_THEME_TRANSLATABLE_RESOURCES, {
             variables: { first: 250, resourceType: resourceTypeConfig.type }
           });
-          const translatableData = await translatableResponse.json();
+          const translatableData: any = await translatableResponse.json();
 
           if (translatableData.errors) {
             console.error(`❌ Error loading ${resourceTypeConfig.type}:`, translatableData.errors[0].message);

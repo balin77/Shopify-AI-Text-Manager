@@ -130,6 +130,10 @@ export const en: Translation = {
       lineBreak: "Break",
     },
     menuLimitation: "Menu links cannot be translated through this app due to a Shopify API limitation. Please translate your menus directly in Shopify Admin under \"Translate & Adapt\".",
+    unsavedChanges: "Unsaved Changes",
+    discard: "Discard",
+    save: "Save",
+    saveSuccess: "Successfully saved!",
   },
 
   // Settings Page

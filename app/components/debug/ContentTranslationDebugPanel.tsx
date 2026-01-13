@@ -120,7 +120,7 @@ export function ContentTranslationDebugPanel({ contentItem, contentType, shopLoc
           <Text as="h2" variant="headingMd">
             Translation Debug Panel ({contentType})
           </Text>
-          <Button onClick={() => setIsOpen(!isOpen)} plain>
+          <Button onClick={() => setIsOpen(!isOpen)} variant="plain">
             {isOpen ? "Hide" : "Show"} Details
           </Button>
         </InlineStack>
@@ -314,14 +314,14 @@ export function ContentTranslationDebugPanel({ contentItem, contentType, shopLoc
 
                   if (missingFields.length === 0) {
                     return (
-                      <Text key={locale.locale} tone="success">
+                      <Text as="p" key={locale.locale} tone="success">
                         ✓ {locale.locale}: All fields present
                       </Text>
                     );
                   }
 
                   return (
-                    <Text key={locale.locale} tone="critical">
+                    <Text as="p" key={locale.locale} tone="critical">
                       ✗ {locale.locale}: Missing {missingFields.join(", ")}
                     </Text>
                   );

@@ -37,7 +37,7 @@ export class ProductSyncService {
       // 3. Fetch translations for all non-primary locales
       const allTranslations = await this.fetchAllTranslations(
         productId,
-        locales.filter(l => !l.primary),
+        locales.filter((l: any) => !l.primary),
         productData // Pass product data for fallback values
       );
       console.log(`[ProductSync] Fetched ${allTranslations.length} translations`);

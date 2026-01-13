@@ -223,9 +223,9 @@ export function AIEditableHTMLField({
           onAccept={onAcceptSuggestion}
           onDecline={onRejectSuggestion}
           onAcceptAndTranslate={onAcceptAndTranslate}
-          acceptLabel={t.products.acceptSuggestion || "Übernehmen"}
-          declineLabel={t.products.rejectSuggestion || "Ablehnen"}
-          acceptAndTranslateLabel={onAcceptAndTranslate ? (t.products.acceptAndTranslate || "Übernehmen & Übersetzen") : undefined}
+          acceptLabel={t.products.accept || "Übernehmen"}
+          declineLabel={t.products.decline || "Ablehnen"}
+          acceptAndTranslateLabel={onAcceptAndTranslate ? (t.products.acceptTranslate || "Übernehmen & Übersetzen") : undefined}
           titleLabel={t.products.aiSuggestion || "KI-Vorschlag"}
         />
       )}

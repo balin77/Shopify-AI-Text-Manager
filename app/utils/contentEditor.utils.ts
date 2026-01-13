@@ -292,9 +292,7 @@ export function hasPrimaryContentMissing(
   }
 
   const titleMissing = contentType !== 'policies' && !selectedItem.title;
-  const bodyMissing = contentType === 'collections'
-    ? !selectedItem.descriptionHtml
-    : !selectedItem.body;
+  const bodyMissing = !selectedItem.body;
   const handleMissing = contentType !== 'policies' && !selectedItem.handle;
 
   return titleMissing || bodyMissing || handleMissing;

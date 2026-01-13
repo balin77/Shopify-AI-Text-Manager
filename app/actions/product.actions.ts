@@ -583,7 +583,7 @@ async function handleTranslateAll(
 
         if (product && translationsInput.length > 0) {
           // Delete existing translations for this locale and product
-          await db.productTranslation.deleteMany({
+          await db.translation.deleteMany({
             where: {
               productId: productId,
               locale: locale,
@@ -591,14 +591,13 @@ async function handleTranslateAll(
           });
 
           // Insert new translations
-          await db.productTranslation.createMany({
+          await db.translation.createMany({
             data: translationsInput.map(t => ({
               productId: productId,
               key: t.key,
               value: t.value,
               locale: locale,
               digest: t.translatableContentDigest || null,
-              shop: product.shop,
             })),
           });
           console.log(`[TranslateAll] ✓ Saved ${translationsInput.length} translations to DB for ${locale}`);
@@ -811,7 +810,7 @@ async function handleUpdateProduct(admin: any, formData: FormData, productId: st
 
       if (product) {
         // Delete existing translations for this locale and product
-        await db.productTranslation.deleteMany({
+        await db.translation.deleteMany({
           where: {
             productId: productId,
             locale: locale,
@@ -820,14 +819,13 @@ async function handleUpdateProduct(admin: any, formData: FormData, productId: st
 
         // Insert new translations
         if (translationsInput.length > 0) {
-          await db.productTranslation.createMany({
+          await db.translation.createMany({
             data: translationsInput.map(t => ({
               productId: productId,
               key: t.key,
               value: t.value,
               locale: t.locale,
               digest: null,
-              shop: product.shop,
             })),
           });
           console.log(`[UPDATE-PRODUCT] ✓ Saved ${translationsInput.length} translations to DB`);

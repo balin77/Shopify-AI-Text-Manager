@@ -11,6 +11,7 @@ interface Product {
   id: string;
   title: string;
   handle: string;
+  descriptionHtml?: string;
   seo?: {
     title: string | null;
     description: string | null;
@@ -55,7 +56,7 @@ export function TranslationDebugPanel({ product, shopLocales }: TranslationDebug
           <Text as="h2" variant="headingMd">
             Translation Debug Panel
           </Text>
-          <Button onClick={() => setIsOpen(!isOpen)} plain>
+          <Button onClick={() => setIsOpen(!isOpen)} variant="plain">
             {isOpen ? "Hide" : "Show"} Details
           </Button>
         </InlineStack>
@@ -189,14 +190,14 @@ export function TranslationDebugPanel({ product, shopLocales }: TranslationDebug
 
                   if (missingFields.length === 0) {
                     return (
-                      <Text key={locale.locale} tone="success">
+                      <Text as="p" key={locale.locale} tone="success">
                         ✓ {locale.locale}: All fields present
                       </Text>
                     );
                   }
 
                   return (
-                    <Text key={locale.locale} tone="critical">
+                    <Text as="p" key={locale.locale} tone="critical">
                       ✗ {locale.locale}: Missing {missingFields.join(", ")}
                     </Text>
                   );

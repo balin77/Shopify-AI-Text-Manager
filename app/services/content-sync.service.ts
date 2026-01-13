@@ -43,7 +43,7 @@ export class ContentSyncService {
       // 3. Fetch translations for all non-primary locales
       const allTranslations = await this.fetchAllTranslations(
         collectionId,
-        locales.filter(l => !l.primary),
+        locales.filter((l: any) => !l.primary),
         "Collection"
       );
       console.log(`[ContentSync] Fetched ${allTranslations.length} translations`);
@@ -103,7 +103,7 @@ export class ContentSyncService {
       // 3. Fetch translations
       const allTranslations = await this.fetchAllTranslations(
         articleId,
-        locales.filter(l => !l.primary),
+        locales.filter((l: any) => !l.primary),
         "Article"
       );
 
