@@ -72,7 +72,17 @@ export function AIInstructionFieldGroup({
           {isHtmlField && (
             <>
               {htmlMode === "rendered" && onFormatHtml && (
-                <div style={{ marginTop: "0.5rem", display: "flex", gap: "0.25rem", flexWrap: "wrap", padding: "0.5rem", background: "white", border: "1px solid #c9cccf", borderRadius: "8px 8px 0 0" }}>
+                <div style={{
+                  marginTop: "0.5rem",
+                  display: "flex",
+                  gap: "0.25rem",
+                  flexWrap: "wrap",
+                  padding: "0.75rem",
+                  background: "white",
+                  border: "1px solid #c9cccf",
+                  borderRadius: "8px 8px 0 0",
+                  minHeight: "52px"
+                }}>
                   <ButtonGroup variant="segmented">
                     <Button size="slim" onClick={() => onFormatHtml("bold")}>B</Button>
                     <Button size="slim" onClick={() => onFormatHtml("italic")}>I</Button>
@@ -118,13 +128,16 @@ export function AIInstructionFieldGroup({
                   dangerouslySetInnerHTML={{ __html: formatValue || '<p>Beispieltext...</p>' }}
                   style={{
                     width: "100%",
-                    minHeight: "150px",
+                    minHeight: "200px",
+                    maxHeight: "500px",
+                    overflowY: "auto",
                     padding: "12px",
                     border: "1px solid #c9cccf",
                     borderTop: htmlMode === "rendered" ? "none" : "1px solid #c9cccf",
                     borderRadius: htmlMode === "rendered" ? "0 0 8px 8px" : "8px",
                     lineHeight: "1.6",
                     background: "white",
+                    boxSizing: "border-box"
                   }}
                   className="description-editor"
                 />

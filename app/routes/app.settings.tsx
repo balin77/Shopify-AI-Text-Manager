@@ -20,6 +20,13 @@ import { useInfoBox } from "../contexts/InfoBoxContext";
 import { sanitizeFormatExample } from "../utils/sanitizer";
 import { AISettingsSchema, AIInstructionsSchema, parseFormData } from "../utils/validation";
 import { toSafeErrorResponse } from "../utils/error-handler";
+import {
+  DEFAULT_PRODUCT_INSTRUCTIONS,
+  DEFAULT_COLLECTION_INSTRUCTIONS,
+  DEFAULT_BLOG_INSTRUCTIONS,
+  DEFAULT_PAGE_INSTRUCTIONS,
+  DEFAULT_POLICY_INSTRUCTIONS
+} from "../constants/aiInstructionsDefaults";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
@@ -126,58 +133,58 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     },
     instructions: {
       // Products
-      productTitleFormat: instructions.productTitleFormat || "",
-      productTitleInstructions: instructions.productTitleInstructions || "",
-      productDescriptionFormat: instructions.productDescriptionFormat || "",
-      productDescriptionInstructions: instructions.productDescriptionInstructions || "",
-      productHandleFormat: instructions.productHandleFormat || "",
-      productHandleInstructions: instructions.productHandleInstructions || "",
-      productSeoTitleFormat: instructions.productSeoTitleFormat || "",
-      productSeoTitleInstructions: instructions.productSeoTitleInstructions || "",
-      productMetaDescFormat: instructions.productMetaDescFormat || "",
-      productMetaDescInstructions: instructions.productMetaDescInstructions || "",
-      productAltTextFormat: instructions.productAltTextFormat || "",
-      productAltTextInstructions: instructions.productAltTextInstructions || "",
+      productTitleFormat: instructions.productTitleFormat || DEFAULT_PRODUCT_INSTRUCTIONS.titleFormat,
+      productTitleInstructions: instructions.productTitleInstructions || DEFAULT_PRODUCT_INSTRUCTIONS.titleInstructions,
+      productDescriptionFormat: instructions.productDescriptionFormat || DEFAULT_PRODUCT_INSTRUCTIONS.descriptionFormat,
+      productDescriptionInstructions: instructions.productDescriptionInstructions || DEFAULT_PRODUCT_INSTRUCTIONS.descriptionInstructions,
+      productHandleFormat: instructions.productHandleFormat || DEFAULT_PRODUCT_INSTRUCTIONS.handleFormat,
+      productHandleInstructions: instructions.productHandleInstructions || DEFAULT_PRODUCT_INSTRUCTIONS.handleInstructions,
+      productSeoTitleFormat: instructions.productSeoTitleFormat || DEFAULT_PRODUCT_INSTRUCTIONS.seoTitleFormat,
+      productSeoTitleInstructions: instructions.productSeoTitleInstructions || DEFAULT_PRODUCT_INSTRUCTIONS.seoTitleInstructions,
+      productMetaDescFormat: instructions.productMetaDescFormat || DEFAULT_PRODUCT_INSTRUCTIONS.metaDescFormat,
+      productMetaDescInstructions: instructions.productMetaDescInstructions || DEFAULT_PRODUCT_INSTRUCTIONS.metaDescInstructions,
+      productAltTextFormat: instructions.productAltTextFormat || DEFAULT_PRODUCT_INSTRUCTIONS.altTextFormat || "",
+      productAltTextInstructions: instructions.productAltTextInstructions || DEFAULT_PRODUCT_INSTRUCTIONS.altTextInstructions || "",
 
       // Collections
-      collectionTitleFormat: instructions.collectionTitleFormat || "",
-      collectionTitleInstructions: instructions.collectionTitleInstructions || "",
-      collectionDescriptionFormat: instructions.collectionDescriptionFormat || "",
-      collectionDescriptionInstructions: instructions.collectionDescriptionInstructions || "",
-      collectionHandleFormat: instructions.collectionHandleFormat || "",
-      collectionHandleInstructions: instructions.collectionHandleInstructions || "",
-      collectionSeoTitleFormat: instructions.collectionSeoTitleFormat || "",
-      collectionSeoTitleInstructions: instructions.collectionSeoTitleInstructions || "",
-      collectionMetaDescFormat: instructions.collectionMetaDescFormat || "",
-      collectionMetaDescInstructions: instructions.collectionMetaDescInstructions || "",
+      collectionTitleFormat: instructions.collectionTitleFormat || DEFAULT_COLLECTION_INSTRUCTIONS.titleFormat,
+      collectionTitleInstructions: instructions.collectionTitleInstructions || DEFAULT_COLLECTION_INSTRUCTIONS.titleInstructions,
+      collectionDescriptionFormat: instructions.collectionDescriptionFormat || DEFAULT_COLLECTION_INSTRUCTIONS.descriptionFormat,
+      collectionDescriptionInstructions: instructions.collectionDescriptionInstructions || DEFAULT_COLLECTION_INSTRUCTIONS.descriptionInstructions,
+      collectionHandleFormat: instructions.collectionHandleFormat || DEFAULT_COLLECTION_INSTRUCTIONS.handleFormat,
+      collectionHandleInstructions: instructions.collectionHandleInstructions || DEFAULT_COLLECTION_INSTRUCTIONS.handleInstructions,
+      collectionSeoTitleFormat: instructions.collectionSeoTitleFormat || DEFAULT_COLLECTION_INSTRUCTIONS.seoTitleFormat,
+      collectionSeoTitleInstructions: instructions.collectionSeoTitleInstructions || DEFAULT_COLLECTION_INSTRUCTIONS.seoTitleInstructions,
+      collectionMetaDescFormat: instructions.collectionMetaDescFormat || DEFAULT_COLLECTION_INSTRUCTIONS.metaDescFormat,
+      collectionMetaDescInstructions: instructions.collectionMetaDescInstructions || DEFAULT_COLLECTION_INSTRUCTIONS.metaDescInstructions,
 
       // Blogs
-      blogTitleFormat: instructions.blogTitleFormat || "",
-      blogTitleInstructions: instructions.blogTitleInstructions || "",
-      blogDescriptionFormat: instructions.blogDescriptionFormat || "",
-      blogDescriptionInstructions: instructions.blogDescriptionInstructions || "",
-      blogHandleFormat: instructions.blogHandleFormat || "",
-      blogHandleInstructions: instructions.blogHandleInstructions || "",
-      blogSeoTitleFormat: instructions.blogSeoTitleFormat || "",
-      blogSeoTitleInstructions: instructions.blogSeoTitleInstructions || "",
-      blogMetaDescFormat: instructions.blogMetaDescFormat || "",
-      blogMetaDescInstructions: instructions.blogMetaDescInstructions || "",
+      blogTitleFormat: instructions.blogTitleFormat || DEFAULT_BLOG_INSTRUCTIONS.titleFormat,
+      blogTitleInstructions: instructions.blogTitleInstructions || DEFAULT_BLOG_INSTRUCTIONS.titleInstructions,
+      blogDescriptionFormat: instructions.blogDescriptionFormat || DEFAULT_BLOG_INSTRUCTIONS.descriptionFormat,
+      blogDescriptionInstructions: instructions.blogDescriptionInstructions || DEFAULT_BLOG_INSTRUCTIONS.descriptionInstructions,
+      blogHandleFormat: instructions.blogHandleFormat || DEFAULT_BLOG_INSTRUCTIONS.handleFormat,
+      blogHandleInstructions: instructions.blogHandleInstructions || DEFAULT_BLOG_INSTRUCTIONS.handleInstructions,
+      blogSeoTitleFormat: instructions.blogSeoTitleFormat || DEFAULT_BLOG_INSTRUCTIONS.seoTitleFormat,
+      blogSeoTitleInstructions: instructions.blogSeoTitleInstructions || DEFAULT_BLOG_INSTRUCTIONS.seoTitleInstructions,
+      blogMetaDescFormat: instructions.blogMetaDescFormat || DEFAULT_BLOG_INSTRUCTIONS.metaDescFormat,
+      blogMetaDescInstructions: instructions.blogMetaDescInstructions || DEFAULT_BLOG_INSTRUCTIONS.metaDescInstructions,
 
       // Pages
-      pageTitleFormat: instructions.pageTitleFormat || "",
-      pageTitleInstructions: instructions.pageTitleInstructions || "",
-      pageDescriptionFormat: instructions.pageDescriptionFormat || "",
-      pageDescriptionInstructions: instructions.pageDescriptionInstructions || "",
-      pageHandleFormat: instructions.pageHandleFormat || "",
-      pageHandleInstructions: instructions.pageHandleInstructions || "",
-      pageSeoTitleFormat: instructions.pageSeoTitleFormat || "",
-      pageSeoTitleInstructions: instructions.pageSeoTitleInstructions || "",
-      pageMetaDescFormat: instructions.pageMetaDescFormat || "",
-      pageMetaDescInstructions: instructions.pageMetaDescInstructions || "",
+      pageTitleFormat: instructions.pageTitleFormat || DEFAULT_PAGE_INSTRUCTIONS.titleFormat,
+      pageTitleInstructions: instructions.pageTitleInstructions || DEFAULT_PAGE_INSTRUCTIONS.titleInstructions,
+      pageDescriptionFormat: instructions.pageDescriptionFormat || DEFAULT_PAGE_INSTRUCTIONS.descriptionFormat,
+      pageDescriptionInstructions: instructions.pageDescriptionInstructions || DEFAULT_PAGE_INSTRUCTIONS.descriptionInstructions,
+      pageHandleFormat: instructions.pageHandleFormat || DEFAULT_PAGE_INSTRUCTIONS.handleFormat,
+      pageHandleInstructions: instructions.pageHandleInstructions || DEFAULT_PAGE_INSTRUCTIONS.handleInstructions,
+      pageSeoTitleFormat: instructions.pageSeoTitleFormat || DEFAULT_PAGE_INSTRUCTIONS.seoTitleFormat,
+      pageSeoTitleInstructions: instructions.pageSeoTitleInstructions || DEFAULT_PAGE_INSTRUCTIONS.seoTitleInstructions,
+      pageMetaDescFormat: instructions.pageMetaDescFormat || DEFAULT_PAGE_INSTRUCTIONS.metaDescFormat,
+      pageMetaDescInstructions: instructions.pageMetaDescInstructions || DEFAULT_PAGE_INSTRUCTIONS.metaDescInstructions,
 
       // Policies (description only)
-      policyDescriptionFormat: instructions.policyDescriptionFormat || "",
-      policyDescriptionInstructions: instructions.policyDescriptionInstructions || "",
+      policyDescriptionFormat: instructions.policyDescriptionFormat || DEFAULT_POLICY_INSTRUCTIONS.descriptionFormat,
+      policyDescriptionInstructions: instructions.policyDescriptionInstructions || DEFAULT_POLICY_INSTRUCTIONS.descriptionInstructions,
     },
   });
 };

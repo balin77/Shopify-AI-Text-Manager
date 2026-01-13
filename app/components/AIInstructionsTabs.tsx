@@ -134,31 +134,61 @@ export function AIInstructionsTabs({ instructions, fetcher }: AIInstructionsTabs
 
   return (
     <BlockStack gap="500">
-      <Text as="p" variant="bodyMd" tone="subdued">
-        Geben Sie für jedes Feld ein Formatbeispiel und spezifische Anweisungen an, an denen sich die KI orientieren soll.
-      </Text>
+      {/* Action Buttons on same level as tabs */}
+      <InlineStack align="space-between" blockAlign="center">
+        <Button onClick={handleResetAll} tone="critical">
+          Alle Felder zurücksetzen
+        </Button>
+        <Button
+          variant={hasChanges ? "primary" : undefined}
+          onClick={handleSave}
+          disabled={!hasChanges}
+          loading={fetcher.state !== "idle"}
+        >
+          Änderungen speichern
+        </Button>
+      </InlineStack>
 
-      <Tabs tabs={tabs} selected={selectedTab} onSelect={setSelectedTab}>
-        <div style={{ marginTop: "1rem" }}>
-          {/* Action Buttons */}
-          <InlineStack align="space-between">
-            <Button onClick={handleResetAll} tone="critical">
-              Alle Felder zurücksetzen
-            </Button>
-            <Button
-              variant={hasChanges ? "primary" : undefined}
-              onClick={handleSave}
-              disabled={!hasChanges}
-              loading={fetcher.state !== "idle"}
-            >
-              Änderungen speichern
-            </Button>
-          </InlineStack>
+      <div style={{
+        background: "white",
+        borderRadius: "8px",
+        padding: "0.5rem",
+      }}>
+        <style>{`
+          .Polaris-Tabs__Tab {
+            background: white !important;
+          }
+          .Polaris-Tabs__Tab--selected {
+            background: white !important;
+            border-bottom: 3px solid #008060 !important;
+          }
+        `}</style>
+        <Tabs tabs={tabs} selected={selectedTab} onSelect={setSelectedTab}>
+          <div style={{ marginTop: "1rem" }}>
+          {/* Description text below tabs */}
+          <div style={{ marginBottom: "1rem" }}>
+            <Text as="p" variant="bodyMd" tone="subdued">
+              Geben Sie für jedes Feld ein Formatbeispiel und spezifische Anweisungen an, an denen sich die KI orientieren soll.
+            </Text>
+          </div>
 
           <BlockStack gap="400" inlineAlign="stretch">
             {/* PRODUCTS TAB */}
             {selectedTab === 0 && (
               <>
+                <AIInstructionFieldGroup
+                  fieldName="Alt-Text (Bilder)"
+                  formatValue={localInstructions.productAltTextFormat}
+                  instructionsValue={localInstructions.productAltTextInstructions}
+                  onFormatChange={(v) => handleFieldChange('productAltTextFormat', v)}
+                  onInstructionsChange={(v) => handleFieldChange('productAltTextInstructions', v)}
+                  onReset={() => handleResetField('productAltTextFormat', 'products')}
+                  formatPlaceholder="z.B. Premium Leder Geldbörse aus dunkelbraunem Vollrindleder"
+                  instructionsPlaceholder="z.B. 60-125 Zeichen, beschreibe was zu sehen ist, sachlich"
+                  formatLabel="Formatbeispiel"
+                  instructionsLabel="Anweisungen"
+                />
+
                 <AIInstructionFieldGroup
                   fieldName="Titel"
                   formatValue={localInstructions.productTitleFormat}
@@ -221,19 +251,6 @@ export function AIInstructionsTabs({ instructions, fetcher }: AIInstructionsTabs
                   onReset={() => handleResetField('productMetaDescFormat', 'products')}
                   formatPlaceholder="z.B. Handgefertigte Premium Leder Geldbörse. Zeitlos, langlebig..."
                   instructionsPlaceholder="z.B. 150-160 Zeichen, 2-3 Keywords, Handlungsaufforderung"
-                  formatLabel="Formatbeispiel"
-                  instructionsLabel="Anweisungen"
-                />
-
-                <AIInstructionFieldGroup
-                  fieldName="Alt-Text (Bilder)"
-                  formatValue={localInstructions.productAltTextFormat}
-                  instructionsValue={localInstructions.productAltTextInstructions}
-                  onFormatChange={(v) => handleFieldChange('productAltTextFormat', v)}
-                  onInstructionsChange={(v) => handleFieldChange('productAltTextInstructions', v)}
-                  onReset={() => handleResetField('productAltTextFormat', 'products')}
-                  formatPlaceholder="z.B. Premium Leder Geldbörse aus dunkelbraunem Vollrindleder"
-                  instructionsPlaceholder="z.B. 60-125 Zeichen, beschreibe was zu sehen ist, sachlich"
                   formatLabel="Formatbeispiel"
                   instructionsLabel="Anweisungen"
                 />
@@ -424,32 +441,6 @@ export function AIInstructionsTabs({ instructions, fetcher }: AIInstructionsTabs
                   formatLabel="Formatbeispiel"
                   instructionsLabel="Anweisungen"
                 />
-
-                <AIInstructionFieldGroup
-                  fieldName="SEO-Titel"
-                  formatValue={localInstructions.pageSeoTitleFormat}
-                  instructionsValue={localInstructions.pageSeoTitleInstructions}
-                  onFormatChange={(v) => handleFieldChange('pageSeoTitleFormat', v)}
-                  onInstructionsChange={(v) => handleFieldChange('pageSeoTitleInstructions', v)}
-                  onReset={() => handleResetField('pageSeoTitleFormat', 'pages')}
-                  formatPlaceholder="z.B. Über uns - Traditionelle Lederverarbeitung"
-                  instructionsPlaceholder="z.B. 50-60 Zeichen, Seitentyp am Anfang"
-                  formatLabel="Formatbeispiel"
-                  instructionsLabel="Anweisungen"
-                />
-
-                <AIInstructionFieldGroup
-                  fieldName="Meta-Beschreibung"
-                  formatValue={localInstructions.pageMetaDescFormat}
-                  instructionsValue={localInstructions.pageMetaDescInstructions}
-                  onFormatChange={(v) => handleFieldChange('pageMetaDescFormat', v)}
-                  onInstructionsChange={(v) => handleFieldChange('pageMetaDescInstructions', v)}
-                  onReset={() => handleResetField('pageMetaDescFormat', 'pages')}
-                  formatPlaceholder="z.B. Lernen Sie uns kennen: Seit 1970 fertigen wir..."
-                  instructionsPlaceholder="z.B. 150-160 Zeichen, Seiteninhalt beschreiben"
-                  formatLabel="Formatbeispiel"
-                  instructionsLabel="Anweisungen"
-                />
               </>
             )}
 
@@ -478,6 +469,7 @@ export function AIInstructionsTabs({ instructions, fetcher }: AIInstructionsTabs
           </BlockStack>
         </div>
       </Tabs>
+      </div>
     </BlockStack>
   );
 }
