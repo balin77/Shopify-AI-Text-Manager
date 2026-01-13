@@ -11,7 +11,6 @@ import { useI18n } from "../contexts/I18nContext";
 import { useProductFields } from "../hooks/useProductFields";
 import { useAISuggestions } from "../hooks/useAISuggestions";
 import { handleProductActions } from "../actions/product.actions";
-import { getLocaleButtonStyle as getLocaleButtonStyleUtil } from "../utils/contentEditor.utils";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
@@ -164,11 +163,6 @@ export default function Products() {
     primaryLocale,
     imageAltTexts,
   });
-
-  // Use central getLocaleButtonStyle function
-  const getLocaleButtonStyle = (locale: any, isSelected: boolean) => {
-    return getLocaleButtonStyleUtil(locale, selectedProduct, primaryLocale, 'products');
-  };
 
   const { aiSuggestions, removeSuggestion } = useAISuggestions(fetcher.data);
 
@@ -550,7 +544,6 @@ export default function Products() {
             aiSuggestions={aiSuggestions}
             hasChanges={hasChanges}
             getFieldBackgroundColor={getFieldBackgroundColor}
-            getLocaleButtonStyle={getLocaleButtonStyle}
             onSave={handleSaveProduct}
             onTranslateAll={handleTranslateAll}
             onGenerateAI={handleGenerateAI}

@@ -17,6 +17,7 @@ import { MainNavigation } from "../components/MainNavigation";
 import { ContentTypeNavigation } from "../components/ContentTypeNavigation";
 import { AIEditableField } from "../components/AIEditableField";
 import { AIEditableHTMLField } from "../components/AIEditableHTMLField";
+import { LocaleNavigationButtons } from "../components/LocaleNavigationButtons";
 import { AIService } from "../../src/services/ai.service";
 import { TranslationService } from "../../src/services/translation.service";
 import { ShopifyContentService } from "../../src/services/shopify-content.service";
@@ -31,7 +32,6 @@ import {
   hasLocaleMissingTranslations as checkLocaleMissingTranslations,
   hasMissingTranslations as checkMissingTranslations,
   hasFieldMissingTranslations as checkFieldMissingTranslations,
-  getLocaleButtonStyle as getLocaleButtonStyleUtil,
 } from "../utils/contentEditor.utils";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -462,10 +462,6 @@ export default function PagesPage() {
     return checkFieldMissingTranslations(selectedItem, fieldKey, shopLocales, primaryLocale, 'pages');
   };
 
-  const getLocaleButtonStyle = (locale: any) => {
-    return getLocaleButtonStyleUtil(locale, selectedItem, primaryLocale, 'pages');
-  };
-
   return (
     <Page fullWidth>
       <style>{contentEditorStyles}</style>
@@ -535,21 +531,16 @@ export default function PagesPage() {
             {selectedItem ? (
               <BlockStack gap="500">
                 {/* Language Selector */}
-                <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
-                  {shopLocales.map((locale: any) => (
-                    <div key={locale.locale} style={getLocaleButtonStyle(locale)}>
-                      <Button
-                        variant={currentLanguage === locale.locale ? "primary" : undefined}
-                        onClick={() => {
-                          handleNavigationAttempt(() => setCurrentLanguage(locale.locale), hasChanges);
-                        }}
-                        size="slim"
-                      >
-                        {locale.name} {locale.primary && `(${t.content.primaryLanguageSuffix})`}
-                      </Button>
-                    </div>
-                  ))}
-                </div>
+                <LocaleNavigationButtons
+                  shopLocales={shopLocales}
+                  currentLanguage={currentLanguage}
+                  primaryLocaleSuffix={t.content.primaryLanguageSuffix}
+                  selectedItem={selectedItem}
+                  primaryLocale={primaryLocale}
+                  contentType="pages"
+                  hasChanges={hasChanges}
+                  onLanguageChange={(locale) => handleNavigationAttempt(() => setCurrentLanguage(locale), hasChanges)}
+                />
 
                 {/* Save Button */}
                 <InlineStack align="space-between" blockAlign="center">

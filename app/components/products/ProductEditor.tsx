@@ -14,6 +14,7 @@ import { CheckIcon, XIcon } from "@shopify/polaris-icons";
 import { AIEditableField } from "../AIEditableField";
 import { AIEditableHTMLField } from "../AIEditableHTMLField";
 import { ProductOptions } from "./ProductOptions";
+import { LocaleNavigationButtons } from "../LocaleNavigationButtons";
 import { useI18n } from "../../contexts/I18nContext";
 
 interface Product {
@@ -74,7 +75,6 @@ interface ProductEditorProps {
   aiSuggestions: Record<string, string>;
   hasChanges: boolean;
   getFieldBackgroundColor: (key: string) => string;
-  getLocaleButtonStyle: (locale: any, isSelected: boolean) => React.CSSProperties;
   onSave: () => void;
   onTranslateAll: () => void;
   onGenerateAI: (fieldType: string) => void;
@@ -120,7 +120,6 @@ export function ProductEditor({
   aiSuggestions,
   hasChanges,
   getFieldBackgroundColor,
-  getLocaleButtonStyle,
   onSave,
   onTranslateAll,
   onGenerateAI,
@@ -204,22 +203,16 @@ export function ProductEditor({
       <Card padding="600">
         <BlockStack gap="500">
           {/* Language Selector */}
-          <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
-            {shopLocales.map((locale: ShopLocale) => {
-              const isSelected = currentLanguage === locale.locale;
-              return (
-                <div key={locale.locale} style={getLocaleButtonStyle(locale, isSelected)}>
-                  <Button
-                    variant={isSelected ? "primary" : undefined}
-                    onClick={() => onLanguageChange(locale.locale)}
-                    size="slim"
-                  >
-                    {locale.name} {locale.primary && t.products.primaryLanguageSuffix}
-                  </Button>
-                </div>
-              );
-            })}
-          </div>
+          <LocaleNavigationButtons
+            shopLocales={shopLocales}
+            currentLanguage={currentLanguage}
+            primaryLocaleSuffix={t.products.primaryLanguageSuffix}
+            selectedItem={product}
+            primaryLocale={primaryLocale}
+            contentType="products"
+            hasChanges={hasChanges}
+            onLanguageChange={onLanguageChange}
+          />
 
           {/* Header with Save Button */}
           <InlineStack align="end" blockAlign="center">
