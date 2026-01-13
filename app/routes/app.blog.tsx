@@ -28,6 +28,7 @@ import {
   useChangeTracking,
   getTranslatedValue,
   isFieldTranslated as checkFieldTranslated,
+  getLocaleButtonStyle,
 } from "../utils/contentEditor.utils";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -310,7 +311,6 @@ export default function BlogPage() {
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [currentLanguage, setCurrentLanguage] = useState(primaryLocale);
   const [aiSuggestions, setAiSuggestions] = useState<Record<string, string>>({});
-  const [loadedTranslations, setLoadedTranslations] = useState<Record<string, any[]>>({});
   const [bodyMode, setBodyMode] = useState<"html" | "rendered">("rendered");
 
   // Editable fields
@@ -334,7 +334,6 @@ export default function BlogPage() {
     selectedItem,
     currentLanguage,
     primaryLocale,
-    loadedTranslations,
     {
       title: editableTitle,
       description: editableBody,
@@ -356,53 +355,13 @@ export default function BlogPage() {
       setEditableSeoTitle(selectedItem.seo?.title || "");
       setEditableMetaDescription(selectedItem.seo?.description || "");
     } else {
-      const itemKey = `${selectedItem.id}_${currentLanguage}`;
-      const hasTranslations = loadedTranslations[itemKey] || selectedItem.translations?.some(
-        (t: any) => t.locale === currentLanguage
-      );
-
-      if (!hasTranslations) {
-        fetcher.submit(
-          {
-            action: "loadTranslations",
-            itemId: selectedItem.id,
-            locale: currentLanguage,
-          },
-          { method: "POST" }
-        );
-      } else {
-        setEditableTitle(getTranslatedValue(selectedItem, "title", currentLanguage, "", primaryLocale, loadedTranslations));
-        setEditableBody(getTranslatedValue(selectedItem, "body", currentLanguage, "", primaryLocale, loadedTranslations));
-        setEditableHandle(getTranslatedValue(selectedItem, "handle", currentLanguage, "", primaryLocale, loadedTranslations));
-        setEditableSeoTitle(getTranslatedValue(selectedItem, "meta_title", currentLanguage, "", primaryLocale, loadedTranslations));
-        setEditableMetaDescription(getTranslatedValue(selectedItem, "meta_description", currentLanguage, "", primaryLocale, loadedTranslations));
-      }
+      setEditableTitle(getTranslatedValue(selectedItem, "title", currentLanguage, "", primaryLocale));
+      setEditableBody(getTranslatedValue(selectedItem, "body", currentLanguage, "", primaryLocale));
+      setEditableHandle(getTranslatedValue(selectedItem, "handle", currentLanguage, "", primaryLocale));
+      setEditableSeoTitle(getTranslatedValue(selectedItem, "meta_title", currentLanguage, "", primaryLocale));
+      setEditableMetaDescription(getTranslatedValue(selectedItem, "meta_description", currentLanguage, "", primaryLocale));
     }
-  }, [selectedItemId, currentLanguage, loadedTranslations]);
-
-  // Handle loaded translations
-  useEffect(() => {
-    if (fetcher.data?.success && 'translations' in fetcher.data && 'locale' in fetcher.data) {
-      const loadedLocale = (fetcher.data as any).locale;
-      const translations = (fetcher.data as any).translations;
-
-      if (selectedItem && loadedLocale && translations) {
-        const itemKey = `${selectedItem.id}_${loadedLocale}`;
-        setLoadedTranslations(prev => ({
-          ...prev,
-          [itemKey]: translations
-        }));
-
-        if (loadedLocale === currentLanguage) {
-          setEditableTitle(translations.find((t: any) => t.key === "title")?.value || "");
-          setEditableBody(translations.find((t: any) => t.key === "body")?.value || "");
-          setEditableHandle(translations.find((t: any) => t.key === "handle")?.value || "");
-          setEditableSeoTitle(translations.find((t: any) => t.key === "meta_title")?.value || "");
-          setEditableMetaDescription(translations.find((t: any) => t.key === "meta_description")?.value || "");
-        }
-      }
-    }
-  }, [fetcher.data]);
+  }, [selectedItemId, currentLanguage]);
 
   // Handle AI generation response
   useEffect(() => {
@@ -461,11 +420,11 @@ export default function BlogPage() {
       setEditableSeoTitle(selectedItem.seo?.title || "");
       setEditableMetaDescription(selectedItem.seo?.description || "");
     } else {
-      setEditableTitle(getTranslatedValue(selectedItem, "title", currentLanguage, "", primaryLocale, loadedTranslations));
-      setEditableBody(getTranslatedValue(selectedItem, "body", currentLanguage, "", primaryLocale, loadedTranslations));
-      setEditableHandle(getTranslatedValue(selectedItem, "handle", currentLanguage, "", primaryLocale, loadedTranslations));
-      setEditableSeoTitle(getTranslatedValue(selectedItem, "meta_title", currentLanguage, "", primaryLocale, loadedTranslations));
-      setEditableMetaDescription(getTranslatedValue(selectedItem, "meta_description", currentLanguage, "", primaryLocale, loadedTranslations));
+      setEditableTitle(getTranslatedValue(selectedItem, "title", currentLanguage, "", primaryLocale));
+      setEditableBody(getTranslatedValue(selectedItem, "body", currentLanguage, "", primaryLocale));
+      setEditableHandle(getTranslatedValue(selectedItem, "handle", currentLanguage, "", primaryLocale));
+      setEditableSeoTitle(getTranslatedValue(selectedItem, "meta_title", currentLanguage, "", primaryLocale));
+      setEditableMetaDescription(getTranslatedValue(selectedItem, "meta_description", currentLanguage, "", primaryLocale));
     }
 
     clearPendingNavigation();
@@ -535,53 +494,7 @@ export default function BlogPage() {
   };
 
   const isFieldTranslatedCheck = (key: string) => {
-    return checkFieldTranslated(selectedItem, key, currentLanguage, primaryLocale, loadedTranslations);
-  };
-
-  // Check if primary locale has any missing content
-  const hasPrimaryContentMissing = () => {
-    if (!selectedItem) return false;
-    return !selectedItem.title || !selectedItem.body || !selectedItem.handle;
-  };
-
-  // Check if a specific locale has missing translations
-  const hasLocaleMissingTranslations = (locale: string) => {
-    if (!selectedItem || locale === primaryLocale) return false;
-
-    const itemKey = `${selectedItem.id}_${locale}`;
-    const translations = loadedTranslations[itemKey] || selectedItem.translations?.filter(
-      (t: any) => t.locale === locale
-    ) || [];
-
-    const requiredFields = ["title", "body", "handle"];
-    return requiredFields.some(field => {
-      const translation = translations.find((t: any) => t.key === field);
-      return !translation || !translation.value;
-    });
-  };
-
-  // Check if any foreign locale has missing translations
-  const hasMissingTranslations = () => {
-    if (!selectedItem) return false;
-    const foreignLocales = shopLocales.filter((l: any) => !l.primary);
-    return foreignLocales.some((locale: any) => hasLocaleMissingTranslations(locale.locale));
-  };
-
-  // Get button style for locale navigation
-  const getLocaleButtonStyle = (locale: any) => {
-    if (locale.primary && hasPrimaryContentMissing()) {
-      return {
-        animation: "pulse 1.5s ease-in-out infinite",
-        borderRadius: "8px",
-      };
-    }
-    if (!locale.primary && hasLocaleMissingTranslations(locale.locale)) {
-      return {
-        animation: "pulseBlue 1.5s ease-in-out infinite",
-        borderRadius: "8px",
-      };
-    }
-    return {};
+    return checkFieldTranslated(selectedItem, key, currentLanguage, primaryLocale);
   };
 
   return (
@@ -660,7 +573,7 @@ export default function BlogPage() {
                 {/* Language Selector */}
                 <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
                   {shopLocales.map((locale: any) => (
-                    <div key={locale.locale} style={getLocaleButtonStyle(locale)}>
+                    <div key={locale.locale} style={getLocaleButtonStyle(locale, selectedItem, primaryLocale, 'blogs')}>
                       <Button
                         variant={currentLanguage === locale.locale ? "primary" : undefined}
                         onClick={() => {

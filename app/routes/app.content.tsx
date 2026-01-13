@@ -35,6 +35,10 @@ import { ContentTypeNavigation } from "../components/ContentTypeNavigation";
 import { ThemeContentViewer } from "../components/ThemeContentViewer";
 import { useI18n } from "../contexts/I18nContext";
 import { ContentService } from "../services/content.service";
+import {
+  contentEditorStyles,
+  getLocaleButtonStyle as getLocaleButtonStyleUtil,
+} from "../utils/contentEditor.utils";
 
 type ContentType = "collections" | "blogs" | "pages" | "policies" | "menus" | "templates" | "metaobjects" | "shopMetadata";
 

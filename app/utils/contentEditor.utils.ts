@@ -38,16 +38,14 @@ export function getTranslatedValue(
   key: string,
   locale: string,
   fallback: string,
-  primaryLocale: string,
-  loadedTranslations: Record<string, any[]>
+  primaryLocale: string
 ): string {
   if (!item || locale === primaryLocale) {
     return fallback;
   }
 
-  // Check loaded translations state
-  const itemKey = `${item.id}_${locale}`;
-  const translations = loadedTranslations[itemKey] || item.translations || [];
+  // Get translations directly from item
+  const translations = item.translations || [];
 
   const translation = translations.find(
     (t: any) => t.key === key && t.locale === locale
@@ -118,7 +116,6 @@ export function useChangeTracking(
   selectedItem: any,
   currentLanguage: string,
   primaryLocale: string,
-  loadedTranslations: Record<string, any[]>,
   editableFields: {
     title: string;
     description: string;
@@ -140,7 +137,7 @@ export function useChangeTracking(
       if (currentLanguage === primaryLocale) {
         return fallback;
       }
-      return getTranslatedValue(selectedItem, key, currentLanguage, "", primaryLocale, loadedTranslations);
+      return getTranslatedValue(selectedItem, key, currentLanguage, "", primaryLocale);
     };
 
     const descKey = contentType === 'policies' ? 'body' : 'body_html';
@@ -168,8 +165,7 @@ export function useChangeTracking(
     selectedItem,
     currentLanguage,
     contentType,
-    primaryLocale,
-    loadedTranslations
+    primaryLocale
   ]);
 
   return hasChanges;
@@ -182,7 +178,6 @@ export function useItemDataLoader(
   selectedItem: any,
   currentLanguage: string,
   primaryLocale: string,
-  loadedTranslations: Record<string, any[]>,
   contentType: 'pages' | 'blogs' | 'collections' | 'policies',
   setEditableFields: (fields: {
     title: string;
@@ -191,7 +186,6 @@ export function useItemDataLoader(
     seoTitle: string;
     metaDescription: string;
   }) => void,
-  fetcher: any,
   selectedItemId: string | null
 ) {
   useEffect(() => {
@@ -226,47 +220,26 @@ export function useItemDataLoader(
         metaDescription
       });
     } else {
-      // Load translation data
-      const itemKey = `${selectedItem.id}_${currentLanguage}`;
-      const hasTranslations = contentType === 'policies'
-        ? loadedTranslations[itemKey]
-        : (loadedTranslations[itemKey] || selectedItem.translations?.some(
-            (t: any) => t.locale === currentLanguage
-          ));
+      // Load translation data (translations are already loaded in item.translations)
+      const descKey = contentType === 'policies' ? 'body' : 'body_html';
 
-      if (!hasTranslations) {
-        // Load translations from server
-        fetcher.submit(
-          {
-            action: "loadTranslations",
-            itemId: selectedItem.id,
-            locale: currentLanguage,
-            contentType: contentType,
-          },
-          { method: "POST" }
-        );
-      } else {
-        // Translations already loaded
-        const descKey = contentType === 'policies' ? 'body' : 'body_html';
+      const title = contentType !== 'policies'
+        ? getTranslatedValue(selectedItem, "title", currentLanguage, "", primaryLocale)
+        : "";
+      const description = getTranslatedValue(selectedItem, descKey, currentLanguage, "", primaryLocale);
+      const handle = getTranslatedValue(selectedItem, "handle", currentLanguage, "", primaryLocale);
+      const seoTitle = getTranslatedValue(selectedItem, "meta_title", currentLanguage, "", primaryLocale);
+      const metaDescription = getTranslatedValue(selectedItem, "meta_description", currentLanguage, "", primaryLocale);
 
-        const title = contentType !== 'policies'
-          ? getTranslatedValue(selectedItem, "title", currentLanguage, "", primaryLocale, loadedTranslations)
-          : "";
-        const description = getTranslatedValue(selectedItem, descKey, currentLanguage, "", primaryLocale, loadedTranslations);
-        const handle = getTranslatedValue(selectedItem, "handle", currentLanguage, "", primaryLocale, loadedTranslations);
-        const seoTitle = getTranslatedValue(selectedItem, "meta_title", currentLanguage, "", primaryLocale, loadedTranslations);
-        const metaDescription = getTranslatedValue(selectedItem, "meta_description", currentLanguage, "", primaryLocale, loadedTranslations);
-
-        setEditableFields({
-          title,
-          description,
-          handle,
-          seoTitle,
-          metaDescription
-        });
-      }
+      setEditableFields({
+        title,
+        description,
+        handle,
+        seoTitle,
+        metaDescription
+      });
     }
-  }, [selectedItemId, currentLanguage, loadedTranslations, selectedItem, contentType, primaryLocale]);
+  }, [selectedItemId, currentLanguage, selectedItem, contentType, primaryLocale]);
 }
 
 /**
@@ -276,14 +249,12 @@ export function isFieldTranslated(
   selectedItem: any,
   key: string,
   currentLanguage: string,
-  primaryLocale: string,
-  loadedTranslations: Record<string, any[]>
+  primaryLocale: string
 ): boolean {
   if (currentLanguage === primaryLocale) return true;
   if (!selectedItem) return false;
 
-  const itemKey = `${selectedItem.id}_${currentLanguage}`;
-  const translations = loadedTranslations[itemKey] || selectedItem.translations || [];
+  const translations = selectedItem.translations || [];
 
   const translation = translations.find(
     (t: any) => t.key === key && t.locale === currentLanguage
@@ -297,11 +268,15 @@ export function isFieldTranslated(
  */
 export function hasPrimaryContentMissing(
   selectedItem: any,
-  contentType: 'pages' | 'blogs' | 'collections' | 'policies'
+  contentType: 'pages' | 'blogs' | 'collections' | 'policies' | 'products'
 ): boolean {
   if (!selectedItem) return false;
 
   // Check required fields based on content type
+  if (contentType === 'products') {
+    return !selectedItem.title || !selectedItem.descriptionHtml || !selectedItem.handle;
+  }
+
   const titleMissing = contentType !== 'policies' && !selectedItem.title;
   const bodyMissing = contentType === 'collections'
     ? !selectedItem.descriptionHtml
@@ -318,18 +293,16 @@ export function hasLocaleMissingTranslations(
   selectedItem: any,
   locale: string,
   primaryLocale: string,
-  loadedTranslations: Record<string, any[]>,
-  contentType: 'pages' | 'blogs' | 'collections' | 'policies'
+  contentType: 'pages' | 'blogs' | 'collections' | 'policies' | 'products'
 ): boolean {
   if (!selectedItem || locale === primaryLocale) return false;
 
-  const itemKey = `${selectedItem.id}_${locale}`;
-  const translations = loadedTranslations[itemKey] || selectedItem.translations?.filter(
+  const translations = selectedItem.translations?.filter(
     (t: any) => t.locale === locale
   ) || [];
 
   // Define required fields based on content type
-  const requiredFields = contentType === 'collections'
+  const requiredFields = contentType === 'collections' || contentType === 'products'
     ? ["title", "body_html", "handle"]
     : contentType === 'policies'
     ? ["body"]
@@ -347,8 +320,7 @@ export function hasLocaleMissingTranslations(
 export function hasMissingTranslations(
   selectedItem: any,
   shopLocales: any[],
-  loadedTranslations: Record<string, any[]>,
-  contentType: 'pages' | 'blogs' | 'collections' | 'policies'
+  contentType: 'pages' | 'blogs' | 'collections' | 'policies' | 'products'
 ): boolean {
   if (!selectedItem) return false;
 
@@ -356,55 +328,37 @@ export function hasMissingTranslations(
   const foreignLocales = shopLocales.filter((l: any) => !l.primary);
 
   return foreignLocales.some((locale: any) =>
-    hasLocaleMissingTranslations(selectedItem, locale.locale, primaryLocale, loadedTranslations, contentType)
+    hasLocaleMissingTranslations(selectedItem, locale.locale, primaryLocale, contentType)
   );
 }
 
 /**
  * Get button style for locale navigation
- * Returns animation if selected, background color if not selected
+ * Always shows pulsing animation when translations are missing
  */
 export function getLocaleButtonStyle(
   locale: any,
   selectedItem: any,
   primaryLocale: string,
-  loadedTranslations: Record<string, any[]>,
-  contentType: 'pages' | 'blogs' | 'collections' | 'policies',
-  isSelected: boolean
+  contentType: 'pages' | 'blogs' | 'collections' | 'policies' | 'products'
 ): React.CSSProperties {
   const primaryContentMissing = locale.primary && hasPrimaryContentMissing(selectedItem, contentType);
-  const foreignTranslationMissing = !locale.primary && hasLocaleMissingTranslations(selectedItem, locale.locale, primaryLocale, loadedTranslations, contentType);
+  const foreignTranslationMissing = !locale.primary && hasLocaleMissingTranslations(selectedItem, locale.locale, primaryLocale, contentType);
 
   if (primaryContentMissing) {
-    if (isSelected) {
-      // Selected: Show pulsing border animation
-      return {
-        animation: "pulse 1.5s ease-in-out infinite",
-        borderRadius: "8px",
-      };
-    } else {
-      // Not selected: Show orange background
-      return {
-        backgroundColor: "#fff4e5",
-        borderRadius: "8px",
-      };
-    }
+    // Always show pulsing animation (orange) when primary content is missing
+    return {
+      animation: "pulse 1.5s ease-in-out infinite",
+      borderRadius: "8px",
+    };
   }
 
   if (foreignTranslationMissing) {
-    if (isSelected) {
-      // Selected: Show pulsing border animation
-      return {
-        animation: "pulseBlue 1.5s ease-in-out infinite",
-        borderRadius: "8px",
-      };
-    } else {
-      // Not selected: Show blue background
-      return {
-        backgroundColor: "#e0f2fe",
-        borderRadius: "8px",
-      };
-    }
+    // Always show pulsing animation (blue) when translations are missing
+    return {
+      animation: "pulseBlue 1.5s ease-in-out infinite",
+      borderRadius: "8px",
+    };
   }
 
   return {};

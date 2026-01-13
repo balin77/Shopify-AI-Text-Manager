@@ -7,8 +7,7 @@ interface LocaleNavigationButtonsProps {
   primaryLocaleSuffix: string;
   selectedItem: any;
   primaryLocale: string;
-  loadedTranslations: Record<string, any[]>;
-  contentType: 'pages' | 'blogs' | 'collections' | 'policies';
+  contentType: 'pages' | 'blogs' | 'collections' | 'policies' | 'products';
   hasChanges: boolean;
   onLanguageChange: (locale: string) => void;
 }
@@ -19,7 +18,6 @@ export function LocaleNavigationButtons({
   primaryLocaleSuffix,
   selectedItem,
   primaryLocale,
-  loadedTranslations,
   contentType,
   hasChanges,
   onLanguageChange,
@@ -27,20 +25,17 @@ export function LocaleNavigationButtons({
   return (
     <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
       {shopLocales.map((locale: any) => {
-        const isSelected = currentLanguage === locale.locale;
         const buttonStyle = getLocaleButtonStyle(
           locale,
           selectedItem,
           primaryLocale,
-          loadedTranslations,
-          contentType,
-          isSelected
+          contentType
         );
 
         return (
           <div key={locale.locale} style={buttonStyle}>
             <Button
-              variant={isSelected ? "primary" : undefined}
+              variant={currentLanguage === locale.locale ? "primary" : undefined}
               onClick={() => onLanguageChange(locale.locale)}
               size="slim"
             >

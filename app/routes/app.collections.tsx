@@ -444,7 +444,6 @@ export default function CollectionsPage() {
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [currentLanguage, setCurrentLanguage] = useState(primaryLocale);
   const [aiSuggestions, setAiSuggestions] = useState<Record<string, string>>({});
-  const [loadedTranslations, setLoadedTranslations] = useState<Record<string, any[]>>({});
   const [descriptionMode, setDescriptionMode] = useState<"html" | "rendered">("rendered");
 
   // Editable fields
@@ -468,7 +467,6 @@ export default function CollectionsPage() {
     selectedItem,
     currentLanguage,
     primaryLocale,
-    loadedTranslations,
     {
       title: editableTitle,
       description: editableDescription,
@@ -490,53 +488,13 @@ export default function CollectionsPage() {
       setEditableSeoTitle(selectedItem.seo?.title || "");
       setEditableMetaDescription(selectedItem.seo?.description || "");
     } else {
-      const itemKey = `${selectedItem.id}_${currentLanguage}`;
-      const hasTranslations = loadedTranslations[itemKey] || selectedItem.translations?.some(
-        (t: any) => t.locale === currentLanguage
-      );
-
-      if (!hasTranslations) {
-        fetcher.submit(
-          {
-            action: "loadTranslations",
-            itemId: selectedItem.id,
-            locale: currentLanguage,
-          },
-          { method: "POST" }
-        );
-      } else {
-        setEditableTitle(getTranslatedValue(selectedItem, "title", currentLanguage, "", primaryLocale, loadedTranslations));
-        setEditableDescription(getTranslatedValue(selectedItem, "body_html", currentLanguage, "", primaryLocale, loadedTranslations));
-        setEditableHandle(getTranslatedValue(selectedItem, "handle", currentLanguage, "", primaryLocale, loadedTranslations));
-        setEditableSeoTitle(getTranslatedValue(selectedItem, "meta_title", currentLanguage, "", primaryLocale, loadedTranslations));
-        setEditableMetaDescription(getTranslatedValue(selectedItem, "meta_description", currentLanguage, "", primaryLocale, loadedTranslations));
-      }
+      setEditableTitle(getTranslatedValue(selectedItem, "title", currentLanguage, "", primaryLocale));
+      setEditableDescription(getTranslatedValue(selectedItem, "body_html", currentLanguage, "", primaryLocale));
+      setEditableHandle(getTranslatedValue(selectedItem, "handle", currentLanguage, "", primaryLocale));
+      setEditableSeoTitle(getTranslatedValue(selectedItem, "meta_title", currentLanguage, "", primaryLocale));
+      setEditableMetaDescription(getTranslatedValue(selectedItem, "meta_description", currentLanguage, "", primaryLocale));
     }
-  }, [selectedItemId, currentLanguage, loadedTranslations]);
-
-  // Handle loaded translations
-  useEffect(() => {
-    if (fetcher.data?.success && 'translations' in fetcher.data && 'locale' in fetcher.data) {
-      const loadedLocale = (fetcher.data as any).locale;
-      const translations = (fetcher.data as any).translations;
-
-      if (selectedItem && loadedLocale && translations) {
-        const itemKey = `${selectedItem.id}_${loadedLocale}`;
-        setLoadedTranslations(prev => ({
-          ...prev,
-          [itemKey]: translations
-        }));
-
-        if (loadedLocale === currentLanguage) {
-          setEditableTitle(translations.find((t: any) => t.key === "title")?.value || "");
-          setEditableDescription(translations.find((t: any) => t.key === "body_html")?.value || "");
-          setEditableHandle(translations.find((t: any) => t.key === "handle")?.value || "");
-          setEditableSeoTitle(translations.find((t: any) => t.key === "meta_title")?.value || "");
-          setEditableMetaDescription(translations.find((t: any) => t.key === "meta_description")?.value || "");
-        }
-      }
-    }
-  }, [fetcher.data]);
+  }, [selectedItemId, currentLanguage]);
 
   // Handle AI generation response
   useEffect(() => {
@@ -595,11 +553,11 @@ export default function CollectionsPage() {
       setEditableSeoTitle(selectedItem.seo?.title || "");
       setEditableMetaDescription(selectedItem.seo?.description || "");
     } else {
-      setEditableTitle(getTranslatedValue(selectedItem, "title", currentLanguage, "", primaryLocale, loadedTranslations));
-      setEditableDescription(getTranslatedValue(selectedItem, "body_html", currentLanguage, "", primaryLocale, loadedTranslations));
-      setEditableHandle(getTranslatedValue(selectedItem, "handle", currentLanguage, "", primaryLocale, loadedTranslations));
-      setEditableSeoTitle(getTranslatedValue(selectedItem, "meta_title", currentLanguage, "", primaryLocale, loadedTranslations));
-      setEditableMetaDescription(getTranslatedValue(selectedItem, "meta_description", currentLanguage, "", primaryLocale, loadedTranslations));
+      setEditableTitle(getTranslatedValue(selectedItem, "title", currentLanguage, "", primaryLocale));
+      setEditableDescription(getTranslatedValue(selectedItem, "body_html", currentLanguage, "", primaryLocale));
+      setEditableHandle(getTranslatedValue(selectedItem, "handle", currentLanguage, "", primaryLocale));
+      setEditableSeoTitle(getTranslatedValue(selectedItem, "meta_title", currentLanguage, "", primaryLocale));
+      setEditableMetaDescription(getTranslatedValue(selectedItem, "meta_description", currentLanguage, "", primaryLocale));
     }
 
     clearPendingNavigation();
@@ -669,11 +627,11 @@ export default function CollectionsPage() {
   };
 
   const isFieldTranslatedCheck = (key: string) => {
-    return checkFieldTranslated(selectedItem, key, currentLanguage, primaryLocale, loadedTranslations);
+    return checkFieldTranslated(selectedItem, key, currentLanguage, primaryLocale);
   };
 
   const hasMissingTranslations = () => {
-    return checkMissingTranslations(selectedItem, shopLocales, loadedTranslations, 'collections');
+    return checkMissingTranslations(selectedItem, shopLocales, 'collections');
   };
 
   return (
@@ -751,7 +709,6 @@ export default function CollectionsPage() {
                   primaryLocaleSuffix={t.content.primaryLanguageSuffix}
                   selectedItem={selectedItem}
                   primaryLocale={primaryLocale}
-                  loadedTranslations={loadedTranslations}
                   contentType="collections"
                   hasChanges={hasChanges}
                   onLanguageChange={(locale) => handleNavigationAttempt(() => setCurrentLanguage(locale), hasChanges)}

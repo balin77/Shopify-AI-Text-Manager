@@ -26,10 +26,7 @@ import {
   useChangeTracking,
   getTranslatedValue,
   isFieldTranslated as checkFieldTranslated,
-  hasPrimaryContentMissing as checkPrimaryContentMissing,
-  hasLocaleMissingTranslations as checkLocaleMissingTranslations,
-  hasMissingTranslations as checkMissingTranslations,
-  getLocaleButtonStyle as getLocaleButtonStyleUtil,
+  getLocaleButtonStyle,
 } from "../utils/contentEditor.utils";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -249,7 +246,6 @@ export default function PoliciesPage() {
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [currentLanguage, setCurrentLanguage] = useState(primaryLocale);
   const [aiSuggestions, setAiSuggestions] = useState<Record<string, string>>({});
-  const [loadedTranslations, setLoadedTranslations] = useState<Record<string, any[]>>({});
   const [bodyMode, setBodyMode] = useState<"html" | "rendered">("rendered");
 
   // Editable fields (only body is editable, title is read-only)
@@ -269,7 +265,6 @@ export default function PoliciesPage() {
     selectedItem,
     currentLanguage,
     primaryLocale,
-    loadedTranslations,
     {
       title: "", // Not editable for policies
       description: editableBody,
@@ -287,45 +282,9 @@ export default function PoliciesPage() {
     if (currentLanguage === primaryLocale) {
       setEditableBody(selectedItem.body || "");
     } else {
-      const itemKey = `${selectedItem.id}_${currentLanguage}`;
-      const hasTranslations = loadedTranslations[itemKey] || selectedItem.translations?.some(
-        (t: any) => t.locale === currentLanguage
-      );
-
-      if (!hasTranslations) {
-        fetcher.submit(
-          {
-            action: "loadTranslations",
-            itemId: selectedItem.id,
-            locale: currentLanguage,
-          },
-          { method: "POST" }
-        );
-      } else {
-        setEditableBody(getTranslatedValue(selectedItem, "body", currentLanguage, "", primaryLocale, loadedTranslations));
-      }
+      setEditableBody(getTranslatedValue(selectedItem, "body", currentLanguage, "", primaryLocale));
     }
-  }, [selectedItemId, currentLanguage, loadedTranslations]);
-
-  // Handle loaded translations
-  useEffect(() => {
-    if (fetcher.data?.success && 'translations' in fetcher.data && 'locale' in fetcher.data) {
-      const loadedLocale = (fetcher.data as any).locale;
-      const translations = (fetcher.data as any).translations;
-
-      if (selectedItem && loadedLocale && translations) {
-        const itemKey = `${selectedItem.id}_${loadedLocale}`;
-        setLoadedTranslations(prev => ({
-          ...prev,
-          [itemKey]: translations
-        }));
-
-        if (loadedLocale === currentLanguage) {
-          setEditableBody(translations.find((t: any) => t.key === "body")?.value || "");
-        }
-      }
-    }
-  }, [fetcher.data]);
+  }, [selectedItemId, currentLanguage]);
 
   // Handle AI generation response
   useEffect(() => {
@@ -372,7 +331,7 @@ export default function PoliciesPage() {
     if (currentLanguage === primaryLocale) {
       setEditableBody(selectedItem.body || "");
     } else {
-      setEditableBody(getTranslatedValue(selectedItem, "body", currentLanguage, "", primaryLocale, loadedTranslations));
+      setEditableBody(getTranslatedValue(selectedItem, "body", currentLanguage, "", primaryLocale));
     }
 
     clearPendingNavigation();
@@ -426,16 +385,7 @@ export default function PoliciesPage() {
   };
 
   const isFieldTranslatedCheck = (key: string) => {
-    return checkFieldTranslated(selectedItem, key, currentLanguage, primaryLocale, loadedTranslations);
-  };
-
-  const hasMissingTranslations = () => {
-    return checkMissingTranslations(selectedItem, shopLocales, loadedTranslations, 'policies');
-  };
-
-  const getLocaleButtonStyle = (locale: any) => {
-    const isSelected = currentLanguage === locale.locale;
-    return getLocaleButtonStyleUtil(locale, selectedItem, primaryLocale, loadedTranslations, 'policies', isSelected);
+    return checkFieldTranslated(selectedItem, key, currentLanguage, primaryLocale);
   };
 
   // Map policy types to human-readable names
@@ -529,7 +479,7 @@ export default function PoliciesPage() {
                 {/* Language Selector */}
                 <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
                   {shopLocales.map((locale: any) => (
-                    <div key={locale.locale} style={getLocaleButtonStyle(locale)}>
+                    <div key={locale.locale} style={getLocaleButtonStyle(locale, selectedItem, primaryLocale, 'policies')}>
                       <Button
                         variant={currentLanguage === locale.locale ? "primary" : undefined}
                         onClick={() => {
@@ -608,7 +558,6 @@ export default function PoliciesPage() {
                   isTranslated={isFieldTranslatedCheck("body")}
                   isLoading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "body"}
                   sourceTextAvailable={!!selectedItem?.body}
-                  hasMissingTranslations={hasMissingTranslations()}
                   onGenerateAI={() => handleGenerateAI("body")}
                   onTranslate={() => handleTranslateField("body")}
                   onTranslateAll={handleTranslateAll}
