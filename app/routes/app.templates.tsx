@@ -323,19 +323,45 @@ export default function TemplatesPage() {
       isDataLoaded: !!loadedThemes[groupId]
     });
 
-    setSelectedItemId(itemId);
     setAiSuggestions({});
 
     if (isSameItem) {
-      // Force reload: clear state but keep the theme data to trigger useEffect
-      console.log('[TEMPLATES] Same item clicked - clearing state and resetting to primary locale');
-      setEditableValues({});
-      setOriginalValues({});
-      // Reset language to primary to force data reload
-      setCurrentLanguage(primaryLocale);
+      // Force reload: directly reload the values from the cached theme data
+      console.log('[TEMPLATES] Same item clicked - force reloading values');
+
+      const themeData = loadedThemes[groupId];
+      if (themeData && themeData.translatableContent) {
+        // Reload values based on current language
+        if (currentLanguage === primaryLocale) {
+          // Reload primary locale values
+          const values: Record<string, string> = {};
+          themeData.translatableContent.forEach((item: any) => {
+            values[item.key] = item.value || "";
+          });
+          console.log('[TEMPLATES] Reloading primary locale values:', Object.keys(values).length, 'fields');
+          setEditableValues(values);
+          setOriginalValues({ ...values });
+        } else {
+          // Reload translation values
+          const translationKey = `${groupId}_${currentLanguage}`;
+          const translations = loadedTranslations[translationKey];
+
+          if (translations) {
+            const values: Record<string, string> = {};
+            themeData.translatableContent.forEach((item: any) => {
+              const translation = translations.find((t: any) => t.key === item.key);
+              values[item.key] = translation?.value || "";
+            });
+            console.log('[TEMPLATES] Reloading translation values:', Object.keys(values).length, 'fields');
+            setEditableValues(values);
+            setOriginalValues({ ...values });
+          }
+        }
+      }
     } else {
       // Different item: clear state and load new data
       console.log('[TEMPLATES] Different item clicked - clearing state and loading data');
+      setSelectedItemId(itemId);
       setEditableValues({});
       setOriginalValues({});
       loadThemeData(groupId);
