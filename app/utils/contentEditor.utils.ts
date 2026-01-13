@@ -378,6 +378,75 @@ export function hasMissingTranslations(
 }
 
 /**
+ * Check if a specific field has missing translations in any foreign locale
+ * Only returns true if:
+ * 1. The primary locale has content for this field
+ * 2. At least one foreign locale is missing translation for this field
+ */
+export function hasFieldMissingTranslations(
+  selectedItem: any,
+  fieldKey: string,
+  shopLocales: any[],
+  primaryLocale: string,
+  contentType: 'pages' | 'blogs' | 'collections' | 'policies' | 'products'
+): boolean {
+  if (!selectedItem) return false;
+
+  // First check if primary locale has content for this field
+  let primaryHasContent = false;
+
+  if (fieldKey === "title") {
+    primaryHasContent = !!selectedItem.title && selectedItem.title.trim() !== '';
+  } else if (fieldKey === "body_html" || fieldKey === "description") {
+    if (contentType === 'collections' || contentType === 'products') {
+      primaryHasContent = !!selectedItem.descriptionHtml && selectedItem.descriptionHtml.trim() !== '';
+    } else {
+      primaryHasContent = !!selectedItem.body && selectedItem.body.trim() !== '';
+    }
+  } else if (fieldKey === "body") {
+    primaryHasContent = !!selectedItem.body && selectedItem.body.trim() !== '';
+  } else if (fieldKey === "handle") {
+    primaryHasContent = !!selectedItem.handle && selectedItem.handle.trim() !== '';
+  } else if (fieldKey === "meta_title" || fieldKey === "seoTitle") {
+    primaryHasContent = !!selectedItem.seo?.title && selectedItem.seo.title.trim() !== '';
+  } else if (fieldKey === "meta_description" || fieldKey === "metaDescription") {
+    primaryHasContent = !!selectedItem.seo?.description && selectedItem.seo.description.trim() !== '';
+  }
+
+  // If primary doesn't have content, no translation is expected
+  if (!primaryHasContent) {
+    return false;
+  }
+
+  // Map UI field names to translation keys
+  const translationKeyMap: { [key: string]: string } = {
+    "title": "title",
+    "description": "body_html",
+    "body_html": "body_html",
+    "body": "body",
+    "handle": "handle",
+    "seoTitle": "meta_title",
+    "meta_title": "meta_title",
+    "metaDescription": "meta_description",
+    "meta_description": "meta_description",
+  };
+
+  const translationKey = translationKeyMap[fieldKey] || fieldKey;
+
+  // Check if any foreign locale is missing this specific translation
+  const foreignLocales = shopLocales.filter((l: any) => !l.primary);
+
+  return foreignLocales.some((locale: any) => {
+    const translations = selectedItem.translations?.filter(
+      (t: any) => t.locale === locale.locale
+    ) || [];
+
+    const translation = translations.find((t: any) => t.key === translationKey);
+    return !translation || !translation.value || translation.value.trim() === '';
+  });
+}
+
+/**
  * Get button style for locale navigation
  * Always shows pulsing animation when translations are missing
  */

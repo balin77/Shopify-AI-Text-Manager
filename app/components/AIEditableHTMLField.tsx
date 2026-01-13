@@ -11,12 +11,14 @@ interface AIEditableHTMLFieldProps {
   mode: "html" | "rendered";
   onToggleMode: () => void;
   fieldType: string;
+  fieldKey?: string;
   suggestion?: string;
   isPrimaryLocale: boolean;
   isTranslated?: boolean;
   isLoading?: boolean;
   sourceTextAvailable?: boolean;
   hasMissingTranslations?: boolean;
+  hasFieldMissingTranslations?: boolean;
   onGenerateAI: () => void;
   onTranslate: () => void;
   onTranslateAll?: () => void;
@@ -32,12 +34,14 @@ export function AIEditableHTMLField({
   mode,
   onToggleMode,
   fieldType,
+  fieldKey,
   suggestion,
   isPrimaryLocale,
   isTranslated = true,
   isLoading = false,
   sourceTextAvailable = true,
   hasMissingTranslations = false,
+  hasFieldMissingTranslations = false,
   onGenerateAI,
   onTranslate,
   onTranslateAll,
@@ -56,8 +60,13 @@ export function AIEditableHTMLField({
     // Priority 2: Primary locale is empty (orange)
     if (isPrimaryLocale && !value) return "bg-untranslated";
 
-    // Priority 3: Primary locale has content but translations are missing (blue)
-    if (isPrimaryLocale && value && hasMissingTranslations) return "bg-missing-translation";
+    // Priority 3: Primary locale has content but THIS FIELD has missing translations (blue)
+    // Use field-specific check if provided, otherwise fall back to global check
+    const fieldHasMissingTranslations = hasFieldMissingTranslations !== undefined
+      ? hasFieldMissingTranslations
+      : hasMissingTranslations;
+
+    if (isPrimaryLocale && value && fieldHasMissingTranslations) return "bg-missing-translation";
 
     // Priority 4: Foreign locale - orange if not translated, white if translated
     if (!isPrimaryLocale) return isTranslated ? "bg-white" : "bg-untranslated";

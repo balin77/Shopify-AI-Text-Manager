@@ -30,6 +30,7 @@ import {
   hasPrimaryContentMissing as checkPrimaryContentMissing,
   hasLocaleMissingTranslations as checkLocaleMissingTranslations,
   hasMissingTranslations as checkMissingTranslations,
+  hasFieldMissingTranslations as checkFieldMissingTranslations,
   getLocaleButtonStyle as getLocaleButtonStyleUtil,
 } from "../utils/contentEditor.utils";
 
@@ -457,6 +458,10 @@ export default function PagesPage() {
     return checkMissingTranslations(selectedItem, shopLocales, 'pages');
   };
 
+  const hasFieldMissingTranslations = (fieldKey: string) => {
+    return checkFieldMissingTranslations(selectedItem, fieldKey, shopLocales, primaryLocale, 'pages');
+  };
+
   const getLocaleButtonStyle = (locale: any) => {
     return getLocaleButtonStyleUtil(locale, selectedItem, primaryLocale, 'pages');
   };
@@ -584,13 +589,14 @@ export default function PagesPage() {
                   value={editableTitle}
                   onChange={setEditableTitle}
                   fieldType="title"
+                  fieldKey="title"
                   suggestion={aiSuggestions.title}
                   isPrimaryLocale={currentLanguage === primaryLocale}
                   isTranslated={isFieldTranslatedCheck("title")}
                   helpText={`${editableTitle.length} ${t.content.characters}`}
                   isLoading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "title"}
                   sourceTextAvailable={!!selectedItem?.title}
-                  hasMissingTranslations={hasMissingTranslations()}
+                  hasFieldMissingTranslations={hasFieldMissingTranslations("title")}
                   onGenerateAI={() => handleGenerateAI("title")}
                   onTranslate={() => handleTranslateField("title")}
                   onTranslateAll={handleTranslateAll}
@@ -606,12 +612,13 @@ export default function PagesPage() {
                   mode={descriptionMode}
                   onToggleMode={() => setDescriptionMode(descriptionMode === "html" ? "rendered" : "html")}
                   fieldType="description"
+                  fieldKey="description"
                   suggestion={aiSuggestions.description}
                   isPrimaryLocale={currentLanguage === primaryLocale}
                   isTranslated={isFieldTranslatedCheck("body_html")}
                   isLoading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "description"}
                   sourceTextAvailable={!!selectedItem?.body}
-                  hasMissingTranslations={hasMissingTranslations()}
+                  hasFieldMissingTranslations={hasFieldMissingTranslations("description")}
                   onGenerateAI={() => handleGenerateAI("description")}
                   onTranslate={() => handleTranslateField("description")}
                   onTranslateAll={handleTranslateAll}
@@ -625,12 +632,13 @@ export default function PagesPage() {
                   value={editableHandle}
                   onChange={setEditableHandle}
                   fieldType="handle"
+                  fieldKey="handle"
                   suggestion={aiSuggestions.handle}
                   isPrimaryLocale={currentLanguage === primaryLocale}
                   isTranslated={isFieldTranslatedCheck("handle")}
                   isLoading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "handle"}
                   sourceTextAvailable={!!selectedItem?.handle}
-                  hasMissingTranslations={hasMissingTranslations()}
+                  hasFieldMissingTranslations={hasFieldMissingTranslations("handle")}
                   onGenerateAI={() => handleGenerateAI("handle")}
                   onTranslate={() => handleTranslateField("handle")}
                   onTranslateAll={handleTranslateAll}

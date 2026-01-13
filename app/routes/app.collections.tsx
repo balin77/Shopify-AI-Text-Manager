@@ -31,6 +31,7 @@ import {
   getTranslatedValue,
   isFieldTranslated as checkFieldTranslated,
   hasMissingTranslations as checkMissingTranslations,
+  hasFieldMissingTranslations as checkFieldMissingTranslations,
 } from "../utils/contentEditor.utils";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -634,6 +635,10 @@ export default function CollectionsPage() {
     return checkMissingTranslations(selectedItem, shopLocales, 'collections');
   };
 
+  const hasFieldMissingTranslations = (fieldKey: string) => {
+    return checkFieldMissingTranslations(selectedItem, fieldKey, shopLocales, primaryLocale, 'collections');
+  };
+
   return (
     <Page fullWidth>
       <style>{contentEditorStyles}</style>
@@ -752,13 +757,14 @@ export default function CollectionsPage() {
                   value={editableTitle}
                   onChange={setEditableTitle}
                   fieldType="title"
+                  fieldKey="title"
                   suggestion={aiSuggestions.title}
                   isPrimaryLocale={currentLanguage === primaryLocale}
                   isTranslated={isFieldTranslatedCheck("title")}
                   helpText={`${editableTitle.length} ${t.content.characters}`}
                   isLoading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "title"}
                   sourceTextAvailable={!!selectedItem?.title}
-                  hasMissingTranslations={hasMissingTranslations()}
+                  hasFieldMissingTranslations={hasFieldMissingTranslations("title")}
                   onGenerateAI={() => handleGenerateAI("title")}
                   onTranslate={() => handleTranslateField("title")}
                   onTranslateAll={handleTranslateAll}
@@ -774,12 +780,13 @@ export default function CollectionsPage() {
                   mode={descriptionMode}
                   onToggleMode={() => setDescriptionMode(descriptionMode === "html" ? "rendered" : "html")}
                   fieldType="description"
+                  fieldKey="description"
                   suggestion={aiSuggestions.description}
                   isPrimaryLocale={currentLanguage === primaryLocale}
                   isTranslated={isFieldTranslatedCheck("body_html")}
                   isLoading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "description"}
                   sourceTextAvailable={!!selectedItem?.descriptionHtml}
-                  hasMissingTranslations={hasMissingTranslations()}
+                  hasFieldMissingTranslations={hasFieldMissingTranslations("description")}
                   onGenerateAI={() => handleGenerateAI("description")}
                   onTranslate={() => handleTranslateField("description")}
                   onTranslateAll={handleTranslateAll}
@@ -793,12 +800,13 @@ export default function CollectionsPage() {
                   value={editableHandle}
                   onChange={setEditableHandle}
                   fieldType="handle"
+                  fieldKey="handle"
                   suggestion={aiSuggestions.handle}
                   isPrimaryLocale={currentLanguage === primaryLocale}
                   isTranslated={isFieldTranslatedCheck("handle")}
                   isLoading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "handle"}
                   sourceTextAvailable={!!selectedItem?.handle}
-                  hasMissingTranslations={hasMissingTranslations()}
+                  hasFieldMissingTranslations={hasFieldMissingTranslations("handle")}
                   onGenerateAI={() => handleGenerateAI("handle")}
                   onTranslate={() => handleTranslateField("handle")}
                   onTranslateAll={handleTranslateAll}
@@ -812,13 +820,14 @@ export default function CollectionsPage() {
                   value={editableSeoTitle}
                   onChange={setEditableSeoTitle}
                   fieldType="seoTitle"
+                  fieldKey="seoTitle"
                   suggestion={aiSuggestions.seoTitle}
                   isPrimaryLocale={currentLanguage === primaryLocale}
                   isTranslated={isFieldTranslatedCheck("meta_title")}
                   helpText={`${editableSeoTitle.length} ${t.content.characters} (${t.content.recommended}: 50-60)`}
                   isLoading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "seoTitle"}
                   sourceTextAvailable={!!selectedItem?.seo?.title}
-                  hasMissingTranslations={hasMissingTranslations()}
+                  hasFieldMissingTranslations={hasFieldMissingTranslations("seoTitle")}
                   onGenerateAI={() => handleGenerateAI("seoTitle")}
                   onTranslate={() => handleTranslateField("seoTitle")}
                   onTranslateAll={handleTranslateAll}
@@ -832,6 +841,7 @@ export default function CollectionsPage() {
                   value={editableMetaDescription}
                   onChange={setEditableMetaDescription}
                   fieldType="metaDescription"
+                  fieldKey="metaDescription"
                   suggestion={aiSuggestions.metaDescription}
                   isPrimaryLocale={currentLanguage === primaryLocale}
                   isTranslated={isFieldTranslatedCheck("meta_description")}
@@ -839,7 +849,7 @@ export default function CollectionsPage() {
                   multiline={3}
                   isLoading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "metaDescription"}
                   sourceTextAvailable={!!selectedItem?.seo?.description}
-                  hasMissingTranslations={hasMissingTranslations()}
+                  hasFieldMissingTranslations={hasFieldMissingTranslations("metaDescription")}
                   onGenerateAI={() => handleGenerateAI("metaDescription")}
                   onTranslate={() => handleTranslateField("metaDescription")}
                   onTranslateAll={handleTranslateAll}
