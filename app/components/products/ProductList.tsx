@@ -9,9 +9,11 @@ import {
   InlineStack,
   Button,
   Icon,
+  Banner,
 } from "@shopify/polaris";
 import { SearchIcon, ChevronLeftIcon, ChevronRightIcon } from "@shopify/polaris-icons";
 import { Thumbnail } from "@shopify/polaris";
+import { usePlan } from "../../contexts/PlanContext";
 
 interface Product {
   id: string;
@@ -51,6 +53,11 @@ export function ProductList({
   const [hoveredProductId, setHoveredProductId] = useState<string | null>(null);
   const productsPerPage = 10;
 
+  const { plan, getMaxProducts, getNextPlanUpgrade } = usePlan();
+  const maxProducts = getMaxProducts();
+  const isAtLimit = products.length >= maxProducts && maxProducts !== Infinity;
+  const nextPlan = getNextPlanUpgrade();
+
   // Filter and pagination
   const filteredProducts = products.filter((p: Product) =>
     p.title.toLowerCase().includes(searchQuery.toLowerCase())
@@ -75,6 +82,20 @@ export function ProductList({
 
   return (
     <Card padding="0">
+      {/* Plan Limit Warning */}
+      {isAtLimit && nextPlan && (
+        <div style={{ padding: "1rem", borderBottom: "1px solid #e1e3e5" }}>
+          <Banner tone="warning">
+            <Text as="p" fontWeight="semibold">
+              Product limit reached ({products.length}/{maxProducts})
+            </Text>
+            <Text as="p" variant="bodySm" tone="subdued">
+              Upgrade to {nextPlan.charAt(0).toUpperCase() + nextPlan.slice(1)} plan to add more products.
+            </Text>
+          </Banner>
+        </div>
+      )}
+
       <div style={{ padding: "1rem", borderBottom: "1px solid #e1e3e5" }}>
         <BlockStack gap="300">
           <Text as="h2" variant="headingMd">

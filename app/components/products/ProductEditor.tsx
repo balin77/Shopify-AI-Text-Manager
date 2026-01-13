@@ -17,6 +17,7 @@ import { ProductOptions } from "./ProductOptions";
 import { LocaleNavigationButtons } from "../LocaleNavigationButtons";
 import { SaveDiscardButtons } from "../SaveDiscardButtons";
 import { useI18n } from "../../contexts/I18nContext";
+import { usePlan } from "../../contexts/PlanContext";
 
 interface Product {
   id: string;
@@ -155,11 +156,14 @@ export function ProductEditor({
   fetcherState = "idle",
 }: ProductEditorProps) {
   const { t } = useI18n();
+  const { plan, shouldCacheAllProductImages } = usePlan();
   const [descriptionMode, setDescriptionMode] = useState<"html" | "rendered">("rendered");
   const [selectedImageIndex, setSelectedImageIndex] = useState(0);
   const [altTextSuggestions, setAltTextSuggestions] = useState<Record<number, string>>({});
 
   const isPrimaryLocale = currentLanguage === primaryLocale;
+  const isFreePlan = plan === "free";
+  const canShowAllImages = shouldCacheAllProductImages();
 
   // Reset selected image when product changes or ensure index is valid
   useEffect(() => {
@@ -255,8 +259,17 @@ export function ProductEditor({
           </InlineStack>
 
           {/* Image Gallery */}
-          {product.images && product.images.length > 0 && product.images[selectedImageIndex] && (
+          {((product.images && product.images.length > 0) || product.featuredImage) && (
             <BlockStack gap="400">
+              {/* Free Plan Notice */}
+              {isFreePlan && (
+                <Banner tone="info">
+                  <Text as="p" variant="bodySm">
+                    Only featured image is available in Free plan. Upgrade to Basic to access all product images.
+                  </Text>
+                </Banner>
+              )}
+
               {/* Image Layout: Preview left, Grid right */}
               <div
                 style={{
@@ -283,34 +296,51 @@ export function ProductEditor({
                       backgroundColor: "#f6f6f7",
                     }}
                   >
-                    <img
-                      src={product.images[selectedImageIndex].url}
-                      alt={imageAltTexts[selectedImageIndex] || product.images[selectedImageIndex].altText || `${t.products.image} ${selectedImageIndex + 1}`}
-                      style={{
-                        position: "absolute",
-                        top: 0,
-                        left: 0,
-                        width: "100%",
-                        height: "100%",
-                        objectFit: "cover",
-                      }}
-                    />
+                    {/* Show featured image in free plan, or selected image in other plans */}
+                    {isFreePlan && product.featuredImage ? (
+                      <img
+                        src={product.featuredImage.url}
+                        alt={product.featuredImage.altText || t.products.featuredImage}
+                        style={{
+                          position: "absolute",
+                          top: 0,
+                          left: 0,
+                          width: "100%",
+                          height: "100%",
+                          objectFit: "cover",
+                        }}
+                      />
+                    ) : product.images && product.images[selectedImageIndex] ? (
+                      <img
+                        src={product.images[selectedImageIndex].url}
+                        alt={imageAltTexts[selectedImageIndex] || product.images[selectedImageIndex].altText || `${t.products.image} ${selectedImageIndex + 1}`}
+                        style={{
+                          position: "absolute",
+                          top: 0,
+                          left: 0,
+                          width: "100%",
+                          height: "100%",
+                          objectFit: "cover",
+                        }}
+                      />
+                    ) : null}
                     {/* Alt-text status badge on preview */}
-                    <div
-                      style={{
-                        position: "absolute",
-                        top: "8px",
-                        right: "8px",
-                        backgroundColor: !!(imageAltTexts[selectedImageIndex] || product.images[selectedImageIndex].altText) ? "#008060" : "#d72c0d",
-                        borderRadius: "50%",
-                        width: "36px",
-                        height: "36px",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        boxShadow: "0 2px 4px rgba(0, 0, 0, 0.2)",
-                      }}
-                    >
+                    {!isFreePlan && product.images && product.images[selectedImageIndex] && (
+                      <div
+                        style={{
+                          position: "absolute",
+                          top: "8px",
+                          right: "8px",
+                          backgroundColor: !!(imageAltTexts[selectedImageIndex] || product.images[selectedImageIndex].altText) ? "#008060" : "#d72c0d",
+                          borderRadius: "50%",
+                          width: "36px",
+                          height: "36px",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          boxShadow: "0 2px 4px rgba(0, 0, 0, 0.2)",
+                        }}
+                      >
                       <svg
                         width="20"
                         height="20"
@@ -343,27 +373,29 @@ export function ProductEditor({
                           </>
                         )}
                       </svg>
-                    </div>
+                      </div>
+                    )}
                   </div>
                 </div>
 
                 {/* Image Grid - Scrollable Container */}
-                <div
-                  style={{
-                    flex: "1",
-                    maxHeight: "280px",
-                    overflowY: "auto",
-                    overflowX: "hidden",
-                  }}
-                >
+                {!isFreePlan && (
                   <div
                     style={{
-                      display: "grid",
-                      gridTemplateColumns: "repeat(4, 1fr)",
-                      gap: "12px",
+                      flex: "1",
+                      maxHeight: "280px",
+                      overflowY: "auto",
+                      overflowX: "hidden",
                     }}
                   >
-                  {product.images.map((image, index) => {
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "repeat(4, 1fr)",
+                        gap: "12px",
+                      }}
+                    >
+                    {product.images && product.images.map((image, index) => {
                     const hasAltText = !!(imageAltTexts[index] || image.altText);
                     const isSelected = index === selectedImageIndex;
 
@@ -445,23 +477,52 @@ export function ProductEditor({
                       </button>
                     );
                   })}
+                    </div>
                   </div>
-                </div>
+                )}
+
+                {/* Free Plan: Show locked message instead of grid */}
+                {isFreePlan && (
+                  <div
+                    style={{
+                      flex: "1",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      border: "2px dashed #c9cccf",
+                      borderRadius: "8px",
+                      padding: "2rem",
+                      backgroundColor: "#f6f6f7",
+                    }}
+                  >
+                    <BlockStack gap="300" inlineAlign="center">
+                      <Text as="p" variant="bodyMd" alignment="center" tone="subdued">
+                        🔒 Additional images
+                      </Text>
+                      <Text as="p" variant="bodySm" alignment="center" tone="subdued">
+                        Available in Basic plan
+                      </Text>
+                    </BlockStack>
+                  </div>
+                )}
               </div>
 
               {/* Auto-generate all button - below images */}
-              <InlineStack align="start">
-                <Button
-                  size="slim"
-                  onClick={onGenerateAllAltTexts}
-                  loading={isFieldLoading("allAltTexts", "generateAllAltTexts")}
-                >
-                  ✨ {t.products.generateAllAltTexts}
-                </Button>
-              </InlineStack>
+              {!isFreePlan && (
+                <InlineStack align="start">
+                  <Button
+                    size="slim"
+                    onClick={onGenerateAllAltTexts}
+                    loading={isFieldLoading("allAltTexts", "generateAllAltTexts")}
+                  >
+                    ✨ {t.products.generateAllAltTexts}
+                  </Button>
+                </InlineStack>
+              )}
 
-              {/* Alt-text input for selected image */}
-              <AIEditableField
+              {/* Alt-text input for selected image - only in non-free plans */}
+              {!isFreePlan && (
+                <AIEditableField
                 label={`${t.products.altTextForImage} ${selectedImageIndex + 1}`}
                 value={imageAltTexts[selectedImageIndex] || product.images[selectedImageIndex]?.altText || ""}
                 onChange={(value) => {
@@ -504,7 +565,8 @@ export function ProductEditor({
                     return newSuggestions;
                   });
                 }}
-              />
+                />
+              )}
             </BlockStack>
           )}
 
