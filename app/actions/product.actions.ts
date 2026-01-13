@@ -4,6 +4,7 @@ import { AIService } from "../../src/services/ai.service";
 import { TranslationService } from "../../src/services/translation.service";
 import { getTaskExpirationDate } from "../../src/utils/task.utils";
 import { ShopifyApiGateway } from "../services/shopify-api-gateway.service";
+import { sanitizeSlug } from "../utils/slug.utils";
 
 export async function handleProductActions({ request }: ActionFunctionArgs) {
   console.log('📮 [PRODUCT.ACTIONS] === PRODUCT ACTION HANDLER CALLED ===');
@@ -233,11 +234,21 @@ async function handleGenerateAIText(
       if (aiInstructions?.productHandleInstructions) {
         prompt += `\n\nAnweisungen:\n${aiInstructions.productHandleInstructions}`;
       } else {
-        prompt += `\n\nDer Slug sollte:\n- Nur Kleinbuchstaben und Bindestriche enthalten\n- Keine Sonderzeichen oder Umlaute haben\n- Kurz und prägnant sein (2-5 Wörter)\n- SEO-optimiert sein`;
+        prompt += `\n\nWICHTIG - Der URL-Slug MUSS diesem Format folgen:`;
+        prompt += `\n- NUR Kleinbuchstaben (a-z)`;
+        prompt += `\n- NUR Ziffern (0-9)`;
+        prompt += `\n- NUR Bindestriche (-) als Trennzeichen`;
+        prompt += `\n- KEINE Leerzeichen, KEINE Unterstriche, KEINE Sonderzeichen`;
+        prompt += `\n- Umlaute MÜSSEN umgewandelt werden (ä→ae, ö→oe, ü→ue, ß→ss)`;
+        prompt += `\n- 2-5 Wörter, durch Bindestriche getrennt`;
+        prompt += `\n\nBeispiele:`;
+        prompt += `\n- "Premium Kaffee Mühle" → "premium-kaffee-muehle"`;
+        prompt += `\n- "Läufer für Garten" → "laeufer-fuer-garten"`;
+        prompt += `\n- "Bio Kräuter & Tee" → "bio-kraeuter-tee"`;
       }
-      prompt += `\n\nGib nur den Slug zurück, ohne Erklärungen.`;
+      prompt += `\n\nGib NUR den fertigen URL-Slug zurück, ohne jegliche Erklärungen oder zusätzlichen Text.`;
       generatedContent = await aiService.generateProductTitle(prompt);
-      generatedContent = generatedContent.toLowerCase().trim();
+      generatedContent = sanitizeSlug(generatedContent);
     } else if (fieldType === "seoTitle") {
       let prompt = `Erstelle einen optimierten SEO-Titel für dieses Produkt:\nTitel: ${contextTitle}\nBeschreibung: ${contextDescription}`;
       if (aiInstructions?.productSeoTitleFormat) {
@@ -367,11 +378,21 @@ async function handleFormatAIText(
       if (aiInstructions?.productHandleInstructions) {
         prompt += `\n\nFormatierungsanweisungen:\n${aiInstructions.productHandleInstructions}`;
       } else {
-        prompt += `\n\nDer Slug sollte:\n- Nur Kleinbuchstaben und Bindestriche enthalten\n- Keine Sonderzeichen oder Umlaute haben\n- Kurz und prägnant sein (2-5 Wörter)\n- SEO-optimiert sein`;
+        prompt += `\n\nWICHTIG - Der URL-Slug MUSS diesem Format folgen:`;
+        prompt += `\n- NUR Kleinbuchstaben (a-z)`;
+        prompt += `\n- NUR Ziffern (0-9)`;
+        prompt += `\n- NUR Bindestriche (-) als Trennzeichen`;
+        prompt += `\n- KEINE Leerzeichen, KEINE Unterstriche, KEINE Sonderzeichen`;
+        prompt += `\n- Umlaute MÜSSEN umgewandelt werden (ä→ae, ö→oe, ü→ue, ß→ss)`;
+        prompt += `\n- 2-5 Wörter, durch Bindestriche getrennt`;
+        prompt += `\n\nBeispiele:`;
+        prompt += `\n- "Premium Kaffee Mühle" → "premium-kaffee-muehle"`;
+        prompt += `\n- "Läufer für Garten" → "laeufer-fuer-garten"`;
+        prompt += `\n- "Bio Kräuter & Tee" → "bio-kraeuter-tee"`;
       }
-      prompt += `\n\nGib nur den formatierten Slug zurück, ohne Erklärungen.`;
+      prompt += `\n\nGib NUR den fertigen URL-Slug zurück, ohne jegliche Erklärungen oder zusätzlichen Text.`;
       formattedContent = await aiService.generateProductTitle(prompt);
-      formattedContent = formattedContent.toLowerCase().trim();
+      formattedContent = sanitizeSlug(formattedContent);
     } else if (fieldType === "seoTitle") {
       let prompt = `Formatiere den folgenden SEO-Titel gemäß den Formatierungsrichtlinien:\n\nAktueller SEO-Titel:\n${currentValue}\n\nKontext - Titel: ${contextTitle}\nBeschreibung: ${contextDescription}`;
       if (aiInstructions?.productSeoTitleFormat) {
@@ -830,10 +851,18 @@ async function handleUpdateProduct(admin: any, formData: FormData, productId: st
   const locale = formData.get("locale") as string;
   const title = formData.get("title") as string;
   const descriptionHtml = formData.get("descriptionHtml") as string;
-  const handle = formData.get("handle") as string;
+  let handle = formData.get("handle") as string;
   const seoTitle = formData.get("seoTitle") as string;
   const metaDescription = formData.get("metaDescription") as string;
   const imageAltTextsStr = formData.get("imageAltTexts") as string;
+
+  // Sanitize handle to ensure it's a valid URL slug
+  if (handle) {
+    handle = sanitizeSlug(handle);
+    if (!handle) {
+      return json({ success: false, error: "Invalid URL slug: Handle must contain at least one alphanumeric character" }, { status: 400 });
+    }
+  }
 
   try {
     const { db } = await import("../db.server");

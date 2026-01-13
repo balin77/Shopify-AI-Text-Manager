@@ -35,6 +35,7 @@ import {
   hasMissingTranslations as checkMissingTranslations,
   hasFieldMissingTranslations as checkFieldMissingTranslations,
 } from "../utils/contentEditor.utils";
+import { sanitizeSlug } from "../utils/slug.utils";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
@@ -192,11 +193,21 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         if (aiInstructions?.collectionHandleInstructions) {
           prompt += `\n\nAnweisungen:\n${aiInstructions.collectionHandleInstructions}`;
         } else {
-          prompt += `\n\nDer Slug sollte:\n- Nur Kleinbuchstaben und Bindestriche enthalten\n- Keine Sonderzeichen oder Umlaute haben\n- Kurz und prägnant sein (2-5 Wörter)\n- SEO-optimiert sein`;
+          prompt += `\n\nWICHTIG - Der URL-Slug MUSS diesem Format folgen:`;
+          prompt += `\n- NUR Kleinbuchstaben (a-z)`;
+          prompt += `\n- NUR Ziffern (0-9)`;
+          prompt += `\n- NUR Bindestriche (-) als Trennzeichen`;
+          prompt += `\n- KEINE Leerzeichen, KEINE Unterstriche, KEINE Sonderzeichen`;
+          prompt += `\n- Umlaute MÜSSEN umgewandelt werden (ä→ae, ö→oe, ü→ue, ß→ss)`;
+          prompt += `\n- 2-5 Wörter, durch Bindestriche getrennt`;
+          prompt += `\n\nBeispiele:`;
+          prompt += `\n- "Über Uns" → "ueber-uns"`;
+          prompt += `\n- "Kontakt & Impressum" → "kontakt-impressum"`;
+          prompt += `\n- "Häufige Fragen (FAQ)" → "haeufige-fragen-faq"`;
         }
-        prompt += `\n\nGib nur den Slug zurück, ohne Erklärungen.`;
+        prompt += `\n\nGib NUR den fertigen URL-Slug zurück, ohne jegliche Erklärungen oder zusätzlichen Text.`;
         generatedContent = await aiService.generateProductTitle(prompt);
-        generatedContent = generatedContent.toLowerCase().trim();
+        generatedContent = sanitizeSlug(generatedContent);
       } else if (fieldType === "seoTitle") {
         let prompt = `Erstelle einen optimierten SEO-Titel für:\nTitel: ${contextTitle}\nBeschreibung: ${contextDescription}`;
         if (aiInstructions?.collectionSeoTitleFormat) {
@@ -266,11 +277,21 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         if (aiInstructions?.collectionHandleInstructions) {
           prompt += `\n\nFormatierungsanweisungen:\n${aiInstructions.collectionHandleInstructions}`;
         } else {
-          prompt += `\n\nDer Slug sollte:\n- Nur Kleinbuchstaben und Bindestriche enthalten\n- Keine Sonderzeichen oder Umlaute haben\n- Kurz und prägnant sein (2-5 Wörter)\n- SEO-optimiert sein`;
+          prompt += `\n\nWICHTIG - Der URL-Slug MUSS diesem Format folgen:`;
+          prompt += `\n- NUR Kleinbuchstaben (a-z)`;
+          prompt += `\n- NUR Ziffern (0-9)`;
+          prompt += `\n- NUR Bindestriche (-) als Trennzeichen`;
+          prompt += `\n- KEINE Leerzeichen, KEINE Unterstriche, KEINE Sonderzeichen`;
+          prompt += `\n- Umlaute MÜSSEN umgewandelt werden (ä→ae, ö→oe, ü→ue, ß→ss)`;
+          prompt += `\n- 2-5 Wörter, durch Bindestriche getrennt`;
+          prompt += `\n\nBeispiele:`;
+          prompt += `\n- "Über Uns" → "ueber-uns"`;
+          prompt += `\n- "Kontakt & Impressum" → "kontakt-impressum"`;
+          prompt += `\n- "Häufige Fragen (FAQ)" → "haeufige-fragen-faq"`;
         }
-        prompt += `\n\nGib nur den formatierten Slug zurück, ohne Erklärungen.`;
+        prompt += `\n\nGib NUR den fertigen URL-Slug zurück, ohne jegliche Erklärungen oder zusätzlichen Text.`;
         formattedContent = await aiService.generateProductTitle(prompt);
-        formattedContent = formattedContent.toLowerCase().trim();
+        formattedContent = sanitizeSlug(formattedContent);
       } else if (fieldType === "seoTitle") {
         let prompt = `Formatiere den folgenden SEO-Titel gemäß den Formatierungsrichtlinien:\n\nAktueller SEO-Titel:\n${currentValue}\n\nKontext - Titel: ${contextTitle}\nBeschreibung: ${contextDescription}`;
         if (aiInstructions?.collectionSeoTitleFormat) {
@@ -414,12 +435,20 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const locale = formData.get("locale") as string;
     const title = formData.get("title") as string;
     const description = formData.get("description") as string;
-    const handle = formData.get("handle") as string;
+    let handle = formData.get("handle") as string;
     const seoTitle = formData.get("seoTitle") as string;
     const metaDescription = formData.get("metaDescription") as string;
     const primaryLocale = formData.get("primaryLocale") as string;
 
     try {
+      // Sanitize handle to ensure it's a valid URL slug
+      if (handle) {
+        handle = sanitizeSlug(handle);
+        if (!handle) {
+          return json({ success: false, error: "Invalid URL slug: Handle must contain at least one alphanumeric character" }, { status: 400 });
+        }
+      }
+
       if (locale !== primaryLocale) {
         // Handle translations
         const translationsInput = [];
