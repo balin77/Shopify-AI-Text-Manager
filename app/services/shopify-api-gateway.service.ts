@@ -29,10 +29,13 @@ export class ShopifyApiGateway {
   private windowStart: number = Date.now();
 
   // Rate limiting configuration
-  private readonly MAX_REQUESTS_PER_SECOND = 2; // Conservative: 2 requests per second
+  // Shopify GraphQL uses cost-based limits (100-1000 points/sec depending on plan)
+  // Simple translation queries cost ~5-15 points each
+  // Conservative approach: 10 requests per second = ~50-150 points/sec (safe for all plans)
+  private readonly MAX_REQUESTS_PER_SECOND = 10;
   private readonly REQUEST_WINDOW = 1000; // 1 second window
   private readonly MAX_RETRIES = 3;
-  private readonly RETRY_DELAY_MS = 2000; // 2 seconds between retries
+  private readonly RETRY_DELAY_MS = 1000; // 1 second between retries (Shopify recommends 1s backoff)
 
   constructor(admin: ShopifyGraphQLClient, shop: string) {
     this.admin = admin;
@@ -145,8 +148,8 @@ export class ShopifyApiGateway {
         }
       }
 
-      // Small delay between requests to be gentle on the API
-      await this.sleep(50);
+      // Small delay between requests (20ms = smooth distribution, ~50 req/sec max)
+      await this.sleep(20);
     }
 
     this.isProcessing = false;
