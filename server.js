@@ -19,61 +19,33 @@ const viteDevServer =
 const app = express();
 
 // Trust proxy - required for Railway/Heroku/etc behind reverse proxy
-// This allows express-rate-limit to correctly identify client IPs
-app.set('trust proxy', 1);
+app.set('trust proxy', true);
 
 app.use(compression());
 
 // http://expressjs.com/en/advanced/best-practice-security.html#at-a-minimum-disable-x-powered-by-header
 app.disable("x-powered-by");
 
-// Security: Set Content Security Policy headers
+// Basic security headers (CSP removed - causes issues with Shopify App Bridge)
 app.use((req, res, next) => {
-  // CSP to prevent XSS attacks
-  res.setHeader(
-    'Content-Security-Policy',
-    "default-src 'self'; " +
-    "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.shopify.com; " +
-    "style-src 'self' 'unsafe-inline' https://cdn.shopify.com; " +
-    "img-src 'self' data: https: blob:; " +
-    "font-src 'self' data: https://cdn.shopify.com; " +
-    "connect-src 'self' https://cdn.shopify.com https://*.myshopify.com; " +
-    "frame-ancestors 'self' https://*.myshopify.com; " +
-    "base-uri 'self'; " +
-    "form-action 'self';"
-  );
-
-  // Additional security headers
   res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
-  res.setHeader('X-XSS-Protection', '1; mode=block');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-
   next();
 });
 
-// General rate limiter: 100 requests per 15 minutes per IP
-const generalLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 100,
-  message: 'Too many requests from this IP, please try again later.',
+// Rate limiter only for specific expensive API routes
+const apiLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 20, // 20 requests per minute
   standardHeaders: true,
   legacyHeaders: false,
-  handler: (req, res) => {
-    res.status(429).json({
-      success: false,
-      error: 'Too many requests. Please try again later.',
-    });
+  skip: (req) => {
+    // Skip rate limiting for auth routes and assets
+    return req.path.startsWith('/auth') ||
+           req.path.startsWith('/assets') ||
+           req.path.startsWith('/_') ||
+           req.path === '/';
   },
-});
-
-// Strict rate limiter for expensive operations: 10 requests per minute
-const strictLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: 10,
-  message: 'Rate limit exceeded for this operation.',
-  standardHeaders: true,
-  legacyHeaders: false,
   handler: (req, res) => {
     res.status(429).json({
       success: false,
@@ -82,13 +54,8 @@ const strictLimiter = rateLimit({
   },
 });
 
-// Apply general rate limiting to all routes
-app.use(generalLimiter);
-
-// Apply strict rate limiting to expensive operations
-app.use('/api/sync-products', strictLimiter);
-app.use('/api/sync-content', strictLimiter);
-app.use('/api/setup-webhooks', strictLimiter);
+// Apply rate limiting only to API routes
+app.use('/api', apiLimiter);
 
 // handle asset requests
 if (viteDevServer) {
