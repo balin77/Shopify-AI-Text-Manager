@@ -193,7 +193,9 @@ export default function TemplatesPage() {
         setOriginalValues({ ...values });
       }
     }
-  }, [selectedItem, currentLanguage, currentGroupId, primaryLocale, loadedTranslations]);
+    // IMPORTANT: Don't add loadedTranslations to dependencies - it causes infinite loop
+    // The second useEffect handles updates when translations are loaded
+  }, [selectedItem, currentLanguage, currentGroupId, primaryLocale]);
 
   // Handle loaded translations from fetcher
   useEffect(() => {
