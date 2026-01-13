@@ -229,6 +229,80 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
   }
 
+  if (action === "formatAIText") {
+    const fieldType = formData.get("fieldType") as string;
+    const currentValue = formData.get("currentValue") as string;
+    const contextTitle = formData.get("contextTitle") as string;
+    const contextDescription = formData.get("contextDescription") as string;
+
+    try {
+      let formattedContent = "";
+
+      if (fieldType === "title") {
+        let prompt = `Formatiere den folgenden Collection-Titel gemäß den Formatierungsrichtlinien:\n\nAktueller Titel:\n${currentValue}`;
+        if (aiInstructions?.collectionTitleFormat) {
+          prompt += `\n\nFormatbeispiel:\n${aiInstructions.collectionTitleFormat}`;
+        }
+        if (aiInstructions?.collectionTitleInstructions) {
+          prompt += `\n\nFormatierungsanweisungen:\n${aiInstructions.collectionTitleInstructions}`;
+        }
+        prompt += `\n\nBehalte den Inhalt und die Kernaussage bei, formatiere aber den Text gemäß den Richtlinien. Gib nur den formatierten Titel zurück, ohne Erklärungen.`;
+        formattedContent = await aiService.generateProductTitle(prompt);
+      } else if (fieldType === "description") {
+        let prompt = `Formatiere die folgende Collection-Beschreibung gemäß den Formatierungsrichtlinien:\n\nAktuelle Beschreibung:\n${currentValue}`;
+        if (aiInstructions?.collectionDescriptionFormat) {
+          prompt += `\n\nFormatbeispiel:\n${aiInstructions.collectionDescriptionFormat}`;
+        }
+        if (aiInstructions?.collectionDescriptionInstructions) {
+          prompt += `\n\nFormatierungsanweisungen:\n${aiInstructions.collectionDescriptionInstructions}`;
+        }
+        prompt += `\n\nBehalte den Inhalt und die Kernaussagen bei, formatiere aber den Text gemäß den Richtlinien (Struktur, HTML-Tags, Überschriften, etc.). Gib nur den formatierten Text zurück, ohne Erklärungen.`;
+        formattedContent = await aiService.generateProductDescription(currentValue, prompt);
+      } else if (fieldType === "handle") {
+        let prompt = `Formatiere den folgenden URL-Slug gemäß den Formatierungsrichtlinien:\n\nAktueller Slug:\n${currentValue}\n\nKontext - Titel: ${contextTitle}`;
+        if (aiInstructions?.collectionHandleFormat) {
+          prompt += `\n\nFormatbeispiel:\n${aiInstructions.collectionHandleFormat}`;
+        }
+        if (aiInstructions?.collectionHandleInstructions) {
+          prompt += `\n\nFormatierungsanweisungen:\n${aiInstructions.collectionHandleInstructions}`;
+        } else {
+          prompt += `\n\nDer Slug sollte:\n- Nur Kleinbuchstaben und Bindestriche enthalten\n- Keine Sonderzeichen oder Umlaute haben\n- Kurz und prägnant sein (2-5 Wörter)\n- SEO-optimiert sein`;
+        }
+        prompt += `\n\nGib nur den formatierten Slug zurück, ohne Erklärungen.`;
+        formattedContent = await aiService.generateProductTitle(prompt);
+        formattedContent = formattedContent.toLowerCase().trim();
+      } else if (fieldType === "seoTitle") {
+        let prompt = `Formatiere den folgenden SEO-Titel gemäß den Formatierungsrichtlinien:\n\nAktueller SEO-Titel:\n${currentValue}\n\nKontext - Titel: ${contextTitle}\nBeschreibung: ${contextDescription}`;
+        if (aiInstructions?.collectionSeoTitleFormat) {
+          prompt += `\n\nFormatbeispiel:\n${aiInstructions.collectionSeoTitleFormat}`;
+        }
+        if (aiInstructions?.collectionSeoTitleInstructions) {
+          prompt += `\n\nFormatierungsanweisungen:\n${aiInstructions.collectionSeoTitleInstructions}`;
+        } else {
+          prompt += `\n\nDer SEO-Titel sollte:\n- Max. 60 Zeichen lang sein\n- Keywords enthalten\n- Zum Klicken anregen`;
+        }
+        prompt += `\n\nBehalte die Kernaussage bei, formatiere aber den Text gemäß den Richtlinien. Gib nur den formatierten SEO-Titel zurück, ohne Erklärungen.`;
+        formattedContent = await aiService.generateProductTitle(prompt);
+      } else if (fieldType === "metaDescription") {
+        let prompt = `Formatiere die folgende Meta-Description gemäß den Formatierungsrichtlinien:\n\nAktuelle Meta-Description:\n${currentValue}\n\nKontext - Titel: ${contextTitle}\nBeschreibung: ${contextDescription}`;
+        if (aiInstructions?.collectionMetaDescFormat) {
+          prompt += `\n\nFormatbeispiel:\n${aiInstructions.collectionMetaDescFormat}`;
+        }
+        if (aiInstructions?.collectionMetaDescInstructions) {
+          prompt += `\n\nFormatierungsanweisungen:\n${aiInstructions.collectionMetaDescInstructions}`;
+        } else {
+          prompt += `\n\nDie Meta-Description sollte:\n- 150-160 Zeichen lang sein\n- Keywords enthalten\n- Zum Klicken anregen`;
+        }
+        prompt += `\n\nBehalte die Kernaussage bei, formatiere aber den Text gemäß den Richtlinien. Gib nur die formatierte Meta-Description als reinen Text zurück, ohne HTML-Tags und ohne Erklärungen.`;
+        formattedContent = await aiService.generateProductTitle(prompt);
+      }
+
+      return json({ success: true, generatedContent: formattedContent, fieldType });
+    } catch (error: any) {
+      return json({ success: false, error: error.message }, { status: 500 });
+    }
+  }
+
   if (action === "translateField") {
     const fieldType = formData.get("fieldType") as string;
     const sourceText = formData.get("sourceText") as string;
@@ -592,6 +666,19 @@ export default function CollectionsPage() {
     );
   };
 
+  const handleFormatAI = (fieldType: string) => {
+    if (!selectedItemId) return;
+    const currentValue = { title: editableTitle, description: editableDescription, handle: editableHandle, seoTitle: editableSeoTitle, metaDescription: editableMetaDescription }[fieldType] || "";
+    if (!currentValue) {
+      showInfoBox("Kein Inhalt zum Formatieren vorhanden", "warning", "Warnung");
+      return;
+    }
+    fetcher.submit(
+      { action: "formatAIText", itemId: selectedItemId, fieldType, currentValue, contextTitle: editableTitle, contextDescription: editableDescription },
+      { method: "POST" }
+    );
+  };
+
   const handleTranslateField = (fieldType: string) => {
     if (!selectedItemId || !selectedItem) return;
     const sourceMap: Record<string, string> = {
@@ -755,6 +842,7 @@ export default function CollectionsPage() {
                   sourceTextAvailable={!!selectedItem?.title}
                   hasFieldMissingTranslations={hasFieldMissingTranslations("title")}
                   onGenerateAI={() => handleGenerateAI("title")}
+                  onFormatAI={() => handleFormatAI("title")}
                   onTranslate={() => handleTranslateField("title")}
                   onTranslateAll={handleTranslateAll}
                   onAcceptSuggestion={() => handleAcceptSuggestion("title")}
@@ -777,6 +865,7 @@ export default function CollectionsPage() {
                   sourceTextAvailable={!!selectedItem?.descriptionHtml}
                   hasFieldMissingTranslations={hasFieldMissingTranslations("description")}
                   onGenerateAI={() => handleGenerateAI("description")}
+                  onFormatAI={() => handleFormatAI("description")}
                   onTranslate={() => handleTranslateField("description")}
                   onTranslateAll={handleTranslateAll}
                   onAcceptSuggestion={() => handleAcceptSuggestion("description")}
@@ -797,6 +886,7 @@ export default function CollectionsPage() {
                   sourceTextAvailable={!!selectedItem?.handle}
                   hasFieldMissingTranslations={hasFieldMissingTranslations("handle")}
                   onGenerateAI={() => handleGenerateAI("handle")}
+                  onFormatAI={() => handleFormatAI("handle")}
                   onTranslate={() => handleTranslateField("handle")}
                   onTranslateAll={handleTranslateAll}
                   onAcceptSuggestion={() => handleAcceptSuggestion("handle")}
@@ -818,6 +908,7 @@ export default function CollectionsPage() {
                   sourceTextAvailable={!!selectedItem?.seo?.title}
                   hasFieldMissingTranslations={hasFieldMissingTranslations("seoTitle")}
                   onGenerateAI={() => handleGenerateAI("seoTitle")}
+                  onFormatAI={() => handleFormatAI("seoTitle")}
                   onTranslate={() => handleTranslateField("seoTitle")}
                   onTranslateAll={handleTranslateAll}
                   onAcceptSuggestion={() => handleAcceptSuggestion("seoTitle")}
@@ -840,6 +931,7 @@ export default function CollectionsPage() {
                   sourceTextAvailable={!!selectedItem?.seo?.description}
                   hasFieldMissingTranslations={hasFieldMissingTranslations("metaDescription")}
                   onGenerateAI={() => handleGenerateAI("metaDescription")}
+                  onFormatAI={() => handleFormatAI("metaDescription")}
                   onTranslate={() => handleTranslateField("metaDescription")}
                   onTranslateAll={handleTranslateAll}
                   onAcceptSuggestion={() => handleAcceptSuggestion("metaDescription")}

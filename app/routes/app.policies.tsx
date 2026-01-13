@@ -168,6 +168,32 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
   }
 
+  if (action === "formatAIText") {
+    const fieldType = formData.get("fieldType") as string;
+    const currentValue = formData.get("currentValue") as string;
+    const contextTitle = formData.get("contextTitle") as string;
+
+    try {
+      let formattedContent = "";
+
+      if (fieldType === "body") {
+        let prompt = `Formatiere den folgenden Richtlinientext gemäß den Formatierungsrichtlinien:\n\nAktueller Text:\n${currentValue}`;
+        if (aiInstructions?.policyDescriptionFormat) {
+          prompt += `\n\nFormatbeispiel:\n${aiInstructions.policyDescriptionFormat}`;
+        }
+        if (aiInstructions?.policyDescriptionInstructions) {
+          prompt += `\n\nFormatierungsanweisungen:\n${aiInstructions.policyDescriptionInstructions}`;
+        }
+        prompt += `\n\nBehalte den Inhalt und die Kernaussagen bei, formatiere aber den Text gemäß den Richtlinien (Struktur, HTML-Tags, Überschriften, etc.). Gib nur den formatierten Text zurück, ohne Erklärungen.`;
+        formattedContent = await aiService.generateProductDescription(currentValue, prompt);
+      }
+
+      return json({ success: true, generatedContent: formattedContent, fieldType });
+    } catch (error: any) {
+      return json({ success: false, error: error.message }, { status: 500 });
+    }
+  }
+
   if (action === "translateField") {
     const fieldType = formData.get("fieldType") as string;
     const sourceText = formData.get("sourceText") as string;
@@ -365,6 +391,19 @@ export default function PoliciesPage() {
     );
   };
 
+  const handleFormatAI = (fieldType: string) => {
+    if (!selectedItemId || !selectedItem) return;
+    const currentValue = editableBody;
+    if (!currentValue) {
+      showInfoBox("Kein Inhalt zum Formatieren vorhanden", "warning", "Warnung");
+      return;
+    }
+    fetcher.submit(
+      { action: "formatAIText", itemId: selectedItemId, fieldType, currentValue, contextTitle: selectedItem.title },
+      { method: "POST" }
+    );
+  };
+
   const handleTranslateField = (fieldType: string) => {
     if (!selectedItemId || !selectedItem) return;
     const sourceText = selectedItem.body || "";
@@ -543,6 +582,7 @@ export default function PoliciesPage() {
                   isLoading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "body"}
                   sourceTextAvailable={!!selectedItem?.body}
                   onGenerateAI={() => handleGenerateAI("body")}
+                  onFormatAI={() => handleFormatAI("body")}
                   onTranslate={() => handleTranslateField("body")}
                   onTranslateAll={handleTranslateAll}
                   onAcceptSuggestion={() => handleAcceptSuggestion("body")}
