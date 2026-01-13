@@ -41,20 +41,21 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       return json({ error: "Group not found" }, { status: 404 });
     }
 
-    // Group translations by resourceId
-    const translationsByResource: Record<string, any[]> = {};
+    // Build a Map for O(1) lookup by resourceId (more efficient than object)
+    const translationsByResource = new Map<string, any[]>();
     for (const trans of themeTranslations) {
-      const key = trans.resourceId;
-      if (!translationsByResource[key]) {
-        translationsByResource[key] = [];
+      const existing = translationsByResource.get(trans.resourceId);
+      if (existing) {
+        existing.push(trans);
+      } else {
+        translationsByResource.set(trans.resourceId, [trans]);
       }
-      translationsByResource[key].push(trans);
     }
 
     // Merge all translatable content from all resources in this group
     const allContent = themeGroups.flatMap((group) => group.translatableContent as any[]);
     const allTranslations = themeGroups.flatMap((group) =>
-      translationsByResource[group.resourceId] || []
+      translationsByResource.get(group.resourceId) || []
     );
 
     // Get group metadata from first item

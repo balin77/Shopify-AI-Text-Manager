@@ -7,6 +7,7 @@
   "scripts": {
     "build": "remix vite:build",
     "postinstall": "prisma generate || true",
+    "postdeploy": "npm run prisma:migrate",
     "dev": "remix vite:dev",
     "start": "node scripts/validate-env.js && node start.js",
     "start:migrate": "node scripts/migrate-baseline.js && npm run start",

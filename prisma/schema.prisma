@@ -353,5 +353,6 @@ model ThemeTranslation {
 
   @@unique([shop, resourceId, groupId, key, locale])
   @@index([shop, resourceId, groupId])
+  @@index([shop, groupId, locale])  // For efficient locale-specific group queries
   @@index([locale])
 }

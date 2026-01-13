@@ -555,11 +555,12 @@ export class BackgroundSyncService {
               const groupName = firstItem._groupName;
               const groupIcon = firstItem._groupIcon;
 
-              // Fetch translations for this resource
+              // Fetch translations for all locales in parallel
               const allTranslations = [];
               const seenKeys = new Set<string>(); // Track seen key-locale combinations
 
-              for (const locale of nonPrimaryLocales) {
+              // Parallelize locale queries
+              const translationPromises = nonPrimaryLocales.map(async (locale: any) => {
                 try {
                   const translationsResponse = await this.admin.graphql(
                     `#graphql
@@ -577,20 +578,26 @@ export class BackgroundSyncService {
                   );
 
                   const translationsData = await translationsResponse.json();
-                  const translations = translationsData.data?.translatableResource?.translations || [];
-
-                  // Filter translations for this group only and deduplicate
-                  for (const t of translations) {
-                    if (items.some(item => item.key === t.key)) {
-                      const uniqueKey = `${t.key}::${t.locale}`;
-                      if (!seenKeys.has(uniqueKey)) {
-                        seenKeys.add(uniqueKey);
-                        allTranslations.push(t);
-                      }
-                    }
-                  }
+                  return translationsData.data?.translatableResource?.translations || [];
                 } catch (error) {
                   console.error(`[BackgroundSync] Error fetching theme translations for locale ${locale.locale}:`, error);
+                  return [];
+                }
+              });
+
+              // Wait for all locale queries to complete
+              const allLocaleTranslations = await Promise.all(translationPromises);
+
+              // Flatten and deduplicate translations for this group
+              for (const translations of allLocaleTranslations) {
+                for (const t of translations) {
+                  if (items.some(item => item.key === t.key)) {
+                    const uniqueKey = `${t.key}::${t.locale}`;
+                    if (!seenKeys.has(uniqueKey)) {
+                      seenKeys.add(uniqueKey);
+                      allTranslations.push(t);
+                    }
+                  }
                 }
               }
 
