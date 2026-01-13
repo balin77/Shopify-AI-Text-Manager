@@ -16,3 +16,7 @@ prisma/*.db-journal
 
 # Shopify
 .shopify/
+
+# Local development files
+.claude/settings.local.json
+check-translations.cjs
