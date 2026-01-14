@@ -47,10 +47,10 @@ interface SettingsAITabProps {
 
 export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: SettingsAITabProps) {
   const AI_PROVIDERS = [
-    { label: t.settings.providers.huggingface, value: "huggingface" },
+    { label: t.settings.providers.openai, value: "openai" },
     { label: t.settings.providers.gemini, value: "gemini" },
     { label: t.settings.providers.claude, value: "claude" },
-    { label: t.settings.providers.openai, value: "openai" },
+    { label: t.settings.providers.huggingface, value: "huggingface" },
     { label: t.settings.providers.grok, value: "grok" },
     { label: t.settings.providers.deepseek, value: "deepseek" },
   ];
@@ -238,19 +238,19 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
               {t.settings.apiKeys}
             </Text>
 
-            {/* Hugging Face */}
+            {/* OpenAI */}
             <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
               <BlockStack gap="400">
-                <Text as="h3" variant="headingMd">Hugging Face</Text>
+                <Text as="h3" variant="headingMd">OpenAI</Text>
                 <TextField
                   label="API Key"
-                  value={huggingfaceKey}
-                  onChange={setHuggingfaceKey}
-                  type={showHuggingfaceKey ? "text" : "password"}
+                  value={openaiKey}
+                  onChange={setOpenaiKey}
+                  type={showOpenaiKey ? "text" : "password"}
                   autoComplete="off"
                   suffix={
                     <button
-                      onClick={() => setShowHuggingfaceKey(!showHuggingfaceKey)}
+                      onClick={() => setShowOpenaiKey(!showOpenaiKey)}
                       style={{
                         background: "none",
                         border: "none",
@@ -261,19 +261,19 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                       }}
                       type="button"
                     >
-                      <Icon source={showHuggingfaceKey ? HideIcon : ViewIcon} />
+                      <Icon source={showOpenaiKey ? HideIcon : ViewIcon} />
                     </button>
                   }
                   helpText={
                     <span>
-                      {t.settings.huggingfaceHelp}{" "}
+                      {t.settings.openaiHelp}{" "}
                       <a
-                        href="https://huggingface.co/settings/tokens"
+                        href="https://platform.openai.com/api-keys"
                         target="_blank"
                         rel="noopener noreferrer"
                         style={{ color: "#008060" }}
                       >
-                        Hugging Face
+                        OpenAI Platform
                       </a>
                     </span>
                   }
@@ -282,8 +282,8 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                   <div style={{ flex: 1 }}>
                     <TextField
                       label="Max Tokens / Minute"
-                      value={hfMaxTokensPerMinute}
-                      onChange={setHfMaxTokensPerMinute}
+                      value={openaiMaxTokensPerMinute}
+                      onChange={setOpenaiMaxTokensPerMinute}
                       type="number"
                       autoComplete="off"
                     />
@@ -291,8 +291,8 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                   <div style={{ flex: 1 }}>
                     <TextField
                       label="Max Requests / Minute"
-                      value={hfMaxRequestsPerMinute}
-                      onChange={setHfMaxRequestsPerMinute}
+                      value={openaiMaxRequestsPerMinute}
+                      onChange={setOpenaiMaxRequestsPerMinute}
                       type="number"
                       autoComplete="off"
                     />
@@ -427,19 +427,19 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
               </BlockStack>
             </div>
 
-            {/* OpenAI */}
+            {/* Hugging Face */}
             <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
               <BlockStack gap="400">
-                <Text as="h3" variant="headingMd">OpenAI</Text>
+                <Text as="h3" variant="headingMd">Hugging Face</Text>
                 <TextField
                   label="API Key"
-                  value={openaiKey}
-                  onChange={setOpenaiKey}
-                  type={showOpenaiKey ? "text" : "password"}
+                  value={huggingfaceKey}
+                  onChange={setHuggingfaceKey}
+                  type={showHuggingfaceKey ? "text" : "password"}
                   autoComplete="off"
                   suffix={
                     <button
-                      onClick={() => setShowOpenaiKey(!showOpenaiKey)}
+                      onClick={() => setShowHuggingfaceKey(!showHuggingfaceKey)}
                       style={{
                         background: "none",
                         border: "none",
@@ -450,19 +450,19 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                       }}
                       type="button"
                     >
-                      <Icon source={showOpenaiKey ? HideIcon : ViewIcon} />
+                      <Icon source={showHuggingfaceKey ? HideIcon : ViewIcon} />
                     </button>
                   }
                   helpText={
                     <span>
-                      {t.settings.openaiHelp}{" "}
+                      {t.settings.huggingfaceHelp}{" "}
                       <a
-                        href="https://platform.openai.com/api-keys"
+                        href="https://huggingface.co/settings/tokens"
                         target="_blank"
                         rel="noopener noreferrer"
                         style={{ color: "#008060" }}
                       >
-                        OpenAI Platform
+                        Hugging Face
                       </a>
                     </span>
                   }
@@ -471,8 +471,8 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                   <div style={{ flex: 1 }}>
                     <TextField
                       label="Max Tokens / Minute"
-                      value={openaiMaxTokensPerMinute}
-                      onChange={setOpenaiMaxTokensPerMinute}
+                      value={hfMaxTokensPerMinute}
+                      onChange={setHfMaxTokensPerMinute}
                       type="number"
                       autoComplete="off"
                     />
@@ -480,8 +480,8 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                   <div style={{ flex: 1 }}>
                     <TextField
                       label="Max Requests / Minute"
-                      value={openaiMaxRequestsPerMinute}
-                      onChange={setOpenaiMaxRequestsPerMinute}
+                      value={hfMaxRequestsPerMinute}
+                      onChange={setHfMaxRequestsPerMinute}
                       type="number"
                       autoComplete="off"
                     />
