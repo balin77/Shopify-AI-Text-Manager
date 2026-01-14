@@ -16,7 +16,7 @@ export const de = {
     // Plan limits
     productLimitReached: "Produktlimit erreicht ({count}/{max})",
     upgradeToPlan: "Upgrade auf {plan} Plan, um mehr Produkte hinzuzufügen",
-    upgradeForMoreProducts: "Upgrade auf Basic für 100 Produkte",
+    upgradeForMoreProducts: "Upgrade für mehr Produkte (Basic: 50, Pro: 150, Max: unbegrenzt)",
     onlyFeaturedImageAvailable: "Nur das Hauptbild ist im Free-Plan verfügbar. Upgrade auf Basic, um auf alle Produktbilder zuzugreifen.",
     additionalImagesLocked: "Zusätzliche Bilder",
     availableInBasicPlan: "Verfügbar im Basic-Plan",
@@ -155,6 +155,8 @@ export const de = {
     discard: "Verwerfen",
     save: "Speichern",
     saveSuccess: "Erfolgreich gespeichert!",
+    upgradeRequired: "Upgrade erforderlich",
+    upgradeToAccessFeature: "Upgrade auf {plan}, um auf dieses Feature zuzugreifen",
   },
 
   // Settings Page
@@ -165,9 +167,9 @@ export const de = {
     aiInstructions: "KI-Anweisungen",
     appLanguage: "App-Sprache",
     // Plan restrictions
-    aiInstructionsReadOnly: "KI-Anweisungen sind im Free-Plan schreibgeschützt",
-    aiInstructionsReadOnlyDescription: "Upgrade auf Basic-Plan, um KI-Generierungsanweisungen für Ihre Produkte und Inhalte anzupassen.",
-    defaultInstructionsReadOnly: "Standard-KI-Anweisungen (schreibgeschützt im Free-Plan)",
+    aiInstructionsReadOnly: "KI-Anweisungen sind im Free- und Basic-Plan schreibgeschützt",
+    aiInstructionsReadOnlyDescription: "Upgrade auf Pro-Plan, um KI-Generierungsanweisungen für Ihre Produkte und Inhalte anzupassen.",
+    defaultInstructionsReadOnly: "Standard-KI-Anweisungen (schreibgeschützt im Free- und Basic-Plan)",
     unsavedChangesMessage: "Sie haben ungespeicherte Änderungen. Möchten Sie wirklich fortfahren? Ihre Änderungen gehen verloren.",
     resetAllFields: "Alle Felder zurücksetzen",
     aiInstructionsDescription: "Konfigurieren Sie, wie die KI Ihre Inhalte generieren soll. Diese Einstellungen werden auf alle KI-generierten Texte angewendet.",
@@ -218,7 +220,7 @@ export const de = {
     errors: "Fehler:",
     // AI Instructions
     aiInstructionsTitle: "KI-Anweisungen für Produktfelder",
-    aiInstructionsDescription: "Geben Sie für jedes Feld ein Formatbeispiel und spezifische Anweisungen an, an denen sich die KI orientieren soll.",
+    aiInstructionsFieldsDescription: "Geben Sie für jedes Feld ein Formatbeispiel und spezifische Anweisungen an, an denen sich die KI orientieren soll.",
     formatExample: "Formatbeispiel",
     instructions: "Anweisungen",
     fieldTitle: "Titel",

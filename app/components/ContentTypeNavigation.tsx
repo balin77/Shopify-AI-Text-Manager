@@ -9,6 +9,7 @@ import { InlineStack, Text, Tooltip } from "@shopify/polaris";
 import { useI18n } from "../contexts/I18nContext";
 import { usePlan } from "../contexts/PlanContext";
 import { type ContentType as PlanContentType } from "../config/plans";
+import { getPlanDisplayName as getPlanDisplayNameUtil } from "../utils/planUtils";
 
 type ContentType = "collections" | "blogs" | "pages" | "policies" | "menus" | "templates" | "metaobjects" | "shopMetadata";
 
@@ -26,7 +27,7 @@ export function ContentTypeNavigation() {
   const navigate = useNavigate();
   const location = useLocation();
   const { t } = useI18n();
-  const { canAccessContentType, getPlanDisplayName, getNextPlanUpgrade } = usePlan();
+  const { canAccessContentType, getNextPlanUpgrade } = usePlan();
 
   const contentTypes: ContentTypeConfig[] = [
     { id: "collections", label: t.content.collections, icon: "📂", description: t.content.collectionsDescription, path: "/app/collections", planContentType: "collections" },
@@ -108,9 +109,10 @@ export function ContentTypeNavigation() {
 
             // Wrap with tooltip if locked by plan
             if (!hasAccess && !type.comingSoon && nextPlan) {
-              const nextPlanName = nextPlan.charAt(0).toUpperCase() + nextPlan.slice(1);
+              const nextPlanName = getPlanDisplayNameUtil(nextPlan);
+              const tooltipText = t.content.upgradeToAccessFeature.replace('{plan}', nextPlanName);
               return (
-                <Tooltip key={type.id} content={`Available in ${nextPlanName} plan`}>
+                <Tooltip key={type.id} content={tooltipText}>
                   {button}
                 </Tooltip>
               );

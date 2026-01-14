@@ -354,6 +354,8 @@ export default function SettingsPage() {
   const { t } = useI18n();
   const { showInfoBox } = useInfoBox();
   const isFreePlan = subscriptionPlan === "free";
+  const isBasicPlan = subscriptionPlan === "basic";
+  const aiInstructionsReadOnly = isFreePlan || isBasicPlan;
 
   const [selectedSection, setSelectedSection] = useState<"setup" | "ai" | "instructions" | "language">("setup");
   const [hasAIChanges, setHasAIChanges] = useState(false);
@@ -509,7 +511,7 @@ export default function SettingsPage() {
               {/* AI Instructions */}
               {selectedSection === "instructions" && (
                 <>
-                  {isFreePlan && (
+                  {aiInstructionsReadOnly && (
                     <Banner tone="info">
                       <Text as="p" fontWeight="semibold">
                         {t.settings.aiInstructionsReadOnly}
@@ -522,7 +524,7 @@ export default function SettingsPage() {
                   <AIInstructionsTabs
                     instructions={instructions}
                     fetcher={fetcher}
-                    readOnly={isFreePlan}
+                    readOnly={aiInstructionsReadOnly}
                     onHasChangesChange={setHasInstructionsChanges}
                   />
                 </>

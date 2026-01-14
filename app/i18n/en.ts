@@ -18,7 +18,7 @@ export const en: Translation = {
     // Plan limits
     productLimitReached: "Product limit reached ({count}/{max})",
     upgradeToPlan: "Upgrade to {plan} plan to add more products",
-    upgradeForMoreProducts: "Upgrade to Basic for 100 products",
+    upgradeForMoreProducts: "Upgrade for more products (Basic: 50, Pro: 150, Max: unlimited)",
     onlyFeaturedImageAvailable: "Only the featured image is available in the Free plan. Upgrade to Basic to access all product images.",
     additionalImagesLocked: "Additional images",
     availableInBasicPlan: "Available in Basic plan",
@@ -157,6 +157,8 @@ export const en: Translation = {
     discard: "Discard",
     save: "Save",
     saveSuccess: "Successfully saved!",
+    upgradeRequired: "Upgrade required",
+    upgradeToAccessFeature: "Upgrade to {plan} to access this feature",
   },
 
   // Settings Page
@@ -167,9 +169,9 @@ export const en: Translation = {
     aiInstructions: "AI Instructions",
     appLanguage: "App Language",
     // Plan restrictions
-    aiInstructionsReadOnly: "AI Instructions are read-only in the Free plan",
-    aiInstructionsReadOnlyDescription: "Upgrade to Basic plan to customize AI generation instructions for your products and content.",
-    defaultInstructionsReadOnly: "Default AI Instructions (read-only in Free plan)",
+    aiInstructionsReadOnly: "AI Instructions are read-only in the Free and Basic plans",
+    aiInstructionsReadOnlyDescription: "Upgrade to Pro plan to customize AI generation instructions for your products and content.",
+    defaultInstructionsReadOnly: "Default AI Instructions (read-only in Free and Basic plans)",
     unsavedChangesMessage: "You have unsaved changes. Do you really want to continue? Your changes will be lost.",
     resetAllFields: "Reset all fields",
     aiInstructionsDescription: "Configure how AI should generate your content. These settings apply to all AI-generated texts.",
@@ -220,7 +222,7 @@ export const en: Translation = {
     errors: "Errors:",
     // AI Instructions
     aiInstructionsTitle: "AI Instructions for Product Fields",
-    aiInstructionsDescription: "Provide a format example and specific instructions for each field that the AI should follow.",
+    aiInstructionsFieldsDescription: "Provide a format example and specific instructions for each field that the AI should follow.",
     formatExample: "Format Example",
     instructions: "Instructions",
     fieldTitle: "Title",
