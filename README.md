@@ -1074,6 +1074,17 @@ railway logs | grep "ContentSync"
 [ContentSync] ✓ Saved X translations to DB
 ```
 
+## 📚 Weitere Dokumentation
+
+Detaillierte Dokumentationen findest du im [docs/](docs/) Ordner:
+
+- **[Prisma Migration Guide](docs/PRISMA_MIGRATION_GUIDE.md)** - Datenbank-Migrationen auf Railway
+- **[Webhook Setup Guide](docs/WEBHOOK-SETUP-GUIDE.md)** - Einrichtung des Webhook-Systems
+- **[Plan System](docs/PLAN_SYSTEM.md)** - Subscription-Plan-System
+- **[Database Maintenance](docs/DATABASE_MAINTENANCE.md)** - Datenbank-Wartung
+- **[Security Improvements](docs/SECURITY_IMPROVEMENTS.md)** - Sicherheitsverbesserungen
+- **[Shopify Content Types](docs/SHOPIFY_TRANSLATABLE_CONTENT_TYPES.md)** - Referenz aller Content-Types
+
 ## 📄 Lizenz
 
 ISC

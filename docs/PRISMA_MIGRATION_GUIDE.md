@@ -11,10 +11,22 @@
 5. [Testing](#testing)
 6. [Troubleshooting](#troubleshooting)
 7. [Best Practices](#best-practices)
+8. [Projektstruktur](#projektstruktur)
+9. [Changelog](#changelog)
 
 ---
 
 ## Schnellanleitung
+
+### 🚀 Quick Start: Aktuelle Migration deployen
+
+**Railway Pre-deploy Command setzen:**
+
+```bash
+node scripts/run-migration.js
+```
+
+**Wo:** Railway Dashboard → Settings → Deploy → Pre-deploy Command
 
 ### Für eine neue Migration:
 
@@ -47,6 +59,18 @@ node scripts/run-migration.js
 - ✅ Perfekt für Datenbank-Migrationen
 - ✅ Bei Fehler wird Deployment abgebrochen (sicher!)
 - ✅ Logs sind sichtbar im Railway Dashboard
+
+### ⚠️ Was NICHT funktioniert
+
+Railway erlaubt **nur** Pre-deploy Commands für Migrationen.
+
+❌ **Funktioniert NICHT:**
+- Custom Start Commands
+- `start:railway` npm script
+- Post-deploy Hooks
+
+✅ **Funktioniert:**
+- Pre-deploy Command: `node scripts/run-migration.js`
 
 ---
 
@@ -162,12 +186,29 @@ main().catch((error) => {
 });
 ```
 
+### ES Modules Syntax verwenden!
+
+Da `package.json` `"type": "module"` hat, **MÜSSEN** alle Scripts ESM-Syntax verwenden:
+
+```javascript
+// ✅ Richtig
+import fs from 'fs';
+import { execSync } from 'child_process';
+
+// ❌ Falsch
+const fs = require('fs');
+const { execSync } = require('child_process');
+```
+
 ### Script in package.json registrieren
 
 ```json
 {
   "scripts": {
-    "migrate": "node scripts/run-migration.js"
+    "migrate": "node scripts/run-migration.js",
+    "prisma:migrate:predeploy": "node scripts/run-migration.js",
+    "prisma:generate": "npx prisma generate",
+    "prisma:push": "npx prisma db push"
   }
 }
 ```
@@ -416,6 +457,21 @@ if (isProduction) {
 
 ---
 
+## Projektstruktur
+
+```
+├── prisma/
+│   ├── schema.prisma                    # Prisma Schema
+│   └── migrations/
+│       └── *.sql                        # SQL Migration Dateien
+├── scripts/
+│   └── run-migration.js                 # Migration Runner (ESM!)
+├── PRISMA_MIGRATION_GUIDE.md           # Dieser Guide
+└── package.json                        # npm scripts
+```
+
+---
+
 ## Checkliste für neue Migration
 
 - [ ] **Schema aktualisiert** (`prisma/schema.prisma`)
@@ -540,6 +596,45 @@ git push
 
 ---
 
+## 🔧 Verfügbare npm Scripts
+
+```bash
+# Migration ausführen (für Pre-deploy)
+npm run migrate
+npm run prisma:migrate:predeploy
+
+# Prisma Client generieren
+npm run prisma:generate
+
+# Schema zu DB pushen (Development)
+npm run prisma:push
+
+# Alte Migration (Baseline)
+npm run prisma:migrate
+```
+
+---
+
+## 📊 Changelog
+
+### Letzte Migration: 2025-01-13
+
+**Was wurde geändert:**
+- ✅ Grok & DeepSeek API Keys hinzugefügt
+- ✅ Entity-spezifische AI Instructions (Products, Collections, Blogs, Pages, Policies)
+- ✅ Alte generische Felder zu product-spezifischen Feldern umbenannt
+
+**SQL-Datei:** `prisma/migrations/add_entity_specific_ai_instructions.sql`
+
+**Status:** ✅ In Production deployed
+
+### 2025-01-13: Entity-Specific Instructions & Grok/DeepSeek
+- Added 54 new columns to AIInstructions table
+- Added grokApiKey and deepseekApiKey to AISettings
+- Migration is idempotent (can run multiple times safely)
+
+---
+
 ## Support & Weitere Ressourcen
 
 ### Prisma Dokumentation
@@ -558,5 +653,5 @@ git push
 ---
 
 **Erstellt:** 2025-01-13
-**Letztes Update:** 2025-01-13
-**Version:** 1.0
+**Letztes Update:** 2026-01-14
+**Version:** 2.0 (Zusammengeführt mit README_MIGRATIONS.md)

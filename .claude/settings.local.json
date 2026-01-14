@@ -36,7 +36,17 @@
       "Bash(railway login:*)",
       "Bash(tee:*)",
       "Bash(git diff:*)",
-      "Bash(git fetch:*)"
+      "Bash(git fetch:*)",
+      "Bash(git branch:*)",
+      "Bash(git filter-repo:*)",
+      "Bash(git filter-branch --force --index-filter \"git ls-files -s | sed \"\"s/\\t\"\"\"*RAILWAY-DEPLOYMENT.md/t/\"\")",
+      "Bash(GIT_INDEX_FILE=$GIT_INDEX_FILE.new git update-index:*)",
+      "Bash(java -jar bfg.jar:*)",
+      "Bash(git reflog:*)",
+      "Bash(git gc:*)",
+      "Bash(curl:*)",
+      "Bash(xargs -I {} git show {}:SHOPIFY-APP-MIGRATION.md)",
+      "Bash(xargs -I {} git show {}:RAILWAY-DEPLOYMENT.md)"
     ],
     "deny": [],
     "ask": []
