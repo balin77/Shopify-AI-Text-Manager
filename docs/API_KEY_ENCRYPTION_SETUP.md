@@ -90,27 +90,51 @@ environment:
   - ENCRYPTION_KEY=a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef123456
 ```
 
-### 3. Migrate Existing API Keys (Einmalig)
+### 3. Migrate Existing API Keys
 
 ⚠️ **WICHTIG:** Diese Migration ist **KEINE Prisma/Schema Migration**!
 
 Die Datenbank-Struktur ändert sich nicht. Wir verschlüsseln nur den **Inhalt** der bestehenden API Keys.
 
-**Backup your database first!**
+#### Option A: Automatisch bei jedem Deploy (Empfohlen)
+
+Die Migration wird automatisch beim Railway-Deployment ausgeführt.
+
+**Railway Pre-deploy Command setzen:**
+
+1. Railway Dashboard → Settings → Deploy
+2. Pre-deploy Command:
+   ```bash
+   node scripts/run-all-migrations.js
+   ```
+3. Save Changes
+
+**Vorteile:**
+- ✅ Läuft automatisch bei jedem Deploy
+- ✅ Idempotent (kann mehrfach laufen)
+- ✅ Keine manuelle Aktion nötig
+
+#### Option B: Manuell im Railway Container
 
 ```bash
-# Backup Datenbank (PostgreSQL Beispiel)
-pg_dump $DATABASE_URL > backup_$(date +%Y%m%d_%H%M%S).sql
+# 1. In Railway Shell einloggen
+railway shell
 
-# Run Data Migration (verschlüsselt bestehende Keys)
+# 2. Migration ausführen
 npx tsx scripts/migrate-encrypt-api-keys.ts
 ```
 
-**Alternative: Manuell über Railway**
+#### Option C: Lokal mit Public DATABASE_URL
 
 ```bash
-# Falls du tsx nicht lokal installiert hast
-railway run npx tsx scripts/migrate-encrypt-api-keys.ts
+# 1. Hole DATABASE_URL
+railway variables get DATABASE_URL
+
+# 2. Temporär in .env setzen (mit PUBLIC URL)
+DATABASE_URL=postgresql://postgres:...@containers-us-west-xxx.railway.app:5432/railway
+
+# 3. Migration ausführen
+npx tsx scripts/migrate-encrypt-api-keys.ts
 ```
 
 **Was passiert:**
