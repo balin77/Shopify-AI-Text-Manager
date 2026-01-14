@@ -11,7 +11,9 @@ interface NavigationHeightContextType {
 const NavigationHeightContext = createContext<NavigationHeightContextType | undefined>(undefined);
 
 export function NavigationHeightProvider({ children }: { children: ReactNode }) {
-  const [mainNavHeight, setMainNavHeight] = useState(0);
+  // Use reasonable defaults that match approximate SSR heights to prevent hydration errors
+  // These will be updated to actual values once components mount on the client
+  const [mainNavHeight, setMainNavHeight] = useState(73);
   const [contentNavHeight, setContentNavHeight] = useState(0);
 
   const getTotalNavHeight = () => mainNavHeight + contentNavHeight;
@@ -33,8 +35,17 @@ export function NavigationHeightProvider({ children }: { children: ReactNode }) 
 
 export function useNavigationHeight() {
   const context = useContext(NavigationHeightContext);
+
+  // Provide safe fallback values if context is not available (e.g., during SSR)
   if (context === undefined) {
-    throw new Error("useNavigationHeight must be used within a NavigationHeightProvider");
+    return {
+      mainNavHeight: 73,
+      contentNavHeight: 0,
+      setMainNavHeight: () => {},
+      setContentNavHeight: () => {},
+      getTotalNavHeight: () => 73,
+    };
   }
+
   return context;
 }
