@@ -59,7 +59,7 @@ export function ContentTypeNavigation() {
   return (
     <>
       {/* Fixed Navigation */}
-      <div style={{ borderBottom: "1px solid #e1e3e5", background: "white", padding: "1rem 1rem 1rem 1rem", paddingTop: "1.5rem", position: "fixed", top: "73px", left: 0, right: 0, zIndex: 999 }}>
+      <div style={{ borderBottom: "1px solid #e1e3e5", background: "white", padding: "1rem 1rem 1rem 1rem", paddingTop: "1.5rem", position: "fixed", top: "73px", left: 0, right: 0, zIndex: 999, overflowX: "auto" }}>
         <InlineStack gap="300">
           {contentTypes.map((type) => {
             const hasAccess = canAccessContentType(type.planContentType);
