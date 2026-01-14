@@ -1,7 +1,7 @@
 import { Button, Tooltip } from "@shopify/polaris";
 import { RefreshIcon } from "@shopify/polaris-icons";
 import { useState, useEffect } from "react";
-import { useFetcher } from "@remix-run/react";
+import { useFetcher, useRevalidator } from "@remix-run/react";
 
 interface ReloadButtonProps {
   resourceId: string;
@@ -18,6 +18,7 @@ export function ReloadButton({
 }: ReloadButtonProps) {
   const [isLoading, setIsLoading] = useState(false);
   const fetcher = useFetcher();
+  const revalidator = useRevalidator();
 
   // Monitor fetcher state
   useEffect(() => {
@@ -26,17 +27,18 @@ export function ReloadButton({
 
       const data = fetcher.data as any;
       if (data.success) {
-        // Success - reload page to show fresh data
+        // Success - revalidate to fetch fresh data without full page reload
+        revalidator.revalidate();
+
         if (onReloadComplete) {
           onReloadComplete();
         }
-        window.location.reload();
       } else {
         // Error
         alert(`Fehler beim Neuladen: ${data.error || "Unbekannter Fehler"}`);
       }
     }
-  }, [fetcher.state, fetcher.data, isLoading, onReloadComplete]);
+  }, [fetcher.state, fetcher.data, isLoading, onReloadComplete, revalidator]);
 
   const handleReload = () => {
     if (isLoading) return;
