@@ -82,6 +82,35 @@ export function ProductList({
     }
   };
 
+  // Pagination component
+  const PaginationControls = () => (
+    <div style={{ padding: "1rem", borderTop: "1px solid #e1e3e5", flexShrink: 0 }}>
+      <InlineStack align="space-between" blockAlign="center">
+        <Text as="p" variant="bodySm" tone="subdued">
+          {startIndex + 1}-{Math.min(startIndex + productsPerPage, filteredProducts.length)} {paginationOf}{" "}
+          {filteredProducts.length}
+        </Text>
+        <InlineStack gap="200">
+          <Button
+            icon={ChevronLeftIcon}
+            onClick={() => setCurrentPage(currentPage - 1)}
+            disabled={currentPage === 1}
+            accessibilityLabel={paginationPrevious}
+          />
+          <Text as="span" variant="bodySm">
+            {currentPage} / {totalPages}
+          </Text>
+          <Button
+            icon={ChevronRightIcon}
+            onClick={() => setCurrentPage(currentPage + 1)}
+            disabled={currentPage === totalPages}
+            accessibilityLabel={paginationNext}
+          />
+        </InlineStack>
+      </InlineStack>
+    </div>
+  );
+
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
       <Card padding="0">
@@ -104,9 +133,30 @@ export function ProductList({
 
       <div style={{ padding: "1rem", borderBottom: "1px solid #e1e3e5", flexShrink: 0 }}>
         <BlockStack gap="300">
-          <Text as="h2" variant="headingMd">
-            {countLabel} ({filteredProducts.length})
-          </Text>
+          <InlineStack align="space-between" blockAlign="center">
+            <Text as="h2" variant="headingMd">
+              {countLabel} ({filteredProducts.length})
+            </Text>
+            {totalPages > 1 && (
+              <InlineStack gap="200">
+                <Button
+                  icon={ChevronLeftIcon}
+                  onClick={() => setCurrentPage(currentPage - 1)}
+                  disabled={currentPage === 1}
+                  accessibilityLabel={paginationPrevious}
+                />
+                <Text as="span" variant="bodySm">
+                  {currentPage} / {totalPages}
+                </Text>
+                <Button
+                  icon={ChevronRightIcon}
+                  onClick={() => setCurrentPage(currentPage + 1)}
+                  disabled={currentPage === totalPages}
+                  accessibilityLabel={paginationNext}
+                />
+              </InlineStack>
+            )}
+          </InlineStack>
           <div style={{ position: "relative" }}>
             <div
               style={{
@@ -139,7 +189,7 @@ export function ProductList({
         </BlockStack>
       </div>
 
-      <div style={{ flex: 1, overflowY: "auto" }}>
+      <div style={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
         <ResourceList
           resourceName={resourceName}
           items={paginatedProducts}
@@ -229,33 +279,7 @@ export function ProductList({
         />
       </div>
 
-      {totalPages > 1 && (
-        <div style={{ padding: "1rem", borderTop: "1px solid #e1e3e5", flexShrink: 0 }}>
-          <InlineStack align="space-between" blockAlign="center">
-            <Text as="p" variant="bodySm" tone="subdued">
-              {startIndex + 1}-{Math.min(startIndex + productsPerPage, filteredProducts.length)} {paginationOf}{" "}
-              {filteredProducts.length}
-            </Text>
-            <InlineStack gap="200">
-              <Button
-                icon={ChevronLeftIcon}
-                onClick={() => setCurrentPage(currentPage - 1)}
-                disabled={currentPage === 1}
-                accessibilityLabel={paginationPrevious}
-              />
-              <Text as="span" variant="bodySm">
-                {currentPage} / {totalPages}
-              </Text>
-              <Button
-                icon={ChevronRightIcon}
-                onClick={() => setCurrentPage(currentPage + 1)}
-                disabled={currentPage === totalPages}
-                accessibilityLabel={paginationNext}
-              />
-            </InlineStack>
-          </InlineStack>
-        </div>
-      )}
+      {totalPages > 1 && <PaginationControls />}
       </Card>
     </div>
   );
