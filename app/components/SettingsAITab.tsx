@@ -235,7 +235,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                       }}
                       type="button"
                     >
-                      <Icon source={showHuggingfaceKey ? ViewIcon : HideIcon} />
+                      <Icon source={showHuggingfaceKey ? HideIcon : ViewIcon} />
                     </button>
                   }
                   helpText={
@@ -298,7 +298,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                       }}
                       type="button"
                     >
-                      <Icon source={showGeminiKey ? ViewIcon : HideIcon} />
+                      <Icon source={showGeminiKey ? HideIcon : ViewIcon} />
                     </button>
                   }
                   helpText={
@@ -361,7 +361,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                       }}
                       type="button"
                     >
-                      <Icon source={showClaudeKey ? ViewIcon : HideIcon} />
+                      <Icon source={showClaudeKey ? HideIcon : ViewIcon} />
                     </button>
                   }
                   helpText={
@@ -424,7 +424,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                       }}
                       type="button"
                     >
-                      <Icon source={showOpenaiKey ? ViewIcon : HideIcon} />
+                      <Icon source={showOpenaiKey ? HideIcon : ViewIcon} />
                     </button>
                   }
                   helpText={
@@ -487,7 +487,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                       }}
                       type="button"
                     >
-                      <Icon source={showGrokKey ? ViewIcon : HideIcon} />
+                      <Icon source={showGrokKey ? HideIcon : ViewIcon} />
                     </button>
                   }
                   helpText={
@@ -550,7 +550,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                       }}
                       type="button"
                     >
-                      <Icon source={showDeepseekKey ? ViewIcon : HideIcon} />
+                      <Icon source={showDeepseekKey ? HideIcon : ViewIcon} />
                     </button>
                   }
                   helpText={
