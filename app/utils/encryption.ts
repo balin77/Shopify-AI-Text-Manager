@@ -371,3 +371,55 @@ export function decryptToken(encryptedToken: string | null | undefined): string 
 
   return decrypt(trimmed);
 }
+
+// ============================================================================
+// Webhook Payload Encryption
+// ============================================================================
+
+/**
+ * Safely encrypt webhook payload data
+ *
+ * @param payload - The webhook payload to encrypt (can be null/undefined)
+ * @returns {string | null} Encrypted payload or null
+ *
+ * @example
+ * ```typescript
+ * const encrypted = encryptPayload(JSON.stringify(webhookData));
+ * const decrypted = decryptPayload(encrypted); // Original JSON string
+ * ```
+ */
+export function encryptPayload(payload: string | null | undefined): string | null {
+  if (!payload || payload.trim() === '') {
+    return null;
+  }
+  return encrypt(payload.trim());
+}
+
+/**
+ * Safely decrypt webhook payload data (handles null/undefined/already-decrypted)
+ *
+ * @param encryptedPayload - The encrypted payload (can be null/undefined)
+ * @returns {string | null} Decrypted payload or null
+ *
+ * @example
+ * ```typescript
+ * const encrypted = 'a2V5MTIzNDU2Nzg=:ZW5jcnlwdGVk:dGFn';
+ * const decrypted = decryptPayload(encrypted); // Original JSON string
+ * const webhookData = JSON.parse(decrypted);
+ * ```
+ */
+export function decryptPayload(encryptedPayload: string | null | undefined): string | null {
+  if (!encryptedPayload || encryptedPayload.trim() === '') {
+    return null;
+  }
+
+  const trimmed = encryptedPayload.trim();
+
+  // If it's not encrypted, return as-is (for backwards compatibility during migration)
+  if (!isEncrypted(trimmed)) {
+    console.warn('Warning: Webhook payload is not encrypted. Consider running migration.');
+    return trimmed;
+  }
+
+  return decrypt(trimmed);
+}

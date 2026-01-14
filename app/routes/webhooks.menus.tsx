@@ -2,6 +2,7 @@ import { json } from "@remix-run/node";
 import type { ActionFunctionArgs } from "@remix-run/node";
 import crypto from "crypto";
 import { ContentSyncService } from "../services/content-sync.service";
+import { encryptPayload } from "../utils/encryption";
 
 /**
  * Webhook Handler for Shopify Menu Events
@@ -50,7 +51,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         shop,
         topic,
         productId: menuId, // Reuse productId field for menu ID
-        payload: rawBody,
+        payload: encryptPayload(rawBody) || rawBody, // Encrypt payload for security
         processed: false,
       },
     });

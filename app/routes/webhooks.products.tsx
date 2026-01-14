@@ -2,6 +2,7 @@ import { json } from "@remix-run/node";
 import type { ActionFunctionArgs } from "@remix-run/node";
 import crypto from "crypto";
 import { ProductSyncService } from "../services/product-sync.service";
+import { encryptPayload } from "../utils/encryption";
 
 /**
  * Webhook Handler for Shopify Product Events
@@ -43,14 +44,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     console.log(`[WEBHOOK] Product ID: ${productId}`);
 
-    // 4. Log webhook to database
+    // 4. Log webhook to database (with encrypted payload)
     const { db } = await import("../db.server");
     const webhookLog = await db.webhookLog.create({
       data: {
         shop,
         topic,
         productId,
-        payload: rawBody,
+        payload: encryptPayload(rawBody) || rawBody, // Encrypt payload for security
         processed: false,
       },
     });

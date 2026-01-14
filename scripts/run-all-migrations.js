@@ -6,6 +6,7 @@
  * 1. Prisma migrations (if any)
  * 2. API Key encryption migration (idempotent)
  * 3. Session PII encryption migration (idempotent)
+ * 4. Webhook Payload encryption migration (idempotent)
  */
 
 import { execSync } from 'child_process';
@@ -84,6 +85,21 @@ async function main() {
     }
   } else {
     log('\nℹ️  Skipping Session PII encryption (ENCRYPTION_KEY not set)', 'blue');
+  }
+
+  // 4. Run Webhook Payload encryption migration (if ENCRYPTION_KEY is set)
+  if (process.env.ENCRYPTION_KEY) {
+    log('\n📦 Running Webhook Payload Encryption Migration...', 'blue');
+    const success = runCommand(
+      'npx tsx scripts/migrate-encrypt-webhook-payloads.ts',
+      'Webhook Payload Encryption'
+    );
+
+    if (!success) {
+      log('⚠️  Webhook Payload encryption failed, but continuing...', 'yellow');
+    }
+  } else {
+    log('\nℹ️  Skipping Webhook Payload encryption (ENCRYPTION_KEY not set)', 'blue');
   }
 
   log('\n' + '='.repeat(50), 'green');

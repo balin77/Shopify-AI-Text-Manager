@@ -48,7 +48,9 @@
       "Bash(xargs -I {} git show {}:SHOPIFY-APP-MIGRATION.md)",
       "Bash(xargs -I {} git show {}:RAILWAY-DEPLOYMENT.md)",
       "Bash(node test-quick.cjs:*)",
-      "Bash(git restore:*)"
+      "Bash(git restore:*)",
+      "Bash(for file in app/routes/webhooks.{articles,collections,menus}.tsx)",
+      "Bash(do echo \"=== $file ===\")"
     ],
     "deny": [],
     "ask": []
