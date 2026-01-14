@@ -649,4 +649,74 @@ export class ContentSyncService {
     return menus.length;
   }
 
+  // ============================================
+  // SINGLE RESOURCE SYNC (for manual reload)
+  // ============================================
+
+  /**
+   * Sync a single collection (wrapper for manual reload)
+   */
+  async syncSingleCollection(collectionId: string): Promise<any> {
+    const gid = collectionId.startsWith("gid://")
+      ? collectionId
+      : `gid://shopify/Collection/${collectionId}`;
+
+    await this.syncCollection(gid);
+
+    const { db } = await import("../db.server");
+    const collection = await db.collection.findUnique({
+      where: {
+        shop_id: {
+          shop: this.shop,
+          id: gid,
+        },
+      },
+    });
+
+    const translations = await db.contentTranslation.findMany({
+      where: {
+        resourceId: gid,
+        resourceType: "Collection",
+      },
+    });
+
+    return {
+      ...collection,
+      translations,
+    };
+  }
+
+  /**
+   * Sync a single article (wrapper for manual reload)
+   */
+  async syncSingleArticle(articleId: string): Promise<any> {
+    const gid = articleId.startsWith("gid://")
+      ? articleId
+      : `gid://shopify/OnlineStoreArticle/${articleId}`;
+
+    await this.syncArticle(gid);
+
+    const { db } = await import("../db.server");
+    const article = await db.article.findUnique({
+      where: {
+        shop_id: {
+          shop: this.shop,
+          id: gid,
+        },
+      },
+    });
+
+    const translations = await db.contentTranslation.findMany({
+      where: {
+        resourceId: gid,
+        resourceType: "Article",
+      },
+    });
+
+    return {
+      ...article,
+      translations,
+    };
+  }
+
 }

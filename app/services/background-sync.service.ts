@@ -115,7 +115,7 @@ export class BackgroundSyncService {
 
       // 4. Sync each page
       for (const page of pages) {
-        await this.syncSinglePage(page, nonPrimaryLocales);
+        await this.syncSinglePageInternal(page, nonPrimaryLocales);
       }
 
       console.log(`[BackgroundSync] ✓ Successfully synced ${pages.length} pages`);
@@ -127,9 +127,73 @@ export class BackgroundSyncService {
   }
 
   /**
-   * Sync a single page with translations
+   * Sync a single page by ID (public method for manual reload)
    */
-  private async syncSinglePage(pageData: any, nonPrimaryLocales: any[]): Promise<void> {
+  async syncSinglePage(pageId: string): Promise<any> {
+    const gid = pageId.startsWith("gid://")
+      ? pageId
+      : `gid://shopify/OnlineStorePage/${pageId}`;
+
+    console.log(`[BackgroundSync] Manual sync for page: ${gid}`);
+
+    const { db } = await import("../db.server");
+
+    // Fetch page data from Shopify
+    const pageResponse = await this.gateway.graphql(
+      `#graphql
+        query getPage($id: ID!) {
+          page(id: $id) {
+            id
+            title
+            handle
+            body
+            updatedAt
+          }
+        }`,
+      { variables: { id: gid } }
+    );
+
+    const pageDataResponse = await pageResponse.json();
+    const pageData = pageDataResponse.data?.page;
+
+    if (!pageData) {
+      throw new Error(`Page ${gid} not found in Shopify`);
+    }
+
+    // Fetch locales
+    const locales = await this.fetchShopLocales();
+    const nonPrimaryLocales = locales.filter((l: any) => !l.primary);
+
+    // Sync the page
+    await this.syncSinglePageInternal(pageData, nonPrimaryLocales);
+
+    // Return fresh data from database
+    const page = await db.page.findUnique({
+      where: {
+        shop_id: {
+          shop: this.shop,
+          id: gid,
+        },
+      },
+    });
+
+    const translations = await db.contentTranslation.findMany({
+      where: {
+        resourceId: gid,
+        resourceType: "Page",
+      },
+    });
+
+    return {
+      ...page,
+      translations,
+    };
+  }
+
+  /**
+   * Sync a single page with translations (internal method)
+   */
+  private async syncSinglePageInternal(pageData: any, nonPrimaryLocales: any[]): Promise<void> {
     const { db } = await import("../db.server");
 
     // Fetch translations for all non-primary locales
@@ -292,7 +356,7 @@ export class BackgroundSyncService {
 
       // 4. Sync each policy
       for (const policy of policies) {
-        await this.syncSinglePolicy(policy, nonPrimaryLocales);
+        await this.syncSinglePolicyInternal(policy, nonPrimaryLocales);
       }
 
       console.log(`[BackgroundSync] ✓ Successfully synced ${policies.length} policies`);
@@ -304,9 +368,78 @@ export class BackgroundSyncService {
   }
 
   /**
-   * Sync a single policy with translations
+   * Sync a single policy by ID or type (public method for manual reload)
    */
-  private async syncSinglePolicy(policyData: any, nonPrimaryLocales: any[]): Promise<void> {
+  async syncSinglePolicy(policyIdOrType: string): Promise<any> {
+    // Policy can be identified by GID or by type (e.g., "PRIVACY_POLICY")
+    const isType = !policyIdOrType.startsWith("gid://");
+
+    console.log(`[BackgroundSync] Manual sync for policy: ${policyIdOrType}`);
+
+    const { db } = await import("../db.server");
+
+    // Fetch all policies to find the one we need
+    const policiesResponse = await this.gateway.graphql(
+      `#graphql
+        query getShopPolicies {
+          shop {
+            shopPolicies {
+              id
+              type
+              title
+              body
+              url
+            }
+          }
+        }`
+    );
+
+    const policiesData = await policiesResponse.json();
+    const policies = policiesData.data?.shop?.shopPolicies || [];
+
+    // Find the policy
+    const policyData = isType
+      ? policies.find((p: any) => p.type === policyIdOrType)
+      : policies.find((p: any) => p.id === policyIdOrType);
+
+    if (!policyData) {
+      throw new Error(`Policy ${policyIdOrType} not found in Shopify`);
+    }
+
+    // Fetch locales
+    const locales = await this.fetchShopLocales();
+    const nonPrimaryLocales = locales.filter((l: any) => !l.primary);
+
+    // Sync the policy
+    await this.syncSinglePolicyInternal(policyData, nonPrimaryLocales);
+
+    // Return fresh data from database
+    const policy = await db.shopPolicy.findUnique({
+      where: {
+        shop_id: {
+          shop: this.shop,
+          id: policyData.id,
+        },
+      },
+    });
+
+    const translations = await db.contentTranslation.findMany({
+      where: {
+        resourceId: policyData.id,
+        resourceType: "ShopPolicy",
+      },
+    });
+
+    return {
+      ...policy,
+      translations,
+    };
+  }
+
+  /**
+   * Sync a single policy with translations (internal method)
+   */
+  private async syncSinglePolicyInternal(policyData: any, nonPrimaryLocales: any[]): Promise<void> {
     const { db } = await import("../db.server");
 
     // Fetch translations for all non-primary locales

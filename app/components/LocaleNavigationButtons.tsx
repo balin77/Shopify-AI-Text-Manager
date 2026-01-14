@@ -1,5 +1,6 @@
 import { Button } from "@shopify/polaris";
 import { getLocaleButtonStyle } from "../utils/contentEditor.utils";
+import { ReloadButton } from "./ReloadButton";
 
 interface LocaleNavigationButtonsProps {
   shopLocales: any[];
@@ -22,28 +23,42 @@ export function LocaleNavigationButtons({
   hasChanges,
   onLanguageChange,
 }: LocaleNavigationButtonsProps) {
-  return (
-    <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
-      {shopLocales.map((locale: any) => {
-        const buttonStyle = getLocaleButtonStyle(
-          locale,
-          selectedItem,
-          primaryLocale,
-          contentType
-        );
+  // Map content type to resource type for the API
+  const resourceType = contentType === 'blogs' ? 'article' : contentType === 'pages' ? 'page' : contentType === 'policies' ? 'policy' : contentType;
 
-        return (
-          <div key={locale.locale} style={buttonStyle}>
-            <Button
-              variant={currentLanguage === locale.locale ? "primary" : undefined}
-              onClick={() => onLanguageChange(locale.locale)}
-              size="slim"
-            >
-              {locale.name} {locale.primary && `(${primaryLocaleSuffix})`}
-            </Button>
-          </div>
-        );
-      })}
+  return (
+    <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", justifyContent: "space-between", alignItems: "center" }}>
+      <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+        {shopLocales.map((locale: any) => {
+          const buttonStyle = getLocaleButtonStyle(
+            locale,
+            selectedItem,
+            primaryLocale,
+            contentType
+          );
+
+          return (
+            <div key={locale.locale} style={buttonStyle}>
+              <Button
+                variant={currentLanguage === locale.locale ? "primary" : undefined}
+                onClick={() => onLanguageChange(locale.locale)}
+                size="slim"
+              >
+                {locale.name} {locale.primary && `(${primaryLocaleSuffix})`}
+              </Button>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Reload Button - rechts neben den Sprachen */}
+      {selectedItem && (
+        <ReloadButton
+          resourceId={selectedItem.id}
+          resourceType={resourceType as any}
+          locale={currentLanguage}
+        />
+      )}
     </div>
   );
 }

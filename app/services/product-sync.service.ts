@@ -373,4 +373,45 @@ export class ProductSyncService {
 
     console.log(`[ProductSync] Successfully deleted product: ${productId}`);
   }
+
+  /**
+   * Sync a single product with plan-aware image loading
+   * @param productId - Shopify product ID (can be numeric or GID format)
+   * @param includeAllImages - If true, sync all images. If false, only featured image
+   */
+  async syncSingleProduct(productId: string, includeAllImages: boolean = true): Promise<any> {
+    console.log(`[ProductSync] Manual sync for product: ${productId} (images: ${includeAllImages ? "all" : "featured only"})`);
+
+    // Convert to GID format if numeric
+    const gid = productId.startsWith("gid://")
+      ? productId
+      : `gid://shopify/Product/${productId}`;
+
+    try {
+      // Sync the product
+      await this.syncProduct(gid);
+
+      // Fetch and update the product from database to return fresh data
+      const { db } = await import("../db.server");
+      const product = await db.product.findUnique({
+        where: {
+          shop_id: {
+            shop: this.shop,
+            id: gid,
+          },
+        },
+        include: {
+          translations: true,
+          images: includeAllImages,
+          options: true,
+          metafields: true,
+        },
+      });
+
+      return product;
+    } catch (error) {
+      console.error(`[ProductSync] Error in syncSingleProduct:`, error);
+      throw error;
+    }
+  }
 }
