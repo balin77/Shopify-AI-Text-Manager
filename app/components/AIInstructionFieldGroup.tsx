@@ -86,22 +86,22 @@ export function AIInstructionFieldGroup({
                   <ButtonGroup variant="segmented">
                     <Tooltip content="Fett">
                       <Button size="slim" onClick={() => executeCommand("bold")}>
-                        <strong>B</strong>
+                        B
                       </Button>
                     </Tooltip>
                     <Tooltip content="Kursiv">
                       <Button size="slim" onClick={() => executeCommand("italic")}>
-                        <em>I</em>
+                        I
                       </Button>
                     </Tooltip>
                     <Tooltip content="Unterstrichen">
                       <Button size="slim" onClick={() => executeCommand("underline")}>
-                        <u>U</u>
+                        U
                       </Button>
                     </Tooltip>
                     <Tooltip content="Durchgestrichen">
                       <Button size="slim" onClick={() => executeCommand("strikethrough")}>
-                        <s>S</s>
+                        S
                       </Button>
                     </Tooltip>
                   </ButtonGroup>

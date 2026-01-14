@@ -124,7 +124,7 @@ export function useChangeTracking(
     seoTitle?: string;
     metaDescription?: string;
   },
-  contentType: 'pages' | 'blogs' | 'collections' | 'policies'
+  contentType: 'pages' | 'blogs' | 'collections' | 'policies' | 'products'
 ) {
   const [hasChanges, setHasChanges] = useState(false);
 
@@ -184,7 +184,7 @@ export function useItemDataLoader(
   selectedItem: any,
   currentLanguage: string,
   primaryLocale: string,
-  contentType: 'pages' | 'blogs' | 'collections' | 'policies',
+  contentType: 'pages' | 'blogs' | 'collections' | 'policies' | 'products',
   setEditableFields: (fields: {
     title: string;
     description: string;

@@ -248,10 +248,10 @@ interface FieldRendererProps {
   isTranslated: boolean;
   isLoading: boolean;
   sourceTextAvailable: boolean;
-  onGenerateAI: () => void;
-  onFormatAI: () => void;
-  onTranslate: () => void;
-  onTranslateAll: () => void;
+  onGenerateAI?: () => void;
+  onFormatAI?: () => void;
+  onTranslate?: () => void;
+  onTranslateAll?: () => void;
   onAcceptSuggestion: () => void;
   onRejectSuggestion: () => void;
   htmlMode: "html" | "rendered";

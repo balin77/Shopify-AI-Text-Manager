@@ -12,5 +12,9 @@ if (process.env.NODE_ENV !== "production") {
   }
 }
 
-export const db = prismaClient;
+// Export as named export
+const db = prismaClient;
+export { db };
+
+// Export as default
 export default prismaClient;

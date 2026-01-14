@@ -5,6 +5,9 @@
 
 import { PLAN_CONFIG, PLAN_DISPLAY_NAMES, type Plan, type ContentType, type PlanLimits } from "../config/plans";
 
+// Re-export types for convenience
+export type { Plan, ContentType, PlanLimits } from "../config/plans";
+
 /**
  * Get the limits and features for a given plan
  */

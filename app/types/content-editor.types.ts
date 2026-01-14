@@ -4,6 +4,8 @@
  * Shared types for the unified content editor system
  */
 
+export type InfoBoxTone = "success" | "info" | "warning" | "critical";
+
 export type ContentType = 'products' | 'collections' | 'blogs' | 'pages' | 'policies';
 
 export type FieldType = 'text' | 'html' | 'slug' | 'textarea' | 'number';
@@ -121,7 +123,7 @@ export interface UseContentEditorProps {
   fetcher: any;
 
   /** ShowInfoBox function */
-  showInfoBox: (message: string, tone?: string, title?: string) => void;
+  showInfoBox: (message: string, tone?: InfoBoxTone, title?: string) => void;
 
   /** Translation function */
   t: any;
@@ -141,7 +143,7 @@ export interface UseContentEditorReturn {
   navigationGuard: {
     pendingNavigation: (() => void) | null;
     highlightSaveButton: boolean;
-    saveButtonRef: React.RefObject<HTMLDivElement>;
+    saveButtonRef: React.RefObject<HTMLDivElement | null>;
     handleNavigationAttempt: (callback: () => void, hasChanges: boolean) => void;
     clearPendingNavigation: () => void;
   };

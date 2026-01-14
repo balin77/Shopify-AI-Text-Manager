@@ -112,22 +112,22 @@ export function AIEditableHTMLField({
           <ButtonGroup variant="segmented">
             <Tooltip content="Fett">
               <Button size="slim" onClick={() => handleFormatText("bold")}>
-                <strong>B</strong>
+                B
               </Button>
             </Tooltip>
             <Tooltip content="Kursiv">
               <Button size="slim" onClick={() => handleFormatText("italic")}>
-                <em>I</em>
+                I
               </Button>
             </Tooltip>
             <Tooltip content="Unterstrichen">
               <Button size="slim" onClick={() => handleFormatText("underline")}>
-                <u>U</u>
+                U
               </Button>
             </Tooltip>
             <Tooltip content="Durchgestrichen">
               <Button size="slim" onClick={() => handleFormatText("strikethrough")}>
-                <s>S</s>
+                S
               </Button>
             </Tooltip>
           </ButtonGroup>

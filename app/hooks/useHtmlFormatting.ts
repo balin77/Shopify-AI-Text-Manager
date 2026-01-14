@@ -21,7 +21,7 @@ export type HtmlFormattingCommand =
   | "removeFormat";
 
 interface UseHtmlFormattingProps {
-  editorRef: React.RefObject<HTMLDivElement>;
+  editorRef: React.RefObject<HTMLDivElement | null>;
   onChange: (html: string) => void;
 }
 
