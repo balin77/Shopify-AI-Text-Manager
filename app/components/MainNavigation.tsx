@@ -17,6 +17,7 @@ export function MainNavigation() {
   const { plan, getPlanDisplayName, getMaxProducts } = usePlan();
   const { setMainNavHeight } = useNavigationHeight();
   const fetcher = useFetcher();
+  const tasksFetcher = useFetcher<{ count: number }>();
   const [isChangingPlan, setIsChangingPlan] = useState(false);
   const [showLoadingIndicator, setShowLoadingIndicator] = useState(false);
   const navRef = useRef<HTMLDivElement>(null);
@@ -27,9 +28,22 @@ export function MainNavigation() {
   const productCount = productsRouteData?.productCount;
   const maxProducts = getMaxProducts();
 
-  // Get total task count from tasks route loader data
-  const tasksRouteData = matches.find((match) => match.id === "routes/app.tasks")?.data as any;
-  const totalTaskCount = tasksRouteData?.pagination?.totalCount || 0;
+  // Get running task count from dedicated API endpoint
+  const runningTaskCount = tasksFetcher.data?.count || 0;
+
+  // Fetch running tasks count on mount and every 5 seconds
+  useEffect(() => {
+    // Load initial count
+    const searchParams = new URLSearchParams(location.search);
+    tasksFetcher.load(`/api/running-tasks-count?${searchParams.toString()}`);
+
+    // Refresh every 5 seconds
+    const interval = setInterval(() => {
+      tasksFetcher.load(`/api/running-tasks-count?${searchParams.toString()}`);
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [location.search]); // Re-fetch when search params change (e.g., shop parameter)
 
   // Show loading indicator only if loading takes longer than 1 second
   useEffect(() => {
@@ -149,7 +163,7 @@ export function MainNavigation() {
               const isActive = location.pathname.startsWith(tab.path);
               const showProductCount = tab.id === "products" && productCount !== undefined;
               const isAtLimit = showProductCount && productCount >= maxProducts && maxProducts !== Infinity;
-              const showTaskCount = tab.id === "tasks" && totalTaskCount > 0;
+              const showTaskCount = tab.id === "tasks" && runningTaskCount > 0;
 
               const tabContent = (
                 <button
@@ -196,7 +210,7 @@ export function MainNavigation() {
                           textAlign: "center",
                         }}
                       >
-                        {totalTaskCount}
+                        {runningTaskCount}
                       </div>
                     )}
                   </InlineStack>
