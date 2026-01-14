@@ -105,7 +105,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
 
       <div
         style={{
-          height: "calc(100vh - 150px)",
+          height: "calc(100vh - 158px)",
           display: "flex",
           gap: "1rem",
           padding: "1rem",

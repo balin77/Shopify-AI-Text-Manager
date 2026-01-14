@@ -214,7 +214,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
             <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
               <BlockStack gap="400">
                 <Text as="h3" variant="headingMd">Hugging Face</Text>
-                <div style={{ display: "flex", gap: "0.5rem", alignItems: "flex-start" }}>
+                <div style={{ display: "flex", gap: "0.5rem", alignItems: "flex-end" }}>
                   <div style={{ flex: 1 }}>
                     <TextField
                       label="API Key"
@@ -240,7 +240,6 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                   <button
                     onClick={() => setShowHuggingfaceKey(!showHuggingfaceKey)}
                     style={{
-                      marginTop: "1.75rem",
                       padding: "0.5rem",
                       background: "white",
                       border: "1px solid #c9cccf",
@@ -249,6 +248,8 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
+                      height: "36px",
+                      marginBottom: "1.5rem",
                     }}
                     type="button"
                   >
@@ -282,7 +283,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
             <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
               <BlockStack gap="400">
                 <Text as="h3" variant="headingMd">Google Gemini</Text>
-                <div style={{ display: "flex", gap: "0.5rem", alignItems: "flex-start" }}>
+                <div style={{ display: "flex", gap: "0.5rem", alignItems: "flex-end" }}>
                   <div style={{ flex: 1 }}>
                     <TextField
                       label="API Key"
@@ -308,7 +309,6 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                   <button
                     onClick={() => setShowGeminiKey(!showGeminiKey)}
                     style={{
-                      marginTop: "1.75rem",
                       padding: "0.5rem",
                       background: "white",
                       border: "1px solid #c9cccf",
@@ -317,6 +317,8 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
+                      height: "36px",
+                      marginBottom: "1.5rem",
                     }}
                     type="button"
                   >
@@ -350,7 +352,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
             <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
               <BlockStack gap="400">
                 <Text as="h3" variant="headingMd">Anthropic Claude</Text>
-                <div style={{ display: "flex", gap: "0.5rem", alignItems: "flex-start" }}>
+                <div style={{ display: "flex", gap: "0.5rem", alignItems: "flex-end" }}>
                   <div style={{ flex: 1 }}>
                     <TextField
                       label="API Key"
@@ -376,7 +378,6 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                   <button
                     onClick={() => setShowClaudeKey(!showClaudeKey)}
                     style={{
-                      marginTop: "1.75rem",
                       padding: "0.5rem",
                       background: "white",
                       border: "1px solid #c9cccf",
@@ -385,6 +386,8 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
+                      height: "36px",
+                      marginBottom: "1.5rem",
                     }}
                     type="button"
                   >
@@ -418,7 +421,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
             <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
               <BlockStack gap="400">
                 <Text as="h3" variant="headingMd">OpenAI</Text>
-                <div style={{ display: "flex", gap: "0.5rem", alignItems: "flex-start" }}>
+                <div style={{ display: "flex", gap: "0.5rem", alignItems: "flex-end" }}>
                   <div style={{ flex: 1 }}>
                     <TextField
                       label="API Key"
@@ -444,7 +447,6 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                   <button
                     onClick={() => setShowOpenaiKey(!showOpenaiKey)}
                     style={{
-                      marginTop: "1.75rem",
                       padding: "0.5rem",
                       background: "white",
                       border: "1px solid #c9cccf",
@@ -453,6 +455,8 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
+                      height: "36px",
+                      marginBottom: "1.5rem",
                     }}
                     type="button"
                   >
@@ -486,7 +490,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
             <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
               <BlockStack gap="400">
                 <Text as="h3" variant="headingMd">Grok (X.AI)</Text>
-                <div style={{ display: "flex", gap: "0.5rem", alignItems: "flex-start" }}>
+                <div style={{ display: "flex", gap: "0.5rem", alignItems: "flex-end" }}>
                   <div style={{ flex: 1 }}>
                     <TextField
                       label="API Key"
@@ -512,7 +516,6 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                   <button
                     onClick={() => setShowGrokKey(!showGrokKey)}
                     style={{
-                      marginTop: "1.75rem",
                       padding: "0.5rem",
                       background: "white",
                       border: "1px solid #c9cccf",
@@ -521,6 +524,8 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
+                      height: "36px",
+                      marginBottom: "1.5rem",
                     }}
                     type="button"
                   >
@@ -554,7 +559,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
             <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
               <BlockStack gap="400">
                 <Text as="h3" variant="headingMd">DeepSeek</Text>
-                <div style={{ display: "flex", gap: "0.5rem", alignItems: "flex-start" }}>
+                <div style={{ display: "flex", gap: "0.5rem", alignItems: "flex-end" }}>
                   <div style={{ flex: 1 }}>
                     <TextField
                       label="API Key"
@@ -580,7 +585,6 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                   <button
                     onClick={() => setShowDeepseekKey(!showDeepseekKey)}
                     style={{
-                      marginTop: "1.75rem",
                       padding: "0.5rem",
                       background: "white",
                       border: "1px solid #c9cccf",
@@ -589,6 +593,8 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
+                      height: "36px",
+                      marginBottom: "1.5rem",
                     }}
                     type="button"
                   >
