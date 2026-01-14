@@ -112,84 +112,84 @@ export function ProductList({
   );
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
-      <Card padding="0">
+    <div style={{ height: "100%" }}>
+      <div style={{ display: "flex", flexDirection: "column", height: "100%", backgroundColor: "white", borderRadius: "12px", boxShadow: "0 1px 0 0 rgba(0, 0, 0, 0.05)", overflow: "hidden" }}>
         {/* Plan Limit Warning */}
-      {isAtLimit && nextPlan && (
-        <div style={{ padding: "1rem", borderBottom: "1px solid #e1e3e5", flexShrink: 0 }}>
-          <Banner tone="warning">
-            <Text as="p" fontWeight="semibold">
-              {t.products.productLimitReached
-                .replace("{count}", String(products.length))
-                .replace("{max}", String(maxProducts))}
-            </Text>
-            <Text as="p" variant="bodySm" tone="subdued">
-              {t.products.upgradeToPlan
-                .replace("{plan}", nextPlan.charAt(0).toUpperCase() + nextPlan.slice(1))}
-            </Text>
-          </Banner>
-        </div>
-      )}
-
-      <div style={{ padding: "1rem", borderBottom: "1px solid #e1e3e5", flexShrink: 0 }}>
-        <BlockStack gap="300">
-          <InlineStack align="space-between" blockAlign="center">
-            <Text as="h2" variant="headingMd">
-              {countLabel} ({filteredProducts.length})
-            </Text>
-            {totalPages > 1 && (
-              <InlineStack gap="200">
-                <Button
-                  icon={ChevronLeftIcon}
-                  onClick={() => setCurrentPage(currentPage - 1)}
-                  disabled={currentPage === 1}
-                  accessibilityLabel={paginationPrevious}
-                />
-                <Text as="span" variant="bodySm">
-                  {currentPage} / {totalPages}
-                </Text>
-                <Button
-                  icon={ChevronRightIcon}
-                  onClick={() => setCurrentPage(currentPage + 1)}
-                  disabled={currentPage === totalPages}
-                  accessibilityLabel={paginationNext}
-                />
-              </InlineStack>
-            )}
-          </InlineStack>
-          <div style={{ position: "relative" }}>
-            <div
-              style={{
-                position: "absolute",
-                left: "12px",
-                top: "50%",
-                transform: "translateY(-50%)",
-                pointerEvents: "none",
-              }}
-            >
-              <Icon source={SearchIcon} />
-            </div>
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => {
-                setSearchQuery(e.target.value);
-                setCurrentPage(1);
-              }}
-              placeholder={searchPlaceholder}
-              style={{
-                width: "100%",
-                padding: "8px 12px 8px 36px",
-                border: "1px solid #babfc3",
-                borderRadius: "8px",
-                fontSize: "14px",
-              }}
-            />
+        {isAtLimit && nextPlan && (
+          <div style={{ padding: "1rem", borderBottom: "1px solid #e1e3e5", flexShrink: 0 }}>
+            <Banner tone="warning">
+              <Text as="p" fontWeight="semibold">
+                {t.products.productLimitReached
+                  .replace("{count}", String(products.length))
+                  .replace("{max}", String(maxProducts))}
+              </Text>
+              <Text as="p" variant="bodySm" tone="subdued">
+                {t.products.upgradeToPlan
+                  .replace("{plan}", nextPlan.charAt(0).toUpperCase() + nextPlan.slice(1))}
+              </Text>
+            </Banner>
           </div>
-        </BlockStack>
-      </div>
+        )}
 
-      <div style={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
+        <div style={{ padding: "1rem", borderBottom: "1px solid #e1e3e5", flexShrink: 0 }}>
+          <BlockStack gap="300">
+            <InlineStack align="space-between" blockAlign="center">
+              <Text as="h2" variant="headingMd">
+                {countLabel} ({filteredProducts.length})
+              </Text>
+              {totalPages > 1 && (
+                <InlineStack gap="200">
+                  <Button
+                    icon={ChevronLeftIcon}
+                    onClick={() => setCurrentPage(currentPage - 1)}
+                    disabled={currentPage === 1}
+                    accessibilityLabel={paginationPrevious}
+                  />
+                  <Text as="span" variant="bodySm">
+                    {currentPage} / {totalPages}
+                  </Text>
+                  <Button
+                    icon={ChevronRightIcon}
+                    onClick={() => setCurrentPage(currentPage + 1)}
+                    disabled={currentPage === totalPages}
+                    accessibilityLabel={paginationNext}
+                  />
+                </InlineStack>
+              )}
+            </InlineStack>
+            <div style={{ position: "relative" }}>
+              <div
+                style={{
+                  position: "absolute",
+                  left: "12px",
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  pointerEvents: "none",
+                }}
+              >
+                <Icon source={SearchIcon} />
+              </div>
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value);
+                  setCurrentPage(1);
+                }}
+                placeholder={searchPlaceholder}
+                style={{
+                  width: "100%",
+                  padding: "8px 12px 8px 36px",
+                  border: "1px solid #babfc3",
+                  borderRadius: "8px",
+                  fontSize: "14px",
+                }}
+              />
+            </div>
+          </BlockStack>
+        </div>
+
+        <div style={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
         <ResourceList
           resourceName={resourceName}
           items={paginatedProducts}
@@ -277,10 +277,10 @@ export function ProductList({
             );
           }}
         />
-      </div>
+        </div>
 
-      {totalPages > 1 && <PaginationControls />}
-      </Card>
+        {totalPages > 1 && <PaginationControls />}
+      </div>
     </div>
   );
 }
