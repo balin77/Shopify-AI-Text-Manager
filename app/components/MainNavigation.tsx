@@ -4,7 +4,7 @@ import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { usePlan } from "../contexts/PlanContext";
 import { type Plan } from "../config/plans";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 
 export function MainNavigation() {
   const location = useLocation();
@@ -17,6 +17,8 @@ export function MainNavigation() {
   const fetcher = useFetcher();
   const [isChangingPlan, setIsChangingPlan] = useState(false);
   const [showLoadingIndicator, setShowLoadingIndicator] = useState(false);
+  const navRef = useRef<HTMLDivElement>(null);
+  const [navHeight, setNavHeight] = useState(73);
 
   // Get product count from products route loader data
   const productsRouteData = matches.find((match) => match.id === "routes/app.products")?.data as any;
@@ -50,6 +52,34 @@ export function MainNavigation() {
       }
     };
   }, [navigation.state]);
+
+  // Dynamically measure navigation height and update spacer
+  useEffect(() => {
+    const updateHeight = () => {
+      if (navRef.current) {
+        setNavHeight(navRef.current.offsetHeight);
+      }
+    };
+
+    // Update height on mount and when window resizes
+    updateHeight();
+    window.addEventListener('resize', updateHeight);
+
+    // Use ResizeObserver for more precise tracking (if available)
+    if (navRef.current && typeof ResizeObserver !== 'undefined') {
+      const observer = new ResizeObserver(updateHeight);
+      observer.observe(navRef.current);
+
+      return () => {
+        observer.disconnect();
+        window.removeEventListener('resize', updateHeight);
+      };
+    }
+
+    return () => {
+      window.removeEventListener('resize', updateHeight);
+    };
+  }, [infoBox, showLoadingIndicator]); // Re-measure when infoBox or loading indicator changes
 
   const tabs = [
     { id: "products", label: t.nav.products, path: "/app/products" },
@@ -98,6 +128,7 @@ export function MainNavigation() {
     <>
       {/* Fixed Navigation */}
       <div
+        ref={navRef}
         style={{
           background: "white",
           borderBottom: "1px solid #e1e3e5",
@@ -109,7 +140,7 @@ export function MainNavigation() {
         }}
       >
         {/* Einzeilige Leiste mit Navigation, InfoBox und Plan Selector */}
-        <div style={{ display: "flex", alignItems: "center", padding: "1rem", gap: "2rem" }}>
+        <div style={{ display: "flex", alignItems: "center", padding: "1rem", gap: "2rem", flexWrap: "wrap" }}>
           {/* Navigation Tabs */}
           <InlineStack gap="400" blockAlign="center">
             {tabs.map((tab) => {
@@ -190,10 +221,6 @@ export function MainNavigation() {
                 display: "flex",
                 alignItems: "center",
                 gap: "0.5rem",
-                padding: "0.5rem 1rem",
-                borderRadius: "4px",
-                backgroundColor: "#f6f6f7",
-                border: "1px solid #c9cccf",
               }}
             >
               <Spinner size="small" />
@@ -271,8 +298,8 @@ export function MainNavigation() {
         </div>
       </div>
 
-      {/* Spacer to prevent content from going under fixed navigation */}
-      <div style={{ height: "73px" }} />
+      {/* Dynamic spacer to prevent content from going under fixed navigation */}
+      <div style={{ height: `${navHeight}px` }} />
     </>
   );
 }
