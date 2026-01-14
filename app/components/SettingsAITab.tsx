@@ -240,7 +240,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                   <button
                     onClick={() => setShowHuggingfaceKey(!showHuggingfaceKey)}
                     style={{
-                      padding: "0.5rem",
+                      padding: "0.5rem 0.75rem",
                       background: "white",
                       border: "1px solid #c9cccf",
                       borderRadius: "8px",
@@ -248,8 +248,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
-                      height: "36px",
-                      marginBottom: "1.5rem",
+                      minHeight: "32px",
                     }}
                     type="button"
                   >
@@ -309,7 +308,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                   <button
                     onClick={() => setShowGeminiKey(!showGeminiKey)}
                     style={{
-                      padding: "0.5rem",
+                      padding: "0.5rem 0.75rem",
                       background: "white",
                       border: "1px solid #c9cccf",
                       borderRadius: "8px",
@@ -317,8 +316,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
-                      height: "36px",
-                      marginBottom: "1.5rem",
+                      minHeight: "32px",
                     }}
                     type="button"
                   >
@@ -378,7 +376,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                   <button
                     onClick={() => setShowClaudeKey(!showClaudeKey)}
                     style={{
-                      padding: "0.5rem",
+                      padding: "0.5rem 0.75rem",
                       background: "white",
                       border: "1px solid #c9cccf",
                       borderRadius: "8px",
@@ -386,8 +384,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
-                      height: "36px",
-                      marginBottom: "1.5rem",
+                      minHeight: "32px",
                     }}
                     type="button"
                   >
@@ -447,7 +444,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                   <button
                     onClick={() => setShowOpenaiKey(!showOpenaiKey)}
                     style={{
-                      padding: "0.5rem",
+                      padding: "0.5rem 0.75rem",
                       background: "white",
                       border: "1px solid #c9cccf",
                       borderRadius: "8px",
@@ -455,8 +452,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
-                      height: "36px",
-                      marginBottom: "1.5rem",
+                      minHeight: "32px",
                     }}
                     type="button"
                   >
@@ -516,7 +512,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                   <button
                     onClick={() => setShowGrokKey(!showGrokKey)}
                     style={{
-                      padding: "0.5rem",
+                      padding: "0.5rem 0.75rem",
                       background: "white",
                       border: "1px solid #c9cccf",
                       borderRadius: "8px",
@@ -524,8 +520,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
-                      height: "36px",
-                      marginBottom: "1.5rem",
+                      minHeight: "32px",
                     }}
                     type="button"
                   >
@@ -585,7 +580,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                   <button
                     onClick={() => setShowDeepseekKey(!showDeepseekKey)}
                     style={{
-                      padding: "0.5rem",
+                      padding: "0.5rem 0.75rem",
                       background: "white",
                       border: "1px solid #c9cccf",
                       borderRadius: "8px",
@@ -593,8 +588,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
-                      height: "36px",
-                      marginBottom: "1.5rem",
+                      minHeight: "32px",
                     }}
                     type="button"
                   >
