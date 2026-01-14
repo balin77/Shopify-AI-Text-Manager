@@ -71,6 +71,9 @@ export function MainNavigation() {
         style={{
           background: "white",
           borderBottom: "1px solid #e1e3e5",
+          position: "sticky",
+          top: 0,
+          zIndex: 1000,
         }}
       >
         {/* Einzeilige Leiste mit Navigation, InfoBox und Plan Selector */}
