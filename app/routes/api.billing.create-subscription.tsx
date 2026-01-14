@@ -1,0 +1,46 @@
+/**
+ * API Route: Create Billing Subscription
+ *
+ * Creates a new subscription for the specified plan
+ */
+
+import type { ActionFunctionArgs } from '@remix-run/node';
+import { json } from '@remix-run/node';
+import { authenticate } from '~/shopify.server';
+import { createSubscription } from '~/services/billing.server';
+import type { BillingPlan } from '~/config/billing';
+import { isPaidPlan } from '~/config/billing';
+
+export const action = async ({ request }: ActionFunctionArgs) => {
+  const { admin, session } = await authenticate.admin(request);
+
+  if (!admin || !session) {
+    return json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  try {
+    const body = await request.json();
+    const { plan } = body as { plan: BillingPlan };
+
+    if (!plan || !isPaidPlan(plan)) {
+      return json({ error: 'Invalid plan specified' }, { status: 400 });
+    }
+
+    // Create return URL (where user is redirected after confirming payment)
+    const returnUrl = `${process.env.SHOPIFY_APP_URL}/app/billing/callback?plan=${plan}`;
+
+    const result = await createSubscription(admin, session, plan, returnUrl);
+
+    return json({
+      success: true,
+      confirmationUrl: result.confirmationUrl,
+      subscriptionId: result.subscriptionId,
+    });
+  } catch (error) {
+    console.error('Error creating subscription:', error);
+    return json(
+      { error: error instanceof Error ? error.message : 'Failed to create subscription' },
+      { status: 500 }
+    );
+  }
+};
