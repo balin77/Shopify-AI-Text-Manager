@@ -20,13 +20,13 @@ interface AIEditableHTMLFieldProps {
   sourceTextAvailable?: boolean;
   hasMissingTranslations?: boolean;
   hasFieldMissingTranslations?: boolean;
-  onGenerateAI: () => void;
+  onGenerateAI?: () => void;
   onFormatAI?: () => void;
-  onTranslate: () => void;
+  onTranslate?: () => void;
   onTranslateAll?: () => void;
-  onAcceptSuggestion: () => void;
+  onAcceptSuggestion?: () => void;
   onAcceptAndTranslate?: () => void;
-  onRejectSuggestion: () => void;
+  onRejectSuggestion?: () => void;
 }
 
 export function AIEditableHTMLField({
@@ -266,7 +266,7 @@ export function AIEditableHTMLField({
         />
       )}
 
-      {suggestion && (
+      {suggestion && onAcceptSuggestion && onRejectSuggestion && (
         <AISuggestionBanner
           fieldType={fieldType}
           suggestionText={suggestion}
@@ -288,9 +288,11 @@ export function AIEditableHTMLField({
           </span>
         </div>
         <div className="ai-field-footer-right">
-          <Button size="slim" onClick={onGenerateAI} loading={isLoading}>
-            ✨ {t.products.aiGenerate}
-          </Button>
+          {onGenerateAI && (
+            <Button size="slim" onClick={onGenerateAI} loading={isLoading}>
+              ✨ {t.products.aiGenerate}
+            </Button>
+          )}
           {onFormatAI && (
             <Button
               size="slim"
@@ -301,14 +303,16 @@ export function AIEditableHTMLField({
               🎨 Formatieren
             </Button>
           )}
-          <Button
-            size="slim"
-            onClick={isPrimaryLocale ? onTranslateAll : onTranslate}
-            loading={isLoading}
-            disabled={(isPrimaryLocale && !onTranslateAll) || (!isPrimaryLocale && !sourceTextAvailable)}
-          >
-            🌍 {isPrimaryLocale ? "Übersetzen" : t.products.translateFromPrimary}
-          </Button>
+          {(onTranslate || onTranslateAll) && (
+            <Button
+              size="slim"
+              onClick={isPrimaryLocale ? onTranslateAll : onTranslate}
+              loading={isLoading}
+              disabled={(isPrimaryLocale && !onTranslateAll) || (!isPrimaryLocale && !sourceTextAvailable)}
+            >
+              🌍 {isPrimaryLocale ? "Übersetzen" : t.products.translateFromPrimary}
+            </Button>
+          )}
         </div>
       </div>
     </div>

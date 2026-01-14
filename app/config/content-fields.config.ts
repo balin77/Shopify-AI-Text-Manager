@@ -1,0 +1,244 @@
+/**
+ * Field Definitions for Content Types
+ *
+ * Defines the editable fields for each content type
+ */
+
+import type { ContentEditorConfig } from "../types/content-editor.types";
+
+// ============================================================================
+// COLLECTIONS
+// ============================================================================
+
+export const COLLECTIONS_CONFIG: ContentEditorConfig = {
+  contentType: "collections",
+  resourceType: "Collection",
+  displayName: "Collections",
+  displayNameSingular: "Collection",
+  showSeoSidebar: true,
+  idPrefix: "ID:",
+
+  fieldDefinitions: [
+    {
+      key: "title",
+      type: "text",
+      label: "Title",
+      translationKey: "title",
+      required: true,
+      supportsAI: true,
+      supportsFormatting: true,
+      supportsTranslation: true,
+      aiInstructionsKey: "collectionTitle",
+      helpText: (value) => `${value.length} characters`,
+    },
+    {
+      key: "description",
+      type: "html",
+      label: "Description",
+      translationKey: "body_html",
+      supportsAI: true,
+      supportsFormatting: true,
+      supportsTranslation: true,
+      aiInstructionsKey: "collectionDescription",
+    },
+    {
+      key: "handle",
+      type: "slug",
+      label: "URL Slug",
+      translationKey: "handle",
+      supportsAI: true,
+      supportsFormatting: true,
+      supportsTranslation: true,
+      aiInstructionsKey: "collectionHandle",
+    },
+    {
+      key: "seoTitle",
+      type: "text",
+      label: "SEO Title",
+      translationKey: "meta_title",
+      supportsAI: true,
+      supportsFormatting: true,
+      supportsTranslation: true,
+      aiInstructionsKey: "collectionSeoTitle",
+      helpText: (value) => `${value.length} characters (recommended: 50-60)`,
+    },
+    {
+      key: "metaDescription",
+      type: "textarea",
+      label: "Meta Description",
+      translationKey: "meta_description",
+      multiline: 3,
+      supportsAI: true,
+      supportsFormatting: true,
+      supportsTranslation: true,
+      aiInstructionsKey: "collectionMetaDesc",
+      helpText: (value) => `${value.length} characters (recommended: 150-160)`,
+    },
+  ],
+};
+
+// ============================================================================
+// BLOGS (ARTICLES)
+// ============================================================================
+
+export const BLOGS_CONFIG: ContentEditorConfig = {
+  contentType: "blogs",
+  resourceType: "Article",
+  displayName: "Articles",
+  displayNameSingular: "Article",
+  showSeoSidebar: true,
+  idPrefix: "ID:",
+  getSubtitle: (item) => item.blogTitle,
+
+  fieldDefinitions: [
+    {
+      key: "title",
+      type: "text",
+      label: "Title",
+      translationKey: "title",
+      required: true,
+      supportsAI: true,
+      supportsFormatting: true,
+      supportsTranslation: true,
+      aiInstructionsKey: "blogTitle",
+      helpText: (value) => `${value.length} characters`,
+    },
+    {
+      key: "body",
+      type: "html",
+      label: "Body",
+      translationKey: "body",
+      supportsAI: true,
+      supportsFormatting: true,
+      supportsTranslation: true,
+      aiInstructionsKey: "blogDescription",
+    },
+    {
+      key: "handle",
+      type: "slug",
+      label: "URL Slug",
+      translationKey: "handle",
+      supportsAI: true,
+      supportsFormatting: true,
+      supportsTranslation: true,
+      aiInstructionsKey: "blogHandle",
+    },
+    {
+      key: "seoTitle",
+      type: "text",
+      label: "SEO Title",
+      translationKey: "meta_title",
+      supportsAI: true,
+      supportsFormatting: true,
+      supportsTranslation: true,
+      aiInstructionsKey: "blogSeoTitle",
+      helpText: (value) => `${value.length} characters (recommended: 50-60)`,
+    },
+    {
+      key: "metaDescription",
+      type: "textarea",
+      label: "Meta Description",
+      translationKey: "meta_description",
+      multiline: 3,
+      supportsAI: true,
+      supportsFormatting: true,
+      supportsTranslation: true,
+      aiInstructionsKey: "blogMetaDesc",
+      helpText: (value) => `${value.length} characters (recommended: 150-160)`,
+    },
+  ],
+};
+
+// ============================================================================
+// PAGES
+// ============================================================================
+
+export const PAGES_CONFIG: ContentEditorConfig = {
+  contentType: "pages",
+  resourceType: "Page",
+  displayName: "Pages",
+  displayNameSingular: "Page",
+  showSeoSidebar: false,
+  idPrefix: "ID:",
+
+  fieldDefinitions: [
+    {
+      key: "title",
+      type: "text",
+      label: "Title",
+      translationKey: "title",
+      required: true,
+      supportsAI: true,
+      supportsFormatting: true,
+      supportsTranslation: true,
+      aiInstructionsKey: "pageTitle",
+      helpText: (value) => `${value.length} characters`,
+    },
+    {
+      key: "body",
+      type: "html",
+      label: "Body",
+      translationKey: "body_html",
+      supportsAI: true,
+      supportsFormatting: true,
+      supportsTranslation: true,
+      aiInstructionsKey: "pageDescription",
+    },
+    {
+      key: "handle",
+      type: "slug",
+      label: "URL Slug",
+      translationKey: "handle",
+      supportsAI: true,
+      supportsFormatting: true,
+      supportsTranslation: true,
+      aiInstructionsKey: "pageHandle",
+    },
+  ],
+};
+
+// ============================================================================
+// POLICIES
+// ============================================================================
+
+export const POLICIES_CONFIG: ContentEditorConfig = {
+  contentType: "policies",
+  resourceType: "ShopPolicy",
+  displayName: "Policies",
+  displayNameSingular: "Policy",
+  showSeoSidebar: false,
+  idPrefix: "ID:",
+  getPrimaryField: (item) => item.title || getPolicyTypeName(item.type),
+  getSubtitle: (item) => getPolicyTypeName(item.type),
+
+  fieldDefinitions: [
+    {
+      key: "body",
+      type: "html",
+      label: "Body",
+      translationKey: "body",
+      supportsAI: true,
+      supportsFormatting: true,
+      supportsTranslation: true,
+      aiInstructionsKey: "policyDescription",
+    },
+  ],
+};
+
+// ============================================================================
+// UTILITY FUNCTIONS
+// ============================================================================
+
+function getPolicyTypeName(type: string): string {
+  const typeMap: Record<string, string> = {
+    CONTACT_INFORMATION: "Kontaktinformationen",
+    LEGAL_NOTICE: "Impressum",
+    PRIVACY_POLICY: "Datenschutzerklärung",
+    REFUND_POLICY: "Rückerstattungsrichtlinie",
+    SHIPPING_POLICY: "Versandrichtlinie",
+    TERMS_OF_SERVICE: "Nutzungsbedingungen",
+    TERMS_OF_SALE: "Verkaufsbedingungen",
+    SUBSCRIPTION_POLICY: "Abonnementrichtlinie",
+  };
+  return typeMap[type] || type;
+}
