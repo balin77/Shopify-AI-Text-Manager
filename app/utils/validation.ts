@@ -15,7 +15,7 @@ const API_KEY_PATTERNS = {
   claude: /^sk-ant-[A-Za-z0-9_-]{95,}$/,
   openai: /^sk-[A-Za-z0-9_-]{20,}$/,
   grok: /^xai-[A-Za-z0-9]{40,}$/,
-  deepseek: /^sk-[A-Za-z0-9]{48,}$/,
+  deepseek: /^sk-[a-f0-9]{32}$/,
 };
 
 /**
@@ -150,7 +150,7 @@ export function parseFormData<T>(
     const obj: Record<string, any> = {};
 
     // Iterate through FormData entries using Array.from for TypeScript compatibility
-    const entries = Array.from(formData as any);
+    const entries = Array.from(formData.entries());
     for (const [key, value] of entries) {
       // Handle number fields
       if (key.includes('Max') && key.includes('PerMinute')) {
