@@ -23,7 +23,7 @@ interface AIEditableFieldProps {
   onGenerateAI?: () => void;
   onFormatAI?: () => void;
   onTranslate?: () => void;
-  onTranslateAll?: () => void;
+  onTranslateToAllLocales?: () => void;
   onAcceptSuggestion?: () => void;
   onAcceptAndTranslate?: () => void;
   onRejectSuggestion?: () => void;
@@ -49,7 +49,7 @@ export function AIEditableField({
   onGenerateAI,
   onFormatAI,
   onTranslate,
-  onTranslateAll,
+  onTranslateToAllLocales,
   onAcceptSuggestion,
   onAcceptAndTranslate,
   onRejectSuggestion,
@@ -137,12 +137,12 @@ export function AIEditableField({
               🎨 Formatieren
             </Button>
           )}
-          {(onTranslate || onTranslateAll) && (
+          {(onTranslate || onTranslateToAllLocales) && (
             <Button
               size="slim"
-              onClick={isPrimaryLocale ? onTranslateAll : onTranslate}
+              onClick={isPrimaryLocale ? onTranslateToAllLocales : onTranslate}
               loading={isLoading}
-              disabled={(isPrimaryLocale && !onTranslateAll) || (!isPrimaryLocale && !sourceTextAvailable)}
+              disabled={(isPrimaryLocale && !onTranslateToAllLocales) || (!isPrimaryLocale && !sourceTextAvailable)}
             >
               🌍 {isPrimaryLocale ? "Übersetzen" : t.products.translateFromPrimary}
             </Button>

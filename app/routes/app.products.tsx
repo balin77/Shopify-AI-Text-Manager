@@ -579,6 +579,26 @@ export default function Products() {
     );
   };
 
+  const handleTranslateFieldToAllLocales = (fieldType: string) => {
+    if (!selectedProductId || !selectedProduct) return;
+    const sourceMap: Record<string, string> = {
+      title: selectedProduct.title,
+      description: selectedProduct.descriptionHtml || "",
+      handle: selectedProduct.handle,
+      seoTitle: selectedProduct.seo?.title || "",
+      metaDescription: selectedProduct.seo?.description || "",
+    };
+    const sourceText = sourceMap[fieldType] || "";
+    if (!sourceText) {
+      alert("Kein Text in der Hauptsprache vorhanden zum Übersetzen");
+      return;
+    }
+    fetcher.submit(
+      { action: "translateFieldToAllLocales", productId: selectedProductId, fieldType, sourceText },
+      { method: "POST" }
+    );
+  };
+
   const handleAcceptSuggestion = (fieldType: string) => {
     const suggestion = aiSuggestions[fieldType];
     if (!suggestion) return;
@@ -806,6 +826,7 @@ export default function Products() {
             onGenerateAI={handleGenerateAI}
             onFormatAI={handleFormatAI}
             onTranslateField={handleTranslateField}
+            onTranslateFieldToAllLocales={handleTranslateFieldToAllLocales}
             onAcceptSuggestion={handleAcceptSuggestion}
             onAcceptAndTranslate={handleAcceptAndTranslate}
             onRejectSuggestion={removeSuggestion}

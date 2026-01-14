@@ -82,6 +82,7 @@ interface ProductEditorProps {
   onGenerateAI: (fieldType: string) => void;
   onFormatAI?: (fieldType: string) => void;
   onTranslateField: (fieldType: string) => void;
+  onTranslateFieldToAllLocales: (fieldType: string) => void;
   onAcceptSuggestion: (fieldType: string) => void;
   onAcceptAndTranslate: (fieldType: string) => void;
   onRejectSuggestion: (fieldType: string) => void;
@@ -131,6 +132,7 @@ export function ProductEditor({
   onGenerateAI,
   onFormatAI,
   onTranslateField,
+  onTranslateFieldToAllLocales,
   onAcceptSuggestion,
   onAcceptAndTranslate,
   onRejectSuggestion,
@@ -595,7 +597,7 @@ export function ProductEditor({
             onGenerateAI={() => onGenerateAI("title")}
             onFormatAI={onFormatAI ? () => onFormatAI("title") : undefined}
             onTranslate={() => onTranslateField("title")}
-            onTranslateAll={isPrimaryLocale ? onTranslateAll : undefined}
+            onTranslateToAllLocales={isPrimaryLocale ? () => onTranslateFieldToAllLocales("title") : undefined}
             onAcceptSuggestion={() => onAcceptSuggestion("title")}
             onAcceptAndTranslate={() => onAcceptAndTranslate("title")}
             onRejectSuggestion={() => onRejectSuggestion("title")}
@@ -624,7 +626,7 @@ export function ProductEditor({
             onGenerateAI={() => onGenerateAI("description")}
             onFormatAI={onFormatAI ? () => onFormatAI("description") : undefined}
             onTranslate={() => onTranslateField("description")}
-            onTranslateAll={isPrimaryLocale ? onTranslateAll : undefined}
+            onTranslateToAllLocales={isPrimaryLocale ? () => onTranslateFieldToAllLocales("description") : undefined}
             onAcceptSuggestion={() => onAcceptSuggestion("description")}
             onAcceptAndTranslate={() => onAcceptAndTranslate("description")}
             onRejectSuggestion={() => onRejectSuggestion("description")}
@@ -649,7 +651,7 @@ export function ProductEditor({
             onGenerateAI={() => onGenerateAI("handle")}
             onFormatAI={onFormatAI ? () => onFormatAI("handle") : undefined}
             onTranslate={() => onTranslateField("handle")}
-            onTranslateAll={isPrimaryLocale ? onTranslateAll : undefined}
+            onTranslateToAllLocales={isPrimaryLocale ? () => onTranslateFieldToAllLocales("handle") : undefined}
             onAcceptSuggestion={() => onAcceptSuggestion("handle")}
             onAcceptAndTranslate={() => onAcceptAndTranslate("handle")}
             onRejectSuggestion={() => onRejectSuggestion("handle")}
@@ -675,7 +677,7 @@ export function ProductEditor({
             onGenerateAI={() => onGenerateAI("seoTitle")}
             onFormatAI={onFormatAI ? () => onFormatAI("seoTitle") : undefined}
             onTranslate={() => onTranslateField("seoTitle")}
-            onTranslateAll={isPrimaryLocale ? onTranslateAll : undefined}
+            onTranslateToAllLocales={isPrimaryLocale ? () => onTranslateFieldToAllLocales("seoTitle") : undefined}
             onAcceptSuggestion={() => onAcceptSuggestion("seoTitle")}
             onAcceptAndTranslate={() => onAcceptAndTranslate("seoTitle")}
             onRejectSuggestion={() => onRejectSuggestion("seoTitle")}
@@ -702,7 +704,7 @@ export function ProductEditor({
             onGenerateAI={() => onGenerateAI("metaDescription")}
             onFormatAI={onFormatAI ? () => onFormatAI("metaDescription") : undefined}
             onTranslate={() => onTranslateField("metaDescription")}
-            onTranslateAll={isPrimaryLocale ? onTranslateAll : undefined}
+            onTranslateToAllLocales={isPrimaryLocale ? () => onTranslateFieldToAllLocales("metaDescription") : undefined}
             onAcceptSuggestion={() => onAcceptSuggestion("metaDescription")}
             onAcceptAndTranslate={() => onAcceptAndTranslate("metaDescription")}
             onRejectSuggestion={() => onRejectSuggestion("metaDescription")}

@@ -75,6 +75,11 @@ export async function handleProductActions({ request }: ActionFunctionArgs) {
     return handleTranslateField(provider, config, formData, session.shop);
   }
 
+  if (action === "translateFieldToAllLocales") {
+    console.log('🌐 [PRODUCT.ACTIONS] Translating field to all locales:', formData.get("fieldType"));
+    return handleTranslateFieldToAllLocales(admin, provider, config, formData, session.shop);
+  }
+
   if (action === "translateSuggestion") {
     console.log('🌐 [PRODUCT.ACTIONS] Translating suggestion for field:', formData.get("fieldType"));
     return handleTranslateSuggestion(provider, config, formData, session.shop);
@@ -549,6 +554,212 @@ async function handleTranslateField(
     });
 
     return json({ success: true, translatedValue, fieldType, targetLocale });
+  } catch (error: any) {
+    await db.task.update({
+      where: { id: task.id },
+      data: {
+        status: "failed",
+        completedAt: new Date(),
+        error: error.message,
+      },
+    });
+
+    return json({ success: false, error: error.message }, { status: 500 });
+  }
+}
+
+async function handleTranslateFieldToAllLocales(
+  admin: any,
+  provider: any,
+  config: any,
+  formData: FormData,
+  shop: string
+) {
+  const fieldType = formData.get("fieldType") as string;
+  const sourceText = formData.get("sourceText") as string;
+  const productId = formData.get("productId") as string;
+
+  const { db } = await import("../db.server");
+
+  // Create task entry
+  const task = await db.task.create({
+    data: {
+      shop,
+      type: "bulkTranslation",
+      status: "pending",
+      resourceType: "product",
+      resourceId: productId,
+      fieldType,
+      progress: 0,
+      expiresAt: getTaskExpirationDate(),
+    },
+  });
+
+  try {
+    const translationService = new TranslationService(provider, config, shop, task.id);
+    const gateway = new ShopifyApiGateway(admin, shop);
+
+    const changedFields: any = {};
+    changedFields[fieldType] = sourceText;
+
+    // Get target locales
+    const targetLocales = ['en', 'fr', 'es', 'it'];
+    const totalLocales = targetLocales.length;
+    let processedLocales = 0;
+    const allTranslations: Record<string, string> = {};
+
+    console.log(`[TranslateFieldToAllLocales] Starting translation for field ${fieldType} in product ${productId}`);
+    console.log(`[TranslateFieldToAllLocales] Target locales:`, targetLocales);
+
+    await db.task.update({
+      where: { id: task.id },
+      data: { status: "queued", progress: 10, total: totalLocales, processed: 0 },
+    });
+
+    // Get the translatableContent for this product
+    const translatableResponse = await gateway.graphql(
+      `#graphql
+        query getTranslatableContent($resourceId: ID!) {
+          translatableResource(resourceId: $resourceId) {
+            resourceId
+            translatableContent {
+              key
+              value
+              digest
+              locale
+            }
+          }
+        }`,
+      { variables: { resourceId: productId } }
+    );
+
+    const translatableData = await translatableResponse.json();
+    const translatableContent = translatableData.data?.translatableResource?.translatableContent || [];
+
+    // Create a map of key -> digest
+    const digestMap: Record<string, string> = {};
+    for (const content of translatableContent) {
+      digestMap[content.key] = content.digest;
+    }
+
+    // Map fieldType to Shopify key
+    const fieldKeyMap: Record<string, string> = {
+      title: "title",
+      description: "body_html",
+      handle: "handle",
+      seoTitle: "meta_title",
+      metaDescription: "meta_description",
+    };
+    const shopifyKey = fieldKeyMap[fieldType];
+
+    if (!shopifyKey) {
+      throw new Error(`Unknown field type: ${fieldType}`);
+    }
+
+    // Translate to each locale one by one
+    for (const locale of targetLocales) {
+      try {
+        console.log(`[TranslateFieldToAllLocales] Translating ${fieldType} to ${locale}`);
+
+        const localeTranslations = await translationService.translateProduct(changedFields, [locale]);
+        const translatedValue = localeTranslations[locale]?.[fieldType] || "";
+
+        if (!translatedValue) {
+          console.warn(`[TranslateFieldToAllLocales] No translation returned for ${locale}`);
+          continue;
+        }
+
+        allTranslations[locale] = translatedValue;
+
+        // Save to Shopify
+        if (digestMap[shopifyKey]) {
+          console.log(`[TranslateFieldToAllLocales] Saving ${shopifyKey} to Shopify for ${locale}`);
+
+          const response = await gateway.graphql(
+            `#graphql
+              mutation translateProduct($resourceId: ID!, $translations: [TranslationInput!]!) {
+                translationsRegister(resourceId: $resourceId, translations: $translations) {
+                  userErrors {
+                    field
+                    message
+                  }
+                  translations {
+                    locale
+                    key
+                    value
+                  }
+                }
+              }`,
+            {
+              variables: {
+                resourceId: productId,
+                translations: [{
+                  key: shopifyKey,
+                  value: translatedValue,
+                  locale,
+                  translatableContentDigest: digestMap[shopifyKey]
+                }]
+              },
+            }
+          );
+
+          const responseData = await response.json();
+          if (responseData.data?.translationsRegister?.userErrors?.length > 0) {
+            console.error(`[TranslateFieldToAllLocales] Shopify API error for ${locale}:`, responseData.data.translationsRegister.userErrors);
+          } else {
+            console.log(`[TranslateFieldToAllLocales] Successfully saved ${shopifyKey} for ${locale}`);
+
+            // Update local database
+            const product = await db.product.findFirst({
+              where: { id: productId },
+              select: { shop: true }
+            });
+
+            if (product) {
+              await db.translation.deleteMany({
+                where: {
+                  productId: productId,
+                  locale: locale,
+                  key: shopifyKey,
+                },
+              });
+
+              await db.translation.create({
+                data: {
+                  productId: productId,
+                  key: shopifyKey,
+                  value: translatedValue,
+                  locale: locale,
+                  digest: digestMap[shopifyKey] || null,
+                },
+              });
+              console.log(`[TranslateFieldToAllLocales] ✓ Saved translation to DB for ${locale}`);
+            }
+          }
+        }
+
+        processedLocales++;
+        const progressPercent = Math.round(10 + (processedLocales / totalLocales) * 90);
+        await db.task.update({
+          where: { id: task.id },
+          data: { progress: progressPercent, processed: processedLocales },
+        });
+      } catch (localeError: any) {
+        console.error(`[TranslateFieldToAllLocales] ERROR: Failed to translate to ${locale}:`, localeError);
+      }
+    }
+
+    await db.task.update({
+      where: { id: task.id },
+      data: {
+        status: processedLocales > 0 ? "completed" : "failed",
+        progress: 100,
+        completedAt: new Date(),
+        result: JSON.stringify({ translations: allTranslations, fieldType }),
+      },
+    });
+
+    return json({ success: processedLocales > 0, translations: allTranslations, fieldType, processedLocales, totalLocales });
   } catch (error: any) {
     await db.task.update({
       where: { id: task.id },
