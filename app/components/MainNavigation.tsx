@@ -116,7 +116,7 @@ export function MainNavigation() {
               const isActive = location.pathname.startsWith(tab.path);
               const showProductCount = tab.id === "products";
               const isAtLimit = showProductCount && productCount >= maxProducts && maxProducts !== Infinity;
-              const showTaskCount = tab.id === "tasks";
+              const showTaskCount = tab.id === "tasks" && runningTaskCount > 0;
 
               const tabContent = (
                 <button
