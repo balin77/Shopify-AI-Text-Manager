@@ -745,7 +745,7 @@ export class BackgroundSyncService {
               const seenKeys = new Set<string>(); // Track seen key-locale combinations
 
               // Check cache first to avoid duplicate API calls
-              const cacheKey = `${resource.resourceId}::${nonPrimaryLocales.map(l => l.locale).join(',')}`;
+              const cacheKey = `${resource.resourceId}::${nonPrimaryLocales.map((l: any) => l.locale).join(',')}`;
               let resourceTranslations = translationCache.get(cacheKey);
 
               if (!resourceTranslations) {

@@ -305,4 +305,5 @@ if (require.main === module) {
   main();
 }
 
-export { migrate, MigrationStats };
+export type { MigrationStats };
+export { migrate };

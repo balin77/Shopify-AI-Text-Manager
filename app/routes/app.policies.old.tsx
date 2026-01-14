@@ -584,7 +584,7 @@ export default function PoliciesPage() {
                   onGenerateAI={() => handleGenerateAI("body")}
                   onFormatAI={() => handleFormatAI("body")}
                   onTranslate={() => handleTranslateField("body")}
-                  onTranslateAll={handleTranslateAll}
+                  onTranslateToAllLocales={handleTranslateAll}
                   onAcceptSuggestion={() => handleAcceptSuggestion("body")}
                   onRejectSuggestion={() => setAiSuggestions(prev => { const newSuggestions = {...prev}; delete newSuggestions["body"]; return newSuggestions; })}
                 />

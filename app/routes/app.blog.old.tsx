@@ -734,7 +734,7 @@ export default function BlogPage() {
                   onGenerateAI={() => handleGenerateAI("title")}
                   onFormatAI={() => handleFormatAI("title")}
                   onTranslate={() => handleTranslateField("title")}
-                  onTranslateAll={handleTranslateAll}
+                  onTranslateToAllLocales={handleTranslateAll}
                   onAcceptSuggestion={() => handleAcceptSuggestion("title")}
                   onRejectSuggestion={() => setAiSuggestions(prev => { const newSuggestions = {...prev}; delete newSuggestions["title"]; return newSuggestions; })}
                 />
@@ -755,7 +755,7 @@ export default function BlogPage() {
                   onGenerateAI={() => handleGenerateAI("body")}
                   onFormatAI={() => handleFormatAI("body")}
                   onTranslate={() => handleTranslateField("body")}
-                  onTranslateAll={handleTranslateAll}
+                  onTranslateToAllLocales={handleTranslateAll}
                   onAcceptSuggestion={() => handleAcceptSuggestion("body")}
                   onRejectSuggestion={() => setAiSuggestions(prev => { const newSuggestions = {...prev}; delete newSuggestions["body"]; return newSuggestions; })}
                 />
@@ -774,7 +774,7 @@ export default function BlogPage() {
                   onGenerateAI={() => handleGenerateAI("handle")}
                   onFormatAI={() => handleFormatAI("handle")}
                   onTranslate={() => handleTranslateField("handle")}
-                  onTranslateAll={handleTranslateAll}
+                  onTranslateToAllLocales={handleTranslateAll}
                   onAcceptSuggestion={() => handleAcceptSuggestion("handle")}
                   onRejectSuggestion={() => setAiSuggestions(prev => { const newSuggestions = {...prev}; delete newSuggestions["handle"]; return newSuggestions; })}
                 />
@@ -794,7 +794,7 @@ export default function BlogPage() {
                   onGenerateAI={() => handleGenerateAI("seoTitle")}
                   onFormatAI={() => handleFormatAI("seoTitle")}
                   onTranslate={() => handleTranslateField("seoTitle")}
-                  onTranslateAll={handleTranslateAll}
+                  onTranslateToAllLocales={handleTranslateAll}
                   onAcceptSuggestion={() => handleAcceptSuggestion("seoTitle")}
                   onRejectSuggestion={() => setAiSuggestions(prev => { const newSuggestions = {...prev}; delete newSuggestions["seoTitle"]; return newSuggestions; })}
                 />
@@ -815,7 +815,7 @@ export default function BlogPage() {
                   onGenerateAI={() => handleGenerateAI("metaDescription")}
                   onFormatAI={() => handleFormatAI("metaDescription")}
                   onTranslate={() => handleTranslateField("metaDescription")}
-                  onTranslateAll={handleTranslateAll}
+                  onTranslateToAllLocales={handleTranslateAll}
                   onAcceptSuggestion={() => handleAcceptSuggestion("metaDescription")}
                   onRejectSuggestion={() => setAiSuggestions(prev => { const newSuggestions = {...prev}; delete newSuggestions["metaDescription"]; return newSuggestions; })}
                 />

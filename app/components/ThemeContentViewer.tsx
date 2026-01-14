@@ -230,7 +230,7 @@ export function ThemeContentViewer({
                         sourceTextAvailable={!!sourceText}
                         onGenerateAI={() => onGenerateAI(fieldKey)}
                         onTranslate={() => onTranslate(fieldKey)}
-                        onTranslateAll={isPrimaryLocale ? onTranslateAll : undefined}
+                        onTranslateToAllLocales={isPrimaryLocale ? onTranslateAll : undefined}
                         onAcceptSuggestion={() => onAcceptSuggestion(fieldKey)}
                         onRejectSuggestion={() => onRejectSuggestion(fieldKey)}
                       />
@@ -248,7 +248,7 @@ export function ThemeContentViewer({
                         sourceTextAvailable={!!sourceText}
                         onGenerateAI={() => onGenerateAI(fieldKey)}
                         onTranslate={() => onTranslate(fieldKey)}
-                        onTranslateAll={isPrimaryLocale ? onTranslateAll : undefined}
+                        onTranslateToAllLocales={isPrimaryLocale ? onTranslateAll : undefined}
                         onAcceptSuggestion={() => onAcceptSuggestion(fieldKey)}
                         onRejectSuggestion={() => onRejectSuggestion(fieldKey)}
                       />

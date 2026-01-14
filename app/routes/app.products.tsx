@@ -205,12 +205,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const products = dbProducts.map((p) => ({
       id: p.id,
       title: p.title,
-      descriptionHtml: p.descriptionHtml,
+      descriptionHtml: p.descriptionHtml || "",
       handle: p.handle,
       status: p.status,
       featuredImage: {
-        url: p.featuredImageUrl,
-        altText: p.featuredImageAlt,
+        url: p.featuredImageUrl || "",
+        altText: p.featuredImageAlt || undefined,
       },
       images: p.images ? p.images.map((img: any) => ({
         url: img.url,
@@ -221,8 +221,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         })) : [],
       })) : [],
       seo: {
-        title: p.seoTitle,
-        description: p.seoDescription,
+        title: p.seoTitle || "",
+        description: p.seoDescription || "",
       },
       options: p.options ? p.options.map((opt) => ({
         id: opt.id,
@@ -316,7 +316,7 @@ export default function Products() {
     shopLocales.map((l: any) => l.locale)
   );
 
-  const selectedProduct = products.find((p: any) => p.id === selectedProductId);
+  const selectedProduct = products.find((p: any) => p.id === selectedProductId) || null;
 
   const {
     editableTitle,
@@ -908,7 +908,7 @@ export default function Products() {
         {/* Left: Product List (Fixed) */}
         <div style={{ width: "350px", flexShrink: 0, display: "flex", flexDirection: "column", height: "100%" }}>
           <ProductList
-            products={products}
+            products={(products || []) as any}
             selectedProductId={selectedProductId}
             onProductSelect={setSelectedProductId}
             searchPlaceholder={t.products.search}
@@ -923,7 +923,7 @@ export default function Products() {
         {/* Middle: Product Editor */}
         <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
           <ProductEditor
-            product={selectedProduct}
+            product={selectedProduct as any}
             shopLocales={shopLocales}
             primaryLocale={primaryLocale}
             currentLanguage={currentLanguage}
@@ -955,8 +955,8 @@ export default function Products() {
             isLoading={fetcher.state !== "idle"}
             isSaving={fetcher.state !== "idle" && fetcher.formData?.get("action") === "updateProduct"}
             isTranslatingAll={fetcher.state !== "idle" && fetcher.formData?.get("action") === "translateAll"}
-            fetcherFormData={fetcher.formData}
-            showSuccessBanner={fetcher.data?.success && !(fetcher.data as any).generatedContent}
+            fetcherFormData={fetcher.formData || null}
+            showSuccessBanner={fetcher.data?.success && !(fetcher.data as any).generatedContent ? true : false}
             selectProductText={t.products.selectProduct}
             optionTranslations={optionTranslations}
             onOptionNameChange={handleOptionNameChange}

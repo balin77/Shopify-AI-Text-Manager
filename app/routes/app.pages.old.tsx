@@ -672,7 +672,7 @@ export default function PagesPage() {
                   onGenerateAI={() => handleGenerateAI("title")}
                   onFormatAI={() => handleFormatAI("title")}
                   onTranslate={() => handleTranslateField("title")}
-                  onTranslateAll={handleTranslateAll}
+                  onTranslateToAllLocales={handleTranslateAll}
                   onAcceptSuggestion={() => handleAcceptSuggestion("title")}
                   onRejectSuggestion={() => setAiSuggestions(prev => { const newSuggestions = {...prev}; delete newSuggestions["title"]; return newSuggestions; })}
                 />
@@ -695,7 +695,7 @@ export default function PagesPage() {
                   onGenerateAI={() => handleGenerateAI("description")}
                   onFormatAI={() => handleFormatAI("description")}
                   onTranslate={() => handleTranslateField("description")}
-                  onTranslateAll={handleTranslateAll}
+                  onTranslateToAllLocales={handleTranslateAll}
                   onAcceptSuggestion={() => handleAcceptSuggestion("description")}
                   onRejectSuggestion={() => setAiSuggestions(prev => { const newSuggestions = {...prev}; delete newSuggestions["description"]; return newSuggestions; })}
                 />
@@ -716,7 +716,7 @@ export default function PagesPage() {
                   onGenerateAI={() => handleGenerateAI("handle")}
                   onFormatAI={() => handleFormatAI("handle")}
                   onTranslate={() => handleTranslateField("handle")}
-                  onTranslateAll={handleTranslateAll}
+                  onTranslateToAllLocales={handleTranslateAll}
                   onAcceptSuggestion={() => handleAcceptSuggestion("handle")}
                   onRejectSuggestion={() => setAiSuggestions(prev => { const newSuggestions = {...prev}; delete newSuggestions["handle"]; return newSuggestions; })}
                 />

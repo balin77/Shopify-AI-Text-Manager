@@ -49,13 +49,14 @@ export function LocaleNavigationButtons({
             <div key={locale.locale} style={buttonStyle}>
               <Button
                 variant={isCurrentLanguage ? "primary" : undefined}
-                onClick={(event: any) => {
+                onClick={() => {
+                  onLanguageChange(locale.locale);
+                }}
+                onPointerDown={(event: any) => {
                   // Ctrl+Click toggles language activation (except for primary locale)
                   if (event.ctrlKey && onToggleLanguage && !isPrimary) {
+                    event.preventDefault();
                     onToggleLanguage(locale.locale);
-                  } else {
-                    // Always allow language switching (even for disabled languages)
-                    onLanguageChange(locale.locale);
                   }
                 }}
                 size="slim"

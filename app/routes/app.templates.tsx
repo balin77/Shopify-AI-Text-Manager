@@ -131,8 +131,10 @@ export default function TemplatesPage() {
   useEffect(() => {
     if (themes.length > 0 && !selectedItemId) {
       const firstTheme = themes[0];
-      setSelectedItemId(firstTheme.id);
-      loadThemeData(firstTheme.groupId);
+      if (firstTheme) {
+        setSelectedItemId(firstTheme.id);
+        loadThemeData(firstTheme.groupId);
+      }
     }
   }, [themes]);
 
@@ -226,7 +228,7 @@ export default function TemplatesPage() {
 
   // Handle loaded translations from fetcher
   useEffect(() => {
-    if (fetcher.data?.success && 'translations' in fetcher.data && 'locale' in fetcher.data) {
+    if (fetcher.data && typeof fetcher.data === 'object' && 'success' in fetcher.data && fetcher.data.success && 'translations' in fetcher.data && 'locale' in fetcher.data) {
       const { translations, locale } = fetcher.data as any;
       const translationKey = `${currentGroupId}_${locale}`;
 
@@ -250,7 +252,7 @@ export default function TemplatesPage() {
 
   // Handle AI generation response
   useEffect(() => {
-    if (fetcher.data?.success && 'generatedContent' in fetcher.data && 'fieldKey' in fetcher.data) {
+    if (fetcher.data && typeof fetcher.data === 'object' && 'success' in fetcher.data && fetcher.data.success && 'generatedContent' in fetcher.data && 'fieldKey' in fetcher.data) {
       const { generatedContent, fieldKey } = fetcher.data as any;
       setAiSuggestions(prev => ({
         ...prev,
@@ -261,7 +263,7 @@ export default function TemplatesPage() {
 
   // Handle translated field response
   useEffect(() => {
-    if (fetcher.data?.success && 'translatedValue' in fetcher.data && 'fieldKey' in fetcher.data) {
+    if (fetcher.data && typeof fetcher.data === 'object' && 'success' in fetcher.data && fetcher.data.success && 'translatedValue' in fetcher.data && 'fieldKey' in fetcher.data) {
       const { translatedValue, fieldKey } = fetcher.data as any;
       setEditableValues(prev => ({
         ...prev,
@@ -272,7 +274,7 @@ export default function TemplatesPage() {
 
   // Handle translateAll response
   useEffect(() => {
-    if (fetcher.data?.success && 'translatedFields' in fetcher.data) {
+    if (fetcher.data && typeof fetcher.data === 'object' && 'success' in fetcher.data && fetcher.data.success && 'translatedFields' in fetcher.data) {
       const { translatedFields } = fetcher.data as any;
       setEditableValues(prev => ({
         ...prev,
@@ -283,9 +285,9 @@ export default function TemplatesPage() {
 
   // Show global InfoBox for success/error messages
   useEffect(() => {
-    if (fetcher.data?.success && !(fetcher.data as any).generatedContent && !(fetcher.data as any).translatedValue) {
+    if (fetcher.data && typeof fetcher.data === 'object' && 'success' in fetcher.data && fetcher.data.success && !(fetcher.data as any).generatedContent && !(fetcher.data as any).translatedValue) {
       showInfoBox(t.content?.changesSaved || "Changes saved successfully!", "success", t.content?.success || "Success");
-    } else if (fetcher.data && !fetcher.data.success && 'error' in fetcher.data) {
+    } else if (fetcher.data && typeof fetcher.data === 'object' && 'success' in fetcher.data && !fetcher.data.success && 'error' in fetcher.data) {
       showInfoBox(fetcher.data.error as string, "critical", t.content?.error || "Error");
     }
   }, [fetcher.data, showInfoBox, t]);

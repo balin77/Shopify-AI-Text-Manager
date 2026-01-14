@@ -8,16 +8,20 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   try {
     console.log("🔐 [AUTH.$] Authenticating...");
-    const { session, redirect } = await authenticate.admin(request);
+    const authResult = await authenticate.admin(request);
 
     // If we have a redirect, return it
-    if (redirect) {
-      console.log("🔀 [AUTH.$] Redirect response:", redirect.headers.get("Location"));
+    if ('redirect' in authResult && authResult.redirect) {
+      const redirect = authResult.redirect;
+      if (redirect instanceof Response && 'headers' in redirect) {
+        console.log("🔀 [AUTH.$] Redirect response:", redirect.headers.get("Location"));
+      }
       return redirect;
     }
 
     // If we have a session, redirect to the app
-    if (session) {
+    if ('session' in authResult && authResult.session) {
+      const session = authResult.session;
       console.log("✅ [AUTH.$] Session found, redirecting to /app");
       console.log("✅ [AUTH.$] Shop:", session.shop);
       console.log("✅ [AUTH.$] Session ID:", session.id);

@@ -116,43 +116,45 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
       >
         {/* Left Sidebar - Item List (Fixed) */}
         <div style={{ width: "350px", flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden", height: "100%" }}>
-          <Card padding="0" style={{ display: "flex", flexDirection: "column", height: "100%" }}>
-            <div style={{ padding: "1rem", borderBottom: "1px solid #e1e3e5", flexShrink: 0 }}>
-              <Text as="h2" variant="headingMd">
-                {config.displayName} ({items.length})
-              </Text>
-            </div>
-            <div style={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
-              {items.length > 0 ? (
-                <ResourceList
-                  resourceName={{
-                    singular: config.displayNameSingular,
-                    plural: config.displayName,
-                  }}
-                  items={items}
-                  renderItem={(item: any) => {
-                    const { id } = item;
-                    const isSelected = state.selectedItemId === id;
+          <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+            <Card padding="0">
+              <div style={{ padding: "1rem", borderBottom: "1px solid #e1e3e5", flexShrink: 0 }}>
+                <Text as="h2" variant="headingMd">
+                  {config.displayName} ({items.length})
+                </Text>
+              </div>
+              <div style={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
+                {items.length > 0 ? (
+                  <ResourceList
+                    resourceName={{
+                      singular: config.displayNameSingular,
+                      plural: config.displayName,
+                    }}
+                    items={items}
+                    renderItem={(item: any) => {
+                      const { id } = item;
+                      const isSelected = state.selectedItemId === id;
 
-                    return (
-                      <ResourceItem
-                        id={id}
-                        onClick={() => handlers.handleItemSelect(id)}
-                      >
-                        {listItemRenderer(item, isSelected)}
-                      </ResourceItem>
-                    );
-                  }}
-                />
-              ) : (
-                <div style={{ padding: "2rem", textAlign: "center" }}>
-                  <Text as="p" variant="bodySm" tone="subdued">
-                    {t.content?.noEntries || "No entries found"}
-                  </Text>
-                </div>
-              )}
-            </div>
-          </Card>
+                      return (
+                        <ResourceItem
+                          id={id}
+                          onClick={() => handlers.handleItemSelect(id)}
+                        >
+                          {listItemRenderer(item, isSelected)}
+                        </ResourceItem>
+                      );
+                    }}
+                  />
+                ) : (
+                  <div style={{ padding: "2rem", textAlign: "center" }}>
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      {t.content?.noEntries || "No entries found"}
+                    </Text>
+                  </div>
+                )}
+              </div>
+            </Card>
+          </div>
         </div>
 
         {/* Middle: Content Editor */}

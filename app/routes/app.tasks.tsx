@@ -129,7 +129,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function TasksPage() {
-  const { tasks, shop, error, pagination, filters } = useLoaderData<typeof loader>();
+  const loaderData = useLoaderData<typeof loader>();
+  const { tasks, shop, pagination, filters } = loaderData;
+  const error = 'error' in loaderData ? loaderData.error : undefined;
   const fetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
   const { t } = useI18n();

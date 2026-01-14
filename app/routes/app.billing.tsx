@@ -43,11 +43,23 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 };
 
 export default function BillingPage() {
-  const { currentPlan, subscription } = useLoaderData<typeof loader>();
+  const loaderData = useLoaderData<typeof loader>();
   const navigate = useNavigate();
   const [loading, setLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Type guard to check if we have an error
+  if ('error' in loaderData) {
+    return (
+      <Page title="Abonnement & Preise">
+        <Banner tone="critical">
+          <p>{loaderData.error}</p>
+        </Banner>
+      </Page>
+    );
+  }
+
+  const { currentPlan, subscription } = loaderData;
   const availablePlans = getAvailablePlans();
 
   const handleSelectPlan = async (plan: BillingPlan) => {

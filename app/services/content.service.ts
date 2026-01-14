@@ -702,8 +702,9 @@ export class ContentService {
       const data = await response.json();
 
       // Check for GraphQL errors (like access denied)
-      if (data.errors && data.errors.length > 0) {
-        const accessDeniedError = data.errors.find((err: any) =>
+      if ('errors' in data && data.errors && Array.isArray(data.errors) && data.errors.length > 0) {
+        const errors = data.errors as any[];
+        const accessDeniedError = errors.find((err: any) =>
           err.message?.includes('Access denied') || err.message?.includes('metaobjectDefinitions')
         );
 
@@ -712,7 +713,7 @@ export class ContentService {
           return [];
         }
 
-        throw new Error(data.errors[0].message);
+        throw new Error(errors[0].message);
       }
 
       const definitions = data.data?.metaobjectDefinitions?.edges?.map((edge: any) => edge.node) || [];
