@@ -13,6 +13,7 @@
  */
 
 import { db } from "../db.server";
+import { decryptPII } from "../utils/encryption";
 
 export interface GDPRCustomerDataRequest {
   shop_id: number;
@@ -91,10 +92,14 @@ export async function exportCustomerData(
     },
   });
 
-  // Convert BigInt to string for JSON serialization
+  // Convert BigInt to string and decrypt PII for JSON serialization
   const sanitizedSessions = sessions.map(session => ({
     ...session,
     userId: session.userId ? session.userId.toString() : null,
+    // Decrypt PII data before exporting (GDPR right to access requires readable data)
+    firstName: decryptPII(session.firstName),
+    lastName: decryptPII(session.lastName),
+    email: decryptPII(session.email),
   }));
 
   const exportData = {
@@ -107,9 +112,9 @@ export async function exportCustomerData(
     sessions: sanitizedSessions,
     dataCollected: {
       personalData: {
-        firstName: sessions[0]?.firstName || null,
-        lastName: sessions[0]?.lastName || null,
-        email: sessions[0]?.email || null,
+        firstName: decryptPII(sessions[0]?.firstName) || null,
+        lastName: decryptPII(sessions[0]?.lastName) || null,
+        email: decryptPII(sessions[0]?.email) || null,
         locale: sessions[0]?.locale || null,
       },
       metadata: {
@@ -119,7 +124,7 @@ export async function exportCustomerData(
         lastActivity: sessions[0]?.lastActivityAt || null,
       },
     },
-    note: "This app only stores session data for authentication purposes. No order data, payment information, or other sensitive data is stored.",
+    note: "This app only stores session data for authentication purposes. No order data, payment information, or other sensitive data is stored. PII data is encrypted at rest for security.",
   };
 
   console.log(`✅ [GDPR] Exported data for customer ${customer.id}: ${sessions.length} sessions found`);

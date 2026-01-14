@@ -5,6 +5,7 @@
  * This script runs:
  * 1. Prisma migrations (if any)
  * 2. API Key encryption migration (idempotent)
+ * 3. Session PII encryption migration (idempotent)
  */
 
 import { execSync } from 'child_process';
@@ -68,6 +69,21 @@ async function main() {
     }
   } else {
     log('\nℹ️  Skipping API Key encryption (ENCRYPTION_KEY not set)', 'blue');
+  }
+
+  // 3. Run Session PII encryption migration (if ENCRYPTION_KEY is set)
+  if (process.env.ENCRYPTION_KEY) {
+    log('\n📦 Running Session PII Encryption Migration...', 'blue');
+    const success = runCommand(
+      'npx tsx scripts/migrate-encrypt-session-pii.ts',
+      'Session PII Encryption'
+    );
+
+    if (!success) {
+      log('⚠️  Session PII encryption failed, but continuing...', 'yellow');
+    }
+  } else {
+    log('\nℹ️  Skipping Session PII encryption (ENCRYPTION_KEY not set)', 'blue');
   }
 
   log('\n' + '='.repeat(50), 'green');

@@ -1,7 +1,7 @@
 /**
- * Encryption Utility for API Keys
+ * Encryption Utility for Sensitive Data
  *
- * Uses AES-256-GCM for secure encryption of sensitive data like API keys.
+ * Uses AES-256-GCM for secure encryption of sensitive data like API keys and PII.
  *
  * Security Features:
  * - AES-256-GCM (Authenticated Encryption with Associated Data)
@@ -10,6 +10,11 @@
  * - NIST-recommended algorithm
  *
  * Storage Format: {iv}:{encryptedData}:{authTag} (Base64-encoded)
+ *
+ * Use Cases:
+ * - API Keys (Claude, OpenAI, Gemini, etc.)
+ * - PII Data (firstName, lastName, email)
+ * - OAuth Tokens (accessToken, refreshToken)
  *
  * @example
  * ```typescript
@@ -275,6 +280,92 @@ export function decryptApiKey(encryptedApiKey: string | null | undefined): strin
   // If it's not encrypted, return as-is (for backwards compatibility during migration)
   if (!isEncrypted(trimmed)) {
     console.warn('Warning: API key is not encrypted. Consider running migration.');
+    return trimmed;
+  }
+
+  return decrypt(trimmed);
+}
+
+// ============================================================================
+// PII (Personally Identifiable Information) Encryption
+// ============================================================================
+
+/**
+ * Safely encrypt PII data (firstName, lastName, email, etc.)
+ *
+ * @param piiData - The PII data to encrypt (can be null/undefined)
+ * @returns {string | null} Encrypted PII data or null
+ *
+ * @example
+ * ```typescript
+ * const encrypted = encryptPII('John');
+ * const decrypted = decryptPII(encrypted); // 'John'
+ * ```
+ */
+export function encryptPII(piiData: string | null | undefined): string | null {
+  if (!piiData || piiData.trim() === '') {
+    return null;
+  }
+  return encrypt(piiData.trim());
+}
+
+/**
+ * Safely decrypt PII data (handles null/undefined/already-decrypted)
+ *
+ * @param encryptedPII - The encrypted PII data (can be null/undefined)
+ * @returns {string | null} Decrypted PII data or null
+ *
+ * @example
+ * ```typescript
+ * const encrypted = 'a2V5MTIzNDU2Nzg=:ZW5jcnlwdGVk:dGFn';
+ * const decrypted = decryptPII(encrypted); // 'John'
+ * ```
+ */
+export function decryptPII(encryptedPII: string | null | undefined): string | null {
+  if (!encryptedPII || encryptedPII.trim() === '') {
+    return null;
+  }
+
+  const trimmed = encryptedPII.trim();
+
+  // If it's not encrypted, return as-is (for backwards compatibility during migration)
+  if (!isEncrypted(trimmed)) {
+    console.warn('Warning: PII data is not encrypted. Consider running migration.');
+    return trimmed;
+  }
+
+  return decrypt(trimmed);
+}
+
+/**
+ * Safely encrypt an OAuth token (accessToken, refreshToken)
+ *
+ * @param token - The OAuth token to encrypt (can be null/undefined)
+ * @returns {string | null} Encrypted token or null
+ */
+export function encryptToken(token: string | null | undefined): string | null {
+  if (!token || token.trim() === '') {
+    return null;
+  }
+  return encrypt(token.trim());
+}
+
+/**
+ * Safely decrypt an OAuth token (handles null/undefined/already-decrypted)
+ *
+ * @param encryptedToken - The encrypted token (can be null/undefined)
+ * @returns {string | null} Decrypted token or null
+ */
+export function decryptToken(encryptedToken: string | null | undefined): string | null {
+  if (!encryptedToken || encryptedToken.trim() === '') {
+    return null;
+  }
+
+  const trimmed = encryptedToken.trim();
+
+  // If it's not encrypted, return as-is (for backwards compatibility during migration)
+  if (!isEncrypted(trimmed)) {
+    console.warn('Warning: OAuth token is not encrypted. Consider running migration.');
     return trimmed;
   }
 
