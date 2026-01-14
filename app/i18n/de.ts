@@ -321,6 +321,7 @@ export const de = {
       all: "Alle Felder",
     },
     // Expandable details
+    aiPrompt: "AI Anfrage",
     aiOutput: "AI Ergebnis",
     image: "Bild",
   },

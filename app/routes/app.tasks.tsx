@@ -374,9 +374,23 @@ export default function TasksPage() {
                           </div>
                         )}
 
+                        {/* AI Prompt Section */}
+                        {task.prompt && (
+                          <div style={{ padding: "1rem", background: "#f0f7ff", borderRadius: "8px", border: "1px solid #b3d9ff" }}>
+                            <BlockStack gap="200">
+                              <Text as="h3" variant="headingSm" fontWeight="semibold">
+                                {t.tasks.aiPrompt || "AI Prompt"}
+                              </Text>
+                              <div style={{ padding: "0.75rem", background: "white", borderRadius: "4px", fontFamily: "monospace", fontSize: "12px", whiteSpace: "pre-wrap", maxHeight: "300px", overflowY: "auto" }}>
+                                {task.prompt}
+                              </div>
+                            </BlockStack>
+                          </div>
+                        )}
+
                         {/* AI Output Section */}
                         {task.result && (
-                          <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
+                          <div style={{ padding: "1rem", background: "#f0fff4", borderRadius: "8px", border: "1px solid #9ae6b4" }}>
                             <BlockStack gap="300">
                               <Text as="h3" variant="headingSm" fontWeight="semibold">
                                 {t.tasks.aiOutput || "AI Output"}

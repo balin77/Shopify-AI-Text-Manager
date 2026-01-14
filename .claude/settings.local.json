@@ -8,7 +8,9 @@
       "Bash(npm run build:*)",
       "Bash(npm run dev:*)",
       "Bash(timeout 10 bash:*)",
-      "Bash(git log:*)"
+      "Bash(git log:*)",
+      "Bash(npm run migrate:*)",
+      "Bash(npx prisma generate:*)"
     ],
     "deny": [],
     "ask": []

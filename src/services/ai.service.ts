@@ -348,6 +348,11 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
   }
 
   private async askAI(prompt: string): Promise<string> {
+    // Save prompt to database if taskId is provided
+    if (this.taskId && this.shop) {
+      await this.savePromptToTask(prompt);
+    }
+
     // If no shop/taskId provided, execute directly (backward compatibility)
     if (!this.shop || !this.taskId) {
       return this.executeAIRequest(prompt);
@@ -363,6 +368,19 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       estimatedTokens,
       () => this.executeAIRequest(prompt)
     );
+  }
+
+  private async savePromptToTask(prompt: string): Promise<void> {
+    try {
+      const { db } = await import('../../app/db.server');
+      await db.task.update({
+        where: { id: this.taskId },
+        data: { prompt },
+      });
+    } catch (error) {
+      console.error('Failed to save prompt to task:', error);
+      // Don't throw - we don't want to fail the task if prompt saving fails
+    }
   }
 
   private async executeAIRequest(prompt: string): Promise<string> {

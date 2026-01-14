@@ -56,7 +56,8 @@ async function main() {
   // Run all migrations in order
   const migrations = [
     'add_entity_specific_ai_instructions.sql',
-    '20250113_add_menu_model.sql'
+    '20250113_add_menu_model.sql',
+    '20260114_add_prompt_to_task.sql'
   ];
 
   for (const migrationFile of migrations) {

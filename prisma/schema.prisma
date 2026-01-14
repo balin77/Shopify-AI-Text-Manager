@@ -144,6 +144,7 @@ model Task {
   progress      Int     @default(0) // 0-100
   total         Int? // Total number of items (for bulk operations)
   processed     Int     @default(0) // Number of processed items
+  prompt        String? @db.Text // The AI prompt/request sent
   result        String? @db.Text // JSON string with results or error message
   error         String? @db.Text
 

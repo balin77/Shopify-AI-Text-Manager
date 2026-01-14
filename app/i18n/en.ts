@@ -323,6 +323,7 @@ export const en: Translation = {
       all: "All Fields",
     },
     // Expandable details
+    aiPrompt: "AI Prompt",
     aiOutput: "AI Output",
     image: "Image",
   },

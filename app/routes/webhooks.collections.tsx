@@ -86,31 +86,13 @@ async function processWebhookAsync(
   const { db } = await import("../db.server");
 
   try {
-    // 1. Get admin session for this shop
-    const session = await db.session.findFirst({
-      where: { shop },
-      orderBy: { id: "desc" },
-    });
+    // 1. Create admin GraphQL client from shop session
+    const { createAdminClientFromShop } = await import("../utils/admin-client.server");
+    const admin = await createAdminClientFromShop(shop);
 
-    if (!session) {
-      throw new Error(`No session found for shop: ${shop}`);
-    }
+    console.log(`[WEBHOOK-ASYNC] Created admin client for shop: ${shop}`);
 
-    console.log(`[WEBHOOK-ASYNC] Found session for shop: ${shop}`);
-
-    // 2. Create admin GraphQL client
-    const { authenticate } = await import("../shopify.server");
-
-    // Create a mock request with the session
-    const mockRequest = new Request("https://fake.url", {
-      headers: {
-        "Authorization": `Bearer ${session.accessToken}`,
-      },
-    });
-
-    const { admin } = await authenticate.admin(mockRequest);
-
-    // 3. Process based on topic
+    // 2. Process based on topic
     const syncService = new ContentSyncService(admin, shop);
 
     if (topic === "collections/create" || topic === "collections/update") {
@@ -121,7 +103,7 @@ async function processWebhookAsync(
       await syncService.deleteCollection(collectionId);
     }
 
-    // 4. Mark webhook as processed
+    // 3. Mark webhook as processed
     await db.webhookLog.update({
       where: { id: logId },
       data: { processed: true },
