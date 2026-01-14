@@ -41,8 +41,8 @@ const apiLimiter = rateLimit({
   max: 20, // 20 requests per minute
   standardHeaders: true,
   legacyHeaders: false,
-  // Trust the first proxy (Railway's load balancer)
-  trustProxy: 1,
+  // Note: Trust proxy is configured on the Express app (line 24)
+  // express-rate-limit automatically uses the app's trust proxy setting
   skip: (req) => {
     // Skip rate limiting for auth routes and assets
     return req.path.startsWith('/auth') ||
