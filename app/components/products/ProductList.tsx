@@ -198,82 +198,80 @@ export function ProductList({
             const isSelected = selectedProductId === id;
 
             return (
-              <div style={{ position: "relative" }}>
-                {/* Status stripe positioned absolutely at the left edge */}
-                <div
-                  style={{
-                    position: "absolute",
-                    left: 0,
-                    top: "10%",
-                    height: "80%",
-                    width: "6px",
-                    backgroundColor: getStatusColor(status),
-                    zIndex: 1,
-                    borderRadius: "0 3px 3px 0",
-                  }}
-                />
-                <ResourceItem
-                  id={id}
-                  onClick={() => onProductSelect(id)}
-                  media={
+              <ResourceItem
+                id={id}
+                onClick={() => onProductSelect(id)}
+                media={
+                  <div
+                    style={{ position: "relative", display: "inline-block", marginLeft: "12px" }}
+                    onMouseEnter={() => setHoveredProductId(id)}
+                    onMouseLeave={() => setHoveredProductId(null)}
+                  >
+                    {/* Status stripe positioned absolutely at the left edge */}
                     <div
-                      style={{ position: "relative", display: "inline-block", marginLeft: "12px" }}
-                      onMouseEnter={() => setHoveredProductId(id)}
-                      onMouseLeave={() => setHoveredProductId(null)}
-                    >
-                      {featuredImage ? (
-                        <Thumbnail
-                          source={featuredImage.url}
-                          alt={featuredImage.altText || title}
-                          size="large"
-                        />
-                      ) : (
-                        <div
-                          style={{
-                            width: "60px",
-                            height: "60px",
-                            background: "#e1e3e5",
-                            borderRadius: "8px",
-                          }}
-                        />
-                      )}
-                      {/* Badge on hover - positioned at bottom */}
-                      {hoveredProductId === id && (
-                        <div
-                          style={{
-                            position: "absolute",
-                            bottom: "8px",
-                            left: "50%",
-                            transform: "translateX(-50%)",
-                            pointerEvents: "none",
-                            zIndex: 100,
-                            backgroundColor: "rgba(255, 255, 255, 0.9)",
-                            borderRadius: "999px",
-                            padding: "1px 2px",
-                            boxShadow: "0 2px 4px rgba(0, 0, 0, 0.2)",
-                          }}
+                      style={{
+                        position: "absolute",
+                        left: "-18px",
+                        top: "10%",
+                        height: "80%",
+                        width: "6px",
+                        backgroundColor: getStatusColor(status),
+                        zIndex: 1,
+                        borderRadius: "0 3px 3px 0",
+                      }}
+                    />
+                    {featuredImage ? (
+                      <Thumbnail
+                        source={featuredImage.url}
+                        alt={featuredImage.altText || title}
+                        size="large"
+                      />
+                    ) : (
+                      <div
+                        style={{
+                          width: "60px",
+                          height: "60px",
+                          background: "#e1e3e5",
+                          borderRadius: "8px",
+                        }}
+                      />
+                    )}
+                    {/* Badge on hover - positioned at bottom */}
+                    {hoveredProductId === id && (
+                      <div
+                        style={{
+                          position: "absolute",
+                          bottom: "8px",
+                          left: "50%",
+                          transform: "translateX(-50%)",
+                          pointerEvents: "none",
+                          zIndex: 100,
+                          backgroundColor: "rgba(255, 255, 255, 0.9)",
+                          borderRadius: "999px",
+                          padding: "1px 2px",
+                          boxShadow: "0 2px 4px rgba(0, 0, 0, 0.2)",
+                        }}
+                      >
+                        <Badge
+                          tone={
+                            status === "ACTIVE"
+                              ? "success"
+                              : status === "DRAFT"
+                                ? "attention"
+                                : "info"
+                          }
                         >
-                          <Badge
-                            tone={
-                              status === "ACTIVE"
-                                ? "success"
-                                : status === "DRAFT"
-                                  ? "attention"
-                                  : "info"
-                            }
-                          >
-                            {status}
-                          </Badge>
-                        </div>
-                      )}
-                    </div>
-                  }
-                >
-                  <Text as="p" variant="bodyMd" fontWeight={isSelected ? "bold" : "regular"}>
-                    {title}
-                  </Text>
-                </ResourceItem>
-              </div>
+                          {status}
+                        </Badge>
+                      </div>
+                    )}
+                  </div>
+                }
+              >
+                <Text as="p" variant="bodyMd" fontWeight={isSelected ? "bold" : "regular"}>
+                  {title}
+                </Text>
+              </ResourceItem>
             );
           }}
         />
