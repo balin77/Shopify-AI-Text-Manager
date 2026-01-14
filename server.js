@@ -18,8 +18,10 @@ const viteDevServer =
 
 const app = express();
 
-// Trust proxy - required for Railway/Heroku/etc behind reverse proxy
-app.set('trust proxy', true);
+// Trust proxy - configure for Railway deployment
+// Only trust the first proxy (Railway's load balancer)
+// This prevents IP spoofing while allowing proper IP detection
+app.set('trust proxy', 1);
 
 app.use(compression());
 
@@ -39,6 +41,8 @@ const apiLimiter = rateLimit({
   max: 20, // 20 requests per minute
   standardHeaders: true,
   legacyHeaders: false,
+  // Trust the first proxy (Railway's load balancer)
+  trustProxy: 1,
   skip: (req) => {
     // Skip rate limiting for auth routes and assets
     return req.path.startsWith('/auth') ||

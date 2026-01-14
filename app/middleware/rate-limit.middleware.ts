@@ -17,6 +17,7 @@ export const generalLimiter = rateLimit({
   message: 'Too many requests from this IP, please try again later.',
   standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
   legacyHeaders: false, // Disable the `X-RateLimit-*` headers
+  trustProxy: 1, // Trust first proxy (Railway's load balancer)
   // Store in memory (for production, consider Redis)
   handler: (req, res) => {
     res.status(429).json({
@@ -37,6 +38,7 @@ export const strictLimiter = rateLimit({
   message: 'Rate limit exceeded for this operation. Please wait before trying again.',
   standardHeaders: true,
   legacyHeaders: false,
+  trustProxy: 1, // Trust first proxy (Railway's load balancer)
   // Use shop domain as key instead of IP
   keyGenerator: (req) => {
     // Extract shop from query params or session
@@ -62,6 +64,7 @@ export const authLimiter = rateLimit({
   message: 'Too many authentication attempts. Please try again later.',
   standardHeaders: true,
   legacyHeaders: false,
+  trustProxy: 1, // Trust first proxy (Railway's load balancer)
   skipSuccessfulRequests: true, // Don't count successful requests
   handler: (req, res) => {
     res.status(429).json({
@@ -82,6 +85,7 @@ export const webhookLimiter = rateLimit({
   message: 'Webhook rate limit exceeded.',
   standardHeaders: false, // Don't expose rate limit info to Shopify
   legacyHeaders: false,
+  trustProxy: 1, // Trust first proxy (Railway's load balancer)
   keyGenerator: (req) => {
     const shop = req.headers['x-shopify-shop-domain'] as string || 'unknown';
     return `webhook:${shop}`;

@@ -58,7 +58,8 @@
       "Bash(railway projects:*)",
       "Bash(railway:*)",
       "Bash(git ls-tree:*)",
-      "Bash(git mv:*)"
+      "Bash(git mv:*)",
+      "Bash(trivially bypass IP-based rate limiting\"\n\nRailway''s load balancer is now the only trusted proxy, preventing\nmalicious actors from spoofing X-Forwarded-For headers.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")"
     ],
     "deny": [],
     "ask": []
