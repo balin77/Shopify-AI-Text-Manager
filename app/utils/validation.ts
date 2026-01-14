@@ -13,7 +13,7 @@ const API_KEY_PATTERNS = {
   huggingface: /^hf_[A-Za-z0-9]{32,}$/,
   gemini: /^AIzaSy[A-Za-z0-9_-]{33}$/,
   claude: /^sk-ant-[A-Za-z0-9_-]{95,}$/,
-  openai: /^sk-[A-Za-z0-9]{48,}$/,
+  openai: /^sk-[A-Za-z0-9_-]{20,}$/,
   grok: /^xai-[A-Za-z0-9]{40,}$/,
   deepseek: /^sk-[A-Za-z0-9]{48,}$/,
 };

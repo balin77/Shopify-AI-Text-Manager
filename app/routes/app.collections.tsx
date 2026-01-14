@@ -17,6 +17,7 @@ import { COLLECTIONS_CONFIG } from "../config/content-fields.config";
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { useEffect } from "react";
+import type { ContentItem } from "../types/content-editor.types";
 
 // ============================================================================
 // LOADER - Load data from database
@@ -137,7 +138,7 @@ export default function CollectionsPage() {
   // Initialize unified content editor
   const editor = useUnifiedContentEditor({
     config: COLLECTIONS_CONFIG,
-    items: collections,
+    items: collections as ContentItem[],
     shopLocales,
     primaryLocale,
     fetcher,
@@ -158,7 +159,7 @@ export default function CollectionsPage() {
       <ContentTypeNavigation />
       <UnifiedContentEditor
         config={COLLECTIONS_CONFIG}
-        items={collections}
+        items={collections as ContentItem[]}
         shopLocales={shopLocales}
         primaryLocale={primaryLocale}
         editor={editor}

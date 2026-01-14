@@ -356,6 +356,8 @@ export default function SettingsPage() {
   const isFreePlan = subscriptionPlan === "free";
 
   const [selectedSection, setSelectedSection] = useState<"setup" | "ai" | "instructions" | "language">("setup");
+  const [hasAIChanges, setHasAIChanges] = useState(false);
+  const [hasLanguageChanges, setHasLanguageChanges] = useState(false);
 
   // Show global InfoBox when fetcher returns success or error
   useEffect(() => {

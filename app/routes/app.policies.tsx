@@ -21,6 +21,7 @@ import { POLICIES_CONFIG } from "../config/content-fields.config";
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { useEffect } from "react";
+import type { ContentItem } from "../types/content-editor.types";
 
 // ============================================================================
 // LOADER - Load data from database
@@ -153,7 +154,7 @@ export default function PoliciesPage() {
   // Initialize unified content editor
   const editor = useUnifiedContentEditor({
     config: POLICIES_CONFIG,
-    items: policies,
+    items: policies as ContentItem[],
     shopLocales,
     primaryLocale,
     fetcher,

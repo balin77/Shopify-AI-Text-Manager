@@ -9,6 +9,7 @@ import {
   Select,
   InlineStack,
 } from "@shopify/polaris";
+import { SaveDiscardButtons } from "./SaveDiscardButtons";
 
 interface Settings {
   huggingfaceApiKey: string;
@@ -37,9 +38,10 @@ interface SettingsAITabProps {
   settings: Settings;
   fetcher: FetcherWithComponents<any>;
   t: any; // i18n translations
+  onHasChangesChange?: (hasChanges: boolean) => void;
 }
 
-export function SettingsAITab({ settings, fetcher, t }: SettingsAITabProps) {
+export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: SettingsAITabProps) {
   const AI_PROVIDERS = [
     { label: t.settings.providers.huggingface, value: "huggingface" },
     { label: t.settings.providers.gemini, value: "gemini" },
@@ -103,6 +105,9 @@ export function SettingsAITab({ settings, fetcher, t }: SettingsAITabProps) {
       deepseekMaxTokensPerMinute !== String(settings.deepseekMaxTokensPerMinute) ||
       deepseekMaxRequestsPerMinute !== String(settings.deepseekMaxRequestsPerMinute);
     setHasChanges(changed);
+    if (onHasChangesChange) {
+      onHasChangesChange(changed);
+    }
   }, [
     huggingfaceKey, geminiKey, claudeKey, openaiKey, grokKey, deepseekKey, provider,
     hfMaxTokensPerMinute, hfMaxRequestsPerMinute,
@@ -111,7 +116,8 @@ export function SettingsAITab({ settings, fetcher, t }: SettingsAITabProps) {
     openaiMaxTokensPerMinute, openaiMaxRequestsPerMinute,
     grokMaxTokensPerMinute, grokMaxRequestsPerMinute,
     deepseekMaxTokensPerMinute, deepseekMaxRequestsPerMinute,
-    settings
+    settings,
+    onHasChangesChange
   ]);
 
   const handleSave = () => {
@@ -145,12 +151,46 @@ export function SettingsAITab({ settings, fetcher, t }: SettingsAITabProps) {
     );
   };
 
+  const handleDiscard = () => {
+    setHuggingfaceKey(settings.huggingfaceApiKey);
+    setGeminiKey(settings.geminiApiKey);
+    setClaudeKey(settings.claudeApiKey);
+    setOpenaiKey(settings.openaiApiKey);
+    setGrokKey(settings.grokApiKey);
+    setDeepseekKey(settings.deepseekApiKey);
+    setProvider(settings.preferredProvider);
+    setHfMaxTokensPerMinute(String(settings.hfMaxTokensPerMinute));
+    setHfMaxRequestsPerMinute(String(settings.hfMaxRequestsPerMinute));
+    setGeminiMaxTokensPerMinute(String(settings.geminiMaxTokensPerMinute));
+    setGeminiMaxRequestsPerMinute(String(settings.geminiMaxRequestsPerMinute));
+    setClaudeMaxTokensPerMinute(String(settings.claudeMaxTokensPerMinute));
+    setClaudeMaxRequestsPerMinute(String(settings.claudeMaxRequestsPerMinute));
+    setOpenaiMaxTokensPerMinute(String(settings.openaiMaxTokensPerMinute));
+    setOpenaiMaxRequestsPerMinute(String(settings.openaiMaxRequestsPerMinute));
+    setGrokMaxTokensPerMinute(String(settings.grokMaxTokensPerMinute));
+    setGrokMaxRequestsPerMinute(String(settings.grokMaxRequestsPerMinute));
+    setDeepseekMaxTokensPerMinute(String(settings.deepseekMaxTokensPerMinute));
+    setDeepseekMaxRequestsPerMinute(String(settings.deepseekMaxRequestsPerMinute));
+  };
+
   return (
     <Card>
       <BlockStack gap="500">
-        <Text as="h2" variant="headingLg">
-          {t.settings.manageAiKeys}
-        </Text>
+        <InlineStack align="space-between" blockAlign="center">
+          <Text as="h2" variant="headingLg">
+            {t.settings.manageAiKeys}
+          </Text>
+          <SaveDiscardButtons
+            hasChanges={hasChanges}
+            onSave={handleSave}
+            onDiscard={handleDiscard}
+            saveText={t.products.saveChanges}
+            discardText={t.content?.discardChanges || "Verwerfen"}
+            action="saveSettings"
+            fetcherState={fetcher.state}
+            fetcherFormData={fetcher.formData}
+          />
+        </InlineStack>
 
         <Text as="p" variant="bodyMd" tone="subdued">
           {t.settings.aiKeysDescription}

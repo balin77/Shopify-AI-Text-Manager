@@ -17,6 +17,7 @@ import { PAGES_CONFIG } from "../config/content-fields.config";
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { useEffect } from "react";
+import type { ContentItem } from "../types/content-editor.types";
 
 // ============================================================================
 // LOADER - Load data from database
@@ -133,7 +134,7 @@ export default function PagesPage() {
   // Initialize unified content editor
   const editor = useUnifiedContentEditor({
     config: PAGES_CONFIG,
-    items: pages,
+    items: pages as ContentItem[],
     shopLocales,
     primaryLocale,
     fetcher,

@@ -8,6 +8,7 @@ import {
   Select,
   InlineStack,
 } from "@shopify/polaris";
+import { SaveDiscardButtons } from "./SaveDiscardButtons";
 
 interface SettingsLanguageTabProps {
   settings: {
@@ -16,9 +17,10 @@ interface SettingsLanguageTabProps {
   };
   fetcher: FetcherWithComponents<any>;
   t: any; // i18n translations
+  onHasChangesChange?: (hasChanges: boolean) => void;
 }
 
-export function SettingsLanguageTab({ settings, fetcher, t }: SettingsLanguageTabProps) {
+export function SettingsLanguageTab({ settings, fetcher, t, onHasChangesChange }: SettingsLanguageTabProps) {
   const APP_LANGUAGES = [
     { label: t.settings.languages.de, value: "de" },
     { label: t.settings.languages.en, value: "en" },
@@ -29,12 +31,12 @@ export function SettingsLanguageTab({ settings, fetcher, t }: SettingsLanguageTa
 
   // Track if language was changed
   useEffect(() => {
-    if (appLanguage !== settings.appLanguage) {
-      setLanguageChanged(true);
-    } else {
-      setLanguageChanged(false);
+    const changed = appLanguage !== settings.appLanguage;
+    setLanguageChanged(changed);
+    if (onHasChangesChange) {
+      onHasChangesChange(changed);
     }
-  }, [appLanguage, settings.appLanguage]);
+  }, [appLanguage, settings.appLanguage, onHasChangesChange]);
 
   // Reload page after language change is saved
   useEffect(() => {
@@ -79,12 +81,28 @@ export function SettingsLanguageTab({ settings, fetcher, t }: SettingsLanguageTa
     );
   };
 
+  const handleDiscard = () => {
+    setAppLanguage(settings.appLanguage);
+  };
+
   return (
     <Card>
       <BlockStack gap="500">
-        <Text as="h2" variant="headingLg">
-          {t.settings.appLanguage}
-        </Text>
+        <InlineStack align="space-between" blockAlign="center">
+          <Text as="h2" variant="headingLg">
+            {t.settings.appLanguage}
+          </Text>
+          <SaveDiscardButtons
+            hasChanges={languageChanged}
+            onSave={handleSave}
+            onDiscard={handleDiscard}
+            saveText={t.products.saveChanges}
+            discardText={t.content?.discardChanges || "Verwerfen"}
+            action="saveSettings"
+            fetcherState={fetcher.state}
+            fetcherFormData={fetcher.formData}
+          />
+        </InlineStack>
 
         <Text as="p" variant="bodyMd" tone="subdued">
           {t.settings.appLanguageDescription}
