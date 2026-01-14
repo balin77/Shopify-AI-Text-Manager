@@ -46,7 +46,9 @@
       "Bash(git gc:*)",
       "Bash(curl:*)",
       "Bash(xargs -I {} git show {}:SHOPIFY-APP-MIGRATION.md)",
-      "Bash(xargs -I {} git show {}:RAILWAY-DEPLOYMENT.md)"
+      "Bash(xargs -I {} git show {}:RAILWAY-DEPLOYMENT.md)",
+      "Bash(node test-quick.cjs:*)",
+      "Bash(git restore:*)"
     ],
     "deny": [],
     "ask": []

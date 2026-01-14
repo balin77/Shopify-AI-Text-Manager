@@ -476,26 +476,151 @@ Die folgenden kritischen Punkte wurden NOCH NICHT implementiert:
 **Location:** `Session` Table (firstName, lastName, email)
 **Lösung:** Feld-Level Verschlüsselung mit `pgcrypto`
 
-### 3. HMAC Webhook Verification
-**Risiko:** MITTEL
-**Location:** GDPR Webhook Endpoints
-**Lösung:** Shopify HMAC Signature Verification implementieren
+### 3. ~~HMAC Webhook Verification~~ ✅ ERLEDIGT
+~~**Risiko:** MITTEL~~
+~~**Location:** GDPR Webhook Endpoints~~
+~~**Lösung:** Shopify HMAC Signature Verification implementieren~~
+
+**Status:** ✅ Implementiert am 2026-01-14
+- Alle 3 GDPR Webhooks mit HMAC Verification geschützt
+- Utility-Funktion `verifyAndParseWebhook()` erstellt
+- Timing-safe comparison für zusätzliche Sicherheit
 
 ---
 
-### 9. GDPR Compliance ⭐ NEU
+### 9. HMAC Webhook Verification ⭐ NEU
+
+**Dateien:**
+- `app/utils/webhook-verification.ts` (neu erstellt)
+- `app/routes/webhooks.gdpr.customers.data_request.tsx` (aktualisiert)
+- `app/routes/webhooks.gdpr.customers.redact.tsx` (aktualisiert)
+- `app/routes/webhooks.gdpr.shop.redact.tsx` (aktualisiert)
+
+**Was wurde gemacht:**
+- HMAC-SHA256 Signature Verification für alle GDPR Webhooks
+- Timing-safe comparison zum Schutz vor Timing-Angriffen
+- Automatisches Logging von Verifikationsfehlern
+- Zentrale Utility-Funktion für wiederverwendbare Webhook-Verifikation
+
+**Wie es funktioniert:**
+
+Shopify signiert jeden Webhook mit einem HMAC-SHA256 Hash:
+1. Shopify nimmt den Request Body
+2. Erstellt HMAC mit dem `SHOPIFY_API_SECRET`
+3. Sendet Signature im `X-Shopify-Hmac-Sha256` Header
+4. Wir berechnen den gleichen HMAC
+5. Vergleichen beide Signaturen (timing-safe)
+
+**Implementation:**
+
+```typescript
+// Utility-Funktion
+import { verifyAndParseWebhook } from "../utils/webhook-verification";
+
+// In GDPR Webhook Route
+const { isValid, body: payload, metadata } = await verifyAndParseWebhook<GDPRRequest>(request);
+
+if (!isValid) {
+  console.error('🚫 Webhook verification failed - Invalid HMAC signature');
+  return json({ success: false, error: 'Webhook verification failed' }, { status: 401 });
+}
+
+// Payload ist jetzt verifiziert und kann sicher verwendet werden
+console.log('✅ Webhook signature verified');
+```
+
+**Sicherheitsfeatures:**
+
+1. **Timing-safe Comparison:**
+```typescript
+const verified = crypto.timingSafeEqual(
+  Buffer.from(calculatedHmac),
+  Buffer.from(hmac)
+);
+```
+Verhindert Timing-Angriffe, bei denen Angreifer durch Messung der Vergleichszeit die Signatur erraten könnten.
+
+2. **Automatic Logging:**
+Bei fehlgeschlagener Verifikation werden Details geloggt:
+- Expected vs. Received HMAC (gekürzt)
+- Mögliche Ursachen (Unauthorized, MITM, Wrong Secret)
+- Shop Domain (wenn verfügbar)
+
+3. **Critical Alerts für shop/redact:**
+```typescript
+console.error('🚫 CRITICAL: Shop deletion prevented by security check');
+```
+Extra Warnung, da shop/redact ALLE Daten löscht.
+
+**Environment Variable:**
+```bash
+SHOPIFY_API_SECRET=your_shopify_api_secret
+```
+(Wird automatisch von Shopify beim App-Setup gesetzt)
+
+**Verwendung für andere Webhooks:**
+
+Die Utility-Funktion kann für ALLE Webhooks verwendet werden:
+
+```typescript
+// Für Produkt-Webhooks
+const { isValid, body, metadata } = await verifyAndParseWebhook<ShopifyProduct>(request);
+
+// Für Collection-Webhooks
+const { isValid, body, metadata } = await verifyAndParseWebhook<ShopifyCollection>(request);
+
+// Header-Extraktion separat
+import { extractWebhookHeaders } from "../utils/webhook-verification";
+const { hmac, shop, topic, webhookId } = extractWebhookHeaders(request);
+```
+
+**Schutz gegen:**
+- Unauthorized Webhook Requests (Fake GDPR Requests)
+- Man-in-the-Middle Angriffe
+- Replay Angriffe (wenn mit Timestamp kombiniert)
+- Data Deletion durch unbefugte Dritte
+- Timing-Angriffe auf Signature Verification
+
+**Testing:**
+
+Test mit gültigem HMAC:
+```bash
+# Generate HMAC
+echo -n '{"shop_domain":"test.myshopify.com"}' | openssl dgst -sha256 -hmac "YOUR_SECRET" -binary | base64
+
+# Send request
+curl -X POST https://your-app.com/webhooks/gdpr/shop/redact \
+  -H "X-Shopify-Hmac-Sha256: GENERATED_HMAC" \
+  -H "X-Shopify-Shop-Domain: test.myshopify.com" \
+  -H "Content-Type: application/json" \
+  -d '{"shop_domain":"test.myshopify.com"}'
+```
+
+Test mit ungültigem HMAC (sollte 401 zurückgeben):
+```bash
+curl -X POST https://your-app.com/webhooks/gdpr/shop/redact \
+  -H "X-Shopify-Hmac-Sha256: invalid_signature" \
+  -H "Content-Type: application/json" \
+  -d '{"shop_domain":"test.myshopify.com"}'
+```
+
+---
+
+### 10. GDPR Compliance ⭐ NEU
 
 **Dateien:**
 - `app/services/gdpr.service.ts` (neu erstellt)
 - `app/routes/webhooks.gdpr.customers.data_request.tsx` (neu erstellt)
 - `app/routes/webhooks.gdpr.customers.redact.tsx` (neu erstellt)
 - `app/routes/webhooks.gdpr.shop.redact.tsx` (neu erstellt)
+- `app/utils/webhook-verification.ts` (neu erstellt)
 
 **Was wurde gemacht:**
 - Alle 3 Pflicht-Webhooks von Shopify implementiert
 - GDPR Artikel 15 (Recht auf Auskunft) - Data Export
 - GDPR Artikel 17 (Recht auf Vergessenwerden) - Data Deletion
 - Compliance Audit Logging für alle GDPR Requests
+- **HMAC Webhook Verification für alle GDPR Endpoints** ⭐
 
 **Implementierte Webhooks:**
 
@@ -531,11 +656,36 @@ Event subscriptions → Add webhooks:
 3. shop/redact → /webhooks/gdpr/shop/redact
 ```
 
+**HMAC Webhook Verification:**
+
+Alle GDPR Webhooks sind jetzt durch HMAC-SHA256 Signature Verification geschützt:
+
+```typescript
+import { verifyAndParseWebhook } from "../utils/webhook-verification";
+
+// Verify HMAC signature and parse payload
+const { isValid, body: payload, metadata } = await verifyAndParseWebhook<GDPRRequest>(request);
+
+if (!isValid) {
+  // Reject unauthorized requests
+  return json({ success: false, error: 'Webhook verification failed' }, { status: 401 });
+}
+```
+
+**Sicherheits-Features:**
+- ✅ HMAC-SHA256 Signature Verification
+- ✅ Timing-safe comparison (verhindert Timing-Angriffe)
+- ✅ Automatisches Logging bei fehlgeschlagener Verifikation
+- ✅ Kritische Warnung bei shop/redact Verifikationsfehler
+
+**Konfiguration:**
+Benötigt `SHOPIFY_API_SECRET` Environment Variable (wird automatisch von Shopify gesetzt).
+
 **Dokumentation:**
 - Complete Guide: `docs/GDPR_COMPLIANCE.md`
 
 **TODO für Production:**
-- [ ] HMAC Signature Verification implementieren
+- [x] HMAC Signature Verification implementieren ✅
 - [ ] Separate GDPR Audit Log Tabelle erstellen
 - [ ] 3-Jahre Aufbewahrung für Compliance Logs
 
@@ -543,6 +693,9 @@ Event subscriptions → Add webhooks:
 - GDPR Verstöße (bis zu €20M Strafe)
 - Shopify App Review Ablehnung
 - Rechtliche Probleme in der EU
+- **Unauthorized Webhook Requests (Fake GDPR Requests)** ⭐
+- **Man-in-the-Middle Angriffe** ⭐
+- **Data Deletion von unbefugten Dritten** ⭐
 
 ---
 
@@ -686,6 +839,15 @@ skip: (req) => req.path.startsWith('/assets')
 
 ## 📝 Changelog
 
+### v3.1.0 (2026-01-14) ⭐⭐⭐
+- ✅ Added: **HMAC Webhook Verification für GDPR Endpoints**
+- ✅ Added: `app/utils/webhook-verification.ts` utility
+- ✅ Added: Timing-safe comparison for security
+- ✅ Added: Automatic logging of verification failures
+- ✅ Updated: All 3 GDPR webhooks with HMAC verification
+- ✅ Security: Prevents unauthorized webhook requests
+- ✅ Security: Protects against fake GDPR deletion requests
+
 ### v3.0.0 (2026-01-14) ⭐⭐
 - ✅ Added: **GDPR Compliance (3 mandatory webhooks)**
 - ✅ Added: customers/data_request endpoint
@@ -720,5 +882,5 @@ skip: (req) => req.path.startsWith('/assets')
 
 **Erstellt:** 2026-01-13
 **Letztes Update:** 2026-01-14
-**Version:** 3.0.0
-**Status:** ✅ Production-ready (inkl. API Keys Encryption & GDPR Compliance)
+**Version:** 3.1.0
+**Status:** ✅ Production-ready (inkl. API Keys Encryption, GDPR Compliance & HMAC Verification)

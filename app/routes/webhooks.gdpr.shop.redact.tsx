@@ -12,13 +12,47 @@
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { redactShopData, logGDPRRequest, type GDPRShopRedactRequest } from "../services/gdpr.service";
+import { verifyAndParseWebhook } from "../utils/webhook-verification";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   console.log('📨 [GDPR] Received shop/redact webhook');
 
   try {
+    // Verify HMAC signature and parse payload
+    const { isValid, body: payload, metadata } = await verifyAndParseWebhook<GDPRShopRedactRequest>(request);
+
+    // Reject requests with invalid signature
+    if (!isValid) {
+      console.error('🚫 [GDPR] Webhook verification failed - Invalid HMAC signature');
+      console.error('🚫 [GDPR] This could be an unauthorized request attempt');
+      console.error('🚫 [GDPR] CRITICAL: Shop deletion prevented by security check');
+
+      await logGDPRRequest(
+        metadata.shop || 'unknown',
+        'shop_redact',
+        undefined,
+        undefined,
+        undefined,
+        'Webhook verification failed: Invalid HMAC signature'
+      );
+
+      return json({
+        success: false,
+        error: 'Webhook verification failed',
+      }, { status: 401 });
+    }
+
+    if (!payload) {
+      console.error('❌ [GDPR] Failed to parse webhook payload');
+      return json({
+        success: false,
+        error: 'Invalid payload',
+      }, { status: 400 });
+    }
+
+    console.log('✅ [GDPR] Webhook signature verified');
+
     // Parse Shopify's GDPR request
-    const payload: GDPRShopRedactRequest = await request.json();
 
     console.log('📋 [GDPR] Shop redaction request for:', payload.shop_domain);
     console.log('⚠️  [GDPR] WARNING: This will DELETE ALL DATA for this shop!');
