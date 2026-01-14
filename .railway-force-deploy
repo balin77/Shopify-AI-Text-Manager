@@ -1,1 +1,2 @@
 # Force redeploy
+# Trigger deployment after fixing SHOPIFY_APP_URL in Railway Development
