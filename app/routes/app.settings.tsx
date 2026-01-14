@@ -104,6 +104,30 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // Get subscription plan
   const subscriptionPlan = settings.subscriptionPlan || "basic";
 
+  // Decrypt API keys with error handling
+  let decryptedKeys;
+  try {
+    decryptedKeys = {
+      huggingfaceApiKey: decryptApiKey(settings.huggingfaceApiKey) || "",
+      geminiApiKey: decryptApiKey(settings.geminiApiKey) || "",
+      claudeApiKey: decryptApiKey(settings.claudeApiKey) || "",
+      openaiApiKey: decryptApiKey(settings.openaiApiKey) || "",
+      grokApiKey: decryptApiKey(settings.grokApiKey) || "",
+      deepseekApiKey: decryptApiKey(settings.deepseekApiKey) || "",
+    };
+  } catch (error) {
+    console.error('[SETTINGS LOADER] Decryption error:', error);
+    // If decryption fails, return empty keys
+    decryptedKeys = {
+      huggingfaceApiKey: "",
+      geminiApiKey: "",
+      claudeApiKey: "",
+      openaiApiKey: "",
+      grokApiKey: "",
+      deepseekApiKey: "",
+    };
+  }
+
   return json({
     shop: session.shop,
     productCount,
@@ -113,12 +137,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     articleCount,
     subscriptionPlan,
     settings: {
-      huggingfaceApiKey: decryptApiKey(settings.huggingfaceApiKey) || "",
-      geminiApiKey: decryptApiKey(settings.geminiApiKey) || "",
-      claudeApiKey: decryptApiKey(settings.claudeApiKey) || "",
-      openaiApiKey: decryptApiKey(settings.openaiApiKey) || "",
-      grokApiKey: decryptApiKey(settings.grokApiKey) || "",
-      deepseekApiKey: decryptApiKey(settings.deepseekApiKey) || "",
+      ...decryptedKeys,
       preferredProvider: settings.preferredProvider,
       appLanguage: settings.appLanguage || "de",
 
