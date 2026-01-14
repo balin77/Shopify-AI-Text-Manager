@@ -97,11 +97,9 @@ function AppContent() {
     if (!hasApiKey) {
       const providerName = getProviderDisplayName(aiSettings.preferredProvider as AIProvider);
       const message = t.settings?.preferredProviderNoKey?.replace("{provider}", providerName) ||
-        `No API key configured for ${providerName}`;
-      const description = t.settings?.configureApiKeyInSettings ||
-        "Please configure an API key in Settings to use AI features.";
+        `No ${providerName} API key. Please add in Settings.`;
 
-      showInfoBox(`${message}. ${description}`, "warning", t.settings?.noApiKeyConfigured || "API Key Missing");
+      showInfoBox(message, "warning", t.settings?.noApiKeyConfigured || "No API Key");
     }
   }, [aiSettings, t, showInfoBox]);
 

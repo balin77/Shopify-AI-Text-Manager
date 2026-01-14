@@ -169,12 +169,12 @@ export const en: Translation = {
     aiInstructions: "AI Instructions",
     appLanguage: "App Language",
     // API Key Warnings
-    noApiKeyConfigured: "No API key configured",
-    noApiKeyForProvider: "You have not configured an API key for {provider}.",
-    configureApiKeyInSettings: "Please configure an API key in Settings to use AI features.",
+    noApiKeyConfigured: "No API key",
+    noApiKeyForProvider: "No API key configured for {provider}",
+    configureApiKeyInSettings: "Please add API key in Settings",
     goToSettings: "Go to Settings",
-    preferredProviderNoKey: "Your preferred AI provider ({provider}) has no API key",
-    preferredProviderNoKeyDescription: "To use AI translations and generations, you need to enter an API key for {provider} or select a different provider as preferred.",
+    preferredProviderNoKey: "No {provider} API key. Please add key in Settings or change model.",
+    preferredProviderNoKeyDescription: "AI features require an API key for {provider}.",
     // Plan restrictions
     aiInstructionsReadOnly: "AI Instructions are read-only in the Free and Basic plans",
     aiInstructionsReadOnlyDescription: "Upgrade to Pro plan to customize AI generation instructions for your products and content.",

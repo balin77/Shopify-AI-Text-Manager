@@ -167,12 +167,12 @@ export const de = {
     aiInstructions: "KI-Anweisungen",
     appLanguage: "App-Sprache",
     // API Key Warnings
-    noApiKeyConfigured: "Kein API-Schlüssel konfiguriert",
-    noApiKeyForProvider: "Sie haben keinen API-Schlüssel für {provider} konfiguriert.",
-    configureApiKeyInSettings: "Bitte konfigurieren Sie einen API-Schlüssel in den Einstellungen, um KI-Funktionen nutzen zu können.",
+    noApiKeyConfigured: "Kein API-Schlüssel",
+    noApiKeyForProvider: "Kein API-Schlüssel für {provider} konfiguriert",
+    configureApiKeyInSettings: "Bitte API-Schlüssel in den Einstellungen eingeben",
     goToSettings: "Zu den Einstellungen",
-    preferredProviderNoKey: "Ihr bevorzugter KI-Anbieter ({provider}) hat keinen API-Schlüssel",
-    preferredProviderNoKeyDescription: "Um KI-Übersetzungen und -Generierungen zu nutzen, müssen Sie einen API-Schlüssel für {provider} eingeben oder einen anderen Anbieter als bevorzugt auswählen.",
+    preferredProviderNoKey: "Kein {provider} API-Schlüssel. Bitte Schlüssel in den Einstellungen eingeben oder Modell wechseln.",
+    preferredProviderNoKeyDescription: "KI-Funktionen benötigen einen API-Schlüssel für {provider}.",
     // Plan restrictions
     aiInstructionsReadOnly: "KI-Anweisungen sind im Free- und Basic-Plan schreibgeschützt",
     aiInstructionsReadOnlyDescription: "Upgrade auf Pro-Plan, um KI-Generierungsanweisungen für Ihre Produkte und Inhalte anzupassen.",
