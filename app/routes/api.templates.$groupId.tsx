@@ -9,6 +9,7 @@ import { authenticate } from "../shopify.server";
 import { AIService } from "../../src/services/ai.service";
 import { TranslationService } from "../../src/services/translation.service";
 import { TRANSLATE_CONTENT } from "../graphql/content.mutations";
+import { decryptApiKey } from "../utils/encryption";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -140,10 +141,12 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         const aiService = new AIService(
           settings?.preferredProvider as any || 'huggingface',
           {
-            huggingfaceApiKey: settings?.huggingfaceApiKey || undefined,
-            geminiApiKey: settings?.geminiApiKey || undefined,
-            claudeApiKey: settings?.claudeApiKey || undefined,
-            openaiApiKey: settings?.openaiApiKey || undefined,
+            huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
+            geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
+            claudeApiKey: decryptApiKey(settings?.claudeApiKey) || undefined,
+            openaiApiKey: decryptApiKey(settings?.openaiApiKey) || undefined,
+            grokApiKey: decryptApiKey(settings?.grokApiKey) || undefined,
+            deepseekApiKey: decryptApiKey(settings?.deepseekApiKey) || undefined,
           }
         );
 
@@ -184,10 +187,12 @@ Please provide improved content that is clear and concise.`;
         const aiService = new AIService(
           settings?.preferredProvider as any || 'huggingface',
           {
-            huggingfaceApiKey: settings?.huggingfaceApiKey || undefined,
-            geminiApiKey: settings?.geminiApiKey || undefined,
-            claudeApiKey: settings?.claudeApiKey || undefined,
-            openaiApiKey: settings?.openaiApiKey || undefined,
+            huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
+            geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
+            claudeApiKey: decryptApiKey(settings?.claudeApiKey) || undefined,
+            openaiApiKey: decryptApiKey(settings?.openaiApiKey) || undefined,
+            grokApiKey: decryptApiKey(settings?.grokApiKey) || undefined,
+            deepseekApiKey: decryptApiKey(settings?.deepseekApiKey) || undefined,
           }
         );
 
@@ -228,10 +233,12 @@ Please provide improved content that is clear and concise.`;
         const aiService = new AIService(
           settings?.preferredProvider as any || 'huggingface',
           {
-            huggingfaceApiKey: settings?.huggingfaceApiKey || undefined,
-            geminiApiKey: settings?.geminiApiKey || undefined,
-            claudeApiKey: settings?.claudeApiKey || undefined,
-            openaiApiKey: settings?.openaiApiKey || undefined,
+            huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
+            geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
+            claudeApiKey: decryptApiKey(settings?.claudeApiKey) || undefined,
+            openaiApiKey: decryptApiKey(settings?.openaiApiKey) || undefined,
+            grokApiKey: decryptApiKey(settings?.grokApiKey) || undefined,
+            deepseekApiKey: decryptApiKey(settings?.deepseekApiKey) || undefined,
           }
         );
 

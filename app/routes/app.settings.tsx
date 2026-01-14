@@ -20,6 +20,7 @@ import { useInfoBox } from "../contexts/InfoBoxContext";
 import { sanitizeFormatExample } from "../utils/sanitizer";
 import { AISettingsSchema, AIInstructionsSchema, parseFormData } from "../utils/validation";
 import { toSafeErrorResponse } from "../utils/error-handler";
+import { encryptApiKey, decryptApiKey } from "../utils/encryption";
 import {
   DEFAULT_PRODUCT_INSTRUCTIONS,
   DEFAULT_COLLECTION_INSTRUCTIONS,
@@ -112,12 +113,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     articleCount,
     subscriptionPlan,
     settings: {
-      huggingfaceApiKey: settings.huggingfaceApiKey || "",
-      geminiApiKey: settings.geminiApiKey || "",
-      claudeApiKey: settings.claudeApiKey || "",
-      openaiApiKey: settings.openaiApiKey || "",
-      grokApiKey: settings.grokApiKey || "",
-      deepseekApiKey: settings.deepseekApiKey || "",
+      huggingfaceApiKey: decryptApiKey(settings.huggingfaceApiKey) || "",
+      geminiApiKey: decryptApiKey(settings.geminiApiKey) || "",
+      claudeApiKey: decryptApiKey(settings.claudeApiKey) || "",
+      openaiApiKey: decryptApiKey(settings.openaiApiKey) || "",
+      grokApiKey: decryptApiKey(settings.grokApiKey) || "",
+      deepseekApiKey: decryptApiKey(settings.deepseekApiKey) || "",
       preferredProvider: settings.preferredProvider,
       appLanguage: settings.appLanguage || "de",
 
@@ -289,12 +290,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       await db.aISettings.upsert({
         where: { shop: session.shop },
         update: {
-          huggingfaceApiKey: data.huggingfaceApiKey || null,
-          geminiApiKey: data.geminiApiKey || null,
-          claudeApiKey: data.claudeApiKey || null,
-          openaiApiKey: data.openaiApiKey || null,
-          grokApiKey: data.grokApiKey || null,
-          deepseekApiKey: data.deepseekApiKey || null,
+          huggingfaceApiKey: encryptApiKey(data.huggingfaceApiKey),
+          geminiApiKey: encryptApiKey(data.geminiApiKey),
+          claudeApiKey: encryptApiKey(data.claudeApiKey),
+          openaiApiKey: encryptApiKey(data.openaiApiKey),
+          grokApiKey: encryptApiKey(data.grokApiKey),
+          deepseekApiKey: encryptApiKey(data.deepseekApiKey),
           preferredProvider: data.preferredProvider,
           appLanguage: data.appLanguage,
           hfMaxTokensPerMinute: data.hfMaxTokensPerMinute,
@@ -312,12 +313,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         },
         create: {
           shop: session.shop,
-          huggingfaceApiKey: data.huggingfaceApiKey || null,
-          geminiApiKey: data.geminiApiKey || null,
-          claudeApiKey: data.claudeApiKey || null,
-          openaiApiKey: data.openaiApiKey || null,
-          grokApiKey: data.grokApiKey || null,
-          deepseekApiKey: data.deepseekApiKey || null,
+          huggingfaceApiKey: encryptApiKey(data.huggingfaceApiKey),
+          geminiApiKey: encryptApiKey(data.geminiApiKey),
+          claudeApiKey: encryptApiKey(data.claudeApiKey),
+          openaiApiKey: encryptApiKey(data.openaiApiKey),
+          grokApiKey: encryptApiKey(data.grokApiKey),
+          deepseekApiKey: encryptApiKey(data.deepseekApiKey),
           preferredProvider: data.preferredProvider,
           appLanguage: data.appLanguage,
           hfMaxTokensPerMinute: data.hfMaxTokensPerMinute,

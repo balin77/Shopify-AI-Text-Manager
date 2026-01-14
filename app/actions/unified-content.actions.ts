@@ -11,6 +11,7 @@ import { AIService } from "../../src/services/ai.service";
 import { TranslationService } from "../../src/services/translation.service";
 import { ShopifyContentService } from "../../src/services/shopify-content.service";
 import { sanitizeSlug } from "../utils/slug.utils";
+import { decryptApiKey } from "../utils/encryption";
 import type { ContentEditorConfig } from "../types/content-editor.types";
 
 interface UnifiedContentActionsConfig {
@@ -32,10 +33,12 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
   // Initialize services
   const provider = (aiSettings?.preferredProvider as any) || process.env.AI_PROVIDER || "huggingface";
   const serviceConfig = {
-    huggingfaceApiKey: aiSettings?.huggingfaceApiKey || undefined,
-    geminiApiKey: aiSettings?.geminiApiKey || undefined,
-    claudeApiKey: aiSettings?.claudeApiKey || undefined,
-    openaiApiKey: aiSettings?.openaiApiKey || undefined,
+    huggingfaceApiKey: decryptApiKey(aiSettings?.huggingfaceApiKey) || undefined,
+    geminiApiKey: decryptApiKey(aiSettings?.geminiApiKey) || undefined,
+    claudeApiKey: decryptApiKey(aiSettings?.claudeApiKey) || undefined,
+    openaiApiKey: decryptApiKey(aiSettings?.openaiApiKey) || undefined,
+    grokApiKey: decryptApiKey(aiSettings?.grokApiKey) || undefined,
+    deepseekApiKey: decryptApiKey(aiSettings?.deepseekApiKey) || undefined,
   };
 
   const aiService = new AIService(provider, serviceConfig);
