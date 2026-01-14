@@ -315,7 +315,7 @@ export default function ContentHub() {
       <ContentTypeNavigation />
 
       {/* Main Content Area */}
-      <div style={{ height: "calc(100vh - 120px)", display: "flex", gap: "1rem", padding: "1rem", overflow: "hidden" }}>
+      <div style={{ paddingTop: "150px", height: "100vh", display: "flex", gap: "1rem", padding: "1rem", overflow: "hidden", boxSizing: "border-box" }}>
         {/* Left Sidebar - Items List */}
         <div style={{ width: "350px", flexShrink: 0 }}>
           <Card padding="0">

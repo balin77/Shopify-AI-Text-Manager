@@ -56,7 +56,7 @@ export function ContentTypeNavigation() {
   const activeType = getActiveType();
 
   return (
-    <div style={{ borderBottom: "1px solid #e1e3e5", background: "white", padding: "1rem", position: "sticky", top: 0, zIndex: 999 }}>
+    <div style={{ borderBottom: "1px solid #e1e3e5", background: "white", padding: "1rem", position: "fixed", top: "73px", left: 0, right: 0, zIndex: 999 }}>
       <InlineStack gap="300">
         {contentTypes.map((type) => {
           const hasAccess = canAccessContentType(type.planContentType);

@@ -71,8 +71,10 @@ export function MainNavigation() {
         style={{
           background: "white",
           borderBottom: "1px solid #e1e3e5",
-          position: "sticky",
+          position: "fixed",
           top: 0,
+          left: 0,
+          right: 0,
           zIndex: 1000,
         }}
       >
