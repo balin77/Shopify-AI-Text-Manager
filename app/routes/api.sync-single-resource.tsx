@@ -1,10 +1,10 @@
 import { json, type ActionFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
-import { db } from "~/db.server";
-import { ProductSyncService } from "~/services/product-sync.service";
-import { ContentSyncService } from "~/services/content-sync.service";
-import { BackgroundSyncService } from "~/services/background-sync.service";
-import { getPlanLimits } from "~/utils/planUtils";
+import { db } from "../db.server";
+import { ProductSyncService } from "../services/product-sync.service";
+import { ContentSyncService } from "../services/content-sync.service";
+import { BackgroundSyncService } from "../services/background-sync.service";
+import { getPlanLimits } from "../utils/planUtils";
 
 export async function action({ request }: ActionFunctionArgs) {
   const { admin, session } = await authenticate.admin(request);
