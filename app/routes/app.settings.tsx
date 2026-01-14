@@ -358,9 +358,10 @@ export default function SettingsPage() {
   const [selectedSection, setSelectedSection] = useState<"setup" | "ai" | "instructions" | "language">("setup");
   const [hasAIChanges, setHasAIChanges] = useState(false);
   const [hasLanguageChanges, setHasLanguageChanges] = useState(false);
+  const [hasInstructionsChanges, setHasInstructionsChanges] = useState(false);
 
   // Check if there are any unsaved changes across tabs
-  const hasUnsavedChanges = hasAIChanges || hasLanguageChanges;
+  const hasUnsavedChanges = hasAIChanges || hasLanguageChanges || hasInstructionsChanges;
 
   // Handle section navigation with unsaved changes warning
   const handleSectionChange = (newSection: "setup" | "ai" | "instructions" | "language") => {
@@ -374,6 +375,7 @@ export default function SettingsPage() {
       // Reset changes state when user confirms navigation
       setHasAIChanges(false);
       setHasLanguageChanges(false);
+      setHasInstructionsChanges(false);
     }
     setSelectedSection(newSection);
   };
@@ -383,6 +385,7 @@ export default function SettingsPage() {
     if (fetcher.data?.success) {
       setHasAIChanges(false);
       setHasLanguageChanges(false);
+      setHasInstructionsChanges(false);
     }
   }, [fetcher.data]);
 
@@ -520,6 +523,7 @@ export default function SettingsPage() {
                     instructions={instructions}
                     fetcher={fetcher}
                     readOnly={isFreePlan}
+                    onHasChangesChange={setHasInstructionsChanges}
                   />
                 </>
               )}

@@ -1,6 +1,7 @@
-import { useState } from "react";
-import { BlockStack, Text, Button, InlineStack } from "@shopify/polaris";
+import { useState, useEffect } from "react";
+import { BlockStack, Text, Button, InlineStack, Card } from "@shopify/polaris";
 import { AIInstructionFieldGroup } from "./AIInstructionFieldGroup";
+import { SaveDiscardButtons } from "./SaveDiscardButtons";
 import {
   getDefaultInstructions,
   getDefaultForField,
@@ -69,9 +70,10 @@ interface AIInstructionsTabsProps {
   instructions: Instructions;
   fetcher: FetcherWithComponents<any>;
   readOnly?: boolean;
+  onHasChangesChange?: (hasChanges: boolean) => void;
 }
 
-export function AIInstructionsTabs({ instructions, fetcher, readOnly = false }: AIInstructionsTabsProps) {
+export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, onHasChangesChange }: AIInstructionsTabsProps) {
   const { t } = useI18n();
   const [selectedTab, setSelectedTab] = useState(0);
   const [localInstructions, setLocalInstructions] = useState<Instructions>(instructions);
@@ -144,32 +146,54 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false }: 
   // Check if there are unsaved changes
   const hasChanges = JSON.stringify(localInstructions) !== JSON.stringify(instructions);
 
-  return (
-    <BlockStack gap="500">
-      {/* Action Buttons on same level as tabs */}
-      {!readOnly && (
-        <InlineStack align="space-between" blockAlign="center">
-          <Button onClick={handleResetAll} tone="critical">
-            Alle Felder zurücksetzen
-          </Button>
-          <Button
-            variant={hasChanges ? "primary" : undefined}
-            onClick={handleSave}
-            disabled={!hasChanges}
-            loading={fetcher.state !== "idle"}
-          >
-            Änderungen speichern
-          </Button>
-        </InlineStack>
-      )}
+  // Propagate hasChanges to parent component
+  useEffect(() => {
+    if (onHasChangesChange) {
+      onHasChangesChange(hasChanges);
+    }
+  }, [hasChanges, onHasChangesChange]);
 
-      {/* Custom Tab Navigation */}
-      <div style={{
-        background: "white",
-        borderRadius: "8px",
-        padding: "1rem",
-        borderBottom: "1px solid #e1e3e5",
-      }}>
+  const handleDiscard = () => {
+    setLocalInstructions(instructions);
+  };
+
+  return (
+    <Card>
+      <BlockStack gap="500">
+        {/* Header with Title and Save/Discard Buttons */}
+        <InlineStack align="space-between" blockAlign="center">
+          <Text as="h2" variant="headingLg">
+            {t.settings.aiInstructions}
+          </Text>
+          {!readOnly && (
+            <SaveDiscardButtons
+              hasChanges={hasChanges}
+              onSave={handleSave}
+              onDiscard={handleDiscard}
+              saveText={t.products?.saveChanges || "Änderungen speichern"}
+              discardText={t.content?.discardChanges || "Verwerfen"}
+              action="saveInstructions"
+              fetcherState={fetcher.state}
+              fetcherFormData={fetcher.formData}
+            />
+          )}
+        </InlineStack>
+
+        {/* Description */}
+        <Text as="p" variant="bodyMd" tone="subdued">
+          {readOnly
+            ? t.settings.defaultInstructionsReadOnly
+            : t.settings.aiInstructionsDescription
+          }
+        </Text>
+
+        {/* Custom Tab Navigation */}
+        <div style={{
+          background: "#f6f6f7",
+          borderRadius: "8px",
+          padding: "1rem",
+          borderBottom: "1px solid #e1e3e5",
+        }}>
         <InlineStack gap="400">
           {tabs.map((tab, index) => {
             const isActive = selectedTab === index;
@@ -202,17 +226,7 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false }: 
       </div>
 
       {/* Tab Content */}
-      <div style={{ marginTop: "1rem", opacity: readOnly ? 0.6 : 1, pointerEvents: readOnly ? "none" : "auto" }}>
-        {/* Description text below tabs */}
-        <div style={{ marginBottom: "1rem" }}>
-          <Text as="p" variant="bodyMd" tone="subdued">
-            {readOnly
-              ? t.settings.defaultInstructionsReadOnly
-              : t.settings.aiInstructionsDescription
-            }
-          </Text>
-        </div>
-
+      <div style={{ opacity: readOnly ? 0.6 : 1, pointerEvents: readOnly ? "none" : "auto" }}>
         <BlockStack gap="400" inlineAlign="stretch">
             {/* PRODUCTS TAB */}
             {selectedTab === 0 && (
@@ -519,6 +533,18 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false }: 
             )}
         </BlockStack>
       </div>
+
+      {/* Reset All Button at bottom */}
+      {!readOnly && (
+        <div style={{ paddingTop: "1rem", borderTop: "1px solid #e1e3e5" }}>
+          <InlineStack align="start">
+            <Button onClick={handleResetAll} tone="critical">
+              {t.settings?.resetAllFields || "Alle Felder zurücksetzen"}
+            </Button>
+          </InlineStack>
+        </div>
+      )}
     </BlockStack>
+    </Card>
   );
 }

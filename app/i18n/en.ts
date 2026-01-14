@@ -171,6 +171,8 @@ export const en: Translation = {
     aiInstructionsReadOnlyDescription: "Upgrade to Basic plan to customize AI generation instructions for your products and content.",
     defaultInstructionsReadOnly: "Default AI Instructions (read-only in Free plan)",
     unsavedChangesMessage: "You have unsaved changes. Do you really want to continue? Your changes will be lost.",
+    resetAllFields: "Reset all fields",
+    aiInstructionsDescription: "Configure how AI should generate your content. These settings apply to all AI-generated texts.",
     appLanguageDescription: "Choose the language for the user interface",
     manageAiKeys: "Manage AI API Access Codes",
     aiKeysDescription: "Configure your preferred AI providers. API keys are stored securely encrypted and only used for your shop translations.",
