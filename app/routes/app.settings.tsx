@@ -30,6 +30,7 @@ import {
 } from "../constants/aiInstructionsDefaults";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
+  console.log('[SETTINGS] Loading settings page for shop');
   const { admin, session } = await authenticate.admin(request);
 
   // Fetch shop's primary locale
