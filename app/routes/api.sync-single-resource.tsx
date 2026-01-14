@@ -98,12 +98,9 @@ export async function action({ request }: ActionFunctionArgs) {
           session.shop
         );
 
-        const pageId = resourceId.includes("gid://")
-          ? resourceId.split("/").pop()!
-          : resourceId;
-
-        result = await backgroundSyncService.syncSinglePage(pageId);
-        console.log(`[Manual Sync] Page ${pageId} synced successfully`);
+        // Pass the full resourceId - syncSinglePage will handle GID conversion
+        result = await backgroundSyncService.syncSinglePage(resourceId);
+        console.log(`[Manual Sync] Page ${resourceId} synced successfully`);
         break;
       }
 
