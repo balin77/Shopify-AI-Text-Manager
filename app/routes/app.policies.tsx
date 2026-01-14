@@ -15,6 +15,7 @@ import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
 import { ContentTypeNavigation } from "../components/ContentTypeNavigation";
 import { UnifiedContentEditor } from "../components/UnifiedContentEditor";
+import { ApiKeyWarningBanner } from "../components/ApiKeyWarningBanner";
 import { useUnifiedContentEditor } from "../hooks/useUnifiedContentEditor";
 import { handleUnifiedContentActions } from "../actions/unified-content.actions";
 import { POLICIES_CONFIG } from "../config/content-fields.config";
@@ -32,6 +33,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   try {
     const { db } = await import("../db.server");
+    const { loadAISettingsForValidation } = await import("../utils/loader-helpers");
 
     // Load shopLocales
     const localesResponse = await admin.graphql(
@@ -51,7 +53,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "de";
 
     // Load policies from database (synced by background sync)
-    const [policies, allTranslations] = await Promise.all([
+    const [policies, allTranslations, aiSettings] = await Promise.all([
       db.shopPolicy.findMany({
         where: { shop: session.shop },
         orderBy: { type: 'asc' },
@@ -59,6 +61,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       db.contentTranslation.findMany({
         where: { resourceType: 'ShopPolicy' }
       }),
+      loadAISettingsForValidation(db, session.shop),
     ]);
 
     // Group translations by resourceId
@@ -85,7 +88,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       shop: session.shop,
       shopLocales,
       primaryLocale,
-      error: null
+      error: null,
+      aiSettings,
     });
   } catch (error: any) {
     console.error("[POLICIES-LOADER] Error:", error);
@@ -94,7 +98,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       shop: session.shop,
       shopLocales: [],
       primaryLocale: "de",
-      error: error.message
+      error: error.message,
+      aiSettings: null,
     }, { status: 500 });
   }
 };
@@ -146,7 +151,7 @@ function getPolicyTypeName(type: string, t: any) {
 }
 
 export default function PoliciesPage() {
-  const { policies, shopLocales, primaryLocale, error } = useLoaderData<typeof loader>();
+  const { policies, shopLocales, primaryLocale, error, aiSettings } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const { t } = useI18n();
   const { showInfoBox } = useInfoBox();
@@ -187,6 +192,7 @@ export default function PoliciesPage() {
     <>
       <MainNavigation />
       <ContentTypeNavigation />
+      <ApiKeyWarningBanner aiSettings={aiSettings} t={t} />
       <UnifiedContentEditor
         config={POLICIES_CONFIG}
         items={policies}

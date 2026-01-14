@@ -11,6 +11,7 @@ import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
 import { ContentTypeNavigation } from "../components/ContentTypeNavigation";
 import { UnifiedContentEditor } from "../components/UnifiedContentEditor";
+import { ApiKeyWarningBanner } from "../components/ApiKeyWarningBanner";
 import { useUnifiedContentEditor } from "../hooks/useUnifiedContentEditor";
 import { handleUnifiedContentActions } from "../actions/unified-content.actions";
 import { PAGES_CONFIG } from "../config/content-fields.config";
@@ -28,6 +29,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   try {
     const { db } = await import("../db.server");
+    const { loadAISettingsForValidation } = await import("../utils/loader-helpers");
 
     // Load shopLocales
     const localesResponse = await admin.graphql(
@@ -47,7 +49,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "de";
 
     // Load pages from database
-    const [pages, allTranslations] = await Promise.all([
+    const [pages, allTranslations, aiSettings] = await Promise.all([
       db.page.findMany({
         where: { shop: session.shop },
         orderBy: { title: 'asc' },
@@ -55,6 +57,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       db.contentTranslation.findMany({
         where: { resourceType: 'Page' }
       }),
+      loadAISettingsForValidation(db, session.shop),
     ]);
 
     // Group translations by resourceId
@@ -80,7 +83,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       shop: session.shop,
       shopLocales,
       primaryLocale,
-      error: null
+      error: null,
+      aiSettings,
     });
   } catch (error: any) {
     console.error("[PAGES-LOADER] Error:", error);
@@ -89,7 +93,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       shop: session.shop,
       shopLocales: [],
       primaryLocale: "de",
-      error: error.message
+      error: error.message,
+      aiSettings: null,
     }, { status: 500 });
   }
 };
@@ -126,7 +131,7 @@ export const action = async (args: ActionFunctionArgs) => {
 // ============================================================================
 
 export default function PagesPage() {
-  const { pages, shopLocales, primaryLocale, error } = useLoaderData<typeof loader>();
+  const { pages, shopLocales, primaryLocale, error, aiSettings } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const { t } = useI18n();
   const { showInfoBox } = useInfoBox();
@@ -153,6 +158,7 @@ export default function PagesPage() {
     <>
       <MainNavigation />
       <ContentTypeNavigation />
+      <ApiKeyWarningBanner aiSettings={aiSettings} t={t} />
       <UnifiedContentEditor
         config={PAGES_CONFIG}
         items={pages}

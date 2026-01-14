@@ -9,9 +9,11 @@ import {
   Select,
   InlineStack,
   Icon,
+  Banner,
 } from "@shopify/polaris";
 import { ViewIcon, HideIcon } from "@shopify/polaris-icons";
 import { SaveDiscardButtons } from "./SaveDiscardButtons";
+import { hasApiKeyForProvider, getProviderDisplayName, type AIProvider } from "../utils/api-key-validation";
 
 interface Settings {
   huggingfaceApiKey: string;
@@ -175,6 +177,19 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
     setDeepseekMaxRequestsPerMinute(String(settings.deepseekMaxRequestsPerMinute));
   };
 
+  // Check if the preferred provider has an API key
+  const preferredProviderHasKey = hasApiKeyForProvider(
+    {
+      huggingfaceApiKey: huggingfaceKey,
+      geminiApiKey: geminiKey,
+      claudeApiKey: claudeKey,
+      openaiApiKey: openaiKey,
+      grokApiKey: grokKey,
+      deepseekApiKey: deepseekKey,
+    },
+    provider as AIProvider
+  );
+
   return (
     <Card>
       <BlockStack gap="500">
@@ -197,6 +212,17 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
         <Text as="p" variant="bodyMd" tone="subdued">
           {t.settings.aiKeysDescription}
         </Text>
+
+        {!preferredProviderHasKey && (
+          <Banner tone="warning">
+            <Text as="p" fontWeight="semibold">
+              {t.settings.preferredProviderNoKey?.replace("{provider}", getProviderDisplayName(provider as AIProvider))}
+            </Text>
+            <Text as="p" variant="bodySm">
+              {t.settings.preferredProviderNoKeyDescription?.replace("{provider}", getProviderDisplayName(provider as AIProvider))}
+            </Text>
+          </Banner>
+        )}
 
         <Select
           label={t.settings.preferredProvider}
