@@ -321,15 +321,8 @@ export const de = {
       all: "Alle Felder",
     },
     // Expandable details
-    details: "Details",
-    taskId: "Task ID",
-    resourceId: "Ressourcen-ID",
-    queuePosition: "Queue-Position",
-    retryCount: "Wiederholungsversuche",
-    estimatedTokens: "Geschätzte Tokens",
-    createdAt: "Erstellt am",
-    updatedAt: "Aktualisiert am",
-    expiresAt: "Läuft ab am",
+    aiOutput: "AI Ergebnis",
+    image: "Bild",
   },
 
   // SEO Sidebar

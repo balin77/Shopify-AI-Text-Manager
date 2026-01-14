@@ -60,8 +60,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // Sanitize tasks to prevent JSON serialization errors
     const sanitizedTasks = tasks.map(task => ({
       ...task,
-      result: null, // Don't send result to client, we don't display it anyway
-      error: task.error ? String(task.error).substring(0, 500) : null,
+      result: task.result, // Include result for displaying AI output
+      error: task.error ? String(task.error) : null, // Full error message
       startedAt: task.startedAt.toISOString(),
       completedAt: task.completedAt ? task.completedAt.toISOString() : null,
       createdAt: task.createdAt.toISOString(),
@@ -374,104 +374,101 @@ export default function TasksPage() {
                           </div>
                         )}
 
-                        {/* Additional Details Section */}
-                        <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
-                          <BlockStack gap="200">
-                            <Text as="h3" variant="headingSm" fontWeight="semibold">
-                              {t.tasks.details || "Details"}
-                            </Text>
-
-                            {/* Task ID */}
-                            <InlineStack gap="200">
-                              <Text as="span" variant="bodySm" fontWeight="semibold">
-                                {t.tasks.taskId || "Task ID"}:
+                        {/* AI Output Section */}
+                        {task.result && (
+                          <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
+                            <BlockStack gap="300">
+                              <Text as="h3" variant="headingSm" fontWeight="semibold">
+                                {t.tasks.aiOutput || "AI Output"}
                               </Text>
-                              <Text as="span" variant="bodySm" tone="subdued">
-                                {task.id}
-                              </Text>
-                            </InlineStack>
+                              {(() => {
+                                try {
+                                  const resultData = JSON.parse(task.result);
 
-                            {/* Resource ID */}
-                            {task.resourceId && (
-                              <InlineStack gap="200">
-                                <Text as="span" variant="bodySm" fontWeight="semibold">
-                                  {t.tasks.resourceId || "Resource ID"}:
-                                </Text>
-                                <Text as="span" variant="bodySm" tone="subdued">
-                                  {task.resourceId}
-                                </Text>
-                              </InlineStack>
-                            )}
+                                  // Bulk Translation Result
+                                  if (resultData.translations) {
+                                    return (
+                                      <BlockStack gap="200">
+                                        {Object.entries(resultData.translations).map(([locale, value]: [string, any]) => (
+                                          <div key={locale} style={{ padding: "0.5rem", background: "white", borderRadius: "4px" }}>
+                                            <Text as="p" variant="bodySm" fontWeight="semibold">
+                                              {locale}:
+                                            </Text>
+                                            <Text as="p" variant="bodySm" tone="subdued">
+                                              {typeof value === 'string' ? value : JSON.stringify(value, null, 2)}
+                                            </Text>
+                                          </div>
+                                        ))}
+                                      </BlockStack>
+                                    );
+                                  }
 
-                            {/* Queue Position */}
-                            {task.queuePosition !== null && task.queuePosition !== undefined && (
-                              <InlineStack gap="200">
-                                <Text as="span" variant="bodySm" fontWeight="semibold">
-                                  {t.tasks.queuePosition || "Queue Position"}:
-                                </Text>
-                                <Text as="span" variant="bodySm" tone="subdued">
-                                  {task.queuePosition}
-                                </Text>
-                              </InlineStack>
-                            )}
+                                  // Bulk Alt Text Generation
+                                  if (resultData.generatedAltTexts) {
+                                    return (
+                                      <BlockStack gap="200">
+                                        {Object.entries(resultData.generatedAltTexts).map(([index, altText]: [string, any]) => (
+                                          <div key={index} style={{ padding: "0.5rem", background: "white", borderRadius: "4px" }}>
+                                            <Text as="p" variant="bodySm" fontWeight="semibold">
+                                              {t.tasks.image || "Image"} {parseInt(index) + 1}:
+                                            </Text>
+                                            <Text as="p" variant="bodySm" tone="subdued">
+                                              {altText}
+                                            </Text>
+                                          </div>
+                                        ))}
+                                      </BlockStack>
+                                    );
+                                  }
 
-                            {/* Retry Count */}
-                            {task.retryCount > 0 && (
-                              <InlineStack gap="200">
-                                <Text as="span" variant="bodySm" fontWeight="semibold">
-                                  {t.tasks.retryCount || "Retry Count"}:
-                                </Text>
-                                <Text as="span" variant="bodySm" tone="subdued">
-                                  {task.retryCount}
-                                </Text>
-                              </InlineStack>
-                            )}
+                                  // Single AI Generation or Translation
+                                  if (resultData.generatedContent) {
+                                    return (
+                                      <div style={{ padding: "0.5rem", background: "white", borderRadius: "4px" }}>
+                                        <Text as="p" variant="bodySm">
+                                          {resultData.generatedContent}
+                                        </Text>
+                                      </div>
+                                    );
+                                  }
 
-                            {/* Estimated Tokens */}
-                            {task.estimatedTokens && (
-                              <InlineStack gap="200">
-                                <Text as="span" variant="bodySm" fontWeight="semibold">
-                                  {t.tasks.estimatedTokens || "Estimated Tokens"}:
-                                </Text>
-                                <Text as="span" variant="bodySm" tone="subdued">
-                                  {task.estimatedTokens.toLocaleString()}
-                                </Text>
-                              </InlineStack>
-                            )}
+                                  if (resultData.formattedContent) {
+                                    return (
+                                      <div style={{ padding: "0.5rem", background: "white", borderRadius: "4px" }}>
+                                        <div dangerouslySetInnerHTML={{ __html: resultData.formattedContent }} />
+                                      </div>
+                                    );
+                                  }
 
-                            {/* Created At */}
-                            <InlineStack gap="200">
-                              <Text as="span" variant="bodySm" fontWeight="semibold">
-                                {t.tasks.createdAt || "Created At"}:
-                              </Text>
-                              <Text as="span" variant="bodySm" tone="subdued">
-                                {new Date(task.createdAt).toLocaleString()}
-                              </Text>
-                            </InlineStack>
+                                  if (resultData.altText) {
+                                    return (
+                                      <div style={{ padding: "0.5rem", background: "white", borderRadius: "4px" }}>
+                                        <Text as="p" variant="bodySm">
+                                          {resultData.altText}
+                                        </Text>
+                                      </div>
+                                    );
+                                  }
 
-                            {/* Updated At */}
-                            <InlineStack gap="200">
-                              <Text as="span" variant="bodySm" fontWeight="semibold">
-                                {t.tasks.updatedAt || "Updated At"}:
-                              </Text>
-                              <Text as="span" variant="bodySm" tone="subdued">
-                                {new Date(task.updatedAt).toLocaleString()}
-                              </Text>
-                            </InlineStack>
-
-                            {/* Expires At */}
-                            {task.expiresAt && (
-                              <InlineStack gap="200">
-                                <Text as="span" variant="bodySm" fontWeight="semibold">
-                                  {t.tasks.expiresAt || "Expires At"}:
-                                </Text>
-                                <Text as="span" variant="bodySm" tone="subdued">
-                                  {new Date(task.expiresAt).toLocaleString()}
-                                </Text>
-                              </InlineStack>
-                            )}
-                          </BlockStack>
-                        </div>
+                                  // Generic result display
+                                  return (
+                                    <div style={{ padding: "0.5rem", background: "white", borderRadius: "4px", fontFamily: "monospace", fontSize: "12px", whiteSpace: "pre-wrap" }}>
+                                      {JSON.stringify(resultData, null, 2)}
+                                    </div>
+                                  );
+                                } catch (e) {
+                                  return (
+                                    <div style={{ padding: "0.5rem", background: "white", borderRadius: "4px" }}>
+                                      <Text as="p" variant="bodySm">
+                                        {task.result}
+                                      </Text>
+                                    </div>
+                                  );
+                                }
+                              })()}
+                            </BlockStack>
+                          </div>
+                        )}
 
                         {/* Time Info */}
                         <InlineStack gap="400">
