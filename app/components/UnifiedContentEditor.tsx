@@ -11,6 +11,7 @@ import { AIEditableHTMLField } from "./AIEditableHTMLField";
 import { LocaleNavigationButtons } from "./LocaleNavigationButtons";
 import { SaveDiscardButtons } from "./SaveDiscardButtons";
 import { SeoSidebar } from "./SeoSidebar";
+import { useNavigationHeight } from "../contexts/NavigationHeightContext";
 import { contentEditorStyles } from "../utils/contentEditor.utils";
 import type { ContentEditorConfig, UseContentEditorReturn, FieldDefinition } from "../types/content-editor.types";
 
@@ -98,6 +99,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
 
   const listItemRenderer = renderListItem || defaultRenderListItem;
   const sidebarRenderer = renderSidebar || defaultRenderSidebar;
+  const { getTotalNavHeight } = useNavigationHeight();
 
   return (
     <Page fullWidth>
@@ -105,7 +107,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
 
       <div
         style={{
-          height: "calc(100vh - 158px)",
+          height: `calc(100vh - ${getTotalNavHeight()}px)`,
           display: "flex",
           gap: "1rem",
           padding: "1rem",

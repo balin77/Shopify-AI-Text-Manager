@@ -9,6 +9,7 @@ import { ProductList } from "../components/products/ProductList";
 import { ProductEditor } from "../components/products/ProductEditor";
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
+import { useNavigationHeight } from "../contexts/NavigationHeightContext";
 import { useProductFields } from "../hooks/useProductFields";
 import { useAISuggestions } from "../hooks/useAISuggestions";
 import { handleProductActions } from "../actions/product.actions";
@@ -305,6 +306,7 @@ export default function Products() {
   const revalidator = useRevalidator();
   const { t, locale } = useI18n();
   const { showInfoBox } = useInfoBox();
+  const { mainNavHeight } = useNavigationHeight();
 
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
   const [currentLanguage, setCurrentLanguage] = useState(primaryLocale);
@@ -902,7 +904,7 @@ export default function Products() {
         }
       `}</style>
       <MainNavigation />
-      <div style={{ height: "calc(100vh - 60px)", display: "flex", gap: "1rem", padding: "1rem", overflow: "hidden" }}>
+      <div style={{ height: `calc(100vh - ${mainNavHeight}px)`, display: "flex", gap: "1rem", padding: "1rem", overflow: "hidden" }}>
         {/* Left: Product List (Fixed) */}
         <div style={{ width: "350px", flexShrink: 0, display: "flex", flexDirection: "column", height: "100%" }}>
           <ProductList

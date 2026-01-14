@@ -26,6 +26,7 @@ import { SaveDiscardButtons } from "../components/SaveDiscardButtons";
 import { LocaleNavigationButtons } from "../components/LocaleNavigationButtons";
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
+import { useNavigationHeight } from "../contexts/NavigationHeightContext";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
@@ -98,6 +99,7 @@ export default function TemplatesPage() {
   const fetcher = useFetcher();
   const { t } = useI18n();
   const { showInfoBox } = useInfoBox();
+  const { getTotalNavHeight } = useNavigationHeight();
   const saveButtonRef = useRef<HTMLDivElement>(null);
 
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
@@ -498,7 +500,7 @@ export default function TemplatesPage() {
       <MainNavigation />
       <ContentTypeNavigation />
 
-      <div style={{ height: "calc(100vh - 120px)", display: "flex", gap: "1rem", padding: "1rem", overflow: "hidden" }}>
+      <div style={{ height: `calc(100vh - ${getTotalNavHeight()}px)`, display: "flex", gap: "1rem", padding: "1rem", overflow: "hidden" }}>
         {/* Left Sidebar - Theme Resources List */}
         <div style={{ width: "350px", flexShrink: 0 }}>
           <Card padding="0">

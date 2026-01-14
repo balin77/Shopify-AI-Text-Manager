@@ -8,6 +8,7 @@ import { useNavigate, useLocation } from "@remix-run/react";
 import { InlineStack, Text, Tooltip } from "@shopify/polaris";
 import { useI18n } from "../contexts/I18nContext";
 import { usePlan } from "../contexts/PlanContext";
+import { useNavigationHeight } from "../contexts/NavigationHeightContext";
 import { type ContentType as PlanContentType } from "../config/plans";
 import { getPlanDisplayName as getPlanDisplayNameUtil } from "../utils/planUtils";
 import { useState, useEffect, useRef } from "react";
@@ -29,9 +30,9 @@ export function ContentTypeNavigation() {
   const location = useLocation();
   const { t } = useI18n();
   const { canAccessContentType, getNextPlanUpgrade } = usePlan();
+  const { mainNavHeight, setContentNavHeight } = useNavigationHeight();
   const navRef = useRef<HTMLDivElement>(null);
   const [navHeight, setNavHeight] = useState(85);
-  const [mainNavHeight, setMainNavHeight] = useState(73);
 
   const contentTypes: ContentTypeConfig[] = [
     { id: "collections", label: t.content.collections, icon: "📂", description: t.content.collectionsDescription, path: "/app/collections", planContentType: "collections" },
@@ -60,37 +61,13 @@ export function ContentTypeNavigation() {
 
   const activeType = getActiveType();
 
-  // Dynamically measure main navigation height
-  useEffect(() => {
-    const updateMainNavHeight = () => {
-      // Find the main navigation element (first fixed element with zIndex 1000)
-      const mainNav = document.querySelector('[style*="z-index: 1000"]') as HTMLElement;
-      if (mainNav) {
-        setMainNavHeight(mainNav.offsetHeight);
-      }
-    };
-
-    updateMainNavHeight();
-    window.addEventListener('resize', updateMainNavHeight);
-
-    // Use MutationObserver to detect changes in main nav
-    const observer = new MutationObserver(updateMainNavHeight);
-    const mainNav = document.querySelector('[style*="z-index: 1000"]');
-    if (mainNav) {
-      observer.observe(mainNav, { childList: true, subtree: true, attributes: true });
-    }
-
-    return () => {
-      observer.disconnect();
-      window.removeEventListener('resize', updateMainNavHeight);
-    };
-  }, []);
-
-  // Dynamically measure content navigation height
+  // Dynamically measure content navigation height and update context
   useEffect(() => {
     const updateHeight = () => {
       if (navRef.current) {
-        setNavHeight(navRef.current.offsetHeight);
+        const height = navRef.current.offsetHeight;
+        setNavHeight(height);
+        setContentNavHeight(height); // Update context for other components
       }
     };
 
@@ -110,7 +87,7 @@ export function ContentTypeNavigation() {
     return () => {
       window.removeEventListener('resize', updateHeight);
     };
-  }, []);
+  }, [setContentNavHeight]);
 
   return (
     <>

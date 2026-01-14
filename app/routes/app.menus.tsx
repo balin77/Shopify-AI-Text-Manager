@@ -22,6 +22,7 @@ import {
 import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
 import { useI18n } from "../contexts/I18nContext";
+import { useNavigationHeight } from "../contexts/NavigationHeightContext";
 import { ContentService } from "../services/content.service";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -132,6 +133,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 export default function MenusPage() {
   const { menus, shop, shopLocales, primaryLocale, error } = useLoaderData<typeof loader>();
   const { t } = useI18n();
+  const { mainNavHeight } = useNavigationHeight();
 
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
 
@@ -171,7 +173,7 @@ export default function MenusPage() {
     <Page fullWidth>
       <MainNavigation />
 
-      <div style={{ height: "calc(100vh - 120px)", display: "flex", gap: "1rem", padding: "1rem", overflow: "hidden" }}>
+      <div style={{ height: `calc(100vh - ${mainNavHeight}px)`, display: "flex", gap: "1rem", padding: "1rem", overflow: "hidden" }}>
         {/* Left Sidebar - Menus List */}
         <div style={{ width: "350px", flexShrink: 0 }}>
           <Card padding="0">

@@ -34,6 +34,7 @@ import { MainNavigation } from "../components/MainNavigation";
 import { ContentTypeNavigation } from "../components/ContentTypeNavigation";
 import { ThemeContentViewer } from "../components/ThemeContentViewer";
 import { useI18n } from "../contexts/I18nContext";
+import { useNavigationHeight } from "../contexts/NavigationHeightContext";
 import { ContentService } from "../services/content.service";
 import {
   contentEditorStyles,
@@ -127,6 +128,7 @@ export default function ContentHub() {
   const [searchParams] = useSearchParams();
   const fetcher = useFetcher();
   const { t } = useI18n();
+  const { getTotalNavHeight } = useNavigationHeight();
   const saveButtonRef = useRef<HTMLDivElement>(null);
 
   const CONTENT_TYPES = getContentTypes(t);
@@ -315,7 +317,7 @@ export default function ContentHub() {
       <ContentTypeNavigation />
 
       {/* Main Content Area */}
-      <div style={{ height: "calc(100vh - 158px)", display: "flex", gap: "1rem", padding: "1rem", overflow: "hidden" }}>
+      <div style={{ height: `calc(100vh - ${getTotalNavHeight()}px)`, display: "flex", gap: "1rem", padding: "1rem", overflow: "hidden" }}>
         {/* Left Sidebar - Items List */}
         <div style={{ width: "350px", flexShrink: 0 }}>
           <Card padding="0">

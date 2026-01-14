@@ -3,6 +3,7 @@ import { InlineStack, Text, Banner, ButtonGroup, Button, Tooltip, Spinner } from
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { usePlan } from "../contexts/PlanContext";
+import { useNavigationHeight } from "../contexts/NavigationHeightContext";
 import { type Plan } from "../config/plans";
 import { useState, useEffect, useRef } from "react";
 
@@ -14,6 +15,7 @@ export function MainNavigation() {
   const { t } = useI18n();
   const { infoBox, hideInfoBox } = useInfoBox();
   const { plan, getPlanDisplayName, getMaxProducts } = usePlan();
+  const { setMainNavHeight } = useNavigationHeight();
   const fetcher = useFetcher();
   const [isChangingPlan, setIsChangingPlan] = useState(false);
   const [showLoadingIndicator, setShowLoadingIndicator] = useState(false);
@@ -53,11 +55,13 @@ export function MainNavigation() {
     };
   }, [navigation.state]);
 
-  // Dynamically measure navigation height and update spacer
+  // Dynamically measure navigation height and update spacer + context
   useEffect(() => {
     const updateHeight = () => {
       if (navRef.current) {
-        setNavHeight(navRef.current.offsetHeight);
+        const height = navRef.current.offsetHeight;
+        setNavHeight(height);
+        setMainNavHeight(height); // Update context for other components
       }
     };
 
@@ -79,7 +83,7 @@ export function MainNavigation() {
     return () => {
       window.removeEventListener('resize', updateHeight);
     };
-  }, [infoBox, showLoadingIndicator]); // Re-measure when infoBox or loading indicator changes
+  }, [infoBox, showLoadingIndicator, setMainNavHeight]); // Re-measure when infoBox or loading indicator changes
 
   const tabs = [
     { id: "products", label: t.nav.products, path: "/app/products" },

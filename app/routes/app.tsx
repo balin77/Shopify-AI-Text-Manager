@@ -7,6 +7,7 @@ import { authenticate } from "../shopify.server";
 import { I18nProvider } from "../contexts/I18nContext";
 import { InfoBoxProvider } from "../contexts/InfoBoxContext";
 import { PlanProvider } from "../contexts/PlanContext";
+import { NavigationHeightProvider } from "../contexts/NavigationHeightContext";
 import { useEffect } from "react";
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
@@ -125,7 +126,9 @@ export default function App() {
       <I18nProvider locale={appLanguage}>
         <PlanProvider plan={subscriptionPlan}>
           <InfoBoxProvider>
-            <AppContent />
+            <NavigationHeightProvider>
+              <AppContent />
+            </NavigationHeightProvider>
           </InfoBoxProvider>
         </PlanProvider>
       </I18nProvider>
