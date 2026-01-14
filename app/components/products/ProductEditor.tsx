@@ -606,7 +606,8 @@ export function ProductEditor({
             isLoading={
               isFieldLoading("title", "generateAIText") ||
               isFieldLoading("title", "formatAIText") ||
-              isFieldLoading("title", "translateField")
+              isFieldLoading("title", "translateField") ||
+              isFieldLoading("title", "translateFieldToAllLocales")
             }
             onGenerateAI={() => onGenerateAI("title")}
             onFormatAI={onFormatAI ? () => onFormatAI("title") : undefined}
@@ -635,7 +636,8 @@ export function ProductEditor({
             isLoading={
               isFieldLoading("description", "generateAIText") ||
               isFieldLoading("description", "formatAIText") ||
-              isFieldLoading("description", "translateField")
+              isFieldLoading("description", "translateField") ||
+              isFieldLoading("description", "translateFieldToAllLocales")
             }
             onGenerateAI={() => onGenerateAI("description")}
             onFormatAI={onFormatAI ? () => onFormatAI("description") : undefined}
@@ -660,7 +662,8 @@ export function ProductEditor({
             isLoading={
               isFieldLoading("handle", "generateAIText") ||
               isFieldLoading("handle", "formatAIText") ||
-              isFieldLoading("handle", "translateField")
+              isFieldLoading("handle", "translateField") ||
+              isFieldLoading("handle", "translateFieldToAllLocales")
             }
             onGenerateAI={() => onGenerateAI("handle")}
             onFormatAI={onFormatAI ? () => onFormatAI("handle") : undefined}
@@ -686,7 +689,8 @@ export function ProductEditor({
             isLoading={
               isFieldLoading("seoTitle", "generateAIText") ||
               isFieldLoading("seoTitle", "formatAIText") ||
-              isFieldLoading("seoTitle", "translateField")
+              isFieldLoading("seoTitle", "translateField") ||
+              isFieldLoading("seoTitle", "translateFieldToAllLocales")
             }
             onGenerateAI={() => onGenerateAI("seoTitle")}
             onFormatAI={onFormatAI ? () => onFormatAI("seoTitle") : undefined}
@@ -713,7 +717,8 @@ export function ProductEditor({
             isLoading={
               isFieldLoading("metaDescription", "generateAIText") ||
               isFieldLoading("metaDescription", "formatAIText") ||
-              isFieldLoading("metaDescription", "translateField")
+              isFieldLoading("metaDescription", "translateField") ||
+              isFieldLoading("metaDescription", "translateFieldToAllLocales")
             }
             onGenerateAI={() => onGenerateAI("metaDescription")}
             onFormatAI={onFormatAI ? () => onFormatAI("metaDescription") : undefined}
