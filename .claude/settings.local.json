@@ -10,7 +10,8 @@
       "Bash(timeout 10 bash:*)",
       "Bash(git log:*)",
       "Bash(npm run migrate:*)",
-      "Bash(npx prisma generate:*)"
+      "Bash(npx prisma generate:*)",
+      "Bash(npm install)"
     ],
     "deny": [],
     "ask": []
