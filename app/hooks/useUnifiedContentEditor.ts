@@ -323,6 +323,33 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     );
   };
 
+  const handleTranslateFieldToAllLocales = (fieldKey: string) => {
+    if (!selectedItemId || !selectedItem) return;
+
+    const field = config.fieldDefinitions.find((f) => f.key === fieldKey);
+    if (!field) return;
+
+    const sourceText = getItemFieldValue(selectedItem, fieldKey, primaryLocale);
+    if (!sourceText) {
+      showInfoBox(
+        t.content?.noSourceText || "Kein Text in der Hauptsprache vorhanden zum Übersetzen",
+        "warning",
+        "Warnung"
+      );
+      return;
+    }
+
+    fetcher.submit(
+      {
+        action: "translateFieldToAllLocales",
+        itemId: selectedItemId,
+        fieldType: fieldKey,
+        sourceText,
+      },
+      { method: "POST" }
+    );
+  };
+
   const handleTranslateAll = () => {
     if (!selectedItemId || !selectedItem) return;
 
@@ -441,6 +468,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     handleGenerateAI,
     handleFormatAI,
     handleTranslateField,
+    handleTranslateFieldToAllLocales,
     handleTranslateAll,
     handleAcceptSuggestion,
     handleRejectSuggestion,

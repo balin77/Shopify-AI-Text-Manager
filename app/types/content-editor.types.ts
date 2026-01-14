@@ -97,6 +97,7 @@ export interface EditorHandlers {
   handleGenerateAI: (fieldKey: string) => void;
   handleFormatAI: (fieldKey: string) => void;
   handleTranslateField: (fieldKey: string) => void;
+  handleTranslateFieldToAllLocales: (fieldKey: string) => void;
   handleTranslateAll: () => void;
   handleAcceptSuggestion: (fieldKey: string) => void;
   handleRejectSuggestion: (fieldKey: string) => void;

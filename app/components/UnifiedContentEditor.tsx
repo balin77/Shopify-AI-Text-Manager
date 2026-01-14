@@ -203,7 +203,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                     onGenerateAI={field.supportsAI !== false ? () => handlers.handleGenerateAI(field.key) : undefined}
                     onFormatAI={field.supportsFormatting !== false ? () => handlers.handleFormatAI(field.key) : undefined}
                     onTranslate={field.supportsTranslation !== false ? () => handlers.handleTranslateField(field.key) : undefined}
-                    onTranslateAll={field.supportsTranslation !== false ? handlers.handleTranslateAll : undefined}
+                    onTranslateToAllLocales={field.supportsTranslation !== false ? () => handlers.handleTranslateFieldToAllLocales(field.key) : undefined}
                     onAcceptSuggestion={() => handlers.handleAcceptSuggestion(field.key)}
                     onRejectSuggestion={() => handlers.handleRejectSuggestion(field.key)}
                     htmlMode={state.htmlModes[field.key] || "rendered"}
@@ -251,7 +251,7 @@ interface FieldRendererProps {
   onGenerateAI?: () => void;
   onFormatAI?: () => void;
   onTranslate?: () => void;
-  onTranslateAll?: () => void;
+  onTranslateToAllLocales?: () => void;
   onAcceptSuggestion: () => void;
   onRejectSuggestion: () => void;
   htmlMode: "html" | "rendered";
@@ -274,7 +274,7 @@ function FieldRenderer(props: FieldRendererProps) {
     onGenerateAI,
     onFormatAI,
     onTranslate,
-    onTranslateAll,
+    onTranslateToAllLocales,
     onAcceptSuggestion,
     onRejectSuggestion,
     htmlMode,
@@ -319,7 +319,7 @@ function FieldRenderer(props: FieldRendererProps) {
         onGenerateAI={field.supportsAI !== false ? onGenerateAI : undefined}
         onFormatAI={field.supportsFormatting !== false ? onFormatAI : undefined}
         onTranslate={field.supportsTranslation !== false ? onTranslate : undefined}
-        onTranslateAll={field.supportsTranslation !== false ? onTranslateAll : undefined}
+        onTranslateToAllLocales={field.supportsTranslation !== false ? onTranslateToAllLocales : undefined}
         onAcceptSuggestion={onAcceptSuggestion}
         onRejectSuggestion={onRejectSuggestion}
       />
@@ -344,7 +344,7 @@ function FieldRenderer(props: FieldRendererProps) {
       onGenerateAI={field.supportsAI !== false ? onGenerateAI : undefined}
       onFormatAI={field.supportsFormatting !== false ? onFormatAI : undefined}
       onTranslate={field.supportsTranslation !== false ? onTranslate : undefined}
-      onTranslateAll={field.supportsTranslation !== false ? onTranslateAll : undefined}
+      onTranslateToAllLocales={field.supportsTranslation !== false ? onTranslateToAllLocales : undefined}
       onAcceptSuggestion={onAcceptSuggestion}
       onRejectSuggestion={onRejectSuggestion}
     />

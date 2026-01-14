@@ -254,6 +254,36 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
   }
 
   // ============================================================================
+  // TRANSLATE FIELD TO ALL LOCALES
+  // ============================================================================
+
+  if (action === "translateFieldToAllLocales") {
+    const fieldType = formData.get("fieldType") as string;
+    const sourceText = formData.get("sourceText") as string;
+
+    try {
+      const changedFields: any = {};
+      changedFields[fieldType] = sourceText;
+
+      if (!sourceText) {
+        return json({ success: false, error: "No source text to translate" }, { status: 400 });
+      }
+
+      const allTranslations = await shopifyContentService.translateAllContent({
+        resourceId: itemId,
+        resourceType: contentConfig.resourceType as any,
+        fields: changedFields,
+        translationService,
+        db,
+      });
+
+      return json({ success: true, translations: allTranslations, fieldType });
+    } catch (error: any) {
+      return json({ success: false, error: error.message }, { status: 500 });
+    }
+  }
+
+  // ============================================================================
   // UPDATE CONTENT
   // ============================================================================
 
