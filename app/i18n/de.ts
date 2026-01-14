@@ -186,8 +186,8 @@ export const de = {
     openai: "OpenAI API-Schlüssel",
     openaiHelp: "Erhältlich bei",
     providers: {
-      huggingface: "Hugging Face (Kostenlos)",
-      gemini: "Google Gemini (Kostenlos)",
+      huggingface: "Hugging Face",
+      gemini: "Google Gemini",
       claude: "Anthropic Claude",
       openai: "OpenAI GPT",
       grok: "Grok (X.AI)",

@@ -188,8 +188,8 @@ export const en: Translation = {
     openai: "OpenAI API Key",
     openaiHelp: "Available at",
     providers: {
-      huggingface: "Hugging Face (Free)",
-      gemini: "Google Gemini (Free)",
+      huggingface: "Hugging Face",
+      gemini: "Google Gemini",
       claude: "Anthropic Claude",
       openai: "OpenAI GPT",
       grok: "Grok (X.AI)",

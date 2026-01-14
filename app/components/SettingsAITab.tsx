@@ -8,7 +8,9 @@ import {
   Button,
   Select,
   InlineStack,
+  Icon,
 } from "@shopify/polaris";
+import { ViewIcon, HideIcon } from "@shopify/polaris-icons";
 import { SaveDiscardButtons } from "./SaveDiscardButtons";
 
 interface Settings {
@@ -228,13 +230,12 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                         border: "none",
                         cursor: "pointer",
                         padding: "0",
-                        fontSize: "1.2rem",
                         display: "flex",
                         alignItems: "center",
                       }}
                       type="button"
                     >
-                      {showHuggingfaceKey ? "👁️" : "👁️‍🗨️"}
+                      <Icon source={showHuggingfaceKey ? ViewIcon : HideIcon} />
                     </button>
                   }
                   helpText={
@@ -292,13 +293,12 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                         border: "none",
                         cursor: "pointer",
                         padding: "0",
-                        fontSize: "1.2rem",
                         display: "flex",
                         alignItems: "center",
                       }}
                       type="button"
                     >
-                      {showGeminiKey ? "👁️" : "👁️‍🗨️"}
+                      <Icon source={showGeminiKey ? ViewIcon : HideIcon} />
                     </button>
                   }
                   helpText={
@@ -356,13 +356,12 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                         border: "none",
                         cursor: "pointer",
                         padding: "0",
-                        fontSize: "1.2rem",
                         display: "flex",
                         alignItems: "center",
                       }}
                       type="button"
                     >
-                      {showClaudeKey ? "👁️" : "👁️‍🗨️"}
+                      <Icon source={showClaudeKey ? ViewIcon : HideIcon} />
                     </button>
                   }
                   helpText={
@@ -420,13 +419,12 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                         border: "none",
                         cursor: "pointer",
                         padding: "0",
-                        fontSize: "1.2rem",
                         display: "flex",
                         alignItems: "center",
                       }}
                       type="button"
                     >
-                      {showOpenaiKey ? "👁️" : "👁️‍🗨️"}
+                      <Icon source={showOpenaiKey ? ViewIcon : HideIcon} />
                     </button>
                   }
                   helpText={
@@ -484,13 +482,12 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                         border: "none",
                         cursor: "pointer",
                         padding: "0",
-                        fontSize: "1.2rem",
                         display: "flex",
                         alignItems: "center",
                       }}
                       type="button"
                     >
-                      {showGrokKey ? "👁️" : "👁️‍🗨️"}
+                      <Icon source={showGrokKey ? ViewIcon : HideIcon} />
                     </button>
                   }
                   helpText={
@@ -548,13 +545,12 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                         border: "none",
                         cursor: "pointer",
                         padding: "0",
-                        fontSize: "1.2rem",
                         display: "flex",
                         alignItems: "center",
                       }}
                       type="button"
                     >
-                      {showDeepseekKey ? "👁️" : "👁️‍🗨️"}
+                      <Icon source={showDeepseekKey ? ViewIcon : HideIcon} />
                     </button>
                   }
                   helpText={
