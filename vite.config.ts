@@ -28,5 +28,7 @@ export default defineConfig({
       ".railway.app", // Allow all Railway domains
       ".trycloudflare.com", // For local development tunnels
     ],
+    // Disable HMR when running on Railway or in production
+    hmr: process.env.RAILWAY_ENVIRONMENT ? false : undefined,
   },
 });

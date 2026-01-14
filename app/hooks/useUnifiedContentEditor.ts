@@ -107,6 +107,49 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     }
   }, [fetcher.data]);
 
+  // Handle "translateFieldToAllLocales" response (from Accept & Translate)
+  useEffect(() => {
+    if (
+      fetcher.data?.success &&
+      'translations' in fetcher.data &&
+      'fieldType' in fetcher.data &&
+      !('locale' in fetcher.data)
+    ) {
+      const { translations, fieldType } = fetcher.data as any;
+      // translations is Record<string, string> where key is locale and value is translated text
+
+      const field = config.fieldDefinitions.find(f => f.key === fieldType);
+      if (!field) return;
+
+      const shopifyKey = field.translationKey;
+
+      if (selectedItem && shopifyKey) {
+        // Update item translations for all locales
+        for (const [locale, translatedValue] of Object.entries(translations as Record<string, string>)) {
+          // Remove existing translation for this key and locale
+          selectedItem.translations = selectedItem.translations.filter(
+            (t: any) => !(t.locale === locale && t.key === shopifyKey)
+          );
+
+          // Add new translation
+          selectedItem.translations.push({
+            key: shopifyKey,
+            value: translatedValue,
+            locale
+          });
+
+          console.log(`[ACCEPT-AND-TRANSLATE] Updated ${fieldType} for ${locale}: ${translatedValue.substring(0, 50)}...`);
+        }
+
+        showInfoBox(
+          `${fieldType} wurde in ${Object.keys(translations).length} Sprache(n) übersetzt`,
+          "success",
+          "Erfolgreich"
+        );
+      }
+    }
+  }, [fetcher.data, currentLanguage, selectedItem, config.fieldDefinitions, showInfoBox]);
+
   // Handle "translateAll" response
   useEffect(() => {
     if (
@@ -428,6 +471,30 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     });
   };
 
+  const handleAcceptAndTranslate = (fieldKey: string) => {
+    const suggestion = aiSuggestions[fieldKey];
+    if (!suggestion || !selectedItemId) return;
+
+    // First, accept the suggestion in the primary locale
+    handleAcceptSuggestion(fieldKey);
+
+    // Then translate to all enabled locales (except primary)
+    const targetLocales = enabledLanguages.filter(l => l !== primaryLocale);
+    if (targetLocales.length === 0) {
+      showInfoBox("Keine Zielsprachen aktiviert", "warning", "Warnung");
+      return;
+    }
+
+    // Submit translation to all enabled locales
+    fetcher.submit({
+      action: "translateFieldToAllLocales",
+      itemId: selectedItemId,
+      fieldType: fieldKey,
+      sourceText: suggestion,
+      targetLocales: JSON.stringify(targetLocales)
+    }, { method: "POST" });
+  };
+
   const handleRejectSuggestion = (fieldKey: string) => {
     setAiSuggestions((prev) => {
       const newSuggestions = { ...prev };
@@ -530,6 +597,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     handleTranslateFieldToAllLocales,
     handleTranslateAll,
     handleAcceptSuggestion,
+    handleAcceptAndTranslate,
     handleRejectSuggestion,
     handleLanguageChange,
     handleToggleLanguage,

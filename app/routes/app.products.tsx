@@ -405,6 +405,54 @@ export default function Products() {
     }
   }, [fetcher.data]);
 
+  // Handle "translateFieldToAllLocales" response (from Accept & Translate)
+  useEffect(() => {
+    if (
+      fetcher.data?.success &&
+      'translations' in fetcher.data &&
+      'fieldType' in fetcher.data &&
+      !('locale' in fetcher.data)
+    ) {
+      const { translations, fieldType } = fetcher.data as any;
+      // translations is Record<string, string> where key is locale and value is translated text
+
+      // Map fieldType to Shopify key
+      const fieldKeyMap: Record<string, string> = {
+        title: "title",
+        description: "body_html",
+        handle: "handle",
+        seoTitle: "meta_title",
+        metaDescription: "meta_description",
+      };
+      const shopifyKey = fieldKeyMap[fieldType];
+
+      if (selectedProduct && shopifyKey) {
+        // Update product translations for all locales
+        for (const [locale, translatedValue] of Object.entries(translations as Record<string, string>)) {
+          // Remove existing translation for this key and locale
+          selectedProduct.translations = selectedProduct.translations.filter(
+            (t: any) => !(t.locale === locale && t.key === shopifyKey)
+          );
+
+          // Add new translation
+          selectedProduct.translations.push({
+            key: shopifyKey,
+            value: translatedValue,
+            locale
+          });
+
+          console.log(`[ACCEPT-AND-TRANSLATE] Updated ${fieldType} for ${locale}: ${translatedValue.substring(0, 50)}...`);
+        }
+
+        showInfoBox(
+          `${fieldType} wurde in ${Object.keys(translations).length} Sprache(n) übersetzt`,
+          "success",
+          "Erfolgreich"
+        );
+      }
+    }
+  }, [fetcher.data, currentLanguage]);
+
   // Handle "translateAll" response
   useEffect(() => {
     if (
@@ -661,9 +709,26 @@ export default function Products() {
 
   const handleAcceptAndTranslate = (fieldType: string) => {
     const suggestion = aiSuggestions[fieldType];
-    if (!suggestion) return;
+    if (!suggestion || !selectedProduct) return;
+
+    // First, accept the suggestion in the primary locale
     handleAcceptSuggestion(fieldType);
-    fetcher.submit({ action: "translateSuggestion", suggestion, fieldType }, { method: "POST" });
+
+    // Then translate to all enabled locales (except primary)
+    const targetLocales = enabledLanguages.filter(l => l !== primaryLocale);
+    if (targetLocales.length === 0) {
+      showInfoBox("Keine Zielsprachen aktiviert", "warning", "Warnung");
+      return;
+    }
+
+    // Submit translation to all enabled locales
+    fetcher.submit({
+      action: "translateFieldToAllLocales",
+      productId: selectedProduct.id,
+      fieldType,
+      sourceText: suggestion,
+      targetLocales: JSON.stringify(targetLocales)
+    }, { method: "POST" });
   };
 
   const handleDiscardChanges = () => {

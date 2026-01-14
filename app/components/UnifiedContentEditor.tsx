@@ -217,6 +217,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         onTranslate={field.supportsTranslation !== false ? () => handlers.handleTranslateField(field.key) : undefined}
                         onTranslateToAllLocales={field.supportsTranslation !== false ? () => handlers.handleTranslateFieldToAllLocales(field.key) : undefined}
                         onAcceptSuggestion={() => handlers.handleAcceptSuggestion(field.key)}
+                        onAcceptAndTranslate={() => handlers.handleAcceptAndTranslate(field.key)}
                         onRejectSuggestion={() => handlers.handleRejectSuggestion(field.key)}
                         htmlMode={state.htmlModes[field.key] || "rendered"}
                         onToggleHtmlMode={() => handlers.handleToggleHtmlMode(field.key)}
@@ -271,6 +272,7 @@ interface FieldRendererProps {
   onTranslate?: () => void;
   onTranslateToAllLocales?: () => void;
   onAcceptSuggestion: () => void;
+  onAcceptAndTranslate: () => void;
   onRejectSuggestion: () => void;
   htmlMode: "html" | "rendered";
   onToggleHtmlMode: () => void;
@@ -294,6 +296,7 @@ function FieldRenderer(props: FieldRendererProps) {
     onTranslate,
     onTranslateToAllLocales,
     onAcceptSuggestion,
+    onAcceptAndTranslate,
     onRejectSuggestion,
     htmlMode,
     onToggleHtmlMode,
@@ -339,6 +342,7 @@ function FieldRenderer(props: FieldRendererProps) {
         onTranslate={field.supportsTranslation !== false ? onTranslate : undefined}
         onTranslateToAllLocales={field.supportsTranslation !== false ? onTranslateToAllLocales : undefined}
         onAcceptSuggestion={onAcceptSuggestion}
+        onAcceptAndTranslate={onAcceptAndTranslate}
         onRejectSuggestion={onRejectSuggestion}
       />
     );
@@ -364,6 +368,7 @@ function FieldRenderer(props: FieldRendererProps) {
       onTranslate={field.supportsTranslation !== false ? onTranslate : undefined}
       onTranslateToAllLocales={field.supportsTranslation !== false ? onTranslateToAllLocales : undefined}
       onAcceptSuggestion={onAcceptSuggestion}
+      onAcceptAndTranslate={onAcceptAndTranslate}
       onRejectSuggestion={onRejectSuggestion}
     />
   );

@@ -101,6 +101,7 @@ export interface EditorHandlers {
   handleTranslateFieldToAllLocales: (fieldKey: string) => void;
   handleTranslateAll: () => void;
   handleAcceptSuggestion: (fieldKey: string) => void;
+  handleAcceptAndTranslate: (fieldKey: string) => void;
   handleRejectSuggestion: (fieldKey: string) => void;
   handleLanguageChange: (locale: string) => void;
   handleToggleLanguage: (locale: string) => void;
