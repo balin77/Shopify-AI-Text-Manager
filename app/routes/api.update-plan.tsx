@@ -21,6 +21,7 @@ interface UpdatePlanResponse {
   syncStats?: {
     synced: number;
     failed: number;
+    resyncedForImages: number;
   };
   cacheStats: {
     before: Awaited<ReturnType<typeof getCacheStats>>;
@@ -89,64 +90,103 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const newPlanLimits = getPlanLimits(newPlan);
     const isUpgrade = newPlanLimits.maxProducts > currentPlanLimits.maxProducts;
 
-    let syncStats: { synced: number; failed: number } | undefined;
+    // Check if we're upgrading image access (from featured-only to all)
+    const isImageUpgrade =
+      currentPlanLimits.productImages === "featured-only" &&
+      newPlanLimits.productImages === "all";
 
-    if (isUpgrade && currentProductCount < newPlanLimits.maxProducts) {
-      console.log(`🔄 [API/UpdatePlan] Upgrading from ${currentPlan} to ${newPlan} - syncing additional products...`);
+    let syncStats: { synced: number; failed: number; resyncedForImages: number } | undefined;
 
-      // Fetch products from Shopify that we might not have yet
-      const maxToSync = newPlanLimits.maxProducts === Infinity ? 250 : newPlanLimits.maxProducts;
+    // Handle upgrades (more products available) or image upgrades
+    if ((isUpgrade && currentProductCount < newPlanLimits.maxProducts) || isImageUpgrade) {
+      console.log(`🔄 [API/UpdatePlan] Upgrading from ${currentPlan} to ${newPlan}...`);
 
-      const response = await admin.graphql(
-        `#graphql
-          query getProducts($first: Int!) {
-            products(first: $first) {
-              edges {
-                node {
-                  id
+      const syncService = new ProductSyncService(admin, session.shop);
+      let synced = 0;
+      let failed = 0;
+      let resyncedForImages = 0;
+
+      // If upgrading image access, re-sync existing products to get all images
+      if (isImageUpgrade) {
+        const existingProducts = await db.product.findMany({
+          where: { shop: session.shop },
+          select: { id: true },
+        });
+
+        if (existingProducts.length > 0) {
+          console.log(`🖼️ [API/UpdatePlan] Image upgrade detected - re-syncing ${existingProducts.length} existing products for all images...`);
+
+          for (const product of existingProducts) {
+            try {
+              console.log(`[API/UpdatePlan] Re-syncing product for images ${resyncedForImages + 1}/${existingProducts.length}: ${product.id}`);
+              await syncService.syncProduct(product.id);
+              resyncedForImages++;
+            } catch (error: any) {
+              console.error(`[API/UpdatePlan] Failed to re-sync ${product.id}:`, error.message);
+              failed++;
+            }
+          }
+
+          console.log(`✅ [API/UpdatePlan] Re-synced ${resyncedForImages} existing products for all images`);
+        }
+      }
+
+      // If upgrading product limit, sync additional products
+      if (isUpgrade && currentProductCount < newPlanLimits.maxProducts) {
+        console.log(`📦 [API/UpdatePlan] Product limit increased - checking for additional products to sync...`);
+
+        // Fetch products from Shopify that we might not have yet
+        const maxToSync = newPlanLimits.maxProducts === Infinity ? 250 : newPlanLimits.maxProducts;
+
+        const response = await admin.graphql(
+          `#graphql
+            query getProducts($first: Int!) {
+              products(first: $first) {
+                edges {
+                  node {
+                    id
+                  }
                 }
               }
+            }`,
+          { variables: { first: maxToSync } }
+        );
+
+        const data = await response.json();
+        const allProductIds = data.data?.products?.edges?.map((e: any) => e.node.id) || [];
+
+        console.log(`📦 [API/UpdatePlan] Found ${allProductIds.length} products in Shopify`);
+
+        // Get existing product IDs from database
+        const existingProducts = await db.product.findMany({
+          where: { shop: session.shop },
+          select: { id: true },
+        });
+        const existingIds = new Set(existingProducts.map(p => p.id));
+
+        // Find products we don't have yet
+        const productsToSync = allProductIds.filter((id: string) => !existingIds.has(id));
+
+        console.log(`🔄 [API/UpdatePlan] Need to sync ${productsToSync.length} new products`);
+
+        // Now sync new products
+        if (productsToSync.length > 0) {
+          for (const productId of productsToSync) {
+            try {
+              console.log(`[API/UpdatePlan] Syncing new product ${synced + 1}/${productsToSync.length}: ${productId}`);
+              await syncService.syncProduct(productId);
+              synced++;
+            } catch (error: any) {
+              console.error(`[API/UpdatePlan] Failed to sync ${productId}:`, error.message);
+              failed++;
             }
-          }`,
-        { variables: { first: maxToSync } }
-      );
-
-      const data = await response.json();
-      const allProductIds = data.data?.products?.edges?.map((e: any) => e.node.id) || [];
-
-      console.log(`📦 [API/UpdatePlan] Found ${allProductIds.length} products in Shopify`);
-
-      // Get existing product IDs from database
-      const existingProducts = await db.product.findMany({
-        where: { shop: session.shop },
-        select: { id: true },
-      });
-      const existingIds = new Set(existingProducts.map(p => p.id));
-
-      // Find products we don't have yet
-      const productsToSync = allProductIds.filter((id: string) => !existingIds.has(id));
-
-      console.log(`🔄 [API/UpdatePlan] Need to sync ${productsToSync.length} new products`);
-
-      if (productsToSync.length > 0) {
-        const syncService = new ProductSyncService(admin, session.shop);
-        let synced = 0;
-        let failed = 0;
-
-        for (const productId of productsToSync) {
-          try {
-            console.log(`[API/UpdatePlan] Syncing product ${synced + 1}/${productsToSync.length}: ${productId}`);
-            await syncService.syncProduct(productId);
-            synced++;
-          } catch (error: any) {
-            console.error(`[API/UpdatePlan] Failed to sync ${productId}:`, error.message);
-            failed++;
           }
-        }
 
-        syncStats = { synced, failed };
-        console.log(`✅ [API/UpdatePlan] Product sync complete: ${synced} synced, ${failed} failed`);
+          console.log(`✅ [API/UpdatePlan] Product sync complete: ${synced} new products synced, ${failed} failed`);
+        }
       }
+
+      syncStats = { synced, failed, resyncedForImages };
     }
 
     // Cleanup cache based on new plan (for downgrades)
@@ -168,7 +208,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         after: cacheStatsAfter,
       },
       message: syncStats
-        ? `Successfully switched to ${newPlan} plan and synced ${syncStats.synced} additional products`
+        ? `Successfully switched to ${newPlan} plan. Synced ${syncStats.synced} new products${syncStats.resyncedForImages > 0 ? ` and re-synced ${syncStats.resyncedForImages} existing products to fetch all images` : ""}`
         : `Successfully switched to ${newPlan} plan`,
     };
 
