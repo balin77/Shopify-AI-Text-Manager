@@ -29,6 +29,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const [enabledLanguages, setEnabledLanguages] = useState<string[]>(
     shopLocales.map((l: any) => l.locale)
   );
+  // Track if we're in the middle of an accept-and-translate flow to prevent immediate deletion
+  const [isAcceptAndTranslateFlow, setIsAcceptAndTranslateFlow] = useState(false);
 
   const selectedItem = items.find((item) => item.id === selectedItemId);
 
@@ -56,6 +58,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
   useEffect(() => {
     if (!selectedItem) return;
+
+    // Reset accept-and-translate flag when changing items or languages
+    setIsAcceptAndTranslateFlow(false);
 
     const newValues: Record<string, string> = {};
 
@@ -146,6 +151,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           "success",
           "Erfolgreich"
         );
+
+        // Reset the accept-and-translate flow flag after translations are complete
+        setIsAcceptAndTranslateFlow(false);
       }
     }
   }, [fetcher.data, currentLanguage, selectedItem, config.fieldDefinitions, showInfoBox]);
@@ -459,6 +467,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     const suggestion = aiSuggestions[fieldKey];
     if (!suggestion) return;
 
+    // Set flag to indicate we're accepting a suggestion (but not translating)
+    // This allows the change but still clears translations since the primary text changed
     setEditableValues((prev) => ({
       ...prev,
       [fieldKey]: suggestion,
@@ -475,13 +485,26 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     const suggestion = aiSuggestions[fieldKey];
     if (!suggestion || !selectedItemId) return;
 
-    // First, accept the suggestion in the primary locale
-    handleAcceptSuggestion(fieldKey);
+    // Set flag to prevent translation deletion during this flow
+    setIsAcceptAndTranslateFlow(true);
+
+    // Accept the suggestion in the primary locale (without clearing translations)
+    setEditableValues((prev) => ({
+      ...prev,
+      [fieldKey]: suggestion,
+    }));
+
+    setAiSuggestions((prev) => {
+      const newSuggestions = { ...prev };
+      delete newSuggestions[fieldKey];
+      return newSuggestions;
+    });
 
     // Then translate to all enabled locales (except primary)
     const targetLocales = enabledLanguages.filter(l => l !== primaryLocale);
     if (targetLocales.length === 0) {
       showInfoBox("Keine Zielsprachen aktiviert", "warning", "Warnung");
+      setIsAcceptAndTranslateFlow(false);
       return;
     }
 
@@ -531,6 +554,23 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       ...prev,
       [fieldKey]: value,
     }));
+
+    // If we're editing in the primary locale and NOT in an accept-and-translate flow,
+    // delete all translations for this field
+    if (currentLanguage === primaryLocale && !isAcceptAndTranslateFlow && selectedItem) {
+      const field = config.fieldDefinitions.find((f) => f.key === fieldKey);
+      if (!field) return;
+
+      const translationKey = field.translationKey;
+
+      // Remove all translations for this field across all locales
+      if (selectedItem.translations && translationKey) {
+        selectedItem.translations = selectedItem.translations.filter(
+          (t: any) => t.key !== translationKey
+        );
+        console.log(`[TRANSLATION-CLEAR] Cleared all translations for field "${fieldKey}" (key: ${translationKey})`);
+      }
+    }
   };
 
   const handleToggleHtmlMode = (fieldKey: string) => {
