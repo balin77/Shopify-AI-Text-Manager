@@ -53,8 +53,8 @@ export function LocaleNavigationButtons({
                   // Ctrl+Click toggles language activation (except for primary locale)
                   if (event.ctrlKey && onToggleLanguage && !isPrimary) {
                     onToggleLanguage(locale.locale);
-                  } else if (isEnabled || isPrimary) {
-                    // Only allow language change if enabled or primary
+                  } else {
+                    // Always allow language switching (even for disabled languages)
                     onLanguageChange(locale.locale);
                   }
                 }}
