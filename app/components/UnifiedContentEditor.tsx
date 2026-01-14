@@ -112,15 +112,15 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           overflow: "hidden",
         }}
       >
-        {/* Left Sidebar - Item List */}
-        <div style={{ width: "350px", flexShrink: 0 }}>
+        {/* Left Sidebar - Item List (Fixed) */}
+        <div style={{ width: "350px", flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
           <Card padding="0">
             <div style={{ padding: "1rem", borderBottom: "1px solid #e1e3e5" }}>
               <Text as="h2" variant="headingMd">
                 {config.displayName} ({items.length})
               </Text>
             </div>
-            <div style={{ maxHeight: "calc(100vh - 200px)", overflowY: "auto" }}>
+            <div style={{ flex: 1, overflowY: "auto" }}>
               {items.length > 0 ? (
                 <ResourceList
                   resourceName={{
@@ -154,80 +154,96 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
         </div>
 
         {/* Middle: Content Editor */}
-        <div style={{ flex: 1, overflow: "auto", minWidth: 0 }}>
-          <Card padding="600">
-            {selectedItem ? (
-              <BlockStack gap="500">
-                {/* Language Selector */}
-                <LocaleNavigationButtons
-                  shopLocales={shopLocales}
-                  currentLanguage={state.currentLanguage}
-                  primaryLocaleSuffix={t.content?.primaryLanguageSuffix || "Primary"}
-                  selectedItem={selectedItem}
-                  primaryLocale={primaryLocale}
-                  contentType={config.contentType}
-                  hasChanges={state.hasChanges}
-                  onLanguageChange={handlers.handleLanguageChange}
-                />
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
+          {selectedItem ? (
+            <>
+              {/* Fixed Header with Language Selector and Action Buttons */}
+              <Card padding="400">
+                <BlockStack gap="300">
+                  {/* Language Selector, Save/Reload Buttons on same line */}
+                  <InlineStack align="space-between" blockAlign="center" gap="400">
+                    <div style={{ flex: 1 }}>
+                      <LocaleNavigationButtons
+                        shopLocales={shopLocales}
+                        currentLanguage={state.currentLanguage}
+                        primaryLocaleSuffix={t.content?.primaryLanguageSuffix || "Primary"}
+                        selectedItem={selectedItem}
+                        primaryLocale={primaryLocale}
+                        contentType={config.contentType}
+                        hasChanges={state.hasChanges}
+                        onLanguageChange={handlers.handleLanguageChange}
+                      />
+                    </div>
+                    <SaveDiscardButtons
+                      hasChanges={state.hasChanges}
+                      onSave={handlers.handleSave}
+                      onDiscard={handlers.handleDiscard}
+                      highlightSaveButton={navigationGuard.highlightSaveButton}
+                      saveText={t.content?.saveChanges || "Save Changes"}
+                      discardText={t.content?.discardChanges || "Discard"}
+                      action="updateContent"
+                      fetcherState={fetcherState}
+                      fetcherFormData={fetcherFormData}
+                    />
+                  </InlineStack>
+                </BlockStack>
+              </Card>
 
-                {/* Save/Discard Buttons */}
-                <InlineStack align="space-between" blockAlign="center">
-                  <Text as="p" variant="bodySm" tone="subdued">
-                    {config.idPrefix || t.content?.idPrefix || "ID:"} {selectedItem.id.split("/").pop()}
-                  </Text>
-                  <SaveDiscardButtons
-                    hasChanges={state.hasChanges}
-                    onSave={handlers.handleSave}
-                    onDiscard={handlers.handleDiscard}
-                    highlightSaveButton={navigationGuard.highlightSaveButton}
-                    saveText={t.content?.saveChanges || "Save Changes"}
-                    discardText={t.content?.discardChanges || "Discard"}
-                    action="updateContent"
-                    fetcherState={fetcherState}
-                    fetcherFormData={fetcherFormData}
-                  />
-                </InlineStack>
+              {/* Scrollable Content Area */}
+              <div style={{ flex: 1, overflowY: "auto", marginTop: "1rem" }}>
+                <Card padding="600">
+                  <BlockStack gap="500">
+                    {/* Item ID */}
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      {config.idPrefix || t.content?.idPrefix || "ID:"} {selectedItem.id.split("/").pop()}
+                    </Text>
 
-                {/* Dynamic Fields */}
-                {config.fieldDefinitions.map((field) => (
-                  <FieldRenderer
-                    key={field.key}
-                    field={field}
-                    value={helpers.getEditableValue(field.key)}
-                    onChange={(value) => handlers.handleValueChange(field.key, value)}
-                    suggestion={state.aiSuggestions[field.key]}
-                    isPrimaryLocale={state.currentLanguage === primaryLocale}
-                    isTranslated={helpers.isFieldTranslated(field.key)}
-                    isLoading={fetcherState !== "idle" && fetcherFormData?.get("fieldType") === field.key}
-                    sourceTextAvailable={!!getSourceText(selectedItem, field.key, primaryLocale)}
-                    onGenerateAI={field.supportsAI !== false ? () => handlers.handleGenerateAI(field.key) : undefined}
-                    onFormatAI={field.supportsFormatting !== false ? () => handlers.handleFormatAI(field.key) : undefined}
-                    onTranslate={field.supportsTranslation !== false ? () => handlers.handleTranslateField(field.key) : undefined}
-                    onTranslateToAllLocales={field.supportsTranslation !== false ? () => handlers.handleTranslateFieldToAllLocales(field.key) : undefined}
-                    onAcceptSuggestion={() => handlers.handleAcceptSuggestion(field.key)}
-                    onRejectSuggestion={() => handlers.handleRejectSuggestion(field.key)}
-                    htmlMode={state.htmlModes[field.key] || "rendered"}
-                    onToggleHtmlMode={() => handlers.handleToggleHtmlMode(field.key)}
-                    shopLocales={shopLocales}
-                    currentLanguage={state.currentLanguage}
-                    t={t}
-                  />
-                ))}
-              </BlockStack>
-            ) : (
+                    {/* Dynamic Fields */}
+                    {config.fieldDefinitions.map((field) => (
+                      <FieldRenderer
+                        key={field.key}
+                        field={field}
+                        value={helpers.getEditableValue(field.key)}
+                        onChange={(value) => handlers.handleValueChange(field.key, value)}
+                        suggestion={state.aiSuggestions[field.key]}
+                        isPrimaryLocale={state.currentLanguage === primaryLocale}
+                        isTranslated={helpers.isFieldTranslated(field.key)}
+                        isLoading={fetcherState !== "idle" && fetcherFormData?.get("fieldType") === field.key}
+                        sourceTextAvailable={!!getSourceText(selectedItem, field.key, primaryLocale)}
+                        onGenerateAI={field.supportsAI !== false ? () => handlers.handleGenerateAI(field.key) : undefined}
+                        onFormatAI={field.supportsFormatting !== false ? () => handlers.handleFormatAI(field.key) : undefined}
+                        onTranslate={field.supportsTranslation !== false ? () => handlers.handleTranslateField(field.key) : undefined}
+                        onTranslateToAllLocales={field.supportsTranslation !== false ? () => handlers.handleTranslateFieldToAllLocales(field.key) : undefined}
+                        onAcceptSuggestion={() => handlers.handleAcceptSuggestion(field.key)}
+                        onRejectSuggestion={() => handlers.handleRejectSuggestion(field.key)}
+                        htmlMode={state.htmlModes[field.key] || "rendered"}
+                        onToggleHtmlMode={() => handlers.handleToggleHtmlMode(field.key)}
+                        shopLocales={shopLocales}
+                        currentLanguage={state.currentLanguage}
+                        t={t}
+                      />
+                    ))}
+                  </BlockStack>
+                </Card>
+              </div>
+            </>
+          ) : (
+            <Card padding="600">
               <div style={{ textAlign: "center", padding: "4rem 2rem" }}>
                 <Text as="p" variant="headingLg" tone="subdued">
                   {t.content?.selectFromList || "Select an item from the list"}
                 </Text>
               </div>
-            )}
-          </Card>
+            </Card>
+          )}
         </div>
 
-        {/* Right: Optional Sidebar */}
+        {/* Right: Optional Sidebar (Fixed) */}
         {selectedItem && state.currentLanguage === primaryLocale && config.showSeoSidebar && (
-          <div style={{ width: "320px", flexShrink: 0, overflow: "auto" }}>
-            {sidebarRenderer(selectedItem, state.editableValues)}
+          <div style={{ width: "320px", flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+            <div style={{ flex: 1, overflowY: "auto" }}>
+              {sidebarRenderer(selectedItem, state.editableValues)}
+            </div>
           </div>
         )}
       </div>
