@@ -48,7 +48,53 @@ export default function App() {
 }
 
 export function ErrorBoundary() {
-  const error = useRouteError();
+  let error: unknown;
+
+  try {
+    error = useRouteError();
+  } catch (e) {
+    // If useRouteError fails (e.g., called outside router context),
+    // render a generic error page
+    return (
+      <Document title="Error">
+        <div style={{
+          fontFamily: 'system-ui, sans-serif',
+          padding: '2rem',
+          maxWidth: '600px',
+          margin: '4rem auto',
+          textAlign: 'center'
+        }}>
+          <h1 style={{ fontSize: '4rem', margin: '0', color: '#e74c3c' }}>
+            Error
+          </h1>
+          <h2 style={{ fontSize: '1.5rem', marginTop: '1rem', color: '#333' }}>
+            App Unavailable
+          </h2>
+          <p style={{ fontSize: '1.1rem', color: '#666', marginTop: '1rem', lineHeight: '1.6' }}>
+            This app is currently unavailable. Please try again later.
+          </p>
+          <p style={{ fontSize: '1rem', color: '#888', marginTop: '1rem' }}>
+            If this problem persists, please contact the app administrator.
+          </p>
+          <a
+            href="/"
+            style={{
+              display: 'inline-block',
+              marginTop: '2rem',
+              padding: '0.75rem 1.5rem',
+              backgroundColor: '#008060',
+              color: 'white',
+              textDecoration: 'none',
+              borderRadius: '4px',
+              fontWeight: '500'
+            }}
+          >
+            Go to Home
+          </a>
+        </div>
+      </Document>
+    );
+  }
 
   if (isRouteErrorResponse(error)) {
     return (
