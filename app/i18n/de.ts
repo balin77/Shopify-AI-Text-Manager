@@ -168,6 +168,7 @@ export const de = {
     aiInstructionsReadOnly: "KI-Anweisungen sind im Free-Plan schreibgeschützt",
     aiInstructionsReadOnlyDescription: "Upgrade auf Basic-Plan, um KI-Generierungsanweisungen für Ihre Produkte und Inhalte anzupassen.",
     defaultInstructionsReadOnly: "Standard-KI-Anweisungen (schreibgeschützt im Free-Plan)",
+    unsavedChangesMessage: "Sie haben ungespeicherte Änderungen. Möchten Sie wirklich fortfahren? Ihre Änderungen gehen verloren.",
     appLanguageDescription: "Wählen Sie die Sprache für die Benutzeroberfläche",
     manageAiKeys: "AI API-Zugangscodes verwalten",
     aiKeysDescription: "Konfigurieren Sie Ihre bevorzugten KI-Anbieter. Die API-Schlüssel werden sicher verschlüsselt gespeichert und nur für Ihre Shop-Übersetzungen verwendet.",

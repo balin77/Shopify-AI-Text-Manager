@@ -114,17 +114,6 @@ export function SettingsLanguageTab({ settings, fetcher, t, onHasChangesChange }
           value={appLanguage}
           onChange={setAppLanguage}
         />
-
-        <InlineStack align="end">
-          <Button
-            variant={languageChanged ? "primary" : undefined}
-            onClick={handleSave}
-            disabled={!languageChanged}
-            loading={fetcher.state !== "idle"}
-          >
-            {t.products.saveChanges}
-          </Button>
-        </InlineStack>
       </BlockStack>
     </Card>
   );

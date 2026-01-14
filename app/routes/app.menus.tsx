@@ -5,7 +5,7 @@
  * translating menu items via GraphQL API
  */
 
-import { useState } from "react";
+import { useState, type ReactElement } from "react";
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
 import {
@@ -144,7 +144,7 @@ export default function MenusPage() {
   const selectedItem = parsedMenus.find((item: any) => item.id === selectedItemId);
 
   // Recursive function to render menu items with unlimited nesting
-  const renderMenuItem = (item: any, index: number, path: number[]): JSX.Element => {
+  const renderMenuItem = (item: any, index: number, path: number[]): ReactElement => {
     const label = `Menu Item ${path.join('.')}`;
 
     return (

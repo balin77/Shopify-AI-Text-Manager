@@ -211,10 +211,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         url: p.featuredImageUrl,
         altText: p.featuredImageAlt,
       },
-      images: p.images ? p.images.map((img) => ({
+      images: p.images ? p.images.map((img: any) => ({
         url: img.url,
         altText: img.altText,
-        altTextTranslations: img.altTextTranslations ? img.altTextTranslations.map((t) => ({
+        altTextTranslations: img.altTextTranslations ? img.altTextTranslations.map((t: any) => ({
           locale: t.locale,
           altText: t.altText,
         })) : [],
@@ -373,9 +373,15 @@ export default function Products() {
       !('locale' in fetcher.data) &&
       !('fieldType' in fetcher.data)
     ) {
-      const translations = (fetcher.data as any).translations;
+      const translations = (fetcher.data as any).translations as Record<string, {
+        title?: string;
+        description?: string;
+        handle?: string;
+        seoTitle?: string;
+        metaDescription?: string;
+      }>;
       if (selectedProduct) {
-        for (const [locale, fields] of Object.entries(translations as any)) {
+        for (const [locale, fields] of Object.entries(translations)) {
           const newTranslations = [];
           if (fields.title) newTranslations.push({ key: "title", value: fields.title, locale });
           if (fields.description) newTranslations.push({ key: "body_html", value: fields.description, locale });

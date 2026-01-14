@@ -619,17 +619,6 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
             </div>
           </BlockStack>
         </div>
-
-        <InlineStack align="end">
-          <Button
-            variant={hasChanges ? "primary" : undefined}
-            onClick={handleSave}
-            disabled={!hasChanges}
-            loading={fetcher.state !== "idle"}
-          >
-            {t.products.saveChanges}
-          </Button>
-        </InlineStack>
       </BlockStack>
     </Card>
   );

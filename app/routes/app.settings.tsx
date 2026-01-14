@@ -359,6 +359,33 @@ export default function SettingsPage() {
   const [hasAIChanges, setHasAIChanges] = useState(false);
   const [hasLanguageChanges, setHasLanguageChanges] = useState(false);
 
+  // Check if there are any unsaved changes across tabs
+  const hasUnsavedChanges = hasAIChanges || hasLanguageChanges;
+
+  // Handle section navigation with unsaved changes warning
+  const handleSectionChange = (newSection: "setup" | "ai" | "instructions" | "language") => {
+    if (hasUnsavedChanges) {
+      const message = t.settings?.unsavedChangesMessage ||
+        "Sie haben ungespeicherte Änderungen. Möchten Sie wirklich fortfahren? Ihre Änderungen gehen verloren.";
+      const confirmed = window.confirm(message);
+      if (!confirmed) {
+        return;
+      }
+      // Reset changes state when user confirms navigation
+      setHasAIChanges(false);
+      setHasLanguageChanges(false);
+    }
+    setSelectedSection(newSection);
+  };
+
+  // Reset changes state after successful save
+  useEffect(() => {
+    if (fetcher.data?.success) {
+      setHasAIChanges(false);
+      setHasLanguageChanges(false);
+    }
+  }, [fetcher.data]);
+
   // Show global InfoBox when fetcher returns success or error
   useEffect(() => {
     if (fetcher.data?.success) {
@@ -377,7 +404,7 @@ export default function SettingsPage() {
           <div style={{ width: "250px", flexShrink: 0 }}>
             <Card padding="0">
               <button
-                onClick={() => setSelectedSection("setup")}
+                onClick={() => handleSectionChange("setup")}
                 style={{
                   width: "100%",
                   padding: "1rem",
@@ -394,7 +421,7 @@ export default function SettingsPage() {
                 </Text>
               </button>
               <button
-                onClick={() => setSelectedSection("ai")}
+                onClick={() => handleSectionChange("ai")}
                 style={{
                   width: "100%",
                   padding: "1rem",
@@ -412,7 +439,7 @@ export default function SettingsPage() {
                 </Text>
               </button>
               <button
-                onClick={() => setSelectedSection("instructions")}
+                onClick={() => handleSectionChange("instructions")}
                 style={{
                   width: "100%",
                   padding: "1rem",
@@ -430,7 +457,7 @@ export default function SettingsPage() {
                 </Text>
               </button>
               <button
-                onClick={() => setSelectedSection("language")}
+                onClick={() => handleSectionChange("language")}
                 style={{
                   width: "100%",
                   padding: "1rem",
@@ -472,6 +499,7 @@ export default function SettingsPage() {
                   settings={settings}
                   fetcher={fetcher}
                   t={t}
+                  onHasChangesChange={setHasAIChanges}
                 />
               )}
 
@@ -502,6 +530,7 @@ export default function SettingsPage() {
                   settings={settings}
                   fetcher={fetcher}
                   t={t}
+                  onHasChangesChange={setHasLanguageChanges}
                 />
               )}
             </BlockStack>

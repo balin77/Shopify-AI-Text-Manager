@@ -14,7 +14,7 @@
  * - Policies: /app/policies
  */
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, type ReactElement } from "react";
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useNavigate, useSearchParams, useFetcher } from "@remix-run/react";
 import {
@@ -286,7 +286,7 @@ export default function ContentHub() {
   };
 
   // Recursive function to render menu items
-  const renderMenuItem = (item: any, index: number, path: number[]): JSX.Element => {
+  const renderMenuItem = (item: any, index: number, path: number[]): ReactElement => {
     const label = `Menu Item ${path.join('.')}`;
 
     return (

@@ -526,7 +526,7 @@ export function ProductEditor({
               )}
 
               {/* Alt-text input for selected image - only in non-free plans */}
-              {!isFreePlan && (
+              {!isFreePlan && product.images && (
                 <AIEditableField
                 label={`${t.products.altTextForImage} ${selectedImageIndex + 1}`}
                 value={imageAltTexts[selectedImageIndex] || product.images[selectedImageIndex]?.altText || ""}
