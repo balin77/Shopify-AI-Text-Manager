@@ -4,6 +4,29 @@
 
 Die Shopify API Connector App verschlüsselt nun alle API Keys in der Datenbank mit **AES-256-GCM** Verschlüsselung. Dies schützt sensitive API Keys bei einem Datenbank-Leak.
 
+## 🔍 Wichtiger Hinweis: Keine Schema-Migration nötig!
+
+**Dies ist KEINE Prisma/SQL Migration!**
+
+Die Datenbank-Struktur (`schema.prisma`) ändert sich **nicht**. Die API Key Felder bleiben `String?`. Wir ändern nur den **Inhalt** der Felder von Klartext zu verschlüsselt.
+
+```prisma
+// Schema bleibt GLEICH
+model AISettings {
+  id                String  @id @default(cuid())
+  shop              String  @unique
+  huggingfaceApiKey String?  // ← Bleibt String?, aber Inhalt ist jetzt verschlüsselt
+  geminiApiKey      String?  // ← Bleibt String?, aber Inhalt ist jetzt verschlüsselt
+  // ...
+}
+```
+
+Daher brauchst du:
+- ❌ **KEINE** Prisma Migration (`prisma migrate`)
+- ❌ **KEINE** SQL-Datei in `prisma/migrations/`
+- ❌ **KEINE** Railway Pre-deploy Command Änderung
+- ✅ **NUR** das Data-Migration Script ausführen (wenn bereits Keys vorhanden)
+
 ## Warum ist das wichtig?
 
 **Vor der Verschlüsselung:**
@@ -69,14 +92,25 @@ environment:
 
 ### 3. Migrate Existing API Keys (Einmalig)
 
-⚠️ **Backup your database first!**
+⚠️ **WICHTIG:** Diese Migration ist **KEINE Prisma/Schema Migration**!
+
+Die Datenbank-Struktur ändert sich nicht. Wir verschlüsseln nur den **Inhalt** der bestehenden API Keys.
+
+**Backup your database first!**
 
 ```bash
 # Backup Datenbank (PostgreSQL Beispiel)
 pg_dump $DATABASE_URL > backup_$(date +%Y%m%d_%H%M%S).sql
 
-# Run Migration
-node --require dotenv/config --loader tsx scripts/migrate-encrypt-api-keys.ts
+# Run Data Migration (verschlüsselt bestehende Keys)
+npx tsx scripts/migrate-encrypt-api-keys.ts
+```
+
+**Alternative: Manuell über Railway**
+
+```bash
+# Falls du tsx nicht lokal installiert hast
+railway run npx tsx scripts/migrate-encrypt-api-keys.ts
 ```
 
 **Was passiert:**
