@@ -165,19 +165,15 @@ async function migrateEncryptApiKeys() {
   }
 }
 
-// Run migration if this file is executed directly
-if (require.main === module) {
-  migrateEncryptApiKeys()
-    .then((stats) => {
-      if (stats.errors.length > 0) {
-        process.exit(1);
-      }
-      process.exit(0);
-    })
-    .catch((error) => {
-      console.error('Migration failed:', error);
+// Run migration (ES Module - always runs when imported/executed)
+migrateEncryptApiKeys()
+  .then((stats) => {
+    if (stats.errors.length > 0) {
       process.exit(1);
-    });
-}
-
-export { migrateEncryptApiKeys };
+    }
+    process.exit(0);
+  })
+  .catch((error) => {
+    console.error('Migration failed:', error);
+    process.exit(1);
+  });
