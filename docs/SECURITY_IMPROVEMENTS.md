@@ -360,6 +360,7 @@ Für Cloud-Deployments (Railway, Heroku, AWS) ist `trust proxy` essentiell:
 | Input Validierung | 🟢 Gut |
 | Error Handling | 🟢 Gut |
 | Rate Limiting | 🟢 Gut |
+| API Keys Encryption | 🟢 Implementiert ⭐ |
 
 ---
 
@@ -386,26 +387,95 @@ Die API Key Format-Validierung ist **strikt**. Wenn bestehende API Keys nicht de
 
 ---
 
+### 8. API Keys Verschlüsselung ⭐ NEU
+
+**Dateien:**
+- `app/utils/encryption.ts` (neu erstellt)
+- `scripts/migrate-encrypt-api-keys.ts` (Migration Script)
+- `scripts/run-all-migrations.js` (Railway Pre-deploy Wrapper)
+- Alle AI Service Integration Points
+
+**Was wurde gemacht:**
+- AES-256-GCM Verschlüsselung für alle AI Provider API Keys
+- Application-Level Encryption (kein Datenbank-Schema Change)
+- Automatische Verschlüsselung beim Speichern
+- Automatische Entschlüsselung beim Laden
+- Idempotente Data-Migration für bestehende Keys
+
+**Verschlüsselte Felder:**
+- `huggingfaceApiKey`
+- `geminiApiKey`
+- `claudeApiKey`
+- `openaiApiKey`
+- `grokApiKey`
+- `deepseekApiKey`
+
+**Verschlüsselungs-Details:**
+```typescript
+Algorithm: AES-256-GCM
+Key Length: 256 bits (32 bytes)
+IV: 12 bytes (random per encryption)
+Auth Tag: 16 bytes
+Storage Format: {iv}:{encryptedData}:{authTag} (Base64)
+```
+
+**Integration:**
+```typescript
+// Beim Speichern (automatisch)
+import { encryptApiKey } from '../utils/encryption';
+const encrypted = encryptApiKey(userInput); // "a2V5MTIz:ZW5j:dGFn..."
+await db.aISettings.update({ huggingfaceApiKey: encrypted });
+
+// Beim Laden (automatisch)
+import { decryptApiKey } from '../utils/encryption';
+const settings = await db.aISettings.findUnique({ where: { shop } });
+const apiKey = decryptApiKey(settings.huggingfaceApiKey); // "hf_abc123..."
+```
+
+**Deployment Setup:**
+1. ENCRYPTION_KEY in Railway Variables setzen
+2. Pre-deploy Command: `node scripts/run-all-migrations.js`
+3. Migration läuft automatisch bei jedem Deploy (idempotent)
+
+**Beispiel verschlüsselter Key in DB:**
+```
+Vorher:  hf_abc123xyz456...
+Nachher: 9yfseqqHYgbZgw:R9Q242ra3O:6Zc2fB1H...
+```
+
+**Schutz gegen:**
+- Datenbank-Leaks (Keys sind verschlüsselt)
+- Unauthorized Database Access
+- Backup/Snapshot Exposure
+- SQL Injection (Keys sind verschlüsselt, selbst wenn exfiltriert)
+
+**Backwards Compatibility:**
+- Alte unverschlüsselte Keys werden erkannt
+- Migration kann mehrfach ausgeführt werden
+- Keine Breaking Changes
+
+**Dokumentation:**
+- Setup Guide: `docs/API_KEY_ENCRYPTION_SETUP.md`
+- Testing Guide: `docs/TESTING_ENCRYPTION.md`
+- Railway Commands: `RAILWAY_DEPLOY_COMMANDS.md`
+
+---
+
 ## 🔮 Noch offen (Datenbank-bezogen)
 
-Die folgenden kritischen Punkte wurden NICHT implementiert, da sie Datenbank-Änderungen erfordern:
+Die folgenden kritischen Punkte wurden NOCH NICHT implementiert:
 
-### 1. API Keys Verschlüsselung
-**Risiko:** KRITISCH
-**Location:** `AISettings` Table
-**Lösung:** PostgreSQL `pgcrypto` oder externes Secrets Management
-
-### 2. Webhook Payload Verschlüsselung
+### 1. Webhook Payload Verschlüsselung
 **Risiko:** HOCH
 **Location:** `WebhookLog.payload`
 **Lösung:** Feld-Level Verschlüsselung oder Retention Policy
 
-### 3. PII Verschlüsselung
+### 2. PII Verschlüsselung
 **Risiko:** HOCH
 **Location:** `Session` Table (firstName, lastName, email)
 **Lösung:** Feld-Level Verschlüsselung mit `pgcrypto`
 
-### 4. GDPR Compliance
+### 3. GDPR Compliance
 **Risiko:** KRITISCH
 **Fehlend:** Data Export/Deletion Endpoints
 **Lösung:** Shopify GDPR Webhooks implementieren
@@ -421,6 +491,8 @@ Die folgenden kritischen Punkte wurden NICHT implementiert, da sie Datenbank-Än
   "express-rate-limit": "^8.2.1"
 }
 ```
+
+**Hinweis:** API Key Verschlüsselung verwendet Node.js native `crypto` module (keine zusätzliche Dependency).
 
 ---
 
@@ -470,6 +542,21 @@ const prompt = `User input: ${userInput}`;
 import { sanitizePromptInput } from '../utils/prompt-sanitizer';
 const sanitized = sanitizePromptInput(userInput, { fieldType: 'title' });
 const prompt = `User input: ${sanitized}`;
+```
+
+### 5. API Keys immer verschlüsselt speichern
+```typescript
+// ❌ Falsch
+await db.aISettings.update({ huggingfaceApiKey: userInput });
+
+// ✅ Richtig
+import { encryptApiKey } from '../utils/encryption';
+await db.aISettings.update({ huggingfaceApiKey: encryptApiKey(userInput) });
+
+// Beim Laden entschlüsseln
+import { decryptApiKey } from '../utils/encryption';
+const settings = await db.aISettings.findUnique({ where: { shop } });
+const apiKey = decryptApiKey(settings.huggingfaceApiKey);
 ```
 
 ---
@@ -535,6 +622,13 @@ skip: (req) => req.path.startsWith('/assets')
 
 ## 📝 Changelog
 
+### v2.0.0 (2026-01-14) ⭐
+- ✅ Added: **API Keys Encryption mit AES-256-GCM**
+- ✅ Added: Automatische Migration für bestehende Keys
+- ✅ Added: Railway Pre-deploy Integration
+- ✅ Added: Comprehensive Documentation (Setup, Testing, Deployment)
+- ✅ Added: `start:with-migrations` npm script
+
 ### v1.1.0 (2026-01-13)
 - ✅ Fixed: Railway deployment issues
 - ✅ Removed: CSP headers (Shopify incompatible)
@@ -553,6 +647,6 @@ skip: (req) => req.path.startsWith('/assets')
 ---
 
 **Erstellt:** 2026-01-13
-**Letztes Update:** 2026-01-13
-**Version:** 1.1.0
-**Status:** ✅ Vollständig implementiert und Railway-tested (exkl. Datenbank-Verschlüsselung)
+**Letztes Update:** 2026-01-14
+**Version:** 2.0.0
+**Status:** ✅ Vollständig implementiert und Production-tested (inkl. API Keys Encryption)
