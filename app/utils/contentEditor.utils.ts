@@ -117,11 +117,12 @@ export function useChangeTracking(
   currentLanguage: string,
   primaryLocale: string,
   editableFields: {
-    title: string;
-    description: string;
-    handle: string;
-    seoTitle: string;
-    metaDescription: string;
+    title?: string;
+    description?: string;
+    body?: string;
+    handle?: string;
+    seoTitle?: string;
+    metaDescription?: string;
   },
   contentType: 'pages' | 'blogs' | 'collections' | 'policies'
 ) {
@@ -145,20 +146,25 @@ export function useChangeTracking(
       ? (selectedItem.descriptionHtml || "")
       : (selectedItem.body || "");
 
+    // Get the actual description/body value from editableFields
+    // Pages and Blogs use 'body', Collections use 'description'
+    const currentDescValue = editableFields.body || editableFields.description || "";
+
     // Policies don't have translatable title field
     const titleChanged = contentType !== 'policies'
-      ? editableFields.title !== getOriginalValue("title", selectedItem.title)
+      ? (editableFields.title || "") !== getOriginalValue("title", selectedItem.title || "")
       : false;
 
-    const descChanged = editableFields.description !== getOriginalValue(descKey, descFallback || "");
-    const handleChanged = editableFields.handle !== getOriginalValue("handle", selectedItem.handle || "");
-    const seoTitleChanged = editableFields.seoTitle !== getOriginalValue("meta_title", selectedItem.seo?.title || "");
-    const metaDescChanged = editableFields.metaDescription !== getOriginalValue("meta_description", selectedItem.seo?.description || "");
+    const descChanged = currentDescValue !== getOriginalValue(descKey, descFallback || "");
+    const handleChanged = (editableFields.handle || "") !== getOriginalValue("handle", selectedItem.handle || "");
+    const seoTitleChanged = (editableFields.seoTitle || "") !== getOriginalValue("meta_title", selectedItem.seo?.title || "");
+    const metaDescChanged = (editableFields.metaDescription || "") !== getOriginalValue("meta_description", selectedItem.seo?.description || "");
 
     setHasChanges(titleChanged || descChanged || handleChanged || seoTitleChanged || metaDescChanged);
   }, [
     editableFields.title,
     editableFields.description,
+    editableFields.body,
     editableFields.handle,
     editableFields.seoTitle,
     editableFields.metaDescription,
