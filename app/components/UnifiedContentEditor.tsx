@@ -105,13 +105,11 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
 
       <div
         style={{
-          paddingTop: "150px",
-          height: "100vh",
+          height: "calc(100vh - 150px)",
           display: "flex",
           gap: "1rem",
           padding: "1rem",
           overflow: "hidden",
-          boxSizing: "border-box",
         }}
       >
         {/* Left Sidebar - Item List */}

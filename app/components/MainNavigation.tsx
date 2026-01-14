@@ -1,25 +1,49 @@
-import { useLocation, useNavigate, useFetcher, useMatches } from "@remix-run/react";
-import { InlineStack, Text, Banner, ButtonGroup, Button, Tooltip } from "@shopify/polaris";
+import { useLocation, useNavigate, useFetcher, useMatches, useNavigation } from "@remix-run/react";
+import { InlineStack, Text, Banner, ButtonGroup, Button, Tooltip, Spinner } from "@shopify/polaris";
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { usePlan } from "../contexts/PlanContext";
 import { type Plan } from "../config/plans";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 export function MainNavigation() {
   const location = useLocation();
   const navigate = useNavigate();
+  const navigation = useNavigation();
   const matches = useMatches();
   const { t } = useI18n();
   const { infoBox, hideInfoBox } = useInfoBox();
   const { plan, getPlanDisplayName, getMaxProducts } = usePlan();
   const fetcher = useFetcher();
   const [isChangingPlan, setIsChangingPlan] = useState(false);
+  const [showLoadingIndicator, setShowLoadingIndicator] = useState(false);
 
   // Get product count from products route loader data
   const productsRouteData = matches.find((match) => match.id === "routes/app.products")?.data as any;
   const productCount = productsRouteData?.productCount;
   const maxProducts = getMaxProducts();
+
+  // Show loading indicator only if loading takes longer than 1 second
+  useEffect(() => {
+    let timer: NodeJS.Timeout | null = null;
+
+    if (navigation.state === "loading" || navigation.state === "submitting") {
+      timer = setTimeout(() => {
+        setShowLoadingIndicator(true);
+      }, 1000);
+    } else {
+      setShowLoadingIndicator(false);
+      if (timer) {
+        clearTimeout(timer);
+      }
+    }
+
+    return () => {
+      if (timer) {
+        clearTimeout(timer);
+      }
+    };
+  }, [navigation.state]);
 
   const tabs = [
     { id: "products", label: t.nav.products, path: "/app/products" },
@@ -66,7 +90,7 @@ export function MainNavigation() {
 
   return (
     <>
-      {/* Navigation und InfoBox */}
+      {/* Fixed Navigation */}
       <div
         style={{
           background: "white",
@@ -81,7 +105,7 @@ export function MainNavigation() {
         {/* Einzeilige Leiste mit Navigation, InfoBox und Plan Selector */}
         <div style={{ display: "flex", alignItems: "center", padding: "1rem", gap: "2rem" }}>
           {/* Navigation Tabs */}
-          <InlineStack gap="400">
+          <InlineStack gap="400" blockAlign="center">
             {tabs.map((tab) => {
               const isActive = location.pathname.startsWith(tab.path);
               const showProductCount = tab.id === "products" && productCount !== undefined;
@@ -135,6 +159,26 @@ export function MainNavigation() {
               return tabContent;
             })}
           </InlineStack>
+
+          {/* Loading Indicator - nur anzeigen wenn länger als 1 Sekunde */}
+          {showLoadingIndicator && (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "0.5rem",
+                padding: "0.5rem 1rem",
+                borderRadius: "4px",
+                backgroundColor: "#f6f6f7",
+                border: "1px solid #c9cccf",
+              }}
+            >
+              <Spinner size="small" />
+              <Text as="span" variant="bodySm" tone="subdued">
+                Lädt...
+              </Text>
+            </div>
+          )}
 
           {/* InfoBox auf gleicher Ebene - schlanke Variante */}
           {infoBox && (
@@ -203,6 +247,9 @@ export function MainNavigation() {
           </div>
         </div>
       </div>
+
+      {/* Spacer to prevent content from going under fixed navigation */}
+      <div style={{ height: "73px" }} />
     </>
   );
 }

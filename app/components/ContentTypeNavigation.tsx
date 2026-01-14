@@ -56,67 +56,73 @@ export function ContentTypeNavigation() {
   const activeType = getActiveType();
 
   return (
-    <div style={{ borderBottom: "1px solid #e1e3e5", background: "white", padding: "1rem", position: "fixed", top: "73px", left: 0, right: 0, zIndex: 999 }}>
-      <InlineStack gap="300">
-        {contentTypes.map((type) => {
-          const hasAccess = canAccessContentType(type.planContentType);
-          const isDisabled = type.comingSoon || !hasAccess;
-          const nextPlan = getNextPlanUpgrade();
+    <>
+      {/* Fixed Navigation */}
+      <div style={{ borderBottom: "1px solid #e1e3e5", background: "white", padding: "1rem", position: "fixed", top: "73px", left: 0, right: 0, zIndex: 999 }}>
+        <InlineStack gap="300">
+          {contentTypes.map((type) => {
+            const hasAccess = canAccessContentType(type.planContentType);
+            const isDisabled = type.comingSoon || !hasAccess;
+            const nextPlan = getNextPlanUpgrade();
 
-          const button = (
-            <button
-              key={type.id}
-              onClick={() => {
-                if (!isDisabled) {
-                  navigate(type.path);
-                }
-              }}
-              disabled={isDisabled}
-              style={{
-                padding: "0.75rem 1.5rem",
-                border: activeType === type.id ? "2px solid #008060" : "1px solid #c9cccf",
-                borderRadius: "8px",
-                background: activeType === type.id ? "#f1f8f5" : isDisabled ? "#f6f6f7" : "white",
-                cursor: isDisabled ? "not-allowed" : "pointer",
-                transition: "all 0.2s",
-                display: "flex",
-                alignItems: "center",
-                gap: "0.5rem",
-                opacity: isDisabled ? 0.5 : 1,
-              }}
-            >
-              <span style={{ fontSize: "1.2rem" }}>{type.icon}</span>
-              <Text
-                as="span"
-                variant="bodyMd"
-                fontWeight={activeType === type.id ? "semibold" : "regular"}
+            const button = (
+              <button
+                key={type.id}
+                onClick={() => {
+                  if (!isDisabled) {
+                    navigate(type.path);
+                  }
+                }}
+                disabled={isDisabled}
+                style={{
+                  padding: "0.75rem 1.5rem",
+                  border: activeType === type.id ? "2px solid #008060" : "1px solid #c9cccf",
+                  borderRadius: "8px",
+                  background: activeType === type.id ? "#f1f8f5" : isDisabled ? "#f6f6f7" : "white",
+                  cursor: isDisabled ? "not-allowed" : "pointer",
+                  transition: "all 0.2s",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "0.5rem",
+                  opacity: isDisabled ? 0.5 : 1,
+                }}
               >
-                {type.label}
-              </Text>
-              {!hasAccess && !type.comingSoon && (
-                <span style={{ marginLeft: "0.25rem" }}>🔒</span>
-              )}
-              {type.comingSoon && (
-                <Text as="span" variant="bodySm" tone="subdued">
-                  (Coming Soon)
+                <span style={{ fontSize: "1.2rem" }}>{type.icon}</span>
+                <Text
+                  as="span"
+                  variant="bodyMd"
+                  fontWeight={activeType === type.id ? "semibold" : "regular"}
+                >
+                  {type.label}
                 </Text>
-              )}
-            </button>
-          );
-
-          // Wrap with tooltip if locked by plan
-          if (!hasAccess && !type.comingSoon && nextPlan) {
-            const nextPlanName = nextPlan.charAt(0).toUpperCase() + nextPlan.slice(1);
-            return (
-              <Tooltip key={type.id} content={`Available in ${nextPlanName} plan`}>
-                {button}
-              </Tooltip>
+                {!hasAccess && !type.comingSoon && (
+                  <span style={{ marginLeft: "0.25rem" }}>🔒</span>
+                )}
+                {type.comingSoon && (
+                  <Text as="span" variant="bodySm" tone="subdued">
+                    (Coming Soon)
+                  </Text>
+                )}
+              </button>
             );
-          }
 
-          return button;
-        })}
-      </InlineStack>
-    </div>
+            // Wrap with tooltip if locked by plan
+            if (!hasAccess && !type.comingSoon && nextPlan) {
+              const nextPlanName = nextPlan.charAt(0).toUpperCase() + nextPlan.slice(1);
+              return (
+                <Tooltip key={type.id} content={`Available in ${nextPlanName} plan`}>
+                  {button}
+                </Tooltip>
+              );
+            }
+
+            return button;
+          })}
+        </InlineStack>
+      </div>
+
+      {/* Spacer to prevent content from going under fixed navigation */}
+      <div style={{ height: "77px" }} />
+    </>
   );
 }
