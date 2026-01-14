@@ -114,9 +114,9 @@ export function MainNavigation() {
           <InlineStack gap="400" blockAlign="center">
             {tabs.map((tab) => {
               const isActive = location.pathname.startsWith(tab.path);
-              const showProductCount = tab.id === "products" && productCount !== undefined;
+              const showProductCount = tab.id === "products";
               const isAtLimit = showProductCount && productCount >= maxProducts && maxProducts !== Infinity;
-              const showTaskCount = tab.id === "tasks" && runningTaskCount > 0;
+              const showTaskCount = tab.id === "tasks";
 
               const tabContent = (
                 <button
@@ -147,7 +147,7 @@ export function MainNavigation() {
                         variant="bodySm"
                         tone={isAtLimit ? "critical" : "subdued"}
                       >
-                        ({productCount})
+                        ({productCount ?? 0})
                       </Text>
                     )}
                     {showTaskCount && (
