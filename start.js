@@ -1,7 +1,15 @@
 import { execSync } from 'child_process';
 
-// Migrations are now handled by Pre-deploy Command (node scripts/run-migration.js)
-// This file just starts the server
+// Run migrations BEFORE starting the server
+console.log('🚀 Running migrations...');
+try {
+  execSync('node scripts/run-migration.js', { stdio: 'inherit' });
+  console.log('✅ Migrations complete!');
+} catch (error) {
+  console.error('❌ Migration failed:', error.message);
+  process.exit(1);
+}
 
-console.log('Starting Express server...');
+// Start the Express server
+console.log('🚀 Starting Express server...');
 execSync('node server.js', { stdio: 'inherit' });
