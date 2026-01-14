@@ -10,6 +10,7 @@ import { useI18n } from "../contexts/I18nContext";
 import { usePlan } from "../contexts/PlanContext";
 import { type ContentType as PlanContentType } from "../config/plans";
 import { getPlanDisplayName as getPlanDisplayNameUtil } from "../utils/planUtils";
+import { useState, useEffect, useRef } from "react";
 
 type ContentType = "collections" | "blogs" | "pages" | "policies" | "menus" | "templates" | "metaobjects" | "shopMetadata";
 
@@ -28,6 +29,9 @@ export function ContentTypeNavigation() {
   const location = useLocation();
   const { t } = useI18n();
   const { canAccessContentType, getNextPlanUpgrade } = usePlan();
+  const navRef = useRef<HTMLDivElement>(null);
+  const [navHeight, setNavHeight] = useState(85);
+  const [mainNavHeight, setMainNavHeight] = useState(73);
 
   const contentTypes: ContentTypeConfig[] = [
     { id: "collections", label: t.content.collections, icon: "📂", description: t.content.collectionsDescription, path: "/app/collections", planContentType: "collections" },
@@ -56,10 +60,62 @@ export function ContentTypeNavigation() {
 
   const activeType = getActiveType();
 
+  // Dynamically measure main navigation height
+  useEffect(() => {
+    const updateMainNavHeight = () => {
+      // Find the main navigation element (first fixed element with zIndex 1000)
+      const mainNav = document.querySelector('[style*="z-index: 1000"]') as HTMLElement;
+      if (mainNav) {
+        setMainNavHeight(mainNav.offsetHeight);
+      }
+    };
+
+    updateMainNavHeight();
+    window.addEventListener('resize', updateMainNavHeight);
+
+    // Use MutationObserver to detect changes in main nav
+    const observer = new MutationObserver(updateMainNavHeight);
+    const mainNav = document.querySelector('[style*="z-index: 1000"]');
+    if (mainNav) {
+      observer.observe(mainNav, { childList: true, subtree: true, attributes: true });
+    }
+
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', updateMainNavHeight);
+    };
+  }, []);
+
+  // Dynamically measure content navigation height
+  useEffect(() => {
+    const updateHeight = () => {
+      if (navRef.current) {
+        setNavHeight(navRef.current.offsetHeight);
+      }
+    };
+
+    updateHeight();
+    window.addEventListener('resize', updateHeight);
+
+    if (navRef.current && typeof ResizeObserver !== 'undefined') {
+      const observer = new ResizeObserver(updateHeight);
+      observer.observe(navRef.current);
+
+      return () => {
+        observer.disconnect();
+        window.removeEventListener('resize', updateHeight);
+      };
+    }
+
+    return () => {
+      window.removeEventListener('resize', updateHeight);
+    };
+  }, []);
+
   return (
     <>
       {/* Fixed Navigation */}
-      <div style={{ borderBottom: "1px solid #e1e3e5", background: "white", padding: "1rem 1rem 1rem 1rem", paddingTop: "1.5rem", position: "fixed", top: "73px", left: 0, right: 0, zIndex: 999, overflowX: "auto" }}>
+      <div ref={navRef} style={{ borderBottom: "1px solid #e1e3e5", background: "white", padding: "1rem 1rem 1rem 1rem", paddingTop: "1.5rem", position: "fixed", top: `${mainNavHeight}px`, left: 0, right: 0, zIndex: 999, overflowX: "auto" }}>
         <InlineStack gap="300">
           {contentTypes.map((type) => {
             const hasAccess = canAccessContentType(type.planContentType);
@@ -123,8 +179,8 @@ export function ContentTypeNavigation() {
         </InlineStack>
       </div>
 
-      {/* Spacer to prevent content from going under fixed navigation */}
-      <div style={{ height: "85px" }} />
+      {/* Dynamic spacer to prevent content from going under fixed navigations */}
+      <div style={{ height: `${navHeight}px` }} />
     </>
   );
 }
