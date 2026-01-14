@@ -151,34 +151,58 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     }
   }, [fetcher.data, currentLanguage, selectedItem, config.fieldDefinitions]);
 
-  // Update translations in item object after saving
+  // Update item object after saving (both primary locale and translations)
   useEffect(() => {
     if (
       fetcher.data?.success &&
       !('translations' in fetcher.data) &&
       !('generatedContent' in fetcher.data) &&
       !('translatedValue' in fetcher.data) &&
-      selectedItem &&
-      currentLanguage !== primaryLocale
+      selectedItem
     ) {
-      // This was a successful update action for a translation
-      const existingTranslations = selectedItem.translations.filter(
-        (t: any) => t.locale !== currentLanguage
-      );
+      if (currentLanguage === primaryLocale) {
+        // This was a successful update action for primary locale
+        // Update the item object directly with new values
+        config.fieldDefinitions.forEach((fieldDef) => {
+          const value = editableValues[fieldDef.key];
 
-      // Add new translations
-      config.fieldDefinitions.forEach((fieldDef) => {
-        const value = editableValues[fieldDef.key];
-        if (value) {
-          existingTranslations.push({
-            key: fieldDef.translationKey,
-            value,
-            locale: currentLanguage,
-          });
-        }
-      });
+          // Update based on field mapping
+          if (fieldDef.key === 'title') {
+            selectedItem.title = value || '';
+          } else if (fieldDef.key === 'description') {
+            selectedItem.descriptionHtml = value || '';
+          } else if (fieldDef.key === 'body') {
+            selectedItem.body = value || '';
+          } else if (fieldDef.key === 'handle') {
+            selectedItem.handle = value || '';
+          } else if (fieldDef.key === 'seoTitle') {
+            if (!selectedItem.seo) selectedItem.seo = {};
+            selectedItem.seo.title = value || '';
+          } else if (fieldDef.key === 'metaDescription') {
+            if (!selectedItem.seo) selectedItem.seo = {};
+            selectedItem.seo.description = value || '';
+          }
+        });
+      } else {
+        // This was a successful update action for a translation
+        const existingTranslations = selectedItem.translations.filter(
+          (t: any) => t.locale !== currentLanguage
+        );
 
-      selectedItem.translations = existingTranslations;
+        // Add new translations
+        config.fieldDefinitions.forEach((fieldDef) => {
+          const value = editableValues[fieldDef.key];
+          if (value) {
+            existingTranslations.push({
+              key: fieldDef.translationKey,
+              value,
+              locale: currentLanguage,
+            });
+          }
+        });
+
+        selectedItem.translations = existingTranslations;
+      }
     }
   }, [fetcher.data, selectedItem, currentLanguage, primaryLocale, editableValues, config.fieldDefinitions]);
 

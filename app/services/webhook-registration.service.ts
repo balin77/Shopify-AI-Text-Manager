@@ -106,11 +106,44 @@ export class WebhookRegistrationService {
   }
 
   /**
-   * Register ALL webhooks (products + content)
+   * Register subscription webhooks
+   */
+  async registerSubscriptionWebhooks(): Promise<void> {
+    const appUrl = process.env.SHOPIFY_APP_URL;
+
+    if (!appUrl) {
+      throw new Error("SHOPIFY_APP_URL environment variable not set");
+    }
+
+    const webhooks = [
+      {
+        topic: "APP_SUBSCRIPTIONS_UPDATE",
+        address: `${appUrl}/webhooks/subscription`,
+      },
+    ];
+
+    console.log("[WebhookRegistration] Registering subscription webhooks...");
+
+    for (const webhook of webhooks) {
+      try {
+        await this.registerWebhook(webhook.topic, webhook.address);
+        console.log(`[WebhookRegistration] ✓ Registered ${webhook.topic}`);
+      } catch (error: any) {
+        console.error(`[WebhookRegistration] ✗ Failed to register ${webhook.topic}:`, error.message);
+        // Continue with other webhooks even if one fails
+      }
+    }
+
+    console.log("[WebhookRegistration] Subscription webhook registration complete");
+  }
+
+  /**
+   * Register ALL webhooks (products + content + subscriptions)
    */
   async registerAllWebhooks(): Promise<void> {
     await this.registerProductWebhooks();
     await this.registerContentWebhooks();
+    await this.registerSubscriptionWebhooks();
   }
 
   /**

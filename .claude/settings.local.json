@@ -54,7 +54,10 @@
       "Bash(railway status:*)",
       "Bash(git checkout:*)",
       "Bash(railway whoami:*)",
-      "Bash(railway link:*)"
+      "Bash(railway link:*)",
+      "Bash(railway projects:*)",
+      "Bash(railway:*)",
+      "Bash(git ls-tree:*)"
     ],
     "deny": [],
     "ask": []

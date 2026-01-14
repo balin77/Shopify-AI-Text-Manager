@@ -23,7 +23,7 @@ import {
 import { authenticate } from '~/shopify.server';
 import { getCurrentSubscription, getPlanFromSubscription } from '~/services/billing.server';
 import { BILLING_PLANS, getAvailablePlans, type BillingPlan } from '~/config/billing';
-import { PLANS } from '~/config/plans';
+import { PLAN_CONFIG, PLAN_DISPLAY_NAMES } from '~/config/plans';
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
@@ -155,7 +155,7 @@ export default function BillingPage() {
 
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '16px' }}>
               {availablePlans.map(({ id, config }) => {
-                const planDetails = PLANS[id];
+                const planDetails = PLAN_CONFIG[id];
                 const isCurrentPlan = id === currentPlan;
                 const price = config ? `€${config.price.toFixed(2)}/Monat` : 'Kostenlos';
 
@@ -164,7 +164,7 @@ export default function BillingPage() {
                     <BlockStack gap="400">
                       <InlineStack align="space-between" blockAlign="start">
                         <Text as="h3" variant="headingMd">
-                          {id.toUpperCase()}
+                          {PLAN_DISPLAY_NAMES[id]}
                         </Text>
                         {isCurrentPlan && <Badge tone="success">Aktiv</Badge>}
                       </InlineStack>
@@ -178,23 +178,28 @@ export default function BillingPage() {
                       <BlockStack gap="200">
                         <Text as="p" variant="bodyMd">
                           <strong>Produkte:</strong>{' '}
-                          {planDetails.productLimit === Infinity
+                          {planDetails.maxProducts === Infinity
                             ? 'Unbegrenzt'
-                            : planDetails.productLimit}
+                            : planDetails.maxProducts}
                         </Text>
                         <Text as="p" variant="bodyMd">
                           <strong>Bilder:</strong>{' '}
-                          {planDetails.allowAllImages ? 'Alle Bilder' : 'Nur Featured Image'}
+                          {planDetails.productImages === 'all' ? 'Alle Bilder' : 'Nur Featured Image'}
                         </Text>
                         <Text as="p" variant="bodyMd">
-                          <strong>Content Types:</strong>
+                          <strong>Content Types:</strong> {planDetails.contentTypes.length}
                         </Text>
                         <BlockStack gap="100">
-                          {Object.entries(planDetails.allowedContentTypes).map(([type, allowed]) => (
-                            <Text key={type} as="p" variant="bodySm" tone={allowed ? 'success' : 'subdued'}>
-                              {allowed ? '✓' : '✗'} {type}
+                          {planDetails.contentTypes.slice(0, 4).map((type) => (
+                            <Text key={type} as="p" variant="bodySm" tone="success">
+                              ✓ {type}
                             </Text>
                           ))}
+                          {planDetails.contentTypes.length > 4 && (
+                            <Text as="p" variant="bodySm" tone="subdued">
+                              +{planDetails.contentTypes.length - 4} mehr
+                            </Text>
+                          )}
                         </BlockStack>
                       </BlockStack>
 
