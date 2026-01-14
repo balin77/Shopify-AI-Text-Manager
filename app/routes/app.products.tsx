@@ -785,8 +785,8 @@ export default function Products() {
       `}</style>
       <MainNavigation />
       <div style={{ height: "calc(100vh - 60px)", display: "flex", gap: "1rem", padding: "1rem", overflow: "hidden" }}>
-        {/* Left: Product List */}
-        <div style={{ width: "350px", flexShrink: 0, display: "flex", flexDirection: "column", gap: "1rem" }}>
+        {/* Left: Product List (Fixed) */}
+        <div style={{ width: "350px", flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
           <ProductList
             products={products}
             selectedProductId={selectedProductId}
@@ -801,7 +801,7 @@ export default function Products() {
         </div>
 
         {/* Middle: Product Editor */}
-        <div style={{ flex: 1, overflow: "auto", minWidth: 0 }}>
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
           <ProductEditor
             product={selectedProduct}
             shopLocales={shopLocales}
@@ -853,23 +853,25 @@ export default function Products() {
           />
         </div>
 
-        {/* Right: SEO Sidebar */}
+        {/* Right: SEO Sidebar (Fixed) */}
         {selectedProduct && currentLanguage === primaryLocale && (
-          <div style={{ width: "320px", flexShrink: 0, overflow: "auto" }}>
-            <SeoSidebar
-              title={editableTitle}
-              description={editableDescription}
-              handle={editableHandle}
-              seoTitle={editableSeoTitle}
-              metaDescription={editableMetaDescription}
-              imagesWithAlt={
-                selectedProduct.images?.filter((img: any, index: number) => {
-                  // Check if there's a new alt-text in state OR an existing alt-text
-                  return imageAltTexts[index] || img.altText;
-                }).length || 0
-              }
-              totalImages={selectedProduct.images?.length || 0}
-            />
+          <div style={{ width: "320px", flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+            <div style={{ flex: 1, overflowY: "auto" }}>
+              <SeoSidebar
+                title={editableTitle}
+                description={editableDescription}
+                handle={editableHandle}
+                seoTitle={editableSeoTitle}
+                metaDescription={editableMetaDescription}
+                imagesWithAlt={
+                  selectedProduct.images?.filter((img: any, index: number) => {
+                    // Check if there's a new alt-text in state OR an existing alt-text
+                    return imageAltTexts[index] || img.altText;
+                  }).length || 0
+                }
+                totalImages={selectedProduct.images?.length || 0}
+              />
+            </div>
           </div>
         )}
       </div>

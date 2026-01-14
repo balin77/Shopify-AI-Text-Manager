@@ -83,10 +83,11 @@ export function ProductList({
   };
 
   return (
-    <Card padding="0">
-      {/* Plan Limit Warning */}
+    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+      <Card padding="0">
+        {/* Plan Limit Warning */}
       {isAtLimit && nextPlan && (
-        <div style={{ padding: "1rem", borderBottom: "1px solid #e1e3e5" }}>
+        <div style={{ padding: "1rem", borderBottom: "1px solid #e1e3e5", flexShrink: 0 }}>
           <Banner tone="warning">
             <Text as="p" fontWeight="semibold">
               {t.products.productLimitReached
@@ -101,7 +102,7 @@ export function ProductList({
         </div>
       )}
 
-      <div style={{ padding: "1rem", borderBottom: "1px solid #e1e3e5" }}>
+      <div style={{ padding: "1rem", borderBottom: "1px solid #e1e3e5", flexShrink: 0 }}>
         <BlockStack gap="300">
           <Text as="h2" variant="headingMd">
             {countLabel} ({filteredProducts.length})
@@ -138,7 +139,7 @@ export function ProductList({
         </BlockStack>
       </div>
 
-      <div style={{ maxHeight: "calc(100vh - 250px)", overflowY: "auto" }}>
+      <div style={{ flex: 1, overflowY: "auto" }}>
         <ResourceList
           resourceName={resourceName}
           items={paginatedProducts}
@@ -229,7 +230,7 @@ export function ProductList({
       </div>
 
       {totalPages > 1 && (
-        <div style={{ padding: "1rem", borderTop: "1px solid #e1e3e5" }}>
+        <div style={{ padding: "1rem", borderTop: "1px solid #e1e3e5", flexShrink: 0 }}>
           <InlineStack align="space-between" blockAlign="center">
             <Text as="p" variant="bodySm" tone="subdued">
               {startIndex + 1}-{Math.min(startIndex + productsPerPage, filteredProducts.length)} {paginationOf}{" "}
@@ -255,6 +256,7 @@ export function ProductList({
           </InlineStack>
         </div>
       )}
-    </Card>
+      </Card>
+    </div>
   );
 }

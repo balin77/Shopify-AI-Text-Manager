@@ -216,41 +216,49 @@ export function ProductEditor({
 
   return (
     <>
-      <Card padding="600">
-        <BlockStack gap="500">
-          {/* Language Selector */}
-          <LocaleNavigationButtons
-            shopLocales={shopLocales}
-            currentLanguage={currentLanguage}
-            primaryLocaleSuffix={t.products.primaryLanguageSuffix}
-            selectedItem={product}
-            primaryLocale={primaryLocale}
-            contentType="products"
-            hasChanges={hasChanges}
-            onLanguageChange={onLanguageChange}
-          />
-
-          {/* Header with Save Button */}
-          <InlineStack align="space-between" blockAlign="center">
-            <div>
+      {/* Fixed Header with Language Selector and Action Buttons */}
+      <Card padding="400">
+        <BlockStack gap="300">
+          {/* Language Selector, Translate All, Save/Reload Buttons on same line */}
+          <InlineStack align="space-between" blockAlign="center" gap="400">
+            <div style={{ flex: 1 }}>
+              <LocaleNavigationButtons
+                shopLocales={shopLocales}
+                currentLanguage={currentLanguage}
+                primaryLocaleSuffix={t.products.primaryLanguageSuffix}
+                selectedItem={product}
+                primaryLocale={primaryLocale}
+                contentType="products"
+                hasChanges={hasChanges}
+                onLanguageChange={onLanguageChange}
+              />
+            </div>
+            <InlineStack gap="200" blockAlign="center">
               {isPrimaryLocale && (
                 <Button onClick={onTranslateAll} loading={isTranslatingAll}>
                   {t.products.translateAll}
                 </Button>
               )}
-            </div>
-            <SaveDiscardButtons
-              hasChanges={hasChanges}
-              onSave={onSave}
-              onDiscard={onDiscardChanges || (() => {})}
-              highlightSaveButton={false}
-              saveText={t.products.saveChanges}
-              discardText={t.products.discardChanges || "Verwerfen"}
-              action="updateProduct"
-              fetcherState={fetcherState}
-              fetcherFormData={fetcherFormData}
-            />
+              <SaveDiscardButtons
+                hasChanges={hasChanges}
+                onSave={onSave}
+                onDiscard={onDiscardChanges || (() => {})}
+                highlightSaveButton={false}
+                saveText={t.products.saveChanges}
+                discardText={t.products.discardChanges || "Verwerfen"}
+                action="updateProduct"
+                fetcherState={fetcherState}
+                fetcherFormData={fetcherFormData}
+              />
+            </InlineStack>
           </InlineStack>
+        </BlockStack>
+      </Card>
+
+      {/* Scrollable Content Area */}
+      <div style={{ flex: 1, overflowY: "auto", marginTop: "1rem" }}>
+        <Card padding="600">
+          <BlockStack gap="500">
 
           {/* Image Gallery */}
           {((product.images && product.images.length > 0) || product.featuredImage) && (
@@ -710,25 +718,26 @@ export function ProductEditor({
             onRejectSuggestion={() => onRejectSuggestion("metaDescription")}
           />
 
-        </BlockStack>
-      </Card>
+          </BlockStack>
+        </Card>
 
-      {/* Product Options */}
-      {product.options && product.options.length > 0 && (
-        <div style={{ marginTop: "1rem" }}>
-          <ProductOptions
-            options={product.options}
-            isPrimaryLocale={isPrimaryLocale}
-            currentLanguage={currentLanguage}
-            translations={optionTranslations}
-            onTranslate={onTranslateOption}
-            onOptionNameChange={onOptionNameChange}
-            onOptionValueChange={onOptionValueChange}
-            isTranslating={isTranslatingOption}
-            translatingOptionId={translatingOptionId}
-          />
-        </div>
-      )}
+        {/* Product Options */}
+        {product.options && product.options.length > 0 && (
+          <div style={{ marginTop: "1rem" }}>
+            <ProductOptions
+              options={product.options}
+              isPrimaryLocale={isPrimaryLocale}
+              currentLanguage={currentLanguage}
+              translations={optionTranslations}
+              onTranslate={onTranslateOption}
+              onOptionNameChange={onOptionNameChange}
+              onOptionValueChange={onOptionValueChange}
+              isTranslating={isTranslatingOption}
+              translatingOptionId={translatingOptionId}
+            />
+          </div>
+        )}
+      </div>
     </>
   );
 }

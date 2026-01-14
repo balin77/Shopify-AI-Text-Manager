@@ -50,7 +50,11 @@
       "Bash(node test-quick.cjs:*)",
       "Bash(git restore:*)",
       "Bash(for file in app/routes/webhooks.{articles,collections,menus}.tsx)",
-      "Bash(do echo \"=== $file ===\")"
+      "Bash(do echo \"=== $file ===\")",
+      "Bash(railway status:*)",
+      "Bash(git checkout:*)",
+      "Bash(railway whoami:*)",
+      "Bash(railway link:*)"
     ],
     "deny": [],
     "ask": []
