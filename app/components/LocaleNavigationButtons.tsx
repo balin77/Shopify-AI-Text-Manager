@@ -43,21 +43,22 @@ export function LocaleNavigationButtons({
 
           const isEnabled = !enabledLanguages || enabledLanguages.includes(locale.locale);
           const isPrimary = locale.primary;
+          const isCurrentLanguage = currentLanguage === locale.locale;
 
           return (
             <div key={locale.locale} style={buttonStyle}>
               <Button
-                variant={currentLanguage === locale.locale ? "primary" : undefined}
+                variant={isCurrentLanguage ? "primary" : undefined}
                 onClick={(event: any) => {
                   // Ctrl+Click toggles language activation (except for primary locale)
                   if (event.ctrlKey && onToggleLanguage && !isPrimary) {
                     onToggleLanguage(locale.locale);
-                  } else {
+                  } else if (isEnabled || isPrimary) {
+                    // Only allow language change if enabled or primary
                     onLanguageChange(locale.locale);
                   }
                 }}
                 size="slim"
-                disabled={!isEnabled && !isPrimary}
                 tone={!isEnabled && !isPrimary ? "critical" : undefined}
               >
                 {locale.name} {locale.primary && `(${primaryLocaleSuffix})`}
