@@ -1,35 +1,30 @@
-import { useState, useEffect } from "react";
+/**
+ * Policies Page - UNIFIED VERSION
+ *
+ * Migrated to use the unified content editor system.
+ * Compare to app.policies.old.tsx - we went from ~605 lines to ~175 lines (71% reduction!)
+ *
+ * Note: Policies only have a "body" field that's editable. The title is read-only
+ * and set automatically by Shopify based on the policy type.
+ */
+
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useFetcher, useNavigate } from "@remix-run/react";
-import {
-  Page,
-  Card,
-  Text,
-  BlockStack,
-  InlineStack,
-  ResourceList,
-  ResourceItem,
-  Button,
-  Banner,
-} from "@shopify/polaris";
+import { useLoaderData, useFetcher } from "@remix-run/react";
+import { Text, BlockStack, Card } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
 import { ContentTypeNavigation } from "../components/ContentTypeNavigation";
-import { AIEditableHTMLField } from "../components/AIEditableHTMLField";
-import { LocaleNavigationButtons } from "../components/LocaleNavigationButtons";
-import { SaveDiscardButtons } from "../components/SaveDiscardButtons";
-import { AIService } from "../../src/services/ai.service";
-import { TranslationService } from "../../src/services/translation.service";
-import { ShopifyContentService } from "../../src/services/shopify-content.service";
+import { UnifiedContentEditor } from "../components/UnifiedContentEditor";
+import { useUnifiedContentEditor } from "../hooks/useUnifiedContentEditor";
+import { handleUnifiedContentActions } from "../actions/unified-content.actions";
+import { POLICIES_CONFIG } from "../config/content-fields.config";
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
-import {
-  contentEditorStyles,
-  useNavigationGuard,
-  useChangeTracking,
-  getTranslatedValue,
-  isFieldTranslated as checkFieldTranslated,
-} from "../utils/contentEditor.utils";
+import { useEffect } from "react";
+
+// ============================================================================
+// LOADER - Load data from database
+// ============================================================================
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
@@ -103,247 +98,68 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   }
 };
 
-export const action = async ({ request }: ActionFunctionArgs) => {
-  const { admin, session } = await authenticate.admin(request);
-  const formData = await request.formData();
-  const action = formData.get("action");
-  const itemId = formData.get("itemId") as string;
+// ============================================================================
+// ACTION - Handle all actions via unified handler
+// ============================================================================
+
+export const action = async (args: ActionFunctionArgs) => {
+  const { admin, session } = await authenticate.admin(args.request);
+  const formData = await args.request.formData();
 
   // Load AI settings
   const { db } = await import("../db.server");
-  const aiSettings = await db.aISettings.findUnique({
-    where: { shop: session.shop },
+  const [aiSettings, aiInstructions] = await Promise.all([
+    db.aISettings.findUnique({ where: { shop: session.shop } }),
+    db.aIInstructions.findUnique({ where: { shop: session.shop } }),
+  ]);
+
+  // Use unified action handler (encryption is handled automatically)
+  return handleUnifiedContentActions({
+    admin,
+    session,
+    formData,
+    contentConfig: POLICIES_CONFIG,
+    db,
+    aiSettings,
+    aiInstructions,
   });
-
-  const aiInstructions = await db.aIInstructions.findUnique({
-    where: { shop: session.shop },
-  });
-
-  const provider = (aiSettings?.preferredProvider as any) || process.env.AI_PROVIDER || "huggingface";
-  const config = {
-    huggingfaceApiKey: aiSettings?.huggingfaceApiKey || undefined,
-    geminiApiKey: aiSettings?.geminiApiKey || undefined,
-    claudeApiKey: aiSettings?.claudeApiKey || undefined,
-    openaiApiKey: aiSettings?.openaiApiKey || undefined,
-  };
-
-  const aiService = new AIService(provider, config);
-  const translationService = new TranslationService(provider, config);
-  const shopifyContentService = new ShopifyContentService(admin);
-
-  if (action === "loadTranslations") {
-    const locale = formData.get("locale") as string;
-
-    try {
-      const translations = await shopifyContentService.loadTranslations(itemId, locale);
-      return json({ success: true, translations, locale });
-    } catch (error: any) {
-      return json({ success: false, error: error.message }, { status: 500 });
-    }
-  }
-
-  if (action === "generateAIText") {
-    const fieldType = formData.get("fieldType") as string;
-    const currentValue = formData.get("currentValue") as string;
-    const contextTitle = formData.get("contextTitle") as string;
-
-    try {
-      let generatedContent = "";
-
-      if (fieldType === "body") {
-        let prompt = `Erstelle einen optimierten Richtlinientext für: ${contextTitle}`;
-        if (aiInstructions?.policyDescriptionFormat) {
-          prompt += `\n\nFormatbeispiel:\n${aiInstructions.policyDescriptionFormat}`;
-        }
-        if (aiInstructions?.policyDescriptionInstructions) {
-          prompt += `\n\nAnweisungen:\n${aiInstructions.policyDescriptionInstructions}`;
-        }
-        prompt += `\n\nAktueller Inhalt:\n${currentValue}\n\nGib nur den Richtlinientext zurück, ohne Erklärungen.`;
-        generatedContent = await aiService.generateProductDescription(contextTitle, prompt);
-      }
-
-      return json({ success: true, generatedContent, fieldType });
-    } catch (error: any) {
-      return json({ success: false, error: error.message }, { status: 500 });
-    }
-  }
-
-  if (action === "formatAIText") {
-    const fieldType = formData.get("fieldType") as string;
-    const currentValue = formData.get("currentValue") as string;
-    const contextTitle = formData.get("contextTitle") as string;
-
-    try {
-      let formattedContent = "";
-
-      if (fieldType === "body") {
-        let prompt = `Formatiere den folgenden Richtlinientext gemäß den Formatierungsrichtlinien:\n\nAktueller Text:\n${currentValue}`;
-        if (aiInstructions?.policyDescriptionFormat) {
-          prompt += `\n\nFormatbeispiel:\n${aiInstructions.policyDescriptionFormat}`;
-        }
-        if (aiInstructions?.policyDescriptionInstructions) {
-          prompt += `\n\nFormatierungsanweisungen:\n${aiInstructions.policyDescriptionInstructions}`;
-        }
-        prompt += `\n\nBehalte den Inhalt und die Kernaussagen bei, formatiere aber den Text gemäß den Richtlinien (Struktur, HTML-Tags, Überschriften, etc.). Gib nur den formatierten Text zurück, ohne Erklärungen.`;
-        formattedContent = await aiService.generateProductDescription(currentValue, prompt);
-      }
-
-      return json({ success: true, generatedContent: formattedContent, fieldType });
-    } catch (error: any) {
-      return json({ success: false, error: error.message }, { status: 500 });
-    }
-  }
-
-  if (action === "translateField") {
-    const fieldType = formData.get("fieldType") as string;
-    const sourceText = formData.get("sourceText") as string;
-    const targetLocale = formData.get("targetLocale") as string;
-
-    try {
-      const changedFields: any = {};
-      changedFields[fieldType] = sourceText;
-
-      const translations = await translationService.translateProduct(changedFields);
-      const translatedValue = translations[targetLocale]?.[fieldType] || "";
-
-      return json({ success: true, translatedValue, fieldType, targetLocale });
-    } catch (error: any) {
-      return json({ success: false, error: error.message }, { status: 500 });
-    }
-  }
-
-  if (action === "translateAll") {
-    const body = formData.get("body") as string;
-
-    try {
-      const changedFields: any = {};
-      if (body) changedFields.body = body;
-
-      if (Object.keys(changedFields).length === 0) {
-        return json({ success: false, error: "No fields to translate" }, { status: 400 });
-      }
-
-      const allTranslations = await shopifyContentService.translateAllContent({
-        resourceId: itemId,
-        resourceType: 'ShopPolicy',
-        fields: changedFields,
-        translationService,
-        db,
-      });
-
-      return json({ success: true, translations: allTranslations });
-    } catch (error: any) {
-      return json({ success: false, error: error.message }, { status: 500 });
-    }
-  }
-
-  if (action === "updateContent") {
-    const locale = formData.get("locale") as string;
-    const body = formData.get("body") as string;
-    const policyType = formData.get("policyType") as string;
-    const primaryLocale = formData.get("primaryLocale") as string;
-
-    try {
-      const result = await shopifyContentService.updateContent({
-        resourceId: itemId,
-        resourceType: 'ShopPolicy',
-        locale,
-        primaryLocale,
-        updates: { body },
-        db,
-        shop: session.shop,
-        policyType,
-      });
-
-      return json(result);
-    } catch (error: any) {
-      console.error("[POLICIES-UPDATE] Error:", error);
-      return json({ success: false, error: error.message }, { status: 500 });
-    }
-  }
-
-  return json({ success: false, error: "Unknown action" }, { status: 400 });
 };
 
+// ============================================================================
+// COMPONENT - Just configuration, no logic!
+// ============================================================================
+
+// Helper function for policy type names
+function getPolicyTypeName(type: string, t: any) {
+  const typeMap: Record<string, string> = {
+    'CONTACT_INFORMATION': t.content?.policyTypes?.contactInformation || 'Kontaktinformationen',
+    'LEGAL_NOTICE': t.content?.policyTypes?.legalNotice || 'Impressum',
+    'PRIVACY_POLICY': t.content?.policyTypes?.privacyPolicy || 'Datenschutzerklärung',
+    'REFUND_POLICY': t.content?.policyTypes?.refundPolicy || 'Rückerstattungsrichtlinie',
+    'SHIPPING_POLICY': t.content?.policyTypes?.shippingPolicy || 'Versandrichtlinie',
+    'TERMS_OF_SERVICE': t.content?.policyTypes?.termsOfService || 'Nutzungsbedingungen',
+    'TERMS_OF_SALE': t.content?.policyTypes?.termsOfSale || 'Verkaufsbedingungen',
+    'SUBSCRIPTION_POLICY': t.content?.policyTypes?.subscriptionPolicy || 'Abonnementrichtlinie',
+  };
+  return typeMap[type] || type;
+}
+
 export default function PoliciesPage() {
-  const { policies, shop, shopLocales, primaryLocale, error } = useLoaderData<typeof loader>();
+  const { policies, shopLocales, primaryLocale, error } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
-  const navigate = useNavigate();
   const { t } = useI18n();
   const { showInfoBox } = useInfoBox();
 
-  const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
-  const [currentLanguage, setCurrentLanguage] = useState(primaryLocale);
-  const [aiSuggestions, setAiSuggestions] = useState<Record<string, string>>({});
-  const [bodyMode, setBodyMode] = useState<"html" | "rendered">("rendered");
-
-  // Editable fields (only body is editable, title is read-only)
-  const [editableBody, setEditableBody] = useState("");
-
-  const selectedItem = policies.find((item: any) => item.id === selectedItemId);
-
-  const {
-    pendingNavigation,
-    highlightSaveButton,
-    saveButtonRef,
-    handleNavigationAttempt,
-    clearPendingNavigation,
-  } = useNavigationGuard();
-
-  const hasChanges = useChangeTracking(
-    selectedItem,
-    currentLanguage,
+  // Initialize unified content editor
+  const editor = useUnifiedContentEditor({
+    config: POLICIES_CONFIG,
+    items: policies,
+    shopLocales,
     primaryLocale,
-    {
-      title: "", // Not editable for policies
-      description: editableBody,
-      handle: "", // Not used for policies
-      seoTitle: "", // Not used for policies
-      metaDescription: "", // Not used for policies
-    },
-    'policies'
-  );
-
-  // Load item data when item or language changes
-  useEffect(() => {
-    if (!selectedItem) return;
-
-    if (currentLanguage === primaryLocale) {
-      setEditableBody(selectedItem.body || "");
-    } else {
-      setEditableBody(getTranslatedValue(selectedItem, "body", currentLanguage, "", primaryLocale));
-    }
-  }, [selectedItemId, currentLanguage]);
-
-  // Handle AI generation response
-  useEffect(() => {
-    if (fetcher.data?.success && (fetcher.data as any).generatedContent) {
-      const fieldType = (fetcher.data as any).fieldType;
-      setAiSuggestions(prev => ({
-        ...prev,
-        [fieldType]: (fetcher.data as any).generatedContent,
-      }));
-    }
-  }, [fetcher.data]);
-
-  // Handle translated field response
-  useEffect(() => {
-    if (fetcher.data?.success && 'translatedValue' in fetcher.data) {
-      const { fieldType, translatedValue } = fetcher.data as any;
-      if (fieldType === "body") {
-        setEditableBody(translatedValue);
-      }
-    }
-  }, [fetcher.data]);
-
-  // Show global InfoBox for success/error messages
-  useEffect(() => {
-    if (fetcher.data?.success && !(fetcher.data as any).generatedContent && !(fetcher.data as any).translatedValue) {
-      showInfoBox(t.content?.changesSaved || "Changes saved successfully!", "success", t.content?.success || "Success");
-    } else if (fetcher.data && !fetcher.data.success && 'error' in fetcher.data) {
-      showInfoBox(fetcher.data.error as string, "critical", t.content?.error || "Error");
-    }
-  }, [fetcher.data, showInfoBox, t]);
+    fetcher,
+    showInfoBox,
+    t,
+  });
 
   // Show loader error
   useEffect(() => {
@@ -352,251 +168,35 @@ export default function PoliciesPage() {
     }
   }, [error, showInfoBox, t]);
 
-  const handleSaveContent = () => {
-    if (!selectedItemId || !hasChanges || !selectedItem) return;
-
-    fetcher.submit(
-      {
-        action: "updateContent",
-        itemId: selectedItemId,
-        locale: currentLanguage,
-        primaryLocale,
-        body: editableBody,
-        policyType: selectedItem.type,
-      },
-      { method: "POST" }
+  // Custom render for policy list items (show type as subtitle)
+  const renderListItem = (item: any, isSelected: boolean) => {
+    return (
+      <BlockStack gap="100">
+        <Text as="p" variant="bodyMd" fontWeight={isSelected ? "bold" : "regular"}>
+          {item.title || getPolicyTypeName(item.type, t)}
+        </Text>
+        <Text as="p" variant="bodySm" tone="subdued">
+          {getPolicyTypeName(item.type, t)}
+        </Text>
+      </BlockStack>
     );
-
-    clearPendingNavigation();
-  };
-
-  const handleDiscardChanges = () => {
-    if (!selectedItem) return;
-
-    if (currentLanguage === primaryLocale) {
-      setEditableBody(selectedItem.body || "");
-    } else {
-      setEditableBody(getTranslatedValue(selectedItem, "body", currentLanguage, "", primaryLocale));
-    }
-
-    clearPendingNavigation();
-  };
-
-  const handleGenerateAI = (fieldType: string) => {
-    if (!selectedItemId || !selectedItem) return;
-    const currentValue = editableBody;
-    fetcher.submit(
-      { action: "generateAIText", itemId: selectedItemId, fieldType, currentValue, contextTitle: selectedItem.title },
-      { method: "POST" }
-    );
-  };
-
-  const handleFormatAI = (fieldType: string) => {
-    if (!selectedItemId || !selectedItem) return;
-    const currentValue = editableBody;
-    if (!currentValue) {
-      showInfoBox("Kein Inhalt zum Formatieren vorhanden", "warning", "Warnung");
-      return;
-    }
-    fetcher.submit(
-      { action: "formatAIText", itemId: selectedItemId, fieldType, currentValue, contextTitle: selectedItem.title },
-      { method: "POST" }
-    );
-  };
-
-  const handleTranslateField = (fieldType: string) => {
-    if (!selectedItemId || !selectedItem) return;
-    const sourceText = selectedItem.body || "";
-    if (!sourceText) {
-      alert(t.content.noSourceText);
-      return;
-    }
-    fetcher.submit(
-      { action: "translateField", itemId: selectedItemId, fieldType, sourceText, targetLocale: currentLanguage },
-      { method: "POST" }
-    );
-  };
-
-  const handleTranslateAll = () => {
-    if (!selectedItemId || !selectedItem) return;
-    fetcher.submit(
-      {
-        action: "translateAll",
-        itemId: selectedItemId,
-        body: selectedItem.body || "",
-      },
-      { method: "POST" }
-    );
-  };
-
-  const handleAcceptSuggestion = (fieldType: string) => {
-    const suggestion = aiSuggestions[fieldType];
-    if (!suggestion) return;
-    if (fieldType === "body") {
-      setEditableBody(suggestion);
-    }
-    setAiSuggestions(prev => {
-      const newSuggestions = { ...prev };
-      delete newSuggestions[fieldType];
-      return newSuggestions;
-    });
-  };
-
-  const isFieldTranslatedCheck = (key: string) => {
-    return checkFieldTranslated(selectedItem, key, currentLanguage, primaryLocale);
-  };
-
-  // Map policy types to human-readable names
-  const getPolicyTypeName = (type: string) => {
-    const typeMap: Record<string, string> = {
-      'CONTACT_INFORMATION': t.content.policyTypes?.contactInformation || 'Kontaktinformationen',
-      'LEGAL_NOTICE': t.content.policyTypes?.legalNotice || 'Impressum',
-      'PRIVACY_POLICY': t.content.policyTypes?.privacyPolicy || 'Datenschutzerklärung',
-      'REFUND_POLICY': t.content.policyTypes?.refundPolicy || 'Rückerstattungsrichtlinie',
-      'SHIPPING_POLICY': t.content.policyTypes?.shippingPolicy || 'Versandrichtlinie',
-      'TERMS_OF_SERVICE': t.content.policyTypes?.termsOfService || 'Nutzungsbedingungen',
-      'TERMS_OF_SALE': t.content.policyTypes?.termsOfSale || 'Verkaufsbedingungen',
-      'SUBSCRIPTION_POLICY': t.content.policyTypes?.subscriptionPolicy || 'Abonnementrichtlinie',
-    };
-    return typeMap[type] || type;
   };
 
   return (
-    <Page fullWidth>
-      <style>{contentEditorStyles}</style>
+    <>
       <MainNavigation />
       <ContentTypeNavigation />
-
-      <div style={{ height: "calc(100vh - 120px)", display: "flex", gap: "1rem", padding: "1rem", overflow: "hidden" }}>
-        {/* Left Sidebar - Policies List */}
-        <div style={{ width: "350px", flexShrink: 0 }}>
-          <Card padding="0">
-            <div style={{ padding: "1rem", borderBottom: "1px solid #e1e3e5" }}>
-              <Text as="h2" variant="headingMd">
-                {t.content.policies || "Richtlinien"} ({policies.length})
-              </Text>
-            </div>
-            <div style={{ maxHeight: "calc(100vh - 200px)", overflowY: "auto" }}>
-              {policies.length > 0 ? (
-                <ResourceList
-                  resourceName={{ singular: "Policy", plural: "Policies" }}
-                  items={policies}
-                  renderItem={(item: any) => {
-                    const { id, title, type } = item;
-                    const isSelected = selectedItemId === id;
-
-                    return (
-                      <ResourceItem
-                        id={id}
-                        onClick={() => {
-                          handleNavigationAttempt(() => setSelectedItemId(id), hasChanges);
-                        }}
-                      >
-                        <BlockStack gap="100">
-                          <Text as="p" variant="bodyMd" fontWeight={isSelected ? "bold" : "regular"}>
-                            {title || getPolicyTypeName(type)}
-                          </Text>
-                          <Text as="p" variant="bodySm" tone="subdued">
-                            {getPolicyTypeName(type)}
-                          </Text>
-                        </BlockStack>
-                      </ResourceItem>
-                    );
-                  }}
-                />
-              ) : (
-                <div style={{ padding: "2rem", textAlign: "center" }}>
-                  <Text as="p" variant="bodySm" tone="subdued">
-                    {t.content.noEntries}
-                  </Text>
-                </div>
-              )}
-            </div>
-          </Card>
-        </div>
-
-        {/* Middle: Policy Editor */}
-        <div style={{ flex: 1, overflow: "auto", minWidth: 0 }}>
-          <Card padding="600">
-            {selectedItem ? (
-              <BlockStack gap="500">
-                {/* Language Selector */}
-                <LocaleNavigationButtons
-                  shopLocales={shopLocales}
-                  currentLanguage={currentLanguage}
-                  primaryLocaleSuffix={t.content.primaryLanguageSuffix}
-                  selectedItem={selectedItem}
-                  primaryLocale={primaryLocale}
-                  contentType="policies"
-                  hasChanges={hasChanges}
-                  onLanguageChange={(locale) => handleNavigationAttempt(() => setCurrentLanguage(locale), hasChanges)}
-                />
-
-                {/* Save Button */}
-                <InlineStack align="space-between" blockAlign="center">
-                  <BlockStack gap="100">
-                    <Text as="p" variant="bodySm" tone="subdued">{t.content.idPrefix} {selectedItem.id.split("/").pop()}</Text>
-                    <Text as="p" variant="bodySm" tone="subdued">
-                      {t.content.policyType || "Typ"}: {getPolicyTypeName(selectedItem.type)}
-                    </Text>
-                  </BlockStack>
-                  <SaveDiscardButtons
-                    hasChanges={hasChanges}
-                    onSave={handleSaveContent}
-                    onDiscard={handleDiscardChanges}
-                    highlightSaveButton={highlightSaveButton}
-                    saveText={t.content.saveChanges}
-                    discardText={t.content.discardChanges || "Verwerfen"}
-                    action="updateContent"
-                    fetcherState={fetcher.state}
-                    fetcherFormData={fetcher.formData}
-                  />
-                </InlineStack>
-
-                {/* Read-only Title */}
-                <BlockStack gap="200">
-                  <Text as="p" variant="bodyMd" fontWeight="medium">
-                    {t.content.title} (Read-only)
-                  </Text>
-                  <Card>
-                    <Text as="p" variant="bodyMd" tone="subdued">
-                      {selectedItem.title || getPolicyTypeName(selectedItem.type)}
-                    </Text>
-                  </Card>
-                  <Text as="p" variant="bodySm" tone="subdued">
-                    {t.content.policyTitleReadOnly || "Der Titel wird automatisch von Shopify basierend auf dem Richtlinientyp gesetzt."}
-                  </Text>
-                </BlockStack>
-
-                {/* Body */}
-                <AIEditableHTMLField
-                  label={`${t.content.body || "Inhalt"} (${shopLocales.find((l: any) => l.locale === currentLanguage)?.name || currentLanguage})`}
-                  value={editableBody}
-                  onChange={setEditableBody}
-                  mode={bodyMode}
-                  onToggleMode={() => setBodyMode(bodyMode === "html" ? "rendered" : "html")}
-                  fieldType="body"
-                  suggestion={aiSuggestions.body}
-                  isPrimaryLocale={currentLanguage === primaryLocale}
-                  isTranslated={isFieldTranslatedCheck("body")}
-                  isLoading={fetcher.state !== "idle" && fetcher.formData?.get("fieldType") === "body"}
-                  sourceTextAvailable={!!selectedItem?.body}
-                  onGenerateAI={() => handleGenerateAI("body")}
-                  onFormatAI={() => handleFormatAI("body")}
-                  onTranslate={() => handleTranslateField("body")}
-                  onTranslateAll={handleTranslateAll}
-                  onAcceptSuggestion={() => handleAcceptSuggestion("body")}
-                  onRejectSuggestion={() => setAiSuggestions(prev => { const newSuggestions = {...prev}; delete newSuggestions["body"]; return newSuggestions; })}
-                />
-              </BlockStack>
-            ) : (
-              <div style={{ textAlign: "center", padding: "4rem 2rem" }}>
-                <Text as="p" variant="headingLg" tone="subdued">{t.content.selectFromList}</Text>
-              </div>
-            )}
-          </Card>
-        </div>
-      </div>
-    </Page>
+      <UnifiedContentEditor
+        config={POLICIES_CONFIG}
+        items={policies}
+        shopLocales={shopLocales}
+        primaryLocale={primaryLocale}
+        editor={editor}
+        fetcherState={fetcher.state}
+        fetcherFormData={fetcher.formData}
+        t={t}
+        renderListItem={renderListItem}
+      />
+    </>
   );
 }
