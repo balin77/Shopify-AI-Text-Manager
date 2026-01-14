@@ -40,7 +40,7 @@ export async function action({ request }: ActionFunctionArgs) {
       case "product":
       case "products": {
         const productSyncService = new ProductSyncService(
-          admin.graphql as any,
+          admin,
           session.shop
         );
 
@@ -64,7 +64,7 @@ export async function action({ request }: ActionFunctionArgs) {
       case "collection":
       case "collections": {
         const contentSyncService = new ContentSyncService(
-          admin.graphql as any,
+          admin,
           session.shop
         );
 
@@ -79,7 +79,7 @@ export async function action({ request }: ActionFunctionArgs) {
 
       case "article": {
         const contentSyncService = new ContentSyncService(
-          admin.graphql as any,
+          admin,
           session.shop
         );
 
@@ -94,7 +94,7 @@ export async function action({ request }: ActionFunctionArgs) {
 
       case "page": {
         const backgroundSyncService = new BackgroundSyncService(
-          admin.graphql as any,
+          admin,
           session.shop
         );
 
@@ -109,7 +109,7 @@ export async function action({ request }: ActionFunctionArgs) {
 
       case "policy": {
         const backgroundSyncService = new BackgroundSyncService(
-          admin.graphql as any,
+          admin,
           session.shop
         );
 
