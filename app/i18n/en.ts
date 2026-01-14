@@ -25,7 +25,7 @@ export const en: Translation = {
     noEntries: "No entries available",
     selectFromList: "Select an entry from the list",
     saveChanges: "Save changes",
-    translateAll: "Translate to all languages",
+    translateAll: "Translate all",
     productTitle: "Product title",
     productDescription: "Product description",
     urlSlug: "URL slug",
@@ -168,6 +168,13 @@ export const en: Translation = {
     aiApiAccess: "AI API Access Codes",
     aiInstructions: "AI Instructions",
     appLanguage: "App Language",
+    // API Key Warnings
+    noApiKeyConfigured: "No API key configured",
+    noApiKeyForProvider: "You have not configured an API key for {provider}.",
+    configureApiKeyInSettings: "Please configure an API key in Settings to use AI features.",
+    goToSettings: "Go to Settings",
+    preferredProviderNoKey: "Your preferred AI provider ({provider}) has no API key",
+    preferredProviderNoKeyDescription: "To use AI translations and generations, you need to enter an API key for {provider} or select a different provider as preferred.",
     // Plan restrictions
     aiInstructionsReadOnly: "AI Instructions are read-only in the Free and Basic plans",
     aiInstructionsReadOnlyDescription: "Upgrade to Pro plan to customize AI generation instructions for your products and content.",

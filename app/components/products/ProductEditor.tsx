@@ -64,6 +64,8 @@ interface ProductEditorProps {
   primaryLocale: string;
   currentLanguage: string;
   onLanguageChange: (locale: string) => void;
+  enabledLanguages?: string[];
+  onToggleLanguage?: (locale: string) => void;
   editableTitle: string;
   setEditableTitle: (value: string) => void;
   editableDescription: string;
@@ -114,6 +116,8 @@ export function ProductEditor({
   primaryLocale,
   currentLanguage,
   onLanguageChange,
+  enabledLanguages,
+  onToggleLanguage,
   editableTitle,
   setEditableTitle,
   editableDescription,
@@ -231,6 +235,8 @@ export function ProductEditor({
                 contentType="products"
                 hasChanges={hasChanges}
                 onLanguageChange={onLanguageChange}
+                enabledLanguages={enabledLanguages}
+                onToggleLanguage={onToggleLanguage}
               />
             </div>
             <InlineStack gap="200" blockAlign="center">

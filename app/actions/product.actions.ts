@@ -578,6 +578,7 @@ async function handleTranslateFieldToAllLocales(
   const fieldType = formData.get("fieldType") as string;
   const sourceText = formData.get("sourceText") as string;
   const productId = formData.get("productId") as string;
+  const targetLocalesStr = formData.get("targetLocales") as string;
 
   const { db } = await import("../db.server");
 
@@ -602,8 +603,8 @@ async function handleTranslateFieldToAllLocales(
     const changedFields: any = {};
     changedFields[fieldType] = sourceText;
 
-    // Get target locales
-    const targetLocales = ['en', 'fr', 'es', 'it'];
+    // Get target locales from request or use default
+    const targetLocales = targetLocalesStr ? JSON.parse(targetLocalesStr) : ['en', 'fr', 'es', 'it'];
     const totalLocales = targetLocales.length;
     let processedLocales = 0;
     const allTranslations: Record<string, string> = {};
@@ -809,6 +810,7 @@ async function handleTranslateAll(
   const handle = formData.get("handle") as string;
   const seoTitle = formData.get("seoTitle") as string;
   const metaDescription = formData.get("metaDescription") as string;
+  const targetLocalesStr = formData.get("targetLocales") as string;
 
   const { db } = await import("../db.server");
 
@@ -854,8 +856,8 @@ async function handleTranslateAll(
       return json({ success: false, error: "No fields to translate" }, { status: 400 });
     }
 
-    // Get target locales
-    const targetLocales = ['en', 'fr', 'es', 'it'];
+    // Get target locales from request or use default
+    const targetLocales = targetLocalesStr ? JSON.parse(targetLocalesStr) : ['en', 'fr', 'es', 'it'];
     const totalLocales = targetLocales.length;
     let processedLocales = 0;
     const allTranslations: Record<string, any> = {};

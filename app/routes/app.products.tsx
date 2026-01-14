@@ -1,12 +1,13 @@
 import { useState, useEffect } from "react";
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher, useRevalidator } from "@remix-run/react";
-import { Page, Banner } from "@shopify/polaris";
+import { Page } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
 import { SeoSidebar } from "../components/SeoSidebar";
 import { ProductList } from "../components/products/ProductList";
 import { ProductEditor } from "../components/products/ProductEditor";
+import { ApiKeyWarningBanner } from "../components/ApiKeyWarningBanner";
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { useProductFields } from "../hooks/useProductFields";
@@ -246,6 +247,17 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
     console.log("[LOADER] Total translations loaded:", products.reduce((sum, p) => sum + p.translations.length, 0));
 
+    // Load AI settings for API key validation
+    const aiSettingsForValidation = {
+      huggingfaceApiKey: settings?.huggingfaceApiKey || null,
+      geminiApiKey: settings?.geminiApiKey || null,
+      claudeApiKey: settings?.claudeApiKey || null,
+      openaiApiKey: settings?.openaiApiKey || null,
+      grokApiKey: settings?.grokApiKey || null,
+      deepseekApiKey: settings?.deepseekApiKey || null,
+      preferredProvider: settings?.preferredProvider || null,
+    };
+
     return json({
       products,
       shop: session.shop,
@@ -255,6 +267,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       plan,
       maxProducts: planLimits.maxProducts,
       productCount: dbProducts.length,
+      aiSettings: aiSettingsForValidation,
     });
   } catch (error: any) {
     console.error("[LOADER] Error:", error);
@@ -268,6 +281,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         plan: "basic",
         maxProducts: 100,
         productCount: 0,
+        aiSettings: {
+          huggingfaceApiKey: null,
+          geminiApiKey: null,
+          claudeApiKey: null,
+          openaiApiKey: null,
+          grokApiKey: null,
+          deepseekApiKey: null,
+          preferredProvider: null,
+        },
       },
       { status: 500 }
     );
@@ -279,7 +301,7 @@ export const action = async (args: ActionFunctionArgs) => {
 };
 
 export default function Products() {
-  const { products, shop, shopLocales, primaryLocale, error } = useLoaderData<typeof loader>();
+  const { products, shop, shopLocales, primaryLocale, error, aiSettings } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
   const { t, locale } = useI18n();
@@ -289,6 +311,9 @@ export default function Products() {
   const [currentLanguage, setCurrentLanguage] = useState(primaryLocale);
   const [optionTranslations, setOptionTranslations] = useState<Record<string, { name: string; values: string[] }>>({});
   const [imageAltTexts, setImageAltTexts] = useState<Record<number, string>>({});
+  const [enabledLanguages, setEnabledLanguages] = useState<string[]>(
+    shopLocales.map((l: any) => l.locale)
+  );
 
   const selectedProduct = products.find((p: any) => p.id === selectedProductId);
 
@@ -348,6 +373,22 @@ export default function Products() {
     console.log('[LANGUAGE-CHANGE] Switching to:', newLanguage);
     setCurrentLanguage(newLanguage);
     // That's it! All translations are already in the product object from the loader
+  };
+
+  // Handle language toggle (Ctrl+Click on language button)
+  const handleToggleLanguage = (locale: string) => {
+    // Don't allow disabling the primary locale
+    if (locale === primaryLocale) return;
+
+    setEnabledLanguages((prev) => {
+      if (prev.includes(locale)) {
+        // Disable this language
+        return prev.filter((l) => l !== locale);
+      } else {
+        // Enable this language
+        return [...prev, locale];
+      }
+    });
   };
 
   // Handle translated field response
@@ -581,6 +622,12 @@ export default function Products() {
 
   const handleTranslateFieldToAllLocales = (fieldType: string) => {
     if (!selectedProductId || !selectedProduct) return;
+    // Filter out primary locale and disabled languages
+    const targetLocales = enabledLanguages.filter(l => l !== primaryLocale);
+    if (targetLocales.length === 0) {
+      showInfoBox("Keine Zielsprachen ausgewählt", "warning", "Warnung");
+      return;
+    }
     const sourceMap: Record<string, string> = {
       title: selectedProduct.title,
       description: selectedProduct.descriptionHtml || "",
@@ -594,7 +641,7 @@ export default function Products() {
       return;
     }
     fetcher.submit(
-      { action: "translateFieldToAllLocales", productId: selectedProductId, fieldType, sourceText },
+      { action: "translateFieldToAllLocales", productId: selectedProductId, fieldType, sourceText, targetLocales: JSON.stringify(targetLocales) },
       { method: "POST" }
     );
   };
@@ -644,6 +691,12 @@ export default function Products() {
 
   const handleTranslateAll = () => {
     if (!selectedProductId || !selectedProduct) return;
+    // Filter out primary locale and disabled languages
+    const targetLocales = enabledLanguages.filter(l => l !== primaryLocale);
+    if (targetLocales.length === 0) {
+      showInfoBox("Keine Zielsprachen ausgewählt", "warning", "Warnung");
+      return;
+    }
     // Always use the primary locale values (original product data), not the current editable values
     fetcher.submit(
       {
@@ -654,6 +707,7 @@ export default function Products() {
         handle: selectedProduct.handle,
         seoTitle: selectedProduct.seo?.title || "",
         metaDescription: selectedProduct.seo?.description || "",
+        targetLocales: JSON.stringify(targetLocales),
       },
       { method: "POST" }
     );
@@ -784,6 +838,7 @@ export default function Products() {
         }
       `}</style>
       <MainNavigation />
+      <ApiKeyWarningBanner aiSettings={aiSettings} t={t} />
       <div style={{ height: "calc(100vh - 60px)", display: "flex", gap: "1rem", padding: "1rem", overflow: "hidden" }}>
         {/* Left: Product List (Fixed) */}
         <div style={{ width: "350px", flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
@@ -808,6 +863,8 @@ export default function Products() {
             primaryLocale={primaryLocale}
             currentLanguage={currentLanguage}
             onLanguageChange={handleLanguageChange}
+            enabledLanguages={enabledLanguages}
+            onToggleLanguage={handleToggleLanguage}
             editableTitle={editableTitle}
             setEditableTitle={setEditableTitle}
             editableDescription={editableDescription}
