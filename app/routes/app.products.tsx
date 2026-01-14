@@ -839,7 +839,7 @@ export default function Products() {
       <MainNavigation />
       <div style={{ height: "calc(100vh - 60px)", display: "flex", gap: "1rem", padding: "1rem", overflow: "hidden" }}>
         {/* Left: Product List (Fixed) */}
-        <div style={{ width: "350px", flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        <div style={{ width: "350px", flexShrink: 0, display: "flex", flexDirection: "column", height: "100%" }}>
           <ProductList
             products={products}
             selectedProductId={selectedProductId}
