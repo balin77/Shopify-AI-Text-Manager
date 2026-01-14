@@ -1,7 +1,7 @@
 import { Banner } from "@shopify/polaris";
 import { Link } from "@remix-run/react";
 import { hasPreferredProviderKey, getProviderDisplayName, type AIProvider, type AISettings } from "../utils/api-key-validation";
-import { decryptApiKey } from "../utils/encryption";
+import { decryptApiKey } from "../utils/encryption.server";
 
 interface ApiKeyWarningBannerProps {
   aiSettings: {

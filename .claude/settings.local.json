@@ -57,7 +57,8 @@
       "Bash(railway link:*)",
       "Bash(railway projects:*)",
       "Bash(railway:*)",
-      "Bash(git ls-tree:*)"
+      "Bash(git ls-tree:*)",
+      "Bash(git mv:*)"
     ],
     "deny": [],
     "ask": []

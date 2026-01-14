@@ -13,7 +13,7 @@
  */
 
 import { db } from "../db.server";
-import { decryptPII } from "../utils/encryption";
+import { decryptPII } from "../utils/encryption.server";
 
 export interface GDPRCustomerDataRequest {
   shop_id: number;

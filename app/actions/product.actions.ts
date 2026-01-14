@@ -5,7 +5,7 @@ import { TranslationService } from "../../src/services/translation.service";
 import { getTaskExpirationDate } from "../../src/utils/task.utils";
 import { ShopifyApiGateway } from "../services/shopify-api-gateway.service";
 import { sanitizeSlug } from "../utils/slug.utils";
-import { decryptApiKey } from "../utils/encryption";
+import { decryptApiKey } from "../utils/encryption.server";
 
 export async function handleProductActions({ request }: ActionFunctionArgs) {
   console.log('📮 [PRODUCT.ACTIONS] === PRODUCT ACTION HANDLER CALLED ===');

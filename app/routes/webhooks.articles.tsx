@@ -2,7 +2,7 @@ import { json } from "@remix-run/node";
 import type { ActionFunctionArgs } from "@remix-run/node";
 import crypto from "crypto";
 import { ContentSyncService } from "../services/content-sync.service";
-import { encryptPayload } from "../utils/encryption";
+import { encryptPayload } from "../utils/encryption.server";
 
 /**
  * Webhook Handler for Shopify Article (Blog) Events

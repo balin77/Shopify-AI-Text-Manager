@@ -20,7 +20,7 @@ import { useInfoBox } from "../contexts/InfoBoxContext";
 import { sanitizeFormatExample } from "../utils/sanitizer";
 import { AISettingsSchema, AIInstructionsSchema, parseFormData } from "../utils/validation";
 import { toSafeErrorResponse } from "../utils/error-handler";
-import { encryptApiKey, decryptApiKey } from "../utils/encryption";
+import { encryptApiKey, decryptApiKey } from "../utils/encryption.server";
 import {
   DEFAULT_PRODUCT_INSTRUCTIONS,
   DEFAULT_COLLECTION_INSTRUCTIONS,

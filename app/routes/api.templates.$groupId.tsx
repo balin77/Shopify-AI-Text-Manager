@@ -9,7 +9,7 @@ import { authenticate } from "../shopify.server";
 import { AIService } from "../../src/services/ai.service";
 import { TranslationService } from "../../src/services/translation.service";
 import { TRANSLATE_CONTENT } from "../graphql/content.mutations";
-import { decryptApiKey } from "../utils/encryption";
+import { decryptApiKey } from "../utils/encryption.server";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);

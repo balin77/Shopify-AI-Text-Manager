@@ -5,10 +5,12 @@
  */
 
 import type { PrismaClient } from "@prisma/client";
+import { decryptApiKey } from "./encryption.server";
 
 /**
  * Load AI settings for API key validation in loaders.
  * Returns only the necessary fields for checking if API keys are configured.
+ * Keys are decrypted server-side and returned as boolean flags for security.
  */
 export async function loadAISettingsForValidation(db: PrismaClient, shop: string) {
   const settings = await db.aISettings.findUnique({
@@ -24,13 +26,15 @@ export async function loadAISettingsForValidation(db: PrismaClient, shop: string
     },
   });
 
+  // Decrypt keys server-side and return only boolean flags
+  // This prevents exposing encrypted keys to the client
   return {
-    huggingfaceApiKey: settings?.huggingfaceApiKey || null,
-    geminiApiKey: settings?.geminiApiKey || null,
-    claudeApiKey: settings?.claudeApiKey || null,
-    openaiApiKey: settings?.openaiApiKey || null,
-    grokApiKey: settings?.grokApiKey || null,
-    deepseekApiKey: settings?.deepseekApiKey || null,
+    hasHuggingfaceApiKey: !!decryptApiKey(settings?.huggingfaceApiKey),
+    hasGeminiApiKey: !!decryptApiKey(settings?.geminiApiKey),
+    hasClaudeApiKey: !!decryptApiKey(settings?.claudeApiKey),
+    hasOpenaiApiKey: !!decryptApiKey(settings?.openaiApiKey),
+    hasGrokApiKey: !!decryptApiKey(settings?.grokApiKey),
+    hasDeepseekApiKey: !!decryptApiKey(settings?.deepseekApiKey),
     preferredProvider: settings?.preferredProvider || null,
   };
 }

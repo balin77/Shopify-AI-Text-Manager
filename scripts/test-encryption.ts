@@ -14,7 +14,7 @@
  *   4. Error handling
  */
 
-import { encrypt, decrypt, isEncrypted, encryptApiKey, decryptApiKey } from '../app/utils/encryption';
+import { encrypt, decrypt, isEncrypted, encryptApiKey, decryptApiKey } from '../app/utils/encryption.server';
 
 interface TestResult {
   name: string;

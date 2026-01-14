@@ -10,8 +10,7 @@ import { PlanProvider } from "../contexts/PlanContext";
 import { useEffect } from "react";
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
-import { hasPreferredProviderKey, getProviderDisplayName, type AIProvider } from "../utils/api-key-validation";
-import { decryptApiKey } from "../utils/encryption";
+import { getProviderDisplayName, type AIProvider } from "../utils/api-key-validation";
 import type { Locale } from "../i18n";
 import type { Plan } from "../config/plans";
 
@@ -79,20 +78,32 @@ function AppContent() {
 
   // Check API key on mount and show warning in InfoBox if missing
   useEffect(() => {
-    if (!aiSettings) return;
+    if (!aiSettings || !aiSettings.preferredProvider) return;
 
-    // Decrypt settings for validation
-    const decryptedSettings = {
-      huggingfaceApiKey: decryptApiKey(aiSettings.huggingfaceApiKey),
-      geminiApiKey: decryptApiKey(aiSettings.geminiApiKey),
-      claudeApiKey: decryptApiKey(aiSettings.claudeApiKey),
-      openaiApiKey: decryptApiKey(aiSettings.openaiApiKey),
-      grokApiKey: decryptApiKey(aiSettings.grokApiKey),
-      deepseekApiKey: decryptApiKey(aiSettings.deepseekApiKey),
-      preferredProvider: aiSettings.preferredProvider,
-    };
+    // Check if preferred provider has an API key using boolean flags
+    const provider = aiSettings.preferredProvider.toLowerCase();
+    let hasApiKey = false;
 
-    const hasApiKey = hasPreferredProviderKey(decryptedSettings);
+    switch (provider) {
+      case 'huggingface':
+        hasApiKey = aiSettings.hasHuggingfaceApiKey;
+        break;
+      case 'gemini':
+        hasApiKey = aiSettings.hasGeminiApiKey;
+        break;
+      case 'claude':
+        hasApiKey = aiSettings.hasClaudeApiKey;
+        break;
+      case 'openai':
+        hasApiKey = aiSettings.hasOpenaiApiKey;
+        break;
+      case 'grok':
+        hasApiKey = aiSettings.hasGrokApiKey;
+        break;
+      case 'deepseek':
+        hasApiKey = aiSettings.hasDeepseekApiKey;
+        break;
+    }
 
     if (!hasApiKey) {
       const providerName = getProviderDisplayName(aiSettings.preferredProvider as AIProvider);
