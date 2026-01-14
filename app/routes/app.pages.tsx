@@ -11,7 +11,6 @@ import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
 import { ContentTypeNavigation } from "../components/ContentTypeNavigation";
 import { UnifiedContentEditor } from "../components/UnifiedContentEditor";
-import { ApiKeyWarningBanner } from "../components/ApiKeyWarningBanner";
 import { useUnifiedContentEditor } from "../hooks/useUnifiedContentEditor";
 import { handleUnifiedContentActions } from "../actions/unified-content.actions";
 import { PAGES_CONFIG } from "../config/content-fields.config";
@@ -158,7 +157,6 @@ export default function PagesPage() {
     <>
       <MainNavigation />
       <ContentTypeNavigation />
-      <ApiKeyWarningBanner aiSettings={aiSettings} t={t} />
       <UnifiedContentEditor
         config={PAGES_CONFIG}
         items={pages}

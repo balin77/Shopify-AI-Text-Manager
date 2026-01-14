@@ -15,7 +15,6 @@ import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
 import { ContentTypeNavigation } from "../components/ContentTypeNavigation";
 import { UnifiedContentEditor } from "../components/UnifiedContentEditor";
-import { ApiKeyWarningBanner } from "../components/ApiKeyWarningBanner";
 import { useUnifiedContentEditor } from "../hooks/useUnifiedContentEditor";
 import { handleUnifiedContentActions } from "../actions/unified-content.actions";
 import { POLICIES_CONFIG } from "../config/content-fields.config";
@@ -192,7 +191,6 @@ export default function PoliciesPage() {
     <>
       <MainNavigation />
       <ContentTypeNavigation />
-      <ApiKeyWarningBanner aiSettings={aiSettings} t={t} />
       <UnifiedContentEditor
         config={POLICIES_CONFIG}
         items={policies}
