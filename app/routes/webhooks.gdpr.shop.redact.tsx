@@ -11,7 +11,7 @@
 
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { redactShopData, logGDPRRequest, type GDPRShopRedactRequest } from "../../services/gdpr.service";
+import { redactShopData, logGDPRRequest, type GDPRShopRedactRequest } from "../services/gdpr.service";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   console.log('📨 [GDPR] Received shop/redact webhook');
