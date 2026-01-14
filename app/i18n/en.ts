@@ -322,6 +322,16 @@ export const en: Translation = {
       metaDescription: "Meta Description",
       all: "All Fields",
     },
+    // Expandable details
+    details: "Details",
+    taskId: "Task ID",
+    resourceId: "Resource ID",
+    queuePosition: "Queue Position",
+    retryCount: "Retry Count",
+    estimatedTokens: "Estimated Tokens",
+    createdAt: "Created At",
+    updatedAt: "Updated At",
+    expiresAt: "Expires At",
   },
 
   // SEO Sidebar

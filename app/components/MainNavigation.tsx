@@ -27,11 +27,9 @@ export function MainNavigation() {
   const productCount = productsRouteData?.productCount;
   const maxProducts = getMaxProducts();
 
-  // Get running task count from tasks route loader data
+  // Get total task count from tasks route loader data
   const tasksRouteData = matches.find((match) => match.id === "routes/app.tasks")?.data as any;
-  const runningTaskCount = tasksRouteData?.tasks?.filter((task: any) =>
-    task.status === "pending" || task.status === "running"
-  ).length || 0;
+  const totalTaskCount = tasksRouteData?.pagination?.totalCount || 0;
 
   // Show loading indicator only if loading takes longer than 1 second
   useEffect(() => {
@@ -151,7 +149,7 @@ export function MainNavigation() {
               const isActive = location.pathname.startsWith(tab.path);
               const showProductCount = tab.id === "products" && productCount !== undefined;
               const isAtLimit = showProductCount && productCount >= maxProducts && maxProducts !== Infinity;
-              const showTaskCount = tab.id === "tasks" && runningTaskCount > 0;
+              const showTaskCount = tab.id === "tasks" && totalTaskCount > 0;
 
               const tabContent = (
                 <button
@@ -198,7 +196,7 @@ export function MainNavigation() {
                           textAlign: "center",
                         }}
                       >
-                        {runningTaskCount}
+                        {totalTaskCount}
                       </div>
                     )}
                   </InlineStack>

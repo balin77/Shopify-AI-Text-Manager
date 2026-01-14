@@ -1,6 +1,6 @@
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher, useRevalidator, useSearchParams } from "@remix-run/react";
-import { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import {
   Page,
   Card,
@@ -136,6 +136,7 @@ export default function TasksPage() {
   const revalidator = useRevalidator();
   const { t } = useI18n();
   const [searchParams, setSearchParams] = useSearchParams();
+  const [expandedTaskIds, setExpandedTaskIds] = useState<Set<string>>(new Set());
 
   // Auto-refresh every 3 seconds if there are running tasks
   useEffect(() => {
@@ -217,6 +218,18 @@ export default function TasksPage() {
     }
   };
 
+  const toggleTaskExpanded = (taskId: string) => {
+    setExpandedTaskIds((prev) => {
+      const newSet = new Set(prev);
+      if (newSet.has(taskId)) {
+        newSet.delete(taskId);
+      } else {
+        newSet.add(taskId);
+      }
+      return newSet;
+    });
+  };
+
   return (
     <Page fullWidth>
       <MainNavigation />
@@ -276,104 +289,221 @@ export default function TasksPage() {
             </Card>
           ) : (
             <BlockStack gap="300">
-              {tasks.map((task: any) => (
+              {tasks.map((task: any) => {
+                const isExpanded = expandedTaskIds.has(task.id);
+                return (
                 <Card key={task.id}>
                   <BlockStack gap="300">
-                    {/* Header */}
-                    <InlineStack align="space-between" blockAlign="center">
-                      <InlineStack gap="200" blockAlign="center">
-                        <Text as="h2" variant="headingMd" fontWeight="semibold">
-                          {(t.tasks.taskType as any)[task.type] || task.type}
-                        </Text>
-                        {getStatusBadge(task.status)}
+                    {/* Header - Clickable to expand/collapse */}
+                    <div
+                      onClick={() => toggleTaskExpanded(task.id)}
+                      style={{ cursor: "pointer" }}
+                    >
+                      <InlineStack align="space-between" blockAlign="center">
+                        <InlineStack gap="200" blockAlign="center">
+                          <Text as="span" variant="headingMd" fontWeight="medium">
+                            {isExpanded ? "▼" : "▶"}
+                          </Text>
+                          <Text as="h2" variant="headingMd" fontWeight="semibold">
+                            {(t.tasks.taskType as any)[task.type] || task.type}
+                          </Text>
+                          {getStatusBadge(task.status)}
+                        </InlineStack>
+                        <div onClick={(e: React.MouseEvent) => e.stopPropagation()}>
+                          <InlineStack gap="200">
+                            {(task.status === "pending" || task.status === "running") && (
+                              <Button
+                                size="slim"
+                                onClick={() => handleCancelTask(task.id)}
+                                loading={fetcher.state !== "idle" && fetcher.formData?.get("taskId") === task.id && fetcher.formData?.get("action") === "cancel"}
+                              >
+                                {t.tasks.cancel}
+                              </Button>
+                            )}
+                            {(task.status === "completed" || task.status === "failed" || task.status === "cancelled") && (
+                              <Button
+                                size="slim"
+                                tone="critical"
+                                onClick={() => handleDeleteTask(task.id)}
+                                loading={fetcher.state !== "idle" && fetcher.formData?.get("taskId") === task.id && fetcher.formData?.get("action") === "delete"}
+                              >
+                                {t.tasks.delete}
+                              </Button>
+                            )}
+                          </InlineStack>
+                        </div>
                       </InlineStack>
-                      <InlineStack gap="200">
-                        {(task.status === "pending" || task.status === "running") && (
-                          <Button
-                            size="slim"
-                            onClick={() => handleCancelTask(task.id)}
-                            loading={fetcher.state !== "idle" && fetcher.formData?.get("taskId") === task.id && fetcher.formData?.get("action") === "cancel"}
-                          >
-                            {t.tasks.cancel}
-                          </Button>
+                    </div>
+
+                    {/* Expandable Details */}
+                    {isExpanded && (
+                      <BlockStack gap="300">
+                        {/* Resource Info */}
+                        {task.resourceTitle && (
+                          <InlineStack gap="200">
+                            {task.resourceType && (
+                              <Badge tone="info">
+                                {(t.tasks.resourceType as any)[task.resourceType] || task.resourceType}
+                              </Badge>
+                            )}
+                            <Text as="p" variant="bodyMd">
+                              {task.resourceTitle}
+                            </Text>
+                          </InlineStack>
                         )}
-                        {(task.status === "completed" || task.status === "failed" || task.status === "cancelled") && (
-                          <Button
-                            size="slim"
-                            tone="critical"
-                            onClick={() => handleDeleteTask(task.id)}
-                            loading={fetcher.state !== "idle" && fetcher.formData?.get("taskId") === task.id && fetcher.formData?.get("action") === "delete"}
-                          >
-                            {t.tasks.delete}
-                          </Button>
+
+                        {/* Field Type */}
+                        {task.fieldType && (
+                          <Text as="p" variant="bodySm" tone="subdued">
+                            {t.tasks.fieldType && (t.tasks.fieldType as any)[task.fieldType]
+                              ? (t.tasks.fieldType as any)[task.fieldType]
+                              : task.fieldType}
+                            {task.targetLocale && ` → ${task.targetLocale}`}
+                          </Text>
                         )}
-                      </InlineStack>
-                    </InlineStack>
 
-                    {/* Resource Info */}
-                    {task.resourceTitle && (
-                      <InlineStack gap="200">
-                        {task.resourceType && (
-                          <Badge tone="info">
-                            {(t.tasks.resourceType as any)[task.resourceType] || task.resourceType}
-                          </Badge>
+                        {/* Progress Bar */}
+                        {(task.status === "running" || task.status === "pending") && (
+                          <div>
+                            <ProgressBar progress={task.progress} size="small" />
+                            <Text as="p" variant="bodySm" tone="subdued">
+                              {t.tasks.progress}: {task.progress}%
+                              {task.total && task.processed !== undefined &&
+                                ` (${task.processed}/${task.total})`}
+                            </Text>
+                          </div>
                         )}
-                        <Text as="p" variant="bodyMd">
-                          {task.resourceTitle}
-                        </Text>
-                      </InlineStack>
-                    )}
 
-                    {/* Field Type */}
-                    {task.fieldType && (
-                      <Text as="p" variant="bodySm" tone="subdued">
-                        {t.tasks.fieldType && (t.tasks.fieldType as any)[task.fieldType]
-                          ? (t.tasks.fieldType as any)[task.fieldType]
-                          : task.fieldType}
-                        {task.targetLocale && ` → ${task.targetLocale}`}
-                      </Text>
-                    )}
+                        {/* Additional Details Section */}
+                        <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
+                          <BlockStack gap="200">
+                            <Text as="h3" variant="headingSm" fontWeight="semibold">
+                              {t.tasks.details || "Details"}
+                            </Text>
 
-                    {/* Progress Bar */}
-                    {(task.status === "running" || task.status === "pending") && (
-                      <div>
-                        <ProgressBar progress={task.progress} size="small" />
-                        <Text as="p" variant="bodySm" tone="subdued">
-                          {t.tasks.progress}: {task.progress}%
-                          {task.total && task.processed !== undefined &&
-                            ` (${task.processed}/${task.total})`}
-                        </Text>
-                      </div>
-                    )}
+                            {/* Task ID */}
+                            <InlineStack gap="200">
+                              <Text as="span" variant="bodySm" fontWeight="semibold">
+                                {t.tasks.taskId || "Task ID"}:
+                              </Text>
+                              <Text as="span" variant="bodySm" tone="subdued">
+                                {task.id}
+                              </Text>
+                            </InlineStack>
 
-                    {/* Time Info */}
-                    <InlineStack gap="400">
-                      <Text as="p" variant="bodySm" tone="subdued">
-                        {t.tasks.startedAt}: {new Date(task.startedAt).toLocaleString()}
-                      </Text>
-                      {task.completedAt && (
-                        <Text as="p" variant="bodySm" tone="subdued">
-                          {t.tasks.duration}: {formatDuration(task.startedAt, task.completedAt)}
-                        </Text>
-                      )}
-                      {!task.completedAt && task.status === "running" && (
-                        <Text as="p" variant="bodySm" tone="subdued">
-                          {t.tasks.duration}: {formatDuration(task.startedAt)}
-                        </Text>
-                      )}
-                    </InlineStack>
+                            {/* Resource ID */}
+                            {task.resourceId && (
+                              <InlineStack gap="200">
+                                <Text as="span" variant="bodySm" fontWeight="semibold">
+                                  {t.tasks.resourceId || "Resource ID"}:
+                                </Text>
+                                <Text as="span" variant="bodySm" tone="subdued">
+                                  {task.resourceId}
+                                </Text>
+                              </InlineStack>
+                            )}
 
-                    {/* Error Message */}
-                    {task.error && (
-                      <div style={{ padding: "0.75rem", background: "#fbeae5", borderRadius: "8px", border: "1px solid #d72c0d" }}>
-                        <Text as="p" variant="bodySm" tone="critical">
-                          {task.error}
-                        </Text>
-                      </div>
+                            {/* Queue Position */}
+                            {task.queuePosition !== null && task.queuePosition !== undefined && (
+                              <InlineStack gap="200">
+                                <Text as="span" variant="bodySm" fontWeight="semibold">
+                                  {t.tasks.queuePosition || "Queue Position"}:
+                                </Text>
+                                <Text as="span" variant="bodySm" tone="subdued">
+                                  {task.queuePosition}
+                                </Text>
+                              </InlineStack>
+                            )}
+
+                            {/* Retry Count */}
+                            {task.retryCount > 0 && (
+                              <InlineStack gap="200">
+                                <Text as="span" variant="bodySm" fontWeight="semibold">
+                                  {t.tasks.retryCount || "Retry Count"}:
+                                </Text>
+                                <Text as="span" variant="bodySm" tone="subdued">
+                                  {task.retryCount}
+                                </Text>
+                              </InlineStack>
+                            )}
+
+                            {/* Estimated Tokens */}
+                            {task.estimatedTokens && (
+                              <InlineStack gap="200">
+                                <Text as="span" variant="bodySm" fontWeight="semibold">
+                                  {t.tasks.estimatedTokens || "Estimated Tokens"}:
+                                </Text>
+                                <Text as="span" variant="bodySm" tone="subdued">
+                                  {task.estimatedTokens.toLocaleString()}
+                                </Text>
+                              </InlineStack>
+                            )}
+
+                            {/* Created At */}
+                            <InlineStack gap="200">
+                              <Text as="span" variant="bodySm" fontWeight="semibold">
+                                {t.tasks.createdAt || "Created At"}:
+                              </Text>
+                              <Text as="span" variant="bodySm" tone="subdued">
+                                {new Date(task.createdAt).toLocaleString()}
+                              </Text>
+                            </InlineStack>
+
+                            {/* Updated At */}
+                            <InlineStack gap="200">
+                              <Text as="span" variant="bodySm" fontWeight="semibold">
+                                {t.tasks.updatedAt || "Updated At"}:
+                              </Text>
+                              <Text as="span" variant="bodySm" tone="subdued">
+                                {new Date(task.updatedAt).toLocaleString()}
+                              </Text>
+                            </InlineStack>
+
+                            {/* Expires At */}
+                            {task.expiresAt && (
+                              <InlineStack gap="200">
+                                <Text as="span" variant="bodySm" fontWeight="semibold">
+                                  {t.tasks.expiresAt || "Expires At"}:
+                                </Text>
+                                <Text as="span" variant="bodySm" tone="subdued">
+                                  {new Date(task.expiresAt).toLocaleString()}
+                                </Text>
+                              </InlineStack>
+                            )}
+                          </BlockStack>
+                        </div>
+
+                        {/* Time Info */}
+                        <InlineStack gap="400">
+                          <Text as="p" variant="bodySm" tone="subdued">
+                            {t.tasks.startedAt}: {new Date(task.startedAt).toLocaleString()}
+                          </Text>
+                          {task.completedAt && (
+                            <Text as="p" variant="bodySm" tone="subdued">
+                              {t.tasks.duration}: {formatDuration(task.startedAt, task.completedAt)}
+                            </Text>
+                          )}
+                          {!task.completedAt && task.status === "running" && (
+                            <Text as="p" variant="bodySm" tone="subdued">
+                              {t.tasks.duration}: {formatDuration(task.startedAt)}
+                            </Text>
+                          )}
+                        </InlineStack>
+
+                        {/* Error Message */}
+                        {task.error && (
+                          <div style={{ padding: "0.75rem", background: "#fbeae5", borderRadius: "8px", border: "1px solid #d72c0d" }}>
+                            <Text as="p" variant="bodySm" tone="critical">
+                              {task.error}
+                            </Text>
+                          </div>
+                        )}
+                      </BlockStack>
                     )}
                   </BlockStack>
                 </Card>
-              ))}
+                );
+              })}
 
               {/* Pagination */}
               {pagination.totalPages > 1 && (

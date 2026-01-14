@@ -320,6 +320,16 @@ export const de = {
       metaDescription: "Meta-Beschreibung",
       all: "Alle Felder",
     },
+    // Expandable details
+    details: "Details",
+    taskId: "Task ID",
+    resourceId: "Ressourcen-ID",
+    queuePosition: "Queue-Position",
+    retryCount: "Wiederholungsversuche",
+    estimatedTokens: "Geschätzte Tokens",
+    createdAt: "Erstellt am",
+    updatedAt: "Aktualisiert am",
+    expiresAt: "Läuft ab am",
   },
 
   // SEO Sidebar
