@@ -26,6 +26,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const [editableValues, setEditableValues] = useState<Record<string, string>>({});
   const [aiSuggestions, setAiSuggestions] = useState<Record<string, string>>({});
   const [htmlModes, setHtmlModes] = useState<Record<string, 'html' | 'rendered'>>({});
+  const [enabledLanguages, setEnabledLanguages] = useState<string[]>(
+    shopLocales.map((l: any) => l.locale)
+  );
 
   const selectedItem = items.find((item) => item.id === selectedItemId);
 
@@ -350,6 +353,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const handleTranslateFieldToAllLocales = (fieldKey: string) => {
     if (!selectedItemId || !selectedItem) return;
 
+    // Filter out primary locale and disabled languages
+    const targetLocales = enabledLanguages.filter(l => l !== primaryLocale);
+    if (targetLocales.length === 0) {
+      showInfoBox("Keine Zielsprachen ausgewählt", "warning", "Warnung");
+      return;
+    }
+
     const field = config.fieldDefinitions.find((f) => f.key === fieldKey);
     if (!field) return;
 
@@ -369,6 +379,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         itemId: selectedItemId,
         fieldType: fieldKey,
         sourceText,
+        targetLocales: JSON.stringify(targetLocales),
       },
       { method: "POST" }
     );
@@ -377,9 +388,17 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const handleTranslateAll = () => {
     if (!selectedItemId || !selectedItem) return;
 
+    // Filter out primary locale and disabled languages
+    const targetLocales = enabledLanguages.filter(l => l !== primaryLocale);
+    if (targetLocales.length === 0) {
+      showInfoBox("Keine Zielsprachen ausgewählt", "warning", "Warnung");
+      return;
+    }
+
     const formDataObj: Record<string, string> = {
       action: "translateAll",
       itemId: selectedItemId,
+      targetLocales: JSON.stringify(targetLocales),
     };
 
     // Add all field values from primary locale
@@ -419,6 +438,21 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
   const handleLanguageChange = (locale: string) => {
     handleNavigationAttempt(() => setCurrentLanguage(locale), hasChanges);
+  };
+
+  const handleToggleLanguage = (locale: string) => {
+    // Don't allow disabling the primary locale
+    if (locale === primaryLocale) return;
+
+    setEnabledLanguages((prev) => {
+      if (prev.includes(locale)) {
+        // Disable this language
+        return prev.filter((l) => l !== locale);
+      } else {
+        // Enable this language
+        return [...prev, locale];
+      }
+    });
   };
 
   const handleItemSelect = (itemId: string) => {
@@ -484,6 +518,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     aiSuggestions,
     htmlModes,
     hasChanges,
+    enabledLanguages,
   };
 
   const handlers: EditorHandlers = {
@@ -497,6 +532,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     handleAcceptSuggestion,
     handleRejectSuggestion,
     handleLanguageChange,
+    handleToggleLanguage,
     handleItemSelect,
     handleValueChange,
     handleToggleHtmlMode,

@@ -274,14 +274,20 @@ export class ShopifyContentService {
     fields: Record<string, string>;
     translationService: any;
     db: any;
+    targetLocales?: string[];
   }) {
-    const { resourceId, resourceType, fields, translationService, db } = params;
+    const { resourceId, resourceType, fields, translationService, db, targetLocales: customTargetLocales } = params;
 
-    // Get target locales
-    const { shopLocales } = await this.loadShopLocales();
-    const targetLocales = shopLocales
-      .filter((l: any) => !l.primary && l.published)
-      .map((l: any) => l.locale);
+    // Get target locales (use custom list if provided, otherwise all published locales)
+    let targetLocales: string[];
+    if (customTargetLocales) {
+      targetLocales = customTargetLocales;
+    } else {
+      const { shopLocales } = await this.loadShopLocales();
+      targetLocales = shopLocales
+        .filter((l: any) => !l.primary && l.published)
+        .map((l: any) => l.locale);
+    }
 
     const allTranslations: Record<string, any> = {};
 

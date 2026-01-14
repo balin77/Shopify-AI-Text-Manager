@@ -172,6 +172,8 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         contentType={config.contentType}
                         hasChanges={state.hasChanges}
                         onLanguageChange={handlers.handleLanguageChange}
+                        enabledLanguages={state.enabledLanguages}
+                        onToggleLanguage={handlers.handleToggleLanguage}
                       />
                     </div>
                     <SaveDiscardButtons

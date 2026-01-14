@@ -226,6 +226,7 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
   if (action === "translateAll") {
     try {
       const changedFields: any = {};
+      const targetLocalesStr = formData.get("targetLocales") as string;
 
       // Collect all field values
       contentConfig.fieldDefinitions.forEach((field) => {
@@ -245,6 +246,7 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
         fields: changedFields,
         translationService,
         db,
+        targetLocales: targetLocalesStr ? JSON.parse(targetLocalesStr) : undefined,
       });
 
       return json({ success: true, translations: allTranslations });
@@ -260,6 +262,7 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
   if (action === "translateFieldToAllLocales") {
     const fieldType = formData.get("fieldType") as string;
     const sourceText = formData.get("sourceText") as string;
+    const targetLocalesStr = formData.get("targetLocales") as string;
 
     try {
       const changedFields: any = {};
@@ -275,6 +278,7 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
         fields: changedFields,
         translationService,
         db,
+        targetLocales: targetLocalesStr ? JSON.parse(targetLocalesStr) : undefined,
       });
 
       return json({ success: true, translations: allTranslations, fieldType });

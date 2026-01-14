@@ -89,6 +89,7 @@ export interface EditorState {
   aiSuggestions: Record<string, string>;
   htmlModes: Record<string, 'html' | 'rendered'>;
   hasChanges: boolean;
+  enabledLanguages: string[];
 }
 
 export interface EditorHandlers {
@@ -102,6 +103,7 @@ export interface EditorHandlers {
   handleAcceptSuggestion: (fieldKey: string) => void;
   handleRejectSuggestion: (fieldKey: string) => void;
   handleLanguageChange: (locale: string) => void;
+  handleToggleLanguage: (locale: string) => void;
   handleItemSelect: (itemId: string) => void;
   handleValueChange: (fieldKey: string, value: string) => void;
   handleToggleHtmlMode: (fieldKey: string) => void;

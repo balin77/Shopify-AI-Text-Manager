@@ -23,6 +23,7 @@ import { MainNavigation } from "../components/MainNavigation";
 import { ContentTypeNavigation } from "../components/ContentTypeNavigation";
 import { ThemeContentViewer } from "../components/ThemeContentViewer";
 import { SaveDiscardButtons } from "../components/SaveDiscardButtons";
+import { LocaleNavigationButtons } from "../components/LocaleNavigationButtons";
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 
@@ -103,6 +104,9 @@ export default function TemplatesPage() {
   const [currentLanguage, setCurrentLanguage] = useState(primaryLocale);
   const [loadedThemes, setLoadedThemes] = useState<Record<string, any>>({});
   const [isLoading, setIsLoading] = useState(false);
+  const [enabledLanguages, setEnabledLanguages] = useState<string[]>(
+    shopLocales.map((l: any) => l.locale)
+  );
 
   // Editable state
   const [editableValues, setEditableValues] = useState<Record<string, string>>({});
@@ -353,6 +357,21 @@ export default function TemplatesPage() {
     setAiSuggestions({});
   };
 
+  const handleToggleLanguage = (locale: string) => {
+    // Don't allow disabling the primary locale
+    if (locale === primaryLocale) return;
+
+    setEnabledLanguages((prev) => {
+      if (prev.includes(locale)) {
+        // Disable this language
+        return prev.filter((l) => l !== locale);
+      } else {
+        // Enable this language
+        return [...prev, locale];
+      }
+    });
+  };
+
   const handleValueChange = (key: string, value: string) => {
     setEditableValues(prev => ({
       ...prev,
@@ -543,18 +562,20 @@ export default function TemplatesPage() {
             ) : selectedItem ? (
               <BlockStack gap="500">
                 {/* Language Selector & Save Buttons */}
-                <InlineStack align="space-between" blockAlign="center">
-                  <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
-                    {shopLocales.map((locale: any) => (
-                      <Button
-                        key={locale.locale}
-                        variant={currentLanguage === locale.locale ? "primary" : undefined}
-                        onClick={() => handleLanguageChange(locale.locale)}
-                        size="slim"
-                      >
-                        {locale.name} {locale.primary && `(${t.content?.primaryLanguageSuffix || "Primary"})`}
-                      </Button>
-                    ))}
+                <InlineStack align="space-between" blockAlign="center" gap="400">
+                  <div style={{ flex: 1 }}>
+                    <LocaleNavigationButtons
+                      shopLocales={shopLocales}
+                      currentLanguage={currentLanguage}
+                      primaryLocaleSuffix={t.content?.primaryLanguageSuffix || "Primary"}
+                      selectedItem={selectedItem}
+                      primaryLocale={primaryLocale}
+                      contentType="pages"
+                      hasChanges={hasChanges}
+                      onLanguageChange={handleLanguageChange}
+                      enabledLanguages={enabledLanguages}
+                      onToggleLanguage={handleToggleLanguage}
+                    />
                   </div>
 
                   {/* Save/Discard Buttons */}
