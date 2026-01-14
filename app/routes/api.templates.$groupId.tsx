@@ -38,6 +38,17 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     // Merge all translatable content from all resources in this group
     const allContent = themeGroups.flatMap((group) => group.translatableContent as any[]);
 
+    // DEDUPLICATION: Remove duplicate keys (same key can appear in multiple resources)
+    const uniqueContent = new Map<string, any>();
+    for (const item of allContent) {
+      if (!uniqueContent.has(item.key)) {
+        uniqueContent.set(item.key, item);
+      }
+    }
+    const deduplicatedContent = Array.from(uniqueContent.values());
+
+    console.log(`[API-TEMPLATES-LOADER] Group ${groupId}: ${allContent.length} total items, ${deduplicatedContent.length} unique keys`);
+
     // Get group metadata from first item
     const firstGroup = themeGroups[0];
 
@@ -48,8 +59,8 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       icon: firstGroup.groupIcon,
       groupId: groupId,
       role: 'THEME_GROUP',
-      translatableContent: allContent,
-      contentCount: allContent.length
+      translatableContent: deduplicatedContent,
+      contentCount: deduplicatedContent.length
     };
 
     console.log(`[API-TEMPLATES-LOADER] Loaded ${themeGroups.length} resources with ${allContent.length} translatable fields for group ${groupId}`);
@@ -216,9 +227,17 @@ Please provide improved content that is clear and concise.`;
         // Get all translatable content
         const allContent = themeGroups.flatMap((group) => group.translatableContent as any[]);
 
+        // DEDUPLICATION: Remove duplicate keys before translation
+        const uniqueContent = new Map<string, any>();
+        for (const item of allContent) {
+          if (!uniqueContent.has(item.key)) {
+            uniqueContent.set(item.key, item);
+          }
+        }
+
         // Collect all fields to translate
         const fieldsToTranslate: Record<string, string> = {};
-        for (const item of allContent) {
+        for (const item of uniqueContent.values()) {
           if (item.value) {
             fieldsToTranslate[item.key] = item.value;
           }
@@ -336,11 +355,12 @@ Please provide improved content that is clear and concise.`;
           for (const [key, value] of Object.entries(updatedFields)) {
             await db.themeTranslation.upsert({
               where: {
-                shop_groupId_locale_key: {
+                shop_resourceId_groupId_key_locale: {
                   shop: session.shop,
+                  resourceId: resourceId,
                   groupId: groupId,
-                  locale: locale,
-                  key: key
+                  key: key,
+                  locale: locale
                 }
               },
               update: {
