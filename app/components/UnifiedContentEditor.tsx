@@ -147,8 +147,8 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           renderItem={renderListItem}
           showSearch={true}
           showPagination={true}
-          showStatusStripe={false}
-          showThumbnails={false}
+          showStatusStripe={true}
+          showThumbnails={true}
           planLimit={planLimit}
           t={{
             searchPlaceholder: t.content?.searchPlaceholder,
@@ -236,6 +236,8 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         onToggleHtmlMode={() => handlers.handleToggleHtmlMode(field.key)}
                         shopLocales={shopLocales}
                         currentLanguage={state.currentLanguage}
+                        primaryLocale={primaryLocale}
+                        selectedItem={selectedItem}
                         t={t}
                       />
                     ))}
@@ -291,6 +293,8 @@ interface FieldRendererProps {
   onToggleHtmlMode: () => void;
   shopLocales: any[];
   currentLanguage: string;
+  primaryLocale: string;
+  selectedItem: any;
   t: any;
 }
 
@@ -315,6 +319,8 @@ function FieldRenderer(props: FieldRendererProps) {
     onToggleHtmlMode,
     shopLocales,
     currentLanguage,
+    primaryLocale,
+    selectedItem,
     t,
   } = props;
 
@@ -364,12 +370,16 @@ function FieldRenderer(props: FieldRendererProps) {
 
   // Image Gallery Field
   if (field.type === "image-gallery") {
-    // Note: Image gallery needs special state handling in the editor
-    // For now, return a placeholder. This will be implemented in useUnifiedContentEditor
     return (
-      <Text as="p" variant="bodySm" tone="subdued">
-        Image gallery field (requires custom implementation per content type)
-      </Text>
+      <ImageGalleryField
+        images={selectedItem.images || []}
+        currentLanguage={currentLanguage}
+        primaryLocale={primaryLocale}
+        shopLocales={shopLocales}
+        productId={selectedItem.id}
+        isPrimaryLocale={isPrimaryLocale}
+        t={t}
+      />
     );
   }
 
