@@ -363,9 +363,21 @@ export class ShopifyContentService {
 
           Object.entries(translatedFields).forEach(([field, value]) => {
             if (value && keyMapping[field]) {
+              // Ensure value is a string, not an object
+              let stringValue: string;
+              if (typeof value === 'string') {
+                stringValue = value;
+              } else if (typeof value === 'object' && value !== null) {
+                // If value is an object, try to extract the actual string value
+                console.error(`[translateAllContent] Warning: Field '${field}' has object value:`, value);
+                stringValue = (value as any).value || JSON.stringify(value);
+              } else {
+                stringValue = String(value);
+              }
+
               translationsInput.push({
                 key: keyMapping[field],
-                value: value as string,
+                value: stringValue,
                 locale
               });
             }

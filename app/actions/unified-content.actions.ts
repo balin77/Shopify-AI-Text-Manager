@@ -537,17 +537,25 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
         taskId: task.id,
       });
 
+      // Extract just the field value for each locale (frontend expects Record<locale, string>)
+      // allTranslations is Record<locale, Record<fieldType, string>>
+      // We need to flatten it to Record<locale, string>
+      const flattenedTranslations: Record<string, string> = {};
+      for (const [locale, fields] of Object.entries(allTranslations)) {
+        flattenedTranslations[locale] = (fields as any)[fieldType] || "";
+      }
+
       await db.task.update({
         where: { id: task.id },
         data: {
           status: "completed",
           progress: 100,
           completedAt: new Date(),
-          result: JSON.stringify({ translations: allTranslations, fieldType }),
+          result: JSON.stringify({ translations: flattenedTranslations, fieldType }),
         },
       });
 
-      return json({ success: true, translations: allTranslations, fieldType });
+      return json({ success: true, translations: flattenedTranslations, fieldType });
     } catch (error: any) {
       await db.task.update({
         where: { id: task.id },
