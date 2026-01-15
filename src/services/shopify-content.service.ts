@@ -3,7 +3,7 @@
  * Centralized service for managing Shopify content via GraphQL API
  */
 
-import { TRANSLATE_CONTENT, UPDATE_PAGE, UPDATE_ARTICLE, UPDATE_SHOP_POLICY } from "../../app/graphql/content.mutations";
+import { TRANSLATE_CONTENT, UPDATE_PAGE, UPDATE_ARTICLE, UPDATE_SHOP_POLICY, UPDATE_COLLECTION } from "../../app/graphql/content.mutations";
 import { GET_TRANSLATIONS } from "../../app/graphql/content.queries";
 
 export interface ShopifyAdminClient {
@@ -84,6 +84,28 @@ export class ShopifyContentService {
   }
 
   /**
+   * Update a collection
+   */
+  async updateCollection(id: string, collection: { title?: string; handle?: string; descriptionHtml?: string; seo?: { title?: string; description?: string } }) {
+    const response = await this.admin.graphql(UPDATE_COLLECTION, {
+      variables: {
+        input: {
+          id,
+          ...collection
+        }
+      }
+    });
+
+    const data = await response.json();
+
+    if (data.data?.collectionUpdate?.userErrors?.length > 0) {
+      throw new Error(data.data.collectionUpdate.userErrors[0].message);
+    }
+
+    return data.data?.collectionUpdate?.collection;
+  }
+
+  /**
    * Update a shop policy
    */
   async updateShopPolicy(type: string, body: string) {
@@ -131,7 +153,7 @@ export class ShopifyContentService {
    */
   async updateContent(params: {
     resourceId: string;
-    resourceType: 'Page' | 'Article' | 'ShopPolicy';
+    resourceType: 'Page' | 'Article' | 'ShopPolicy' | 'Collection';
     locale: string;
     primaryLocale: string;
     updates: Record<string, string>;
@@ -234,6 +256,31 @@ export class ShopifyContentService {
             lastSyncedAt: new Date(),
           },
         });
+      } else if (resourceType === 'Collection') {
+        updatedResource = await this.updateCollection(resourceId, {
+          title: updates.title,
+          handle: updates.handle,
+          descriptionHtml: updates.description,
+          seo: {
+            title: updates.seoTitle,
+            description: updates.metaDescription,
+          },
+        });
+
+        // Update database
+        await db.collection.update({
+          where: {
+            shop_id: { shop, id: resourceId },
+          },
+          data: {
+            title: updates.title,
+            handle: updates.handle,
+            descriptionHtml: updates.description,
+            seoTitle: updates.seoTitle,
+            seoDescription: updates.metaDescription,
+            lastSyncedAt: new Date(),
+          },
+        });
       } else if (resourceType === 'ShopPolicy' && policyType) {
         updatedResource = await this.updateShopPolicy(policyType, updates.body);
 
@@ -270,12 +317,13 @@ export class ShopifyContentService {
    */
   async translateAllContent(params: {
     resourceId: string;
-    resourceType: 'Page' | 'Article' | 'ShopPolicy';
+    resourceType: 'Page' | 'Article' | 'ShopPolicy' | 'Collection';
     fields: Record<string, string>;
     translationService: any;
     db: any;
     targetLocales?: string[];
     contentType?: string;
+    taskId?: string;
   }) {
     const { resourceId, resourceType, fields, translationService, db, targetLocales: customTargetLocales, contentType } = params;
 
