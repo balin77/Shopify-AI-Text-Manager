@@ -147,9 +147,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         }
 
         showInfoBox(
-          `${fieldType} wurde in ${Object.keys(translations).length} Sprache(n) übersetzt`,
+          t.common?.fieldTranslatedToLanguages
+            ?.replace("{fieldType}", fieldType)
+            .replace("{count}", String(Object.keys(translations).length))
+            || `${fieldType} translated to ${Object.keys(translations).length} language(s)`,
           "success",
-          "Erfolgreich"
+          t.common?.success || "Success"
         );
 
         // Reset the accept-and-translate flow flag after translations are complete
@@ -353,7 +356,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
     const currentValue = editableValues[fieldKey] || "";
     if (!currentValue) {
-      showInfoBox("Kein Inhalt zum Formatieren vorhanden", "warning", "Warnung");
+      showInfoBox(
+        t.common?.noContentToFormat || "No content available to format",
+        "warning",
+        t.common?.warning || "Warning"
+      );
       return;
     }
 
@@ -407,7 +414,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // Filter out primary locale and disabled languages
     const targetLocales = enabledLanguages.filter(l => l !== primaryLocale);
     if (targetLocales.length === 0) {
-      showInfoBox("Keine Zielsprachen ausgewählt", "warning", "Warnung");
+      showInfoBox(
+        t.common?.noTargetLanguagesSelected || "No target languages selected",
+        "warning",
+        t.common?.warning || "Warning"
+      );
       return;
     }
 
@@ -445,7 +456,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // Filter out primary locale and disabled languages
     const targetLocales = enabledLanguages.filter(l => l !== primaryLocale);
     if (targetLocales.length === 0) {
-      showInfoBox("Keine Zielsprachen ausgewählt", "warning", "Warnung");
+      showInfoBox(
+        t.common?.noTargetLanguagesSelected || "No target languages selected",
+        "warning",
+        t.common?.warning || "Warning"
+      );
       return;
     }
 
@@ -506,7 +521,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // Then translate to all enabled locales (except primary)
     const targetLocales = enabledLanguages.filter(l => l !== primaryLocale);
     if (targetLocales.length === 0) {
-      showInfoBox("Keine Zielsprachen aktiviert", "warning", "Warnung");
+      showInfoBox(
+        t.common?.noTargetLanguagesEnabled || "No target languages enabled",
+        "warning",
+        t.common?.warning || "Warning"
+      );
       setIsAcceptAndTranslateFlow(false);
       return;
     }

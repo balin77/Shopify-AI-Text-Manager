@@ -337,6 +337,12 @@ export const en: Translation = {
     successSaved: "Successfully saved!",
     settingsSaved: "Your settings have been updated.",
     changesSaved: "Changes saved successfully!",
+    warning: "Warning",
+    // InfoBox messages
+    noContentToFormat: "No content available to format",
+    noTargetLanguagesSelected: "No target languages selected",
+    noTargetLanguagesEnabled: "No target languages enabled",
+    fieldTranslatedToLanguages: "{fieldType} has been translated to {count} language(s)",
   },
 
   // Tasks Page

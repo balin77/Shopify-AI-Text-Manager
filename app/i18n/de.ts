@@ -335,6 +335,12 @@ export const de = {
     successSaved: "Erfolgreich gespeichert!",
     settingsSaved: "Ihre Einstellungen wurden aktualisiert.",
     changesSaved: "Änderungen erfolgreich gespeichert!",
+    warning: "Warnung",
+    // InfoBox messages
+    noContentToFormat: "Kein Inhalt zum Formatieren vorhanden",
+    noTargetLanguagesSelected: "Keine Zielsprachen ausgewählt",
+    noTargetLanguagesEnabled: "Keine Zielsprachen aktiviert",
+    fieldTranslatedToLanguages: "{fieldType} wurde in {count} Sprache(n) übersetzt",
   },
 
   // Tasks Page
