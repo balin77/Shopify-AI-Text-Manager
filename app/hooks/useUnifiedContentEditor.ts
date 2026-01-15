@@ -287,6 +287,32 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const handleSave = () => {
     if (!selectedItemId || !hasChanges) return;
 
+    // If we're saving in the primary locale, clear all translations for changed fields
+    if (currentLanguage === primaryLocale && selectedItem) {
+      config.fieldDefinitions.forEach((field) => {
+        const currentValue = editableValues[field.key] || "";
+        const originalValue = getItemFieldValue(selectedItem, field.key, primaryLocale);
+
+        // Only clear translations if the value actually changed
+        if (currentValue !== originalValue && field.translationKey) {
+          const translationKey = field.translationKey;
+
+          // Remove all translations for this field across all locales
+          if (selectedItem.translations) {
+            const beforeCount = selectedItem.translations.length;
+            selectedItem.translations = selectedItem.translations.filter(
+              (t: any) => t.key !== translationKey
+            );
+            const afterCount = selectedItem.translations.length;
+
+            if (beforeCount !== afterCount) {
+              console.log(`[TRANSLATION-CLEAR] Cleared translations for field "${field.key}" (key: ${translationKey})`);
+            }
+          }
+        }
+      });
+    }
+
     const formDataObj: Record<string, string> = {
       action: "updateContent",
       itemId: selectedItemId,
@@ -575,27 +601,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   };
 
   const handleValueChange = (fieldKey: string, value: string) => {
+    // Update the state immediately without any side effects
+    // This ensures the input field responds instantly to user typing
     setEditableValues((prev) => ({
       ...prev,
       [fieldKey]: value,
     }));
-
-    // If we're editing in the primary locale and NOT in an accept-and-translate flow,
-    // delete all translations for this field
-    if (currentLanguage === primaryLocale && !isAcceptAndTranslateFlow && selectedItem) {
-      const field = config.fieldDefinitions.find((f) => f.key === fieldKey);
-      if (!field) return;
-
-      const translationKey = field.translationKey;
-
-      // Remove all translations for this field across all locales
-      if (selectedItem.translations && translationKey) {
-        selectedItem.translations = selectedItem.translations.filter(
-          (t: any) => t.key !== translationKey
-        );
-        console.log(`[TRANSLATION-CLEAR] Cleared all translations for field "${fieldKey}" (key: ${translationKey})`);
-      }
-    }
   };
 
   const handleToggleHtmlMode = (fieldKey: string) => {

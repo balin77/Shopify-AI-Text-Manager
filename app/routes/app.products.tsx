@@ -612,7 +612,34 @@ export default function Products() {
   }, [currentLanguage, selectedProductId, primaryLocale]);
 
   const handleSaveProduct = () => {
-    if (!selectedProductId || !hasChanges) return;
+    if (!selectedProductId || !hasChanges || !selectedProduct) return;
+
+    // If we're saving in the primary locale, clear all translations for changed fields
+    if (currentLanguage === primaryLocale) {
+      const fieldMappings: Array<{ editableValue: string; originalValue: string; translationKey: string; fieldName: string }> = [
+        { editableValue: editableTitle, originalValue: selectedProduct.title, translationKey: "title", fieldName: "title" },
+        { editableValue: editableDescription, originalValue: selectedProduct.descriptionHtml || "", translationKey: "body_html", fieldName: "description" },
+        { editableValue: editableHandle, originalValue: selectedProduct.handle, translationKey: "handle", fieldName: "handle" },
+        { editableValue: editableSeoTitle, originalValue: selectedProduct.seo?.title || "", translationKey: "meta_title", fieldName: "seoTitle" },
+        { editableValue: editableMetaDescription, originalValue: selectedProduct.seo?.description || "", translationKey: "meta_description", fieldName: "metaDescription" },
+      ];
+
+      fieldMappings.forEach(({ editableValue, originalValue, translationKey, fieldName }) => {
+        // Only clear translations if the value actually changed
+        if (editableValue !== originalValue) {
+          const beforeCount = selectedProduct.translations.length;
+          selectedProduct.translations = selectedProduct.translations.filter(
+            (t: any) => t.key !== translationKey
+          );
+          const afterCount = selectedProduct.translations.length;
+
+          if (beforeCount !== afterCount) {
+            console.log(`[TRANSLATION-CLEAR] Cleared translations for field "${fieldName}" (key: ${translationKey})`);
+          }
+        }
+      });
+    }
+
     fetcher.submit(
       {
         action: "updateProduct",
