@@ -34,39 +34,43 @@ export function LocaleNavigationButtons({
   return (
     <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", justifyContent: "space-between", alignItems: "center" }}>
       <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
-        {shopLocales.map((locale: any) => {
-          const buttonStyle = getLocaleButtonStyle(
-            locale,
-            selectedItem,
-            primaryLocale,
-            contentType
-          );
+        {shopLocales.map((locale) => {
+          const LocaleButton = () => {
+            const buttonStyle = useLocaleButtonStyle(
+              locale,
+              selectedItem,
+              primaryLocale,
+              contentType
+            );
 
-          const isEnabled = !enabledLanguages || enabledLanguages.includes(locale.locale);
-          const isPrimary = locale.primary;
-          const isCurrentLanguage = currentLanguage === locale.locale;
+            const isEnabled = !enabledLanguages || enabledLanguages.includes(locale.locale);
+            const isPrimary = locale.primary;
+            const isCurrentLanguage = currentLanguage === locale.locale;
 
-          return (
-            <div key={locale.locale} style={buttonStyle}>
-              <Button
-                variant={isCurrentLanguage ? "primary" : undefined}
-                onClick={() => {
-                  onLanguageChange(locale.locale);
-                }}
-                onPointerDown={(event: any) => {
-                  // Ctrl+Click toggles language activation (except for primary locale)
-                  if (event.ctrlKey && onToggleLanguage && !isPrimary) {
-                    event.preventDefault();
-                    onToggleLanguage(locale.locale);
-                  }
-                }}
-                size="slim"
-                tone={!isEnabled && !isPrimary ? "critical" : undefined}
-              >
-                {locale.name} {locale.primary && `(${primaryLocaleSuffix})`}
-              </Button>
-            </div>
-          );
+            return (
+              <div key={locale.locale} style={buttonStyle}>
+                <Button
+                  variant={isCurrentLanguage ? "primary" : undefined}
+                  onClick={() => {
+                    onLanguageChange(locale.locale);
+                  }}
+                  onPointerDown={(event: any) => {
+                    // Ctrl+Click toggles language activation (except for primary locale)
+                    if (event.ctrlKey && onToggleLanguage && !isPrimary) {
+                      event.preventDefault();
+                      onToggleLanguage(locale.locale);
+                    }
+                  }}
+                  size="slim"
+                  tone={!isEnabled && !isPrimary ? "critical" : undefined}
+                >
+                  {locale.name || locale.locale} {locale.primary ? `(${primaryLocaleSuffix})` : ''}
+                </Button>
+              </div>
+            );
+          };
+
+          return <LocaleButton key={locale.locale} />;
         })}
       </div>
 

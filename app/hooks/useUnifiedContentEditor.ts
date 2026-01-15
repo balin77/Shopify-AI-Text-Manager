@@ -45,7 +45,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
   // Change tracking
   const hasChanges = useChangeTracking(
-    selectedItem,
+    selectedItem || null,
     currentLanguage,
     primaryLocale,
     editableValues as any, // TODO: Fix type mismatch
