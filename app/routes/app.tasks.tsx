@@ -428,43 +428,47 @@ export default function TasksPage() {
                                   // Bulk Translation Result
                                   if (resultData.translations) {
                                     return (
-                                      <BlockStack gap="200">
-                                        {Object.entries(resultData.translations).map(([locale, value]: [string, any]) => (
-                                          <div key={locale} style={{ padding: "0.5rem", background: "white", borderRadius: "4px" }}>
-                                            <Text as="p" variant="bodySm" fontWeight="semibold">
-                                              {locale}:
-                                            </Text>
-                                            <Text as="p" variant="bodySm" tone="subdued">
-                                              {typeof value === 'string' ? value : JSON.stringify(value, null, 2)}
-                                            </Text>
-                                          </div>
-                                        ))}
-                                      </BlockStack>
+                                      <div style={{ maxHeight: "300px", overflowY: "auto" }}>
+                                        <BlockStack gap="200">
+                                          {Object.entries(resultData.translations).map(([locale, value]: [string, any]) => (
+                                            <div key={locale} style={{ padding: "0.5rem", background: "white", borderRadius: "4px" }}>
+                                              <Text as="p" variant="bodySm" fontWeight="semibold">
+                                                {locale}:
+                                              </Text>
+                                              <Text as="p" variant="bodySm" tone="subdued">
+                                                {typeof value === 'string' ? value : JSON.stringify(value, null, 2)}
+                                              </Text>
+                                            </div>
+                                          ))}
+                                        </BlockStack>
+                                      </div>
                                     );
                                   }
 
                                   // Bulk Alt Text Generation
                                   if (resultData.generatedAltTexts) {
                                     return (
-                                      <BlockStack gap="200">
-                                        {Object.entries(resultData.generatedAltTexts).map(([index, altText]: [string, any]) => (
-                                          <div key={index} style={{ padding: "0.5rem", background: "white", borderRadius: "4px" }}>
-                                            <Text as="p" variant="bodySm" fontWeight="semibold">
-                                              {t.tasks.image || "Image"} {parseInt(index) + 1}:
-                                            </Text>
-                                            <Text as="p" variant="bodySm" tone="subdued">
-                                              {altText}
-                                            </Text>
-                                          </div>
-                                        ))}
-                                      </BlockStack>
+                                      <div style={{ maxHeight: "300px", overflowY: "auto" }}>
+                                        <BlockStack gap="200">
+                                          {Object.entries(resultData.generatedAltTexts).map(([index, altText]: [string, any]) => (
+                                            <div key={index} style={{ padding: "0.5rem", background: "white", borderRadius: "4px" }}>
+                                              <Text as="p" variant="bodySm" fontWeight="semibold">
+                                                {t.tasks.image || "Image"} {parseInt(index) + 1}:
+                                              </Text>
+                                              <Text as="p" variant="bodySm" tone="subdued">
+                                                {altText}
+                                              </Text>
+                                            </div>
+                                          ))}
+                                        </BlockStack>
+                                      </div>
                                     );
                                   }
 
                                   // Single AI Generation or Translation
                                   if (resultData.generatedContent) {
                                     return (
-                                      <div style={{ padding: "0.5rem", background: "white", borderRadius: "4px" }}>
+                                      <div style={{ padding: "0.75rem", background: "white", borderRadius: "4px", maxHeight: "300px", overflowY: "auto", whiteSpace: "pre-wrap" }}>
                                         <Text as="p" variant="bodySm">
                                           {resultData.generatedContent}
                                         </Text>
@@ -474,7 +478,7 @@ export default function TasksPage() {
 
                                   if (resultData.formattedContent) {
                                     return (
-                                      <div style={{ padding: "0.5rem", background: "white", borderRadius: "4px" }}>
+                                      <div style={{ padding: "0.75rem", background: "white", borderRadius: "4px", maxHeight: "300px", overflowY: "auto" }}>
                                         <div dangerouslySetInnerHTML={{ __html: resultData.formattedContent }} />
                                       </div>
                                     );
@@ -482,7 +486,7 @@ export default function TasksPage() {
 
                                   if (resultData.altText) {
                                     return (
-                                      <div style={{ padding: "0.5rem", background: "white", borderRadius: "4px" }}>
+                                      <div style={{ padding: "0.75rem", background: "white", borderRadius: "4px", maxHeight: "300px", overflowY: "auto", whiteSpace: "pre-wrap" }}>
                                         <Text as="p" variant="bodySm">
                                           {resultData.altText}
                                         </Text>
@@ -492,13 +496,13 @@ export default function TasksPage() {
 
                                   // Generic result display
                                   return (
-                                    <div style={{ padding: "0.5rem", background: "white", borderRadius: "4px", fontFamily: "monospace", fontSize: "12px", whiteSpace: "pre-wrap" }}>
+                                    <div style={{ padding: "0.75rem", background: "white", borderRadius: "4px", fontFamily: "monospace", fontSize: "12px", whiteSpace: "pre-wrap", maxHeight: "300px", overflowY: "auto" }}>
                                       {JSON.stringify(resultData, null, 2)}
                                     </div>
                                   );
                                 } catch (e) {
                                   return (
-                                    <div style={{ padding: "0.5rem", background: "white", borderRadius: "4px" }}>
+                                    <div style={{ padding: "0.75rem", background: "white", borderRadius: "4px", maxHeight: "300px", overflowY: "auto", whiteSpace: "pre-wrap" }}>
                                       <Text as="p" variant="bodySm">
                                         {task.result}
                                       </Text>
