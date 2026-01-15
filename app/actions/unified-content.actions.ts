@@ -84,45 +84,45 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
       const instructionsTextKey = `${instructionsKey}Instructions`;
 
       if (field.type === "text" || field.type === "slug") {
-        let prompt = `Erstelle einen optimierten ${field.label}.`;
+        let prompt = `Create an optimized ${field.label}.`;
 
         if (aiInstructions?.[formatKey]) {
-          prompt += `\n\nFormatbeispiel:\n${aiInstructions[formatKey]}`;
+          prompt += `\n\nFormat Example:\n${aiInstructions[formatKey]}`;
         }
         if (aiInstructions?.[instructionsTextKey]) {
-          prompt += `\n\nAnweisungen:\n${aiInstructions[instructionsTextKey]}`;
+          prompt += `\n\nInstructions:\n${aiInstructions[instructionsTextKey]}`;
         }
 
         if (field.type === "slug") {
-          prompt += `\n\nWICHTIG - Der URL-Slug MUSS diesem Format folgen:`;
-          prompt += `\n- NUR Kleinbuchstaben (a-z)`;
-          prompt += `\n- NUR Ziffern (0-9)`;
-          prompt += `\n- NUR Bindestriche (-) als Trennzeichen`;
-          prompt += `\n- KEINE Leerzeichen, KEINE Unterstriche, KEINE Sonderzeichen`;
-          prompt += `\n- Umlaute MÜSSEN umgewandelt werden (ä→ae, ö→oe, ü→ue, ß→ss)`;
-          prompt += `\n- 2-5 Wörter, durch Bindestriche getrennt`;
-          prompt += `\n\nBeispiele:`;
+          prompt += `\n\nIMPORTANT - The URL slug MUST follow this format:`;
+          prompt += `\n- ONLY lowercase letters (a-z)`;
+          prompt += `\n- ONLY digits (0-9)`;
+          prompt += `\n- ONLY hyphens (-) as separators`;
+          prompt += `\n- NO spaces, NO underscores, NO special characters`;
+          prompt += `\n- Umlauts MUST be converted (ä→ae, ö→oe, ü→ue, ß→ss)`;
+          prompt += `\n- 2-5 words, separated by hyphens`;
+          prompt += `\n\nExamples:`;
           prompt += `\n- "Über Uns" → "ueber-uns"`;
           prompt += `\n- "Kontakt & Impressum" → "kontakt-impressum"`;
         }
 
-        prompt += `\n\nKontext:\n${contextDescription || currentValue}\n\nGib nur den ${field.label} zurück, ohne Erklärungen.`;
+        prompt += `\n\nContext:\n${contextDescription || currentValue}\n\nReturn ONLY the ${field.label}, without explanations. Output the result in the main language of the content.`;
         generatedContent = await aiService.generateProductTitle(prompt);
 
         if (field.type === "slug") {
           generatedContent = sanitizeSlug(generatedContent);
         }
       } else if (field.type === "html" || field.type === "textarea") {
-        let prompt = `Erstelle einen optimierten ${field.label} für: ${contextTitle}`;
+        let prompt = `Create an optimized ${field.label} for: ${contextTitle}`;
 
         if (aiInstructions?.[formatKey]) {
-          prompt += `\n\nFormatbeispiel:\n${aiInstructions[formatKey]}`;
+          prompt += `\n\nFormat Example:\n${aiInstructions[formatKey]}`;
         }
         if (aiInstructions?.[instructionsTextKey]) {
-          prompt += `\n\nAnweisungen:\n${aiInstructions[instructionsTextKey]}`;
+          prompt += `\n\nInstructions:\n${aiInstructions[instructionsTextKey]}`;
         }
 
-        prompt += `\n\nAktueller Inhalt:\n${currentValue}\n\nGib nur den ${field.label} zurück, ohne Erklärungen.`;
+        prompt += `\n\nCurrent Content:\n${currentValue}\n\nReturn ONLY the ${field.label}, without explanations. Output the result in the main language of the content.`;
         generatedContent = await aiService.generateProductDescription(contextTitle, prompt);
       }
 
@@ -156,38 +156,38 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
       const instructionsTextKey = `${instructionsKey}Instructions`;
 
       if (field.type === "text" || field.type === "slug") {
-        let prompt = `Formatiere den folgenden ${field.label} gemäß den Formatierungsrichtlinien:\n\nAktueller ${field.label}:\n${currentValue}`;
+        let prompt = `Format the following ${field.label} according to the formatting guidelines:\n\nCurrent ${field.label}:\n${currentValue}`;
 
         if (aiInstructions?.[formatKey]) {
-          prompt += `\n\nFormatbeispiel:\n${aiInstructions[formatKey]}`;
+          prompt += `\n\nFormat Example:\n${aiInstructions[formatKey]}`;
         }
         if (aiInstructions?.[instructionsTextKey]) {
-          prompt += `\n\nFormatierungsanweisungen:\n${aiInstructions[instructionsTextKey]}`;
+          prompt += `\n\nFormatting Instructions:\n${aiInstructions[instructionsTextKey]}`;
         }
 
         if (field.type === "slug") {
-          prompt += `\n\nWICHTIG - Der URL-Slug MUSS diesem Format folgen:`;
-          prompt += `\n- NUR Kleinbuchstaben (a-z), NUR Ziffern (0-9), NUR Bindestriche (-)`;
-          prompt += `\n- Umlaute MÜSSEN umgewandelt werden (ä→ae, ö→oe, ü→ue, ß→ss)`;
+          prompt += `\n\nIMPORTANT - The URL slug MUST follow this format:`;
+          prompt += `\n- ONLY lowercase letters (a-z), ONLY digits (0-9), ONLY hyphens (-)`;
+          prompt += `\n- Umlauts MUST be converted (ä→ae, ö→oe, ü→ue, ß→ss)`;
         }
 
-        prompt += `\n\nGib NUR den fertigen ${field.label} zurück, ohne Erklärungen.`;
+        prompt += `\n\nReturn ONLY the formatted ${field.label}, without explanations. Output the result in the main language of the content.`;
         formattedContent = await aiService.generateProductTitle(prompt);
 
         if (field.type === "slug") {
           formattedContent = sanitizeSlug(formattedContent);
         }
       } else if (field.type === "html" || field.type === "textarea") {
-        let prompt = `Formatiere den folgenden ${field.label} gemäß den Formatierungsrichtlinien:\n\nAktueller ${field.label}:\n${currentValue}`;
+        let prompt = `Format the following ${field.label} according to the formatting guidelines:\n\nCurrent ${field.label}:\n${currentValue}`;
 
         if (aiInstructions?.[formatKey]) {
-          prompt += `\n\nFormatbeispiel:\n${aiInstructions[formatKey]}`;
+          prompt += `\n\nFormat Example:\n${aiInstructions[formatKey]}`;
         }
         if (aiInstructions?.[instructionsTextKey]) {
-          prompt += `\n\nFormatierungsanweisungen:\n${aiInstructions[instructionsTextKey]}`;
+          prompt += `\n\nFormatting Instructions:\n${aiInstructions[instructionsTextKey]}`;
         }
 
-        prompt += `\n\nBehalte den Inhalt bei, formatiere aber gemäß den Richtlinien. Gib nur den formatierten Text zurück.`;
+        prompt += `\n\nKeep the content but format according to the guidelines. Return only the formatted text. Output the result in the main language of the content.`;
         formattedContent = await aiService.generateProductDescription(currentValue, prompt);
       }
 
