@@ -210,7 +210,7 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
       const changedFields: any = {};
       changedFields[fieldType] = sourceText;
 
-      const translations = await translationService.translateProduct(changedFields, [targetLocale], aiInstructions, contentConfig.contentType);
+      const translations = await translationService.translateProduct(changedFields, [targetLocale], contentConfig.contentType);
       const translatedValue = translations[targetLocale]?.[fieldType] || "";
 
       return json({ success: true, translatedValue, fieldType, targetLocale });
@@ -247,7 +247,6 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
         translationService,
         db,
         targetLocales: targetLocalesStr ? JSON.parse(targetLocalesStr) : undefined,
-        aiInstructions,
         contentType: contentConfig.contentType,
       });
 
@@ -281,7 +280,6 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
         translationService,
         db,
         targetLocales: targetLocalesStr ? JSON.parse(targetLocalesStr) : undefined,
-        aiInstructions,
         contentType: contentConfig.contentType,
       });
 

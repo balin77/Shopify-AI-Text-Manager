@@ -281,7 +281,6 @@ Antworte im folgenden JSON-Format:
   async translateFields(
     fields: Record<string, string>,
     targetLocales: string[],
-    aiInstructions?: any,
     contentType: string = 'product'
   ): Promise<Record<string, Record<string, string>>> {
     // Sanitize all field values
@@ -326,38 +325,6 @@ Antworte im folgenden JSON-Format:
       }
     }
 
-    // Build AI instructions section if provided
-    let aiInstructionsText = '';
-    if (aiInstructions) {
-      const instructionsPrefix = contentType === 'product' ? 'product' :
-                                 contentType === 'collection' ? 'collection' :
-                                 contentType === 'blog' ? 'blog' :
-                                 contentType === 'page' ? 'page' :
-                                 contentType === 'policy' ? 'policy' : 'product';
-
-      const fieldInstructionsMap: Record<string, string> = {
-        title: `${instructionsPrefix}TitleInstructions`,
-        description: `${instructionsPrefix}DescriptionInstructions`,
-        handle: `${instructionsPrefix}HandleInstructions`,
-        seoTitle: `${instructionsPrefix}SeoTitleInstructions`,
-        metaDescription: `${instructionsPrefix}MetaDescInstructions`,
-        body: `${instructionsPrefix}DescriptionInstructions`,
-        body_html: `${instructionsPrefix}DescriptionInstructions`,
-      };
-
-      const instructionsForFields: string[] = [];
-      for (const fieldKey of Object.keys(fields)) {
-        const instructionKey = fieldInstructionsMap[fieldKey];
-        if (instructionKey && aiInstructions[instructionKey]) {
-          instructionsForFields.push(`\n${fieldNames[fieldKey] || fieldKey}:\n${aiInstructions[instructionKey]}`);
-        }
-      }
-
-      if (instructionsForFields.length > 0) {
-        aiInstructionsText = `\n\nBitte beachte diese spezifischen Anweisungen für jedes Feld:${instructionsForFields.join('\n')}`;
-      }
-    }
-
     const prompt = `Übersetze diese ${contentType === 'product' ? 'Produkt' : contentType === 'collection' ? 'Sammlungs' : contentType === 'blog' ? 'Blog' : contentType === 'page' ? 'Seiten' : contentType === 'policy' ? 'Richtlinien' : 'Produkt'}felder von Deutsch in ${targetLanguages}.
 
 ${fieldsText}
@@ -366,7 +333,7 @@ Achte darauf, dass:
 - HTML-Tags beibehalten werden
 - Die Zeichenlängen ähnlich bleiben
 - Die Übersetzungen natürlich klingen
-- Bei URL-Slugs (handle) keine Sonderzeichen verwendet werden${aiInstructionsText}
+- Bei URL-Slugs (handle) keine Sonderzeichen verwendet werden
 
 Antworte im JSON-Format:
 ${JSON.stringify(jsonStructure, null, 2)}`;

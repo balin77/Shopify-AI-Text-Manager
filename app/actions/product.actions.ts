@@ -511,7 +511,7 @@ async function handleTranslateField(
       data: { status: "queued", progress: 10 },
     });
 
-    const translations = await translationService.translateProduct(changedFields, [targetLocale], aiInstructions, 'product');
+    const translations = await translationService.translateProduct(changedFields, [targetLocale], 'product');
     const translatedValue = translations[targetLocale]?.[fieldType] || "";
 
     await db.task.update({
@@ -633,7 +633,7 @@ async function handleTranslateFieldToAllLocales(
       try {
         console.log(`[TranslateFieldToAllLocales] Translating ${fieldType} to ${locale}`);
 
-        const localeTranslations = await translationService.translateProduct(changedFields, [locale], aiInstructions, 'product');
+        const localeTranslations = await translationService.translateProduct(changedFields, [locale], 'product');
         const translatedValue = localeTranslations[locale]?.[fieldType] || "";
 
         if (!translatedValue) {
@@ -761,7 +761,7 @@ async function handleTranslateSuggestion(
     const changedFields: any = {};
     changedFields[fieldType] = suggestion;
 
-    const translations = await translationService.translateProduct(changedFields, undefined, aiInstructions, 'product');
+    const translations = await translationService.translateProduct(changedFields, undefined, 'product');
 
     return json({ success: true, translations, fieldType });
   } catch (error: any) {
@@ -880,7 +880,7 @@ async function handleTranslateAll(
         console.log(`[TranslateAll] Starting translation for locale: ${locale}`);
 
         // Translate to this specific locale
-        const localeTranslations = await translationService.translateProduct(changedFields, [locale], aiInstructions, 'product');
+        const localeTranslations = await translationService.translateProduct(changedFields, [locale], 'product');
         console.log(`[TranslateAll] Translation response for ${locale}:`, JSON.stringify(localeTranslations).substring(0, 200));
 
         const fields = localeTranslations[locale];

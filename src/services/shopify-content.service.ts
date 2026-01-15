@@ -275,10 +275,9 @@ export class ShopifyContentService {
     translationService: any;
     db: any;
     targetLocales?: string[];
-    aiInstructions?: any;
     contentType?: string;
   }) {
-    const { resourceId, resourceType, fields, translationService, db, targetLocales: customTargetLocales, aiInstructions, contentType } = params;
+    const { resourceId, resourceType, fields, translationService, db, targetLocales: customTargetLocales, contentType } = params;
 
     // Get target locales (use custom list if provided, otherwise all published locales)
     let targetLocales: string[];
@@ -296,7 +295,7 @@ export class ShopifyContentService {
     // Translate to all target locales
     for (const locale of targetLocales) {
       try {
-        const localeTranslations = await translationService.translateProduct(fields, [locale], aiInstructions, contentType);
+        const localeTranslations = await translationService.translateProduct(fields, [locale], contentType);
         const translatedFields = localeTranslations[locale];
 
         if (translatedFields) {

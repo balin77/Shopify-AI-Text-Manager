@@ -11,7 +11,10 @@
       "Bash(git log:*)",
       "Bash(npm run migrate:*)",
       "Bash(npx prisma generate:*)",
-      "Bash(npm install)"
+      "Bash(npm install)",
+      "Bash(git checkout:*)",
+      "Bash(git stash:*)",
+      "Bash(npx prisma studio)"
     ],
     "deny": [],
     "ask": []
