@@ -55,3 +55,9 @@ export type ContentItem =
   | ShopifyProduct;
 
 export type ContentType = 'pages' | 'blogs' | 'collections' | 'policies' | 'products';
+
+export interface ShopLocale {
+  locale: string;
+  primary: boolean;
+  name?: string;
+}

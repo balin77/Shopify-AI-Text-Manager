@@ -3,8 +3,8 @@
  * Used by: app.collections.tsx, app.blog.tsx, app.pages.tsx, app.policies.tsx
  */
 
-import { useState, useEffect, useRef } from "react";
-import type { TranslatableItem, ContentType } from "~/types/contentEditor.types";
+import { useState, useEffect, useRef, useMemo } from "react";
+import type { TranslatableItem, ContentType, ShopLocale } from "~/types/contentEditor.types";
 import {
   SHOPIFY_TRANSLATION_KEYS,
   CONTENT_TYPE_DESCRIPTION_KEY,
@@ -45,7 +45,7 @@ export interface NavigationState {
 /**
  * Get field value from item, supporting nested paths (e.g., 'seo.title')
  */
-function getFieldValue(item: TranslatableItem | null | undefined, fieldPath: string): string {
+function getFieldValue(item: TranslatableItem | null, fieldPath: string): string {
   if (!item) return '';
 
   const parts = fieldPath.split('.');
@@ -72,7 +72,7 @@ function isFieldEmpty(value: string): boolean {
  * Check if item has any missing required fields
  */
 function hasAnyFieldMissing(
-  item: TranslatableItem | null | undefined,
+  item: TranslatableItem | null,
   fields: readonly string[]
 ): boolean {
   if (!item) return false;
@@ -87,7 +87,7 @@ function hasAnyFieldMissing(
  * Check if primary locale has content for a specific field
  */
 function primaryHasFieldContent(
-  item: TranslatableItem | null | undefined,
+  item: TranslatableItem | null,
   field: string,
   contentType: ContentType
 ): boolean {
@@ -112,7 +112,7 @@ function primaryHasFieldContent(
  * Check if a specific locale has a translation for a field
  */
 function hasTranslationForField(
-  item: TranslatableItem | null | undefined,
+  item: TranslatableItem | null,
   field: string,
   locale: string
 ): boolean {
@@ -178,7 +178,7 @@ function safeScrollIntoView(element: HTMLElement | null): void {
  * Get translated value from translations array
  */
 export function getTranslatedValue(
-  item: TranslatableItem | null | undefined,
+  item: TranslatableItem | null,
   key: string,
   locale: string,
   fallback: string,
@@ -249,7 +249,7 @@ export function useNavigationGuard() {
  * Track changes in editable fields
  */
 export function useChangeTracking(
-  selectedItem: TranslatableItem | null | undefined,
+  selectedItem: TranslatableItem | null,
   currentLanguage: string,
   primaryLocale: string,
   editableFields: {
@@ -317,7 +317,7 @@ export function useChangeTracking(
  * Load item data when item or language changes
  */
 export function useItemDataLoader(
-  selectedItem: TranslatableItem | null | undefined,
+  selectedItem: TranslatableItem | null,
   currentLanguage: string,
   primaryLocale: string,
   contentType: ContentType,
@@ -388,7 +388,7 @@ export function useItemDataLoader(
  * Check if field is translated
  */
 export function isFieldTranslated(
-  selectedItem: TranslatableItem | null | undefined,
+  selectedItem: TranslatableItem | null,
   key: string,
   currentLanguage: string,
   primaryLocale: string
@@ -408,7 +408,7 @@ export function isFieldTranslated(
  * Check if primary locale has any missing content
  */
 export function hasPrimaryContentMissing(
-  selectedItem: TranslatableItem | null | undefined,
+  selectedItem: TranslatableItem | null,
   contentType: ContentType
 ): boolean {
   if (!selectedItem) return false;
@@ -422,7 +422,7 @@ export function hasPrimaryContentMissing(
  * Only marks a field as missing if the primary locale has content for that field
  */
 export function hasLocaleMissingTranslations(
-  selectedItem: TranslatableItem | null | undefined,
+  selectedItem: TranslatableItem | null,
   locale: string,
   primaryLocale: string,
   contentType: ContentType
@@ -446,16 +446,16 @@ export function hasLocaleMissingTranslations(
  * Check if any foreign locale has missing translations
  */
 export function hasMissingTranslations(
-  selectedItem: TranslatableItem | null | undefined,
-  shopLocales: any[],
+  selectedItem: TranslatableItem | null,
+  shopLocales: ShopLocale[],
   contentType: ContentType
 ): boolean {
   if (!selectedItem) return false;
 
-  const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "de";
-  const foreignLocales = shopLocales.filter((l: any) => !l.primary);
+  const primaryLocale = shopLocales.find(l => l.primary)?.locale || "de";
+  const foreignLocales = shopLocales.filter(l => !l.primary);
 
-  return foreignLocales.some((locale: any) =>
+  return foreignLocales.some(locale =>
     hasLocaleMissingTranslations(selectedItem, locale.locale, primaryLocale, contentType)
   );
 }
@@ -467,9 +467,9 @@ export function hasMissingTranslations(
  * 2. At least one foreign locale is missing translation for this field
  */
 export function hasFieldMissingTranslations(
-  selectedItem: TranslatableItem | null | undefined,
+  selectedItem: TranslatableItem | null,
   fieldKey: string,
-  shopLocales: any[],
+  shopLocales: ShopLocale[],
   primaryLocale: string,
   contentType: ContentType
 ): boolean {
@@ -484,9 +484,9 @@ export function hasFieldMissingTranslations(
   }
 
   // Check if any foreign locale is missing this specific translation
-  const foreignLocales = shopLocales.filter((l: any) => !l.primary);
+  const foreignLocales = shopLocales.filter(l => !l.primary);
 
-  return foreignLocales.some((locale: any) => {
+  return foreignLocales.some(locale => {
     return !hasTranslationForField(selectedItem, translationKey, locale.locale);
   });
 }
@@ -494,10 +494,11 @@ export function hasFieldMissingTranslations(
 /**
  * Get button style for locale navigation
  * Shows pulsing border animation when translations are missing
+ * @deprecated Use useLocaleButtonStyle hook instead for better performance
  */
 export function getLocaleButtonStyle(
-  locale: any,
-  selectedItem: TranslatableItem | null | undefined,
+  locale: ShopLocale,
+  selectedItem: TranslatableItem | null,
   primaryLocale: string,
   contentType: ContentType
 ): React.CSSProperties {
@@ -521,6 +522,41 @@ export function getLocaleButtonStyle(
   }
 
   return {};
+}
+
+/**
+ * Hook: Get button style for locale navigation with memoization
+ * Shows pulsing border animation when translations are missing
+ * This hook provides better performance than getLocaleButtonStyle by memoizing the result
+ */
+export function useLocaleButtonStyle(
+  locale: ShopLocale,
+  selectedItem: TranslatableItem | null,
+  primaryLocale: string,
+  contentType: ContentType
+): React.CSSProperties {
+  return useMemo(() => {
+    const primaryContentMissing = locale.primary && hasPrimaryContentMissing(selectedItem, contentType);
+    const foreignTranslationMissing = !locale.primary && hasLocaleMissingTranslations(selectedItem, locale.locale, primaryLocale, contentType);
+
+    if (primaryContentMissing) {
+      // Pulsing border animation (orange) when primary content is missing
+      return {
+        animation: `pulse ${TIMING.HIGHLIGHT_DURATION_MS}ms ease-in-out infinite`,
+        borderRadius: "8px",
+      };
+    }
+
+    if (foreignTranslationMissing) {
+      // Pulsing border animation (blue) when translations are missing
+      return {
+        animation: `pulseBlue ${TIMING.HIGHLIGHT_DURATION_MS}ms ease-in-out infinite`,
+        borderRadius: "8px",
+      };
+    }
+
+    return {};
+  }, [locale, selectedItem, primaryLocale, contentType]);
 }
 
 /**
