@@ -370,21 +370,50 @@ function FieldRenderer(props: FieldRendererProps) {
 
   // Image Gallery Field
   if (field.type === "image-gallery") {
-    // Only render if images array exists (Products have images, Collections don't)
-    if (!selectedItem || !selectedItem.images) {
+    // Only render if images array exists and has items
+    if (!selectedItem || !selectedItem.images || selectedItem.images.length === 0) {
       return null;
     }
 
+    // For now, render a simplified read-only image gallery
+    // TODO: Implement full image gallery functionality with alt-text editing
     return (
-      <ImageGalleryField
-        images={selectedItem.images || []}
-        currentLanguage={currentLanguage}
-        primaryLocale={primaryLocale}
-        shopLocales={shopLocales}
-        productId={selectedItem.id}
-        isPrimaryLocale={isPrimaryLocale}
-        t={t}
-      />
+      <BlockStack gap="300">
+        <Text as="h3" variant="headingMd">
+          {field.label}
+        </Text>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))",
+            gap: "12px",
+          }}
+        >
+          {selectedItem.images.map((image: any, index: number) => (
+            <div
+              key={index}
+              style={{
+                position: "relative",
+                aspectRatio: "1",
+                border: "2px solid #e1e3e5",
+                borderRadius: "8px",
+                overflow: "hidden",
+                backgroundColor: "#f6f6f7",
+              }}
+            >
+              <img
+                src={image.url}
+                alt={image.altText || `Product image ${index + 1}`}
+                style={{
+                  width: "100%",
+                  height: "100%",
+                  objectFit: "cover",
+                }}
+              />
+            </div>
+          ))}
+        </div>
+      </BlockStack>
     );
   }
 
