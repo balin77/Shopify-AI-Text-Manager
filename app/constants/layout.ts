@@ -17,7 +17,7 @@
  * Higher offset = smaller content area (less scrolling needed)
  * Lower offset = larger content area (more scrolling needed)
  */
-export const CONTENT_MAX_HEIGHT = "calc(100vh - 250px)";
+export const CONTENT_MAX_HEIGHT = "calc(100vh - 300px)";
 
 /**
  * Legacy value (for reference): "calc(100vh - 200px)"
