@@ -290,7 +290,7 @@ export function MainNavigation() {
             >
               <Spinner size="small" />
               <Text as="span" variant="bodySm" tone="subdued">
-                Lädt...
+                {t.common.loading}
               </Text>
             </div>
           )}
