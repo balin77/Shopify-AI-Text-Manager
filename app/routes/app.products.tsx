@@ -5,11 +5,13 @@ import { Page } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
 import { SeoSidebar } from "../components/SeoSidebar";
-import { ProductList } from "../components/products/ProductList";
+import { UnifiedItemList } from "../components/unified/UnifiedItemList";
+import type { UnifiedItem } from "../components/unified/UnifiedItemList";
 import { ProductEditor } from "../components/products/ProductEditor";
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { useNavigationHeight } from "../contexts/NavigationHeightContext";
+import { usePlan } from "../contexts/PlanContext";
 import { useProductFields } from "../hooks/useProductFields";
 import { useAISuggestions } from "../hooks/useAISuggestions";
 import { handleProductActions } from "../actions/product.actions";
@@ -301,12 +303,13 @@ export const action = async (args: ActionFunctionArgs) => {
 };
 
 export default function Products() {
-  const { products, shop, shopLocales, primaryLocale, error, aiSettings } = useLoaderData<typeof loader>();
+  const { products, shop, shopLocales, primaryLocale, error, aiSettings, plan, maxProducts } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
   const { t, locale } = useI18n();
   const { showInfoBox } = useInfoBox();
   const { mainNavHeight } = useNavigationHeight();
+  const { getNextPlanUpgrade } = usePlan();
 
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
   const [currentLanguage, setCurrentLanguage] = useState(primaryLocale);
@@ -952,20 +955,36 @@ export default function Products() {
       `}</style>
       <MainNavigation />
       <div style={{ height: `calc(100vh - ${mainNavHeight}px)`, display: "flex", gap: "1rem", padding: "1rem", overflow: "hidden" }}>
-        {/* Left: Product List (Fixed) */}
-        <div style={{ width: "350px", flexShrink: 0, display: "flex", flexDirection: "column", height: "100%" }}>
-          <ProductList
-            products={(products || []) as any}
-            selectedProductId={selectedProductId}
-            onProductSelect={setSelectedProductId}
-            searchPlaceholder={t.products.search}
-            countLabel={t.products.count}
-            resourceName={t.products.resourceName}
-            paginationOf={t.products.pagination.of}
-            paginationPrevious={t.products.pagination.previous}
-            paginationNext={t.products.pagination.next}
-          />
-        </div>
+        {/* Left: Unified Item List (with search & pagination) */}
+        <UnifiedItemList
+          items={(products || []).map((p: any) => ({
+            id: p.id,
+            title: p.title,
+            status: p.status,
+            image: p.featuredImage,
+            ...p,
+          } as UnifiedItem))}
+          selectedItemId={selectedProductId}
+          onItemSelect={setSelectedProductId}
+          resourceName={t.products.resourceName}
+          showSearch={true}
+          showPagination={true}
+          showStatusStripe={true}
+          showThumbnails={true}
+          itemsPerPage={10}
+          planLimit={{
+            isAtLimit: products.length >= maxProducts && maxProducts !== Infinity,
+            maxItems: maxProducts,
+            currentPlan: plan,
+            nextPlan: getNextPlanUpgrade() || undefined,
+          }}
+          t={{
+            searchPlaceholder: t.products.search,
+            paginationOf: t.products.pagination.of,
+            paginationPrevious: t.products.pagination.previous,
+            paginationNext: t.products.pagination.next,
+          }}
+        />
 
         {/* Middle: Product Editor */}
         <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>

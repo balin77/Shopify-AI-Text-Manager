@@ -30,8 +30,10 @@ export function MainNavigation() {
   const productCount = productsRouteData?.productCount;
   const maxProducts = getMaxProducts();
 
-  // Get running task count from dedicated API endpoint
-  const runningTaskCount = tasksFetcher.data?.count || 0;
+  // Get running task count from dedicated API endpoint (with error handling)
+  const runningTaskCount = (tasksFetcher.data?.count !== undefined && !isNaN(tasksFetcher.data.count))
+    ? tasksFetcher.data.count
+    : 0;
 
   // Fetch running tasks count with adaptive polling and error handling
   useEffect(() => {
@@ -67,8 +69,11 @@ export function MainNavigation() {
 
   // Monitor fetcher state and implement exponential backoff on errors
   useEffect(() => {
-    // Check if fetcher encountered an error (including 429)
-    if (tasksFetcher.state === "idle" && tasksFetcher.data === undefined) {
+    // Check if fetcher encountered an error (including 429, 502, etc.)
+    const hasError = tasksFetcher.state === "idle" &&
+      (tasksFetcher.data === undefined || (tasksFetcher.data as any)?.error);
+
+    if (hasError) {
       // Likely an error occurred
       errorCountRef.current += 1;
 
@@ -76,10 +81,10 @@ export function MainNavigation() {
       const newInterval = Math.min(pollIntervalRef.current * 2, 60000);
 
       if (newInterval !== pollIntervalRef.current) {
-        console.warn(`⚠️ [MainNavigation] Rate limit or error detected. Increasing poll interval to ${newInterval}ms`);
+        console.warn(`⚠️ [MainNavigation] Error detected (502/429/etc). Increasing poll interval to ${newInterval}ms`);
         pollIntervalRef.current = newInterval;
       }
-    } else if (tasksFetcher.state === "idle" && tasksFetcher.data !== undefined) {
+    } else if (tasksFetcher.state === "idle" && tasksFetcher.data !== undefined && !(tasksFetcher.data as any)?.error) {
       // Successful fetch - reset error count and gradually reduce interval
       if (errorCountRef.current > 0) {
         errorCountRef.current = 0;

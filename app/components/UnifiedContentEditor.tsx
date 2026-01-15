@@ -5,15 +5,18 @@
  * Based on the products page structure with all bug fixes included.
  */
 
-import { Page, Card, Text, BlockStack, InlineStack, ResourceList, ResourceItem } from "@shopify/polaris";
+import { Page, Card, Text, BlockStack, InlineStack } from "@shopify/polaris";
 import { AIEditableField } from "./AIEditableField";
 import { AIEditableHTMLField } from "./AIEditableHTMLField";
-import { LocaleNavigationButtons } from "./LocaleNavigationButtons";
+import { UnifiedItemList } from "./unified/UnifiedItemList";
+import { UnifiedLanguageBar } from "./unified/UnifiedLanguageBar";
 import { SaveDiscardButtons } from "./SaveDiscardButtons";
 import { SeoSidebar } from "./SeoSidebar";
 import { useNavigationHeight } from "../contexts/NavigationHeightContext";
+import { usePlan } from "../contexts/PlanContext";
 import { contentEditorStyles } from "../utils/contentEditor.utils";
 import type { ContentEditorConfig, UseContentEditorReturn, FieldDefinition } from "../types/content-editor.types";
+import type { UnifiedItem } from "./unified/UnifiedItemList";
 
 interface UnifiedContentEditorProps {
   /** Configuration for this content type */
@@ -62,20 +65,37 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   } = props;
 
   const { state, handlers, selectedItem, navigationGuard, helpers } = editor;
+  const { getMaxProducts } = usePlan();
 
-  // Default list item renderer
-  const defaultRenderListItem = (item: any, isSelected: boolean) => {
-    const title = config.getPrimaryField ? config.getPrimaryField(item) : item.title;
-    const subtitle = config.getSubtitle ? config.getSubtitle(item) : null;
+  // Transform items to UnifiedItem format
+  const unifiedItems: UnifiedItem[] = items.map((item) => ({
+    id: item.id,
+    title: config.getPrimaryField ? config.getPrimaryField(item) : item.title,
+    subtitle: config.getSubtitle ? config.getSubtitle(item) : undefined,
+    status: item.status,
+    image: item.featuredImage || item.image,
+    ...item,
+  }));
 
+  // Plan limit configuration
+  const maxItems = getMaxProducts(); // This works for all content types
+  const planLimit = {
+    isAtLimit: items.length >= maxItems && maxItems !== Infinity,
+    maxItems,
+    currentPlan: "current", // TODO: Get from plan context
+    nextPlan: "Pro", // TODO: Get from plan context
+  };
+
+  // Default list item renderer (if custom renderListItem not provided)
+  const defaultRenderListItem = (item: UnifiedItem, isSelected: boolean, isHovered: boolean) => {
     return (
       <BlockStack gap="100">
         <Text as="p" variant="bodyMd" fontWeight={isSelected ? "bold" : "regular"}>
-          {title}
+          {item.title}
         </Text>
-        {subtitle && (
+        {item.subtitle && (
           <Text as="p" variant="bodySm" tone="subdued">
-            {subtitle}
+            {item.subtitle}
           </Text>
         )}
       </BlockStack>
@@ -97,7 +117,6 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     );
   };
 
-  const listItemRenderer = renderListItem || defaultRenderListItem;
   const sidebarRenderer = renderSidebar || defaultRenderSidebar;
   const { getTotalNavHeight } = useNavigationHeight();
 
@@ -114,72 +133,60 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           overflow: "hidden",
         }}
       >
-        {/* Left Sidebar - Item List (Fixed) */}
-        <div style={{ width: "350px", flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden", height: "100%" }}>
-          <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
-            <Card padding="0">
-              <div style={{ padding: "1rem", borderBottom: "1px solid #e1e3e5", flexShrink: 0 }}>
-                <Text as="h2" variant="headingMd">
-                  {config.displayName} ({items.length})
-                </Text>
-              </div>
-              <div style={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
-                {items.length > 0 ? (
-                  <ResourceList
-                    resourceName={{
-                      singular: config.displayNameSingular,
-                      plural: config.displayName,
-                    }}
-                    items={items}
-                    renderItem={(item: any) => {
-                      const { id } = item;
-                      const isSelected = state.selectedItemId === id;
-
-                      return (
-                        <ResourceItem
-                          id={id}
-                          onClick={() => handlers.handleItemSelect(id)}
-                        >
-                          {listItemRenderer(item, isSelected)}
-                        </ResourceItem>
-                      );
-                    }}
-                  />
-                ) : (
-                  <div style={{ padding: "2rem", textAlign: "center" }}>
-                    <Text as="p" variant="bodySm" tone="subdued">
-                      {t.content?.noEntries || "No entries found"}
-                    </Text>
-                  </div>
-                )}
-              </div>
-            </Card>
-          </div>
-        </div>
+        {/* Left Sidebar - Unified Item List */}
+        <UnifiedItemList
+          items={unifiedItems}
+          selectedItemId={state.selectedItemId}
+          onItemSelect={handlers.handleItemSelect}
+          resourceName={{
+            singular: config.displayNameSingular,
+            plural: config.displayName,
+          }}
+          renderItem={renderListItem}
+          showSearch={true}
+          showPagination={true}
+          showStatusStripe={false}
+          showThumbnails={false}
+          planLimit={planLimit}
+          t={{
+            searchPlaceholder: t.content?.searchPlaceholder,
+            paginationOf: t.content?.paginationOf || "of",
+            paginationPrevious: t.content?.paginationPrevious || "Previous",
+            paginationNext: t.content?.paginationNext || "Next",
+          }}
+        />
 
         {/* Middle: Content Editor */}
         <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
           {selectedItem ? (
             <>
-              {/* Fixed Header with Language Selector and Action Buttons */}
+              {/* Fixed Header with Language Bar and Action Buttons */}
               <Card padding="400">
                 <BlockStack gap="300">
-                  {/* Language Selector, Save/Reload Buttons on same line */}
-                  <InlineStack align="space-between" blockAlign="center" gap="400">
-                    <div style={{ flex: 1 }}>
-                      <LocaleNavigationButtons
-                        shopLocales={shopLocales}
-                        currentLanguage={state.currentLanguage}
-                        primaryLocaleSuffix={t.content?.primaryLanguageSuffix || "Primary"}
-                        selectedItem={selectedItem}
-                        primaryLocale={primaryLocale}
-                        contentType={config.contentType}
-                        hasChanges={state.hasChanges}
-                        onLanguageChange={handlers.handleLanguageChange}
-                        enabledLanguages={state.enabledLanguages}
-                        onToggleLanguage={handlers.handleToggleLanguage}
-                      />
-                    </div>
+                  {/* Unified Language Bar with Translate All */}
+                  <UnifiedLanguageBar
+                    shopLocales={shopLocales}
+                    currentLanguage={state.currentLanguage}
+                    primaryLocale={primaryLocale}
+                    selectedItem={selectedItem}
+                    contentType={config.contentType}
+                    hasChanges={state.hasChanges}
+                    onLanguageChange={handlers.handleLanguageChange}
+                    enabledLanguages={state.enabledLanguages}
+                    onToggleLanguage={handlers.handleToggleLanguage}
+                    onTranslateAll={handlers.handleTranslateAll}
+                    isTranslating={fetcherState !== "idle" && fetcherFormData?.get("action") === "translateAll"}
+                    showTranslateAll={true}
+                    showReloadButton={true}
+                    t={{
+                      primaryLocaleSuffix: t.content?.primaryLanguageSuffix || "Primary",
+                      translateAll: t.content?.translateAll || "🌍 Translate All",
+                      translating: t.content?.translating || "Translating...",
+                    }}
+                  />
+
+                  {/* Save/Discard Buttons */}
+                  <InlineStack align="end" blockAlign="center">
                     <SaveDiscardButtons
                       hasChanges={state.hasChanges}
                       onSave={handlers.handleSave}

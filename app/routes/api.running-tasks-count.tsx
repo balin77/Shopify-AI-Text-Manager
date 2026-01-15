@@ -18,10 +18,26 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         },
       });
 
-      return json({ count: runningTaskCount });
-    } catch (error: any) {
-      console.error("Error fetching running tasks count:", error);
-      return json({ count: 0 }, { status: 500 });
+      return json(
+        { count: runningTaskCount },
+        {
+          headers: {
+            "Content-Type": "application/json",
+            "Cache-Control": "no-store",
+          },
+        }
+      );
+    } catch (dbError: any) {
+      console.error("Database error in running-tasks-count:", dbError);
+      return json(
+        { count: 0, error: "Database error" },
+        {
+          status: 500,
+          headers: {
+            "Content-Type": "application/json",
+          },
+        }
+      );
     }
   } catch (authError: any) {
     // Handle authentication errors (including rate limiting)
