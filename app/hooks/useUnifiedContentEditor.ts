@@ -424,7 +424,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       return;
     }
 
-    const contextTitle = getItemFieldValue(selectedItem, 'title', primaryLocale);
+    const contextTitle = getItemFieldValue(selectedItem, 'title', primaryLocale) || selectedItem.id || "";
 
     fetcher.submit(
       {
@@ -512,7 +512,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     }
 
     // Submit translation to all enabled locales
-    const contextTitle = getItemFieldValue(selectedItem!, 'title', primaryLocale);
+    const contextTitle = getItemFieldValue(selectedItem!, 'title', primaryLocale) || selectedItem!.id || "";
 
     fetcher.submit({
       action: "translateFieldToAllLocales",
