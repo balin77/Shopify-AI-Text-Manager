@@ -281,7 +281,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                 <InlineStack gap="400">
                   <div style={{ flex: 1 }}>
                     <TextField
-                      label="Max Tokens / Minute"
+                      label={t.settings.maxTokensPerMinute}
                       value={openaiMaxTokensPerMinute}
                       onChange={setOpenaiMaxTokensPerMinute}
                       type="number"
@@ -290,7 +290,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                   </div>
                   <div style={{ flex: 1 }}>
                     <TextField
-                      label="Max Requests / Minute"
+                      label={t.settings.maxRequestsPerMinute}
                       value={openaiMaxRequestsPerMinute}
                       onChange={setOpenaiMaxRequestsPerMinute}
                       type="number"
@@ -344,7 +344,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                 <InlineStack gap="400">
                   <div style={{ flex: 1 }}>
                     <TextField
-                      label="Max Tokens / Minute"
+                      label={t.settings.maxTokensPerMinute}
                       value={geminiMaxTokensPerMinute}
                       onChange={setGeminiMaxTokensPerMinute}
                       type="number"
@@ -353,7 +353,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                   </div>
                   <div style={{ flex: 1 }}>
                     <TextField
-                      label="Max Requests / Minute"
+                      label={t.settings.maxRequestsPerMinute}
                       value={geminiMaxRequestsPerMinute}
                       onChange={setGeminiMaxRequestsPerMinute}
                       type="number"
@@ -407,7 +407,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                 <InlineStack gap="400">
                   <div style={{ flex: 1 }}>
                     <TextField
-                      label="Max Tokens / Minute"
+                      label={t.settings.maxTokensPerMinute}
                       value={claudeMaxTokensPerMinute}
                       onChange={setClaudeMaxTokensPerMinute}
                       type="number"
@@ -416,7 +416,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                   </div>
                   <div style={{ flex: 1 }}>
                     <TextField
-                      label="Max Requests / Minute"
+                      label={t.settings.maxRequestsPerMinute}
                       value={claudeMaxRequestsPerMinute}
                       onChange={setClaudeMaxRequestsPerMinute}
                       type="number"
@@ -470,7 +470,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                 <InlineStack gap="400">
                   <div style={{ flex: 1 }}>
                     <TextField
-                      label="Max Tokens / Minute"
+                      label={t.settings.maxTokensPerMinute}
                       value={hfMaxTokensPerMinute}
                       onChange={setHfMaxTokensPerMinute}
                       type="number"
@@ -479,7 +479,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                   </div>
                   <div style={{ flex: 1 }}>
                     <TextField
-                      label="Max Requests / Minute"
+                      label={t.settings.maxRequestsPerMinute}
                       value={hfMaxRequestsPerMinute}
                       onChange={setHfMaxRequestsPerMinute}
                       type="number"
@@ -518,7 +518,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                   }
                   helpText={
                     <span>
-                      Get your API key from{" "}
+                      {t.settings.grokHelp}{" "}
                       <a
                         href="https://console.x.ai"
                         target="_blank"
@@ -533,7 +533,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                 <InlineStack gap="400">
                   <div style={{ flex: 1 }}>
                     <TextField
-                      label="Max Tokens / Minute"
+                      label={t.settings.maxTokensPerMinute}
                       value={grokMaxTokensPerMinute}
                       onChange={setGrokMaxTokensPerMinute}
                       type="number"
@@ -542,7 +542,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                   </div>
                   <div style={{ flex: 1 }}>
                     <TextField
-                      label="Max Requests / Minute"
+                      label={t.settings.maxRequestsPerMinute}
                       value={grokMaxRequestsPerMinute}
                       onChange={setGrokMaxRequestsPerMinute}
                       type="number"
@@ -581,7 +581,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                   }
                   helpText={
                     <span>
-                      Get your API key from{" "}
+                      {t.settings.deepseekHelp}{" "}
                       <a
                         href="https://platform.deepseek.com"
                         target="_blank"
@@ -596,7 +596,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                 <InlineStack gap="400">
                   <div style={{ flex: 1 }}>
                     <TextField
-                      label="Max Tokens / Minute"
+                      label={t.settings.maxTokensPerMinute}
                       value={deepseekMaxTokensPerMinute}
                       onChange={setDeepseekMaxTokensPerMinute}
                       type="number"
@@ -605,7 +605,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                   </div>
                   <div style={{ flex: 1 }}>
                     <TextField
-                      label="Max Requests / Minute"
+                      label={t.settings.maxRequestsPerMinute}
                       value={deepseekMaxRequestsPerMinute}
                       onChange={setDeepseekMaxRequestsPerMinute}
                       type="number"
