@@ -4,7 +4,9 @@
  * This file is imported directly by server.js and not processed by Remix build
  */
 
-import { db as prisma } from "./app/db.server.ts";
+import { PrismaClient } from "@prisma/client";
+
+const prisma = new PrismaClient();
 
 export class TaskCleanupService {
   static instance = null;

@@ -126,8 +126,9 @@ async function gracefulShutdown(signal) {
 
     try {
       // Close Prisma connections
-      const { db } = await import("./app/db.server.ts");
-      await db.$disconnect();
+      const { PrismaClient } = await import("@prisma/client");
+      const prisma = new PrismaClient();
+      await prisma.$disconnect();
       console.log('✅ Database connections closed');
     } catch (error) {
       console.error('Error closing database connections:', error);

@@ -126,8 +126,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       },
     });
     console.log('[SETTINGS] Created AI Instructions with defaults for shop:', session.shop);
-  } else if (!instructions.productSeoTitleInstructions) {
-    // Entry exists but is empty - populate with defaults
+  } else if (!instructions.productSeoTitleInstructions || !instructions.productTitleInstructions) {
+    // Entry exists but some fields are empty - populate with defaults (only once)
+    console.log('[SETTINGS] Detected empty AI Instructions, populating defaults...');
     instructions = await db.aIInstructions.update({
       where: { shop: session.shop },
       data: {
