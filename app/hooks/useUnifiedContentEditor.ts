@@ -143,7 +143,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             locale
           });
 
-          console.log(`[ACCEPT-AND-TRANSLATE] Updated ${fieldType} for ${locale}: ${translatedValue.substring(0, 50)}...`);
+          console.log(`[ACCEPT-AND-TRANSLATE] Updated ${fieldType} for ${locale}: ${String(translatedValue || '').substring(0, 50)}...`);
         }
 
         showInfoBox(
