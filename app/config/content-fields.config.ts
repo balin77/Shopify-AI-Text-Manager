@@ -5,6 +5,7 @@
  */
 
 import type { ContentEditorConfig } from "../types/content-editor.types";
+import { ImageGalleryField } from "../components/unified/ImageGalleryField";
 
 // ============================================================================
 // PRODUCTS
@@ -19,6 +20,17 @@ export const PRODUCTS_CONFIG: ContentEditorConfig = {
   idPrefix: "ID:",
 
   fieldDefinitions: [
+    // Product Images (custom rendering with ImageGalleryField)
+    {
+      key: "images",
+      type: "image-gallery",
+      label: "Product Images",
+      translationKey: "images", // Alt-texts are translated
+      supportsAI: true,
+      supportsTranslation: true,
+      aiInstructionsKey: "productAltText",
+      renderField: (props) => <ImageGalleryField {...props} />,
+    },
     // Title
     {
       key: "title",
