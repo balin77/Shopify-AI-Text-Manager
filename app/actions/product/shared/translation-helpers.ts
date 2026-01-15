@@ -56,7 +56,7 @@ export async function fetchTranslatableContent(
   `;
 
   const response = await gateway.graphql(QUERY_TRANSLATABLE_CONTENT, {
-    resourceId,
+    variables: { resourceId },
   });
 
   const content = response?.translatableResource?.translatableContent || [];
@@ -107,8 +107,10 @@ export async function saveTranslationToShopify(
 
   try {
     const response = await gateway.graphql(TRANSLATE_MUTATION, {
-      resourceId,
-      translations,
+      variables: {
+        resourceId,
+        translations,
+      },
     });
 
     const userErrors = response?.translationsRegister?.userErrors || [];

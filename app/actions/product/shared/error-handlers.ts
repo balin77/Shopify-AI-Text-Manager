@@ -25,7 +25,9 @@ export async function handleActionError(
     action: string;
     taskId?: string;
     productId?: string;
-    additionalInfo?: Record<string, any>;
+    provider?: string;
+    optionId?: string;
+    [key: string]: any; // Allow any additional fields
   }
 ): Promise<Response> {
   const errorMessage = error instanceof Error ? error.message : error.message;

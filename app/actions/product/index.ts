@@ -17,14 +17,22 @@ import { prepareActionContext } from "./shared/action-context";
 import {
   handleGenerateAIText,
   handleFormatAIText,
-} from "./ai-generation.actions.EXAMPLE";
-
-// TODO: Import other actions as they are migrated
-// import { handleTranslateField, handleTranslateSuggestion } from "./translation.actions";
-// import { handleTranslateAll, handleTranslateFieldToAllLocales } from "./translation-bulk.actions";
-// import { handleUpdateProduct } from "./update.actions";
-// import { handleTranslateOption } from "./options.actions";
-// import { handleGenerateAltText, handleGenerateAllAltTexts, handleTranslateAltText } from "./alt-text.actions";
+} from "./ai-generation.actions";
+import {
+  handleTranslateField,
+  handleTranslateSuggestion,
+} from "./translation.actions";
+import {
+  handleTranslateAll,
+  handleTranslateFieldToAllLocales,
+} from "./translation-bulk.actions";
+import { handleUpdateProduct } from "./update.actions";
+import { handleTranslateOption } from "./options.actions";
+import {
+  handleGenerateAltText,
+  handleGenerateAllAltTexts,
+  handleTranslateAltText,
+} from "./alt-text.actions";
 
 /**
  * Main product actions handler
@@ -71,72 +79,36 @@ export async function handleProductActions({
       case "formatAIText":
         return handleFormatAIText(context, formData, productId);
 
-      // Translation Actions (TODO: Migrate)
+      // Translation Actions
       case "translateField":
-        // TODO: return handleTranslateField(context, formData);
-        return json(
-          { success: false, error: "Action not yet migrated" },
-          { status: 501 }
-        );
+        return handleTranslateField(context, formData, productId);
 
       case "translateFieldToAllLocales":
-        // TODO: return handleTranslateFieldToAllLocales(context, formData);
-        return json(
-          { success: false, error: "Action not yet migrated" },
-          { status: 501 }
-        );
+        return handleTranslateFieldToAllLocales(context, formData, productId);
 
       case "translateSuggestion":
-        // TODO: return handleTranslateSuggestion(context, formData);
-        return json(
-          { success: false, error: "Action not yet migrated" },
-          { status: 501 }
-        );
+        return handleTranslateSuggestion(context, formData);
 
       case "translateAll":
-        // TODO: return handleTranslateAll(context, formData, productId);
-        return json(
-          { success: false, error: "Action not yet migrated" },
-          { status: 501 }
-        );
+        return handleTranslateAll(context, formData, productId);
 
-      // Update Action (TODO: Migrate)
+      // Update Action
       case "updateProduct":
-        // TODO: return handleUpdateProduct(context, formData, productId);
-        return json(
-          { success: false, error: "Action not yet migrated" },
-          { status: 501 }
-        );
+        return handleUpdateProduct(context, formData, productId);
 
-      // Options Action (TODO: Migrate)
+      // Options Action
       case "translateOption":
-        // TODO: return handleTranslateOption(context, formData);
-        return json(
-          { success: false, error: "Action not yet migrated" },
-          { status: 501 }
-        );
+        return handleTranslateOption(context, formData);
 
-      // Alt-Text Actions (TODO: Migrate)
+      // Alt-Text Actions
       case "generateAltText":
-        // TODO: return handleGenerateAltText(context, formData, productId);
-        return json(
-          { success: false, error: "Action not yet migrated" },
-          { status: 501 }
-        );
+        return handleGenerateAltText(context, formData, productId);
 
       case "generateAllAltTexts":
-        // TODO: return handleGenerateAllAltTexts(context, formData, productId);
-        return json(
-          { success: false, error: "Action not yet migrated" },
-          { status: 501 }
-        );
+        return handleGenerateAllAltTexts(context, formData, productId);
 
       case "translateAltText":
-        // TODO: return handleTranslateAltText(context, formData);
-        return json(
-          { success: false, error: "Action not yet migrated" },
-          { status: 501 }
-        );
+        return handleTranslateAltText(context, formData);
 
       // Unknown action
       default:

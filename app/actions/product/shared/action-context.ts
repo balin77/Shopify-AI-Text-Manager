@@ -8,7 +8,7 @@
 import { logger } from "~/utils/logger.server";
 import { decryptApiKey } from "~/utils/encryption.server";
 import type { Session } from "@shopify/shopify-api";
-import { AIService } from "../../../../src/services/ai.service";
+import { AIService, type AIProvider } from "../../../../src/services/ai.service";
 import { TranslationService } from "../../../../src/services/translation.service";
 import { ShopifyApiGateway } from "~/services/shopify-api-gateway.service";
 
@@ -57,7 +57,7 @@ export interface ActionContext {
   db: any;
   aiSettings: AISettings;
   aiInstructions: AIInstructions;
-  provider: string;
+  provider: AIProvider;
   config: AIConfig;
   gateway: ShopifyApiGateway;
 }
@@ -170,9 +170,9 @@ export async function prepareActionContext(
   }
 
   // Prepare provider and config
-  const provider =
-    (aiSettings?.preferredProvider as any) ||
-    process.env.AI_PROVIDER ||
+  const provider: AIProvider =
+    (aiSettings?.preferredProvider as AIProvider) ||
+    (process.env.AI_PROVIDER as AIProvider) ||
     "huggingface";
 
   const config: AIConfig = {
@@ -185,7 +185,7 @@ export async function prepareActionContext(
   };
 
   // Create Shopify API Gateway
-  const gateway = new ShopifyApiGateway(admin);
+  const gateway = new ShopifyApiGateway(admin, shop);
 
   logger.debug("Action context prepared", {
     context: "ActionContext",

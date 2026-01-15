@@ -14,7 +14,9 @@ type TaskStatus = "pending" | "queued" | "running" | "completed" | "failed";
 interface TaskCreateOptions {
   shop: string;
   type: TaskType;
+  resourceType?: string;
   resourceId: string;
+  resourceTitle?: string;
   fieldType?: string;
   targetLocale?: string;
   estimatedTokens?: number;
@@ -60,8 +62,9 @@ export async function createProductTask(
       shop: options.shop,
       type: options.type,
       status: "pending",
-      resourceType: "product",
+      resourceType: options.resourceType || "product",
       resourceId: options.resourceId,
+      resourceTitle: options.resourceTitle || null,
       fieldType: options.fieldType || null,
       targetLocale: options.targetLocale || null,
       progress: 0,

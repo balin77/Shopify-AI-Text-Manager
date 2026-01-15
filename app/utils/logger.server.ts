@@ -111,22 +111,22 @@ export const logger = winston.createLogger({
  * Context-specific loggers for common areas
  */
 export const loggers = {
-  ai: (level: 'info' | 'error' | 'debug', message: string, meta?: Record<string, any>) =>
+  ai: (level: 'info' | 'warn' | 'error' | 'debug', message: string, meta?: Record<string, any>) =>
     logger.log(level, message, { context: 'AIService', ...meta }),
 
-  queue: (level: 'info' | 'error' | 'debug', message: string, meta?: Record<string, any>) =>
+  queue: (level: 'info' | 'warn' | 'error' | 'debug', message: string, meta?: Record<string, any>) =>
     logger.log(level, message, { context: 'AIQueue', ...meta }),
 
-  product: (level: 'info' | 'error' | 'debug', message: string, meta?: Record<string, any>) =>
+  product: (level: 'info' | 'warn' | 'error' | 'debug', message: string, meta?: Record<string, any>) =>
     logger.log(level, message, { context: 'ProductSync', ...meta }),
 
-  translation: (level: 'info' | 'error' | 'debug', message: string, meta?: Record<string, any>) =>
+  translation: (level: 'info' | 'warn' | 'error' | 'debug', message: string, meta?: Record<string, any>) =>
     logger.log(level, message, { context: 'Translation', ...meta }),
 
-  webhook: (level: 'info' | 'error' | 'debug', message: string, meta?: Record<string, any>) =>
+  webhook: (level: 'info' | 'warn' | 'error' | 'debug', message: string, meta?: Record<string, any>) =>
     logger.log(level, message, { context: 'Webhook', ...meta }),
 
-  auth: (level: 'info' | 'error' | 'debug', message: string, meta?: Record<string, any>) =>
+  auth: (level: 'info' | 'warn' | 'error' | 'debug', message: string, meta?: Record<string, any>) =>
     logger.log(level, message, { context: 'Auth', ...meta }),
 };
 
