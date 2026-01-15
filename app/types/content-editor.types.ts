@@ -8,7 +8,7 @@ export type InfoBoxTone = "success" | "info" | "warning" | "critical";
 
 export type ContentType = 'products' | 'collections' | 'blogs' | 'pages' | 'policies';
 
-export type FieldType = 'text' | 'html' | 'slug' | 'textarea' | 'number';
+export type FieldType = 'text' | 'html' | 'slug' | 'textarea' | 'number' | 'image-gallery' | 'options';
 
 export interface FieldDefinition {
   /** Unique key for this field */
@@ -46,6 +46,9 @@ export interface FieldDefinition {
 
   /** Custom field-specific AI instructions key */
   aiInstructionsKey?: string;
+
+  /** Optional: Custom render function for special field types */
+  renderField?: (props: any) => React.ReactNode;
 }
 
 export interface ContentEditorConfig {
