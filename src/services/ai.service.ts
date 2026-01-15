@@ -468,51 +468,15 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     throw new Error('No AI provider configured');
   }
 
-  async generateProductTitle(description: string): Promise<string> {
-    // Sanitize description input
-    const sanitizedDescription = sanitizePromptInput(description, {
-      fieldType: 'description',
-      allowNewlines: true
-    });
-
-    const prompt = `Du bist ein E-Commerce-Experte. Erstelle einen prägnanten, verkaufsstarken Produkttitel basierend auf dieser Beschreibung:
-
-${sanitizedDescription}
-
-Der Titel sollte:
-- Max. 80 Zeichen lang sein
-- Das Hauptprodukt und wichtigste Vorteile enthalten
-- SEO-freundlich sein
-- Aufmerksamkeit erregen
-
-Gib nur den Titel zurück, ohne zusätzliche Erklärungen.`;
-
+  async generateProductTitle(prompt: string): Promise<string> {
+    // The prompt is already built by the caller with AI Instructions
+    // Just execute it directly without adding additional instructions
     return await this.askAI(prompt);
   }
 
-  async generateProductDescription(title: string, currentDescription: string): Promise<string> {
-    // Sanitize inputs
-    const sanitizedTitle = sanitizePromptInput(title, { fieldType: 'title' });
-    const sanitizedCurrentDescription = currentDescription
-      ? sanitizePromptInput(currentDescription, {
-          fieldType: 'description',
-          allowNewlines: true
-        })
-      : '';
-
-    const prompt = `Du bist ein E-Commerce-Experte. ${sanitizedCurrentDescription ? 'Verbessere' : 'Erstelle'} eine detaillierte Produktbeschreibung für: ${sanitizedTitle}
-
-${sanitizedCurrentDescription ? `Aktuelle Beschreibung: ${sanitizedCurrentDescription}` : ''}
-
-Die Beschreibung sollte:
-- 200-400 Wörter umfassen
-- HTML-Formatierung verwenden (<p>, <strong>, <ul>, <li>)
-- Produktmerkmale und Vorteile hervorheben
-- Emotionalen Mehrwert bieten
-- Überzeugende Gründe zum Kauf liefern
-
-Gib nur die HTML-formatierte Beschreibung zurück, ohne zusätzliche Erklärungen.`;
-
+  async generateProductDescription(title: string, prompt: string): Promise<string> {
+    // The prompt is already built by the caller with AI Instructions
+    // Just execute it directly without adding additional instructions
     return await this.askAI(prompt);
   }
 
