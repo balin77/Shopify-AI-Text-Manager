@@ -1,6 +1,7 @@
 import { BlockStack, Text, TextField, Button, InlineStack, ButtonGroup, Tooltip } from "@shopify/polaris";
 import { useRef } from "react";
 import { useHtmlFormatting } from "../hooks/useHtmlFormatting";
+import { useI18n } from "../contexts/I18nContext";
 
 interface AIInstructionFieldGroupProps {
   fieldName: string;
@@ -39,6 +40,7 @@ export function AIInstructionFieldGroup({
   resetFormatText = "Reset",
   resetInstructionsText = "Reset",
 }: AIInstructionFieldGroupProps) {
+  const { t } = useI18n();
   const editorRef = useRef<HTMLDivElement>(null);
   const { executeCommand } = useHtmlFormatting({ editorRef, onChange: onFormatChange });
   return (
@@ -53,7 +55,7 @@ export function AIInstructionFieldGroup({
               <Text as="p" variant="bodyMd" fontWeight="medium">{formatLabel}</Text>
               <InlineStack gap="200" blockAlign="center">
                 <Button size="slim" onClick={onToggleHtmlMode}>
-                  {htmlMode === "html" ? "Vorschau" : "HTML"}
+                  {htmlMode === "html" ? t.products.preview : t.products.html}
                 </Button>
                 <Button size="slim" onClick={onResetFormat} tone="critical" variant="plain">
                   {resetFormatText}
@@ -77,7 +79,7 @@ export function AIInstructionFieldGroup({
                 multiline={3}
                 autoComplete="off"
                 placeholder={formatPlaceholder}
-                helpText={`${formatValue.length} Zeichen`}
+                helpText={`${formatValue.length} ${t.products.characters}`}
               />
             </>
           )}
@@ -98,22 +100,22 @@ export function AIInstructionFieldGroup({
                 }}>
                   {/* Text Formatting */}
                   <ButtonGroup variant="segmented">
-                    <Tooltip content="Fett">
+                    <Tooltip content={t.products.formatting.bold || "Bold"}>
                       <Button size="slim" onClick={() => executeCommand("bold")}>
                         B
                       </Button>
                     </Tooltip>
-                    <Tooltip content="Kursiv">
+                    <Tooltip content={t.products.formatting.italic || "Italic"}>
                       <Button size="slim" onClick={() => executeCommand("italic")}>
                         I
                       </Button>
                     </Tooltip>
-                    <Tooltip content="Unterstrichen">
+                    <Tooltip content={t.products.formatting.underline || "Underline"}>
                       <Button size="slim" onClick={() => executeCommand("underline")}>
                         U
                       </Button>
                     </Tooltip>
-                    <Tooltip content="Durchgestrichen">
+                    <Tooltip content={t.products.formatting.strikethrough || "Strikethrough"}>
                       <Button size="slim" onClick={() => executeCommand("strikethrough")}>
                         S
                       </Button>
@@ -122,70 +124,70 @@ export function AIInstructionFieldGroup({
 
                   {/* Headings & Normal Text */}
                   <ButtonGroup variant="segmented">
-                    <Tooltip content="Überschrift 1">
+                    <Tooltip content={t.products.formatting.heading1 || "Heading 1"}>
                       <Button size="slim" onClick={() => executeCommand("h1")}>H1</Button>
                     </Tooltip>
-                    <Tooltip content="Überschrift 2">
+                    <Tooltip content={t.products.formatting.heading2 || "Heading 2"}>
                       <Button size="slim" onClick={() => executeCommand("h2")}>H2</Button>
                     </Tooltip>
-                    <Tooltip content="Überschrift 3">
+                    <Tooltip content={t.products.formatting.heading3 || "Heading 3"}>
                       <Button size="slim" onClick={() => executeCommand("h3")}>H3</Button>
                     </Tooltip>
-                    <Tooltip content="Normaler Text / Absatz">
+                    <Tooltip content={t.products.formatting.paragraph || "Paragraph"}>
                       <Button size="slim" onClick={() => executeCommand("p")}>Text</Button>
                     </Tooltip>
                   </ButtonGroup>
 
                   {/* Lists */}
                   <ButtonGroup variant="segmented">
-                    <Tooltip content="Aufzählungsliste">
+                    <Tooltip content={t.products.formatting.bulletList || "Bullet list"}>
                       <Button size="slim" onClick={() => executeCommand("ul")}>Liste</Button>
                     </Tooltip>
-                    <Tooltip content="Nummerierte Liste">
+                    <Tooltip content={t.products.formatting.numberedList || "Numbered list"}>
                       <Button size="slim" onClick={() => executeCommand("ol")}>Num.</Button>
                     </Tooltip>
                   </ButtonGroup>
 
                   {/* Special Formats */}
                   <ButtonGroup variant="segmented">
-                    <Tooltip content="Zitat-Block">
+                    <Tooltip content={t.products.formatting.quote || "Quote block"}>
                       <Button size="slim" onClick={() => executeCommand("blockquote")}>""</Button>
                     </Tooltip>
-                    <Tooltip content="Code-Block">
+                    <Tooltip content={t.products.formatting.codeBlock || "Code block"}>
                       <Button size="slim" onClick={() => executeCommand("code")}>{"</>"}</Button>
                     </Tooltip>
                   </ButtonGroup>
 
                   {/* Links */}
                   <ButtonGroup variant="segmented">
-                    <Tooltip content="Link einfügen">
+                    <Tooltip content={t.products.formatting.insertLink || "Insert link"}>
                       <Button size="slim" onClick={() => executeCommand("link")}>🔗</Button>
                     </Tooltip>
-                    <Tooltip content="Link entfernen">
+                    <Tooltip content={t.products.formatting.removeLink || "Remove link"}>
                       <Button size="slim" onClick={() => executeCommand("unlink")}>🔗✖</Button>
                     </Tooltip>
                   </ButtonGroup>
 
                   {/* Line Break */}
                   <ButtonGroup variant="segmented">
-                    <Tooltip content="Zeilenumbruch">
+                    <Tooltip content={t.products.formatting.lineBreak || "Line break"}>
                       <Button size="slim" onClick={() => executeCommand("br")}>Umbruch</Button>
                     </Tooltip>
                   </ButtonGroup>
 
                   {/* Undo/Redo */}
                   <ButtonGroup variant="segmented">
-                    <Tooltip content="Rückgängig">
+                    <Tooltip content={t.products.formatting.undo || "Undo"}>
                       <Button size="slim" onClick={() => executeCommand("undo")}>↶</Button>
                     </Tooltip>
-                    <Tooltip content="Wiederholen">
+                    <Tooltip content={t.products.formatting.redo || "Redo"}>
                       <Button size="slim" onClick={() => executeCommand("redo")}>↷</Button>
                     </Tooltip>
                   </ButtonGroup>
 
                   {/* Clear Formatting */}
                   <ButtonGroup variant="segmented">
-                    <Tooltip content="Formatierung entfernen">
+                    <Tooltip content={t.products.formatting.clearFormat || "Clear formatting"}>
                       <Button size="slim" onClick={() => executeCommand("removeFormat")} tone="critical">✖</Button>
                     </Tooltip>
                   </ButtonGroup>
@@ -213,7 +215,7 @@ export function AIInstructionFieldGroup({
                   ref={editorRef}
                   contentEditable
                   onInput={(e) => onFormatChange(e.currentTarget.innerHTML)}
-                  dangerouslySetInnerHTML={{ __html: formatValue || '<p>Beispieltext...</p>' }}
+                  dangerouslySetInnerHTML={{ __html: formatValue || `<p>${t.settings.exampleText || 'Example text...'}</p>` }}
                   style={{
                     width: "100%",
                     minHeight: "200px",
@@ -252,7 +254,7 @@ export function AIInstructionFieldGroup({
             multiline={3}
             autoComplete="off"
             placeholder={instructionsPlaceholder}
-            helpText={`${instructionsValue.length} Zeichen`}
+            helpText={`${instructionsValue.length} ${t.products.characters}`}
           />
         </div>
       </BlockStack>

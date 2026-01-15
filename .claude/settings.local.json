@@ -15,7 +15,9 @@
       "Bash(git checkout:*)",
       "Bash(git stash:*)",
       "Bash(npx prisma studio)",
-      "Bash(python update_reset_buttons.py:*)"
+      "Bash(python update_reset_buttons.py:*)",
+      "Bash(python update_ai_instructions.py:*)",
+      "Bash(python update_field_group.py:*)"
     ],
     "deny": [],
     "ask": []
