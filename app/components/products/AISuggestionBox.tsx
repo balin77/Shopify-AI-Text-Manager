@@ -34,14 +34,9 @@ export function AISuggestionBox({
       }}
     >
       <BlockStack gap="300">
-        <InlineStack gap="200" align="space-between" blockAlign="center">
-          <Text as="p" variant="bodyMd" fontWeight="semibold">
-            {t.products.aiSuggestion}
-          </Text>
-          <Text as="p" variant="bodySm" tone="subdued">
-            {charCount} {t.products.characters}
-          </Text>
-        </InlineStack>
+        <Text as="p" variant="bodyMd" fontWeight="semibold">
+          {t.products.aiSuggestion}
+        </Text>
         {isHtml ? (
           <div dangerouslySetInnerHTML={{ __html: suggestion }} />
         ) : (
@@ -49,16 +44,21 @@ export function AISuggestionBox({
             {suggestion}
           </Text>
         )}
-        <InlineStack gap="200">
-          <Button size="slim" variant="primary" onClick={onAccept}>
-            {t.products.accept}
-          </Button>
-          <Button size="slim" onClick={onAcceptAndTranslate}>
-            {t.products.acceptTranslate}
-          </Button>
-          <Button size="slim" onClick={onReject}>
-            {t.products.decline}
-          </Button>
+        <InlineStack gap="200" align="space-between" blockAlign="center">
+          <InlineStack gap="200">
+            <Button size="slim" variant="primary" onClick={onAccept}>
+              {t.products.accept}
+            </Button>
+            <Button size="slim" onClick={onAcceptAndTranslate}>
+              {t.products.acceptTranslate}
+            </Button>
+            <Button size="slim" onClick={onReject}>
+              {t.products.decline}
+            </Button>
+          </InlineStack>
+          <Text as="p" variant="bodySm" tone="subdued">
+            {charCount} {t.products.characters}
+          </Text>
         </InlineStack>
       </BlockStack>
     </div>

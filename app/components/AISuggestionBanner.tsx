@@ -1,4 +1,5 @@
 import { BlockStack, InlineStack, Text, Button } from "@shopify/polaris";
+import { useI18n } from "../contexts/I18nContext";
 
 interface AISuggestionBannerProps {
   fieldType: string;
@@ -25,6 +26,13 @@ export function AISuggestionBanner({
   acceptAndTranslateLabel,
   titleLabel
 }: AISuggestionBannerProps) {
+  const { t } = useI18n();
+
+  // Calculate character count (strip HTML tags for accurate count)
+  const charCount = isHtml
+    ? suggestionText.replace(/<[^>]*>/g, '').length
+    : suggestionText.length;
+
   return (
     <div
       style={{
@@ -46,18 +54,23 @@ export function AISuggestionBanner({
             {suggestionText}
           </Text>
         )}
-        <InlineStack gap="200">
-          <Button size="slim" variant="primary" onClick={onAccept}>
-            {acceptLabel}
-          </Button>
-          {onAcceptAndTranslate && acceptAndTranslateLabel && (
-            <Button size="slim" onClick={onAcceptAndTranslate}>
-              {acceptAndTranslateLabel}
+        <InlineStack gap="200" align="space-between" blockAlign="center">
+          <InlineStack gap="200">
+            <Button size="slim" variant="primary" onClick={onAccept}>
+              {acceptLabel}
             </Button>
-          )}
-          <Button size="slim" onClick={onDecline}>
-            {declineLabel}
-          </Button>
+            {onAcceptAndTranslate && acceptAndTranslateLabel && (
+              <Button size="slim" onClick={onAcceptAndTranslate}>
+                {acceptAndTranslateLabel}
+              </Button>
+            )}
+            <Button size="slim" onClick={onDecline}>
+              {declineLabel}
+            </Button>
+          </InlineStack>
+          <Text as="p" variant="bodySm" tone="subdued">
+            {charCount} {t.products.characters}
+          </Text>
         </InlineStack>
       </BlockStack>
     </div>
