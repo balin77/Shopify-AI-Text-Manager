@@ -4,6 +4,14 @@
  */
 
 import { useState, useEffect, useRef } from "react";
+import type { TranslatableItem, ContentType } from "~/types/contentEditor.types";
+import {
+  SHOPIFY_TRANSLATION_KEYS,
+  CONTENT_TYPE_DESCRIPTION_KEY,
+  UI_FIELD_TO_TRANSLATION_KEY,
+  FIELD_CONFIGS,
+} from "~/constants/shopifyFields";
+import { TIMING } from "~/constants/timing";
 
 export interface ContentEditorState {
   editableTitle: string;
@@ -30,11 +38,147 @@ export interface NavigationState {
   saveButtonRef: React.RefObject<HTMLDivElement>;
 }
 
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+/**
+ * Get field value from item, supporting nested paths (e.g., 'seo.title')
+ */
+function getFieldValue(item: TranslatableItem | null | undefined, fieldPath: string): string {
+  if (!item) return '';
+
+  const parts = fieldPath.split('.');
+  let value: any = item;
+
+  for (const part of parts) {
+    value = value?.[part];
+    if (value === undefined || value === null) {
+      return '';
+    }
+  }
+
+  return typeof value === 'string' ? value : '';
+}
+
+/**
+ * Check if a field value is empty (null, undefined, or whitespace only)
+ */
+function isFieldEmpty(value: string): boolean {
+  return !value || (typeof value === 'string' && value.trim() === '');
+}
+
+/**
+ * Check if item has any missing required fields
+ */
+function hasAnyFieldMissing(
+  item: TranslatableItem | null | undefined,
+  fields: readonly string[]
+): boolean {
+  if (!item) return false;
+
+  return fields.some(field => {
+    const value = getFieldValue(item, field);
+    return isFieldEmpty(value);
+  });
+}
+
+/**
+ * Check if primary locale has content for a specific field
+ */
+function primaryHasFieldContent(
+  item: TranslatableItem | null | undefined,
+  field: string,
+  contentType: ContentType
+): boolean {
+  if (!item) return false;
+
+  // Map translation key to actual field path
+  const fieldPathMap: Record<string, string> = {
+    title: 'title',
+    body_html: contentType === 'collections' || contentType === 'products' ? 'descriptionHtml' : 'body',
+    body: 'body',
+    handle: 'handle',
+    meta_title: 'seo.title',
+    meta_description: 'seo.description',
+  };
+
+  const fieldPath = fieldPathMap[field] || field;
+  const value = getFieldValue(item, fieldPath);
+  return !isFieldEmpty(value);
+}
+
+/**
+ * Check if a specific locale has a translation for a field
+ */
+function hasTranslationForField(
+  item: TranslatableItem | null | undefined,
+  field: string,
+  locale: string
+): boolean {
+  if (!item) return false;
+
+  const translations = item.translations?.filter(t => t.locale === locale) || [];
+  const translation = translations.find(t => t.key === field);
+  return !!translation && !isFieldEmpty(translation.value);
+}
+
+/**
+ * Get required translation fields for content type
+ */
+function getRequiredFieldsForContentType(contentType: ContentType): string[] {
+  if (contentType === 'collections' || contentType === 'products') {
+    return ["title", "body_html", "handle", "meta_title", "meta_description"];
+  } else if (contentType === 'policies') {
+    return ["body"];
+  } else {
+    return ["title", "body_html", "handle"];
+  }
+}
+
+/**
+ * Safely scroll to top of page
+ */
+function safeScrollToTop(): void {
+  try {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  } catch (error) {
+    // Fallback for browsers that don't support smooth scrolling
+    try {
+      window.scrollTo(0, 0);
+    } catch (e) {
+      console.warn('Failed to scroll to top:', e);
+    }
+  }
+}
+
+/**
+ * Safely scroll element into view
+ */
+function safeScrollIntoView(element: HTMLElement | null): void {
+  if (!element) return;
+
+  try {
+    element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  } catch (error) {
+    // Fallback for browsers that don't support smooth scrolling
+    try {
+      element.scrollIntoView();
+    } catch (e) {
+      console.warn('Failed to scroll element into view:', e);
+    }
+  }
+}
+
+// ============================================================================
+// Exported Functions
+// ============================================================================
+
 /**
  * Get translated value from translations array
  */
 export function getTranslatedValue(
-  item: any,
+  item: TranslatableItem | null | undefined,
   key: string,
   locale: string,
   fallback: string,
@@ -44,11 +188,9 @@ export function getTranslatedValue(
     return fallback;
   }
 
-  // Get translations directly from item
   const translations = item.translations || [];
-
   const translation = translations.find(
-    (t: any) => t.key === key && t.locale === locale
+    (t) => t.key === key && t.locale === locale
   );
 
   return translation?.value || "";
@@ -62,30 +204,24 @@ export function useNavigationGuard() {
   const [highlightSaveButton, setHighlightSaveButton] = useState(false);
   const saveButtonRef = useRef<HTMLDivElement>(null);
 
-  const handleNavigationAttempt = (navigationAction: () => void, hasChanges: boolean) => {
+  const handleNavigationAttempt = (navigationAction: () => void, hasChanges: boolean): void => {
     if (hasChanges) {
       // Prevent navigation
       setPendingNavigation(() => navigationAction);
 
-      // Scroll to top
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      // Safely scroll to top
+      safeScrollToTop();
 
-      // Highlight save button
+      // Highlight and scroll to save button
       setHighlightSaveButton(true);
-
-      // Scroll save button into view
-      if (saveButtonRef.current) {
-        saveButtonRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      }
-
-      return false; // Prevent navigation
+      safeScrollIntoView(saveButtonRef.current);
+      return;
     }
 
     // Allow navigation
     setHighlightSaveButton(false);
     setPendingNavigation(null);
     navigationAction();
-    return true;
   };
 
   const clearPendingNavigation = () => {
@@ -95,7 +231,7 @@ export function useNavigationGuard() {
       }
       setPendingNavigation(null);
       setHighlightSaveButton(false);
-    }, 500);
+    }, TIMING.NAVIGATION_DELAY_MS);
   };
 
   return {
@@ -113,7 +249,7 @@ export function useNavigationGuard() {
  * Track changes in editable fields
  */
 export function useChangeTracking(
-  selectedItem: any,
+  selectedItem: TranslatableItem | null | undefined,
   currentLanguage: string,
   primaryLocale: string,
   editableFields: {
@@ -124,7 +260,7 @@ export function useChangeTracking(
     seoTitle?: string;
     metaDescription?: string;
   },
-  contentType: 'pages' | 'blogs' | 'collections' | 'policies' | 'products'
+  contentType: ContentType
 ) {
   const [hasChanges, setHasChanges] = useState(false);
 
@@ -141,7 +277,7 @@ export function useChangeTracking(
       return getTranslatedValue(selectedItem, key, currentLanguage, "", primaryLocale);
     };
 
-    const descKey = contentType === 'policies' ? 'body' : 'body_html';
+    const descKey = CONTENT_TYPE_DESCRIPTION_KEY[contentType];
     const descFallback = contentType === 'collections'
       ? (selectedItem.descriptionHtml || "")
       : (selectedItem.body || "");
@@ -152,13 +288,13 @@ export function useChangeTracking(
 
     // Policies don't have translatable title field
     const titleChanged = contentType !== 'policies'
-      ? (editableFields.title || "") !== getOriginalValue("title", selectedItem.title || "")
+      ? (editableFields.title || "") !== getOriginalValue(SHOPIFY_TRANSLATION_KEYS.TITLE, selectedItem.title || "")
       : false;
 
     const descChanged = currentDescValue !== getOriginalValue(descKey, descFallback || "");
-    const handleChanged = (editableFields.handle || "") !== getOriginalValue("handle", selectedItem.handle || "");
-    const seoTitleChanged = (editableFields.seoTitle || "") !== getOriginalValue("meta_title", selectedItem.seo?.title || "");
-    const metaDescChanged = (editableFields.metaDescription || "") !== getOriginalValue("meta_description", selectedItem.seo?.description || "");
+    const handleChanged = (editableFields.handle || "") !== getOriginalValue(SHOPIFY_TRANSLATION_KEYS.HANDLE, selectedItem.handle || "");
+    const seoTitleChanged = (editableFields.seoTitle || "") !== getOriginalValue(SHOPIFY_TRANSLATION_KEYS.META_TITLE, selectedItem.seo?.title || "");
+    const metaDescChanged = (editableFields.metaDescription || "") !== getOriginalValue(SHOPIFY_TRANSLATION_KEYS.META_DESCRIPTION, selectedItem.seo?.description || "");
 
     setHasChanges(titleChanged || descChanged || handleChanged || seoTitleChanged || metaDescChanged);
   }, [
@@ -181,10 +317,10 @@ export function useChangeTracking(
  * Load item data when item or language changes
  */
 export function useItemDataLoader(
-  selectedItem: any,
+  selectedItem: TranslatableItem | null | undefined,
   currentLanguage: string,
   primaryLocale: string,
-  contentType: 'pages' | 'blogs' | 'collections' | 'policies' | 'products',
+  contentType: ContentType,
   setEditableFields: (fields: {
     title: string;
     description: string;
@@ -227,15 +363,15 @@ export function useItemDataLoader(
       });
     } else {
       // Load translation data (translations are already loaded in item.translations)
-      const descKey = contentType === 'policies' ? 'body' : 'body_html';
+      const descKey = CONTENT_TYPE_DESCRIPTION_KEY[contentType];
 
       const title = contentType !== 'policies'
-        ? getTranslatedValue(selectedItem, "title", currentLanguage, "", primaryLocale)
+        ? getTranslatedValue(selectedItem, SHOPIFY_TRANSLATION_KEYS.TITLE, currentLanguage, "", primaryLocale)
         : "";
       const description = getTranslatedValue(selectedItem, descKey, currentLanguage, "", primaryLocale);
-      const handle = getTranslatedValue(selectedItem, "handle", currentLanguage, "", primaryLocale);
-      const seoTitle = getTranslatedValue(selectedItem, "meta_title", currentLanguage, "", primaryLocale);
-      const metaDescription = getTranslatedValue(selectedItem, "meta_description", currentLanguage, "", primaryLocale);
+      const handle = getTranslatedValue(selectedItem, SHOPIFY_TRANSLATION_KEYS.HANDLE, currentLanguage, "", primaryLocale);
+      const seoTitle = getTranslatedValue(selectedItem, SHOPIFY_TRANSLATION_KEYS.META_TITLE, currentLanguage, "", primaryLocale);
+      const metaDescription = getTranslatedValue(selectedItem, SHOPIFY_TRANSLATION_KEYS.META_DESCRIPTION, currentLanguage, "", primaryLocale);
 
       setEditableFields({
         title,
@@ -252,7 +388,7 @@ export function useItemDataLoader(
  * Check if field is translated
  */
 export function isFieldTranslated(
-  selectedItem: any,
+  selectedItem: TranslatableItem | null | undefined,
   key: string,
   currentLanguage: string,
   primaryLocale: string
@@ -261,9 +397,8 @@ export function isFieldTranslated(
   if (!selectedItem) return false;
 
   const translations = selectedItem.translations || [];
-
   const translation = translations.find(
-    (t: any) => t.key === key && t.locale === currentLanguage
+    (t) => t.key === key && t.locale === currentLanguage
   );
 
   return !!translation && !!translation.value;
@@ -273,35 +408,13 @@ export function isFieldTranslated(
  * Check if primary locale has any missing content
  */
 export function hasPrimaryContentMissing(
-  selectedItem: any,
-  contentType: 'pages' | 'blogs' | 'collections' | 'policies' | 'products'
+  selectedItem: TranslatableItem | null | undefined,
+  contentType: ContentType
 ): boolean {
   if (!selectedItem) return false;
 
-  // Check required fields based on content type
-  if (contentType === 'products') {
-    const titleMissing = !selectedItem.title || (typeof selectedItem.title === 'string' && selectedItem.title.trim() === '');
-    const descriptionMissing = !selectedItem.descriptionHtml || (typeof selectedItem.descriptionHtml === 'string' && selectedItem.descriptionHtml.trim() === '');
-    const handleMissing = !selectedItem.handle || (typeof selectedItem.handle === 'string' && selectedItem.handle.trim() === '');
-    const seoTitleMissing = !selectedItem.seo?.title || (typeof selectedItem.seo.title === 'string' && selectedItem.seo.title.trim() === '');
-    const seoDescriptionMissing = !selectedItem.seo?.description || (typeof selectedItem.seo.description === 'string' && selectedItem.seo.description.trim() === '');
-    return titleMissing || descriptionMissing || handleMissing || seoTitleMissing || seoDescriptionMissing;
-  }
-
-  if (contentType === 'collections') {
-    const titleMissing = !selectedItem.title || (typeof selectedItem.title === 'string' && selectedItem.title.trim() === '');
-    const descriptionMissing = !selectedItem.descriptionHtml || (typeof selectedItem.descriptionHtml === 'string' && selectedItem.descriptionHtml.trim() === '');
-    const handleMissing = !selectedItem.handle || (typeof selectedItem.handle === 'string' && selectedItem.handle.trim() === '');
-    const seoTitleMissing = !selectedItem.seo?.title || (typeof selectedItem.seo.title === 'string' && selectedItem.seo.title.trim() === '');
-    const seoDescriptionMissing = !selectedItem.seo?.description || (typeof selectedItem.seo.description === 'string' && selectedItem.seo.description.trim() === '');
-    return titleMissing || descriptionMissing || handleMissing || seoTitleMissing || seoDescriptionMissing;
-  }
-
-  const titleMissing = contentType !== 'policies' && !selectedItem.title;
-  const bodyMissing = !selectedItem.body;
-  const handleMissing = contentType !== 'policies' && !selectedItem.handle;
-
-  return titleMissing || bodyMissing || handleMissing;
+  const requiredFields = FIELD_CONFIGS[contentType];
+  return hasAnyFieldMissing(selectedItem, requiredFields);
 }
 
 /**
@@ -309,57 +422,23 @@ export function hasPrimaryContentMissing(
  * Only marks a field as missing if the primary locale has content for that field
  */
 export function hasLocaleMissingTranslations(
-  selectedItem: any,
+  selectedItem: TranslatableItem | null | undefined,
   locale: string,
   primaryLocale: string,
-  contentType: 'pages' | 'blogs' | 'collections' | 'policies' | 'products'
+  contentType: ContentType
 ): boolean {
   if (!selectedItem || locale === primaryLocale) return false;
 
-  const translations = selectedItem.translations?.filter(
-    (t: any) => t.locale === locale
-  ) || [];
-
-  // Define required fields based on content type
-  let requiredFields: string[] = [];
-
-  if (contentType === 'collections' || contentType === 'products') {
-    requiredFields = ["title", "body_html", "handle", "meta_title", "meta_description"];
-  } else if (contentType === 'policies') {
-    requiredFields = ["body"];
-  } else {
-    requiredFields = ["title", "body_html", "handle"];
-  }
+  const requiredFields = getRequiredFieldsForContentType(contentType);
 
   return requiredFields.some(field => {
-    // Check if the primary locale has content for this field
-    let primaryHasContent = false;
-
-    if (field === "title") {
-      primaryHasContent = !!selectedItem.title && typeof selectedItem.title === 'string' && selectedItem.title.trim() !== '';
-    } else if (field === "body_html") {
-      if (contentType === 'collections' || contentType === 'products') {
-        primaryHasContent = !!selectedItem.descriptionHtml && typeof selectedItem.descriptionHtml === 'string' && selectedItem.descriptionHtml.trim() !== '';
-      } else {
-        primaryHasContent = !!selectedItem.body && typeof selectedItem.body === 'string' && selectedItem.body.trim() !== '';
-      }
-    } else if (field === "body") {
-      primaryHasContent = !!selectedItem.body && typeof selectedItem.body === 'string' && selectedItem.body.trim() !== '';
-    } else if (field === "handle") {
-      primaryHasContent = !!selectedItem.handle && typeof selectedItem.handle === 'string' && selectedItem.handle.trim() !== '';
-    } else if (field === "meta_title") {
-      primaryHasContent = !!selectedItem.seo?.title && typeof selectedItem.seo.title === 'string' && selectedItem.seo.title.trim() !== '';
-    } else if (field === "meta_description") {
-      primaryHasContent = !!selectedItem.seo?.description && typeof selectedItem.seo.description === 'string' && selectedItem.seo.description.trim() !== '';
+    // Only check if primary has content
+    if (!primaryHasFieldContent(selectedItem, field, contentType)) {
+      return false;
     }
 
-    // Only check if translation is missing if primary has content
-    if (!primaryHasContent) {
-      return false; // Don't mark as missing if primary is empty
-    }
-
-    const translation = translations.find((t: any) => t.key === field);
-    return !translation || !translation.value || (typeof translation.value === 'string' && translation.value.trim() === '');
+    // Check if translation exists
+    return !hasTranslationForField(selectedItem, field, locale);
   });
 }
 
@@ -367,9 +446,9 @@ export function hasLocaleMissingTranslations(
  * Check if any foreign locale has missing translations
  */
 export function hasMissingTranslations(
-  selectedItem: any,
+  selectedItem: TranslatableItem | null | undefined,
   shopLocales: any[],
-  contentType: 'pages' | 'blogs' | 'collections' | 'policies' | 'products'
+  contentType: ContentType
 ): boolean {
   if (!selectedItem) return false;
 
@@ -388,65 +467,27 @@ export function hasMissingTranslations(
  * 2. At least one foreign locale is missing translation for this field
  */
 export function hasFieldMissingTranslations(
-  selectedItem: any,
+  selectedItem: TranslatableItem | null | undefined,
   fieldKey: string,
   shopLocales: any[],
   primaryLocale: string,
-  contentType: 'pages' | 'blogs' | 'collections' | 'policies' | 'products'
+  contentType: ContentType
 ): boolean {
   if (!selectedItem) return false;
 
-  // First check if primary locale has content for this field
-  let primaryHasContent = false;
+  // Map UI field names to translation keys
+  const translationKey = UI_FIELD_TO_TRANSLATION_KEY[fieldKey] || fieldKey;
 
-  if (fieldKey === "title") {
-    primaryHasContent = !!selectedItem.title && typeof selectedItem.title === 'string' && selectedItem.title.trim() !== '';
-  } else if (fieldKey === "body_html" || fieldKey === "description") {
-    if (contentType === 'collections' || contentType === 'products') {
-      primaryHasContent = !!selectedItem.descriptionHtml && typeof selectedItem.descriptionHtml === 'string' && selectedItem.descriptionHtml.trim() !== '';
-    } else {
-      primaryHasContent = !!selectedItem.body && typeof selectedItem.body === 'string' && selectedItem.body.trim() !== '';
-    }
-  } else if (fieldKey === "body") {
-    primaryHasContent = !!selectedItem.body && typeof selectedItem.body === 'string' && selectedItem.body.trim() !== '';
-  } else if (fieldKey === "handle") {
-    primaryHasContent = !!selectedItem.handle && typeof selectedItem.handle === 'string' && selectedItem.handle.trim() !== '';
-  } else if (fieldKey === "meta_title" || fieldKey === "seoTitle") {
-    primaryHasContent = !!selectedItem.seo?.title && typeof selectedItem.seo.title === 'string' && selectedItem.seo.title.trim() !== '';
-  } else if (fieldKey === "meta_description" || fieldKey === "metaDescription") {
-    primaryHasContent = !!selectedItem.seo?.description && typeof selectedItem.seo.description === 'string' && selectedItem.seo.description.trim() !== '';
-  }
-
-  // If primary doesn't have content, no translation is expected
-  if (!primaryHasContent) {
+  // Check if primary locale has content for this field
+  if (!primaryHasFieldContent(selectedItem, translationKey, contentType)) {
     return false;
   }
-
-  // Map UI field names to translation keys
-  const translationKeyMap: { [key: string]: string } = {
-    "title": "title",
-    "description": "body_html",
-    "body_html": "body_html",
-    "body": "body",
-    "handle": "handle",
-    "seoTitle": "meta_title",
-    "meta_title": "meta_title",
-    "metaDescription": "meta_description",
-    "meta_description": "meta_description",
-  };
-
-  const translationKey = translationKeyMap[fieldKey] || fieldKey;
 
   // Check if any foreign locale is missing this specific translation
   const foreignLocales = shopLocales.filter((l: any) => !l.primary);
 
   return foreignLocales.some((locale: any) => {
-    const translations = selectedItem.translations?.filter(
-      (t: any) => t.locale === locale.locale
-    ) || [];
-
-    const translation = translations.find((t: any) => t.key === translationKey);
-    return !translation || !translation.value || (typeof translation.value === 'string' && translation.value.trim() === '');
+    return !hasTranslationForField(selectedItem, translationKey, locale.locale);
   });
 }
 
@@ -456,9 +497,9 @@ export function hasFieldMissingTranslations(
  */
 export function getLocaleButtonStyle(
   locale: any,
-  selectedItem: any,
+  selectedItem: TranslatableItem | null | undefined,
   primaryLocale: string,
-  contentType: 'pages' | 'blogs' | 'collections' | 'policies' | 'products'
+  contentType: ContentType
 ): React.CSSProperties {
   const primaryContentMissing = locale.primary && hasPrimaryContentMissing(selectedItem, contentType);
   const foreignTranslationMissing = !locale.primary && hasLocaleMissingTranslations(selectedItem, locale.locale, primaryLocale, contentType);
@@ -466,7 +507,7 @@ export function getLocaleButtonStyle(
   if (primaryContentMissing) {
     // Pulsing border animation (orange) when primary content is missing
     return {
-      animation: "pulse 1.5s ease-in-out infinite",
+      animation: `pulse ${TIMING.HIGHLIGHT_DURATION_MS}ms ease-in-out infinite`,
       borderRadius: "8px",
     };
   }
@@ -474,7 +515,7 @@ export function getLocaleButtonStyle(
   if (foreignTranslationMissing) {
     // Pulsing border animation (blue) when translations are missing
     return {
-      animation: "pulseBlue 1.5s ease-in-out infinite",
+      animation: `pulseBlue ${TIMING.HIGHLIGHT_DURATION_MS}ms ease-in-out infinite`,
       borderRadius: "8px",
     };
   }
