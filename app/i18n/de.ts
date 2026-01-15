@@ -37,6 +37,7 @@ export const de = {
     html: "HTML",
     aiGenerate: "Mit KI generieren / verbessern",
     aiGenerateShort: "Mit KI generieren",
+    formatWithAI: "Formatieren",
     aiSuggestion: "KI-Vorschlag:",
     aiSuggestionCharCount: "{count} Zeichen",
     accept: "Übernehmen",

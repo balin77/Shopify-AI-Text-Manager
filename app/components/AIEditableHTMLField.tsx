@@ -300,7 +300,7 @@ export function AIEditableHTMLField({
               loading={isLoading}
               disabled={!value}
             >
-              🎨 Formatieren
+              🎨 {t.products.formatWithAI || "Formatieren"}
             </Button>
           )}
           {(onTranslate || onTranslateToAllLocales) && (
@@ -310,7 +310,7 @@ export function AIEditableHTMLField({
               loading={isLoading}
               disabled={(isPrimaryLocale && !onTranslateToAllLocales) || (!isPrimaryLocale && !sourceTextAvailable)}
             >
-              🌍 {isPrimaryLocale ? "Übersetzen" : t.products.translateFromPrimary}
+              🌍 {isPrimaryLocale ? (t.products.translateAll || "Übersetzen") : t.products.translateFromPrimary}
             </Button>
           )}
         </div>
