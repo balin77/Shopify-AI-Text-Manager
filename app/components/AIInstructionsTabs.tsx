@@ -114,9 +114,14 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, on
     setLocalInstructions({ ...localInstructions, [field]: value });
   };
 
-  const handleResetField = (field: string, entityType: EntityType) => {
-    const defaultValue = getDefaultForField(entityType, field as any);
-    setLocalInstructions({ ...localInstructions, [field]: defaultValue });
+  const handleResetFormatField = (formatField: string, entityType: EntityType) => {
+    const defaultValue = getDefaultForField(entityType, formatField as any);
+    setLocalInstructions({ ...localInstructions, [formatField]: defaultValue });
+  };
+
+  const handleResetInstructionsField = (instructionsField: string, entityType: EntityType) => {
+    const defaultValue = getDefaultForField(entityType, instructionsField as any);
+    setLocalInstructions({ ...localInstructions, [instructionsField]: defaultValue });
   };
 
   const handleResetAll = () => {
@@ -237,11 +242,14 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, on
                   instructionsValue={localInstructions.productAltTextInstructions}
                   onFormatChange={(v) => handleFieldChange('productAltTextFormat', v)}
                   onInstructionsChange={(v) => handleFieldChange('productAltTextInstructions', v)}
-                  onReset={() => handleResetField('productAltTextFormat', 'products')}
+                  onResetFormat={() => handleResetFormatField('productAltTextFormat', 'products')}
+                  onResetInstructions={() => handleResetInstructionsField('productAltTextInstructions', 'products')}
                   formatPlaceholder="z.B. Premium Leder Geldbörse aus dunkelbraunem Vollrindleder"
                   instructionsPlaceholder="z.B. 60-125 Zeichen, beschreibe was zu sehen ist, sachlich"
                   formatLabel="Formatbeispiel"
                   instructionsLabel="Anweisungen"
+                  resetFormatText={t.settings?.resetField || "Reset"}
+                  resetInstructionsText={t.settings?.resetField || "Reset"}
                 />
 
                 <AIInstructionFieldGroup
@@ -250,7 +258,10 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, on
                   instructionsValue={localInstructions.productTitleInstructions}
                   onFormatChange={(v) => handleFieldChange('productTitleFormat', v)}
                   onInstructionsChange={(v) => handleFieldChange('productTitleInstructions', v)}
-                  onReset={() => handleResetField('productTitleFormat', 'products')}
+                  onResetFormat={() => handleResetFormatField('productTitleFormat', 'products')}
+                  onResetInstructions={() => handleResetInstructionsField('productTitleInstructions', 'products')}
+                  resetFormatText={t.settings?.resetField || "Reset"}
+                  resetInstructionsText={t.settings?.resetField || "Reset"}
                   formatPlaceholder="z.B. Premium Leder Geldbörse - Elegant & Langlebig"
                   instructionsPlaceholder="z.B. Maximal 60 Zeichen, Material und Hauptmerkmal nennen"
                   formatLabel="Formatbeispiel"
@@ -263,7 +274,10 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, on
                   instructionsValue={localInstructions.productDescriptionInstructions}
                   onFormatChange={(v) => handleFieldChange('productDescriptionFormat', v)}
                   onInstructionsChange={(v) => handleFieldChange('productDescriptionInstructions', v)}
-                  onReset={() => handleResetField('productDescriptionFormat', 'products')}
+                  onResetFormat={() => handleResetFormatField('productDescriptionFormat', 'products')}
+                  onResetInstructions={() => handleResetInstructionsField('productDescriptionInstructions', 'products')}
+                  resetFormatText={t.settings?.resetField || "Reset"}
+                  resetInstructionsText={t.settings?.resetField || "Reset"}
                   formatPlaceholder="z.B. <h2>Handwerkskunst in Perfektion</h2><p>Premium Leder...</p>"
                   instructionsPlaceholder="z.B. 150-250 Wörter, H2/H3 nutzen, Storytelling verwenden"
                   formatLabel="Formatbeispiel"
@@ -279,7 +293,10 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, on
                   instructionsValue={localInstructions.productHandleInstructions}
                   onFormatChange={(v) => handleFieldChange('productHandleFormat', v)}
                   onInstructionsChange={(v) => handleFieldChange('productHandleInstructions', v)}
-                  onReset={() => handleResetField('productHandleFormat', 'products')}
+                  onResetFormat={() => handleResetFormatField('productHandleFormat', 'products')}
+                  onResetInstructions={() => handleResetInstructionsField('productHandleInstructions', 'products')}
+                  resetFormatText={t.settings?.resetField || "Reset"}
+                  resetInstructionsText={t.settings?.resetField || "Reset"}
                   formatPlaceholder="z.B. premium-leder-geldboerse"
                   instructionsPlaceholder="z.B. Nur Kleinbuchstaben, Bindestriche, keine Umlaute, max 50 Zeichen"
                   formatLabel="Formatbeispiel"
@@ -292,7 +309,10 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, on
                   instructionsValue={localInstructions.productSeoTitleInstructions}
                   onFormatChange={(v) => handleFieldChange('productSeoTitleFormat', v)}
                   onInstructionsChange={(v) => handleFieldChange('productSeoTitleInstructions', v)}
-                  onReset={() => handleResetField('productSeoTitleFormat', 'products')}
+                  onResetFormat={() => handleResetFormatField('productSeoTitleFormat', 'products')}
+                  onResetInstructions={() => handleResetInstructionsField('productSeoTitleInstructions', 'products')}
+                  resetFormatText={t.settings?.resetField || "Reset"}
+                  resetInstructionsText={t.settings?.resetField || "Reset"}
                   formatPlaceholder="z.B. Premium Leder Geldbörse kaufen | Handgefertigt"
                   instructionsPlaceholder="z.B. 50-60 Zeichen, Hauptkeyword am Anfang, Call-to-Action"
                   formatLabel="Formatbeispiel"
@@ -305,7 +325,10 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, on
                   instructionsValue={localInstructions.productMetaDescInstructions}
                   onFormatChange={(v) => handleFieldChange('productMetaDescFormat', v)}
                   onInstructionsChange={(v) => handleFieldChange('productMetaDescInstructions', v)}
-                  onReset={() => handleResetField('productMetaDescFormat', 'products')}
+                  onResetFormat={() => handleResetFormatField('productMetaDescFormat', 'products')}
+                  onResetInstructions={() => handleResetInstructionsField('productMetaDescInstructions', 'products')}
+                  resetFormatText={t.settings?.resetField || "Reset"}
+                  resetInstructionsText={t.settings?.resetField || "Reset"}
                   formatPlaceholder="z.B. Handgefertigte Premium Leder Geldbörse. Zeitlos, langlebig..."
                   instructionsPlaceholder="z.B. 150-160 Zeichen, 2-3 Keywords, Handlungsaufforderung"
                   formatLabel="Formatbeispiel"
@@ -323,7 +346,10 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, on
                   instructionsValue={localInstructions.collectionTitleInstructions}
                   onFormatChange={(v) => handleFieldChange('collectionTitleFormat', v)}
                   onInstructionsChange={(v) => handleFieldChange('collectionTitleInstructions', v)}
-                  onReset={() => handleResetField('collectionTitleFormat', 'collections')}
+                  onResetFormat={() => handleResetFormatField('collectionTitleFormat', 'collections')}
+                  onResetInstructions={() => handleResetInstructionsField('collectionTitleInstructions', 'collections')}
+                  resetFormatText={t.settings?.resetField || "Reset"}
+                  resetInstructionsText={t.settings?.resetField || "Reset"}
                   formatPlaceholder="z.B. Leder Accessoires - Handgefertigt & Zeitlos"
                   instructionsPlaceholder="z.B. Maximal 50 Zeichen, Kategorie + USP"
                   formatLabel="Formatbeispiel"
@@ -336,7 +362,10 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, on
                   instructionsValue={localInstructions.collectionDescriptionInstructions}
                   onFormatChange={(v) => handleFieldChange('collectionDescriptionFormat', v)}
                   onInstructionsChange={(v) => handleFieldChange('collectionDescriptionInstructions', v)}
-                  onReset={() => handleResetField('collectionDescriptionFormat', 'collections')}
+                  onResetFormat={() => handleResetFormatField('collectionDescriptionFormat', 'collections')}
+                  onResetInstructions={() => handleResetInstructionsField('collectionDescriptionInstructions', 'collections')}
+                  resetFormatText={t.settings?.resetField || "Reset"}
+                  resetInstructionsText={t.settings?.resetField || "Reset"}
                   formatPlaceholder="z.B. <h2>Handgefertigte Leder Accessoires</h2><p>Entdecken Sie...</p>"
                   instructionsPlaceholder="z.B. 100-200 Wörter, Übersicht der Kategorie"
                   formatLabel="Formatbeispiel"
@@ -352,7 +381,10 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, on
                   instructionsValue={localInstructions.collectionHandleInstructions}
                   onFormatChange={(v) => handleFieldChange('collectionHandleFormat', v)}
                   onInstructionsChange={(v) => handleFieldChange('collectionHandleInstructions', v)}
-                  onReset={() => handleResetField('collectionHandleFormat', 'collections')}
+                  onResetFormat={() => handleResetFormatField('collectionHandleFormat', 'collections')}
+                  onResetInstructions={() => handleResetInstructionsField('collectionHandleInstructions', 'collections')}
+                  resetFormatText={t.settings?.resetField || "Reset"}
+                  resetInstructionsText={t.settings?.resetField || "Reset"}
                   formatPlaceholder="z.B. leder-accessoires"
                   instructionsPlaceholder="z.B. Nur Kleinbuchstaben, keine Umlaute, max 40 Zeichen"
                   formatLabel="Formatbeispiel"
@@ -365,7 +397,10 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, on
                   instructionsValue={localInstructions.collectionSeoTitleInstructions}
                   onFormatChange={(v) => handleFieldChange('collectionSeoTitleFormat', v)}
                   onInstructionsChange={(v) => handleFieldChange('collectionSeoTitleInstructions', v)}
-                  onReset={() => handleResetField('collectionSeoTitleFormat', 'collections')}
+                  onResetFormat={() => handleResetFormatField('collectionSeoTitleFormat', 'collections')}
+                  onResetInstructions={() => handleResetInstructionsField('collectionSeoTitleInstructions', 'collections')}
+                  resetFormatText={t.settings?.resetField || "Reset"}
+                  resetInstructionsText={t.settings?.resetField || "Reset"}
                   formatPlaceholder="z.B. Leder Accessoires kaufen | Handgefertigt"
                   instructionsPlaceholder="z.B. 50-60 Zeichen, Category-Keyword am Anfang"
                   formatLabel="Formatbeispiel"
@@ -378,7 +413,10 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, on
                   instructionsValue={localInstructions.collectionMetaDescInstructions}
                   onFormatChange={(v) => handleFieldChange('collectionMetaDescFormat', v)}
                   onInstructionsChange={(v) => handleFieldChange('collectionMetaDescInstructions', v)}
-                  onReset={() => handleResetField('collectionMetaDescFormat', 'collections')}
+                  onResetFormat={() => handleResetFormatField('collectionMetaDescFormat', 'collections')}
+                  onResetInstructions={() => handleResetInstructionsField('collectionMetaDescInstructions', 'collections')}
+                  resetFormatText={t.settings?.resetField || "Reset"}
+                  resetInstructionsText={t.settings?.resetField || "Reset"}
                   formatPlaceholder="z.B. Hochwertige Leder Accessoires. Geldbörsen, Gürtel & mehr..."
                   instructionsPlaceholder="z.B. 150-160 Zeichen, Kategorie beschreiben, 2-3 Beispiele"
                   formatLabel="Formatbeispiel"
@@ -396,7 +434,10 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, on
                   instructionsValue={localInstructions.blogTitleInstructions}
                   onFormatChange={(v) => handleFieldChange('blogTitleFormat', v)}
                   onInstructionsChange={(v) => handleFieldChange('blogTitleInstructions', v)}
-                  onReset={() => handleResetField('blogTitleFormat', 'blogs')}
+                  onResetFormat={() => handleResetFormatField('blogTitleFormat', 'blogs')}
+                  onResetInstructions={() => handleResetInstructionsField('blogTitleInstructions', 'blogs')}
+                  resetFormatText={t.settings?.resetField || "Reset"}
+                  resetInstructionsText={t.settings?.resetField || "Reset"}
                   formatPlaceholder="z.B. 5 Tipps für die richtige Pflege Ihrer Lederprodukte"
                   instructionsPlaceholder="z.B. Maximal 60 Zeichen, Zahlen verwenden, Nutzen kommunizieren"
                   formatLabel="Formatbeispiel"
@@ -409,7 +450,10 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, on
                   instructionsValue={localInstructions.blogDescriptionInstructions}
                   onFormatChange={(v) => handleFieldChange('blogDescriptionFormat', v)}
                   onInstructionsChange={(v) => handleFieldChange('blogDescriptionInstructions', v)}
-                  onReset={() => handleResetField('blogDescriptionFormat', 'blogs')}
+                  onResetFormat={() => handleResetFormatField('blogDescriptionFormat', 'blogs')}
+                  onResetInstructions={() => handleResetInstructionsField('blogDescriptionInstructions', 'blogs')}
+                  resetFormatText={t.settings?.resetField || "Reset"}
+                  resetInstructionsText={t.settings?.resetField || "Reset"}
                   formatPlaceholder="z.B. <h2>1. Regelmäßiges Reinigen</h2><p>Entfernen Sie...</p>"
                   instructionsPlaceholder="z.B. 300-800 Wörter, H2/H3 Struktur, informativ"
                   formatLabel="Formatbeispiel"
@@ -425,7 +469,10 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, on
                   instructionsValue={localInstructions.blogHandleInstructions}
                   onFormatChange={(v) => handleFieldChange('blogHandleFormat', v)}
                   onInstructionsChange={(v) => handleFieldChange('blogHandleInstructions', v)}
-                  onReset={() => handleResetField('blogHandleFormat', 'blogs')}
+                  onResetFormat={() => handleResetFormatField('blogHandleFormat', 'blogs')}
+                  onResetInstructions={() => handleResetInstructionsField('blogHandleInstructions', 'blogs')}
+                  resetFormatText={t.settings?.resetField || "Reset"}
+                  resetInstructionsText={t.settings?.resetField || "Reset"}
                   formatPlaceholder="z.B. lederpflege-tipps-anleitung"
                   instructionsPlaceholder="z.B. 3-5 Keywords, maximal 60 Zeichen"
                   formatLabel="Formatbeispiel"
@@ -438,7 +485,10 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, on
                   instructionsValue={localInstructions.blogSeoTitleInstructions}
                   onFormatChange={(v) => handleFieldChange('blogSeoTitleFormat', v)}
                   onInstructionsChange={(v) => handleFieldChange('blogSeoTitleInstructions', v)}
-                  onReset={() => handleResetField('blogSeoTitleFormat', 'blogs')}
+                  onResetFormat={() => handleResetFormatField('blogSeoTitleFormat', 'blogs')}
+                  onResetInstructions={() => handleResetInstructionsField('blogSeoTitleInstructions', 'blogs')}
+                  resetFormatText={t.settings?.resetField || "Reset"}
+                  resetInstructionsText={t.settings?.resetField || "Reset"}
                   formatPlaceholder="z.B. Lederpflege: 5 Tipps | Expertenratgeber"
                   instructionsPlaceholder="z.B. 50-60 Zeichen, Zahlen nutzen, Expertise zeigen"
                   formatLabel="Formatbeispiel"
@@ -451,7 +501,10 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, on
                   instructionsValue={localInstructions.blogMetaDescInstructions}
                   onFormatChange={(v) => handleFieldChange('blogMetaDescFormat', v)}
                   onInstructionsChange={(v) => handleFieldChange('blogMetaDescInstructions', v)}
-                  onReset={() => handleResetField('blogMetaDescFormat', 'blogs')}
+                  onResetFormat={() => handleResetFormatField('blogMetaDescFormat', 'blogs')}
+                  onResetInstructions={() => handleResetInstructionsField('blogMetaDescInstructions', 'blogs')}
+                  resetFormatText={t.settings?.resetField || "Reset"}
+                  resetInstructionsText={t.settings?.resetField || "Reset"}
                   formatPlaceholder="z.B. Lederpflege leicht gemacht: 5 bewährte Tipps..."
                   instructionsPlaceholder="z.B. 150-160 Zeichen, Artikel-Nutzen zusammenfassen"
                   formatLabel="Formatbeispiel"
@@ -469,7 +522,10 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, on
                   instructionsValue={localInstructions.pageTitleInstructions}
                   onFormatChange={(v) => handleFieldChange('pageTitleFormat', v)}
                   onInstructionsChange={(v) => handleFieldChange('pageTitleInstructions', v)}
-                  onReset={() => handleResetField('pageTitleFormat', 'pages')}
+                  onResetFormat={() => handleResetFormatField('pageTitleFormat', 'pages')}
+                  onResetInstructions={() => handleResetInstructionsField('pageTitleInstructions', 'pages')}
+                  resetFormatText={t.settings?.resetField || "Reset"}
+                  resetInstructionsText={t.settings?.resetField || "Reset"}
                   formatPlaceholder="z.B. Über uns - Traditionelle Handwerkskunst seit 1970"
                   instructionsPlaceholder="z.B. Maximal 60 Zeichen, klar und beschreibend"
                   formatLabel="Formatbeispiel"
@@ -482,7 +538,10 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, on
                   instructionsValue={localInstructions.pageDescriptionInstructions}
                   onFormatChange={(v) => handleFieldChange('pageDescriptionFormat', v)}
                   onInstructionsChange={(v) => handleFieldChange('pageDescriptionInstructions', v)}
-                  onReset={() => handleResetField('pageDescriptionFormat', 'pages')}
+                  onResetFormat={() => handleResetFormatField('pageDescriptionFormat', 'pages')}
+                  onResetInstructions={() => handleResetInstructionsField('pageDescriptionInstructions', 'pages')}
+                  resetFormatText={t.settings?.resetField || "Reset"}
+                  resetInstructionsText={t.settings?.resetField || "Reset"}
                   formatPlaceholder="z.B. <h1>Handwerkskunst mit Tradition</h1><p>Seit über 50 Jahren...</p>"
                   instructionsPlaceholder="z.B. 200-400 Wörter, authentisch, H1/H2 Struktur"
                   formatLabel="Formatbeispiel"
@@ -498,7 +557,10 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, on
                   instructionsValue={localInstructions.pageHandleInstructions}
                   onFormatChange={(v) => handleFieldChange('pageHandleFormat', v)}
                   onInstructionsChange={(v) => handleFieldChange('pageHandleInstructions', v)}
-                  onReset={() => handleResetField('pageHandleFormat', 'pages')}
+                  onResetFormat={() => handleResetFormatField('pageHandleFormat', 'pages')}
+                  onResetInstructions={() => handleResetInstructionsField('pageHandleInstructions', 'pages')}
+                  resetFormatText={t.settings?.resetField || "Reset"}
+                  resetInstructionsText={t.settings?.resetField || "Reset"}
                   formatPlaceholder="z.B. ueber-uns, kontakt, impressum"
                   instructionsPlaceholder="z.B. 2-4 Keywords, maximal 40 Zeichen, Standard-Handles"
                   formatLabel="Formatbeispiel"
@@ -520,7 +582,10 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, on
                   instructionsValue={localInstructions.policyDescriptionInstructions}
                   onFormatChange={(v) => handleFieldChange('policyDescriptionFormat', v)}
                   onInstructionsChange={(v) => handleFieldChange('policyDescriptionInstructions', v)}
-                  onReset={() => handleResetField('policyDescriptionFormat', 'policies')}
+                  onResetFormat={() => handleResetFormatField('policyDescriptionFormat', 'policies')}
+                  onResetInstructions={() => handleResetInstructionsField('policyDescriptionInstructions', 'policies')}
+                  resetFormatText={t.settings?.resetField || "Reset"}
+                  resetInstructionsText={t.settings?.resetField || "Reset"}
                   formatPlaceholder="z.B. <h2>Widerrufsrecht</h2><p>Sie haben das Recht...</p>"
                   instructionsPlaceholder="z.B. Rechtssicher formulieren, H2/H3, professionell"
                   formatLabel="Formatbeispiel"

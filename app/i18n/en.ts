@@ -181,6 +181,7 @@ export const en: Translation = {
     defaultInstructionsReadOnly: "Default AI Instructions (read-only in Free and Basic plans)",
     unsavedChangesMessage: "You have unsaved changes. Do you really want to continue? Your changes will be lost.",
     resetAllFields: "Reset all fields",
+    resetField: "Reset",
     aiInstructionsDescription: "Configure how AI should generate your content. These settings apply to all AI-generated texts.",
     appLanguageDescription: "Choose the language for the user interface",
     manageAiKeys: "Manage AI API Access Codes",

@@ -179,6 +179,7 @@ export const de = {
     defaultInstructionsReadOnly: "Standard-KI-Anweisungen (schreibgeschützt im Free- und Basic-Plan)",
     unsavedChangesMessage: "Sie haben ungespeicherte Änderungen. Möchten Sie wirklich fortfahren? Ihre Änderungen gehen verloren.",
     resetAllFields: "Alle Felder zurücksetzen",
+    resetField: "Zurücksetzen",
     aiInstructionsDescription: "Konfigurieren Sie, wie die KI Ihre Inhalte generieren soll. Diese Einstellungen werden auf alle KI-generierten Texte angewendet.",
     appLanguageDescription: "Wählen Sie die Sprache für die Benutzeroberfläche",
     manageAiKeys: "AI API-Zugangscodes verwalten",

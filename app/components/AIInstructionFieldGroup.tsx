@@ -8,7 +8,8 @@ interface AIInstructionFieldGroupProps {
   instructionsValue: string;
   onFormatChange: (value: string) => void;
   onInstructionsChange: (value: string) => void;
-  onReset: () => void;
+  onResetFormat: () => void;
+  onResetInstructions: () => void;
   formatPlaceholder: string;
   instructionsPlaceholder: string;
   formatLabel: string;
@@ -16,6 +17,8 @@ interface AIInstructionFieldGroupProps {
   isHtmlField?: boolean;
   htmlMode?: "html" | "rendered";
   onToggleHtmlMode?: () => void;
+  resetFormatText?: string;
+  resetInstructionsText?: string;
 }
 
 export function AIInstructionFieldGroup({
@@ -24,7 +27,8 @@ export function AIInstructionFieldGroup({
   instructionsValue,
   onFormatChange,
   onInstructionsChange,
-  onReset,
+  onResetFormat,
+  onResetInstructions,
   formatPlaceholder,
   instructionsPlaceholder,
   formatLabel,
@@ -32,24 +36,26 @@ export function AIInstructionFieldGroup({
   isHtmlField = false,
   htmlMode = "rendered",
   onToggleHtmlMode,
+  resetFormatText = "Reset",
+  resetInstructionsText = "Reset",
 }: AIInstructionFieldGroupProps) {
   const editorRef = useRef<HTMLDivElement>(null);
   const { executeCommand } = useHtmlFormatting({ editorRef, onChange: onFormatChange });
   return (
     <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px", overflow: "visible" }}>
       <BlockStack gap="400">
-        <InlineStack align="space-between" blockAlign="center">
-          <Text as="h3" variant="headingMd">{fieldName}</Text>
-          <Button size="slim" onClick={onReset} tone="critical" variant="plain">
-            Zurücksetzen
-          </Button>
-        </InlineStack>
+        <Text as="h3" variant="headingMd">{fieldName}</Text>
 
         {/* Format Example Field */}
         <div style={{ overflow: "visible" }}>
           {isHtmlField && onToggleHtmlMode && (
             <InlineStack align="space-between" blockAlign="center">
-              <Text as="p" variant="bodyMd" fontWeight="medium">{formatLabel}</Text>
+              <InlineStack gap="200" blockAlign="center">
+                <Text as="p" variant="bodyMd" fontWeight="medium">{formatLabel}</Text>
+                <Button size="slim" onClick={onResetFormat} tone="critical" variant="plain">
+                  {resetFormatText}
+                </Button>
+              </InlineStack>
               <Button size="slim" onClick={onToggleHtmlMode}>
                 {htmlMode === "html" ? "Vorschau" : "HTML"}
               </Button>
@@ -57,15 +63,23 @@ export function AIInstructionFieldGroup({
           )}
 
           {!isHtmlField && (
-            <TextField
-              label={formatLabel}
-              value={formatValue}
-              onChange={onFormatChange}
-              multiline={3}
-              autoComplete="off"
-              placeholder={formatPlaceholder}
-              helpText={`${formatValue.length} Zeichen`}
-            />
+            <>
+              <InlineStack align="space-between" blockAlign="center">
+                <Text as="p" variant="bodyMd" fontWeight="medium">{formatLabel}</Text>
+                <Button size="slim" onClick={onResetFormat} tone="critical" variant="plain">
+                  {resetFormatText}
+                </Button>
+              </InlineStack>
+              <TextField
+                label=""
+                value={formatValue}
+                onChange={onFormatChange}
+                multiline={3}
+                autoComplete="off"
+                placeholder={formatPlaceholder}
+                helpText={`${formatValue.length} Zeichen`}
+              />
+            </>
           )}
 
           {isHtmlField && (
@@ -224,15 +238,23 @@ export function AIInstructionFieldGroup({
         </div>
 
         {/* Instructions Field */}
-        <TextField
-          label={instructionsLabel}
-          value={instructionsValue}
-          onChange={onInstructionsChange}
-          multiline={3}
-          autoComplete="off"
-          placeholder={instructionsPlaceholder}
-          helpText={`${instructionsValue.length} Zeichen`}
-        />
+        <div>
+          <InlineStack align="space-between" blockAlign="center">
+            <Text as="p" variant="bodyMd" fontWeight="medium">{instructionsLabel}</Text>
+            <Button size="slim" onClick={onResetInstructions} tone="critical" variant="plain">
+              {resetInstructionsText}
+            </Button>
+          </InlineStack>
+          <TextField
+            label=""
+            value={instructionsValue}
+            onChange={onInstructionsChange}
+            multiline={3}
+            autoComplete="off"
+            placeholder={instructionsPlaceholder}
+            helpText={`${instructionsValue.length} Zeichen`}
+          />
+        </div>
       </BlockStack>
     </div>
   );
