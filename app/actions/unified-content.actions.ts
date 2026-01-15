@@ -12,6 +12,7 @@ import { TranslationService } from "../../src/services/translation.service";
 import { ShopifyContentService } from "../../src/services/shopify-content.service";
 import { sanitizeSlug } from "../utils/slug.utils";
 import { decryptApiKey } from "../utils/encryption.server";
+import { getTaskExpirationDate } from "../../src/utils/task.utils";
 import type { ContentEditorConfig } from "../types/content-editor.types";
 
 interface UnifiedContentActionsConfig {
@@ -40,6 +41,11 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
     grokApiKey: decryptApiKey(aiSettings?.grokApiKey) || undefined,
     deepseekApiKey: decryptApiKey(aiSettings?.deepseekApiKey) || undefined,
   };
+
+  // Update queue rate limits from settings
+  const { AIQueueService } = await import("../../src/services/ai-queue.service");
+  const queue = AIQueueService.getInstance();
+  await queue.updateRateLimits(aiSettings);
 
   const aiService = new AIService(provider, serviceConfig);
   const translationService = new TranslationService(provider, serviceConfig);
@@ -70,13 +76,45 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
     const contextTitle = formData.get("contextTitle") as string;
     const contextDescription = formData.get("contextDescription") as string;
 
+    // Create task entry
+    const task = await db.task.create({
+      data: {
+        shop: session.shop,
+        type: "aiGeneration",
+        status: "pending",
+        resourceType: contentConfig.resourceType,
+        resourceId: itemId,
+        resourceTitle: contextTitle,
+        fieldType,
+        progress: 0,
+        expiresAt: getTaskExpirationDate(),
+      },
+    });
+
     try {
       const field = contentConfig.fieldDefinitions.find((f) => f.key === fieldType);
       if (!field) {
+        await db.task.update({
+          where: { id: task.id },
+          data: {
+            status: "failed",
+            completedAt: new Date(),
+            error: "Invalid field type",
+          },
+        });
         return json({ success: false, error: "Invalid field type" }, { status: 400 });
       }
 
+      // Create AI service with shop and taskId for queue management
+      const aiServiceWithTask = new AIService(provider, serviceConfig, session.shop, task.id);
+
       let generatedContent = "";
+
+      // Update task to queued (queue will update to running)
+      await db.task.update({
+        where: { id: task.id },
+        data: { status: "queued", progress: 10 },
+      });
 
       // Get AI instructions for this field
       const instructionsKey = field.aiInstructionsKey;
@@ -107,7 +145,7 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
         }
 
         prompt += `\n\nContext:\n${contextDescription || currentValue}\n\nReturn ONLY the ${field.label}, without explanations. Output the result in the main language of the content.`;
-        generatedContent = await aiService.generateProductTitle(prompt);
+        generatedContent = await aiServiceWithTask.generateProductTitle(prompt);
 
         if (field.type === "slug") {
           generatedContent = sanitizeSlug(generatedContent);
@@ -123,11 +161,39 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
         }
 
         prompt += `\n\nCurrent Content:\n${currentValue}\n\nReturn ONLY the ${field.label}, without explanations. Output the result in the main language of the content.`;
-        generatedContent = await aiService.generateProductDescription(contextTitle, prompt);
+        generatedContent = await aiServiceWithTask.generateProductDescription(contextTitle, prompt);
       }
+
+      // Update task to completed
+      let resultString = "";
+      try {
+        resultString = JSON.stringify({ generatedContent: generatedContent.substring(0, 500), fieldType });
+      } catch (e) {
+        resultString = JSON.stringify({ fieldType, success: true });
+      }
+
+      await db.task.update({
+        where: { id: task.id },
+        data: {
+          status: "completed",
+          progress: 100,
+          completedAt: new Date(),
+          result: resultString,
+        },
+      });
 
       return json({ success: true, generatedContent, fieldType });
     } catch (error: any) {
+      // Update task to failed
+      const errorMessage = (error.message || String(error)).substring(0, 1000);
+      await db.task.update({
+        where: { id: task.id },
+        data: {
+          status: "failed",
+          completedAt: new Date(),
+          error: errorMessage,
+        },
+      });
       return json({ success: false, error: error.message }, { status: 500 });
     }
   }
@@ -142,13 +208,45 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
     const contextTitle = formData.get("contextTitle") as string;
     const contextDescription = formData.get("contextDescription") as string;
 
+    // Create task entry
+    const task = await db.task.create({
+      data: {
+        shop: session.shop,
+        type: "aiFormatting",
+        status: "pending",
+        resourceType: contentConfig.resourceType,
+        resourceId: itemId,
+        resourceTitle: contextTitle,
+        fieldType,
+        progress: 0,
+        expiresAt: getTaskExpirationDate(),
+      },
+    });
+
     try {
       const field = contentConfig.fieldDefinitions.find((f) => f.key === fieldType);
       if (!field) {
+        await db.task.update({
+          where: { id: task.id },
+          data: {
+            status: "failed",
+            completedAt: new Date(),
+            error: "Invalid field type",
+          },
+        });
         return json({ success: false, error: "Invalid field type" }, { status: 400 });
       }
 
+      // Create AI service with shop and taskId for queue management
+      const aiServiceWithTask = new AIService(provider, serviceConfig, session.shop, task.id);
+
       let formattedContent = "";
+
+      // Update task to queued (queue will update to running)
+      await db.task.update({
+        where: { id: task.id },
+        data: { status: "queued", progress: 10 },
+      });
 
       // Get AI instructions for this field
       const instructionsKey = field.aiInstructionsKey;
@@ -172,7 +270,7 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
         }
 
         prompt += `\n\nReturn ONLY the formatted ${field.label}, without explanations. Output the result in the main language of the content.`;
-        formattedContent = await aiService.generateProductTitle(prompt);
+        formattedContent = await aiServiceWithTask.generateProductTitle(prompt);
 
         if (field.type === "slug") {
           formattedContent = sanitizeSlug(formattedContent);
@@ -188,11 +286,39 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
         }
 
         prompt += `\n\nKeep the content but format according to the guidelines. Return only the formatted text. Output the result in the main language of the content.`;
-        formattedContent = await aiService.generateProductDescription(currentValue, prompt);
+        formattedContent = await aiServiceWithTask.generateProductDescription(currentValue, prompt);
       }
+
+      // Update task to completed
+      let resultString = "";
+      try {
+        resultString = JSON.stringify({ formattedContent: formattedContent.substring(0, 500), fieldType });
+      } catch (e) {
+        resultString = JSON.stringify({ fieldType, success: true });
+      }
+
+      await db.task.update({
+        where: { id: task.id },
+        data: {
+          status: "completed",
+          progress: 100,
+          completedAt: new Date(),
+          result: resultString,
+        },
+      });
 
       return json({ success: true, generatedContent: formattedContent, fieldType });
     } catch (error: any) {
+      // Update task to failed
+      const errorMessage = (error.message || String(error)).substring(0, 1000);
+      await db.task.update({
+        where: { id: task.id },
+        data: {
+          status: "failed",
+          completedAt: new Date(),
+          error: errorMessage,
+        },
+      });
       return json({ success: false, error: error.message }, { status: 500 });
     }
   }
@@ -206,15 +332,55 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
     const sourceText = formData.get("sourceText") as string;
     const targetLocale = formData.get("targetLocale") as string;
 
+    // Create task entry
+    const task = await db.task.create({
+      data: {
+        shop: session.shop,
+        type: "translation",
+        status: "pending",
+        resourceType: contentConfig.resourceType,
+        resourceId: itemId,
+        fieldType,
+        targetLocale,
+        progress: 0,
+        expiresAt: getTaskExpirationDate(),
+      },
+    });
+
     try {
+      // Create translation service with shop and taskId for queue management
+      const translationServiceWithTask = new TranslationService(provider, serviceConfig, session.shop, task.id);
+
       const changedFields: any = {};
       changedFields[fieldType] = sourceText;
 
-      const translations = await translationService.translateProduct(changedFields, [targetLocale], contentConfig.contentType);
+      await db.task.update({
+        where: { id: task.id },
+        data: { status: "queued", progress: 10 },
+      });
+
+      const translations = await translationServiceWithTask.translateProduct(changedFields, [targetLocale], contentConfig.contentType);
       const translatedValue = translations[targetLocale]?.[fieldType] || "";
+
+      await db.task.update({
+        where: { id: task.id },
+        data: {
+          status: "completed",
+          progress: 100,
+          completedAt: new Date(),
+        },
+      });
 
       return json({ success: true, translatedValue, fieldType, targetLocale });
     } catch (error: any) {
+      await db.task.update({
+        where: { id: task.id },
+        data: {
+          status: "failed",
+          completedAt: new Date(),
+          error: error.message,
+        },
+      });
       return json({ success: false, error: error.message }, { status: 500 });
     }
   }
@@ -224,9 +390,26 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
   // ============================================================================
 
   if (action === "translateAll") {
+    const targetLocalesStr = formData.get("targetLocales") as string;
+    const contextTitle = formData.get("title") as string;
+
+    // Create task entry
+    const task = await db.task.create({
+      data: {
+        shop: session.shop,
+        type: "bulkTranslation",
+        status: "pending",
+        resourceType: contentConfig.resourceType,
+        resourceId: itemId,
+        resourceTitle: contextTitle,
+        fieldType: "all",
+        progress: 0,
+        expiresAt: getTaskExpirationDate(),
+      },
+    });
+
     try {
       const changedFields: any = {};
-      const targetLocalesStr = formData.get("targetLocales") as string;
 
       // Collect all field values
       contentConfig.fieldDefinitions.forEach((field) => {
@@ -237,21 +420,59 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
       });
 
       if (Object.keys(changedFields).length === 0) {
+        await db.task.update({
+          where: { id: task.id },
+          data: {
+            status: "failed",
+            completedAt: new Date(),
+            error: "No fields to translate",
+          },
+        });
         return json({ success: false, error: "No fields to translate" }, { status: 400 });
       }
+
+      // Create translation service with shop and taskId for queue management
+      const translationServiceWithTask = new TranslationService(provider, serviceConfig, session.shop, task.id);
+
+      await db.task.update({
+        where: { id: task.id },
+        data: { status: "queued", progress: 10 },
+      });
 
       const allTranslations = await shopifyContentService.translateAllContent({
         resourceId: itemId,
         resourceType: contentConfig.resourceType as any,
         fields: changedFields,
-        translationService,
+        translationService: translationServiceWithTask,
         db,
         targetLocales: targetLocalesStr ? JSON.parse(targetLocalesStr) : undefined,
         contentType: contentConfig.contentType,
+        taskId: task.id,
+      });
+
+      await db.task.update({
+        where: { id: task.id },
+        data: {
+          status: "completed",
+          progress: 100,
+          completedAt: new Date(),
+          result: JSON.stringify({
+            success: true,
+            locales: Object.keys(allTranslations),
+          }),
+        },
       });
 
       return json({ success: true, translations: allTranslations });
     } catch (error: any) {
+      await db.task.update({
+        where: { id: task.id },
+        data: {
+          status: "failed",
+          completedAt: new Date(),
+          error: error.message,
+        },
+      });
       return json({ success: false, error: error.message }, { status: 500 });
     }
   }
@@ -264,27 +485,78 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
     const fieldType = formData.get("fieldType") as string;
     const sourceText = formData.get("sourceText") as string;
     const targetLocalesStr = formData.get("targetLocales") as string;
+    const contextTitle = formData.get("contextTitle") as string;
+
+    // Create task entry
+    const task = await db.task.create({
+      data: {
+        shop: session.shop,
+        type: "bulkTranslation",
+        status: "pending",
+        resourceType: contentConfig.resourceType,
+        resourceId: itemId,
+        resourceTitle: contextTitle,
+        fieldType,
+        progress: 0,
+        expiresAt: getTaskExpirationDate(),
+      },
+    });
 
     try {
       const changedFields: any = {};
       changedFields[fieldType] = sourceText;
 
       if (!sourceText) {
+        await db.task.update({
+          where: { id: task.id },
+          data: {
+            status: "failed",
+            completedAt: new Date(),
+            error: "No source text to translate",
+          },
+        });
         return json({ success: false, error: "No source text to translate" }, { status: 400 });
       }
+
+      // Create translation service with shop and taskId for queue management
+      const translationServiceWithTask = new TranslationService(provider, serviceConfig, session.shop, task.id);
+
+      await db.task.update({
+        where: { id: task.id },
+        data: { status: "queued", progress: 10 },
+      });
 
       const allTranslations = await shopifyContentService.translateAllContent({
         resourceId: itemId,
         resourceType: contentConfig.resourceType as any,
         fields: changedFields,
-        translationService,
+        translationService: translationServiceWithTask,
         db,
         targetLocales: targetLocalesStr ? JSON.parse(targetLocalesStr) : undefined,
         contentType: contentConfig.contentType,
+        taskId: task.id,
+      });
+
+      await db.task.update({
+        where: { id: task.id },
+        data: {
+          status: "completed",
+          progress: 100,
+          completedAt: new Date(),
+          result: JSON.stringify({ translations: allTranslations, fieldType }),
+        },
       });
 
       return json({ success: true, translations: allTranslations, fieldType });
     } catch (error: any) {
+      await db.task.update({
+        where: { id: task.id },
+        data: {
+          status: "failed",
+          completedAt: new Date(),
+          error: error.message,
+        },
+      });
       return json({ success: false, error: error.message }, { status: 500 });
     }
   }
