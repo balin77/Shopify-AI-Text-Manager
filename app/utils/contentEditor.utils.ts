@@ -280,20 +280,20 @@ export function hasPrimaryContentMissing(
 
   // Check required fields based on content type
   if (contentType === 'products') {
-    const titleMissing = !selectedItem.title || selectedItem.title.trim() === '';
-    const descriptionMissing = !selectedItem.descriptionHtml || selectedItem.descriptionHtml.trim() === '';
-    const handleMissing = !selectedItem.handle || selectedItem.handle.trim() === '';
-    const seoTitleMissing = !selectedItem.seo?.title || selectedItem.seo.title.trim() === '';
-    const seoDescriptionMissing = !selectedItem.seo?.description || selectedItem.seo.description.trim() === '';
+    const titleMissing = !selectedItem.title || (typeof selectedItem.title === 'string' && selectedItem.title.trim() === '');
+    const descriptionMissing = !selectedItem.descriptionHtml || (typeof selectedItem.descriptionHtml === 'string' && selectedItem.descriptionHtml.trim() === '');
+    const handleMissing = !selectedItem.handle || (typeof selectedItem.handle === 'string' && selectedItem.handle.trim() === '');
+    const seoTitleMissing = !selectedItem.seo?.title || (typeof selectedItem.seo.title === 'string' && selectedItem.seo.title.trim() === '');
+    const seoDescriptionMissing = !selectedItem.seo?.description || (typeof selectedItem.seo.description === 'string' && selectedItem.seo.description.trim() === '');
     return titleMissing || descriptionMissing || handleMissing || seoTitleMissing || seoDescriptionMissing;
   }
 
   if (contentType === 'collections') {
-    const titleMissing = !selectedItem.title || selectedItem.title.trim() === '';
-    const descriptionMissing = !selectedItem.descriptionHtml || selectedItem.descriptionHtml.trim() === '';
-    const handleMissing = !selectedItem.handle || selectedItem.handle.trim() === '';
-    const seoTitleMissing = !selectedItem.seo?.title || selectedItem.seo.title.trim() === '';
-    const seoDescriptionMissing = !selectedItem.seo?.description || selectedItem.seo.description.trim() === '';
+    const titleMissing = !selectedItem.title || (typeof selectedItem.title === 'string' && selectedItem.title.trim() === '');
+    const descriptionMissing = !selectedItem.descriptionHtml || (typeof selectedItem.descriptionHtml === 'string' && selectedItem.descriptionHtml.trim() === '');
+    const handleMissing = !selectedItem.handle || (typeof selectedItem.handle === 'string' && selectedItem.handle.trim() === '');
+    const seoTitleMissing = !selectedItem.seo?.title || (typeof selectedItem.seo.title === 'string' && selectedItem.seo.title.trim() === '');
+    const seoDescriptionMissing = !selectedItem.seo?.description || (typeof selectedItem.seo.description === 'string' && selectedItem.seo.description.trim() === '');
     return titleMissing || descriptionMissing || handleMissing || seoTitleMissing || seoDescriptionMissing;
   }
 
@@ -336,21 +336,21 @@ export function hasLocaleMissingTranslations(
     let primaryHasContent = false;
 
     if (field === "title") {
-      primaryHasContent = !!selectedItem.title && selectedItem.title.trim() !== '';
+      primaryHasContent = !!selectedItem.title && typeof selectedItem.title === 'string' && selectedItem.title.trim() !== '';
     } else if (field === "body_html") {
       if (contentType === 'collections' || contentType === 'products') {
-        primaryHasContent = !!selectedItem.descriptionHtml && selectedItem.descriptionHtml.trim() !== '';
+        primaryHasContent = !!selectedItem.descriptionHtml && typeof selectedItem.descriptionHtml === 'string' && selectedItem.descriptionHtml.trim() !== '';
       } else {
-        primaryHasContent = !!selectedItem.body && selectedItem.body.trim() !== '';
+        primaryHasContent = !!selectedItem.body && typeof selectedItem.body === 'string' && selectedItem.body.trim() !== '';
       }
     } else if (field === "body") {
-      primaryHasContent = !!selectedItem.body && selectedItem.body.trim() !== '';
+      primaryHasContent = !!selectedItem.body && typeof selectedItem.body === 'string' && selectedItem.body.trim() !== '';
     } else if (field === "handle") {
-      primaryHasContent = !!selectedItem.handle && selectedItem.handle.trim() !== '';
+      primaryHasContent = !!selectedItem.handle && typeof selectedItem.handle === 'string' && selectedItem.handle.trim() !== '';
     } else if (field === "meta_title") {
-      primaryHasContent = !!selectedItem.seo?.title && selectedItem.seo.title.trim() !== '';
+      primaryHasContent = !!selectedItem.seo?.title && typeof selectedItem.seo.title === 'string' && selectedItem.seo.title.trim() !== '';
     } else if (field === "meta_description") {
-      primaryHasContent = !!selectedItem.seo?.description && selectedItem.seo.description.trim() !== '';
+      primaryHasContent = !!selectedItem.seo?.description && typeof selectedItem.seo.description === 'string' && selectedItem.seo.description.trim() !== '';
     }
 
     // Only check if translation is missing if primary has content
@@ -359,7 +359,7 @@ export function hasLocaleMissingTranslations(
     }
 
     const translation = translations.find((t: any) => t.key === field);
-    return !translation || !translation.value || translation.value.trim() === '';
+    return !translation || !translation.value || (typeof translation.value === 'string' && translation.value.trim() === '');
   });
 }
 
@@ -400,21 +400,21 @@ export function hasFieldMissingTranslations(
   let primaryHasContent = false;
 
   if (fieldKey === "title") {
-    primaryHasContent = !!selectedItem.title && selectedItem.title.trim() !== '';
+    primaryHasContent = !!selectedItem.title && typeof selectedItem.title === 'string' && selectedItem.title.trim() !== '';
   } else if (fieldKey === "body_html" || fieldKey === "description") {
     if (contentType === 'collections' || contentType === 'products') {
-      primaryHasContent = !!selectedItem.descriptionHtml && selectedItem.descriptionHtml.trim() !== '';
+      primaryHasContent = !!selectedItem.descriptionHtml && typeof selectedItem.descriptionHtml === 'string' && selectedItem.descriptionHtml.trim() !== '';
     } else {
-      primaryHasContent = !!selectedItem.body && selectedItem.body.trim() !== '';
+      primaryHasContent = !!selectedItem.body && typeof selectedItem.body === 'string' && selectedItem.body.trim() !== '';
     }
   } else if (fieldKey === "body") {
-    primaryHasContent = !!selectedItem.body && selectedItem.body.trim() !== '';
+    primaryHasContent = !!selectedItem.body && typeof selectedItem.body === 'string' && selectedItem.body.trim() !== '';
   } else if (fieldKey === "handle") {
-    primaryHasContent = !!selectedItem.handle && selectedItem.handle.trim() !== '';
+    primaryHasContent = !!selectedItem.handle && typeof selectedItem.handle === 'string' && selectedItem.handle.trim() !== '';
   } else if (fieldKey === "meta_title" || fieldKey === "seoTitle") {
-    primaryHasContent = !!selectedItem.seo?.title && selectedItem.seo.title.trim() !== '';
+    primaryHasContent = !!selectedItem.seo?.title && typeof selectedItem.seo.title === 'string' && selectedItem.seo.title.trim() !== '';
   } else if (fieldKey === "meta_description" || fieldKey === "metaDescription") {
-    primaryHasContent = !!selectedItem.seo?.description && selectedItem.seo.description.trim() !== '';
+    primaryHasContent = !!selectedItem.seo?.description && typeof selectedItem.seo.description === 'string' && selectedItem.seo.description.trim() !== '';
   }
 
   // If primary doesn't have content, no translation is expected
@@ -446,7 +446,7 @@ export function hasFieldMissingTranslations(
     ) || [];
 
     const translation = translations.find((t: any) => t.key === translationKey);
-    return !translation || !translation.value || translation.value.trim() === '';
+    return !translation || !translation.value || (typeof translation.value === 'string' && translation.value.trim() === '');
   });
 }
 
