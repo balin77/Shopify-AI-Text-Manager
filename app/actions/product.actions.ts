@@ -72,22 +72,22 @@ export async function handleProductActions({ request }: ActionFunctionArgs) {
 
   if (action === "translateField") {
     console.log('🌐 [PRODUCT.ACTIONS] Translating field:', formData.get("fieldType"), 'to locale:', formData.get("targetLocale"));
-    return handleTranslateField(provider, config, formData, session.shop);
+    return handleTranslateField(provider, config, formData, session.shop, aiInstructions);
   }
 
   if (action === "translateFieldToAllLocales") {
     console.log('🌐 [PRODUCT.ACTIONS] Translating field to all locales:', formData.get("fieldType"));
-    return handleTranslateFieldToAllLocales(admin, provider, config, formData, session.shop);
+    return handleTranslateFieldToAllLocales(admin, provider, config, formData, session.shop, aiInstructions);
   }
 
   if (action === "translateSuggestion") {
     console.log('🌐 [PRODUCT.ACTIONS] Translating suggestion for field:', formData.get("fieldType"));
-    return handleTranslateSuggestion(provider, config, formData, session.shop);
+    return handleTranslateSuggestion(provider, config, formData, session.shop, aiInstructions);
   }
 
   if (action === "translateAll") {
     console.log('🌐 [PRODUCT.ACTIONS] Translating all fields for product:', productId);
-    return handleTranslateAll(admin, provider, config, formData, productId, session.shop);
+    return handleTranslateAll(admin, provider, config, formData, productId, session.shop, aiInstructions);
   }
 
   if (action === "updateProduct") {
@@ -506,7 +506,8 @@ async function handleTranslateField(
   provider: any,
   config: any,
   formData: FormData,
-  shop: string
+  shop: string,
+  aiInstructions?: any
 ) {
   const fieldType = formData.get("fieldType") as string;
   const sourceText = formData.get("sourceText") as string;
@@ -541,7 +542,7 @@ async function handleTranslateField(
       data: { status: "queued", progress: 10 },
     });
 
-    const translations = await translationService.translateProduct(changedFields, [targetLocale]);
+    const translations = await translationService.translateProduct(changedFields, [targetLocale], aiInstructions, 'product');
     const translatedValue = translations[targetLocale]?.[fieldType] || "";
 
     await db.task.update({
@@ -573,7 +574,8 @@ async function handleTranslateFieldToAllLocales(
   provider: any,
   config: any,
   formData: FormData,
-  shop: string
+  shop: string,
+  aiInstructions?: any
 ) {
   const fieldType = formData.get("fieldType") as string;
   const sourceText = formData.get("sourceText") as string;
@@ -662,7 +664,7 @@ async function handleTranslateFieldToAllLocales(
       try {
         console.log(`[TranslateFieldToAllLocales] Translating ${fieldType} to ${locale}`);
 
-        const localeTranslations = await translationService.translateProduct(changedFields, [locale]);
+        const localeTranslations = await translationService.translateProduct(changedFields, [locale], aiInstructions, 'product');
         const translatedValue = localeTranslations[locale]?.[fieldType] || "";
 
         if (!translatedValue) {
@@ -779,7 +781,8 @@ async function handleTranslateSuggestion(
   provider: any,
   config: any,
   formData: FormData,
-  shop: string
+  shop: string,
+  aiInstructions?: any
 ) {
   const suggestion = formData.get("suggestion") as string;
   const fieldType = formData.get("fieldType") as string;
@@ -789,7 +792,7 @@ async function handleTranslateSuggestion(
     const changedFields: any = {};
     changedFields[fieldType] = suggestion;
 
-    const translations = await translationService.translateProduct(changedFields);
+    const translations = await translationService.translateProduct(changedFields, undefined, aiInstructions, 'product');
 
     return json({ success: true, translations, fieldType });
   } catch (error: any) {
@@ -803,7 +806,8 @@ async function handleTranslateAll(
   config: any,
   formData: FormData,
   productId: string,
-  shop: string
+  shop: string,
+  aiInstructions?: any
 ) {
   const title = formData.get("title") as string;
   const description = formData.get("description") as string;
@@ -907,7 +911,7 @@ async function handleTranslateAll(
         console.log(`[TranslateAll] Starting translation for locale: ${locale}`);
 
         // Translate to this specific locale
-        const localeTranslations = await translationService.translateProduct(changedFields, [locale]);
+        const localeTranslations = await translationService.translateProduct(changedFields, [locale], aiInstructions, 'product');
         console.log(`[TranslateAll] Translation response for ${locale}:`, JSON.stringify(localeTranslations).substring(0, 200));
 
         const fields = localeTranslations[locale];
