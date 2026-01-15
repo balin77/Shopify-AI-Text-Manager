@@ -25,8 +25,8 @@ interface Task {
   shop: string;
   type: string;
   status: string;
-  resourceType: string;
-  resourceId: string;
+  resourceType: string | null;
+  resourceId: string | null;
   fieldType: string | null;
   targetLocale: string | null;
   progress: number;
@@ -35,7 +35,7 @@ interface Task {
   queuePosition: number | null;
   retryCount: number;
   estimatedTokens: number | null;
-  expiresAt: Date;
+  expiresAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
