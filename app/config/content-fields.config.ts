@@ -7,6 +7,100 @@
 import type { ContentEditorConfig } from "../types/content-editor.types";
 
 // ============================================================================
+// PRODUCTS
+// ============================================================================
+
+export const PRODUCTS_CONFIG: ContentEditorConfig = {
+  contentType: "products",
+  resourceType: "Product",
+  displayName: "Products",
+  displayNameSingular: "Product",
+  showSeoSidebar: true,
+  idPrefix: "ID:",
+
+  fieldDefinitions: [
+    // Images (special field type)
+    {
+      key: "images",
+      type: "image-gallery",
+      label: "Product Images",
+      translationKey: "images", // Alt-texts are translated
+      supportsAI: true,
+      supportsTranslation: true,
+      aiInstructionsKey: "productAltText",
+    },
+    // Title
+    {
+      key: "title",
+      type: "text",
+      label: "Product Title",
+      translationKey: "title",
+      required: true,
+      supportsAI: true,
+      supportsFormatting: true,
+      supportsTranslation: true,
+      aiInstructionsKey: "productTitle",
+      helpText: (value) => `${(value || '').length} characters`,
+    },
+    // Description
+    {
+      key: "description",
+      type: "html",
+      label: "Description",
+      translationKey: "body_html",
+      supportsAI: true,
+      supportsFormatting: true,
+      supportsTranslation: true,
+      aiInstructionsKey: "productDescription",
+    },
+    // Handle (URL slug)
+    {
+      key: "handle",
+      type: "slug",
+      label: "URL Handle",
+      translationKey: "handle",
+      supportsAI: true,
+      supportsFormatting: true,
+      supportsTranslation: true,
+      aiInstructionsKey: "productHandle",
+    },
+    // SEO Title
+    {
+      key: "seoTitle",
+      type: "text",
+      label: "SEO Title",
+      translationKey: "meta_title",
+      supportsAI: true,
+      supportsFormatting: true,
+      supportsTranslation: true,
+      aiInstructionsKey: "productSeoTitle",
+      helpText: (value) => `${(value || '').length} characters (recommended: 50-60)`,
+    },
+    // Meta Description
+    {
+      key: "metaDescription",
+      type: "textarea",
+      label: "Meta Description",
+      translationKey: "meta_description",
+      multiline: 3,
+      supportsAI: true,
+      supportsFormatting: true,
+      supportsTranslation: true,
+      aiInstructionsKey: "productMetaDesc",
+      helpText: (value) => `${(value || '').length} characters (recommended: 150-160)`,
+    },
+    // Product Options (special field type)
+    {
+      key: "options",
+      type: "options",
+      label: "Product Options",
+      translationKey: "options",
+      supportsTranslation: true,
+    },
+  ],
+};
+
+// ============================================================================
 // COLLECTIONS
 // ============================================================================
 

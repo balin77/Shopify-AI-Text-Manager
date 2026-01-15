@@ -10,6 +10,8 @@ import { AIEditableField } from "./AIEditableField";
 import { AIEditableHTMLField } from "./AIEditableHTMLField";
 import { UnifiedItemList } from "./unified/UnifiedItemList";
 import { UnifiedLanguageBar } from "./unified/UnifiedLanguageBar";
+import { ImageGalleryField } from "./unified/ImageGalleryField";
+import { OptionsField } from "./unified/OptionsField";
 import { SaveDiscardButtons } from "./SaveDiscardButtons";
 import { SeoSidebar } from "./SeoSidebar";
 import { useNavigationHeight } from "../contexts/NavigationHeightContext";
@@ -333,6 +335,56 @@ function FieldRenderer(props: FieldRendererProps) {
   }
 
   // Render based on field type
+
+  // Custom render function (if provided)
+  if (field.renderField) {
+    return field.renderField({
+      field,
+      value,
+      onChange,
+      suggestion,
+      isPrimaryLocale,
+      isTranslated,
+      isLoading,
+      sourceTextAvailable,
+      onGenerateAI,
+      onFormatAI,
+      onTranslate,
+      onTranslateToAllLocales,
+      onAcceptSuggestion,
+      onAcceptAndTranslate,
+      onRejectSuggestion,
+      htmlMode,
+      onToggleHtmlMode,
+      shopLocales,
+      currentLanguage,
+      t,
+    });
+  }
+
+  // Image Gallery Field
+  if (field.type === "image-gallery") {
+    // Note: Image gallery needs special state handling in the editor
+    // For now, return a placeholder. This will be implemented in useUnifiedContentEditor
+    return (
+      <Text as="p" variant="bodySm" tone="subdued">
+        Image gallery field (requires custom implementation per content type)
+      </Text>
+    );
+  }
+
+  // Options Field
+  if (field.type === "options") {
+    // Note: Options need special state handling in the editor
+    // For now, return a placeholder. This will be implemented in useUnifiedContentEditor
+    return (
+      <Text as="p" variant="bodySm" tone="subdued">
+        Options field (requires custom implementation per content type)
+      </Text>
+    );
+  }
+
+  // HTML Field
   if (field.type === "html") {
     return (
       <AIEditableHTMLField
@@ -359,7 +411,7 @@ function FieldRenderer(props: FieldRendererProps) {
     );
   }
 
-  // Default: Use AIEditableField for text, slug, textarea
+  // Default: Use AIEditableField for text, slug, textarea, number
   return (
     <AIEditableField
       label={label}
