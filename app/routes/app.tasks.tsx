@@ -335,45 +335,71 @@ export default function TasksPage() {
                       </InlineStack>
                     </div>
 
-                    {/* Expandable Details */}
+                    {/* Resource Info - Always Visible */}
+                    {task.resourceTitle && (
+                      <InlineStack gap="200">
+                        {task.resourceType && (
+                          <Badge tone="info">
+                            {(t.tasks.resourceType as any)[task.resourceType] || task.resourceType}
+                          </Badge>
+                        )}
+                        <Text as="p" variant="bodyMd">
+                          {task.resourceTitle}
+                        </Text>
+                      </InlineStack>
+                    )}
+
+                    {/* Field Type - Always Visible */}
+                    {task.fieldType && (
+                      <Text as="p" variant="bodySm" tone="subdued">
+                        {t.tasks.fieldType && (t.tasks.fieldType as any)[task.fieldType]
+                          ? (t.tasks.fieldType as any)[task.fieldType]
+                          : task.fieldType}
+                        {task.targetLocale && ` → ${task.targetLocale}`}
+                      </Text>
+                    )}
+
+                    {/* Progress Bar - Always Visible */}
+                    {(task.status === "running" || task.status === "pending") && (
+                      <div>
+                        <ProgressBar progress={task.progress} size="small" />
+                        <Text as="p" variant="bodySm" tone="subdued">
+                          {t.tasks.progress}: {task.progress}%
+                          {task.total && task.processed !== undefined &&
+                            ` (${task.processed}/${task.total})`}
+                        </Text>
+                      </div>
+                    )}
+
+                    {/* Time Info - Always Visible */}
+                    <InlineStack gap="400">
+                      <Text as="p" variant="bodySm" tone="subdued">
+                        {t.tasks.startedAt}: {new Date(task.startedAt).toLocaleString()}
+                      </Text>
+                      {task.completedAt && (
+                        <Text as="p" variant="bodySm" tone="subdued">
+                          {t.tasks.duration}: {formatDuration(task.startedAt, task.completedAt)}
+                        </Text>
+                      )}
+                      {!task.completedAt && task.status === "running" && (
+                        <Text as="p" variant="bodySm" tone="subdued">
+                          {t.tasks.duration}: {formatDuration(task.startedAt)}
+                        </Text>
+                      )}
+                    </InlineStack>
+
+                    {/* Error Message - Always Visible */}
+                    {task.error && (
+                      <div style={{ padding: "0.75rem", background: "#fbeae5", borderRadius: "8px", border: "1px solid #d72c0d" }}>
+                        <Text as="p" variant="bodySm" tone="critical">
+                          {task.error}
+                        </Text>
+                      </div>
+                    )}
+
+                    {/* Expandable Details - AI Prompt & Output */}
                     {isExpanded && (
                       <BlockStack gap="300">
-                        {/* Resource Info */}
-                        {task.resourceTitle && (
-                          <InlineStack gap="200">
-                            {task.resourceType && (
-                              <Badge tone="info">
-                                {(t.tasks.resourceType as any)[task.resourceType] || task.resourceType}
-                              </Badge>
-                            )}
-                            <Text as="p" variant="bodyMd">
-                              {task.resourceTitle}
-                            </Text>
-                          </InlineStack>
-                        )}
-
-                        {/* Field Type */}
-                        {task.fieldType && (
-                          <Text as="p" variant="bodySm" tone="subdued">
-                            {t.tasks.fieldType && (t.tasks.fieldType as any)[task.fieldType]
-                              ? (t.tasks.fieldType as any)[task.fieldType]
-                              : task.fieldType}
-                            {task.targetLocale && ` → ${task.targetLocale}`}
-                          </Text>
-                        )}
-
-                        {/* Progress Bar */}
-                        {(task.status === "running" || task.status === "pending") && (
-                          <div>
-                            <ProgressBar progress={task.progress} size="small" />
-                            <Text as="p" variant="bodySm" tone="subdued">
-                              {t.tasks.progress}: {task.progress}%
-                              {task.total && task.processed !== undefined &&
-                                ` (${task.processed}/${task.total})`}
-                            </Text>
-                          </div>
-                        )}
-
                         {/* AI Prompt Section */}
                         {task.prompt && (
                           <div style={{ padding: "1rem", background: "#f0f7ff", borderRadius: "8px", border: "1px solid #b3d9ff" }}>
@@ -481,32 +507,6 @@ export default function TasksPage() {
                                 }
                               })()}
                             </BlockStack>
-                          </div>
-                        )}
-
-                        {/* Time Info */}
-                        <InlineStack gap="400">
-                          <Text as="p" variant="bodySm" tone="subdued">
-                            {t.tasks.startedAt}: {new Date(task.startedAt).toLocaleString()}
-                          </Text>
-                          {task.completedAt && (
-                            <Text as="p" variant="bodySm" tone="subdued">
-                              {t.tasks.duration}: {formatDuration(task.startedAt, task.completedAt)}
-                            </Text>
-                          )}
-                          {!task.completedAt && task.status === "running" && (
-                            <Text as="p" variant="bodySm" tone="subdued">
-                              {t.tasks.duration}: {formatDuration(task.startedAt)}
-                            </Text>
-                          )}
-                        </InlineStack>
-
-                        {/* Error Message */}
-                        {task.error && (
-                          <div style={{ padding: "0.75rem", background: "#fbeae5", borderRadius: "8px", border: "1px solid #d72c0d" }}>
-                            <Text as="p" variant="bodySm" tone="critical">
-                              {task.error}
-                            </Text>
                           </div>
                         )}
                       </BlockStack>
