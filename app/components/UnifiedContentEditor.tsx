@@ -370,6 +370,11 @@ function FieldRenderer(props: FieldRendererProps) {
 
   // Image Gallery Field
   if (field.type === "image-gallery") {
+    // Only render if images array exists (Products have images, Collections don't)
+    if (!selectedItem || !selectedItem.images) {
+      return null;
+    }
+
     return (
       <ImageGalleryField
         images={selectedItem.images || []}

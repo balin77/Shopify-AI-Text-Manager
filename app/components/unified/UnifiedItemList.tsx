@@ -217,111 +217,109 @@ export function UnifiedItemList({
   const itemRenderer = renderItem || defaultRenderItem;
 
   return (
-    <div style={{ width: "350px", flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden", height: "100%" }}>
-      <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
-        <Card padding="0">
-          {/* Header */}
-          <div style={{ padding: "1rem", borderBottom: "1px solid #e1e3e5", flexShrink: 0 }}>
-            <BlockStack gap="300">
-              <Text as="h2" variant="headingMd">
-                {resourceName.plural} ({items.length})
-              </Text>
+    <div style={{ width: "350px", flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
+      <Card padding="0" style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+        {/* Header */}
+        <div style={{ padding: "1rem", borderBottom: "1px solid #e1e3e5", flexShrink: 0 }}>
+          <BlockStack gap="300">
+            <Text as="h2" variant="headingMd">
+              {resourceName.plural} ({items.length})
+            </Text>
 
-              {/* Search */}
-              {showSearch && (
-                <TextField
-                  label=""
-                  value={searchQuery}
-                  onChange={handleSearchChange}
-                  placeholder={searchPlaceholder || t.searchPlaceholder || `Search ${resourceName.plural.toLowerCase()}...`}
-                  autoComplete="off"
-                  prefix={<Icon source={SearchIcon} />}
-                  clearButton
-                  onClearButtonClick={() => handleSearchChange("")}
-                />
-              )}
-
-              {/* Plan Limit Warning */}
-              {planLimit?.isAtLimit && (
-                <Banner tone="warning">
-                  <BlockStack gap="200">
-                    <Text as="p" variant="bodyMd">
-                      {planLimit.upgradeMessage || `You've reached the maximum of ${planLimit.maxItems} ${resourceName.plural.toLowerCase()} for the ${planLimit.currentPlan} plan.`}
-                    </Text>
-                    {planLimit.nextPlan && (
-                      <Text as="p" variant="bodySm">
-                        Upgrade to {planLimit.nextPlan} for more {resourceName.plural.toLowerCase()}.
-                      </Text>
-                    )}
-                  </BlockStack>
-                </Banner>
-              )}
-            </BlockStack>
-          </div>
-
-          {/* Item List */}
-          <div style={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
-            {paginatedItems.length > 0 ? (
-              <ResourceList
-                resourceName={resourceName}
-                items={paginatedItems}
-                renderItem={(item: UnifiedItem) => {
-                  const isSelected = selectedItemId === item.id;
-                  const isHovered = hoveredItemId === item.id;
-
-                  return (
-                    <ResourceItem
-                      id={item.id}
-                      onClick={() => onItemSelect(item.id)}
-                      onMouseEnter={() => setHoveredItemId(item.id)}
-                      onMouseLeave={() => setHoveredItemId(null)}
-                    >
-                      {itemRenderer(item, isSelected, isHovered)}
-                    </ResourceItem>
-                  );
-                }}
+            {/* Search */}
+            {showSearch && (
+              <TextField
+                label=""
+                value={searchQuery}
+                onChange={handleSearchChange}
+                placeholder={searchPlaceholder || t.searchPlaceholder || `Search ${resourceName.plural.toLowerCase()}...`}
+                autoComplete="off"
+                prefix={<Icon source={SearchIcon} />}
+                clearButton
+                onClearButtonClick={() => handleSearchChange("")}
               />
-            ) : (
-              <div style={{ padding: "2rem", textAlign: "center" }}>
-                <Text as="p" variant="bodySm" tone="subdued">
-                  {searchQuery
-                    ? `No ${resourceName.plural.toLowerCase()} found matching "${searchQuery}"`
-                    : `No ${resourceName.plural.toLowerCase()} found`}
-                </Text>
-              </div>
             )}
-          </div>
 
-          {/* Pagination */}
-          {showPagination && totalPages > 1 && (
-            <div style={{ padding: "1rem", borderTop: "1px solid #e1e3e5", flexShrink: 0 }}>
-              <InlineStack align="space-between" blockAlign="center">
-                <Text as="p" variant="bodySm" tone="subdued">
-                  {startIndex + 1}-{Math.min(startIndex + itemsPerPage, filteredItems.length)} {t.paginationOf || "of"}{" "}
-                  {filteredItems.length}
-                </Text>
-                <InlineStack gap="200">
-                  <Button
-                    icon={ChevronLeftIcon}
-                    onClick={() => setCurrentPage(currentPage - 1)}
-                    disabled={currentPage === 1}
-                    accessibilityLabel={t.paginationPrevious || "Previous page"}
-                  />
-                  <Text as="span" variant="bodySm">
-                    {currentPage} / {totalPages}
+            {/* Plan Limit Warning */}
+            {planLimit?.isAtLimit && (
+              <Banner tone="warning">
+                <BlockStack gap="200">
+                  <Text as="p" variant="bodyMd">
+                    {planLimit.upgradeMessage || `You've reached the maximum of ${planLimit.maxItems} ${resourceName.plural.toLowerCase()} for the ${planLimit.currentPlan} plan.`}
                   </Text>
-                  <Button
-                    icon={ChevronRightIcon}
-                    onClick={() => setCurrentPage(currentPage + 1)}
-                    disabled={currentPage === totalPages}
-                    accessibilityLabel={t.paginationNext || "Next page"}
-                  />
-                </InlineStack>
-              </InlineStack>
+                  {planLimit.nextPlan && (
+                    <Text as="p" variant="bodySm">
+                      Upgrade to {planLimit.nextPlan} for more {resourceName.plural.toLowerCase()}.
+                    </Text>
+                  )}
+                </BlockStack>
+              </Banner>
+            )}
+          </BlockStack>
+        </div>
+
+        {/* Item List - Scrollable */}
+        <div style={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
+          {paginatedItems.length > 0 ? (
+            <ResourceList
+              resourceName={resourceName}
+              items={paginatedItems}
+              renderItem={(item: UnifiedItem) => {
+                const isSelected = selectedItemId === item.id;
+                const isHovered = hoveredItemId === item.id;
+
+                return (
+                  <ResourceItem
+                    id={item.id}
+                    onClick={() => onItemSelect(item.id)}
+                    onMouseEnter={() => setHoveredItemId(item.id)}
+                    onMouseLeave={() => setHoveredItemId(null)}
+                  >
+                    {itemRenderer(item, isSelected, isHovered)}
+                  </ResourceItem>
+                );
+              }}
+            />
+          ) : (
+            <div style={{ padding: "2rem", textAlign: "center" }}>
+              <Text as="p" variant="bodySm" tone="subdued">
+                {searchQuery
+                  ? `No ${resourceName.plural.toLowerCase()} found matching "${searchQuery}"`
+                  : `No ${resourceName.plural.toLowerCase()} found`}
+              </Text>
             </div>
           )}
-        </Card>
-      </div>
+        </div>
+
+        {/* Pagination */}
+        {showPagination && totalPages > 1 && (
+          <div style={{ padding: "1rem", borderTop: "1px solid #e1e3e5", flexShrink: 0 }}>
+            <InlineStack align="space-between" blockAlign="center">
+              <Text as="p" variant="bodySm" tone="subdued">
+                {startIndex + 1}-{Math.min(startIndex + itemsPerPage, filteredItems.length)} {t.paginationOf || "of"}{" "}
+                {filteredItems.length}
+              </Text>
+              <InlineStack gap="200">
+                <Button
+                  icon={ChevronLeftIcon}
+                  onClick={() => setCurrentPage(currentPage - 1)}
+                  disabled={currentPage === 1}
+                  accessibilityLabel={t.paginationPrevious || "Previous page"}
+                />
+                <Text as="span" variant="bodySm">
+                  {currentPage} / {totalPages}
+                </Text>
+                <Button
+                  icon={ChevronRightIcon}
+                  onClick={() => setCurrentPage(currentPage + 1)}
+                  disabled={currentPage === totalPages}
+                  accessibilityLabel={t.paginationNext || "Next page"}
+                />
+              </InlineStack>
+            </InlineStack>
+          </div>
+        )}
+      </Card>
     </div>
   );
 }
