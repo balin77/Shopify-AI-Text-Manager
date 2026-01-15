@@ -182,7 +182,7 @@ model Product {
   lastSyncedAt     DateTime @default(now())
 
   // Relations
-  translations Translation[]
+  // NOTE: Translations are now stored in ContentTranslation table (polymorphic)
   images       ProductImage[]
   options      ProductOption[]
   metafields   ProductMetafield[]
@@ -191,24 +191,6 @@ model Product {
   @@index([shop])
   @@index([shop, status])
   @@index([lastSyncedAt])
-}
-
-model Translation {
-  id        String  @id @default(cuid())
-  productId String
-  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
-
-  key    String // "title", "body_html", "handle", "seo_title", "seo_description"
-  value  String  @db.Text
-  locale String // "en", "fr", "es", "it", etc.
-  digest String? // Shopify digest for updates
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@unique([productId, key, locale])
-  @@index([productId, locale])
-  @@index([locale])
 }
 
 model ProductImage {
@@ -375,12 +357,12 @@ model Menu {
 model ContentTranslation {
   id String @id @default(cuid())
 
-  // Polymorphic relation (can belong to Collection, Article, Page, or ShopPolicy)
+  // Polymorphic relation (can belong to Product, Collection, Article, Page, or ShopPolicy)
   // NOTE: No foreign key constraints - we handle this polymorphically in code
   resourceId   String // The GID of the parent resource
-  resourceType String // "Collection", "Article", "Page", or "ShopPolicy"
+  resourceType String // "Product", "Collection", "Article", "Page", or "ShopPolicy"
 
-  key    String // "title", "body", "description", "handle", "seo_title", "seo_description"
+  key    String // "title", "body_html", "body", "description", "handle", "meta_title", "meta_description"
   value  String  @db.Text
   locale String // "en", "fr", "es", "it", etc.
   digest String? // Shopify digest for updates

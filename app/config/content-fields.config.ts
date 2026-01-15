@@ -19,16 +19,6 @@ export const PRODUCTS_CONFIG: ContentEditorConfig = {
   idPrefix: "ID:",
 
   fieldDefinitions: [
-    // Images (special field type)
-    {
-      key: "images",
-      type: "image-gallery",
-      label: "Product Images",
-      translationKey: "images", // Alt-texts are translated
-      supportsAI: true,
-      supportsTranslation: true,
-      aiInstructionsKey: "productAltText",
-    },
     // Title
     {
       key: "title",
@@ -88,14 +78,6 @@ export const PRODUCTS_CONFIG: ContentEditorConfig = {
       supportsTranslation: true,
       aiInstructionsKey: "productMetaDesc",
       helpText: (value) => `${(value || '').length} characters (recommended: 150-160)`,
-    },
-    // Product Options (special field type)
-    {
-      key: "options",
-      type: "options",
-      label: "Product Options",
-      translationKey: "options",
-      supportsTranslation: true,
     },
   ],
 };
