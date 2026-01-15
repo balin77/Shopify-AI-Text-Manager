@@ -424,6 +424,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       return;
     }
 
+    const contextTitle = getItemFieldValue(selectedItem, 'title', primaryLocale);
+
     fetcher.submit(
       {
         action: "translateFieldToAllLocales",
@@ -431,6 +433,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         fieldType: fieldKey,
         sourceText,
         targetLocales: JSON.stringify(targetLocales),
+        contextTitle,
       },
       { method: "POST" }
     );
@@ -509,12 +512,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     }
 
     // Submit translation to all enabled locales
+    const contextTitle = getItemFieldValue(selectedItem!, 'title', primaryLocale);
+
     fetcher.submit({
       action: "translateFieldToAllLocales",
       itemId: selectedItemId,
       fieldType: fieldKey,
       sourceText: suggestion,
-      targetLocales: JSON.stringify(targetLocales)
+      targetLocales: JSON.stringify(targetLocales),
+      contextTitle
     }, { method: "POST" });
   };
 

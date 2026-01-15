@@ -558,6 +558,7 @@ async function handleTranslateFieldToAllLocales(
   const sourceText = formData.get("sourceText") as string;
   const productId = formData.get("productId") as string;
   const targetLocalesStr = formData.get("targetLocales") as string;
+  const contextTitle = formData.get("contextTitle") as string;
 
   const { db } = await import("../db.server");
 
@@ -569,6 +570,7 @@ async function handleTranslateFieldToAllLocales(
       status: "pending",
       resourceType: "product",
       resourceId: productId,
+      resourceTitle: contextTitle,
       fieldType,
       progress: 0,
       expiresAt: getTaskExpirationDate(),

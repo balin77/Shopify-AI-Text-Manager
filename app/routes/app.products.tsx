@@ -690,7 +690,7 @@ export default function Products() {
       return;
     }
     fetcher.submit(
-      { action: "translateFieldToAllLocales", productId: selectedProductId, fieldType, sourceText, targetLocales: JSON.stringify(targetLocales) },
+      { action: "translateFieldToAllLocales", productId: selectedProductId, fieldType, sourceText, targetLocales: JSON.stringify(targetLocales), contextTitle: selectedProduct.title },
       { method: "POST" }
     );
   };
@@ -729,7 +729,8 @@ export default function Products() {
       productId: selectedProduct.id,
       fieldType,
       sourceText: suggestion,
-      targetLocales: JSON.stringify(targetLocales)
+      targetLocales: JSON.stringify(targetLocales),
+      contextTitle: selectedProduct.title
     }, { method: "POST" });
   };
 
