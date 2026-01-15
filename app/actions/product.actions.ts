@@ -43,9 +43,17 @@ export async function handleProductActions({ request }: ActionFunctionArgs) {
     where: { shop: session.shop },
   });
 
-  // If no AI Instructions exist, create defaults
+  console.log('🔍 [PRODUCT.ACTIONS] AI Instructions loaded:', {
+    exists: !!aiInstructions,
+    shop: session.shop,
+    productSeoTitleInstructions: aiInstructions?.productSeoTitleInstructions ? 'EXISTS (' + aiInstructions.productSeoTitleInstructions.substring(0, 50) + '...)' : 'NULL/UNDEFINED',
+    productSeoTitleFormat: aiInstructions?.productSeoTitleFormat || 'NULL/UNDEFINED',
+  });
+
+  // If no AI Instructions exist OR they are empty, create/update defaults
+  const { DEFAULT_PRODUCT_INSTRUCTIONS } = await import("../constants/aiInstructionsDefaults");
+
   if (!aiInstructions) {
-    const { DEFAULT_PRODUCT_INSTRUCTIONS } = await import("../constants/aiInstructionsDefaults");
     aiInstructions = await db.aIInstructions.create({
       data: {
         shop: session.shop,
@@ -64,6 +72,26 @@ export async function handleProductActions({ request }: ActionFunctionArgs) {
       },
     });
     console.log('✅ [PRODUCT.ACTIONS] Created default AI Instructions for shop:', session.shop);
+  } else if (!aiInstructions.productSeoTitleInstructions) {
+    // Entry exists but fields are NULL - update with defaults
+    aiInstructions = await db.aIInstructions.update({
+      where: { shop: session.shop },
+      data: {
+        productTitleFormat: aiInstructions.productTitleFormat || DEFAULT_PRODUCT_INSTRUCTIONS.titleFormat,
+        productTitleInstructions: aiInstructions.productTitleInstructions || DEFAULT_PRODUCT_INSTRUCTIONS.titleInstructions,
+        productDescriptionFormat: aiInstructions.productDescriptionFormat || DEFAULT_PRODUCT_INSTRUCTIONS.descriptionFormat,
+        productDescriptionInstructions: aiInstructions.productDescriptionInstructions || DEFAULT_PRODUCT_INSTRUCTIONS.descriptionInstructions,
+        productHandleFormat: aiInstructions.productHandleFormat || DEFAULT_PRODUCT_INSTRUCTIONS.handleFormat,
+        productHandleInstructions: aiInstructions.productHandleInstructions || DEFAULT_PRODUCT_INSTRUCTIONS.handleInstructions,
+        productSeoTitleFormat: aiInstructions.productSeoTitleFormat || DEFAULT_PRODUCT_INSTRUCTIONS.seoTitleFormat,
+        productSeoTitleInstructions: aiInstructions.productSeoTitleInstructions || DEFAULT_PRODUCT_INSTRUCTIONS.seoTitleInstructions,
+        productMetaDescFormat: aiInstructions.productMetaDescFormat || DEFAULT_PRODUCT_INSTRUCTIONS.metaDescFormat,
+        productMetaDescInstructions: aiInstructions.productMetaDescInstructions || DEFAULT_PRODUCT_INSTRUCTIONS.metaDescInstructions,
+        productAltTextFormat: aiInstructions.productAltTextFormat || DEFAULT_PRODUCT_INSTRUCTIONS.altTextFormat,
+        productAltTextInstructions: aiInstructions.productAltTextInstructions || DEFAULT_PRODUCT_INSTRUCTIONS.altTextInstructions,
+      },
+    });
+    console.log('✅ [PRODUCT.ACTIONS] Updated AI Instructions with defaults for shop:', session.shop);
   }
 
   const provider = (aiSettings?.preferredProvider as any) || process.env.AI_PROVIDER || "huggingface";
