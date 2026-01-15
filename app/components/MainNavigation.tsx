@@ -22,6 +22,8 @@ export function MainNavigation() {
   const [showLoadingIndicator, setShowLoadingIndicator] = useState(false);
   const navRef = useRef<HTMLDivElement>(null);
   const [navHeight, setNavHeight] = useState(73);
+  const pollIntervalRef = useRef(10000); // Start with 10 seconds, use ref to persist across renders
+  const errorCountRef = useRef(0); // Track consecutive errors
 
   // Get product count from products route loader data
   const productsRouteData = matches.find((match) => match.id === "routes/app.products")?.data as any;
@@ -31,19 +33,66 @@ export function MainNavigation() {
   // Get running task count from dedicated API endpoint
   const runningTaskCount = tasksFetcher.data?.count || 0;
 
-  // Fetch running tasks count on mount and every 5 seconds
+  // Fetch running tasks count with adaptive polling and error handling
   useEffect(() => {
-    // Load initial count
     const searchParams = new URLSearchParams(location.search);
-    tasksFetcher.load(`/api/running-tasks-count?${searchParams.toString()}`);
+    let interval: NodeJS.Timeout;
 
-    // Refresh every 5 seconds
-    const interval = setInterval(() => {
-      tasksFetcher.load(`/api/running-tasks-count?${searchParams.toString()}`);
-    }, 5000);
+    const fetchTaskCount = () => {
+      // Only fetch if not already loading to prevent overlapping requests
+      if (tasksFetcher.state === "idle") {
+        tasksFetcher.load(`/api/running-tasks-count?${searchParams.toString()}`);
+      }
+    };
 
-    return () => clearInterval(interval);
+    // Load initial count
+    fetchTaskCount();
+
+    // Set up interval with current poll interval
+    const setupInterval = () => {
+      if (interval) {
+        clearInterval(interval);
+      }
+      interval = setInterval(fetchTaskCount, pollIntervalRef.current);
+    };
+
+    setupInterval();
+
+    return () => {
+      if (interval) {
+        clearInterval(interval);
+      }
+    };
   }, [location.search]); // Re-fetch when search params change (e.g., shop parameter)
+
+  // Monitor fetcher state and implement exponential backoff on errors
+  useEffect(() => {
+    // Check if fetcher encountered an error (including 429)
+    if (tasksFetcher.state === "idle" && tasksFetcher.data === undefined) {
+      // Likely an error occurred
+      errorCountRef.current += 1;
+
+      // Exponential backoff: double the interval on each consecutive error, max 60 seconds
+      const newInterval = Math.min(pollIntervalRef.current * 2, 60000);
+
+      if (newInterval !== pollIntervalRef.current) {
+        console.warn(`⚠️ [MainNavigation] Rate limit or error detected. Increasing poll interval to ${newInterval}ms`);
+        pollIntervalRef.current = newInterval;
+      }
+    } else if (tasksFetcher.state === "idle" && tasksFetcher.data !== undefined) {
+      // Successful fetch - reset error count and gradually reduce interval
+      if (errorCountRef.current > 0) {
+        errorCountRef.current = 0;
+
+        // Gradually reduce interval back to 10 seconds
+        const newInterval = Math.max(pollIntervalRef.current / 2, 10000);
+        if (newInterval !== pollIntervalRef.current) {
+          console.log(`✅ [MainNavigation] Connection restored. Reducing poll interval to ${newInterval}ms`);
+          pollIntervalRef.current = newInterval;
+        }
+      }
+    }
+  }, [tasksFetcher.state, tasksFetcher.data]);
 
   // Show loading indicator only if loading takes longer than 1 second
   useEffect(() => {
