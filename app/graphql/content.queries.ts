@@ -83,6 +83,20 @@ export const GET_TRANSLATIONS = `#graphql
   }
 `;
 
+export const GET_TRANSLATABLE_CONTENT = `#graphql
+  query getTranslatableContent($resourceId: ID!) {
+    translatableResource(resourceId: $resourceId) {
+      resourceId
+      translatableContent {
+        key
+        value
+        digest
+        locale
+      }
+    }
+  }
+`;
+
 export const GET_SHOP_POLICIES = `#graphql
   query getShopPolicies {
     shop {

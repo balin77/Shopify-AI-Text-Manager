@@ -4,7 +4,7 @@
  */
 
 import { TRANSLATE_CONTENT, UPDATE_PAGE, UPDATE_ARTICLE, UPDATE_SHOP_POLICY, UPDATE_COLLECTION } from "../../app/graphql/content.mutations";
-import { GET_TRANSLATIONS } from "../../app/graphql/content.queries";
+import { GET_TRANSLATIONS, GET_TRANSLATABLE_CONTENT } from "../../app/graphql/content.queries";
 
 export interface ShopifyAdminClient {
   graphql: (query: string, options?: { variables?: Record<string, any> }) => Promise<Response>;
@@ -30,13 +30,42 @@ export class ShopifyContentService {
   }
 
   /**
+   * Load translatable content with digests for a resource
+   */
+  async loadTranslatableContent(resourceId: string) {
+    const response = await this.admin.graphql(GET_TRANSLATABLE_CONTENT, {
+      variables: { resourceId }
+    });
+
+    const data = await response.json();
+    const content = data.data?.translatableResource?.translatableContent || [];
+
+    // Create digest map for quick lookup
+    const digestMap: Record<string, string> = {};
+    content.forEach((item: any) => {
+      digestMap[item.key] = item.digest;
+    });
+
+    return digestMap;
+  }
+
+  /**
    * Save translations for a resource
    */
   async saveTranslations(resourceId: string, translations: Array<{ key: string; value: string; locale: string }>) {
+    // Fetch digest map first
+    const digestMap = await this.loadTranslatableContent(resourceId);
+
+    // Add digests to translations
+    const translationsWithDigests = translations.map(t => ({
+      ...t,
+      translatableContentDigest: digestMap[t.key]
+    }));
+
     const response = await this.admin.graphql(TRANSLATE_CONTENT, {
       variables: {
         resourceId,
-        translations
+        translations: translationsWithDigests
       }
     });
 
@@ -165,7 +194,10 @@ export class ShopifyContentService {
 
     if (locale !== primaryLocale) {
       // Handle translations
-      const translationsInput: Array<{ key: string; value: string; locale: string }> = [];
+      // Fetch digest map once
+      const digestMap = await this.loadTranslatableContent(resourceId);
+
+      const translationsInput: Array<{ key: string; value: string; locale: string; translatableContentDigest?: string }> = [];
 
       // Map field names to Shopify translation keys
       const keyMapping: Record<string, string> = {
@@ -179,17 +211,30 @@ export class ShopifyContentService {
 
       Object.entries(updates).forEach(([field, value]) => {
         if (value && keyMapping[field]) {
+          const translationKey = keyMapping[field];
           translationsInput.push({
-            key: keyMapping[field],
+            key: translationKey,
             value,
-            locale
+            locale,
+            translatableContentDigest: digestMap[translationKey]
           });
         }
       });
 
-      // Save to Shopify (one field at a time to avoid conflicts)
-      for (const translation of translationsInput) {
-        await this.saveTranslations(resourceId, [translation]);
+      // Save to Shopify with digests
+      if (translationsInput.length > 0) {
+        const response = await this.admin.graphql(TRANSLATE_CONTENT, {
+          variables: {
+            resourceId,
+            translations: translationsInput
+          }
+        });
+
+        const data = await response.json();
+
+        if (data.data?.translationsRegister?.userErrors?.length > 0) {
+          throw new Error(data.data.translationsRegister.userErrors[0].message);
+        }
       }
 
       // Update database
@@ -205,7 +250,7 @@ export class ShopifyContentService {
             key: t.key,
             value: t.value,
             locale: t.locale,
-            digest: null,
+            digest: t.translatableContentDigest || null,
           })),
           skipDuplicates: true,
         });
@@ -327,6 +372,9 @@ export class ShopifyContentService {
   }) {
     const { resourceId, resourceType, fields, translationService, db, targetLocales: customTargetLocales, contentType } = params;
 
+    // Fetch digest map once for all translations
+    const digestMap = await this.loadTranslatableContent(resourceId);
+
     // Get target locales (use custom list if provided, otherwise all published locales)
     let targetLocales: string[];
     if (customTargetLocales) {
@@ -350,7 +398,7 @@ export class ShopifyContentService {
           allTranslations[locale] = translatedFields;
 
           // Map to Shopify translation keys
-          const translationsInput: Array<{ key: string; value: string; locale: string }> = [];
+          const translationsInput: Array<{ key: string; value: string; locale: string; translatableContentDigest?: string }> = [];
 
           const keyMapping: Record<string, string> = {
             title: 'title',
@@ -375,17 +423,31 @@ export class ShopifyContentService {
                 stringValue = String(value);
               }
 
+              const translationKey = keyMapping[field];
               translationsInput.push({
-                key: keyMapping[field],
+                key: translationKey,
                 value: stringValue,
-                locale
+                locale,
+                translatableContentDigest: digestMap[translationKey]
               });
             }
           });
 
-          // Save to Shopify (one at a time to avoid conflicts)
-          for (const translation of translationsInput) {
-            await this.saveTranslations(resourceId, [translation]);
+          // Save to Shopify - send translations directly with digests
+          if (translationsInput.length > 0) {
+            const response = await this.admin.graphql(TRANSLATE_CONTENT, {
+              variables: {
+                resourceId,
+                translations: translationsInput
+              }
+            });
+
+            const data = await response.json();
+
+            if (data.data?.translationsRegister?.userErrors?.length > 0) {
+              console.error(`[translateAllContent] Error saving translations for ${locale}:`,
+                data.data.translationsRegister.userErrors);
+            }
           }
 
           // Update database
@@ -401,7 +463,7 @@ export class ShopifyContentService {
                 key: t.key,
                 value: t.value,
                 locale: t.locale,
-                digest: null,
+                digest: t.translatableContentDigest || null,
               })),
               skipDuplicates: true,
             });
