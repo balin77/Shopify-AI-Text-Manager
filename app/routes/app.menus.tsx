@@ -24,6 +24,7 @@ import { MainNavigation } from "../components/MainNavigation";
 import { useI18n } from "../contexts/I18nContext";
 import { useNavigationHeight } from "../contexts/NavigationHeightContext";
 import { ContentService } from "../services/content.service";
+import { CONTENT_MAX_HEIGHT } from "../constants/layout";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
@@ -182,7 +183,7 @@ export default function MenusPage() {
                 {t.content?.menus || "Menus"} ({parsedMenus.length})
               </Text>
             </div>
-            <div style={{ maxHeight: "calc(100vh - 200px)", overflowY: "auto" }}>
+            <div style={{ maxHeight: CONTENT_MAX_HEIGHT, overflowY: "auto" }}>
               {parsedMenus.length > 0 ? (
                 <ResourceList
                   resourceName={{ singular: "Menu", plural: "Menus" }}

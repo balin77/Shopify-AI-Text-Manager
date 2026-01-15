@@ -27,6 +27,7 @@ import { LocaleNavigationButtons } from "../components/LocaleNavigationButtons";
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { useNavigationHeight } from "../contexts/NavigationHeightContext";
+import { CONTENT_MAX_HEIGHT } from "../constants/layout";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
@@ -511,7 +512,7 @@ export default function TemplatesPage() {
                 {t.content?.templates || "Theme Content"} ({themes.length})
               </Text>
             </div>
-            <div style={{ maxHeight: "calc(100vh - 200px)", overflowY: "auto" }}>
+            <div style={{ maxHeight: CONTENT_MAX_HEIGHT, overflowY: "auto" }}>
               {themes.length > 0 ? (
                 <ResourceList
                   resourceName={{ singular: "Resource", plural: "Resources" }}

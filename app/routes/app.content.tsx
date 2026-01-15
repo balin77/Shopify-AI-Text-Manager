@@ -40,6 +40,7 @@ import {
   contentEditorStyles,
   getLocaleButtonStyle as getLocaleButtonStyleUtil,
 } from "../utils/contentEditor.utils";
+import { CONTENT_MAX_HEIGHT } from "../constants/layout";
 
 type ContentType = "collections" | "blogs" | "pages" | "policies" | "menus" | "templates" | "metaobjects" | "shopMetadata";
 
@@ -326,7 +327,7 @@ export default function ContentHub() {
                 {CONTENT_TYPES.find((t: any) => t.id === selectedType)?.label} ({currentItems.length})
               </Text>
             </div>
-            <div style={{ maxHeight: "calc(100vh - 200px)", overflowY: "auto" }}>
+            <div style={{ maxHeight: CONTENT_MAX_HEIGHT, overflowY: "auto" }}>
               {currentItems.length > 0 ? (
                 <ResourceList
                   resourceName={{ singular: t.content.entry, plural: t.content.entries }}
