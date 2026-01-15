@@ -70,11 +70,119 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   });
 
   if (!instructions) {
+    // Create new entry with all defaults
     instructions = await db.aIInstructions.create({
       data: {
         shop: session.shop,
+        // Products
+        productTitleFormat: DEFAULT_PRODUCT_INSTRUCTIONS.titleFormat,
+        productTitleInstructions: DEFAULT_PRODUCT_INSTRUCTIONS.titleInstructions,
+        productDescriptionFormat: DEFAULT_PRODUCT_INSTRUCTIONS.descriptionFormat,
+        productDescriptionInstructions: DEFAULT_PRODUCT_INSTRUCTIONS.descriptionInstructions,
+        productHandleFormat: DEFAULT_PRODUCT_INSTRUCTIONS.handleFormat,
+        productHandleInstructions: DEFAULT_PRODUCT_INSTRUCTIONS.handleInstructions,
+        productSeoTitleFormat: DEFAULT_PRODUCT_INSTRUCTIONS.seoTitleFormat,
+        productSeoTitleInstructions: DEFAULT_PRODUCT_INSTRUCTIONS.seoTitleInstructions,
+        productMetaDescFormat: DEFAULT_PRODUCT_INSTRUCTIONS.metaDescFormat,
+        productMetaDescInstructions: DEFAULT_PRODUCT_INSTRUCTIONS.metaDescInstructions,
+        productAltTextFormat: DEFAULT_PRODUCT_INSTRUCTIONS.altTextFormat,
+        productAltTextInstructions: DEFAULT_PRODUCT_INSTRUCTIONS.altTextInstructions,
+        // Collections
+        collectionTitleFormat: DEFAULT_COLLECTION_INSTRUCTIONS.titleFormat,
+        collectionTitleInstructions: DEFAULT_COLLECTION_INSTRUCTIONS.titleInstructions,
+        collectionDescriptionFormat: DEFAULT_COLLECTION_INSTRUCTIONS.descriptionFormat,
+        collectionDescriptionInstructions: DEFAULT_COLLECTION_INSTRUCTIONS.descriptionInstructions,
+        collectionHandleFormat: DEFAULT_COLLECTION_INSTRUCTIONS.handleFormat,
+        collectionHandleInstructions: DEFAULT_COLLECTION_INSTRUCTIONS.handleInstructions,
+        collectionSeoTitleFormat: DEFAULT_COLLECTION_INSTRUCTIONS.seoTitleFormat,
+        collectionSeoTitleInstructions: DEFAULT_COLLECTION_INSTRUCTIONS.seoTitleInstructions,
+        collectionMetaDescFormat: DEFAULT_COLLECTION_INSTRUCTIONS.metaDescFormat,
+        collectionMetaDescInstructions: DEFAULT_COLLECTION_INSTRUCTIONS.metaDescInstructions,
+        // Blogs
+        blogTitleFormat: DEFAULT_BLOG_INSTRUCTIONS.titleFormat,
+        blogTitleInstructions: DEFAULT_BLOG_INSTRUCTIONS.titleInstructions,
+        blogDescriptionFormat: DEFAULT_BLOG_INSTRUCTIONS.descriptionFormat,
+        blogDescriptionInstructions: DEFAULT_BLOG_INSTRUCTIONS.descriptionInstructions,
+        blogHandleFormat: DEFAULT_BLOG_INSTRUCTIONS.handleFormat,
+        blogHandleInstructions: DEFAULT_BLOG_INSTRUCTIONS.handleInstructions,
+        blogSeoTitleFormat: DEFAULT_BLOG_INSTRUCTIONS.seoTitleFormat,
+        blogSeoTitleInstructions: DEFAULT_BLOG_INSTRUCTIONS.seoTitleInstructions,
+        blogMetaDescFormat: DEFAULT_BLOG_INSTRUCTIONS.metaDescFormat,
+        blogMetaDescInstructions: DEFAULT_BLOG_INSTRUCTIONS.metaDescInstructions,
+        // Pages
+        pageTitleFormat: DEFAULT_PAGE_INSTRUCTIONS.titleFormat,
+        pageTitleInstructions: DEFAULT_PAGE_INSTRUCTIONS.titleInstructions,
+        pageDescriptionFormat: DEFAULT_PAGE_INSTRUCTIONS.descriptionFormat,
+        pageDescriptionInstructions: DEFAULT_PAGE_INSTRUCTIONS.descriptionInstructions,
+        pageHandleFormat: DEFAULT_PAGE_INSTRUCTIONS.handleFormat,
+        pageHandleInstructions: DEFAULT_PAGE_INSTRUCTIONS.handleInstructions,
+        pageSeoTitleFormat: DEFAULT_PAGE_INSTRUCTIONS.seoTitleFormat,
+        pageSeoTitleInstructions: DEFAULT_PAGE_INSTRUCTIONS.seoTitleInstructions,
+        pageMetaDescFormat: DEFAULT_PAGE_INSTRUCTIONS.metaDescFormat,
+        pageMetaDescInstructions: DEFAULT_PAGE_INSTRUCTIONS.metaDescInstructions,
+        // Policies
+        policyDescriptionFormat: DEFAULT_POLICY_INSTRUCTIONS.descriptionFormat,
+        policyDescriptionInstructions: DEFAULT_POLICY_INSTRUCTIONS.descriptionInstructions,
       },
     });
+    console.log('[SETTINGS] Created AI Instructions with defaults for shop:', session.shop);
+  } else if (!instructions.productSeoTitleInstructions) {
+    // Entry exists but is empty - populate with defaults
+    instructions = await db.aIInstructions.update({
+      where: { shop: session.shop },
+      data: {
+        // Products - only update NULL fields
+        productTitleFormat: instructions.productTitleFormat || DEFAULT_PRODUCT_INSTRUCTIONS.titleFormat,
+        productTitleInstructions: instructions.productTitleInstructions || DEFAULT_PRODUCT_INSTRUCTIONS.titleInstructions,
+        productDescriptionFormat: instructions.productDescriptionFormat || DEFAULT_PRODUCT_INSTRUCTIONS.descriptionFormat,
+        productDescriptionInstructions: instructions.productDescriptionInstructions || DEFAULT_PRODUCT_INSTRUCTIONS.descriptionInstructions,
+        productHandleFormat: instructions.productHandleFormat || DEFAULT_PRODUCT_INSTRUCTIONS.handleFormat,
+        productHandleInstructions: instructions.productHandleInstructions || DEFAULT_PRODUCT_INSTRUCTIONS.handleInstructions,
+        productSeoTitleFormat: instructions.productSeoTitleFormat || DEFAULT_PRODUCT_INSTRUCTIONS.seoTitleFormat,
+        productSeoTitleInstructions: instructions.productSeoTitleInstructions || DEFAULT_PRODUCT_INSTRUCTIONS.seoTitleInstructions,
+        productMetaDescFormat: instructions.productMetaDescFormat || DEFAULT_PRODUCT_INSTRUCTIONS.metaDescFormat,
+        productMetaDescInstructions: instructions.productMetaDescInstructions || DEFAULT_PRODUCT_INSTRUCTIONS.metaDescInstructions,
+        productAltTextFormat: instructions.productAltTextFormat || DEFAULT_PRODUCT_INSTRUCTIONS.altTextFormat,
+        productAltTextInstructions: instructions.productAltTextInstructions || DEFAULT_PRODUCT_INSTRUCTIONS.altTextInstructions,
+        // Collections
+        collectionTitleFormat: instructions.collectionTitleFormat || DEFAULT_COLLECTION_INSTRUCTIONS.titleFormat,
+        collectionTitleInstructions: instructions.collectionTitleInstructions || DEFAULT_COLLECTION_INSTRUCTIONS.titleInstructions,
+        collectionDescriptionFormat: instructions.collectionDescriptionFormat || DEFAULT_COLLECTION_INSTRUCTIONS.descriptionFormat,
+        collectionDescriptionInstructions: instructions.collectionDescriptionInstructions || DEFAULT_COLLECTION_INSTRUCTIONS.descriptionInstructions,
+        collectionHandleFormat: instructions.collectionHandleFormat || DEFAULT_COLLECTION_INSTRUCTIONS.handleFormat,
+        collectionHandleInstructions: instructions.collectionHandleInstructions || DEFAULT_COLLECTION_INSTRUCTIONS.handleInstructions,
+        collectionSeoTitleFormat: instructions.collectionSeoTitleFormat || DEFAULT_COLLECTION_INSTRUCTIONS.seoTitleFormat,
+        collectionSeoTitleInstructions: instructions.collectionSeoTitleInstructions || DEFAULT_COLLECTION_INSTRUCTIONS.seoTitleInstructions,
+        collectionMetaDescFormat: instructions.collectionMetaDescFormat || DEFAULT_COLLECTION_INSTRUCTIONS.metaDescFormat,
+        collectionMetaDescInstructions: instructions.collectionMetaDescInstructions || DEFAULT_COLLECTION_INSTRUCTIONS.metaDescInstructions,
+        // Blogs
+        blogTitleFormat: instructions.blogTitleFormat || DEFAULT_BLOG_INSTRUCTIONS.titleFormat,
+        blogTitleInstructions: instructions.blogTitleInstructions || DEFAULT_BLOG_INSTRUCTIONS.titleInstructions,
+        blogDescriptionFormat: instructions.blogDescriptionFormat || DEFAULT_BLOG_INSTRUCTIONS.descriptionFormat,
+        blogDescriptionInstructions: instructions.blogDescriptionInstructions || DEFAULT_BLOG_INSTRUCTIONS.descriptionInstructions,
+        blogHandleFormat: instructions.blogHandleFormat || DEFAULT_BLOG_INSTRUCTIONS.handleFormat,
+        blogHandleInstructions: instructions.blogHandleInstructions || DEFAULT_BLOG_INSTRUCTIONS.handleInstructions,
+        blogSeoTitleFormat: instructions.blogSeoTitleFormat || DEFAULT_BLOG_INSTRUCTIONS.seoTitleFormat,
+        blogSeoTitleInstructions: instructions.blogSeoTitleInstructions || DEFAULT_BLOG_INSTRUCTIONS.seoTitleInstructions,
+        blogMetaDescFormat: instructions.blogMetaDescFormat || DEFAULT_BLOG_INSTRUCTIONS.metaDescFormat,
+        blogMetaDescInstructions: instructions.blogMetaDescInstructions || DEFAULT_BLOG_INSTRUCTIONS.metaDescInstructions,
+        // Pages
+        pageTitleFormat: instructions.pageTitleFormat || DEFAULT_PAGE_INSTRUCTIONS.titleFormat,
+        pageTitleInstructions: instructions.pageTitleInstructions || DEFAULT_PAGE_INSTRUCTIONS.titleInstructions,
+        pageDescriptionFormat: instructions.pageDescriptionFormat || DEFAULT_PAGE_INSTRUCTIONS.descriptionFormat,
+        pageDescriptionInstructions: instructions.pageDescriptionInstructions || DEFAULT_PAGE_INSTRUCTIONS.descriptionInstructions,
+        pageHandleFormat: instructions.pageHandleFormat || DEFAULT_PAGE_INSTRUCTIONS.handleFormat,
+        pageHandleInstructions: instructions.pageHandleInstructions || DEFAULT_PAGE_INSTRUCTIONS.handleInstructions,
+        pageSeoTitleFormat: instructions.pageSeoTitleFormat || DEFAULT_PAGE_INSTRUCTIONS.seoTitleFormat,
+        pageSeoTitleInstructions: instructions.pageSeoTitleInstructions || DEFAULT_PAGE_INSTRUCTIONS.seoTitleInstructions,
+        pageMetaDescFormat: instructions.pageMetaDescFormat || DEFAULT_PAGE_INSTRUCTIONS.metaDescFormat,
+        pageMetaDescInstructions: instructions.pageMetaDescInstructions || DEFAULT_PAGE_INSTRUCTIONS.metaDescInstructions,
+        // Policies
+        policyDescriptionFormat: instructions.policyDescriptionFormat || DEFAULT_POLICY_INSTRUCTIONS.descriptionFormat,
+        policyDescriptionInstructions: instructions.policyDescriptionInstructions || DEFAULT_POLICY_INSTRUCTIONS.descriptionInstructions,
+      },
+    });
+    console.log('[SETTINGS] Updated AI Instructions with defaults for shop:', session.shop);
   }
 
   // Get counts for App Setup section
