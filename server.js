@@ -92,7 +92,7 @@ app.all(
 const port = process.env.PORT || 8080;
 const host = process.env.HOST || '0.0.0.0';
 
-app.listen(port, host, async () => {
+const server = app.listen(port, host, async () => {
   console.log(`Express server listening at http://${host}:${port}`);
 
   // Start task cleanup service
@@ -105,3 +105,45 @@ app.listen(port, host, async () => {
     console.error("❌ Failed to start task cleanup service:", error);
   }
 });
+
+// Graceful shutdown handler
+async function gracefulShutdown(signal) {
+  console.log(`\n${signal} received. Starting graceful shutdown...`);
+
+  // Stop accepting new connections
+  server.close(async () => {
+    console.log('HTTP server closed');
+
+    try {
+      // Stop task cleanup service
+      const { TaskCleanupService } = await import("./task-cleanup.service.js");
+      const cleanupService = TaskCleanupService.getInstance();
+      cleanupService.stop();
+      console.log('✅ Task cleanup service stopped');
+    } catch (error) {
+      console.error('Error stopping task cleanup service:', error);
+    }
+
+    try {
+      // Close Prisma connections
+      const { db } = await import("./app/db.server.ts");
+      await db.$disconnect();
+      console.log('✅ Database connections closed');
+    } catch (error) {
+      console.error('Error closing database connections:', error);
+    }
+
+    console.log('Graceful shutdown complete');
+    process.exit(0);
+  });
+
+  // Force shutdown after 10 seconds
+  setTimeout(() => {
+    console.error('Forced shutdown after timeout');
+    process.exit(1);
+  }, 10000);
+}
+
+// Handle shutdown signals
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
