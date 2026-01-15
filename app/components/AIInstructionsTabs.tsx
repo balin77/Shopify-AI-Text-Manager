@@ -114,13 +114,29 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, on
     setLocalInstructions({ ...localInstructions, [field]: value });
   };
 
+  // Map full field names (e.g., 'productTitleFormat') to EntityInstructions keys (e.g., 'titleFormat')
+  const getEntityFieldName = (fullFieldName: string, entityType: EntityType): string => {
+    const prefix = entityType === 'products' ? 'product' :
+                   entityType === 'collections' ? 'collection' :
+                   entityType === 'blogs' ? 'blog' :
+                   entityType === 'pages' ? 'page' : 'policy';
+
+    // Remove prefix to get the field name: 'productTitleFormat' -> 'TitleFormat'
+    const withoutPrefix = fullFieldName.replace(new RegExp(`^${prefix}`, 'i'), '');
+
+    // Lowercase first letter: 'TitleFormat' -> 'titleFormat'
+    return withoutPrefix.charAt(0).toLowerCase() + withoutPrefix.slice(1);
+  };
+
   const handleResetFormatField = (formatField: string, entityType: EntityType) => {
-    const defaultValue = getDefaultForField(entityType, formatField as any);
+    const entityFieldName = getEntityFieldName(formatField, entityType);
+    const defaultValue = getDefaultForField(entityType, entityFieldName as any);
     setLocalInstructions({ ...localInstructions, [formatField]: defaultValue });
   };
 
   const handleResetInstructionsField = (instructionsField: string, entityType: EntityType) => {
-    const defaultValue = getDefaultForField(entityType, instructionsField as any);
+    const entityFieldName = getEntityFieldName(instructionsField, entityType);
+    const defaultValue = getDefaultForField(entityType, entityFieldName as any);
     setLocalInstructions({ ...localInstructions, [instructionsField]: defaultValue });
   };
 

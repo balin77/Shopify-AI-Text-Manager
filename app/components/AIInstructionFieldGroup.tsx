@@ -50,15 +50,15 @@ export function AIInstructionFieldGroup({
         <div style={{ overflow: "visible" }}>
           {isHtmlField && onToggleHtmlMode && (
             <InlineStack align="space-between" blockAlign="center">
+              <Text as="p" variant="bodyMd" fontWeight="medium">{formatLabel}</Text>
               <InlineStack gap="200" blockAlign="center">
-                <Text as="p" variant="bodyMd" fontWeight="medium">{formatLabel}</Text>
+                <Button size="slim" onClick={onToggleHtmlMode}>
+                  {htmlMode === "html" ? "Vorschau" : "HTML"}
+                </Button>
                 <Button size="slim" onClick={onResetFormat} tone="critical" variant="plain">
                   {resetFormatText}
                 </Button>
               </InlineStack>
-              <Button size="slim" onClick={onToggleHtmlMode}>
-                {htmlMode === "html" ? "Vorschau" : "HTML"}
-              </Button>
             </InlineStack>
           )}
 
