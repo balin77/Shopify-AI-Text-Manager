@@ -3,7 +3,18 @@ import { installGlobals } from "@remix-run/node";
 import compression from "compression";
 import express from "express";
 import morgan from "morgan";
-import rateLimit from "express-rate-limit";
+import { createRequire } from "module";
+
+// Import rate limiters from CommonJS module
+const require = createRequire(import.meta.url);
+const {
+  apiRateLimit,
+  aiActionRateLimit,
+  webhookRateLimit,
+  authRateLimit,
+  strictRateLimit,
+  bulkOperationRateLimit,
+} = require("./app/middleware/rate-limit-cjs.cjs");
 
 installGlobals();
 
@@ -35,31 +46,38 @@ app.use((req, res, next) => {
   next();
 });
 
-// Rate limiter only for specific expensive API routes
-const apiLimiter = rateLimit({
-  windowMs: 60 * 1000, // 1 minute
-  max: 20, // 20 requests per minute
-  standardHeaders: true,
-  legacyHeaders: false,
-  // Note: Trust proxy is configured on the Express app (line 24)
-  // express-rate-limit automatically uses the app's trust proxy setting
-  skip: (req) => {
-    // Skip rate limiting for auth routes and assets
-    return req.path.startsWith('/auth') ||
-           req.path.startsWith('/assets') ||
-           req.path.startsWith('/_') ||
-           req.path === '/';
-  },
-  handler: (req, res) => {
-    res.status(429).json({
-      success: false,
-      error: 'Rate limit exceeded. Please wait before trying again.',
-    });
-  },
+// Apply granular rate limiting
+// Webhook rate limiting (high limit for Shopify bursts)
+app.use('/webhooks', webhookRateLimit);
+
+// Auth rate limiting (strict to prevent brute force)
+app.use('/auth', authRateLimit);
+
+// Strict rate limiting for sensitive settings
+app.use('/app/settings', strictRateLimit);
+
+// Bulk operation rate limiting for expensive operations
+app.use('/api/sync-products', bulkOperationRateLimit);
+app.use('/api/sync-content', bulkOperationRateLimit);
+
+// AI action rate limiting for generation/translation
+app.use((req, res, next) => {
+  // Check if this is an AI action based on form data
+  const contentType = req.headers['content-type'] || '';
+  if (contentType.includes('application/x-www-form-urlencoded') ||
+      contentType.includes('multipart/form-data')) {
+    // These might be AI actions, apply limit
+    if (req.path.includes('/app/products') ||
+        req.path.includes('/app/content') ||
+        req.path.includes('/app/collections')) {
+      return aiActionRateLimit(req, res, next);
+    }
+  }
+  next();
 });
 
-// Apply rate limiting only to API routes
-app.use('/api', apiLimiter);
+// General API rate limiting (catch-all for /api routes)
+app.use('/api', apiRateLimit);
 
 // handle asset requests
 if (viteDevServer) {

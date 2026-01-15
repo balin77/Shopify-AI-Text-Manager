@@ -1,14 +1,15 @@
 import { Button } from "@shopify/polaris";
-import { getLocaleButtonStyle } from "../utils/contentEditor.utils";
+import { useLocaleButtonStyle } from "../utils/contentEditor.utils";
+import type { ShopLocale, TranslatableItem, ContentType } from "../types/contentEditor.types";
 import { ReloadButton } from "./ReloadButton";
 
 interface LocaleNavigationButtonsProps {
-  shopLocales: any[];
+  shopLocales: ShopLocale[];
   currentLanguage: string;
   primaryLocaleSuffix: string;
-  selectedItem: any;
+  selectedItem: TranslatableItem | null;
   primaryLocale: string;
-  contentType: 'pages' | 'blogs' | 'collections' | 'policies' | 'products';
+  contentType: ContentType;
   hasChanges: boolean;
   onLanguageChange: (locale: string) => void;
   enabledLanguages?: string[];
