@@ -266,52 +266,55 @@ async function handleGenerateAIText(
     });
 
     if (fieldType === "title") {
-      let prompt = `Erstelle einen optimierten Produkttitel.`;
+      let prompt = `Create an optimized product title.`;
       if (aiInstructions?.productTitleFormat) {
-        prompt += `\n\nFormatbeispiel:\n${aiInstructions.productTitleFormat}`;
+        prompt += `\n\nFormat Example:\n${aiInstructions.productTitleFormat}`;
       }
       if (aiInstructions?.productTitleInstructions) {
-        prompt += `\n\nAnweisungen:\n${aiInstructions.productTitleInstructions}`;
+        prompt += `\n\nInstructions:\n${aiInstructions.productTitleInstructions}`;
       }
-      prompt += `\n\nKontext:\n${contextDescription || currentValue}`;
+      prompt += `\n\nContext:\n${contextDescription || currentValue}\n\nReturn ONLY the title, without explanations. Output the result in the main language of the product.`;
       generatedContent = await aiService.generateProductTitle(prompt);
     } else if (fieldType === "description") {
-      let prompt = `Erstelle eine optimierte Produktbeschreibung für: ${contextTitle}`;
+      let prompt = `Create an optimized product description for: ${contextTitle}`;
       if (aiInstructions?.productDescriptionFormat) {
-        prompt += `\n\nFormatbeispiel:\n${aiInstructions.productDescriptionFormat}`;
+        prompt += `\n\nFormat Example:\n${aiInstructions.productDescriptionFormat}`;
       }
       if (aiInstructions?.productDescriptionInstructions) {
-        prompt += `\n\nAnweisungen:\n${aiInstructions.productDescriptionInstructions}`;
+        prompt += `\n\nInstructions:\n${aiInstructions.productDescriptionInstructions}`;
       }
-      prompt += `\n\nAktueller Inhalt:\n${currentValue}`;
+      prompt += `\n\nCurrent Content:\n${currentValue}\n\nReturn ONLY the description, without explanations. Output the result in the main language of the product.`;
       generatedContent = await aiService.generateProductDescription(contextTitle, prompt);
     } else if (fieldType === "handle") {
-      let prompt = `Erstelle einen SEO-freundlichen URL-Slug (handle) für dieses Produkt:\nTitel: ${contextTitle}\nBeschreibung: ${contextDescription}`;
+      let prompt = `Create an SEO-friendly URL slug (handle) for this product:\nTitle: ${contextTitle}\nDescription: ${contextDescription}`;
       if (aiInstructions?.productHandleFormat) {
-        prompt += `\n\nFormatbeispiel:\n${aiInstructions.productHandleFormat}`;
+        prompt += `\n\nFormat Example:\n${aiInstructions.productHandleFormat}`;
       }
       if (aiInstructions?.productHandleInstructions) {
-        prompt += `\n\nAnweisungen:\n${aiInstructions.productHandleInstructions}`;
+        prompt += `\n\nInstructions:\n${aiInstructions.productHandleInstructions}`;
       }
+      prompt += `\n\nReturn ONLY the URL slug, without explanations. Output the result in the main language of the product.`;
       generatedContent = await aiService.generateProductTitle(prompt);
       generatedContent = sanitizeSlug(generatedContent);
     } else if (fieldType === "seoTitle") {
-      let prompt = `Erstelle einen optimierten SEO-Titel für dieses Produkt:\nTitel: ${contextTitle}\nBeschreibung: ${contextDescription}`;
+      let prompt = `Create an optimized SEO title for this product:\nTitle: ${contextTitle}\nDescription: ${contextDescription}`;
       if (aiInstructions?.productSeoTitleFormat) {
-        prompt += `\n\nFormatbeispiel:\n${aiInstructions.productSeoTitleFormat}`;
+        prompt += `\n\nFormat Example:\n${aiInstructions.productSeoTitleFormat}`;
       }
       if (aiInstructions?.productSeoTitleInstructions) {
-        prompt += `\n\nAnweisungen:\n${aiInstructions.productSeoTitleInstructions}`;
+        prompt += `\n\nInstructions:\n${aiInstructions.productSeoTitleInstructions}`;
       }
+      prompt += `\n\nReturn ONLY the SEO title, without explanations. Output the result in the main language of the product.`;
       generatedContent = await aiService.generateProductTitle(prompt);
     } else if (fieldType === "metaDescription") {
-      let prompt = `Erstelle eine optimierte Meta-Description für dieses Produkt:\nTitel: ${contextTitle}\nBeschreibung: ${contextDescription}`;
+      let prompt = `Create an optimized meta description for this product:\nTitle: ${contextTitle}\nDescription: ${contextDescription}`;
       if (aiInstructions?.productMetaDescFormat) {
-        prompt += `\n\nFormatbeispiel:\n${aiInstructions.productMetaDescFormat}`;
+        prompt += `\n\nFormat Example:\n${aiInstructions.productMetaDescFormat}`;
       }
       if (aiInstructions?.productMetaDescInstructions) {
-        prompt += `\n\nAnweisungen:\n${aiInstructions.productMetaDescInstructions}`;
+        prompt += `\n\nInstructions:\n${aiInstructions.productMetaDescInstructions}`;
       }
+      prompt += `\n\nReturn ONLY the meta description, without explanations. Output the result in the main language of the product.`;
       generatedContent = await aiService.generateProductTitle(prompt);
     }
 
@@ -391,50 +394,55 @@ async function handleFormatAIText(
     });
 
     if (fieldType === "title") {
-      let prompt = `Formatiere den folgenden Produkttitel gemäß den Formatierungsrichtlinien:\n\nAktueller Titel:\n${currentValue}`;
+      let prompt = `Format the following product title according to the formatting guidelines:\n\nCurrent Title:\n${currentValue}`;
       if (aiInstructions?.productTitleFormat) {
-        prompt += `\n\nFormatbeispiel:\n${aiInstructions.productTitleFormat}`;
+        prompt += `\n\nFormat Example:\n${aiInstructions.productTitleFormat}`;
       }
       if (aiInstructions?.productTitleInstructions) {
-        prompt += `\n\nFormatierungsanweisungen:\n${aiInstructions.productTitleInstructions}`;
+        prompt += `\n\nFormatting Instructions:\n${aiInstructions.productTitleInstructions}`;
       }
+      prompt += `\n\nReturn ONLY the formatted title, without explanations. Output the result in the main language of the product.`;
       formattedContent = await aiService.generateProductTitle(prompt);
     } else if (fieldType === "description") {
-      let prompt = `Formatiere die folgende Produktbeschreibung gemäß den Formatierungsrichtlinien:\n\nAktuelle Beschreibung:\n${currentValue}`;
+      let prompt = `Format the following product description according to the formatting guidelines:\n\nCurrent Description:\n${currentValue}`;
       if (aiInstructions?.productDescriptionFormat) {
-        prompt += `\n\nFormatbeispiel:\n${aiInstructions.productDescriptionFormat}`;
+        prompt += `\n\nFormat Example:\n${aiInstructions.productDescriptionFormat}`;
       }
       if (aiInstructions?.productDescriptionInstructions) {
-        prompt += `\n\nFormatierungsanweisungen:\n${aiInstructions.productDescriptionInstructions}`;
+        prompt += `\n\nFormatting Instructions:\n${aiInstructions.productDescriptionInstructions}`;
       }
+      prompt += `\n\nReturn ONLY the formatted description, without explanations. Output the result in the main language of the product.`;
       formattedContent = await aiService.generateProductDescription(currentValue, prompt);
     } else if (fieldType === "handle") {
-      let prompt = `Formatiere den folgenden URL-Slug gemäß den Formatierungsrichtlinien:\n\nAktueller Slug:\n${currentValue}\n\nKontext - Titel: ${contextTitle}`;
+      let prompt = `Format the following URL slug according to the formatting guidelines:\n\nCurrent Slug:\n${currentValue}\n\nContext - Title: ${contextTitle}`;
       if (aiInstructions?.productHandleFormat) {
-        prompt += `\n\nFormatbeispiel:\n${aiInstructions.productHandleFormat}`;
+        prompt += `\n\nFormat Example:\n${aiInstructions.productHandleFormat}`;
       }
       if (aiInstructions?.productHandleInstructions) {
-        prompt += `\n\nFormatierungsanweisungen:\n${aiInstructions.productHandleInstructions}`;
+        prompt += `\n\nFormatting Instructions:\n${aiInstructions.productHandleInstructions}`;
       }
+      prompt += `\n\nReturn ONLY the formatted URL slug, without explanations. Output the result in the main language of the product.`;
       formattedContent = await aiService.generateProductTitle(prompt);
       formattedContent = sanitizeSlug(formattedContent);
     } else if (fieldType === "seoTitle") {
-      let prompt = `Formatiere den folgenden SEO-Titel gemäß den Formatierungsrichtlinien:\n\nAktueller SEO-Titel:\n${currentValue}\n\nKontext - Titel: ${contextTitle}\nBeschreibung: ${contextDescription}`;
+      let prompt = `Format the following SEO title according to the formatting guidelines:\n\nCurrent SEO Title:\n${currentValue}\n\nContext - Title: ${contextTitle}\nDescription: ${contextDescription}`;
       if (aiInstructions?.productSeoTitleFormat) {
-        prompt += `\n\nFormatbeispiel:\n${aiInstructions.productSeoTitleFormat}`;
+        prompt += `\n\nFormat Example:\n${aiInstructions.productSeoTitleFormat}`;
       }
       if (aiInstructions?.productSeoTitleInstructions) {
-        prompt += `\n\nFormatierungsanweisungen:\n${aiInstructions.productSeoTitleInstructions}`;
+        prompt += `\n\nFormatting Instructions:\n${aiInstructions.productSeoTitleInstructions}`;
       }
+      prompt += `\n\nReturn ONLY the formatted SEO title, without explanations. Output the result in the main language of the product.`;
       formattedContent = await aiService.generateProductTitle(prompt);
     } else if (fieldType === "metaDescription") {
-      let prompt = `Formatiere die folgende Meta-Description gemäß den Formatierungsrichtlinien:\n\nAktuelle Meta-Description:\n${currentValue}\n\nKontext - Titel: ${contextTitle}\nBeschreibung: ${contextDescription}`;
+      let prompt = `Format the following meta description according to the formatting guidelines:\n\nCurrent Meta Description:\n${currentValue}\n\nContext - Title: ${contextTitle}\nDescription: ${contextDescription}`;
       if (aiInstructions?.productMetaDescFormat) {
-        prompt += `\n\nFormatbeispiel:\n${aiInstructions.productMetaDescFormat}`;
+        prompt += `\n\nFormat Example:\n${aiInstructions.productMetaDescFormat}`;
       }
       if (aiInstructions?.productMetaDescInstructions) {
-        prompt += `\n\nFormatierungsanweisungen:\n${aiInstructions.productMetaDescInstructions}`;
+        prompt += `\n\nFormatting Instructions:\n${aiInstructions.productMetaDescInstructions}`;
       }
+      prompt += `\n\nReturn ONLY the formatted meta description, without explanations. Output the result in the main language of the product.`;
       formattedContent = await aiService.generateProductTitle(prompt);
     }
 
@@ -1477,17 +1485,19 @@ async function handleGenerateAltText(
       data: { status: "queued", progress: 10 },
     });
 
-    let prompt = `Erstelle einen optimierten Alt-Text für ein Produktbild.
-Produkt: ${productTitle}
-Bild-URL: ${imageUrl}`;
+    let prompt = `Create an optimized alt text for a product image.
+Product: ${productTitle}
+Image URL: ${imageUrl}`;
 
     if (aiInstructions?.productAltTextFormat) {
-      prompt += `\n\nFormatbeispiel:\n${aiInstructions.productAltTextFormat}`;
+      prompt += `\n\nFormat Example:\n${aiInstructions.productAltTextFormat}`;
     }
 
     if (aiInstructions?.productAltTextInstructions) {
-      prompt += `\n\nAnweisungen:\n${aiInstructions.productAltTextInstructions}`;
+      prompt += `\n\nInstructions:\n${aiInstructions.productAltTextInstructions}`;
     }
+
+    prompt += `\n\nReturn ONLY the alt text, without explanations. Output the result in the main language of the product.`;
 
     const altText = await aiService.generateImageAltText(imageUrl, productTitle, prompt);
 
