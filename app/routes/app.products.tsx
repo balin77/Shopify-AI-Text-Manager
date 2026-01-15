@@ -181,27 +181,41 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // 2. Fetch products from DATABASE with plan-based limit
     const takeLimit = planLimits.maxProducts === Infinity ? 50 : Math.min(planLimits.maxProducts, 50);
 
-    const dbProducts = await db.product.findMany({
-      where: {
-        shop: session.shop,
-      },
-      include: {
-        translations: true,
-        images: planLimits.cacheEnabled.productImages ? {
-          include: {
-            altTextTranslations: true,
-          },
-        } : false, // Don't load images if not cached in free plan
-        options: planLimits.cacheEnabled.productOptions,
-        metafields: planLimits.cacheEnabled.productMetafields,
-      },
-      orderBy: {
-        title: "asc",
-      },
-      take: takeLimit,
-    });
+    // Load products and translations separately (like Collections do)
+    const [dbProducts, allTranslations] = await Promise.all([
+      db.product.findMany({
+        where: {
+          shop: session.shop,
+        },
+        include: {
+          images: planLimits.cacheEnabled.productImages ? {
+            include: {
+              altTextTranslations: true,
+            },
+          } : false, // Don't load images if not cached in free plan
+          options: planLimits.cacheEnabled.productOptions,
+          metafields: planLimits.cacheEnabled.productMetafields,
+        },
+        orderBy: {
+          title: "asc",
+        },
+        take: takeLimit,
+      }),
+      db.contentTranslation.findMany({
+        where: { resourceType: 'Product' }
+      }),
+    ]);
 
     console.log("[LOADER] Loaded", dbProducts.length, "products from database (limit:", takeLimit, ")");
+
+    // Group translations by resourceId (like Collections loader)
+    const translationsByResource = allTranslations.reduce((acc: Record<string, any[]>, trans) => {
+      if (!acc[trans.resourceId]) {
+        acc[trans.resourceId] = [];
+      }
+      acc[trans.resourceId].push(trans);
+      return acc;
+    }, {});
 
     // 3. Transform to frontend format
     const products = dbProducts.map((p) => ({
@@ -239,12 +253,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         value: mf.value,
         type: mf.type,
       })) : [],
-      // IMPORTANT: All translations are already loaded!
-      translations: p.translations.map((t) => ({
-        key: t.key,
-        value: t.value,
-        locale: t.locale,
-      })),
+      // IMPORTANT: Translations loaded from ContentTranslation table (unified)
+      translations: translationsByResource[p.id] || [],
     }));
 
     console.log("[LOADER] Total translations loaded:", products.reduce((sum, p) => sum + p.translations.length, 0));
