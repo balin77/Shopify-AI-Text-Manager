@@ -5,7 +5,7 @@
  * Provides a complete state management and handler system for content editing.
  */
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigationGuard, useChangeTracking, getTranslatedValue } from "../utils/contentEditor.utils";
 import type {
   UseContentEditorProps,
@@ -43,6 +43,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     clearPendingNavigation,
   } = useNavigationGuard();
 
+  // Track if we're currently loading data to prevent false hasChanges detection
+  const isLoadingDataRef = useRef(false);
+
   // Change tracking
   const hasChanges = useChangeTracking(
     selectedItem || null,
@@ -58,6 +61,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
   useEffect(() => {
     if (!selectedItem) return;
+
+    // Mark that we're loading data
+    isLoadingDataRef.current = true;
 
     // Reset accept-and-translate flag when changing items or languages
     setIsAcceptAndTranslateFlow(false);
@@ -84,6 +90,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     }
 
     setEditableValues(newValues);
+
+    // After state is set, mark loading as complete on next tick
+    // This ensures the change tracking doesn't see the intermediate state
+    setTimeout(() => {
+      isLoadingDataRef.current = false;
+    }, 0);
   }, [selectedItemId, currentLanguage, selectedItem, config.fieldDefinitions, primaryLocale]);
 
   // ============================================================================

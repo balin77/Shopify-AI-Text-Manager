@@ -265,7 +265,16 @@ export function useChangeTracking(
   const [hasChanges, setHasChanges] = useState(false);
 
   useEffect(() => {
+    console.log('[useChangeTracking] Running with:', {
+      hasSelectedItem: !!selectedItem,
+      selectedItemId: selectedItem?.id,
+      currentLanguage,
+      editableFields,
+      contentType
+    });
+
     if (!selectedItem) {
+      console.log('[useChangeTracking] No selectedItem - setting hasChanges to false');
       setHasChanges(false);
       return;
     }
@@ -296,7 +305,18 @@ export function useChangeTracking(
     const seoTitleChanged = (editableFields.seoTitle || "") !== getOriginalValue(SHOPIFY_TRANSLATION_KEYS.META_TITLE, selectedItem.seo?.title || "");
     const metaDescChanged = (editableFields.metaDescription || "") !== getOriginalValue(SHOPIFY_TRANSLATION_KEYS.META_DESCRIPTION, selectedItem.seo?.description || "");
 
-    setHasChanges(titleChanged || descChanged || handleChanged || seoTitleChanged || metaDescChanged);
+    const newHasChanges = titleChanged || descChanged || handleChanged || seoTitleChanged || metaDescChanged;
+
+    console.log('[useChangeTracking] Change detection:', {
+      titleChanged,
+      descChanged,
+      handleChanged,
+      seoTitleChanged,
+      metaDescChanged,
+      newHasChanges
+    });
+
+    setHasChanges(newHasChanges);
   }, [
     editableFields.title,
     editableFields.description,
