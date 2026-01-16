@@ -50,6 +50,20 @@ interface UnifiedContentEditorProps {
 
   /** Optional: Custom render for list item */
   renderListItem?: (item: any, isSelected: boolean) => React.ReactNode;
+
+  /** Optional: Hide images in item list */
+  hideItemListImages?: boolean;
+
+  /** Optional: Hide status bars in item list */
+  hideItemListStatusBars?: boolean;
+
+  /** Optional: Plan limit configuration */
+  planLimit?: {
+    isAtLimit: boolean;
+    maxItems: number;
+    currentPlan: string;
+    nextPlan?: string;
+  };
 }
 
 export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
@@ -64,6 +78,9 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     t,
     renderSidebar,
     renderListItem,
+    hideItemListImages = false,
+    hideItemListStatusBars = false,
+    planLimit,
   } = props;
 
   const { state, handlers, selectedItem, navigationGuard, helpers } = editor;
@@ -81,12 +98,13 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
 
   // Plan limit configuration
   const maxItems = getMaxProducts(); // This works for all content types
-  const planLimit = {
+  const defaultPlanLimit = {
     isAtLimit: items.length >= maxItems && maxItems !== Infinity,
     maxItems,
     currentPlan: "current", // TODO: Get from plan context
     nextPlan: "Pro", // TODO: Get from plan context
   };
+  const finalPlanLimit = planLimit || defaultPlanLimit;
 
   // Default list item renderer (if custom renderListItem not provided)
   const defaultRenderListItem = (item: UnifiedItem, isSelected: boolean, isHovered: boolean) => {
@@ -147,9 +165,9 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           renderItem={renderListItem}
           showSearch={true}
           showPagination={true}
-          showStatusStripe={true}
-          showThumbnails={true}
-          planLimit={planLimit}
+          showStatusStripe={!hideItemListStatusBars}
+          showThumbnails={!hideItemListImages}
+          planLimit={finalPlanLimit}
           t={{
             searchPlaceholder: t.content?.searchPlaceholder,
             paginationOf: t.content?.paginationOf || "of",

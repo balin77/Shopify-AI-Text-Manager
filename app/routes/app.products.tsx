@@ -227,7 +227,6 @@ export default function ProductsPage() {
   return (
     <>
       <MainNavigation />
-      <ContentTypeNavigation />
       <UnifiedContentEditor
         config={PRODUCTS_CONFIG}
         items={products as ContentItem[]}
