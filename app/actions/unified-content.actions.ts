@@ -579,7 +579,42 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
     const primaryLocale = formData.get("primaryLocale") as string;
 
     try {
-      // Collect field updates
+      // Special handling for Products - use dedicated product update handler
+      if (contentConfig.resourceType === "Product") {
+        const { handleUpdateProduct } = await import("./product/update.actions");
+        const { prepareActionContext } = await import("./product/shared/action-context");
+
+        // Prepare context for product update
+        const context = await prepareActionContext(admin, session);
+
+        // Map unified field names to product-specific names
+        const productFormData = new FormData();
+        productFormData.set("action", "updateProduct");
+        productFormData.set("productId", itemId);
+        productFormData.set("locale", locale);
+        productFormData.set("primaryLocale", primaryLocale);
+
+        // Map field names
+        const fieldMapping: Record<string, string> = {
+          title: "title",
+          description: "descriptionHtml",
+          handle: "handle",
+          seoTitle: "seoTitle",
+          metaDescription: "metaDescription",
+        };
+
+        contentConfig.fieldDefinitions.forEach((field) => {
+          const value = formData.get(field.key) as string;
+          const productFieldName = fieldMapping[field.key] || field.key;
+          if (value !== null) {
+            productFormData.set(productFieldName, value);
+          }
+        });
+
+        return handleUpdateProduct(context, productFormData, itemId);
+      }
+
+      // For other content types (Collections, Pages, Blogs, Policies), use unified service
       const updates: any = {};
       contentConfig.fieldDefinitions.forEach((field) => {
         let value = formData.get(field.key) as string;

@@ -298,38 +298,44 @@ async function updateTranslatedProduct(
     }
   }
 
-  // Update local database
+  // Update local database using ContentTranslation table (unified pattern)
   const product = await db.product.findFirst({
     where: { id: productId },
     select: { shop: true },
   });
 
   if (product) {
-    // Delete existing translations for this locale and product
-    await db.translation.deleteMany({
-      where: {
-        productId: productId,
-        locale: params.locale,
-      },
-    });
-
-    // Insert new translations
-    if (translationsInput.length > 0) {
-      await db.translation.createMany({
-        data: translationsInput.map((t) => ({
-          productId: productId,
-          key: t.key,
-          value: t.value,
-          locale: t.locale,
+    // Use upsert to preserve existing translations for other fields
+    for (const translation of translationsInput) {
+      await db.contentTranslation.upsert({
+        where: {
+          resourceId_resourceType_locale_key: {
+            resourceId: productId,
+            resourceType: "Product",
+            locale: translation.locale,
+            key: translation.key,
+          },
+        },
+        update: {
+          value: translation.value,
           digest: null,
-        })),
-      });
-      loggers.product("info", "Saved translations to DB", {
-        productId,
-        locale: params.locale,
-        count: translationsInput.length,
+        },
+        create: {
+          resourceId: productId,
+          resourceType: "Product",
+          key: translation.key,
+          value: translation.value,
+          locale: translation.locale,
+          digest: null,
+        },
       });
     }
+
+    loggers.product("info", "Saved translations to DB (ContentTranslation)", {
+      productId,
+      locale: params.locale,
+      count: translationsInput.length,
+    });
   }
 
   return json({ success: true });
