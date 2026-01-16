@@ -412,6 +412,12 @@ export const de = {
     aiPrompt: "AI Anfrage",
     aiOutput: "AI Ergebnis",
     image: "Bild",
+    // Completion notifications
+    completedTitle: "✓ Fertig",
+    taskCompleted: "Aufgabe abgeschlossen für \"{title}\"",
+    translationCompleted: "Übersetzung abgeschlossen für \"{title}\"",
+    fieldTranslationCompleted: "Übersetzung für {field} in \"{title}\" abgeschlossen",
+    generationCompleted: "KI-Generierung für {field} in \"{title}\" abgeschlossen",
   },
 
   // SEO Sidebar

@@ -13,17 +13,19 @@ export function MainNavigation() {
   const navigation = useNavigation();
   const matches = useMatches();
   const { t } = useI18n();
-  const { infoBox, hideInfoBox } = useInfoBox();
+  const { infoBox, hideInfoBox, showInfoBox } = useInfoBox();
   const { plan, getPlanDisplayName, getMaxProducts } = usePlan();
   const { setMainNavHeight } = useNavigationHeight();
   const fetcher = useFetcher();
   const tasksFetcher = useFetcher<{ count: number }>();
+  const completedTasksFetcher = useFetcher<{ tasks: any[] }>();
   const [isChangingPlan, setIsChangingPlan] = useState(false);
   const [showLoadingIndicator, setShowLoadingIndicator] = useState(false);
   const navRef = useRef<HTMLDivElement>(null);
   const [navHeight, setNavHeight] = useState(73);
   const pollIntervalRef = useRef(10000); // Start with 10 seconds, use ref to persist across renders
   const errorCountRef = useRef(0); // Track consecutive errors
+  const notifiedTaskIds = useRef<Set<string>>(new Set()); // Track which tasks we've already notified about
 
   // Get product count from products route loader data
   const productsRouteData = matches.find((match) => match.id === "routes/app.products")?.data as any;
@@ -66,6 +68,74 @@ export function MainNavigation() {
       }
     };
   }, [location.search]); // Re-fetch when search params change (e.g., shop parameter)
+
+  // Poll for recently completed tasks and show notifications
+  useEffect(() => {
+    const searchParams = new URLSearchParams(location.search);
+    let interval: NodeJS.Timeout;
+
+    const fetchCompletedTasks = () => {
+      if (completedTasksFetcher.state === "idle") {
+        completedTasksFetcher.load(`/api/recently-completed-tasks?${searchParams.toString()}`);
+      }
+    };
+
+    // Load initial
+    fetchCompletedTasks();
+
+    // Poll every 10 seconds
+    interval = setInterval(fetchCompletedTasks, 10000);
+
+    return () => {
+      if (interval) {
+        clearInterval(interval);
+      }
+    };
+  }, [location.search]);
+
+  // Show notifications for newly completed tasks
+  useEffect(() => {
+    if (!completedTasksFetcher.data?.tasks) return;
+
+    const tasks = completedTasksFetcher.data.tasks;
+
+    for (const task of tasks) {
+      // Skip if we've already notified about this task
+      if (notifiedTaskIds.current.has(task.id)) continue;
+
+      // Mark as notified
+      notifiedTaskIds.current.add(task.id);
+
+      // Build notification message based on task type
+      let message = "";
+      const resourceTitle = task.resourceTitle || "";
+
+      if (task.type === "bulkTranslation") {
+        if (task.fieldType === "all") {
+          message = t.tasks?.translationCompleted || `Translation completed for "${resourceTitle}"`;
+        } else {
+          const fieldName = task.fieldType || "field";
+          message = t.tasks?.fieldTranslationCompleted?.replace("{field}", fieldName).replace("{title}", resourceTitle)
+            || `Translation completed for ${fieldName} in "${resourceTitle}"`;
+        }
+      } else if (task.type === "aiGeneration") {
+        const fieldName = task.fieldType || "content";
+        message = t.tasks?.generationCompleted?.replace("{field}", fieldName).replace("{title}", resourceTitle)
+          || `AI generation completed for ${fieldName} in "${resourceTitle}"`;
+      } else {
+        message = t.tasks?.taskCompleted || `Task completed for "${resourceTitle}"`;
+      }
+
+      showInfoBox(message, "success", t.tasks?.completedTitle || "✓ Completed");
+    }
+
+    // Cleanup old task IDs after 5 minutes
+    setTimeout(() => {
+      for (const task of tasks) {
+        notifiedTaskIds.current.delete(task.id);
+      }
+    }, 300000);
+  }, [completedTasksFetcher.data, showInfoBox, t]);
 
   // Monitor fetcher state and implement exponential backoff on errors
   useEffect(() => {

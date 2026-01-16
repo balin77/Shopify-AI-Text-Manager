@@ -414,6 +414,12 @@ export const en: Translation = {
     aiPrompt: "AI Prompt",
     aiOutput: "AI Output",
     image: "Image",
+    // Completion notifications
+    completedTitle: "✓ Completed",
+    taskCompleted: "Task completed for \"{title}\"",
+    translationCompleted: "Translation completed for \"{title}\"",
+    fieldTranslationCompleted: "Translation for {field} in \"{title}\" completed",
+    generationCompleted: "AI generation for {field} in \"{title}\" completed",
   },
 
   // SEO Sidebar
