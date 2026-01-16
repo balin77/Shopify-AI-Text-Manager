@@ -128,6 +128,16 @@ export function UnifiedItemList({
     ? filteredItems.slice(startIndex, startIndex + itemsPerPage)
     : filteredItems;
 
+  // Debug: Log pagination info
+  console.log(`[UnifiedItemList] ${resourceName.plural}:`, {
+    totalItems: items.length,
+    filteredItems: filteredItems.length,
+    itemsPerPage,
+    totalPages,
+    showPagination,
+    willShowPagination: showPagination && totalPages > 1
+  });
+
   // Reset to page 1 when search changes
   const handleSearchChange = (value: string) => {
     setSearchQuery(value);
