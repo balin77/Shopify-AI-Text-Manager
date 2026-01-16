@@ -588,6 +588,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     const suggestion = aiSuggestions[fieldKey];
     if (!suggestion) return;
 
+    // Force isLoadingData to false to ensure change detection works
+    setIsLoadingData(false);
+
     // Set flag to indicate we're accepting a suggestion (but not translating)
     // This allows the change but still clears translations since the primary text changed
     setEditableValues((prev) => ({
@@ -678,6 +681,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   };
 
   const handleValueChange = (fieldKey: string, value: string) => {
+    // Force isLoadingData to false to ensure change detection works for manual changes
+    setIsLoadingData(false);
+
     // Update the state immediately without any side effects
     // This ensures the input field responds instantly to user typing
     setEditableValues((prev) => ({
