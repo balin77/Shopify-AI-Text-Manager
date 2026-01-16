@@ -6,7 +6,12 @@
  */
 
 import { logger } from "~/utils/logger.server";
-import { getTaskExpirationDate } from "../../../../src/utils/task.utils";
+import {
+  getTaskExpirationDate,
+  TASK_CONFIG,
+  truncateTaskResult,
+  truncateTaskError,
+} from "~/config/constants";
 
 type TaskType = "aiGeneration" | "translation" | "bulkTranslation" | "bulkAIGeneration";
 type TaskStatus = "pending" | "queued" | "running" | "completed" | "failed";
@@ -67,7 +72,7 @@ export async function createProductTask(
       resourceTitle: options.resourceTitle || null,
       fieldType: options.fieldType || null,
       targetLocale: options.targetLocale || null,
-      progress: 0,
+      progress: TASK_CONFIG.PROGRESS.INITIAL,
       estimatedTokens: options.estimatedTokens || null,
       expiresAt: getTaskExpirationDate(),
     },
@@ -130,8 +135,8 @@ export async function completeTask(
     where: { id: taskId },
     data: {
       status: "completed",
-      progress: 100,
-      result: resultString.substring(0, 500), // Limit result length
+      progress: TASK_CONFIG.PROGRESS.COMPLETED,
+      result: truncateTaskResult(resultString),
     },
   });
 
@@ -156,7 +161,7 @@ export async function failTask(
     where: { id: taskId },
     data: {
       status: "failed",
-      error: errorMessage.substring(0, 1000), // Limit error length
+      error: truncateTaskError(errorMessage),
     },
   });
 
@@ -184,11 +189,11 @@ export async function updateTaskStatus(
   const updateData: any = { status };
 
   if (additionalData?.error) {
-    updateData.error = additionalData.error.substring(0, 1000);
+    updateData.error = truncateTaskError(additionalData.error);
   }
 
   if (additionalData?.result) {
-    updateData.result = additionalData.result.substring(0, 500);
+    updateData.result = truncateTaskResult(additionalData.result);
   }
 
   if (additionalData?.progress !== undefined) {
@@ -223,8 +228,8 @@ export async function getTask(taskId: string): Promise<Task | null> {
 export function calculateProgress(
   processed: number,
   total: number,
-  startPercent: number = 10,
-  endPercent: number = 90
+  startPercent: number = TASK_CONFIG.PROGRESS.RUNNING_START,
+  endPercent: number = TASK_CONFIG.PROGRESS.RUNNING_END
 ): number {
   if (total === 0) return startPercent;
 
