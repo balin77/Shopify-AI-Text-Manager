@@ -12,7 +12,8 @@ COPY package*.json ./
 COPY prisma ./prisma/
 
 # Install dependencies
-RUN npm ci
+# Using npm install instead of npm ci to handle lock file version differences
+RUN npm install --legacy-peer-deps
 
 # Copy application code
 COPY . .
