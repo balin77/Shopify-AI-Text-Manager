@@ -138,10 +138,13 @@ export default function ContentHub() {
 
     if (typeof window !== "undefined") {
       const stored = localStorage.getItem("lastContentHubType");
-      if (stored) return stored as ContentType;
+      if (stored && ["menus", "templates", "metaobjects", "shopMetadata"].includes(stored)) {
+        return stored as ContentType;
+      }
     }
 
-    return null; // no default - user must select
+    // If no type specified and no valid localStorage, redirect to collections
+    return null;
   };
 
   const [selectedType, setSelectedType] = useState<ContentType | null>(getInitialType());
@@ -160,10 +163,12 @@ export default function ContentHub() {
     key => editableValues[key] !== originalValues[key]
   );
 
-  // Initialize URL on mount - don't auto-navigate if no type selected
+  // Initialize - redirect to collections if no type specified
   useEffect(() => {
     const urlType = searchParams.get("type");
-    if (!urlType && selectedType) {
+    if (!urlType && !selectedType) {
+      navigate("/app/collections", { replace: true });
+    } else if (!urlType && selectedType) {
       navigate(`?type=${selectedType}`, { replace: true });
     }
   }, []);
@@ -310,29 +315,6 @@ export default function ContentHub() {
       </div>
     );
   };
-
-  // If no type selected, show selection screen
-  if (!selectedType) {
-    return (
-      <Page fullWidth>
-        <MainNavigation />
-        <ContentTypeNavigation />
-
-        <div style={{ padding: "2rem", textAlign: "center" }}>
-          <Card>
-            <BlockStack gap="500">
-              <Text as="h1" variant="headingLg">
-                Bitte wählen Sie einen Content-Typ aus der Navigation oben
-              </Text>
-              <Text as="p" variant="bodyMd" tone="subdued">
-                Wählen Sie einen der verfügbaren Content-Typen aus der oberen Navigationsleiste aus, um fortzufahren.
-              </Text>
-            </BlockStack>
-          </Card>
-        </div>
-      </Page>
-    );
-  }
 
   return (
     <Page fullWidth>
