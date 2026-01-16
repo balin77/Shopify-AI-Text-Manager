@@ -144,6 +144,9 @@ export function AIEditableHTMLField({
           {label}
         </Text>
         <InlineStack gap="200">
+          <Button size="slim" onClick={onToggleMode}>
+            {mode === "html" ? t.products.preview : t.products.html}
+          </Button>
           {onClear && value && (
             <Button
               size="slim"
@@ -154,9 +157,6 @@ export function AIEditableHTMLField({
               {t.common?.clear || t.products?.clear || "Clear"}
             </Button>
           )}
-          <Button size="slim" onClick={onToggleMode}>
-            {mode === "html" ? t.products.preview : t.products.html}
-          </Button>
         </InlineStack>
       </InlineStack>
 

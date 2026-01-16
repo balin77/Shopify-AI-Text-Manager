@@ -77,7 +77,20 @@ app.use((req, res, next) => {
 });
 
 // General API rate limiting (catch-all for /api routes)
-app.use('/api', apiRateLimit);
+// Exclude polling endpoints that have their own built-in backoff mechanisms
+app.use('/api', (req, res, next) => {
+  // Skip rate limiting for these endpoints - they have exponential backoff in the client
+  const excludedPaths = [
+    '/api/running-tasks-count',
+    '/api/recently-completed-tasks'
+  ];
+
+  if (excludedPaths.includes(req.path)) {
+    return next();
+  }
+
+  return apiRateLimit(req, res, next);
+});
 
 // handle asset requests
 if (viteDevServer) {

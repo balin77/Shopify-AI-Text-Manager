@@ -25,6 +25,8 @@ export function MainNavigation() {
   const [navHeight, setNavHeight] = useState(73);
   const pollIntervalRef = useRef(10000); // Start with 10 seconds, use ref to persist across renders
   const errorCountRef = useRef(0); // Track consecutive errors
+  const completedTasksPollIntervalRef = useRef(10000); // Separate interval for completed tasks polling
+  const completedTasksErrorCountRef = useRef(0); // Track consecutive errors for completed tasks
   const notifiedTaskIds = useRef<Set<string>>(new Set()); // Track which tasks we've already notified about
 
   // Get product count from products route loader data
@@ -69,12 +71,13 @@ export function MainNavigation() {
     };
   }, [location.search]); // Re-fetch when search params change (e.g., shop parameter)
 
-  // Poll for recently completed tasks and show notifications
+  // Poll for recently completed tasks and show notifications with exponential backoff
   useEffect(() => {
     const searchParams = new URLSearchParams(location.search);
     let interval: NodeJS.Timeout;
 
     const fetchCompletedTasks = () => {
+      // Only fetch if not already loading to prevent overlapping requests
       if (completedTasksFetcher.state === "idle") {
         completedTasksFetcher.load(`/api/recently-completed-tasks?${searchParams.toString()}`);
       }
@@ -83,8 +86,15 @@ export function MainNavigation() {
     // Load initial
     fetchCompletedTasks();
 
-    // Poll every 10 seconds
-    interval = setInterval(fetchCompletedTasks, 10000);
+    // Set up interval with current poll interval
+    const setupInterval = () => {
+      if (interval) {
+        clearInterval(interval);
+      }
+      interval = setInterval(fetchCompletedTasks, completedTasksPollIntervalRef.current);
+    };
+
+    setupInterval();
 
     return () => {
       if (interval) {
@@ -137,7 +147,7 @@ export function MainNavigation() {
     }, 300000);
   }, [completedTasksFetcher.data, showInfoBox, t]);
 
-  // Monitor fetcher state and implement exponential backoff on errors
+  // Monitor fetcher state and implement exponential backoff on errors for running tasks
   useEffect(() => {
     // Check if fetcher encountered an error (including 429, 502, etc.)
     const hasError = tasksFetcher.state === "idle" &&
@@ -151,7 +161,7 @@ export function MainNavigation() {
       const newInterval = Math.min(pollIntervalRef.current * 2, 60000);
 
       if (newInterval !== pollIntervalRef.current) {
-        console.warn(`⚠️ [MainNavigation] Error detected (502/429/etc). Increasing poll interval to ${newInterval}ms`);
+        console.warn(`⚠️ [MainNavigation] Running tasks error detected (502/429/etc). Increasing poll interval to ${newInterval}ms`);
         pollIntervalRef.current = newInterval;
       }
     } else if (tasksFetcher.state === "idle" && tasksFetcher.data !== undefined && !(tasksFetcher.data as any)?.error) {
@@ -162,12 +172,47 @@ export function MainNavigation() {
         // Gradually reduce interval back to 10 seconds
         const newInterval = Math.max(pollIntervalRef.current / 2, 10000);
         if (newInterval !== pollIntervalRef.current) {
-          console.log(`✅ [MainNavigation] Connection restored. Reducing poll interval to ${newInterval}ms`);
+          console.log(`✅ [MainNavigation] Running tasks connection restored. Reducing poll interval to ${newInterval}ms`);
           pollIntervalRef.current = newInterval;
         }
       }
     }
   }, [tasksFetcher.state, tasksFetcher.data]);
+
+  // Monitor completed tasks fetcher and implement exponential backoff on errors
+  useEffect(() => {
+    // Check if fetcher encountered an error (including 429, 502, etc.)
+    // Also check for warning flag (rate limited but returned 200)
+    const data = completedTasksFetcher.data as any;
+    const hasError = completedTasksFetcher.state === "idle" &&
+      (completedTasksFetcher.data === undefined || data?.error || data?.warning);
+
+    if (hasError) {
+      // Likely an error occurred or rate limited
+      completedTasksErrorCountRef.current += 1;
+
+      // Exponential backoff: double the interval on each consecutive error, max 60 seconds
+      const newInterval = Math.min(completedTasksPollIntervalRef.current * 2, 60000);
+
+      if (newInterval !== completedTasksPollIntervalRef.current) {
+        const errorType = data?.warning ? "Rate limited" : "Error";
+        console.warn(`⚠️ [MainNavigation] Completed tasks ${errorType}. Increasing poll interval to ${newInterval}ms`);
+        completedTasksPollIntervalRef.current = newInterval;
+      }
+    } else if (completedTasksFetcher.state === "idle" && completedTasksFetcher.data !== undefined && !data?.error && !data?.warning) {
+      // Successful fetch - reset error count and gradually reduce interval
+      if (completedTasksErrorCountRef.current > 0) {
+        completedTasksErrorCountRef.current = 0;
+
+        // Gradually reduce interval back to 10 seconds
+        const newInterval = Math.max(completedTasksPollIntervalRef.current / 2, 10000);
+        if (newInterval !== completedTasksPollIntervalRef.current) {
+          console.log(`✅ [MainNavigation] Completed tasks connection restored. Reducing poll interval to ${newInterval}ms`);
+          completedTasksPollIntervalRef.current = newInterval;
+        }
+      }
+    }
+  }, [completedTasksFetcher.state, completedTasksFetcher.data]);
 
   // Show loading indicator only if loading takes longer than 1 second
   useEffect(() => {

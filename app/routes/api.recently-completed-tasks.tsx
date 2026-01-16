@@ -43,6 +43,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
           headers: {
             "Content-Type": "application/json",
             "Cache-Control": "no-store",
+            // Add CORS headers for embedded app
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET",
           },
         }
       );
@@ -54,18 +57,37 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
           status: 500,
           headers: {
             "Content-Type": "application/json",
+            "Access-Control-Allow-Origin": "*",
           },
         }
       );
     }
   } catch (authError: any) {
     console.error("Authentication error in recently-completed-tasks:", authError);
+
+    // If this is a rate limit error, return 200 with empty tasks to prevent client errors
+    if (authError.status === 429) {
+      console.warn("Rate limit hit on recently-completed-tasks, returning empty result");
+      return json(
+        { tasks: [], warning: "Rate limited" },
+        {
+          status: 200, // Return 200 to prevent client-side errors
+          headers: {
+            "Content-Type": "application/json",
+            "Access-Control-Allow-Origin": "*",
+            "Retry-After": "60", // Tell client to wait 60 seconds
+          },
+        }
+      );
+    }
+
     return json(
       { tasks: [], error: "Authentication failed" },
       {
         status: authError.status || 401,
         headers: {
           "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",
         },
       }
     );
