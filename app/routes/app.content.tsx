@@ -166,10 +166,13 @@ export default function ContentHub() {
   // Initialize - redirect to collections if no type specified
   useEffect(() => {
     const urlType = searchParams.get("type");
-    if (!urlType && !selectedType) {
+    if (!urlType) {
+      // Clear localStorage to prevent auto-selecting menus
+      if (typeof window !== "undefined") {
+        localStorage.removeItem("lastContentHubType");
+      }
+      // Always redirect to collections when accessing /app/content without type
       navigate("/app/collections", { replace: true });
-    } else if (!urlType && selectedType) {
-      navigate(`?type=${selectedType}`, { replace: true });
     }
   }, []);
 
