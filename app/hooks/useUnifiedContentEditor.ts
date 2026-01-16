@@ -92,11 +92,19 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     }
 
     setEditableValues(newValues);
-
-    // After state is set, mark loading as complete
-    // This allows change tracking to resume with the correct values
-    setIsLoadingData(false);
   }, [selectedItemId, currentLanguage, selectedItem, config.fieldDefinitions, primaryLocale]);
+
+  // Mark loading as complete after editableValues have been updated
+  // This is in a separate useEffect to ensure the state update has completed
+  useEffect(() => {
+    if (selectedItem && isLoadingData) {
+      // Use setTimeout to ensure this runs after the render cycle
+      const timer = setTimeout(() => {
+        setIsLoadingData(false);
+      }, 0);
+      return () => clearTimeout(timer);
+    }
+  }, [editableValues, selectedItem, isLoadingData]);
 
   // ============================================================================
   // FETCHER RESPONSE HANDLERS (based on products implementation)
