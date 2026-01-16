@@ -24,6 +24,7 @@ export const de = {
     selectFromList: "Wähle einen Eintrag aus der Liste",
     saveChanges: "Änderungen speichern",
     translateAll: "Alles übersetzen",
+    translating: "Übersetze...",
     productTitle: "Produkttitel",
     productDescription: "Produktbeschreibung",
     urlSlug: "URL-Slug",

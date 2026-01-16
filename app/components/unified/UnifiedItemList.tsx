@@ -248,7 +248,8 @@ export function UnifiedItemList({
           overflow-y: auto !important;
         }
       `}</style>
-      <Card padding="0" style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
+      <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
+      <Card padding="0">
         {/* Header */}
         <div ref={headerRef} style={{ padding: "1rem", borderBottom: "1px solid #e1e3e5", flexShrink: 0 }}>
           <BlockStack gap="300">
@@ -299,14 +300,17 @@ export function UnifiedItemList({
                 const isHovered = hoveredItemId === item.id;
 
                 return (
-                  <ResourceItem
-                    id={item.id}
-                    onClick={() => onItemSelect(item.id)}
+                  <div
                     onMouseEnter={() => setHoveredItemId(item.id)}
                     onMouseLeave={() => setHoveredItemId(null)}
                   >
-                    {itemRenderer(item, isSelected, isHovered)}
-                  </ResourceItem>
+                    <ResourceItem
+                      id={item.id}
+                      onClick={() => onItemSelect(item.id)}
+                    >
+                      {itemRenderer(item, isSelected, isHovered)}
+                    </ResourceItem>
+                  </div>
                 );
               }}
             />
@@ -350,6 +354,7 @@ export function UnifiedItemList({
           </div>
         )}
       </Card>
+      </div>
     </div>
   );
 }

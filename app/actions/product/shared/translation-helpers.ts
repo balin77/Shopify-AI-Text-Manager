@@ -177,23 +177,24 @@ export async function syncTranslationsToDB(
 
   try {
     // Delete existing translations for this locale
-    await db.translation.deleteMany({
+    await db.contentTranslation.deleteMany({
       where: {
-        productId,
+        resourceId: productId,
+        resourceType: "Product",
         locale,
       },
     });
 
     // Create new translations
     const translationData = translations.map((t) => ({
-      productId,
+      resourceId: productId,
+      resourceType: "Product",
       locale,
       key: t.key,
       value: t.value,
-      shop,
     }));
 
-    await db.translation.createMany({
+    await db.contentTranslation.createMany({
       data: translationData,
     });
 

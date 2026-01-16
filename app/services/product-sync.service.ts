@@ -276,7 +276,7 @@ export class ProductSyncService {
     });
 
     // Delete old relations and create new ones
-    await db.translation.deleteMany({ where: { productId: productData.id } });
+    await db.contentTranslation.deleteMany({ where: { resourceId: productData.id, resourceType: "Product" } });
     await db.productImage.deleteMany({ where: { productId: productData.id } });
     await db.productOption.deleteMany({ where: { productId: productData.id } });
     await db.productMetafield.deleteMany({ where: { productId: productData.id } });
@@ -295,9 +295,10 @@ export class ProductSyncService {
         console.log(`[ProductSync]   ${locale}: ${(keys as string[]).join(', ')}`);
       }
 
-      await db.translation.createMany({
+      await db.contentTranslation.createMany({
         data: translations.map(t => ({
-          productId: productData.id,
+          resourceId: productData.id,
+          resourceType: "Product",
           key: t.key,
           value: t.value,
           locale: t.locale,
@@ -401,7 +402,6 @@ export class ProductSyncService {
           },
         },
         include: {
-          translations: true,
           images: includeAllImages,
           options: true,
           metafields: true,

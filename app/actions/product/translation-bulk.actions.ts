@@ -207,17 +207,19 @@ export async function handleTranslateFieldToAllLocales(
             });
 
             if (product) {
-              await db.translation.deleteMany({
+              await db.contentTranslation.deleteMany({
                 where: {
-                  productId: productId,
+                  resourceId: productId,
+                  resourceType: "Product",
                   locale: locale,
                   key: shopifyKey,
                 },
               });
 
-              await db.translation.create({
+              await db.contentTranslation.create({
                 data: {
-                  productId: productId,
+                  resourceId: productId,
+                  resourceType: "Product",
                   key: shopifyKey,
                   value: translatedValue,
                   locale: locale,
@@ -463,16 +465,18 @@ export async function handleTranslateAll(
         });
 
         if (product && translationsInput.length > 0) {
-          await db.translation.deleteMany({
+          await db.contentTranslation.deleteMany({
             where: {
-              productId: productId,
+              resourceId: productId,
+              resourceType: "Product",
               locale: locale,
             },
           });
 
-          await db.translation.createMany({
+          await db.contentTranslation.createMany({
             data: translationsInput.map((t) => ({
-              productId: productId,
+              resourceId: productId,
+              resourceType: "Product",
               key: t.key,
               value: t.value,
               locale: locale,

@@ -698,17 +698,19 @@ async function handleTranslateFieldToAllLocales(
             });
 
             if (product) {
-              await db.translation.deleteMany({
+              await db.contentTranslation.deleteMany({
                 where: {
-                  productId: productId,
+                  resourceId: productId,
+                  resourceType: "Product",
                   locale: locale,
                   key: shopifyKey,
                 },
               });
 
-              await db.translation.create({
+              await db.contentTranslation.create({
                 data: {
-                  productId: productId,
+                  resourceId: productId,
+                  resourceType: "Product",
                   key: shopifyKey,
                   value: translatedValue,
                   locale: locale,
@@ -995,17 +997,19 @@ async function handleTranslateAll(
 
         if (product && translationsInput.length > 0) {
           // Delete existing translations for this locale and product
-          await db.translation.deleteMany({
+          await db.contentTranslation.deleteMany({
             where: {
-              productId: productId,
+              resourceId: productId,
+              resourceType: "Product",
               locale: locale,
             },
           });
 
           // Insert new translations
-          await db.translation.createMany({
+          await db.contentTranslation.createMany({
             data: translationsInput.map(t => ({
-              productId: productId,
+              resourceId: productId,
+              resourceType: "Product",
               key: t.key,
               value: t.value,
               locale: locale,
@@ -1304,18 +1308,20 @@ async function handleUpdateProduct(admin: any, formData: FormData, productId: st
 
       if (product) {
         // Delete existing translations for this locale and product
-        await db.translation.deleteMany({
+        await db.contentTranslation.deleteMany({
           where: {
-            productId: productId,
+            resourceId: productId,
+            resourceType: "Product",
             locale: locale,
           },
         });
 
         // Insert new translations
         if (translationsInput.length > 0) {
-          await db.translation.createMany({
+          await db.contentTranslation.createMany({
             data: translationsInput.map(t => ({
-              productId: productId,
+              resourceId: productId,
+              resourceType: "Product",
               key: t.key,
               value: t.value,
               locale: t.locale,

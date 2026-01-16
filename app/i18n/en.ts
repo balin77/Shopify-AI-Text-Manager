@@ -26,6 +26,7 @@ export const en: Translation = {
     selectFromList: "Select an entry from the list",
     saveChanges: "Save changes",
     translateAll: "Translate all",
+    translating: "Translating...",
     productTitle: "Product title",
     productDescription: "Product description",
     urlSlug: "URL slug",
