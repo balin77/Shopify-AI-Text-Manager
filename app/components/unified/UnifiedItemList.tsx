@@ -12,7 +12,7 @@
  * Used by: Products, Collections, Pages, Blogs, Articles, Policies, etc.
  */
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   Card,
   ResourceList,
@@ -28,6 +28,7 @@ import {
 } from "@shopify/polaris";
 import { SearchIcon, ChevronLeftIcon, ChevronRightIcon } from "@shopify/polaris-icons";
 import { Thumbnail } from "@shopify/polaris";
+import { useNavigationHeight } from "../../contexts/NavigationHeightContext";
 
 export interface UnifiedItem {
   id: string;
@@ -112,6 +113,11 @@ export function UnifiedItemList({
   const [searchQuery, setSearchQuery] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const [hoveredItemId, setHoveredItemId] = useState<string | null>(null);
+  const [listMaxHeight, setListMaxHeight] = useState(600);
+
+  const { getTotalNavHeight } = useNavigationHeight();
+  const headerRef = useRef<HTMLDivElement>(null);
+  const paginationRef = useRef<HTMLDivElement>(null);
 
   // Filter items based on search
   const filteredItems = showSearch
@@ -128,6 +134,24 @@ export function UnifiedItemList({
     ? filteredItems.slice(startIndex, startIndex + itemsPerPage)
     : filteredItems;
 
+  // Calculate available height dynamically
+  useEffect(() => {
+    const calculateHeight = () => {
+      const navHeight = getTotalNavHeight();
+      const headerHeight = headerRef.current?.offsetHeight || 150;
+      const paginationHeight = paginationRef.current?.offsetHeight || 60;
+      const padding = 32; // 1rem top + 1rem bottom
+
+      const availableHeight = window.innerHeight - navHeight - headerHeight - paginationHeight - padding;
+      setListMaxHeight(Math.max(300, availableHeight)); // Min 300px
+    };
+
+    calculateHeight();
+    window.addEventListener('resize', calculateHeight);
+
+    return () => window.removeEventListener('resize', calculateHeight);
+  }, [getTotalNavHeight]);
+
   // Debug: Log pagination info
   console.log(`[UnifiedItemList] ${resourceName.plural}:`, {
     totalItems: items.length,
@@ -135,7 +159,8 @@ export function UnifiedItemList({
     itemsPerPage,
     totalPages,
     showPagination,
-    willShowPagination: showPagination && totalPages > 1
+    willShowPagination: showPagination && totalPages > 1,
+    listMaxHeight
   });
 
   // Reset to page 1 when search changes
@@ -230,13 +255,13 @@ export function UnifiedItemList({
     <div style={{ width: "350px", flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0, height: "100%" }}>
       <style>{`
         ul.Polaris-ResourceList {
-          max-height: calc(100vh - 350px) !important;
+          max-height: ${listMaxHeight}px !important;
           overflow-y: auto !important;
         }
       `}</style>
       <Card padding="0" style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
         {/* Header */}
-        <div style={{ padding: "1rem", borderBottom: "1px solid #e1e3e5", flexShrink: 0 }}>
+        <div ref={headerRef} style={{ padding: "1rem", borderBottom: "1px solid #e1e3e5", flexShrink: 0 }}>
           <BlockStack gap="300">
             <Text as="h2" variant="headingMd">
               {resourceName.plural} ({items.length})
@@ -309,7 +334,7 @@ export function UnifiedItemList({
 
         {/* Pagination */}
         {showPagination && totalPages > 1 && (
-          <div style={{ padding: "1rem", borderTop: "1px solid #e1e3e5", flexShrink: 0 }}>
+          <div ref={paginationRef} style={{ padding: "1rem", borderTop: "1px solid #e1e3e5", flexShrink: 0 }}>
             <InlineStack align="space-between" blockAlign="center">
               <Text as="p" variant="bodySm" tone="subdued">
                 {startIndex + 1}-{Math.min(startIndex + itemsPerPage, filteredItems.length)} {t.paginationOf || "of"}{" "}
