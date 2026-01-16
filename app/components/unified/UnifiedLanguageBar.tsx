@@ -94,68 +94,41 @@ export function UnifiedLanguageBar({
   const resourceType = resourceTypeMap[contentType] || contentType;
 
   return (
-    <InlineStack align="space-between" blockAlign="center" gap="400" wrap={false}>
-      {/* Left: Language Buttons */}
-      <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", flex: 1, minWidth: 0 }}>
-        {shopLocales.map((locale) => {
-          const buttonStyle = useLocaleButtonStyle(
-            locale,
-            selectedItem,
-            primaryLocale,
-            contentType
-          );
+    <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", flex: 1, minWidth: 0 }}>
+      {shopLocales.map((locale) => {
+        const buttonStyle = useLocaleButtonStyle(
+          locale,
+          selectedItem,
+          primaryLocale,
+          contentType
+        );
 
-          const isEnabled = !enabledLanguages || enabledLanguages.includes(locale.locale);
-          const isPrimary = locale.primary;
-          const isCurrentLanguage = currentLanguage === locale.locale;
+        const isEnabled = !enabledLanguages || enabledLanguages.includes(locale.locale);
+        const isPrimary = locale.primary;
+        const isCurrentLanguage = currentLanguage === locale.locale;
 
-          return (
-            <div key={locale.locale} style={buttonStyle}>
-              <Button
-                variant={isCurrentLanguage ? "primary" : undefined}
-                onClick={() => {
-                  onLanguageChange(locale.locale);
-                }}
-                onPointerDown={(event: any) => {
-                  // Ctrl+Click toggles language activation (except for primary locale)
-                  if (event.ctrlKey && onToggleLanguage && !isPrimary) {
-                    event.preventDefault();
-                    onToggleLanguage(locale.locale);
-                  }
-                }}
-                size="slim"
-                tone={!isEnabled && !isPrimary ? "critical" : undefined}
-              >
-                {locale.name || locale.locale} {locale.primary ? `(${t.primaryLocaleSuffix || "Primary"})` : ""}
-              </Button>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Right: Action Buttons */}
-      <InlineStack gap="200" blockAlign="center" wrap={false}>
-        {/* Translate All Button (only on primary locale) */}
-        {isPrimaryLocale && showTranslateAll && onTranslateAll && (
-          <Button
-            onClick={onTranslateAll}
-            loading={isTranslating}
-            disabled={isTranslating}
-            size="slim"
-          >
-            {isTranslating ? (t.translating || "Translating...") : (t.translateAll || "🌍 Translate All")}
-          </Button>
-        )}
-
-        {/* Reload Button */}
-        {showReloadButton && selectedItem && (
-          <ReloadButton
-            resourceId={selectedItem.id}
-            resourceType={resourceType as any}
-            locale={currentLanguage}
-          />
-        )}
-      </InlineStack>
-    </InlineStack>
+        return (
+          <div key={locale.locale} style={buttonStyle}>
+            <Button
+              variant={isCurrentLanguage ? "primary" : undefined}
+              onClick={() => {
+                onLanguageChange(locale.locale);
+              }}
+              onPointerDown={(event: any) => {
+                // Ctrl+Click toggles language activation (except for primary locale)
+                if (event.ctrlKey && onToggleLanguage && !isPrimary) {
+                  event.preventDefault();
+                  onToggleLanguage(locale.locale);
+                }
+              }}
+              size="slim"
+              tone={!isEnabled && !isPrimary ? "critical" : undefined}
+            >
+              {locale.name || locale.locale} {locale.primary ? `(${t.primaryLocaleSuffix || "Primary"})` : ""}
+            </Button>
+          </div>
+        );
+      })}
+    </div>
   );
 }

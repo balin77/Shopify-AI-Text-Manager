@@ -5,7 +5,7 @@
  * Based on the products page structure with all bug fixes included.
  */
 
-import { Page, Card, Text, BlockStack, InlineStack } from "@shopify/polaris";
+import { Page, Card, Text, BlockStack, InlineStack, Button } from "@shopify/polaris";
 import { AIEditableField } from "./AIEditableField";
 import { AIEditableHTMLField } from "./AIEditableHTMLField";
 import { UnifiedItemList } from "./unified/UnifiedItemList";
@@ -13,6 +13,7 @@ import { UnifiedLanguageBar } from "./unified/UnifiedLanguageBar";
 import { ImageGalleryField } from "./unified/ImageGalleryField";
 import { OptionsField } from "./unified/OptionsField";
 import { SaveDiscardButtons } from "./SaveDiscardButtons";
+import { ReloadButton } from "./ReloadButton";
 import { SeoSidebar } from "./SeoSidebar";
 import { useNavigationHeight } from "../contexts/NavigationHeightContext";
 import { usePlan } from "../contexts/PlanContext";
@@ -183,7 +184,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
               {/* Fixed Header with Language Bar and Action Buttons */}
               <Card padding="400">
                 <BlockStack gap="300">
-                  {/* Unified Language Bar with Translate All */}
+                  {/* Row 1: Language Buttons */}
                   <UnifiedLanguageBar
                     shopLocales={shopLocales}
                     currentLanguage={state.currentLanguage}
@@ -205,19 +206,42 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                     }}
                   />
 
-                  {/* Save/Discard Buttons */}
-                  <InlineStack align="end" blockAlign="center">
-                    <SaveDiscardButtons
-                      hasChanges={state.hasChanges}
-                      onSave={handlers.handleSave}
-                      onDiscard={handlers.handleDiscard}
-                      highlightSaveButton={navigationGuard.highlightSaveButton}
-                      saveText={t.content?.saveChanges || "Save Changes"}
-                      discardText={t.content?.discardChanges || "Discard"}
-                      action="updateContent"
-                      fetcherState={fetcherState}
-                      fetcherFormData={fetcherFormData}
-                    />
+                  {/* Row 2: Action Buttons */}
+                  <InlineStack align="space-between" blockAlign="center">
+                    {/* Left: Translate All Button (only on primary locale) */}
+                    {state.currentLanguage === primaryLocale && (
+                      <Button
+                        onClick={handlers.handleTranslateAll}
+                        loading={fetcherState !== "idle" && fetcherFormData?.get("action") === "translateAll"}
+                        disabled={fetcherState !== "idle" && fetcherFormData?.get("action") === "translateAll"}
+                        size="slim"
+                      >
+                        {fetcherState !== "idle" && fetcherFormData?.get("action") === "translateAll"
+                          ? (t.content?.translating || "Translating...")
+                          : (t.content?.translateAll || "🌍 Translate All")}
+                      </Button>
+                    )}
+                    {state.currentLanguage !== primaryLocale && <div />}
+
+                    {/* Right: Save/Discard + Reload Buttons */}
+                    <InlineStack gap="200" blockAlign="center">
+                      <SaveDiscardButtons
+                        hasChanges={state.hasChanges}
+                        onSave={handlers.handleSave}
+                        onDiscard={handlers.handleDiscard}
+                        highlightSaveButton={navigationGuard.highlightSaveButton}
+                        saveText={t.content?.saveChanges || "Save Changes"}
+                        discardText={t.content?.discardChanges || "Discard"}
+                        action="updateContent"
+                        fetcherState={fetcherState}
+                        fetcherFormData={fetcherFormData}
+                      />
+                      <ReloadButton
+                        resourceId={selectedItem.id}
+                        resourceType={getResourceType(config.contentType)}
+                        locale={state.currentLanguage}
+                      />
+                    </InlineStack>
                   </InlineStack>
                 </BlockStack>
               </Card>
@@ -514,4 +538,15 @@ function getSourceText(item: any, fieldKey: string, primaryLocale: string): stri
   };
 
   return fieldMappings[fieldKey] || "";
+}
+
+function getResourceType(contentType: string): "product" | "collection" | "page" | "article" | "policy" {
+  const resourceTypeMap: Record<string, "product" | "collection" | "page" | "article" | "policy"> = {
+    blogs: "article",
+    pages: "page",
+    policies: "policy",
+    collections: "collection",
+    products: "product",
+  };
+  return resourceTypeMap[contentType] || contentType as any;
 }
