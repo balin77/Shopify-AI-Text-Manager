@@ -227,8 +227,8 @@ export function UnifiedItemList({
   const itemRenderer = renderItem || defaultRenderItem;
 
   return (
-    <div style={{ width: "350px", flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
-      <Card padding="0" style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+    <div style={{ width: "350px", flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0, height: "100%" }}>
+      <Card padding="0" style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
         {/* Header */}
         <div style={{ padding: "1rem", borderBottom: "1px solid #e1e3e5", flexShrink: 0 }}>
           <BlockStack gap="300">
@@ -269,7 +269,7 @@ export function UnifiedItemList({
         </div>
 
         {/* Item List - Scrollable */}
-        <div style={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
+        <div style={{ flex: 1, overflowY: "auto", minHeight: 0, maxHeight: "100%" }}>
           {paginatedItems.length > 0 ? (
             <ResourceList
               resourceName={resourceName}
