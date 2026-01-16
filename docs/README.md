@@ -8,6 +8,7 @@
 
 | Dokument | Beschreibung |
 |----------|--------------|
+| [RAILWAY_DEPLOYMENT.md](RAILWAY_DEPLOYMENT.md) | **⭐ Custom Start Command** für Railway mit automatischen Migrationen |
 | [PRISMA_MIGRATION_GUIDE.md](PRISMA_MIGRATION_GUIDE.md) | **Haupt-Guide** für Datenbank-Migrationen auf Railway |
 | [WEBHOOK-SETUP-GUIDE.md](WEBHOOK-SETUP-GUIDE.md) | Setup-Anleitung für das Webhook-System |
 
@@ -29,6 +30,9 @@
 
 ## 🎯 Quick Links
 
+### Railway Deployment (Custom Start Command)
+→ [RAILWAY_DEPLOYMENT.md](RAILWAY_DEPLOYMENT.md#custom-start-command)
+
 ### Neue Migration erstellen
 → [PRISMA_MIGRATION_GUIDE.md](PRISMA_MIGRATION_GUIDE.md#schnellanleitung)
 
@@ -47,4 +51,4 @@
 
 Die Hauptdokumentation der App findest du in [../README.md](../README.md).
 
-**Letzte Aktualisierung:** 2026-01-14
+**Letzte Aktualisierung:** 2026-01-16

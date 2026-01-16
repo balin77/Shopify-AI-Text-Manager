@@ -57,7 +57,8 @@ async function main() {
   const migrations = [
     'add_entity_specific_ai_instructions.sql',
     '20250113_add_menu_model.sql',
-    '20260114_add_prompt_to_task.sql'
+    '20260114_add_prompt_to_task.sql',
+    '20260116_add_webhook_retry.sql'
   ];
 
   for (const migrationFile of migrations) {
