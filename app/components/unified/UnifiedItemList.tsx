@@ -228,6 +228,12 @@ export function UnifiedItemList({
 
   return (
     <div style={{ width: "350px", flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0, height: "100%" }}>
+      <style>{`
+        .Polaris-ResourceList__ResourceListWrapper {
+          max-height: 100% !important;
+          overflow-y: auto !important;
+        }
+      `}</style>
       <Card padding="0" style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
         {/* Header */}
         <div style={{ padding: "1rem", borderBottom: "1px solid #e1e3e5", flexShrink: 0 }}>
