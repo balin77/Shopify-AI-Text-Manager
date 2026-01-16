@@ -229,8 +229,8 @@ export function UnifiedItemList({
   return (
     <div style={{ width: "350px", flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0, height: "100%" }}>
       <style>{`
-        .Polaris-ResourceList__ResourceListWrapper {
-          max-height: 100% !important;
+        ul.Polaris-ResourceList {
+          max-height: calc(100vh - 350px) !important;
           overflow-y: auto !important;
         }
       `}</style>
