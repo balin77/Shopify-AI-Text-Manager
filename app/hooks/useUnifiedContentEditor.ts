@@ -36,6 +36,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // Track if we're currently loading data to prevent false change detection
   // Initialize to true if an item is selected to prevent race condition
   const [isLoadingData, setIsLoadingData] = useState(!!selectedItemId);
+  // Track if clear all confirmation modal is open
+  const [isClearAllModalOpen, setIsClearAllModalOpen] = useState(false);
 
   // Alt-text state for images (indexed by image position)
   const [imageAltTexts, setImageAltTexts] = useState<Record<number, string>>({});
@@ -706,6 +708,40 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     }));
   };
 
+  const handleClearField = (fieldKey: string) => {
+    // Force isLoadingData to false to ensure change detection works
+    setIsLoadingData(false);
+
+    // Clear the field value
+    setEditableValues((prev) => ({
+      ...prev,
+      [fieldKey]: "",
+    }));
+  };
+
+  const handleClearAllClick = () => {
+    setIsClearAllModalOpen(true);
+  };
+
+  const handleClearAllConfirm = () => {
+    // Force isLoadingData to false to ensure change detection works
+    setIsLoadingData(false);
+
+    // Clear all field values
+    const clearedValues: Record<string, string> = {};
+    config.fieldDefinitions.forEach((field) => {
+      clearedValues[field.key] = "";
+    });
+    setEditableValues(clearedValues);
+
+    // Close modal
+    setIsClearAllModalOpen(false);
+  };
+
+  const handleClearAllCancel = () => {
+    setIsClearAllModalOpen(false);
+  };
+
   // ============================================================================
   // ALT-TEXT HANDLERS
   // ============================================================================
@@ -870,6 +906,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     enabledLanguages,
     imageAltTexts,
     altTextSuggestions,
+    isClearAllModalOpen,
   };
 
   const handlers: EditorHandlers = {
@@ -888,6 +925,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     handleItemSelect,
     handleValueChange,
     handleToggleHtmlMode,
+    handleClearField,
+    handleClearAllClick,
+    handleClearAllConfirm,
+    handleClearAllCancel,
     handleAltTextChange,
     handleGenerateAltText,
     handleGenerateAllAltTexts,

@@ -5,7 +5,7 @@
  * Based on the products page structure with all bug fixes included.
  */
 
-import { Page, Card, Text, BlockStack, InlineStack, Button } from "@shopify/polaris";
+import { Page, Card, Text, BlockStack, InlineStack, Button, Modal, TextContainer } from "@shopify/polaris";
 import { AIEditableField } from "./AIEditableField";
 import { AIEditableHTMLField } from "./AIEditableHTMLField";
 import { UnifiedItemList } from "./unified/UnifiedItemList";
@@ -208,20 +208,30 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
 
                   {/* Row 2: Action Buttons */}
                   <InlineStack align="space-between" blockAlign="center">
-                    {/* Left: Translate All Button (only on primary locale) */}
-                    {state.currentLanguage === primaryLocale && (
-                      <Button
-                        onClick={handlers.handleTranslateAll}
-                        loading={fetcherState !== "idle" && fetcherFormData?.get("action") === "translateAll"}
-                        disabled={fetcherState !== "idle" && fetcherFormData?.get("action") === "translateAll"}
-                        size="slim"
-                      >
-                        {fetcherState !== "idle" && fetcherFormData?.get("action") === "translateAll"
-                          ? (t.content?.translating || "Translating...")
-                          : (t.content?.translateAll || "🌍 Translate All")}
-                      </Button>
+                    {/* Left: Translate All + Clear All Buttons (only on primary locale) */}
+                    {state.currentLanguage === primaryLocale ? (
+                      <InlineStack gap="200">
+                        <Button
+                          onClick={handlers.handleTranslateAll}
+                          loading={fetcherState !== "idle" && fetcherFormData?.get("action") === "translateAll"}
+                          disabled={fetcherState !== "idle" && fetcherFormData?.get("action") === "translateAll"}
+                          size="slim"
+                        >
+                          {fetcherState !== "idle" && fetcherFormData?.get("action") === "translateAll"
+                            ? (t.content?.translating || "Translating...")
+                            : (t.content?.translateAll || "🌍 Translate All")}
+                        </Button>
+                        <Button
+                          onClick={handlers.handleClearAllClick}
+                          size="slim"
+                          tone="critical"
+                        >
+                          🗑️ {t.content?.clearAll || "Clear All"}
+                        </Button>
+                      </InlineStack>
+                    ) : (
+                      <div />
                     )}
-                    {state.currentLanguage !== primaryLocale && <div />}
 
                     {/* Right: Save/Discard + Reload Buttons */}
                     <InlineStack gap="200" blockAlign="center">
@@ -274,6 +284,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         onAcceptSuggestion={() => handlers.handleAcceptSuggestion(field.key)}
                         onAcceptAndTranslate={() => handlers.handleAcceptAndTranslate(field.key)}
                         onRejectSuggestion={() => handlers.handleRejectSuggestion(field.key)}
+                        onClear={() => handlers.handleClearField(field.key)}
                         htmlMode={state.htmlModes[field.key] || "rendered"}
                         onToggleHtmlMode={() => handlers.handleToggleHtmlMode(field.key)}
                         shopLocales={shopLocales}
@@ -311,6 +322,33 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           </div>
         )}
       </div>
+
+      {/* Clear All Confirmation Modal */}
+      <Modal
+        open={state.isClearAllModalOpen}
+        onClose={handlers.handleClearAllCancel}
+        title={t.content?.clearAllConfirmTitle || "Clear All Fields?"}
+        primaryAction={{
+          content: t.content?.clearAllConfirm || "Clear All",
+          onAction: handlers.handleClearAllConfirm,
+          destructive: true,
+        }}
+        secondaryActions={[
+          {
+            content: t.content?.cancel || "Cancel",
+            onAction: handlers.handleClearAllCancel,
+          },
+        ]}
+      >
+        <Modal.Section>
+          <TextContainer>
+            <Text as="p">
+              {t.content?.clearAllConfirmMessage ||
+                "Are you sure you want to clear all fields? This will remove all content from the current item. You will need to save the changes to make them permanent."}
+            </Text>
+          </TextContainer>
+        </Modal.Section>
+      </Modal>
     </Page>
   );
 }
@@ -335,6 +373,7 @@ interface FieldRendererProps {
   onAcceptSuggestion: () => void;
   onAcceptAndTranslate: () => void;
   onRejectSuggestion: () => void;
+  onClear: () => void;
   htmlMode: "html" | "rendered";
   onToggleHtmlMode: () => void;
   shopLocales: any[];
@@ -361,6 +400,7 @@ function FieldRenderer(props: FieldRendererProps & { state?: any; handlers?: any
     onAcceptSuggestion,
     onAcceptAndTranslate,
     onRejectSuggestion,
+    onClear,
     htmlMode,
     onToggleHtmlMode,
     shopLocales,
@@ -502,6 +542,7 @@ function FieldRenderer(props: FieldRendererProps & { state?: any; handlers?: any
         onAcceptSuggestion={onAcceptSuggestion}
         onAcceptAndTranslate={onAcceptAndTranslate}
         onRejectSuggestion={onRejectSuggestion}
+        onClear={onClear}
       />
     );
   }
@@ -528,6 +569,7 @@ function FieldRenderer(props: FieldRendererProps & { state?: any; handlers?: any
       onAcceptSuggestion={onAcceptSuggestion}
       onAcceptAndTranslate={onAcceptAndTranslate}
       onRejectSuggestion={onRejectSuggestion}
+      onClear={onClear}
     />
   );
 }

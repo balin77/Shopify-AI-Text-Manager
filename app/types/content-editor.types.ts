@@ -95,6 +95,7 @@ export interface EditorState {
   enabledLanguages: string[];
   imageAltTexts: Record<number, string>;
   altTextSuggestions: Record<number, string>;
+  isClearAllModalOpen: boolean;
 }
 
 export interface EditorHandlers {
@@ -113,6 +114,10 @@ export interface EditorHandlers {
   handleItemSelect: (itemId: string) => void;
   handleValueChange: (fieldKey: string, value: string) => void;
   handleToggleHtmlMode: (fieldKey: string) => void;
+  handleClearField: (fieldKey: string) => void;
+  handleClearAllClick: () => void;
+  handleClearAllConfirm: () => void;
+  handleClearAllCancel: () => void;
   handleAltTextChange: (imageIndex: number, value: string) => void;
   handleGenerateAltText: (imageIndex: number) => void;
   handleGenerateAllAltTexts: () => void;

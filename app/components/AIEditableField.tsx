@@ -27,6 +27,7 @@ interface AIEditableFieldProps {
   onAcceptSuggestion?: () => void;
   onAcceptAndTranslate?: () => void;
   onRejectSuggestion?: () => void;
+  onClear?: () => void;
 }
 
 export function AIEditableField({
@@ -53,6 +54,7 @@ export function AIEditableField({
   onAcceptSuggestion,
   onAcceptAndTranslate,
   onRejectSuggestion,
+  onClear,
 }: AIEditableFieldProps) {
   const { t } = useI18n();
 
@@ -81,6 +83,20 @@ export function AIEditableField({
 
   return (
     <div>
+      {/* Clear button above input field */}
+      {onClear && value && (
+        <div style={{ marginBottom: "0.5rem", display: "flex", justifyContent: "flex-end" }}>
+          <Button
+            size="slim"
+            onClick={onClear}
+            tone="critical"
+            variant="plain"
+          >
+            🗑️ {t.products.clear || "Clear"}
+          </Button>
+        </div>
+      )}
+
       <div className={`ai-editable-field-wrapper ${getBackgroundClass()}`}>
         <TextField
           label={<span style={{ fontWeight: 600 }}>{label}</span>}

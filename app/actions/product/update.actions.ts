@@ -244,58 +244,132 @@ async function updateTranslatedProduct(
   });
 
   const translationsInput = [];
-  if (params.title) translationsInput.push({ key: "title", value: params.title, locale: params.locale });
-  if (params.descriptionHtml)
+  const translationsToDelete = [];
+
+  // Only add non-empty translations
+  if (params.title && params.title.trim()) {
+    translationsInput.push({ key: "title", value: params.title, locale: params.locale });
+  } else if (params.title === "") {
+    // Empty string means user wants to delete the translation
+    translationsToDelete.push("title");
+  }
+
+  if (params.descriptionHtml && params.descriptionHtml.trim()) {
     translationsInput.push({ key: "body_html", value: params.descriptionHtml, locale: params.locale });
-  if (params.handle) translationsInput.push({ key: "handle", value: params.handle, locale: params.locale });
-  if (params.seoTitle)
+  } else if (params.descriptionHtml === "") {
+    translationsToDelete.push("body_html");
+  }
+
+  if (params.handle && params.handle.trim()) {
+    translationsInput.push({ key: "handle", value: params.handle, locale: params.locale });
+  } else if (params.handle === "") {
+    translationsToDelete.push("handle");
+  }
+
+  if (params.seoTitle && params.seoTitle.trim()) {
     translationsInput.push({ key: "meta_title", value: params.seoTitle, locale: params.locale });
-  if (params.metaDescription)
+  } else if (params.seoTitle === "") {
+    translationsToDelete.push("meta_title");
+  }
+
+  if (params.metaDescription && params.metaDescription.trim()) {
     translationsInput.push({
       key: "meta_description",
       value: params.metaDescription,
       locale: params.locale,
     });
+  } else if (params.metaDescription === "") {
+    translationsToDelete.push("meta_description");
+  }
 
-  // Save to Shopify
-  for (const translation of translationsInput) {
+  // Save non-empty translations to Shopify
+  if (translationsInput.length > 0) {
+    for (const translation of translationsInput) {
+      const response = await gateway.graphql(
+        `#graphql
+          mutation translateProduct($resourceId: ID!, $translations: [TranslationInput!]!) {
+            translationsRegister(resourceId: $resourceId, translations: $translations) {
+              userErrors {
+                field
+                message
+              }
+              translations {
+                locale
+                key
+                value
+              }
+            }
+          }`,
+        {
+          variables: {
+            resourceId: productId,
+            translations: [translation],
+          },
+        }
+      );
+
+      const responseData = await response.json();
+      if (responseData.data?.translationsRegister?.userErrors?.length > 0) {
+        logger.error("Shopify translation API error", {
+          context: "UpdateProduct",
+          errors: responseData.data.translationsRegister.userErrors,
+        });
+        return json(
+          {
+            success: false,
+            error: responseData.data.translationsRegister.userErrors[0].message,
+          },
+          { status: 500 }
+        );
+      }
+    }
+  }
+
+  // Delete cleared translations from Shopify using translationsRemove
+  if (translationsToDelete.length > 0) {
     const response = await gateway.graphql(
       `#graphql
-        mutation translateProduct($resourceId: ID!, $translations: [TranslationInput!]!) {
-          translationsRegister(resourceId: $resourceId, translations: $translations) {
+        mutation removeTranslations($resourceId: ID!, $translationKeys: [String!]!, $locales: [String!]!) {
+          translationsRemove(resourceId: $resourceId, translationKeys: $translationKeys, locales: $locales) {
             userErrors {
               field
               message
             }
             translations {
-              locale
               key
-              value
+              locale
             }
           }
         }`,
       {
         variables: {
           resourceId: productId,
-          translations: [translation],
+          translationKeys: translationsToDelete,
+          locales: [params.locale],
         },
       }
     );
 
     const responseData = await response.json();
-    if (responseData.data?.translationsRegister?.userErrors?.length > 0) {
-      logger.error("Shopify translation API error", {
+    if (responseData.data?.translationsRemove?.userErrors?.length > 0) {
+      logger.error("Shopify translationsRemove API error", {
         context: "UpdateProduct",
-        errors: responseData.data.translationsRegister.userErrors,
+        errors: responseData.data.translationsRemove.userErrors,
       });
       return json(
         {
           success: false,
-          error: responseData.data.translationsRegister.userErrors[0].message,
+          error: responseData.data.translationsRemove.userErrors[0].message,
         },
         { status: 500 }
       );
     }
+
+    loggers.product("info", "Removed translations from Shopify", {
+      productId,
+      locale: params.locale,
+      keys: translationsToDelete,
+    });
   }
 
   // Update local database using ContentTranslation table (unified pattern)
@@ -331,10 +405,23 @@ async function updateTranslatedProduct(
       });
     }
 
+    // Delete translations that were cleared by the user
+    for (const key of translationsToDelete) {
+      await db.contentTranslation.deleteMany({
+        where: {
+          resourceId: productId,
+          resourceType: "Product",
+          locale: params.locale,
+          key: key,
+        },
+      });
+    }
+
     loggers.product("info", "Saved translations to DB (ContentTranslation)", {
       productId,
       locale: params.locale,
-      count: translationsInput.length,
+      saved: translationsInput.length,
+      deleted: translationsToDelete.length,
     });
   }
 
@@ -351,6 +438,17 @@ async function updatePrimaryProduct(
   params: UpdateProductParams
 ): Promise<Response> {
   loggers.product("info", "Updating primary product", { productId });
+
+  // Validate that title is not empty for primary locale
+  if (!params.title || !params.title.trim()) {
+    return json(
+      {
+        success: false,
+        error: "Title cannot be empty for the primary language. Please enter a title.",
+      },
+      { status: 400 }
+    );
+  }
 
   const response = await gateway.graphql(
     `#graphql
