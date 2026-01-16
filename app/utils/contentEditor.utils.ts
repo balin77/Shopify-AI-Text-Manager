@@ -288,12 +288,12 @@ export function useChangeTracking(
     };
 
     const descKey = CONTENT_TYPE_DESCRIPTION_KEY[contentType];
-    const descFallback = contentType === 'collections'
+    const descFallback = (contentType === 'collections' || contentType === 'products')
       ? (selectedItem.descriptionHtml || "")
       : (selectedItem.body || "");
 
     // Get the actual description/body value from editableFields
-    // Pages and Blogs use 'body', Collections use 'description'
+    // Pages and Blogs use 'body', Collections and Products use 'description'
     const currentDescValue = editableFields.body || editableFields.description || "";
 
     // Policies don't have translatable title field
