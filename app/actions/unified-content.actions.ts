@@ -14,6 +14,7 @@ import { sanitizeSlug } from "../utils/slug.utils";
 import { decryptApiKey } from "../utils/encryption.server";
 import { getTaskExpirationDate } from "../../src/utils/task.utils";
 import type { ContentEditorConfig } from "../types/content-editor.types";
+import { logger } from "../utils/logger.server";
 
 interface UnifiedContentActionsConfig {
   admin: any;
@@ -607,7 +608,13 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
 
       return json(result);
     } catch (error: any) {
-      console.error(`[UNIFIED-CONTENT-UPDATE] Error:`, error);
+      logger.error('Unified content update error', {
+        context: 'UnifiedContent',
+        action: 'updateContent',
+        itemId,
+        error: error.message,
+        stack: error.stack
+      });
       return json({ success: false, error: error.message }, { status: 500 });
     }
   }

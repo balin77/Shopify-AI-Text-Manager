@@ -12,6 +12,7 @@ import {
   FIELD_CONFIGS,
 } from "~/constants/shopifyFields";
 import { TIMING } from "~/constants/timing";
+import { logger } from "~/utils/logger.server";
 
 export interface ContentEditorState {
   editableTitle: string;
@@ -147,7 +148,7 @@ function safeScrollToTop(): void {
     try {
       window.scrollTo(0, 0);
     } catch (e) {
-      console.warn('Failed to scroll to top:', e);
+      logger.warn('Failed to scroll to top', { context: 'ContentEditor', error: e });
     }
   }
 }
@@ -165,7 +166,7 @@ function safeScrollIntoView(element: HTMLElement | null): void {
     try {
       element.scrollIntoView();
     } catch (e) {
-      console.warn('Failed to scroll element into view:', e);
+      logger.warn('Failed to scroll element into view', { context: 'ContentEditor', error: e });
     }
   }
 }
@@ -265,7 +266,8 @@ export function useChangeTracking(
   const [hasChanges, setHasChanges] = useState(false);
 
   useEffect(() => {
-    console.log('[useChangeTracking] Running with:', {
+    logger.debug('Change tracking running', {
+      context: 'ContentEditor',
       hasSelectedItem: !!selectedItem,
       selectedItemId: selectedItem?.id,
       currentLanguage,
@@ -274,7 +276,7 @@ export function useChangeTracking(
     });
 
     if (!selectedItem) {
-      console.log('[useChangeTracking] No selectedItem - setting hasChanges to false');
+      logger.debug('No selectedItem - setting hasChanges to false', { context: 'ContentEditor' });
       setHasChanges(false);
       return;
     }
@@ -307,7 +309,8 @@ export function useChangeTracking(
 
     const newHasChanges = titleChanged || descChanged || handleChanged || seoTitleChanged || metaDescChanged;
 
-    console.log('[useChangeTracking] Change detection:', {
+    logger.debug('Change detection', {
+      context: 'ContentEditor',
       titleChanged,
       descChanged,
       handleChanged,
