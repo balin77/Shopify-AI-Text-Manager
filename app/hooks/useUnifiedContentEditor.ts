@@ -727,10 +727,16 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // Force isLoadingData to false to ensure change detection works
     setIsLoadingData(false);
 
-    // Clear all field values
+    // Clear all field values except title (title should never be empty in primary locale)
     const clearedValues: Record<string, string> = {};
     config.fieldDefinitions.forEach((field) => {
-      clearedValues[field.key] = "";
+      if (field.key === "title") {
+        // Keep the current title value
+        clearedValues[field.key] = editableValues[field.key] || "";
+      } else {
+        // Clear all other fields
+        clearedValues[field.key] = "";
+      }
     });
     setEditableValues(clearedValues);
 
