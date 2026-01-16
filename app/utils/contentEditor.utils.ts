@@ -265,7 +265,17 @@ export function useChangeTracking(
   const [hasChanges, setHasChanges] = useState(false);
 
   useEffect(() => {
+    console.log('[DEBUG useChangeTracking] Running', {
+      hasSelectedItem: !!selectedItem,
+      selectedItemId: selectedItem?.id,
+      currentLanguage,
+      contentType,
+      editableFieldsKeys: Object.keys(editableFields),
+      editableFields
+    });
+
     if (!selectedItem) {
+      console.log('[DEBUG useChangeTracking] No item - setting false');
       setHasChanges(false);
       return;
     }
@@ -297,6 +307,15 @@ export function useChangeTracking(
     const metaDescChanged = (editableFields.metaDescription || "") !== getOriginalValue(SHOPIFY_TRANSLATION_KEYS.META_DESCRIPTION, selectedItem.seo?.description || "");
 
     const newHasChanges = titleChanged || descChanged || handleChanged || seoTitleChanged || metaDescChanged;
+
+    console.log('[DEBUG useChangeTracking] Change detection', {
+      titleChanged,
+      descChanged,
+      handleChanged,
+      seoTitleChanged,
+      metaDescChanged,
+      newHasChanges
+    });
 
     setHasChanges(newHasChanges);
   }, [
