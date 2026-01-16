@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, ReactNode } from "react";
+import { createContext, useContext, useState, useCallback, ReactNode } from "react";
 
 interface NavigationHeightContextType {
   mainNavHeight: number;
@@ -16,7 +16,7 @@ export function NavigationHeightProvider({ children }: { children: ReactNode }) 
   const [mainNavHeight, setMainNavHeight] = useState(73);
   const [contentNavHeight, setContentNavHeight] = useState(0);
 
-  const getTotalNavHeight = () => mainNavHeight + contentNavHeight;
+  const getTotalNavHeight = useCallback(() => mainNavHeight + contentNavHeight, [mainNavHeight, contentNavHeight]);
 
   return (
     <NavigationHeightContext.Provider

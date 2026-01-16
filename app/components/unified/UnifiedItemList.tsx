@@ -152,17 +152,6 @@ export function UnifiedItemList({
     return () => window.removeEventListener('resize', calculateHeight);
   }, [getTotalNavHeight]);
 
-  // Debug: Log pagination info
-  console.log(`[UnifiedItemList] ${resourceName.plural}:`, {
-    totalItems: items.length,
-    filteredItems: filteredItems.length,
-    itemsPerPage,
-    totalPages,
-    showPagination,
-    willShowPagination: showPagination && totalPages > 1,
-    listMaxHeight
-  });
-
   // Reset to page 1 when search changes
   const handleSearchChange = (value: string) => {
     setSearchQuery(value);
