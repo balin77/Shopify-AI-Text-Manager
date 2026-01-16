@@ -6,6 +6,7 @@
  */
 
 import { useState, useEffect, useRef } from "react";
+import { useRevalidator } from "@remix-run/react";
 import { useNavigationGuard, useChangeTracking, getTranslatedValue } from "../utils/contentEditor.utils";
 import type {
   UseContentEditorProps,
@@ -16,6 +17,7 @@ import type {
 
 export function useUnifiedContentEditor(props: UseContentEditorProps): UseContentEditorReturn {
   const { config, items, shopLocales, primaryLocale, fetcher, showInfoBox, t } = props;
+  const revalidator = useRevalidator();
 
   // ============================================================================
   // STATE MANAGEMENT
@@ -335,22 +337,27 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     }
   }, [fetcher.data, selectedItem, currentLanguage, primaryLocale, editableValues, config.fieldDefinitions]);
 
-  // Show global InfoBox for success/error messages
+  // Show global InfoBox for success/error messages and revalidate after save
   useEffect(() => {
     if (
       fetcher.data?.success &&
       !(fetcher.data as any).generatedContent &&
-      !(fetcher.data as any).translatedValue
+      !(fetcher.data as any).translatedValue &&
+      !(fetcher.data as any).translations // Skip revalidate for bulk operations, they handle it differently
     ) {
       showInfoBox(
         t.common?.changesSaved || "Changes saved successfully!",
         "success",
         t.common?.success || "Success"
       );
+
+      // Revalidate to fetch fresh data from the database after successful save
+      // This ensures translations and all changes are reflected in the UI
+      revalidator.revalidate();
     } else if (fetcher.data && !fetcher.data.success && 'error' in fetcher.data) {
       showInfoBox(fetcher.data.error as string, "critical", t.common?.error || "Error");
     }
-  }, [fetcher.data, showInfoBox, t]);
+  }, [fetcher.data, showInfoBox, t, revalidator]);
 
   // ============================================================================
   // EVENT HANDLERS
