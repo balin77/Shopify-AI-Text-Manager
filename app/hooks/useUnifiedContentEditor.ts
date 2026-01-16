@@ -35,6 +35,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // Initialize to true if an item is selected to prevent race condition
   const [isLoadingData, setIsLoadingData] = useState(!!selectedItemId);
 
+  // Alt-text state for images (indexed by image position)
+  const [imageAltTexts, setImageAltTexts] = useState<Record<number, string>>({});
+  const [altTextSuggestions, setAltTextSuggestions] = useState<Record<number, string>>({});
+
   const selectedItem = items.find((item) => item.id === selectedItemId);
 
   // Navigation guard
@@ -141,6 +145,41 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       setEditableValues((prev) => ({
         ...prev,
         [fieldType]: translatedValue,
+      }));
+    }
+  }, [fetcher.data]);
+
+  // Handle single alt-text generation (show as suggestion)
+  useEffect(() => {
+    if (fetcher.data?.success && 'altText' in fetcher.data && 'imageIndex' in fetcher.data) {
+      const { altText, imageIndex } = fetcher.data as any;
+      setAltTextSuggestions(prev => ({
+        ...prev,
+        [imageIndex]: altText
+      }));
+    }
+  }, [fetcher.data]);
+
+  // Handle bulk alt-text generation (auto-accept all)
+  useEffect(() => {
+    if (fetcher.data?.success && 'generatedAltTexts' in fetcher.data) {
+      const { generatedAltTexts } = fetcher.data as any;
+      console.log('[ALT-TEXT] Auto-accepting bulk generated alt-texts:', generatedAltTexts);
+      setImageAltTexts(prev => ({
+        ...prev,
+        ...generatedAltTexts
+      }));
+    }
+  }, [fetcher.data]);
+
+  // Handle translated alt-text response
+  useEffect(() => {
+    if (fetcher.data?.success && 'translatedAltText' in fetcher.data) {
+      const { translatedAltText, imageIndex } = fetcher.data as any;
+      console.log('[ALT-TEXT] Setting translated alt-text for image', imageIndex, ':', translatedAltText);
+      setImageAltTexts(prev => ({
+        ...prev,
+        [imageIndex]: translatedAltText
       }));
     }
   }, [fetcher.data]);
@@ -357,6 +396,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     config.fieldDefinitions.forEach((field) => {
       formDataObj[field.key] = editableValues[field.key] || "";
     });
+
+    // Add image alt-texts if there are any changes
+    if (Object.keys(imageAltTexts).length > 0) {
+      formDataObj.imageAltTexts = JSON.stringify(imageAltTexts);
+    }
 
     fetcher.submit(formDataObj, { method: "POST" });
     clearPendingNavigation();
@@ -650,6 +694,122 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   };
 
   // ============================================================================
+  // ALT-TEXT HANDLERS
+  // ============================================================================
+
+  const handleAltTextChange = (imageIndex: number, value: string) => {
+    setImageAltTexts(prev => ({
+      ...prev,
+      [imageIndex]: value
+    }));
+  };
+
+  const handleGenerateAltText = (imageIndex: number) => {
+    if (!selectedItem || !selectedItem.images || !selectedItem.images[imageIndex]) return;
+
+    const image = selectedItem.images[imageIndex];
+    const productTitle = getItemFieldValue(selectedItem, 'title', primaryLocale);
+
+    fetcher.submit({
+      action: "generateAltText",
+      productId: selectedItem.id,
+      imageIndex: String(imageIndex),
+      imageUrl: image.url,
+      productTitle
+    }, { method: "POST" });
+  };
+
+  const handleGenerateAllAltTexts = () => {
+    if (!selectedItem || !selectedItem.images || selectedItem.images.length === 0) return;
+
+    const productTitle = getItemFieldValue(selectedItem, 'title', primaryLocale);
+    const imagesData = selectedItem.images.map((img: any) => ({ url: img.url }));
+
+    fetcher.submit({
+      action: "generateAllAltTexts",
+      productId: selectedItem.id,
+      productTitle,
+      imagesData: JSON.stringify(imagesData)
+    }, { method: "POST" });
+  };
+
+  const handleTranslateAltText = (imageIndex: number) => {
+    if (!selectedItem || !selectedItem.images || !selectedItem.images[imageIndex]) return;
+
+    const image = selectedItem.images[imageIndex];
+    const sourceAltText = image.altText || "";
+
+    if (!sourceAltText) {
+      showInfoBox(
+        t.content?.noSourceText || "Kein Alt-Text in der Hauptsprache vorhanden zum Übersetzen",
+        "warning",
+        "Warnung"
+      );
+      return;
+    }
+
+    fetcher.submit({
+      action: "translateAltText",
+      productId: selectedItem.id,
+      imageIndex: String(imageIndex),
+      sourceAltText,
+      targetLocale: currentLanguage
+    }, { method: "POST" });
+  };
+
+  const handleAcceptAltTextSuggestion = (imageIndex: number) => {
+    const suggestion = altTextSuggestions[imageIndex];
+    if (!suggestion) return;
+
+    setImageAltTexts(prev => ({
+      ...prev,
+      [imageIndex]: suggestion
+    }));
+
+    setAltTextSuggestions(prev => {
+      const newSuggestions = { ...prev };
+      delete newSuggestions[imageIndex];
+      return newSuggestions;
+    });
+  };
+
+  const handleRejectAltTextSuggestion = (imageIndex: number) => {
+    setAltTextSuggestions(prev => {
+      const newSuggestions = { ...prev };
+      delete newSuggestions[imageIndex];
+      return newSuggestions;
+    });
+  };
+
+  // Reset alt-text state when product changes
+  useEffect(() => {
+    setImageAltTexts({});
+    setAltTextSuggestions({});
+  }, [selectedItemId]);
+
+  // Load translated alt-texts when language changes
+  useEffect(() => {
+    if (!selectedItem || !selectedItem.images) return;
+
+    if (currentLanguage === primaryLocale) {
+      // Reset to primary locale alt-texts
+      setImageAltTexts({});
+    } else {
+      // Load translated alt-texts from DB
+      const translatedAltTexts: Record<number, string> = {};
+      selectedItem.images.forEach((img: any, index: number) => {
+        const translation = img.altTextTranslations?.find(
+          (t: any) => t.locale === currentLanguage
+        );
+        if (translation) {
+          translatedAltTexts[index] = translation.altText;
+        }
+      });
+      setImageAltTexts(translatedAltTexts);
+    }
+  }, [currentLanguage, selectedItemId, primaryLocale, selectedItem]);
+
+  // ============================================================================
   // HELPER FUNCTIONS
   // ============================================================================
 
@@ -695,6 +855,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     htmlModes,
     hasChanges,
     enabledLanguages,
+    imageAltTexts,
+    altTextSuggestions,
   };
 
   const handlers: EditorHandlers = {
@@ -713,6 +875,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     handleItemSelect,
     handleValueChange,
     handleToggleHtmlMode,
+    handleAltTextChange,
+    handleGenerateAltText,
+    handleGenerateAllAltTexts,
+    handleTranslateAltText,
+    handleAcceptAltTextSuggestion,
+    handleRejectAltTextSuggestion,
   };
 
   return {

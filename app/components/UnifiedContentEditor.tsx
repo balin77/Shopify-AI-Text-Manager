@@ -281,6 +281,10 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         primaryLocale={primaryLocale}
                         selectedItem={selectedItem}
                         t={t}
+                        state={state}
+                        handlers={handlers}
+                        fetcherState={fetcherState}
+                        fetcherFormData={fetcherFormData}
                       />
                     ))}
                   </BlockStack>
@@ -340,7 +344,7 @@ interface FieldRendererProps {
   t: any;
 }
 
-function FieldRenderer(props: FieldRendererProps) {
+function FieldRenderer(props: FieldRendererProps & { state?: any; handlers?: any; fetcherState?: string; fetcherFormData?: FormData }) {
   const {
     field,
     value,
@@ -364,6 +368,10 @@ function FieldRenderer(props: FieldRendererProps) {
     primaryLocale,
     selectedItem,
     t,
+    state,
+    handlers,
+    fetcherState,
+    fetcherFormData,
   } = props;
 
   // Get locale name for label
@@ -417,13 +425,6 @@ function FieldRenderer(props: FieldRendererProps) {
       return null;
     }
 
-    // Note: Alt-text state management needs to be added to useUnifiedContentEditor
-    // For now, this is read-only. Full implementation will require:
-    // - Alt-text state in editor state
-    // - AI generation handlers
-    // - Translation handlers
-    // See old ProductEditor.tsx implementation for reference
-
     return (
       <ImageGalleryField
         images={selectedItem.images || []}
@@ -432,33 +433,27 @@ function FieldRenderer(props: FieldRendererProps) {
         primaryLocale={primaryLocale}
         isPrimaryLocale={isPrimaryLocale}
         isFreePlan={false} // TODO: Get from plan context
-        altTexts={{}} // TODO: Implement alt-text state management
-        onAltTextChange={(index, value) => {
-          console.log(`[IMAGE-ALT] Alt-text changed for image ${index}:`, value);
-          // TODO: Implement alt-text state update
+        altTexts={state.imageAltTexts}
+        onAltTextChange={handlers.handleAltTextChange}
+        onGenerateAltText={handlers.handleGenerateAltText}
+        onGenerateAllAltTexts={handlers.handleGenerateAllAltTexts}
+        onTranslateAltText={handlers.handleTranslateAltText}
+        altTextSuggestions={state.altTextSuggestions}
+        onAcceptSuggestion={handlers.handleAcceptAltTextSuggestion}
+        onRejectSuggestion={handlers.handleRejectAltTextSuggestion}
+        isFieldLoading={(index) => {
+          // Check if we're loading this specific image's alt-text
+          const formData = fetcherFormData;
+          if (!formData) return false;
+          const action = formData.get("action");
+          const imageIndex = formData.get("imageIndex");
+          return (
+            fetcherState === "submitting" &&
+            (action === "generateAltText" && imageIndex === String(index)) ||
+            (action === "translateAltText" && imageIndex === String(index)) ||
+            (action === "generateAllAltTexts" && index === -1)
+          );
         }}
-        onGenerateAltText={(index) => {
-          console.log(`[IMAGE-ALT] Generate AI alt-text for image ${index}`);
-          // TODO: Implement AI generation
-        }}
-        onGenerateAllAltTexts={() => {
-          console.log(`[IMAGE-ALT] Generate all alt-texts`);
-          // TODO: Implement bulk AI generation
-        }}
-        onTranslateAltText={(index) => {
-          console.log(`[IMAGE-ALT] Translate alt-text for image ${index}`);
-          // TODO: Implement translation
-        }}
-        altTextSuggestions={{}} // TODO: Handle AI suggestions
-        onAcceptSuggestion={(index) => {
-          console.log(`[IMAGE-ALT] Accept suggestion for image ${index}`);
-          // TODO: Implement suggestion acceptance
-        }}
-        onRejectSuggestion={(index) => {
-          console.log(`[IMAGE-ALT] Reject suggestion for image ${index}`);
-          // TODO: Implement suggestion rejection
-        }}
-        isFieldLoading={(index) => false} // TODO: Implement loading state
         t={{
           image: t.products?.image || "Image",
           featuredImage: t.products?.featuredImage || "Featured Image",

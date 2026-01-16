@@ -93,6 +93,8 @@ export interface EditorState {
   htmlModes: Record<string, 'html' | 'rendered'>;
   hasChanges: boolean;
   enabledLanguages: string[];
+  imageAltTexts: Record<number, string>;
+  altTextSuggestions: Record<number, string>;
 }
 
 export interface EditorHandlers {
@@ -111,6 +113,12 @@ export interface EditorHandlers {
   handleItemSelect: (itemId: string) => void;
   handleValueChange: (fieldKey: string, value: string) => void;
   handleToggleHtmlMode: (fieldKey: string) => void;
+  handleAltTextChange: (imageIndex: number, value: string) => void;
+  handleGenerateAltText: (imageIndex: number) => void;
+  handleGenerateAllAltTexts: () => void;
+  handleTranslateAltText: (imageIndex: number) => void;
+  handleAcceptAltTextSuggestion: (imageIndex: number) => void;
+  handleRejectAltTextSuggestion: (imageIndex: number) => void;
 }
 
 export interface UseContentEditorProps {
