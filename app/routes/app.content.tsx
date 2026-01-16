@@ -132,7 +132,7 @@ export default function ContentHub() {
   const CONTENT_TYPES = getContentTypes(t);
 
   // Get initial type from URL or localStorage
-  const getInitialType = (): ContentType => {
+  const getInitialType = (): ContentType | null => {
     const urlType = searchParams.get("type") as ContentType;
     if (urlType) return urlType;
 
@@ -141,10 +141,10 @@ export default function ContentHub() {
       if (stored) return stored as ContentType;
     }
 
-    return "menus"; // default
+    return null; // no default - user must select
   };
 
-  const [selectedType, setSelectedType] = useState<ContentType>(getInitialType());
+  const [selectedType, setSelectedType] = useState<ContentType | null>(getInitialType());
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [currentLanguage, setCurrentLanguage] = useState(primaryLocale);
 
@@ -160,22 +160,24 @@ export default function ContentHub() {
     key => editableValues[key] !== originalValues[key]
   );
 
-  // Initialize URL on mount
+  // Initialize URL on mount - don't auto-navigate if no type selected
   useEffect(() => {
     const urlType = searchParams.get("type");
-    if (!urlType) {
+    if (!urlType && selectedType) {
       navigate(`?type=${selectedType}`, { replace: true });
     }
   }, []);
 
   // Update URL and localStorage when type changes
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      localStorage.setItem("lastContentHubType", selectedType);
-    }
-    const urlType = searchParams.get("type");
-    if (urlType !== selectedType) {
-      navigate(`?type=${selectedType}`, { replace: true });
+    if (selectedType) {
+      if (typeof window !== "undefined") {
+        localStorage.setItem("lastContentHubType", selectedType);
+      }
+      const urlType = searchParams.get("type");
+      if (urlType !== selectedType) {
+        navigate(`?type=${selectedType}`, { replace: true });
+      }
     }
   }, [selectedType, navigate]);
 
@@ -308,6 +310,29 @@ export default function ContentHub() {
       </div>
     );
   };
+
+  // If no type selected, show selection screen
+  if (!selectedType) {
+    return (
+      <Page fullWidth>
+        <MainNavigation />
+        <ContentTypeNavigation />
+
+        <div style={{ padding: "2rem", textAlign: "center" }}>
+          <Card>
+            <BlockStack gap="500">
+              <Text as="h1" variant="headingLg">
+                Bitte wählen Sie einen Content-Typ aus der Navigation oben
+              </Text>
+              <Text as="p" variant="bodyMd" tone="subdued">
+                Wählen Sie einen der verfügbaren Content-Typen aus der oberen Navigationsleiste aus, um fortzufahren.
+              </Text>
+            </BlockStack>
+          </Card>
+        </div>
+      </Page>
+    );
+  }
 
   return (
     <Page fullWidth>
