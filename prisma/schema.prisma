@@ -263,6 +263,23 @@ model WebhookLog {
   @@index([createdAt])
 }
 
+model WebhookRetry {
+  id          String   @id @default(cuid())
+  shop        String
+  topic       String // Webhook topic (e.g., "products/update")
+  payload     String   @db.Text // Full webhook payload as JSON
+  attempt     Int      @default(0) // Current retry attempt number
+  maxAttempts Int      @default(5) // Maximum retry attempts
+  nextRetry   DateTime // When to attempt next retry
+  lastError   String?  @db.Text // Last error message
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([shop])
+  @@index([nextRetry])
+  @@index([attempt])
+}
+
 // ============================================
 // CONTENT MODELS (Collections, Blogs, Pages)
 // ============================================

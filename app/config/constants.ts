@@ -283,7 +283,7 @@ export const WEBHOOK_CONFIG = {
   /**
    * Maximum retry attempts for failed webhooks
    */
-  MAX_RETRIES: 5,
+  MAX_RETRY_ATTEMPTS: 5,
 
   /**
    * Initial retry delay (in milliseconds)
@@ -299,6 +299,12 @@ export const WEBHOOK_CONFIG = {
    * Exponential backoff multiplier
    */
   BACKOFF_MULTIPLIER: 2,
+
+  /**
+   * Exponential backoff delays for webhook retries (in milliseconds)
+   * [1s, 2s, 4s, 8s, 16s, 60s max]
+   */
+  RETRY_DELAYS: [1000, 2000, 4000, 8000, 16000, 60000],
 } as const;
 
 // ============================================================================
