@@ -1,10 +1,6 @@
 import { json } from "@remix-run/node";
 import type { ActionFunctionArgs } from "@remix-run/node";
 import crypto from "crypto";
-import { ProductSyncService } from "../services/product-sync.service";
-import { encryptPayload } from "../utils/encryption.server";
-import { webhookRetryService } from "../services/webhook-retry.service";
-import { logger } from "../utils/logger.server";
 
 /**
  * Webhook Handler for Shopify Product Events
@@ -15,6 +11,7 @@ import { logger } from "../utils/logger.server";
  * It syncs the product data to our local database for fast access.
  */
 export const action = async ({ request }: ActionFunctionArgs) => {
+  const { logger } = await import("../utils/logger.server");
   logger.info('Product webhook received', { context: 'Webhook' });
 
   try {
@@ -63,6 +60,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     // 4. Log webhook to database (with encrypted payload)
     const { db } = await import("../db.server");
+    const { encryptPayload } = await import("../utils/encryption.server");
     const webhookLog = await db.webhookLog.create({
       data: {
         shop,
@@ -106,19 +104,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 };
 
-// Register webhook handler with retry service on module load
-webhookRetryService.registerHandler('products/create', async (payload: any, shop: string) => {
-  await processWebhookAsync(payload.logId, shop, payload.productId, 'products/create');
-});
-
-webhookRetryService.registerHandler('products/update', async (payload: any, shop: string) => {
-  await processWebhookAsync(payload.logId, shop, payload.productId, 'products/update');
-});
-
-webhookRetryService.registerHandler('products/delete', async (payload: any, shop: string) => {
-  await processWebhookAsync(payload.logId, shop, payload.productId, 'products/delete');
-});
-
 /**
  * Process webhook in the background
  */
@@ -128,6 +113,10 @@ async function processWebhookAsync(
   productId: string,
   topic: string
 ) {
+  const { logger } = await import("../utils/logger.server");
+  const { webhookRetryService } = await import("../services/webhook-retry.service");
+  const { ProductSyncService } = await import("../services/product-sync.service");
+
   logger.info('Processing webhook asynchronously', {
     context: 'Webhook',
     logId,
@@ -215,17 +204,11 @@ async function processWebhookAsync(
  */
 function verifyWebhook(rawBody: string, hmac: string | null): boolean {
   if (!hmac) {
-    logger.warn('No HMAC provided for webhook verification', {
-      context: 'Webhook',
-    });
     return false;
   }
 
   const secret = process.env.SHOPIFY_API_SECRET;
   if (!secret) {
-    logger.error('SHOPIFY_API_SECRET not configured', {
-      context: 'Webhook',
-    });
     return false;
   }
 
@@ -234,15 +217,5 @@ function verifyWebhook(rawBody: string, hmac: string | null): boolean {
     .update(rawBody, "utf8")
     .digest("base64");
 
-  const verified = hash === hmac;
-
-  if (!verified) {
-    logger.warn('Webhook signature mismatch', {
-      context: 'Webhook',
-      expected: hash.substring(0, 20) + '...',
-      received: hmac.substring(0, 20) + '...',
-    });
-  }
-
-  return verified;
+  return hash === hmac;
 }
