@@ -237,23 +237,32 @@ export class ShopifyContentService {
         }
       }
 
-      // Update database
-      await db.contentTranslation.deleteMany({
-        where: { resourceId, resourceType, locale },
-      });
-
+      // Update database - use upsert to preserve existing translations
       if (translationsInput.length > 0) {
-        await db.contentTranslation.createMany({
-          data: translationsInput.map(t => ({
-            resourceId,
-            resourceType,
-            key: t.key,
-            value: t.value,
-            locale: t.locale,
-            digest: t.translatableContentDigest || null,
-          })),
-          skipDuplicates: true,
-        });
+        for (const translation of translationsInput) {
+          await db.contentTranslation.upsert({
+            where: {
+              resourceId_resourceType_locale_key: {
+                resourceId,
+                resourceType,
+                locale: translation.locale,
+                key: translation.key,
+              },
+            },
+            update: {
+              value: translation.value,
+              digest: translation.translatableContentDigest || null,
+            },
+            create: {
+              resourceId,
+              resourceType,
+              key: translation.key,
+              value: translation.value,
+              locale: translation.locale,
+              digest: translation.translatableContentDigest || null,
+            },
+          });
+        }
       }
 
       return { success: true };
@@ -450,23 +459,32 @@ export class ShopifyContentService {
             }
           }
 
-          // Update database
-          await db.contentTranslation.deleteMany({
-            where: { resourceId, resourceType, locale },
-          });
-
+          // Update database - use upsert to preserve existing translations
           if (translationsInput.length > 0) {
-            await db.contentTranslation.createMany({
-              data: translationsInput.map(t => ({
-                resourceId,
-                resourceType,
-                key: t.key,
-                value: t.value,
-                locale: t.locale,
-                digest: t.translatableContentDigest || null,
-              })),
-              skipDuplicates: true,
-            });
+            for (const translation of translationsInput) {
+              await db.contentTranslation.upsert({
+                where: {
+                  resourceId_resourceType_locale_key: {
+                    resourceId,
+                    resourceType,
+                    locale: translation.locale,
+                    key: translation.key,
+                  },
+                },
+                update: {
+                  value: translation.value,
+                  digest: translation.translatableContentDigest || null,
+                },
+                create: {
+                  resourceId,
+                  resourceType,
+                  key: translation.key,
+                  value: translation.value,
+                  locale: translation.locale,
+                  digest: translation.translatableContentDigest || null,
+                },
+              });
+            }
           }
         }
       } catch (localeError: any) {
