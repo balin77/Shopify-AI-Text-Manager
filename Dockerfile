@@ -8,12 +8,15 @@ RUN apk add --no-cache openssl libc6-compat
 WORKDIR /app
 
 # Copy package files
-COPY package*.json ./
+COPY package.json ./
 COPY prisma ./prisma/
 
 # Install dependencies with proper platform support
-# Force the installation of the correct rollup binary for Alpine Linux
-RUN npm install --legacy-peer-deps --force
+# Remove lock file to force fresh install with correct optional dependencies
+RUN npm install --legacy-peer-deps
+
+# Explicitly install the Alpine Linux rollup binary
+RUN npm install --no-save @rollup/rollup-linux-x64-musl
 
 # Copy application code
 COPY . .
