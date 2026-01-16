@@ -83,23 +83,21 @@ export function AIEditableField({
 
   return (
     <div>
-      <div className={`ai-editable-field-wrapper ${getBackgroundClass()}`}>
+      <div className={`ai-editable-field-wrapper ${getBackgroundClass()}`} style={{ position: "relative" }}>
+        {onClear && value && (
+          <div style={{ position: "absolute", top: "0", right: "0", zIndex: 10 }}>
+            <Button
+              size="slim"
+              onClick={onClear}
+              tone="critical"
+              variant="plain"
+            >
+              {t.common?.clear || t.products?.clear || "Clear"}
+            </Button>
+          </div>
+        )}
         <TextField
-          label={
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%" }}>
-              <span style={{ fontWeight: 600 }}>{label}</span>
-              {onClear && value && (
-                <Button
-                  size="slim"
-                  onClick={onClear}
-                  tone="critical"
-                  variant="plain"
-                >
-                  {t.common?.clear || t.products?.clear || "Clear"}
-                </Button>
-              )}
-            </div>
-          }
+          label={<span style={{ fontWeight: 600 }}>{label}</span>}
           value={value}
           onChange={onChange}
           autoComplete="off"
