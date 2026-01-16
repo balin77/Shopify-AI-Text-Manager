@@ -31,38 +31,40 @@ import {
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   console.log('[SETTINGS] Loading settings page for shop');
-  const { admin, session } = await authenticate.admin(request);
 
-  // Fetch shop's primary locale
-  const localesResponse = await admin.graphql(
-    `#graphql
-      query getShopLocales {
-        shopLocales {
-          locale
-          primary
-        }
-      }`
-  );
+  try {
+    const { admin, session } = await authenticate.admin(request);
 
-  const localesData = await localesResponse.json();
-  const primaryShopLocale = localesData.data.shopLocales.find((l: any) => l.primary)?.locale || "de";
+    // Fetch shop's primary locale
+    const localesResponse = await admin.graphql(
+      `#graphql
+        query getShopLocales {
+          shopLocales {
+            locale
+            primary
+          }
+        }`
+    );
 
-  let settings = await db.aISettings.findUnique({
-    where: { shop: session.shop },
-  });
+    const localesData = await localesResponse.json();
+    const primaryShopLocale = localesData.data.shopLocales.find((l: any) => l.primary)?.locale || "de";
 
-  if (!settings) {
-    // Auto-select app language based on shop's primary locale
-    const autoSelectedLanguage = primaryShopLocale.startsWith("en") ? "en" : "de";
-
-    settings = await db.aISettings.create({
-      data: {
-        shop: session.shop,
-        preferredProvider: "huggingface",
-        appLanguage: autoSelectedLanguage,
-      },
+    let settings = await db.aISettings.findUnique({
+      where: { shop: session.shop },
     });
-  }
+
+    if (!settings) {
+      // Auto-select app language based on shop's primary locale
+      const autoSelectedLanguage = primaryShopLocale.startsWith("en") ? "en" : "de";
+
+      settings = await db.aISettings.create({
+        data: {
+          shop: session.shop,
+          preferredProvider: "huggingface",
+          appLanguage: autoSelectedLanguage,
+        },
+      });
+    }
 
   // Fetch AI instructions
   let instructions = await db.aIInstructions.findUnique({
@@ -186,141 +188,176 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     console.log('[SETTINGS] Updated AI Instructions with defaults for shop:', session.shop);
   }
 
-  // Get counts for App Setup section
-  const productCount = await db.product.count({
-    where: { shop: session.shop },
-  });
+    // Get counts for App Setup section
+    const productCount = await db.product.count({
+      where: { shop: session.shop },
+    });
 
-  const translationCount = await db.translation.count({
-    where: {
-      product: {
-        shop: session.shop,
+    // Get all resource IDs for this shop to count translations
+    const products = await db.product.findMany({
+      where: { shop: session.shop },
+      select: { id: true },
+    });
+    const collections = await db.collection.findMany({
+      where: { shop: session.shop },
+      select: { id: true },
+    });
+    const articles = await db.article.findMany({
+      where: { shop: session.shop },
+      select: { id: true },
+    });
+    const pages = await db.page.findMany({
+      where: { shop: session.shop },
+      select: { id: true },
+    });
+
+    // Count translations for all resources belonging to this shop
+    const resourceIds = [
+      ...products.map(p => p.id),
+      ...collections.map(c => c.id),
+      ...articles.map(a => a.id),
+      ...pages.map(p => p.id),
+    ];
+
+    const translationCount = resourceIds.length > 0
+      ? await db.contentTranslation.count({
+          where: {
+            resourceId: { in: resourceIds },
+          },
+        })
+      : 0;
+
+    const webhookCount = await db.webhookLog.count({
+      where: { shop: session.shop },
+    });
+
+    const collectionCount = await db.collection.count({
+      where: { shop: session.shop },
+    });
+
+    const articleCount = await db.article.count({
+      where: { shop: session.shop },
+    });
+
+    // Get subscription plan
+    const subscriptionPlan = settings.subscriptionPlan || "basic";
+
+    // Decrypt API keys with error handling
+    let decryptedKeys;
+    try {
+      decryptedKeys = {
+        huggingfaceApiKey: decryptApiKey(settings.huggingfaceApiKey) || "",
+        geminiApiKey: decryptApiKey(settings.geminiApiKey) || "",
+        claudeApiKey: decryptApiKey(settings.claudeApiKey) || "",
+        openaiApiKey: decryptApiKey(settings.openaiApiKey) || "",
+        grokApiKey: decryptApiKey(settings.grokApiKey) || "",
+        deepseekApiKey: decryptApiKey(settings.deepseekApiKey) || "",
+      };
+    } catch (error) {
+      console.error('[SETTINGS LOADER] Decryption error:', error);
+      // If decryption fails, return empty keys
+      decryptedKeys = {
+        huggingfaceApiKey: "",
+        geminiApiKey: "",
+        claudeApiKey: "",
+        openaiApiKey: "",
+        grokApiKey: "",
+        deepseekApiKey: "",
+      };
+    }
+
+    return json({
+      shop: session.shop,
+      productCount,
+      translationCount,
+      webhookCount,
+      collectionCount,
+      articleCount,
+      subscriptionPlan,
+      settings: {
+        ...decryptedKeys,
+        preferredProvider: settings.preferredProvider,
+        appLanguage: settings.appLanguage || "de",
+
+        // Rate limits
+        hfMaxTokensPerMinute: settings.hfMaxTokensPerMinute || 1000000,
+        hfMaxRequestsPerMinute: settings.hfMaxRequestsPerMinute || 100,
+        geminiMaxTokensPerMinute: settings.geminiMaxTokensPerMinute || 1000000,
+        geminiMaxRequestsPerMinute: settings.geminiMaxRequestsPerMinute || 15,
+        claudeMaxTokensPerMinute: settings.claudeMaxTokensPerMinute || 40000,
+        claudeMaxRequestsPerMinute: settings.claudeMaxRequestsPerMinute || 5,
+        openaiMaxTokensPerMinute: settings.openaiMaxTokensPerMinute || 200000,
+        openaiMaxRequestsPerMinute: settings.openaiMaxRequestsPerMinute || 500,
+        grokMaxTokensPerMinute: settings.grokMaxTokensPerMinute || 100000,
+        grokMaxRequestsPerMinute: settings.grokMaxRequestsPerMinute || 60,
+        deepseekMaxTokensPerMinute: settings.deepseekMaxTokensPerMinute || 100000,
+        deepseekMaxRequestsPerMinute: settings.deepseekMaxRequestsPerMinute || 60,
       },
-    },
-  });
+      instructions: {
+        // Products
+        productTitleFormat: instructions.productTitleFormat || DEFAULT_PRODUCT_INSTRUCTIONS.titleFormat,
+        productTitleInstructions: instructions.productTitleInstructions || DEFAULT_PRODUCT_INSTRUCTIONS.titleInstructions,
+        productDescriptionFormat: instructions.productDescriptionFormat || DEFAULT_PRODUCT_INSTRUCTIONS.descriptionFormat,
+        productDescriptionInstructions: instructions.productDescriptionInstructions || DEFAULT_PRODUCT_INSTRUCTIONS.descriptionInstructions,
+        productHandleFormat: instructions.productHandleFormat || DEFAULT_PRODUCT_INSTRUCTIONS.handleFormat,
+        productHandleInstructions: instructions.productHandleInstructions || DEFAULT_PRODUCT_INSTRUCTIONS.handleInstructions,
+        productSeoTitleFormat: instructions.productSeoTitleFormat || DEFAULT_PRODUCT_INSTRUCTIONS.seoTitleFormat,
+        productSeoTitleInstructions: instructions.productSeoTitleInstructions || DEFAULT_PRODUCT_INSTRUCTIONS.seoTitleInstructions,
+        productMetaDescFormat: instructions.productMetaDescFormat || DEFAULT_PRODUCT_INSTRUCTIONS.metaDescFormat,
+        productMetaDescInstructions: instructions.productMetaDescInstructions || DEFAULT_PRODUCT_INSTRUCTIONS.metaDescInstructions,
+        productAltTextFormat: instructions.productAltTextFormat || DEFAULT_PRODUCT_INSTRUCTIONS.altTextFormat || "",
+        productAltTextInstructions: instructions.productAltTextInstructions || DEFAULT_PRODUCT_INSTRUCTIONS.altTextInstructions || "",
 
-  const webhookCount = await db.webhookLog.count({
-    where: { shop: session.shop },
-  });
+        // Collections
+        collectionTitleFormat: instructions.collectionTitleFormat || DEFAULT_COLLECTION_INSTRUCTIONS.titleFormat,
+        collectionTitleInstructions: instructions.collectionTitleInstructions || DEFAULT_COLLECTION_INSTRUCTIONS.titleInstructions,
+        collectionDescriptionFormat: instructions.collectionDescriptionFormat || DEFAULT_COLLECTION_INSTRUCTIONS.descriptionFormat,
+        collectionDescriptionInstructions: instructions.collectionDescriptionInstructions || DEFAULT_COLLECTION_INSTRUCTIONS.descriptionInstructions,
+        collectionHandleFormat: instructions.collectionHandleFormat || DEFAULT_COLLECTION_INSTRUCTIONS.handleFormat,
+        collectionHandleInstructions: instructions.collectionHandleInstructions || DEFAULT_COLLECTION_INSTRUCTIONS.handleInstructions,
+        collectionSeoTitleFormat: instructions.collectionSeoTitleFormat || DEFAULT_COLLECTION_INSTRUCTIONS.seoTitleFormat,
+        collectionSeoTitleInstructions: instructions.collectionSeoTitleInstructions || DEFAULT_COLLECTION_INSTRUCTIONS.seoTitleInstructions,
+        collectionMetaDescFormat: instructions.collectionMetaDescFormat || DEFAULT_COLLECTION_INSTRUCTIONS.metaDescFormat,
+        collectionMetaDescInstructions: instructions.collectionMetaDescInstructions || DEFAULT_COLLECTION_INSTRUCTIONS.metaDescInstructions,
 
-  const collectionCount = await db.collection.count({
-    where: { shop: session.shop },
-  });
+        // Blogs
+        blogTitleFormat: instructions.blogTitleFormat || DEFAULT_BLOG_INSTRUCTIONS.titleFormat,
+        blogTitleInstructions: instructions.blogTitleInstructions || DEFAULT_BLOG_INSTRUCTIONS.titleInstructions,
+        blogDescriptionFormat: instructions.blogDescriptionFormat || DEFAULT_BLOG_INSTRUCTIONS.descriptionFormat,
+        blogDescriptionInstructions: instructions.blogDescriptionInstructions || DEFAULT_BLOG_INSTRUCTIONS.descriptionInstructions,
+        blogHandleFormat: instructions.blogHandleFormat || DEFAULT_BLOG_INSTRUCTIONS.handleFormat,
+        blogHandleInstructions: instructions.blogHandleInstructions || DEFAULT_BLOG_INSTRUCTIONS.handleInstructions,
+        blogSeoTitleFormat: instructions.blogSeoTitleFormat || DEFAULT_BLOG_INSTRUCTIONS.seoTitleFormat,
+        blogSeoTitleInstructions: instructions.blogSeoTitleInstructions || DEFAULT_BLOG_INSTRUCTIONS.seoTitleInstructions,
+        blogMetaDescFormat: instructions.blogMetaDescFormat || DEFAULT_BLOG_INSTRUCTIONS.metaDescFormat,
+        blogMetaDescInstructions: instructions.blogMetaDescInstructions || DEFAULT_BLOG_INSTRUCTIONS.metaDescInstructions,
 
-  const articleCount = await db.article.count({
-    where: { shop: session.shop },
-  });
+        // Pages
+        pageTitleFormat: instructions.pageTitleFormat || DEFAULT_PAGE_INSTRUCTIONS.titleFormat,
+        pageTitleInstructions: instructions.pageTitleInstructions || DEFAULT_PAGE_INSTRUCTIONS.titleInstructions,
+        pageDescriptionFormat: instructions.pageDescriptionFormat || DEFAULT_PAGE_INSTRUCTIONS.descriptionFormat,
+        pageDescriptionInstructions: instructions.pageDescriptionInstructions || DEFAULT_PAGE_INSTRUCTIONS.descriptionInstructions,
+        pageHandleFormat: instructions.pageHandleFormat || DEFAULT_PAGE_INSTRUCTIONS.handleFormat,
+        pageHandleInstructions: instructions.pageHandleInstructions || DEFAULT_PAGE_INSTRUCTIONS.handleInstructions,
+        pageSeoTitleFormat: instructions.pageSeoTitleFormat || DEFAULT_PAGE_INSTRUCTIONS.seoTitleFormat,
+        pageSeoTitleInstructions: instructions.pageSeoTitleInstructions || DEFAULT_PAGE_INSTRUCTIONS.seoTitleInstructions,
+        pageMetaDescFormat: instructions.pageMetaDescFormat || DEFAULT_PAGE_INSTRUCTIONS.metaDescFormat,
+        pageMetaDescInstructions: instructions.pageMetaDescInstructions || DEFAULT_PAGE_INSTRUCTIONS.metaDescInstructions,
 
-  // Get subscription plan
-  const subscriptionPlan = settings.subscriptionPlan || "basic";
-
-  // Decrypt API keys with error handling
-  let decryptedKeys;
-  try {
-    decryptedKeys = {
-      huggingfaceApiKey: decryptApiKey(settings.huggingfaceApiKey) || "",
-      geminiApiKey: decryptApiKey(settings.geminiApiKey) || "",
-      claudeApiKey: decryptApiKey(settings.claudeApiKey) || "",
-      openaiApiKey: decryptApiKey(settings.openaiApiKey) || "",
-      grokApiKey: decryptApiKey(settings.grokApiKey) || "",
-      deepseekApiKey: decryptApiKey(settings.deepseekApiKey) || "",
-    };
-  } catch (error) {
-    console.error('[SETTINGS LOADER] Decryption error:', error);
-    // If decryption fails, return empty keys
-    decryptedKeys = {
-      huggingfaceApiKey: "",
-      geminiApiKey: "",
-      claudeApiKey: "",
-      openaiApiKey: "",
-      grokApiKey: "",
-      deepseekApiKey: "",
-    };
+        // Policies (description only)
+        policyDescriptionFormat: instructions.policyDescriptionFormat || DEFAULT_POLICY_INSTRUCTIONS.descriptionFormat,
+        policyDescriptionInstructions: instructions.policyDescriptionInstructions || DEFAULT_POLICY_INSTRUCTIONS.descriptionInstructions,
+      },
+    });
+  } catch (error: unknown) {
+    console.error('[SETTINGS LOADER] Fatal error:', error);
+    // Use safe error handler
+    const safeError = toSafeErrorResponse(error, {
+      route: 'app.settings',
+      action: 'loader',
+    });
+    throw new Response(safeError.message, { status: safeError.statusCode });
   }
-
-  return json({
-    shop: session.shop,
-    productCount,
-    translationCount,
-    webhookCount,
-    collectionCount,
-    articleCount,
-    subscriptionPlan,
-    settings: {
-      ...decryptedKeys,
-      preferredProvider: settings.preferredProvider,
-      appLanguage: settings.appLanguage || "de",
-
-      // Rate limits
-      hfMaxTokensPerMinute: settings.hfMaxTokensPerMinute || 1000000,
-      hfMaxRequestsPerMinute: settings.hfMaxRequestsPerMinute || 100,
-      geminiMaxTokensPerMinute: settings.geminiMaxTokensPerMinute || 1000000,
-      geminiMaxRequestsPerMinute: settings.geminiMaxRequestsPerMinute || 15,
-      claudeMaxTokensPerMinute: settings.claudeMaxTokensPerMinute || 40000,
-      claudeMaxRequestsPerMinute: settings.claudeMaxRequestsPerMinute || 5,
-      openaiMaxTokensPerMinute: settings.openaiMaxTokensPerMinute || 200000,
-      openaiMaxRequestsPerMinute: settings.openaiMaxRequestsPerMinute || 500,
-      grokMaxTokensPerMinute: settings.grokMaxTokensPerMinute || 100000,
-      grokMaxRequestsPerMinute: settings.grokMaxRequestsPerMinute || 60,
-      deepseekMaxTokensPerMinute: settings.deepseekMaxTokensPerMinute || 100000,
-      deepseekMaxRequestsPerMinute: settings.deepseekMaxRequestsPerMinute || 60,
-    },
-    instructions: {
-      // Products
-      productTitleFormat: instructions.productTitleFormat || DEFAULT_PRODUCT_INSTRUCTIONS.titleFormat,
-      productTitleInstructions: instructions.productTitleInstructions || DEFAULT_PRODUCT_INSTRUCTIONS.titleInstructions,
-      productDescriptionFormat: instructions.productDescriptionFormat || DEFAULT_PRODUCT_INSTRUCTIONS.descriptionFormat,
-      productDescriptionInstructions: instructions.productDescriptionInstructions || DEFAULT_PRODUCT_INSTRUCTIONS.descriptionInstructions,
-      productHandleFormat: instructions.productHandleFormat || DEFAULT_PRODUCT_INSTRUCTIONS.handleFormat,
-      productHandleInstructions: instructions.productHandleInstructions || DEFAULT_PRODUCT_INSTRUCTIONS.handleInstructions,
-      productSeoTitleFormat: instructions.productSeoTitleFormat || DEFAULT_PRODUCT_INSTRUCTIONS.seoTitleFormat,
-      productSeoTitleInstructions: instructions.productSeoTitleInstructions || DEFAULT_PRODUCT_INSTRUCTIONS.seoTitleInstructions,
-      productMetaDescFormat: instructions.productMetaDescFormat || DEFAULT_PRODUCT_INSTRUCTIONS.metaDescFormat,
-      productMetaDescInstructions: instructions.productMetaDescInstructions || DEFAULT_PRODUCT_INSTRUCTIONS.metaDescInstructions,
-      productAltTextFormat: instructions.productAltTextFormat || DEFAULT_PRODUCT_INSTRUCTIONS.altTextFormat || "",
-      productAltTextInstructions: instructions.productAltTextInstructions || DEFAULT_PRODUCT_INSTRUCTIONS.altTextInstructions || "",
-
-      // Collections
-      collectionTitleFormat: instructions.collectionTitleFormat || DEFAULT_COLLECTION_INSTRUCTIONS.titleFormat,
-      collectionTitleInstructions: instructions.collectionTitleInstructions || DEFAULT_COLLECTION_INSTRUCTIONS.titleInstructions,
-      collectionDescriptionFormat: instructions.collectionDescriptionFormat || DEFAULT_COLLECTION_INSTRUCTIONS.descriptionFormat,
-      collectionDescriptionInstructions: instructions.collectionDescriptionInstructions || DEFAULT_COLLECTION_INSTRUCTIONS.descriptionInstructions,
-      collectionHandleFormat: instructions.collectionHandleFormat || DEFAULT_COLLECTION_INSTRUCTIONS.handleFormat,
-      collectionHandleInstructions: instructions.collectionHandleInstructions || DEFAULT_COLLECTION_INSTRUCTIONS.handleInstructions,
-      collectionSeoTitleFormat: instructions.collectionSeoTitleFormat || DEFAULT_COLLECTION_INSTRUCTIONS.seoTitleFormat,
-      collectionSeoTitleInstructions: instructions.collectionSeoTitleInstructions || DEFAULT_COLLECTION_INSTRUCTIONS.seoTitleInstructions,
-      collectionMetaDescFormat: instructions.collectionMetaDescFormat || DEFAULT_COLLECTION_INSTRUCTIONS.metaDescFormat,
-      collectionMetaDescInstructions: instructions.collectionMetaDescInstructions || DEFAULT_COLLECTION_INSTRUCTIONS.metaDescInstructions,
-
-      // Blogs
-      blogTitleFormat: instructions.blogTitleFormat || DEFAULT_BLOG_INSTRUCTIONS.titleFormat,
-      blogTitleInstructions: instructions.blogTitleInstructions || DEFAULT_BLOG_INSTRUCTIONS.titleInstructions,
-      blogDescriptionFormat: instructions.blogDescriptionFormat || DEFAULT_BLOG_INSTRUCTIONS.descriptionFormat,
-      blogDescriptionInstructions: instructions.blogDescriptionInstructions || DEFAULT_BLOG_INSTRUCTIONS.descriptionInstructions,
-      blogHandleFormat: instructions.blogHandleFormat || DEFAULT_BLOG_INSTRUCTIONS.handleFormat,
-      blogHandleInstructions: instructions.blogHandleInstructions || DEFAULT_BLOG_INSTRUCTIONS.handleInstructions,
-      blogSeoTitleFormat: instructions.blogSeoTitleFormat || DEFAULT_BLOG_INSTRUCTIONS.seoTitleFormat,
-      blogSeoTitleInstructions: instructions.blogSeoTitleInstructions || DEFAULT_BLOG_INSTRUCTIONS.seoTitleInstructions,
-      blogMetaDescFormat: instructions.blogMetaDescFormat || DEFAULT_BLOG_INSTRUCTIONS.metaDescFormat,
-      blogMetaDescInstructions: instructions.blogMetaDescInstructions || DEFAULT_BLOG_INSTRUCTIONS.metaDescInstructions,
-
-      // Pages
-      pageTitleFormat: instructions.pageTitleFormat || DEFAULT_PAGE_INSTRUCTIONS.titleFormat,
-      pageTitleInstructions: instructions.pageTitleInstructions || DEFAULT_PAGE_INSTRUCTIONS.titleInstructions,
-      pageDescriptionFormat: instructions.pageDescriptionFormat || DEFAULT_PAGE_INSTRUCTIONS.descriptionFormat,
-      pageDescriptionInstructions: instructions.pageDescriptionInstructions || DEFAULT_PAGE_INSTRUCTIONS.descriptionInstructions,
-      pageHandleFormat: instructions.pageHandleFormat || DEFAULT_PAGE_INSTRUCTIONS.handleFormat,
-      pageHandleInstructions: instructions.pageHandleInstructions || DEFAULT_PAGE_INSTRUCTIONS.handleInstructions,
-      pageSeoTitleFormat: instructions.pageSeoTitleFormat || DEFAULT_PAGE_INSTRUCTIONS.seoTitleFormat,
-      pageSeoTitleInstructions: instructions.pageSeoTitleInstructions || DEFAULT_PAGE_INSTRUCTIONS.seoTitleInstructions,
-      pageMetaDescFormat: instructions.pageMetaDescFormat || DEFAULT_PAGE_INSTRUCTIONS.metaDescFormat,
-      pageMetaDescInstructions: instructions.pageMetaDescInstructions || DEFAULT_PAGE_INSTRUCTIONS.metaDescInstructions,
-
-      // Policies (description only)
-      policyDescriptionFormat: instructions.policyDescriptionFormat || DEFAULT_POLICY_INSTRUCTIONS.descriptionFormat,
-      policyDescriptionInstructions: instructions.policyDescriptionInstructions || DEFAULT_POLICY_INSTRUCTIONS.descriptionInstructions,
-    },
-  });
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
