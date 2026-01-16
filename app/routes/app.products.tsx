@@ -23,6 +23,7 @@ import { PRODUCTS_CONFIG } from "../config/content-fields.config";
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { usePlan } from "../contexts/PlanContext";
+import { useNavigationHeight } from "../contexts/NavigationHeightContext";
 import { useEffect } from "react";
 import type { ContentItem } from "../types/content-editor.types";
 
@@ -203,6 +204,7 @@ export default function ProductsPage() {
   const { t } = useI18n();
   const { showInfoBox } = useInfoBox();
   const { getNextPlanUpgrade } = usePlan();
+  const { setContentNavHeight } = useNavigationHeight();
 
   // Initialize unified content editor
   const editor = useUnifiedContentEditor({
@@ -214,6 +216,11 @@ export default function ProductsPage() {
     showInfoBox,
     t,
   });
+
+  // Reset ContentNavigation height to 0 (since we don't have ContentTypeNavigation on Products page)
+  useEffect(() => {
+    setContentNavHeight(0);
+  }, [setContentNavHeight]);
 
   // Show loader error
   useEffect(() => {
