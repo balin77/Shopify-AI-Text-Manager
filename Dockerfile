@@ -1,8 +1,8 @@
 # Use Node 22 Alpine (required for jsdom@27, isomorphic-dompurify 2.35+)
 FROM node:22-alpine
 
-# Install dependencies for Prisma
-RUN apk add --no-cache openssl
+# Install dependencies for Prisma and build tools
+RUN apk add --no-cache openssl libc6-compat
 
 # Set working directory
 WORKDIR /app
@@ -11,9 +11,9 @@ WORKDIR /app
 COPY package*.json ./
 COPY prisma ./prisma/
 
-# Install dependencies
-# Using npm install instead of npm ci to handle lock file version differences
-RUN npm install --legacy-peer-deps
+# Install dependencies with proper platform support
+# Force the installation of the correct rollup binary for Alpine Linux
+RUN npm install --legacy-peer-deps --force
 
 # Copy application code
 COPY . .
