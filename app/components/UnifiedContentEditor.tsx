@@ -284,7 +284,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         onAcceptSuggestion={() => handlers.handleAcceptSuggestion(field.key)}
                         onAcceptAndTranslate={() => handlers.handleAcceptAndTranslate(field.key)}
                         onRejectSuggestion={() => handlers.handleRejectSuggestion(field.key)}
-                        onClear={() => handlers.handleClearField(field.key)}
+                        onClear={field.key === "title" && state.currentLanguage === primaryLocale ? undefined : () => handlers.handleClearField(field.key)}
                         htmlMode={state.htmlModes[field.key] || "rendered"}
                         onToggleHtmlMode={() => handlers.handleToggleHtmlMode(field.key)}
                         shopLocales={shopLocales}
@@ -519,6 +519,9 @@ function FieldRenderer(props: FieldRendererProps & { state?: any; handlers?: any
     );
   }
 
+  // Determine if Clear button should be shown (hide for title in primary locale)
+  const shouldShowClear = !(field.key === "title" && isPrimaryLocale);
+
   // HTML Field
   if (field.type === "html") {
     return (
@@ -542,7 +545,7 @@ function FieldRenderer(props: FieldRendererProps & { state?: any; handlers?: any
         onAcceptSuggestion={onAcceptSuggestion}
         onAcceptAndTranslate={onAcceptAndTranslate}
         onRejectSuggestion={onRejectSuggestion}
-        onClear={onClear}
+        onClear={shouldShowClear ? onClear : undefined}
       />
     );
   }
@@ -569,7 +572,7 @@ function FieldRenderer(props: FieldRendererProps & { state?: any; handlers?: any
       onAcceptSuggestion={onAcceptSuggestion}
       onAcceptAndTranslate={onAcceptAndTranslate}
       onRejectSuggestion={onRejectSuggestion}
-      onClear={onClear}
+      onClear={shouldShowClear ? onClear : undefined}
     />
   );
 }

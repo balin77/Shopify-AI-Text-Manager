@@ -506,8 +506,8 @@ async function updatePrimaryProduct(
   try {
     const updateData: any = {};
     if (params.title) updateData.title = params.title;
-    if (params.descriptionHtml) updateData.descriptionHtml = params.descriptionHtml;
-    if (params.handle) updateData.handle = params.handle;
+    if (params.descriptionHtml !== undefined) updateData.descriptionHtml = params.descriptionHtml || null;
+    if (params.handle !== undefined) updateData.handle = params.handle || null;
     if (params.seoTitle !== undefined) updateData.seoTitle = params.seoTitle || null;
     if (params.metaDescription !== undefined) updateData.seoDescription = params.metaDescription || null;
 

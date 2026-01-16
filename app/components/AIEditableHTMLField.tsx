@@ -139,27 +139,25 @@ export function AIEditableHTMLField({
 
   return (
     <div className={`ai-editable-html-field ${getBackgroundClass()}`}>
-      {/* Clear button above input field */}
-      {onClear && value && (
-        <div style={{ marginBottom: "0.5rem", display: "flex", justifyContent: "flex-end" }}>
-          <Button
-            size="slim"
-            onClick={onClear}
-            tone="critical"
-            variant="plain"
-          >
-            🗑️ {t.products.clear || "Clear"}
-          </Button>
-        </div>
-      )}
-
       <InlineStack align="space-between" blockAlign="center">
         <Text as="p" variant="bodyMd" fontWeight="bold">
           {label}
         </Text>
-        <Button size="slim" onClick={onToggleMode}>
-          {mode === "html" ? t.products.preview : t.products.html}
-        </Button>
+        <InlineStack gap="200">
+          {onClear && value && (
+            <Button
+              size="slim"
+              onClick={onClear}
+              tone="critical"
+              variant="plain"
+            >
+              {t.common?.clear || t.products?.clear || "Clear"}
+            </Button>
+          )}
+          <Button size="slim" onClick={onToggleMode}>
+            {mode === "html" ? t.products.preview : t.products.html}
+          </Button>
+        </InlineStack>
       </InlineStack>
 
       {mode === "rendered" && (
