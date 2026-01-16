@@ -417,45 +417,59 @@ function FieldRenderer(props: FieldRendererProps) {
       return null;
     }
 
-    // For now, render a simplified read-only image gallery
-    // TODO: Implement full image gallery functionality with alt-text editing
+    // Note: Alt-text state management needs to be added to useUnifiedContentEditor
+    // For now, this is read-only. Full implementation will require:
+    // - Alt-text state in editor state
+    // - AI generation handlers
+    // - Translation handlers
+    // See old ProductEditor.tsx implementation for reference
+
     return (
-      <BlockStack gap="300">
-        <Text as="h3" variant="headingMd">
-          {field.label}
-        </Text>
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))",
-            gap: "12px",
-          }}
-        >
-          {selectedItem.images.map((image: any, index: number) => (
-            <div
-              key={index}
-              style={{
-                position: "relative",
-                aspectRatio: "1",
-                border: "2px solid #e1e3e5",
-                borderRadius: "8px",
-                overflow: "hidden",
-                backgroundColor: "#f6f6f7",
-              }}
-            >
-              <img
-                src={image.url}
-                alt={image.altText || `Product image ${index + 1}`}
-                style={{
-                  width: "100%",
-                  height: "100%",
-                  objectFit: "cover",
-                }}
-              />
-            </div>
-          ))}
-        </div>
-      </BlockStack>
+      <ImageGalleryField
+        images={selectedItem.images || []}
+        featuredImage={selectedItem.featuredImage}
+        currentLanguage={currentLanguage}
+        primaryLocale={primaryLocale}
+        isPrimaryLocale={isPrimaryLocale}
+        isFreePlan={false} // TODO: Get from plan context
+        altTexts={{}} // TODO: Implement alt-text state management
+        onAltTextChange={(index, value) => {
+          console.log(`[IMAGE-ALT] Alt-text changed for image ${index}:`, value);
+          // TODO: Implement alt-text state update
+        }}
+        onGenerateAltText={(index) => {
+          console.log(`[IMAGE-ALT] Generate AI alt-text for image ${index}`);
+          // TODO: Implement AI generation
+        }}
+        onGenerateAllAltTexts={() => {
+          console.log(`[IMAGE-ALT] Generate all alt-texts`);
+          // TODO: Implement bulk AI generation
+        }}
+        onTranslateAltText={(index) => {
+          console.log(`[IMAGE-ALT] Translate alt-text for image ${index}`);
+          // TODO: Implement translation
+        }}
+        altTextSuggestions={{}} // TODO: Handle AI suggestions
+        onAcceptSuggestion={(index) => {
+          console.log(`[IMAGE-ALT] Accept suggestion for image ${index}`);
+          // TODO: Implement suggestion acceptance
+        }}
+        onRejectSuggestion={(index) => {
+          console.log(`[IMAGE-ALT] Reject suggestion for image ${index}`);
+          // TODO: Implement suggestion rejection
+        }}
+        isFieldLoading={(index) => false} // TODO: Implement loading state
+        t={{
+          image: t.products?.image || "Image",
+          featuredImage: t.products?.featuredImage || "Featured Image",
+          altTextForImage: t.products?.altTextForImage || "Alt-text for image",
+          altTextPlaceholder: t.products?.altTextPlaceholder || "Describe the image...",
+          generateAllAltTexts: t.products?.generateAllAltTexts || "Generate all alt-texts",
+          onlyFeaturedImageAvailable: t.products?.onlyFeaturedImageAvailable || "Only the featured image is available in the free plan.",
+          additionalImagesLocked: t.products?.additionalImagesLocked || "Additional images are locked",
+          availableInBasicPlan: t.products?.availableInBasicPlan || "Available in Basic plan and above",
+        }}
+      />
     );
   }
 
