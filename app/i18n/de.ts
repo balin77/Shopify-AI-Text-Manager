@@ -23,6 +23,7 @@ export const de = {
     noEntries: "Keine Einträge verfügbar",
     selectFromList: "Wähle einen Eintrag aus der Liste",
     saveChanges: "Änderungen speichern",
+    translate: "Übersetzen",
     translateAll: "Alles übersetzen",
     translating: "Übersetze...",
     productTitle: "Produkttitel",

@@ -200,24 +200,28 @@ export async function handleTranslateFieldToAllLocales(
               key: shopifyKey,
             });
 
-            // Update local database
+            // Update local database - only update this specific field
             const product = await db.product.findFirst({
               where: { id: productId },
               select: { shop: true },
             });
 
             if (product) {
-              await db.contentTranslation.deleteMany({
+              // Use upsert to update or create only this specific field
+              await db.contentTranslation.upsert({
                 where: {
-                  resourceId: productId,
-                  resourceType: "Product",
-                  locale: locale,
-                  key: shopifyKey,
+                  resourceId_resourceType_locale_key: {
+                    resourceId: productId,
+                    resourceType: "Product",
+                    locale: locale,
+                    key: shopifyKey,
+                  },
                 },
-              });
-
-              await db.contentTranslation.create({
-                data: {
+                update: {
+                  value: translatedValue,
+                  digest: digestMap[shopifyKey] || null,
+                },
+                create: {
                   resourceId: productId,
                   resourceType: "Product",
                   key: shopifyKey,
@@ -458,31 +462,38 @@ export async function handleTranslateAll(
           }
         }
 
-        // Update local database
+        // Update local database - use upsert to preserve existing translations
         const product = await db.product.findFirst({
           where: { id: productId },
           select: { shop: true },
         });
 
         if (product && translationsInput.length > 0) {
-          await db.contentTranslation.deleteMany({
-            where: {
-              resourceId: productId,
-              resourceType: "Product",
-              locale: locale,
-            },
-          });
-
-          await db.contentTranslation.createMany({
-            data: translationsInput.map((t) => ({
-              resourceId: productId,
-              resourceType: "Product",
-              key: t.key,
-              value: t.value,
-              locale: locale,
-              digest: t.translatableContentDigest || null,
-            })),
-          });
+          // Use upsert for each field to only update what we translated
+          for (const translation of translationsInput) {
+            await db.contentTranslation.upsert({
+              where: {
+                resourceId_resourceType_locale_key: {
+                  resourceId: productId,
+                  resourceType: "Product",
+                  locale: locale,
+                  key: translation.key,
+                },
+              },
+              update: {
+                value: translation.value,
+                digest: translation.translatableContentDigest || null,
+              },
+              create: {
+                resourceId: productId,
+                resourceType: "Product",
+                key: translation.key,
+                value: translation.value,
+                locale: locale,
+                digest: translation.translatableContentDigest || null,
+              },
+            });
+          }
         }
 
         processedLocales++;

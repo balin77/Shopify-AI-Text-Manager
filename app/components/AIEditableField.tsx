@@ -144,7 +144,7 @@ export function AIEditableField({
               loading={isLoading}
               disabled={(isPrimaryLocale && !onTranslateToAllLocales) || (!isPrimaryLocale && !sourceTextAvailable)}
             >
-              🌍 {isPrimaryLocale ? (t.products.translateAll || "Übersetzen") : t.products.translateFromPrimary}
+              🌍 {isPrimaryLocale ? (t.products.translate || "Übersetzen") : t.products.translateFromPrimary}
             </Button>
           )}
         </div>
