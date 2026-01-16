@@ -31,6 +31,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   );
   // Track if we're in the middle of an accept-and-translate flow to prevent immediate deletion
   const [isAcceptAndTranslateFlow, setIsAcceptAndTranslateFlow] = useState(false);
+  // Track if we're currently loading data to prevent false change detection
+  const [isLoadingData, setIsLoadingData] = useState(false);
 
   const selectedItem = items.find((item) => item.id === selectedItemId);
 
@@ -43,12 +45,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     clearPendingNavigation,
   } = useNavigationGuard();
 
-  // Track if we're currently loading data to prevent false hasChanges detection
-  const isLoadingDataRef = useRef(false);
-
-  // Change tracking
+  // Change tracking - only track changes if we're not currently loading data
   const hasChanges = useChangeTracking(
-    selectedItem || null,
+    isLoadingData ? null : (selectedItem || null), // Pass null while loading to prevent false change detection
     currentLanguage,
     primaryLocale,
     editableValues as any, // TODO: Fix type mismatch
@@ -60,10 +59,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // ============================================================================
 
   useEffect(() => {
-    if (!selectedItem) return;
+    if (!selectedItem) {
+      setIsLoadingData(false);
+      return;
+    }
 
-    // Mark that we're loading data
-    isLoadingDataRef.current = true;
+    // Mark that we're loading data - this will prevent change tracking temporarily
+    setIsLoadingData(true);
 
     // Reset accept-and-translate flag when changing items or languages
     setIsAcceptAndTranslateFlow(false);
@@ -91,11 +93,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
     setEditableValues(newValues);
 
-    // After state is set, mark loading as complete on next tick
-    // This ensures the change tracking doesn't see the intermediate state
-    setTimeout(() => {
-      isLoadingDataRef.current = false;
-    }, 0);
+    // After state is set, mark loading as complete
+    // This allows change tracking to resume with the correct values
+    setIsLoadingData(false);
   }, [selectedItemId, currentLanguage, selectedItem, config.fieldDefinitions, primaryLocale]);
 
   // ============================================================================
