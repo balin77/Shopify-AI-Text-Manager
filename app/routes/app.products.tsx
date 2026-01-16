@@ -70,9 +70,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     console.log("[PRODUCTS-LOADER] Primary locale:", primaryLocale);
     console.log("[PRODUCTS-LOADER] Available locales:", shopLocales.length);
 
-    // 2. Fetch products from DATABASE with plan-based limit
-    const takeLimit = planLimits.maxProducts === Infinity ? 50 : Math.min(planLimits.maxProducts, 50);
-
+    // 2. Fetch ALL products from DATABASE (no limit)
     // Load products and translations separately (unified pattern like Collections)
     const [dbProducts, allTranslations, aiSettings] = await Promise.all([
       db.product.findMany({
@@ -90,7 +88,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         orderBy: {
           title: "asc",
         },
-        take: takeLimit,
+        // NO LIMIT - load all products
       }),
       db.contentTranslation.findMany({
         where: { resourceType: 'Product' }
@@ -98,7 +96,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       loadAISettingsForValidation(db, session.shop),
     ]);
 
-    console.log("[PRODUCTS-LOADER] Loaded", dbProducts.length, "products from database (limit:", takeLimit, ")");
+    console.log("[PRODUCTS-LOADER] Loaded", dbProducts.length, "products from database (no limit)");
 
     // Group translations by resourceId (unified pattern)
     const translationsByResource = allTranslations.reduce((acc: Record<string, any[]>, trans) => {
