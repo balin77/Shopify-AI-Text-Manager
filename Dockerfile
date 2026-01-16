@@ -1,5 +1,5 @@
-# Use Node 20 Alpine (required for isomorphic-dompurify 2.35+)
-FROM node:20-alpine
+# Use Node 22 Alpine (required for jsdom@27, isomorphic-dompurify 2.35+)
+FROM node:22-alpine
 
 # Install dependencies for Prisma
 RUN apk add --no-cache openssl
