@@ -32,7 +32,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // Track if we're in the middle of an accept-and-translate flow to prevent immediate deletion
   const [isAcceptAndTranslateFlow, setIsAcceptAndTranslateFlow] = useState(false);
   // Track if we're currently loading data to prevent false change detection
-  const [isLoadingData, setIsLoadingData] = useState(false);
+  // Initialize to true if an item is selected to prevent race condition
+  const [isLoadingData, setIsLoadingData] = useState(!!selectedItemId);
 
   const selectedItem = items.find((item) => item.id === selectedItemId);
 
@@ -76,7 +77,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       return;
     }
 
-    // Mark that we're loading data - this will prevent change tracking temporarily
+    // Mark as loading immediately
     setIsLoadingData(true);
 
     // Reset accept-and-translate flag when changing items or languages
