@@ -352,7 +352,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
         title={t.content?.clearAllConfirmTitle || "Clear All Fields?"}
         primaryAction={{
           content: t.content?.clearAllConfirm || "Clear All",
-          onAction: currentLanguage === primaryLocale ? handlers.handleClearAllConfirm : handlers.handleClearAllForLocaleConfirm,
+          onAction: state.currentLanguage === primaryLocale ? handlers.handleClearAllConfirm : handlers.handleClearAllForLocaleConfirm,
           destructive: true,
         }}
         secondaryActions={[
@@ -365,11 +365,11 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
         <Modal.Section>
           <TextContainer>
             <Text as="p">
-              {currentLanguage === primaryLocale
+              {state.currentLanguage === primaryLocale
                 ? (t.content?.clearAllConfirmMessage ||
                   "Are you sure you want to clear all fields? This will remove all content from the current item. You will need to save the changes to make them permanent.")
                 : (t.content?.clearAllForLocaleConfirmMessage ||
-                  `Are you sure you want to clear all translations for ${shopLocales.find(l => l.locale === currentLanguage)?.name || currentLanguage}? This will remove all translated content for this language. You will need to save the changes to make them permanent.`)}
+                  `Are you sure you want to clear all translations for ${shopLocales.find(l => l.locale === state.currentLanguage)?.name || state.currentLanguage}? This will remove all translated content for this language. You will need to save the changes to make them permanent.`)}
             </Text>
           </TextContainer>
         </Modal.Section>
