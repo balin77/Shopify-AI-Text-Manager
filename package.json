@@ -12,6 +12,7 @@
     "start": "node scripts/validate-env.js && node start.js",
     "start:migrate": "node scripts/migrate-baseline.js && npm run start",
     "start:with-migrations": "node scripts/run-all-migrations.js && npm run start",
+    "start:production": "node scripts/run-all-migrations.js && node scripts/validate-env.js && node start.js",
     "migrate:product-translations": "tsx scripts/migrate-product-translations.ts",
     "typecheck": "tsc",
     "test": "vitest run",
