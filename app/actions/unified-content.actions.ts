@@ -387,7 +387,7 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
   }
 
   // ============================================================================
-  // TRANSLATE ALL
+  // TRANSLATE ALL (to ALL enabled locales)
   // ============================================================================
 
   if (action === "translateAll") {
@@ -465,6 +465,104 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
       });
 
       return json({ success: true, translations: allTranslations });
+    } catch (error: any) {
+      await db.task.update({
+        where: { id: task.id },
+        data: {
+          status: "failed",
+          completedAt: new Date(),
+          error: error.message,
+        },
+      });
+      return json({ success: false, error: error.message }, { status: 500 });
+    }
+  }
+
+  // ============================================================================
+  // TRANSLATE ALL FOR LOCALE (to ONE specific locale)
+  // ============================================================================
+
+  if (action === "translateAllForLocale") {
+    const targetLocale = formData.get("targetLocale") as string;
+    const contextTitle = formData.get("title") as string;
+
+    // Create task entry
+    const task = await db.task.create({
+      data: {
+        shop: session.shop,
+        type: "bulkTranslation",
+        status: "pending",
+        resourceType: contentConfig.resourceType,
+        resourceId: itemId,
+        resourceTitle: contextTitle,
+        targetLocale,
+        fieldType: "all",
+        progress: 0,
+        expiresAt: getTaskExpirationDate(),
+      },
+    });
+
+    try {
+      const changedFields: any = {};
+
+      // Collect all field values
+      contentConfig.fieldDefinitions.forEach((field) => {
+        const value = formData.get(field.key) as string;
+        if (value) {
+          changedFields[field.key] = value;
+        }
+      });
+
+      if (Object.keys(changedFields).length === 0) {
+        await db.task.update({
+          where: { id: task.id },
+          data: {
+            status: "failed",
+            completedAt: new Date(),
+            error: "No fields to translate",
+          },
+        });
+        return json({ success: false, error: "No fields to translate" }, { status: 400 });
+      }
+
+      // Create translation service with shop and taskId for queue management
+      const translationServiceWithTask = new TranslationService(provider, serviceConfig, session.shop, task.id);
+
+      await db.task.update({
+        where: { id: task.id },
+        data: { status: "queued", progress: 10 },
+      });
+
+      // Translate to only ONE specific locale
+      const allTranslations = await shopifyContentService.translateAllContent({
+        resourceId: itemId,
+        resourceType: contentConfig.resourceType as any,
+        fields: changedFields,
+        translationService: translationServiceWithTask,
+        db,
+        targetLocales: [targetLocale],
+        contentType: contentConfig.contentType,
+        taskId: task.id,
+      });
+
+      // Extract translations for the target locale
+      const translations = allTranslations[targetLocale] || {};
+
+      await db.task.update({
+        where: { id: task.id },
+        data: {
+          status: "completed",
+          progress: 100,
+          completedAt: new Date(),
+          result: JSON.stringify({
+            success: true,
+            targetLocale,
+            translations,
+          }),
+        },
+      });
+
+      return json({ success: true, translations, targetLocale });
     } catch (error: any) {
       await db.task.update({
         where: { id: task.id },

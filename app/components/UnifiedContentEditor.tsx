@@ -208,30 +208,52 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
 
                   {/* Row 2: Action Buttons */}
                   <InlineStack align="space-between" blockAlign="center">
-                    {/* Left: Translate All + Clear All Buttons (only on primary locale) */}
-                    {state.currentLanguage === primaryLocale ? (
-                      <InlineStack gap="200">
-                        <Button
-                          onClick={handlers.handleTranslateAll}
-                          loading={fetcherState !== "idle" && fetcherFormData?.get("action") === "translateAll"}
-                          disabled={fetcherState !== "idle" && fetcherFormData?.get("action") === "translateAll"}
-                          size="slim"
-                        >
-                          {fetcherState !== "idle" && fetcherFormData?.get("action") === "translateAll"
-                            ? (t.content?.translating || "Translating...")
-                            : (t.content?.translateAll || "🌍 Translate All")}
-                        </Button>
-                        <Button
-                          onClick={handlers.handleClearAllClick}
-                          size="slim"
-                          tone="critical"
-                        >
-                          🗑️ {t.content?.clearAll || "Clear All"}
-                        </Button>
-                      </InlineStack>
-                    ) : (
-                      <div />
-                    )}
+                    {/* Left: Translate All + Clear All Buttons */}
+                    <InlineStack gap="200">
+                      {state.currentLanguage === primaryLocale ? (
+                        <>
+                          {/* Primary locale: Translate to ALL foreign languages */}
+                          <Button
+                            onClick={handlers.handleTranslateAll}
+                            loading={fetcherState !== "idle" && fetcherFormData?.get("action") === "translateAll"}
+                            disabled={fetcherState !== "idle" && fetcherFormData?.get("action") === "translateAll"}
+                            size="slim"
+                          >
+                            {fetcherState !== "idle" && fetcherFormData?.get("action") === "translateAll"
+                              ? (t.content?.translating || "Translating...")
+                              : (t.content?.translateAll || "🌍 Translate All")}
+                          </Button>
+                          <Button
+                            onClick={handlers.handleClearAllClick}
+                            size="slim"
+                            tone="critical"
+                          >
+                            🗑️ {t.content?.clearAll || "Clear All"}
+                          </Button>
+                        </>
+                      ) : (
+                        <>
+                          {/* Foreign locale: Translate ONLY this locale */}
+                          <Button
+                            onClick={handlers.handleTranslateAllForLocale}
+                            loading={fetcherState !== "idle" && fetcherFormData?.get("action") === "translateAllForLocale"}
+                            disabled={fetcherState !== "idle" && fetcherFormData?.get("action") === "translateAllForLocale"}
+                            size="slim"
+                          >
+                            {fetcherState !== "idle" && fetcherFormData?.get("action") === "translateAllForLocale"
+                              ? (t.content?.translating || "Translating...")
+                              : (t.content?.translateAll || "🌍 Translate All")}
+                          </Button>
+                          <Button
+                            onClick={handlers.handleClearAllForLocaleClick}
+                            size="slim"
+                            tone="critical"
+                          >
+                            🗑️ {t.content?.clearAll || "Clear All"}
+                          </Button>
+                        </>
+                      )}
+                    </InlineStack>
 
                     {/* Right: Save/Discard + Reload Buttons */}
                     <InlineStack gap="200" blockAlign="center">
@@ -330,7 +352,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
         title={t.content?.clearAllConfirmTitle || "Clear All Fields?"}
         primaryAction={{
           content: t.content?.clearAllConfirm || "Clear All",
-          onAction: handlers.handleClearAllConfirm,
+          onAction: currentLanguage === primaryLocale ? handlers.handleClearAllConfirm : handlers.handleClearAllForLocaleConfirm,
           destructive: true,
         }}
         secondaryActions={[
@@ -343,8 +365,11 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
         <Modal.Section>
           <TextContainer>
             <Text as="p">
-              {t.content?.clearAllConfirmMessage ||
-                "Are you sure you want to clear all fields? This will remove all content from the current item. You will need to save the changes to make them permanent."}
+              {currentLanguage === primaryLocale
+                ? (t.content?.clearAllConfirmMessage ||
+                  "Are you sure you want to clear all fields? This will remove all content from the current item. You will need to save the changes to make them permanent.")
+                : (t.content?.clearAllForLocaleConfirmMessage ||
+                  `Are you sure you want to clear all translations for ${shopLocales.find(l => l.locale === currentLanguage)?.name || currentLanguage}? This will remove all translated content for this language. You will need to save the changes to make them permanent.`)}
             </Text>
           </TextContainer>
         </Modal.Section>

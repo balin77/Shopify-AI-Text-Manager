@@ -118,6 +118,9 @@ export interface EditorHandlers {
   handleClearAllClick: () => void;
   handleClearAllConfirm: () => void;
   handleClearAllCancel: () => void;
+  handleClearAllForLocaleClick: () => void;
+  handleClearAllForLocaleConfirm: () => void;
+  handleTranslateAllForLocale: () => void;
   handleAltTextChange: (imageIndex: number, value: string) => void;
   handleGenerateAltText: (imageIndex: number) => void;
   handleGenerateAllAltTexts: () => void;

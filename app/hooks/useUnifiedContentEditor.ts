@@ -237,13 +237,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     }
   }, [fetcher.data, currentLanguage, selectedItem, config.fieldDefinitions, showInfoBox]);
 
-  // Handle "translateAll" response
+  // Handle "translateAll" response (translates to ALL enabled locales)
   useEffect(() => {
     if (
       fetcher.data?.success &&
       'translations' in fetcher.data &&
       !('locale' in fetcher.data) &&
-      !('fieldType' in fetcher.data)
+      !('fieldType' in fetcher.data) &&
+      !('targetLocale' in fetcher.data)
     ) {
       const translations = (fetcher.data as any).translations;
       if (selectedItem) {
@@ -283,6 +284,57 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       }
     }
   }, [fetcher.data, currentLanguage, selectedItem, config.fieldDefinitions]);
+
+  // Handle "translateAllForLocale" response (translates to ONE specific locale)
+  useEffect(() => {
+    if (
+      fetcher.data?.success &&
+      'translations' in fetcher.data &&
+      'targetLocale' in fetcher.data &&
+      !('fieldType' in fetcher.data)
+    ) {
+      const { translations, targetLocale } = fetcher.data as any;
+      if (selectedItem) {
+        const newTranslations: any[] = [];
+
+        // Map fields to translations for the specific locale
+        config.fieldDefinitions.forEach((fieldDef) => {
+          const value = translations[fieldDef.key];
+          if (value) {
+            newTranslations.push({
+              key: fieldDef.translationKey,
+              value,
+              locale: targetLocale,
+            });
+          }
+        });
+
+        // Store directly in item translations (replace existing for this locale)
+        selectedItem.translations = [
+          ...selectedItem.translations.filter((t: any) => t.locale !== targetLocale),
+          ...newTranslations,
+        ];
+
+        // If we're currently viewing this locale, update the editable fields
+        if (currentLanguage === targetLocale) {
+          const updatedValues = { ...editableValues };
+          config.fieldDefinitions.forEach((fieldDef) => {
+            const value = translations[fieldDef.key];
+            if (value) {
+              updatedValues[fieldDef.key] = value;
+            }
+          });
+          setEditableValues(updatedValues);
+        }
+
+        showInfoBox(
+          t.common?.translatedSuccessfully || `Successfully translated to ${targetLocale}`,
+          "success",
+          t.common?.success || "Success"
+        );
+      }
+    }
+  }, [fetcher.data, currentLanguage, selectedItem, config.fieldDefinitions, showInfoBox, t]);
 
   // Update item object after saving (both primary locale and translations)
   useEffect(() => {
@@ -748,6 +800,45 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     setIsClearAllModalOpen(false);
   };
 
+  const handleClearAllForLocaleClick = () => {
+    setIsClearAllModalOpen(true);
+  };
+
+  const handleClearAllForLocaleConfirm = () => {
+    // Force isLoadingData to false to ensure change detection works
+    setIsLoadingData(false);
+
+    // Clear all field values for the current foreign language
+    const clearedValues: Record<string, string> = {};
+    config.fieldDefinitions.forEach((field) => {
+      clearedValues[field.key] = "";
+    });
+    setEditableValues(clearedValues);
+
+    // Close modal
+    setIsClearAllModalOpen(false);
+  };
+
+  const handleTranslateAllForLocale = () => {
+    if (!selectedItemId || !selectedItem || currentLanguage === primaryLocale) return;
+
+    const formDataObj: Record<string, string> = {
+      action: "translateAllForLocale",
+      itemId: selectedItemId,
+      targetLocale: currentLanguage,
+    };
+
+    // Add all field values from primary locale
+    config.fieldDefinitions.forEach((field) => {
+      const value = getItemFieldValue(selectedItem, field.key, primaryLocale);
+      if (value) {
+        formDataObj[field.key] = value;
+      }
+    });
+
+    fetcher.submit(formDataObj, { method: "POST" });
+  };
+
   // ============================================================================
   // ALT-TEXT HANDLERS
   // ============================================================================
@@ -935,6 +1026,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     handleClearAllClick,
     handleClearAllConfirm,
     handleClearAllCancel,
+    handleClearAllForLocaleClick,
+    handleClearAllForLocaleConfirm,
+    handleTranslateAllForLocale,
     handleAltTextChange,
     handleGenerateAltText,
     handleGenerateAllAltTexts,
