@@ -12,19 +12,17 @@ COPY package.json ./
 COPY prisma ./prisma/
 
 # Install dependencies with proper platform support
-# Remove lock file to force fresh install with correct optional dependencies
-# Skip husky installation in Docker (HUSKY=0 disables husky hooks)
-ENV HUSKY=0
-RUN npm install --legacy-peer-deps
+# Use --ignore-scripts to skip problematic postinstall hooks (like husky)
+RUN npm install --legacy-peer-deps --ignore-scripts
+
+# Manually run prisma generate (normally done in postinstall)
+RUN npx prisma generate
 
 # Explicitly install the Alpine Linux rollup binary
 RUN npm install --no-save @rollup/rollup-linux-x64-musl
 
 # Copy application code
 COPY . .
-
-# Generate Prisma Client
-RUN npx prisma generate
 
 # Build the application
 RUN npm run build
