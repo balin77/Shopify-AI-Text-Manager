@@ -14,7 +14,7 @@ import { CheckIcon, XIcon } from "@shopify/polaris-icons";
 import { AIEditableField } from "../AIEditableField";
 import { AIEditableHTMLField } from "../AIEditableHTMLField";
 import { ProductOptions } from "./ProductOptions";
-import { LocaleNavigationButtons } from "../LocaleNavigationButtons";
+import { UnifiedLanguageBar } from "../unified/UnifiedLanguageBar";
 import { SaveDiscardButtons } from "../SaveDiscardButtons";
 import { useI18n } from "../../contexts/I18nContext";
 import { usePlan } from "../../contexts/PlanContext";
@@ -220,43 +220,44 @@ export function ProductEditor({
 
   return (
     <>
-      {/* Fixed Header with Language Selector and Action Buttons */}
+      {/* Fixed Header with Unified Language Bar and Action Buttons */}
       <Card padding="400">
         <BlockStack gap="300">
-          {/* Language Selector, Translate All, Save/Reload Buttons on same line */}
-          <InlineStack align="space-between" blockAlign="center" gap="400">
-            <div style={{ flex: 1 }}>
-              <LocaleNavigationButtons
-                shopLocales={shopLocales}
-                currentLanguage={currentLanguage}
-                primaryLocaleSuffix={t.products.primaryLanguageSuffix}
-                selectedItem={product}
-                primaryLocale={primaryLocale}
-                contentType="products"
-                hasChanges={hasChanges}
-                onLanguageChange={onLanguageChange}
-                enabledLanguages={enabledLanguages}
-                onToggleLanguage={onToggleLanguage}
-              />
-            </div>
-            <InlineStack gap="200" blockAlign="center">
-              {isPrimaryLocale && (
-                <Button onClick={onTranslateAll} loading={isTranslatingAll}>
-                  {t.products.translateAll}
-                </Button>
-              )}
-              <SaveDiscardButtons
-                hasChanges={hasChanges}
-                onSave={onSave}
-                onDiscard={onDiscardChanges || (() => {})}
-                highlightSaveButton={false}
-                saveText={t.products.saveChanges}
-                discardText={t.products.discardChanges || "Verwerfen"}
-                action="updateProduct"
-                fetcherState={fetcherState}
-                fetcherFormData={fetcherFormData}
-              />
-            </InlineStack>
+          {/* Unified Language Bar with Translate All and Reload */}
+          <UnifiedLanguageBar
+            shopLocales={shopLocales}
+            currentLanguage={currentLanguage}
+            primaryLocale={primaryLocale}
+            selectedItem={product}
+            contentType="products"
+            hasChanges={hasChanges}
+            onLanguageChange={onLanguageChange}
+            enabledLanguages={enabledLanguages}
+            onToggleLanguage={onToggleLanguage}
+            onTranslateAll={onTranslateAll}
+            isTranslating={isTranslatingAll}
+            showTranslateAll={true}
+            showReloadButton={true}
+            t={{
+              primaryLocaleSuffix: t.products.primaryLanguageSuffix,
+              translateAll: t.products.translateAll,
+              translating: t.products.translating || "Translating...",
+            }}
+          />
+
+          {/* Save/Discard Buttons */}
+          <InlineStack align="end" blockAlign="center">
+            <SaveDiscardButtons
+              hasChanges={hasChanges}
+              onSave={onSave}
+              onDiscard={onDiscardChanges || (() => {})}
+              highlightSaveButton={false}
+              saveText={t.products.saveChanges}
+              discardText={t.products.discardChanges || "Verwerfen"}
+              action="updateProduct"
+              fetcherState={fetcherState}
+              fetcherFormData={fetcherFormData}
+            />
           </InlineStack>
         </BlockStack>
       </Card>

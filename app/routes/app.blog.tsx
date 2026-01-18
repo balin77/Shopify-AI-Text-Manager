@@ -172,6 +172,8 @@ export default function BlogPage() {
         fetcherState={fetcher.state}
         fetcherFormData={fetcher.formData}
         t={t}
+        hideItemListImages={true}
+        hideItemListStatusBars={true}
       />
     </>
   );

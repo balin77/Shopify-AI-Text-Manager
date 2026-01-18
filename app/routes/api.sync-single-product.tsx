@@ -31,7 +31,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     console.log(`[SYNC-SINGLE-PRODUCT] ✓ Sync complete!`);
 
-    // Fetch updated product from database
+    // Fetch updated product and translations from database
     const { db } = await import("../db.server");
     const product = await db.product.findUnique({
       where: {
@@ -40,13 +40,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           id: productId,
         },
       },
-      include: {
-        translations: true,
+    });
+
+    const translations = await db.contentTranslation.findMany({
+      where: {
+        resourceId: productId,
+        resourceType: "Product",
       },
     });
 
     const translationsByLocale: Record<string, string[]> = {};
-    for (const translation of product?.translations || []) {
+    for (const translation of translations) {
       if (!translationsByLocale[translation.locale]) {
         translationsByLocale[translation.locale] = [];
       }
@@ -56,7 +60,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return json({
       success: true,
       message: `Successfully synced product: ${productId}`,
-      translationsCount: product?.translations.length || 0,
+      translationsCount: translations.length,
       translationsByLocale,
     });
   } catch (error: any) {

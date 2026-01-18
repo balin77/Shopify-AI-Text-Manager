@@ -8,6 +8,9 @@ dist/
 *.log
 .DS_Store
 
+# Logs directory
+logs/
+
 # Remix/Vite Build
 build/
 .cache/

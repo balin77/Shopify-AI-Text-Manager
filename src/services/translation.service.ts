@@ -7,8 +7,12 @@ export class TranslationService {
     this.aiService = new AIService(aiProvider, config, shop, taskId);
   }
 
-  async translateProduct(fields: Record<string, string>, targetLocales?: string[]): Promise<Record<string, Record<string, string>>> {
+  async translateProduct(
+    fields: Record<string, string>,
+    targetLocales?: string[],
+    contentType: string = 'product'
+  ): Promise<Record<string, Record<string, string>>> {
     const locales = targetLocales || ['en', 'fr', 'es', 'it'];
-    return await this.aiService.translateFields(fields, locales);
+    return await this.aiService.translateFields(fields, locales, contentType);
   }
 }

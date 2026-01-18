@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useRef, useEffect } from "react";
 import { Text, Button, ButtonGroup, InlineStack, Tooltip } from "@shopify/polaris";
 import { AISuggestionBanner } from "./AISuggestionBanner";
 import { useI18n } from "../contexts/I18nContext";
@@ -27,6 +27,7 @@ interface AIEditableHTMLFieldProps {
   onAcceptSuggestion?: () => void;
   onAcceptAndTranslate?: () => void;
   onRejectSuggestion?: () => void;
+  onClear?: () => void;
 }
 
 export function AIEditableHTMLField({
@@ -51,10 +52,62 @@ export function AIEditableHTMLField({
   onAcceptSuggestion,
   onAcceptAndTranslate,
   onRejectSuggestion,
+  onClear,
 }: AIEditableHTMLFieldProps) {
   const { t } = useI18n();
   const editorRef = useRef<HTMLDivElement>(null);
   const { executeCommand } = useHtmlFormatting({ editorRef, onChange });
+  const isUserTypingRef = useRef(false);
+  const initializedRef = useRef(false);
+
+  // Initialize content on first render and update only when value changes externally
+  useEffect(() => {
+    if (!editorRef.current) return;
+
+    // On first render, set the initial content
+    if (!initializedRef.current) {
+      editorRef.current.innerHTML = value;
+      initializedRef.current = true;
+      return;
+    }
+
+    // Skip update if user is currently typing
+    if (isUserTypingRef.current) return;
+
+    // Only update if the content is actually different
+    if (editorRef.current.innerHTML !== value) {
+      // Save current cursor position
+      const selection = window.getSelection();
+      const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+      const startOffset = range?.startOffset;
+      const startContainer = range?.startContainer;
+
+      // Update content
+      editorRef.current.innerHTML = value;
+
+      // Restore cursor position if possible
+      if (startContainer && startOffset !== undefined && editorRef.current.contains(startContainer)) {
+        try {
+          const newRange = document.createRange();
+          newRange.setStart(startContainer, Math.min(startOffset, startContainer.textContent?.length || 0));
+          newRange.collapse(true);
+          selection?.removeAllRanges();
+          selection?.addRange(newRange);
+        } catch (e) {
+          // Cursor restoration failed, that's okay
+        }
+      }
+    }
+  }, [value]);
+
+  const handleInput = (e: React.FormEvent<HTMLDivElement>) => {
+    isUserTypingRef.current = true;
+    onChange(e.currentTarget.innerHTML);
+    // Reset flag after a short delay
+    setTimeout(() => {
+      isUserTypingRef.current = false;
+    }, 0);
+  };
 
   // Determine background color class based on translation state
   const getBackgroundClass = () => {
@@ -90,9 +143,21 @@ export function AIEditableHTMLField({
         <Text as="p" variant="bodyMd" fontWeight="bold">
           {label}
         </Text>
-        <Button size="slim" onClick={onToggleMode}>
-          {mode === "html" ? t.products.preview : t.products.html}
-        </Button>
+        <InlineStack gap="200">
+          <Button size="slim" onClick={onToggleMode}>
+            {mode === "html" ? t.products.preview : t.products.html}
+          </Button>
+          {onClear && value && (
+            <Button
+              size="slim"
+              onClick={onClear}
+              tone="critical"
+              variant="plain"
+            >
+              {t.common?.clear || t.products?.clear || "Clear"}
+            </Button>
+          )}
+        </InlineStack>
       </InlineStack>
 
       {mode === "rendered" && (
@@ -251,8 +316,8 @@ export function AIEditableHTMLField({
         <div
           ref={editorRef}
           contentEditable
-          onInput={(e) => onChange(e.currentTarget.innerHTML)}
-          dangerouslySetInnerHTML={{ __html: value }}
+          onInput={handleInput}
+          suppressContentEditableWarning
           style={{
             width: "100%",
             minHeight: "200px",
@@ -300,7 +365,7 @@ export function AIEditableHTMLField({
               loading={isLoading}
               disabled={!value}
             >
-              🎨 Formatieren
+              🎨 {t.products.formatWithAI || "Formatieren"}
             </Button>
           )}
           {(onTranslate || onTranslateToAllLocales) && (
@@ -310,7 +375,7 @@ export function AIEditableHTMLField({
               loading={isLoading}
               disabled={(isPrimaryLocale && !onTranslateToAllLocales) || (!isPrimaryLocale && !sourceTextAvailable)}
             >
-              🌍 {isPrimaryLocale ? "Übersetzen" : t.products.translateFromPrimary}
+              🌍 {isPrimaryLocale ? (t.products.translate || "Übersetzen") : t.products.translateFromPrimary}
             </Button>
           )}
         </div>

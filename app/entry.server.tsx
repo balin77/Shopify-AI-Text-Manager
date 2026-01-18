@@ -5,21 +5,22 @@ import { RemixServer } from "@remix-run/react";
 import { renderToPipeableStream } from "react-dom/server";
 import { addDocumentResponseHeaders } from "./shopify.server";
 import { syncScheduler } from "./services/sync-scheduler.service";
+import { logger } from "./utils/logger.server";
 
 const ABORT_DELAY = 5000;
 
 // Graceful shutdown handlers for sync scheduler
 process.on('SIGTERM', () => {
-  console.log('[ENTRY.SERVER] SIGTERM received - stopping all sync schedulers...');
+  logger.info('SIGTERM received - stopping all sync schedulers', { context: 'EntryServer' });
   syncScheduler.stopAll();
-  console.log('[ENTRY.SERVER] All sync schedulers stopped');
+  logger.info('All sync schedulers stopped', { context: 'EntryServer' });
   process.exit(0);
 });
 
 process.on('SIGINT', () => {
-  console.log('[ENTRY.SERVER] SIGINT received - stopping all sync schedulers...');
+  logger.info('SIGINT received - stopping all sync schedulers', { context: 'EntryServer' });
   syncScheduler.stopAll();
-  console.log('[ENTRY.SERVER] All sync schedulers stopped');
+  logger.info('All sync schedulers stopped', { context: 'EntryServer' });
   process.exit(0);
 });
 
@@ -30,9 +31,13 @@ export default async function handleRequest(
   remixContext: EntryContext
 ) {
   const url = new URL(request.url);
-  console.log(`📥 [ENTRY.SERVER] Request: ${request.method} ${url.pathname}`);
-  console.log(`🔍 [ENTRY.SERVER] Status Code: ${responseStatusCode}`);
-  console.log(`🔍 [ENTRY.SERVER] Headers:`, Object.fromEntries(request.headers.entries()));
+  logger.debug('Incoming request', {
+    context: 'EntryServer',
+    method: request.method,
+    pathname: url.pathname,
+    statusCode: responseStatusCode,
+    headers: Object.fromEntries(request.headers.entries())
+  });
 
   addDocumentResponseHeaders(request, responseHeaders);
 
@@ -52,7 +57,10 @@ export default async function handleRequest(
 
           responseHeaders.set("Content-Type", "text/html");
 
-          console.log(`✅ [ENTRY.SERVER] Shell ready, sending response with status ${responseStatusCode}`);
+          logger.debug('Shell ready, sending response', {
+            context: 'EntryServer',
+            statusCode: responseStatusCode
+          });
 
           resolve(
             new Response(stream, {
@@ -64,14 +72,14 @@ export default async function handleRequest(
           pipe(body);
         },
         onShellError(error: unknown) {
-          console.error("❌ [ENTRY.SERVER] Shell error:", error);
+          logger.error('Shell error', { context: 'EntryServer', error });
           reject(error);
         },
         onError(error: unknown) {
-          console.error("❌ [ENTRY.SERVER] Render error:", error);
+          logger.error('Render error', { context: 'EntryServer', error });
           responseStatusCode = 500;
           if (shellRendered) {
-            console.error(error);
+            logger.error('Post-shell render error', { context: 'EntryServer', error });
           }
         },
       }

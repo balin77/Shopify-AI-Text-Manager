@@ -1078,12 +1078,20 @@ railway logs | grep "ContentSync"
 
 Detaillierte Dokumentationen findest du im [docs/](docs/) Ordner:
 
+### Setup & Deployment
 - **[Prisma Migration Guide](docs/PRISMA_MIGRATION_GUIDE.md)** - Datenbank-Migrationen auf Railway
 - **[Webhook Setup Guide](docs/WEBHOOK-SETUP-GUIDE.md)** - Einrichtung des Webhook-Systems
-- **[Plan System](docs/PLAN_SYSTEM.md)** - Subscription-Plan-System
 - **[Database Maintenance](docs/DATABASE_MAINTENANCE.md)** - Datenbank-Wartung
-- **[Security Improvements](docs/SECURITY_IMPROVEMENTS.md)** - Sicherheitsverbesserungen
+
+### Features & Architektur
+- **[Plan System](docs/PLAN_SYSTEM.md)** - Subscription-Plan-System
 - **[Shopify Content Types](docs/SHOPIFY_TRANSLATABLE_CONTENT_TYPES.md)** - Referenz aller Content-Types
+
+### Entwicklung & Best Practices
+- **[Code Evaluation](docs/CODE_EVALUATION.md)** - Vollständige Code-Evaluierung & Qualitätsanalyse
+- **[Logging Guide](docs/LOGGING_GUIDE.md)** - Strukturiertes Logging mit Winston
+- **[Security Improvements](docs/SECURITY_IMPROVEMENTS.md)** - Sicherheitsverbesserungen
+- **[Improvements 2026-01-15](docs/IMPROVEMENTS_2026-01-15.md)** - Aktuelle Code-Verbesserungen
 
 ## 📄 Lizenz
 

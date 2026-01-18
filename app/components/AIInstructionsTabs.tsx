@@ -82,27 +82,27 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, on
   const tabs = [
     {
       id: 'products',
-      content: 'Produkte',
+      content: t.settings.tabProducts,
       panelID: 'products-panel',
     },
     {
       id: 'collections',
-      content: 'Collections',
+      content: t.settings.tabCollections,
       panelID: 'collections-panel',
     },
     {
       id: 'blogs',
-      content: 'Blogs',
+      content: t.settings.tabBlogs,
       panelID: 'blogs-panel',
     },
     {
       id: 'pages',
-      content: 'Seiten',
+      content: t.settings.tabPages,
       panelID: 'pages-panel',
     },
     {
       id: 'policies',
-      content: 'Richtlinien',
+      content: t.settings.tabPolicies,
       panelID: 'policies-panel',
     },
   ];
@@ -114,9 +114,30 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, on
     setLocalInstructions({ ...localInstructions, [field]: value });
   };
 
-  const handleResetField = (field: string, entityType: EntityType) => {
-    const defaultValue = getDefaultForField(entityType, field as any);
-    setLocalInstructions({ ...localInstructions, [field]: defaultValue });
+  // Map full field names (e.g., 'productTitleFormat') to EntityInstructions keys (e.g., 'titleFormat')
+  const getEntityFieldName = (fullFieldName: string, entityType: EntityType): string => {
+    const prefix = entityType === 'products' ? 'product' :
+                   entityType === 'collections' ? 'collection' :
+                   entityType === 'blogs' ? 'blog' :
+                   entityType === 'pages' ? 'page' : 'policy';
+
+    // Remove prefix to get the field name: 'productTitleFormat' -> 'TitleFormat'
+    const withoutPrefix = fullFieldName.replace(new RegExp(`^${prefix}`, 'i'), '');
+
+    // Lowercase first letter: 'TitleFormat' -> 'titleFormat'
+    return withoutPrefix.charAt(0).toLowerCase() + withoutPrefix.slice(1);
+  };
+
+  const handleResetFormatField = (formatField: string, entityType: EntityType) => {
+    const entityFieldName = getEntityFieldName(formatField, entityType);
+    const defaultValue = getDefaultForField(entityType, entityFieldName as any);
+    setLocalInstructions({ ...localInstructions, [formatField]: defaultValue });
+  };
+
+  const handleResetInstructionsField = (instructionsField: string, entityType: EntityType) => {
+    const entityFieldName = getEntityFieldName(instructionsField, entityType);
+    const defaultValue = getDefaultForField(entityType, entityFieldName as any);
+    setLocalInstructions({ ...localInstructions, [instructionsField]: defaultValue });
   };
 
   const handleResetAll = () => {
@@ -232,84 +253,102 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, on
             {selectedTab === 0 && (
               <>
                 <AIInstructionFieldGroup
-                  fieldName="Alt-Text (Bilder)"
+                  fieldName={t.settings.fieldAltText}
                   formatValue={localInstructions.productAltTextFormat}
                   instructionsValue={localInstructions.productAltTextInstructions}
                   onFormatChange={(v) => handleFieldChange('productAltTextFormat', v)}
                   onInstructionsChange={(v) => handleFieldChange('productAltTextInstructions', v)}
-                  onReset={() => handleResetField('productAltTextFormat', 'products')}
-                  formatPlaceholder="z.B. Premium Leder Geldbörse aus dunkelbraunem Vollrindleder"
-                  instructionsPlaceholder="z.B. 60-125 Zeichen, beschreibe was zu sehen ist, sachlich"
-                  formatLabel="Formatbeispiel"
-                  instructionsLabel="Anweisungen"
+                  onResetFormat={() => handleResetFormatField('productAltTextFormat', 'products')}
+                  onResetInstructions={() => handleResetInstructionsField('productAltTextInstructions', 'products')}
+                  formatPlaceholder={t.settings.productAltTextFormatPlaceholder}
+                  instructionsPlaceholder={t.settings.productAltTextInstructionsPlaceholder}
+                  formatLabel={t.settings.formatLabel}
+                  instructionsLabel={t.settings.instructionsLabel}
+                  resetFormatText={t.settings?.resetField || "Reset"}
+                  resetInstructionsText={t.settings?.resetField || "Reset"}
                 />
 
                 <AIInstructionFieldGroup
-                  fieldName="Titel"
+                  fieldName={t.settings.fieldTitle}
                   formatValue={localInstructions.productTitleFormat}
                   instructionsValue={localInstructions.productTitleInstructions}
                   onFormatChange={(v) => handleFieldChange('productTitleFormat', v)}
                   onInstructionsChange={(v) => handleFieldChange('productTitleInstructions', v)}
-                  onReset={() => handleResetField('productTitleFormat', 'products')}
-                  formatPlaceholder="z.B. Premium Leder Geldbörse - Elegant & Langlebig"
-                  instructionsPlaceholder="z.B. Maximal 60 Zeichen, Material und Hauptmerkmal nennen"
-                  formatLabel="Formatbeispiel"
-                  instructionsLabel="Anweisungen"
+                  onResetFormat={() => handleResetFormatField('productTitleFormat', 'products')}
+                  onResetInstructions={() => handleResetInstructionsField('productTitleInstructions', 'products')}
+                  resetFormatText={t.settings?.resetField || "Reset"}
+                  resetInstructionsText={t.settings?.resetField || "Reset"}
+                  formatPlaceholder={t.settings.productTitleFormatPlaceholder}
+                  instructionsPlaceholder={t.settings.productTitleInstructionsPlaceholder}
+                  formatLabel={t.settings.formatLabel}
+                  instructionsLabel={t.settings.instructionsLabel}
                 />
 
                 <AIInstructionFieldGroup
-                  fieldName="Beschreibung"
+                  fieldName={t.settings.fieldDescription}
                   formatValue={localInstructions.productDescriptionFormat}
                   instructionsValue={localInstructions.productDescriptionInstructions}
                   onFormatChange={(v) => handleFieldChange('productDescriptionFormat', v)}
                   onInstructionsChange={(v) => handleFieldChange('productDescriptionInstructions', v)}
-                  onReset={() => handleResetField('productDescriptionFormat', 'products')}
-                  formatPlaceholder="z.B. <h2>Handwerkskunst in Perfektion</h2><p>Premium Leder...</p>"
-                  instructionsPlaceholder="z.B. 150-250 Wörter, H2/H3 nutzen, Storytelling verwenden"
-                  formatLabel="Formatbeispiel"
-                  instructionsLabel="Anweisungen"
+                  onResetFormat={() => handleResetFormatField('productDescriptionFormat', 'products')}
+                  onResetInstructions={() => handleResetInstructionsField('productDescriptionInstructions', 'products')}
+                  resetFormatText={t.settings?.resetField || "Reset"}
+                  resetInstructionsText={t.settings?.resetField || "Reset"}
+                  formatPlaceholder={t.settings.productDescriptionFormatPlaceholder}
+                  instructionsPlaceholder={t.settings.productDescriptionInstructionsPlaceholder}
+                  formatLabel={t.settings.formatLabel}
+                  instructionsLabel={t.settings.instructionsLabel}
                   isHtmlField={true}
                   htmlMode={htmlModes['productDescriptionFormat'] || 'rendered'}
                   onToggleHtmlMode={() => handleToggleHtmlMode('productDescriptionFormat')}
                 />
 
                 <AIInstructionFieldGroup
-                  fieldName="URL-Handle"
+                  fieldName={t.settings.fieldUrlHandle}
                   formatValue={localInstructions.productHandleFormat}
                   instructionsValue={localInstructions.productHandleInstructions}
                   onFormatChange={(v) => handleFieldChange('productHandleFormat', v)}
                   onInstructionsChange={(v) => handleFieldChange('productHandleInstructions', v)}
-                  onReset={() => handleResetField('productHandleFormat', 'products')}
-                  formatPlaceholder="z.B. premium-leder-geldboerse"
-                  instructionsPlaceholder="z.B. Nur Kleinbuchstaben, Bindestriche, keine Umlaute, max 50 Zeichen"
-                  formatLabel="Formatbeispiel"
-                  instructionsLabel="Anweisungen"
+                  onResetFormat={() => handleResetFormatField('productHandleFormat', 'products')}
+                  onResetInstructions={() => handleResetInstructionsField('productHandleInstructions', 'products')}
+                  resetFormatText={t.settings?.resetField || "Reset"}
+                  resetInstructionsText={t.settings?.resetField || "Reset"}
+                  formatPlaceholder={t.settings.productHandleFormatPlaceholder}
+                  instructionsPlaceholder={t.settings.productHandleInstructionsPlaceholder}
+                  formatLabel={t.settings.formatLabel}
+                  instructionsLabel={t.settings.instructionsLabel}
                 />
 
                 <AIInstructionFieldGroup
-                  fieldName="SEO-Titel"
+                  fieldName={t.settings.fieldSeoTitle}
                   formatValue={localInstructions.productSeoTitleFormat}
                   instructionsValue={localInstructions.productSeoTitleInstructions}
                   onFormatChange={(v) => handleFieldChange('productSeoTitleFormat', v)}
                   onInstructionsChange={(v) => handleFieldChange('productSeoTitleInstructions', v)}
-                  onReset={() => handleResetField('productSeoTitleFormat', 'products')}
-                  formatPlaceholder="z.B. Premium Leder Geldbörse kaufen | Handgefertigt"
-                  instructionsPlaceholder="z.B. 50-60 Zeichen, Hauptkeyword am Anfang, Call-to-Action"
-                  formatLabel="Formatbeispiel"
-                  instructionsLabel="Anweisungen"
+                  onResetFormat={() => handleResetFormatField('productSeoTitleFormat', 'products')}
+                  onResetInstructions={() => handleResetInstructionsField('productSeoTitleInstructions', 'products')}
+                  resetFormatText={t.settings?.resetField || "Reset"}
+                  resetInstructionsText={t.settings?.resetField || "Reset"}
+                  formatPlaceholder={t.settings.productSeoTitleFormatPlaceholder}
+                  instructionsPlaceholder={t.settings.productSeoTitleInstructionsPlaceholder}
+                  formatLabel={t.settings.formatLabel}
+                  instructionsLabel={t.settings.instructionsLabel}
                 />
 
                 <AIInstructionFieldGroup
-                  fieldName="Meta-Beschreibung"
+                  fieldName={t.settings.fieldMetaDescription}
                   formatValue={localInstructions.productMetaDescFormat}
                   instructionsValue={localInstructions.productMetaDescInstructions}
                   onFormatChange={(v) => handleFieldChange('productMetaDescFormat', v)}
                   onInstructionsChange={(v) => handleFieldChange('productMetaDescInstructions', v)}
-                  onReset={() => handleResetField('productMetaDescFormat', 'products')}
-                  formatPlaceholder="z.B. Handgefertigte Premium Leder Geldbörse. Zeitlos, langlebig..."
-                  instructionsPlaceholder="z.B. 150-160 Zeichen, 2-3 Keywords, Handlungsaufforderung"
-                  formatLabel="Formatbeispiel"
-                  instructionsLabel="Anweisungen"
+                  onResetFormat={() => handleResetFormatField('productMetaDescFormat', 'products')}
+                  onResetInstructions={() => handleResetInstructionsField('productMetaDescInstructions', 'products')}
+                  resetFormatText={t.settings?.resetField || "Reset"}
+                  resetInstructionsText={t.settings?.resetField || "Reset"}
+                  formatPlaceholder={t.settings.productMetaDescFormatPlaceholder}
+                  instructionsPlaceholder={t.settings.productMetaDescInstructionsPlaceholder}
+                  formatLabel={t.settings.formatLabel}
+                  instructionsLabel={t.settings.instructionsLabel}
                 />
               </>
             )}
@@ -318,71 +357,86 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, on
             {selectedTab === 1 && (
               <>
                 <AIInstructionFieldGroup
-                  fieldName="Titel"
+                  fieldName={t.settings.fieldTitle}
                   formatValue={localInstructions.collectionTitleFormat}
                   instructionsValue={localInstructions.collectionTitleInstructions}
                   onFormatChange={(v) => handleFieldChange('collectionTitleFormat', v)}
                   onInstructionsChange={(v) => handleFieldChange('collectionTitleInstructions', v)}
-                  onReset={() => handleResetField('collectionTitleFormat', 'collections')}
-                  formatPlaceholder="z.B. Leder Accessoires - Handgefertigt & Zeitlos"
-                  instructionsPlaceholder="z.B. Maximal 50 Zeichen, Kategorie + USP"
-                  formatLabel="Formatbeispiel"
-                  instructionsLabel="Anweisungen"
+                  onResetFormat={() => handleResetFormatField('collectionTitleFormat', 'collections')}
+                  onResetInstructions={() => handleResetInstructionsField('collectionTitleInstructions', 'collections')}
+                  resetFormatText={t.settings?.resetField || "Reset"}
+                  resetInstructionsText={t.settings?.resetField || "Reset"}
+                  formatPlaceholder={t.settings.collectionTitleFormatPlaceholder}
+                  instructionsPlaceholder={t.settings.collectionTitleInstructionsPlaceholder}
+                  formatLabel={t.settings.formatLabel}
+                  instructionsLabel={t.settings.instructionsLabel}
                 />
 
                 <AIInstructionFieldGroup
-                  fieldName="Beschreibung"
+                  fieldName={t.settings.fieldDescription}
                   formatValue={localInstructions.collectionDescriptionFormat}
                   instructionsValue={localInstructions.collectionDescriptionInstructions}
                   onFormatChange={(v) => handleFieldChange('collectionDescriptionFormat', v)}
                   onInstructionsChange={(v) => handleFieldChange('collectionDescriptionInstructions', v)}
-                  onReset={() => handleResetField('collectionDescriptionFormat', 'collections')}
-                  formatPlaceholder="z.B. <h2>Handgefertigte Leder Accessoires</h2><p>Entdecken Sie...</p>"
-                  instructionsPlaceholder="z.B. 100-200 Wörter, Übersicht der Kategorie"
-                  formatLabel="Formatbeispiel"
-                  instructionsLabel="Anweisungen"
+                  onResetFormat={() => handleResetFormatField('collectionDescriptionFormat', 'collections')}
+                  onResetInstructions={() => handleResetInstructionsField('collectionDescriptionInstructions', 'collections')}
+                  resetFormatText={t.settings?.resetField || "Reset"}
+                  resetInstructionsText={t.settings?.resetField || "Reset"}
+                  formatPlaceholder={t.settings.collectionDescriptionFormatPlaceholder}
+                  instructionsPlaceholder={t.settings.collectionDescriptionInstructionsPlaceholder}
+                  formatLabel={t.settings.formatLabel}
+                  instructionsLabel={t.settings.instructionsLabel}
                   isHtmlField={true}
                   htmlMode={htmlModes['collectionDescriptionFormat'] || 'rendered'}
                   onToggleHtmlMode={() => handleToggleHtmlMode('collectionDescriptionFormat')}
                 />
 
                 <AIInstructionFieldGroup
-                  fieldName="URL-Handle"
+                  fieldName={t.settings.fieldUrlHandle}
                   formatValue={localInstructions.collectionHandleFormat}
                   instructionsValue={localInstructions.collectionHandleInstructions}
                   onFormatChange={(v) => handleFieldChange('collectionHandleFormat', v)}
                   onInstructionsChange={(v) => handleFieldChange('collectionHandleInstructions', v)}
-                  onReset={() => handleResetField('collectionHandleFormat', 'collections')}
-                  formatPlaceholder="z.B. leder-accessoires"
-                  instructionsPlaceholder="z.B. Nur Kleinbuchstaben, keine Umlaute, max 40 Zeichen"
-                  formatLabel="Formatbeispiel"
-                  instructionsLabel="Anweisungen"
+                  onResetFormat={() => handleResetFormatField('collectionHandleFormat', 'collections')}
+                  onResetInstructions={() => handleResetInstructionsField('collectionHandleInstructions', 'collections')}
+                  resetFormatText={t.settings?.resetField || "Reset"}
+                  resetInstructionsText={t.settings?.resetField || "Reset"}
+                  formatPlaceholder={t.settings.collectionHandleFormatPlaceholder}
+                  instructionsPlaceholder={t.settings.collectionHandleInstructionsPlaceholder}
+                  formatLabel={t.settings.formatLabel}
+                  instructionsLabel={t.settings.instructionsLabel}
                 />
 
                 <AIInstructionFieldGroup
-                  fieldName="SEO-Titel"
+                  fieldName={t.settings.fieldSeoTitle}
                   formatValue={localInstructions.collectionSeoTitleFormat}
                   instructionsValue={localInstructions.collectionSeoTitleInstructions}
                   onFormatChange={(v) => handleFieldChange('collectionSeoTitleFormat', v)}
                   onInstructionsChange={(v) => handleFieldChange('collectionSeoTitleInstructions', v)}
-                  onReset={() => handleResetField('collectionSeoTitleFormat', 'collections')}
-                  formatPlaceholder="z.B. Leder Accessoires kaufen | Handgefertigt"
-                  instructionsPlaceholder="z.B. 50-60 Zeichen, Category-Keyword am Anfang"
-                  formatLabel="Formatbeispiel"
-                  instructionsLabel="Anweisungen"
+                  onResetFormat={() => handleResetFormatField('collectionSeoTitleFormat', 'collections')}
+                  onResetInstructions={() => handleResetInstructionsField('collectionSeoTitleInstructions', 'collections')}
+                  resetFormatText={t.settings?.resetField || "Reset"}
+                  resetInstructionsText={t.settings?.resetField || "Reset"}
+                  formatPlaceholder={t.settings.collectionSeoTitleFormatPlaceholder}
+                  instructionsPlaceholder={t.settings.collectionSeoTitleInstructionsPlaceholder}
+                  formatLabel={t.settings.formatLabel}
+                  instructionsLabel={t.settings.instructionsLabel}
                 />
 
                 <AIInstructionFieldGroup
-                  fieldName="Meta-Beschreibung"
+                  fieldName={t.settings.fieldMetaDescription}
                   formatValue={localInstructions.collectionMetaDescFormat}
                   instructionsValue={localInstructions.collectionMetaDescInstructions}
                   onFormatChange={(v) => handleFieldChange('collectionMetaDescFormat', v)}
                   onInstructionsChange={(v) => handleFieldChange('collectionMetaDescInstructions', v)}
-                  onReset={() => handleResetField('collectionMetaDescFormat', 'collections')}
-                  formatPlaceholder="z.B. Hochwertige Leder Accessoires. Geldbörsen, Gürtel & mehr..."
-                  instructionsPlaceholder="z.B. 150-160 Zeichen, Kategorie beschreiben, 2-3 Beispiele"
-                  formatLabel="Formatbeispiel"
-                  instructionsLabel="Anweisungen"
+                  onResetFormat={() => handleResetFormatField('collectionMetaDescFormat', 'collections')}
+                  onResetInstructions={() => handleResetInstructionsField('collectionMetaDescInstructions', 'collections')}
+                  resetFormatText={t.settings?.resetField || "Reset"}
+                  resetInstructionsText={t.settings?.resetField || "Reset"}
+                  formatPlaceholder={t.settings.collectionMetaDescFormatPlaceholder}
+                  instructionsPlaceholder={t.settings.collectionMetaDescInstructionsPlaceholder}
+                  formatLabel={t.settings.formatLabel}
+                  instructionsLabel={t.settings.instructionsLabel}
                 />
               </>
             )}
@@ -391,71 +445,86 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, on
             {selectedTab === 2 && (
               <>
                 <AIInstructionFieldGroup
-                  fieldName="Titel"
+                  fieldName={t.settings.fieldTitle}
                   formatValue={localInstructions.blogTitleFormat}
                   instructionsValue={localInstructions.blogTitleInstructions}
                   onFormatChange={(v) => handleFieldChange('blogTitleFormat', v)}
                   onInstructionsChange={(v) => handleFieldChange('blogTitleInstructions', v)}
-                  onReset={() => handleResetField('blogTitleFormat', 'blogs')}
-                  formatPlaceholder="z.B. 5 Tipps für die richtige Pflege Ihrer Lederprodukte"
-                  instructionsPlaceholder="z.B. Maximal 60 Zeichen, Zahlen verwenden, Nutzen kommunizieren"
-                  formatLabel="Formatbeispiel"
-                  instructionsLabel="Anweisungen"
+                  onResetFormat={() => handleResetFormatField('blogTitleFormat', 'blogs')}
+                  onResetInstructions={() => handleResetInstructionsField('blogTitleInstructions', 'blogs')}
+                  resetFormatText={t.settings?.resetField || "Reset"}
+                  resetInstructionsText={t.settings?.resetField || "Reset"}
+                  formatPlaceholder={t.settings.blogTitleFormatPlaceholder}
+                  instructionsPlaceholder={t.settings.blogTitleInstructionsPlaceholder}
+                  formatLabel={t.settings.formatLabel}
+                  instructionsLabel={t.settings.instructionsLabel}
                 />
 
                 <AIInstructionFieldGroup
-                  fieldName="Inhalt"
+                  fieldName={t.settings.fieldContent}
                   formatValue={localInstructions.blogDescriptionFormat}
                   instructionsValue={localInstructions.blogDescriptionInstructions}
                   onFormatChange={(v) => handleFieldChange('blogDescriptionFormat', v)}
                   onInstructionsChange={(v) => handleFieldChange('blogDescriptionInstructions', v)}
-                  onReset={() => handleResetField('blogDescriptionFormat', 'blogs')}
-                  formatPlaceholder="z.B. <h2>1. Regelmäßiges Reinigen</h2><p>Entfernen Sie...</p>"
-                  instructionsPlaceholder="z.B. 300-800 Wörter, H2/H3 Struktur, informativ"
-                  formatLabel="Formatbeispiel"
-                  instructionsLabel="Anweisungen"
+                  onResetFormat={() => handleResetFormatField('blogDescriptionFormat', 'blogs')}
+                  onResetInstructions={() => handleResetInstructionsField('blogDescriptionInstructions', 'blogs')}
+                  resetFormatText={t.settings?.resetField || "Reset"}
+                  resetInstructionsText={t.settings?.resetField || "Reset"}
+                  formatPlaceholder={t.settings.blogDescriptionFormatPlaceholder}
+                  instructionsPlaceholder={t.settings.blogDescriptionInstructionsPlaceholder}
+                  formatLabel={t.settings.formatLabel}
+                  instructionsLabel={t.settings.instructionsLabel}
                   isHtmlField={true}
                   htmlMode={htmlModes['blogDescriptionFormat'] || 'rendered'}
                   onToggleHtmlMode={() => handleToggleHtmlMode('blogDescriptionFormat')}
                 />
 
                 <AIInstructionFieldGroup
-                  fieldName="URL-Handle"
+                  fieldName={t.settings.fieldUrlHandle}
                   formatValue={localInstructions.blogHandleFormat}
                   instructionsValue={localInstructions.blogHandleInstructions}
                   onFormatChange={(v) => handleFieldChange('blogHandleFormat', v)}
                   onInstructionsChange={(v) => handleFieldChange('blogHandleInstructions', v)}
-                  onReset={() => handleResetField('blogHandleFormat', 'blogs')}
-                  formatPlaceholder="z.B. lederpflege-tipps-anleitung"
-                  instructionsPlaceholder="z.B. 3-5 Keywords, maximal 60 Zeichen"
-                  formatLabel="Formatbeispiel"
-                  instructionsLabel="Anweisungen"
+                  onResetFormat={() => handleResetFormatField('blogHandleFormat', 'blogs')}
+                  onResetInstructions={() => handleResetInstructionsField('blogHandleInstructions', 'blogs')}
+                  resetFormatText={t.settings?.resetField || "Reset"}
+                  resetInstructionsText={t.settings?.resetField || "Reset"}
+                  formatPlaceholder={t.settings.blogHandleFormatPlaceholder}
+                  instructionsPlaceholder={t.settings.blogHandleInstructionsPlaceholder}
+                  formatLabel={t.settings.formatLabel}
+                  instructionsLabel={t.settings.instructionsLabel}
                 />
 
                 <AIInstructionFieldGroup
-                  fieldName="SEO-Titel"
+                  fieldName={t.settings.fieldSeoTitle}
                   formatValue={localInstructions.blogSeoTitleFormat}
                   instructionsValue={localInstructions.blogSeoTitleInstructions}
                   onFormatChange={(v) => handleFieldChange('blogSeoTitleFormat', v)}
                   onInstructionsChange={(v) => handleFieldChange('blogSeoTitleInstructions', v)}
-                  onReset={() => handleResetField('blogSeoTitleFormat', 'blogs')}
-                  formatPlaceholder="z.B. Lederpflege: 5 Tipps | Expertenratgeber"
-                  instructionsPlaceholder="z.B. 50-60 Zeichen, Zahlen nutzen, Expertise zeigen"
-                  formatLabel="Formatbeispiel"
-                  instructionsLabel="Anweisungen"
+                  onResetFormat={() => handleResetFormatField('blogSeoTitleFormat', 'blogs')}
+                  onResetInstructions={() => handleResetInstructionsField('blogSeoTitleInstructions', 'blogs')}
+                  resetFormatText={t.settings?.resetField || "Reset"}
+                  resetInstructionsText={t.settings?.resetField || "Reset"}
+                  formatPlaceholder={t.settings.blogSeoTitleFormatPlaceholder}
+                  instructionsPlaceholder={t.settings.blogSeoTitleInstructionsPlaceholder}
+                  formatLabel={t.settings.formatLabel}
+                  instructionsLabel={t.settings.instructionsLabel}
                 />
 
                 <AIInstructionFieldGroup
-                  fieldName="Meta-Beschreibung"
+                  fieldName={t.settings.fieldMetaDescription}
                   formatValue={localInstructions.blogMetaDescFormat}
                   instructionsValue={localInstructions.blogMetaDescInstructions}
                   onFormatChange={(v) => handleFieldChange('blogMetaDescFormat', v)}
                   onInstructionsChange={(v) => handleFieldChange('blogMetaDescInstructions', v)}
-                  onReset={() => handleResetField('blogMetaDescFormat', 'blogs')}
-                  formatPlaceholder="z.B. Lederpflege leicht gemacht: 5 bewährte Tipps..."
-                  instructionsPlaceholder="z.B. 150-160 Zeichen, Artikel-Nutzen zusammenfassen"
-                  formatLabel="Formatbeispiel"
-                  instructionsLabel="Anweisungen"
+                  onResetFormat={() => handleResetFormatField('blogMetaDescFormat', 'blogs')}
+                  onResetInstructions={() => handleResetInstructionsField('blogMetaDescInstructions', 'blogs')}
+                  resetFormatText={t.settings?.resetField || "Reset"}
+                  resetInstructionsText={t.settings?.resetField || "Reset"}
+                  formatPlaceholder={t.settings.blogMetaDescFormatPlaceholder}
+                  instructionsPlaceholder={t.settings.blogMetaDescInstructionsPlaceholder}
+                  formatLabel={t.settings.formatLabel}
+                  instructionsLabel={t.settings.instructionsLabel}
                 />
               </>
             )}
@@ -464,45 +533,54 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, on
             {selectedTab === 3 && (
               <>
                 <AIInstructionFieldGroup
-                  fieldName="Titel"
+                  fieldName={t.settings.fieldTitle}
                   formatValue={localInstructions.pageTitleFormat}
                   instructionsValue={localInstructions.pageTitleInstructions}
                   onFormatChange={(v) => handleFieldChange('pageTitleFormat', v)}
                   onInstructionsChange={(v) => handleFieldChange('pageTitleInstructions', v)}
-                  onReset={() => handleResetField('pageTitleFormat', 'pages')}
-                  formatPlaceholder="z.B. Über uns - Traditionelle Handwerkskunst seit 1970"
-                  instructionsPlaceholder="z.B. Maximal 60 Zeichen, klar und beschreibend"
-                  formatLabel="Formatbeispiel"
-                  instructionsLabel="Anweisungen"
+                  onResetFormat={() => handleResetFormatField('pageTitleFormat', 'pages')}
+                  onResetInstructions={() => handleResetInstructionsField('pageTitleInstructions', 'pages')}
+                  resetFormatText={t.settings?.resetField || "Reset"}
+                  resetInstructionsText={t.settings?.resetField || "Reset"}
+                  formatPlaceholder={t.settings.pageTitleFormatPlaceholder}
+                  instructionsPlaceholder={t.settings.pageTitleInstructionsPlaceholder}
+                  formatLabel={t.settings.formatLabel}
+                  instructionsLabel={t.settings.instructionsLabel}
                 />
 
                 <AIInstructionFieldGroup
-                  fieldName="Inhalt"
+                  fieldName={t.settings.fieldContent}
                   formatValue={localInstructions.pageDescriptionFormat}
                   instructionsValue={localInstructions.pageDescriptionInstructions}
                   onFormatChange={(v) => handleFieldChange('pageDescriptionFormat', v)}
                   onInstructionsChange={(v) => handleFieldChange('pageDescriptionInstructions', v)}
-                  onReset={() => handleResetField('pageDescriptionFormat', 'pages')}
-                  formatPlaceholder="z.B. <h1>Handwerkskunst mit Tradition</h1><p>Seit über 50 Jahren...</p>"
-                  instructionsPlaceholder="z.B. 200-400 Wörter, authentisch, H1/H2 Struktur"
-                  formatLabel="Formatbeispiel"
-                  instructionsLabel="Anweisungen"
+                  onResetFormat={() => handleResetFormatField('pageDescriptionFormat', 'pages')}
+                  onResetInstructions={() => handleResetInstructionsField('pageDescriptionInstructions', 'pages')}
+                  resetFormatText={t.settings?.resetField || "Reset"}
+                  resetInstructionsText={t.settings?.resetField || "Reset"}
+                  formatPlaceholder={t.settings.pageDescriptionFormatPlaceholder}
+                  instructionsPlaceholder={t.settings.pageDescriptionInstructionsPlaceholder}
+                  formatLabel={t.settings.formatLabel}
+                  instructionsLabel={t.settings.instructionsLabel}
                   isHtmlField={true}
                   htmlMode={htmlModes['pageDescriptionFormat'] || 'rendered'}
                   onToggleHtmlMode={() => handleToggleHtmlMode('pageDescriptionFormat')}
                 />
 
                 <AIInstructionFieldGroup
-                  fieldName="URL-Handle"
+                  fieldName={t.settings.fieldUrlHandle}
                   formatValue={localInstructions.pageHandleFormat}
                   instructionsValue={localInstructions.pageHandleInstructions}
                   onFormatChange={(v) => handleFieldChange('pageHandleFormat', v)}
                   onInstructionsChange={(v) => handleFieldChange('pageHandleInstructions', v)}
-                  onReset={() => handleResetField('pageHandleFormat', 'pages')}
-                  formatPlaceholder="z.B. ueber-uns, kontakt, impressum"
-                  instructionsPlaceholder="z.B. 2-4 Keywords, maximal 40 Zeichen, Standard-Handles"
-                  formatLabel="Formatbeispiel"
-                  instructionsLabel="Anweisungen"
+                  onResetFormat={() => handleResetFormatField('pageHandleFormat', 'pages')}
+                  onResetInstructions={() => handleResetInstructionsField('pageHandleInstructions', 'pages')}
+                  resetFormatText={t.settings?.resetField || "Reset"}
+                  resetInstructionsText={t.settings?.resetField || "Reset"}
+                  formatPlaceholder={t.settings.pageHandleFormatPlaceholder}
+                  instructionsPlaceholder={t.settings.pageHandleInstructionsPlaceholder}
+                  formatLabel={t.settings.formatLabel}
+                  instructionsLabel={t.settings.instructionsLabel}
                 />
               </>
             )}
@@ -511,20 +589,23 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, on
             {selectedTab === 4 && (
               <>
                 <Text as="p" variant="bodyMd" tone="subdued">
-                  Für Richtlinien (Datenschutz, AGB, Impressum, etc.) ist nur der Inhalt editierbar.
+                  {t.settings.policyNotice}
                 </Text>
 
                 <AIInstructionFieldGroup
-                  fieldName="Inhalt"
+                  fieldName={t.settings.fieldContent}
                   formatValue={localInstructions.policyDescriptionFormat}
                   instructionsValue={localInstructions.policyDescriptionInstructions}
                   onFormatChange={(v) => handleFieldChange('policyDescriptionFormat', v)}
                   onInstructionsChange={(v) => handleFieldChange('policyDescriptionInstructions', v)}
-                  onReset={() => handleResetField('policyDescriptionFormat', 'policies')}
-                  formatPlaceholder="z.B. <h2>Widerrufsrecht</h2><p>Sie haben das Recht...</p>"
-                  instructionsPlaceholder="z.B. Rechtssicher formulieren, H2/H3, professionell"
-                  formatLabel="Formatbeispiel"
-                  instructionsLabel="Anweisungen"
+                  onResetFormat={() => handleResetFormatField('policyDescriptionFormat', 'policies')}
+                  onResetInstructions={() => handleResetInstructionsField('policyDescriptionInstructions', 'policies')}
+                  resetFormatText={t.settings?.resetField || "Reset"}
+                  resetInstructionsText={t.settings?.resetField || "Reset"}
+                  formatPlaceholder={t.settings.policyDescriptionFormatPlaceholder}
+                  instructionsPlaceholder={t.settings.policyDescriptionInstructionsPlaceholder}
+                  formatLabel={t.settings.formatLabel}
+                  instructionsLabel={t.settings.instructionsLabel}
                   isHtmlField={true}
                   htmlMode={htmlModes['policyDescriptionFormat'] || 'rendered'}
                   onToggleHtmlMode={() => handleToggleHtmlMode('policyDescriptionFormat')}

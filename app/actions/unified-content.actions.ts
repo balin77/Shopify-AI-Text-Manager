@@ -12,7 +12,9 @@ import { TranslationService } from "../../src/services/translation.service";
 import { ShopifyContentService } from "../../src/services/shopify-content.service";
 import { sanitizeSlug } from "../utils/slug.utils";
 import { decryptApiKey } from "../utils/encryption.server";
+import { getTaskExpirationDate } from "../../src/utils/task.utils";
 import type { ContentEditorConfig } from "../types/content-editor.types";
+import { logger } from "../utils/logger.server";
 
 interface UnifiedContentActionsConfig {
   admin: any;
@@ -40,6 +42,11 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
     grokApiKey: decryptApiKey(aiSettings?.grokApiKey) || undefined,
     deepseekApiKey: decryptApiKey(aiSettings?.deepseekApiKey) || undefined,
   };
+
+  // Update queue rate limits from settings
+  const { AIQueueService } = await import("../../src/services/ai-queue.service");
+  const queue = AIQueueService.getInstance();
+  await queue.updateRateLimits(aiSettings);
 
   const aiService = new AIService(provider, serviceConfig);
   const translationService = new TranslationService(provider, serviceConfig);
@@ -70,13 +77,45 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
     const contextTitle = formData.get("contextTitle") as string;
     const contextDescription = formData.get("contextDescription") as string;
 
+    // Create task entry
+    const task = await db.task.create({
+      data: {
+        shop: session.shop,
+        type: "aiGeneration",
+        status: "pending",
+        resourceType: contentConfig.resourceType,
+        resourceId: itemId,
+        resourceTitle: contextTitle,
+        fieldType,
+        progress: 0,
+        expiresAt: getTaskExpirationDate(),
+      },
+    });
+
     try {
       const field = contentConfig.fieldDefinitions.find((f) => f.key === fieldType);
       if (!field) {
+        await db.task.update({
+          where: { id: task.id },
+          data: {
+            status: "failed",
+            completedAt: new Date(),
+            error: "Invalid field type",
+          },
+        });
         return json({ success: false, error: "Invalid field type" }, { status: 400 });
       }
 
+      // Create AI service with shop and taskId for queue management
+      const aiServiceWithTask = new AIService(provider, serviceConfig, session.shop, task.id);
+
       let generatedContent = "";
+
+      // Update task to queued (queue will update to running)
+      await db.task.update({
+        where: { id: task.id },
+        data: { status: "queued", progress: 10 },
+      });
 
       // Get AI instructions for this field
       const instructionsKey = field.aiInstructionsKey;
@@ -84,50 +123,78 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
       const instructionsTextKey = `${instructionsKey}Instructions`;
 
       if (field.type === "text" || field.type === "slug") {
-        let prompt = `Erstelle einen optimierten ${field.label}.`;
+        let prompt = `Create an optimized ${field.label}.`;
 
         if (aiInstructions?.[formatKey]) {
-          prompt += `\n\nFormatbeispiel:\n${aiInstructions[formatKey]}`;
+          prompt += `\n\nFormat Example:\n${aiInstructions[formatKey]}`;
         }
         if (aiInstructions?.[instructionsTextKey]) {
-          prompt += `\n\nAnweisungen:\n${aiInstructions[instructionsTextKey]}`;
+          prompt += `\n\nInstructions:\n${aiInstructions[instructionsTextKey]}`;
         }
 
         if (field.type === "slug") {
-          prompt += `\n\nWICHTIG - Der URL-Slug MUSS diesem Format folgen:`;
-          prompt += `\n- NUR Kleinbuchstaben (a-z)`;
-          prompt += `\n- NUR Ziffern (0-9)`;
-          prompt += `\n- NUR Bindestriche (-) als Trennzeichen`;
-          prompt += `\n- KEINE Leerzeichen, KEINE Unterstriche, KEINE Sonderzeichen`;
-          prompt += `\n- Umlaute MÜSSEN umgewandelt werden (ä→ae, ö→oe, ü→ue, ß→ss)`;
-          prompt += `\n- 2-5 Wörter, durch Bindestriche getrennt`;
-          prompt += `\n\nBeispiele:`;
+          prompt += `\n\nIMPORTANT - The URL slug MUST follow this format:`;
+          prompt += `\n- ONLY lowercase letters (a-z)`;
+          prompt += `\n- ONLY digits (0-9)`;
+          prompt += `\n- ONLY hyphens (-) as separators`;
+          prompt += `\n- NO spaces, NO underscores, NO special characters`;
+          prompt += `\n- Umlauts MUST be converted (ä→ae, ö→oe, ü→ue, ß→ss)`;
+          prompt += `\n- 2-5 words, separated by hyphens`;
+          prompt += `\n\nExamples:`;
           prompt += `\n- "Über Uns" → "ueber-uns"`;
           prompt += `\n- "Kontakt & Impressum" → "kontakt-impressum"`;
         }
 
-        prompt += `\n\nKontext:\n${contextDescription || currentValue}\n\nGib nur den ${field.label} zurück, ohne Erklärungen.`;
-        generatedContent = await aiService.generateProductTitle(prompt);
+        prompt += `\n\nContext:\n${contextDescription || currentValue}\n\nReturn ONLY the ${field.label}, without explanations. Output the result in the main language of the content.`;
+        generatedContent = await aiServiceWithTask.generateProductTitle(prompt);
 
         if (field.type === "slug") {
           generatedContent = sanitizeSlug(generatedContent);
         }
       } else if (field.type === "html" || field.type === "textarea") {
-        let prompt = `Erstelle einen optimierten ${field.label} für: ${contextTitle}`;
+        let prompt = `Create an optimized ${field.label} for: ${contextTitle}`;
 
         if (aiInstructions?.[formatKey]) {
-          prompt += `\n\nFormatbeispiel:\n${aiInstructions[formatKey]}`;
+          prompt += `\n\nFormat Example:\n${aiInstructions[formatKey]}`;
         }
         if (aiInstructions?.[instructionsTextKey]) {
-          prompt += `\n\nAnweisungen:\n${aiInstructions[instructionsTextKey]}`;
+          prompt += `\n\nInstructions:\n${aiInstructions[instructionsTextKey]}`;
         }
 
-        prompt += `\n\nAktueller Inhalt:\n${currentValue}\n\nGib nur den ${field.label} zurück, ohne Erklärungen.`;
-        generatedContent = await aiService.generateProductDescription(contextTitle, prompt);
+        prompt += `\n\nCurrent Content:\n${currentValue}\n\nReturn ONLY the ${field.label}, without explanations. Output the result in the main language of the content.`;
+        generatedContent = await aiServiceWithTask.generateProductDescription(contextTitle, prompt);
       }
+
+      // Update task to completed
+      let resultString = "";
+      try {
+        resultString = JSON.stringify({ generatedContent: generatedContent.substring(0, 500), fieldType });
+      } catch (e) {
+        resultString = JSON.stringify({ fieldType, success: true });
+      }
+
+      await db.task.update({
+        where: { id: task.id },
+        data: {
+          status: "completed",
+          progress: 100,
+          completedAt: new Date(),
+          result: resultString,
+        },
+      });
 
       return json({ success: true, generatedContent, fieldType });
     } catch (error: any) {
+      // Update task to failed
+      const errorMessage = (error.message || String(error)).substring(0, 1000);
+      await db.task.update({
+        where: { id: task.id },
+        data: {
+          status: "failed",
+          completedAt: new Date(),
+          error: errorMessage,
+        },
+      });
       return json({ success: false, error: error.message }, { status: 500 });
     }
   }
@@ -142,13 +209,45 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
     const contextTitle = formData.get("contextTitle") as string;
     const contextDescription = formData.get("contextDescription") as string;
 
+    // Create task entry
+    const task = await db.task.create({
+      data: {
+        shop: session.shop,
+        type: "aiFormatting",
+        status: "pending",
+        resourceType: contentConfig.resourceType,
+        resourceId: itemId,
+        resourceTitle: contextTitle,
+        fieldType,
+        progress: 0,
+        expiresAt: getTaskExpirationDate(),
+      },
+    });
+
     try {
       const field = contentConfig.fieldDefinitions.find((f) => f.key === fieldType);
       if (!field) {
+        await db.task.update({
+          where: { id: task.id },
+          data: {
+            status: "failed",
+            completedAt: new Date(),
+            error: "Invalid field type",
+          },
+        });
         return json({ success: false, error: "Invalid field type" }, { status: 400 });
       }
 
+      // Create AI service with shop and taskId for queue management
+      const aiServiceWithTask = new AIService(provider, serviceConfig, session.shop, task.id);
+
       let formattedContent = "";
+
+      // Update task to queued (queue will update to running)
+      await db.task.update({
+        where: { id: task.id },
+        data: { status: "queued", progress: 10 },
+      });
 
       // Get AI instructions for this field
       const instructionsKey = field.aiInstructionsKey;
@@ -156,43 +255,71 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
       const instructionsTextKey = `${instructionsKey}Instructions`;
 
       if (field.type === "text" || field.type === "slug") {
-        let prompt = `Formatiere den folgenden ${field.label} gemäß den Formatierungsrichtlinien:\n\nAktueller ${field.label}:\n${currentValue}`;
+        let prompt = `Format the following ${field.label} according to the formatting guidelines:\n\nCurrent ${field.label}:\n${currentValue}`;
 
         if (aiInstructions?.[formatKey]) {
-          prompt += `\n\nFormatbeispiel:\n${aiInstructions[formatKey]}`;
+          prompt += `\n\nFormat Example:\n${aiInstructions[formatKey]}`;
         }
         if (aiInstructions?.[instructionsTextKey]) {
-          prompt += `\n\nFormatierungsanweisungen:\n${aiInstructions[instructionsTextKey]}`;
+          prompt += `\n\nFormatting Instructions:\n${aiInstructions[instructionsTextKey]}`;
         }
 
         if (field.type === "slug") {
-          prompt += `\n\nWICHTIG - Der URL-Slug MUSS diesem Format folgen:`;
-          prompt += `\n- NUR Kleinbuchstaben (a-z), NUR Ziffern (0-9), NUR Bindestriche (-)`;
-          prompt += `\n- Umlaute MÜSSEN umgewandelt werden (ä→ae, ö→oe, ü→ue, ß→ss)`;
+          prompt += `\n\nIMPORTANT - The URL slug MUST follow this format:`;
+          prompt += `\n- ONLY lowercase letters (a-z), ONLY digits (0-9), ONLY hyphens (-)`;
+          prompt += `\n- Umlauts MUST be converted (ä→ae, ö→oe, ü→ue, ß→ss)`;
         }
 
-        prompt += `\n\nGib NUR den fertigen ${field.label} zurück, ohne Erklärungen.`;
-        formattedContent = await aiService.generateProductTitle(prompt);
+        prompt += `\n\nReturn ONLY the formatted ${field.label}, without explanations. Output the result in the main language of the content.`;
+        formattedContent = await aiServiceWithTask.generateProductTitle(prompt);
 
         if (field.type === "slug") {
           formattedContent = sanitizeSlug(formattedContent);
         }
       } else if (field.type === "html" || field.type === "textarea") {
-        let prompt = `Formatiere den folgenden ${field.label} gemäß den Formatierungsrichtlinien:\n\nAktueller ${field.label}:\n${currentValue}`;
+        let prompt = `Format the following ${field.label} according to the formatting guidelines:\n\nCurrent ${field.label}:\n${currentValue}`;
 
         if (aiInstructions?.[formatKey]) {
-          prompt += `\n\nFormatbeispiel:\n${aiInstructions[formatKey]}`;
+          prompt += `\n\nFormat Example:\n${aiInstructions[formatKey]}`;
         }
         if (aiInstructions?.[instructionsTextKey]) {
-          prompt += `\n\nFormatierungsanweisungen:\n${aiInstructions[instructionsTextKey]}`;
+          prompt += `\n\nFormatting Instructions:\n${aiInstructions[instructionsTextKey]}`;
         }
 
-        prompt += `\n\nBehalte den Inhalt bei, formatiere aber gemäß den Richtlinien. Gib nur den formatierten Text zurück.`;
-        formattedContent = await aiService.generateProductDescription(currentValue, prompt);
+        prompt += `\n\nKeep the content but format according to the guidelines. Return only the formatted text. Output the result in the main language of the content.`;
+        formattedContent = await aiServiceWithTask.generateProductDescription(currentValue, prompt);
       }
+
+      // Update task to completed
+      let resultString = "";
+      try {
+        resultString = JSON.stringify({ formattedContent: formattedContent.substring(0, 500), fieldType });
+      } catch (e) {
+        resultString = JSON.stringify({ fieldType, success: true });
+      }
+
+      await db.task.update({
+        where: { id: task.id },
+        data: {
+          status: "completed",
+          progress: 100,
+          completedAt: new Date(),
+          result: resultString,
+        },
+      });
 
       return json({ success: true, generatedContent: formattedContent, fieldType });
     } catch (error: any) {
+      // Update task to failed
+      const errorMessage = (error.message || String(error)).substring(0, 1000);
+      await db.task.update({
+        where: { id: task.id },
+        data: {
+          status: "failed",
+          completedAt: new Date(),
+          error: errorMessage,
+        },
+      });
       return json({ success: false, error: error.message }, { status: 500 });
     }
   }
@@ -206,27 +333,84 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
     const sourceText = formData.get("sourceText") as string;
     const targetLocale = formData.get("targetLocale") as string;
 
+    // Create task entry
+    const task = await db.task.create({
+      data: {
+        shop: session.shop,
+        type: "translation",
+        status: "pending",
+        resourceType: contentConfig.resourceType,
+        resourceId: itemId,
+        fieldType,
+        targetLocale,
+        progress: 0,
+        expiresAt: getTaskExpirationDate(),
+      },
+    });
+
     try {
+      // Create translation service with shop and taskId for queue management
+      const translationServiceWithTask = new TranslationService(provider, serviceConfig, session.shop, task.id);
+
       const changedFields: any = {};
       changedFields[fieldType] = sourceText;
 
-      const translations = await translationService.translateProduct(changedFields);
+      await db.task.update({
+        where: { id: task.id },
+        data: { status: "queued", progress: 10 },
+      });
+
+      const translations = await translationServiceWithTask.translateProduct(changedFields, [targetLocale], contentConfig.contentType);
       const translatedValue = translations[targetLocale]?.[fieldType] || "";
+
+      await db.task.update({
+        where: { id: task.id },
+        data: {
+          status: "completed",
+          progress: 100,
+          completedAt: new Date(),
+        },
+      });
 
       return json({ success: true, translatedValue, fieldType, targetLocale });
     } catch (error: any) {
+      await db.task.update({
+        where: { id: task.id },
+        data: {
+          status: "failed",
+          completedAt: new Date(),
+          error: error.message,
+        },
+      });
       return json({ success: false, error: error.message }, { status: 500 });
     }
   }
 
   // ============================================================================
-  // TRANSLATE ALL
+  // TRANSLATE ALL (to ALL enabled locales)
   // ============================================================================
 
   if (action === "translateAll") {
+    const targetLocalesStr = formData.get("targetLocales") as string;
+    const contextTitle = formData.get("title") as string;
+
+    // Create task entry
+    const task = await db.task.create({
+      data: {
+        shop: session.shop,
+        type: "bulkTranslation",
+        status: "pending",
+        resourceType: contentConfig.resourceType,
+        resourceId: itemId,
+        resourceTitle: contextTitle,
+        fieldType: "all",
+        progress: 0,
+        expiresAt: getTaskExpirationDate(),
+      },
+    });
+
     try {
       const changedFields: any = {};
-      const targetLocalesStr = formData.get("targetLocales") as string;
 
       // Collect all field values
       contentConfig.fieldDefinitions.forEach((field) => {
@@ -237,20 +421,157 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
       });
 
       if (Object.keys(changedFields).length === 0) {
+        await db.task.update({
+          where: { id: task.id },
+          data: {
+            status: "failed",
+            completedAt: new Date(),
+            error: "No fields to translate",
+          },
+        });
         return json({ success: false, error: "No fields to translate" }, { status: 400 });
       }
+
+      // Create translation service with shop and taskId for queue management
+      const translationServiceWithTask = new TranslationService(provider, serviceConfig, session.shop, task.id);
+
+      await db.task.update({
+        where: { id: task.id },
+        data: { status: "queued", progress: 10 },
+      });
 
       const allTranslations = await shopifyContentService.translateAllContent({
         resourceId: itemId,
         resourceType: contentConfig.resourceType as any,
         fields: changedFields,
-        translationService,
+        translationService: translationServiceWithTask,
         db,
         targetLocales: targetLocalesStr ? JSON.parse(targetLocalesStr) : undefined,
+        contentType: contentConfig.contentType,
+        taskId: task.id,
+      });
+
+      await db.task.update({
+        where: { id: task.id },
+        data: {
+          status: "completed",
+          progress: 100,
+          completedAt: new Date(),
+          result: JSON.stringify({
+            success: true,
+            locales: Object.keys(allTranslations),
+          }),
+        },
       });
 
       return json({ success: true, translations: allTranslations });
     } catch (error: any) {
+      await db.task.update({
+        where: { id: task.id },
+        data: {
+          status: "failed",
+          completedAt: new Date(),
+          error: error.message,
+        },
+      });
+      return json({ success: false, error: error.message }, { status: 500 });
+    }
+  }
+
+  // ============================================================================
+  // TRANSLATE ALL FOR LOCALE (to ONE specific locale)
+  // ============================================================================
+
+  if (action === "translateAllForLocale") {
+    const targetLocale = formData.get("targetLocale") as string;
+    const contextTitle = formData.get("title") as string;
+
+    // Create task entry
+    const task = await db.task.create({
+      data: {
+        shop: session.shop,
+        type: "bulkTranslation",
+        status: "pending",
+        resourceType: contentConfig.resourceType,
+        resourceId: itemId,
+        resourceTitle: contextTitle,
+        targetLocale,
+        fieldType: "all",
+        progress: 0,
+        expiresAt: getTaskExpirationDate(),
+      },
+    });
+
+    try {
+      const changedFields: any = {};
+
+      // Collect all field values
+      contentConfig.fieldDefinitions.forEach((field) => {
+        const value = formData.get(field.key) as string;
+        if (value) {
+          changedFields[field.key] = value;
+        }
+      });
+
+      if (Object.keys(changedFields).length === 0) {
+        await db.task.update({
+          where: { id: task.id },
+          data: {
+            status: "failed",
+            completedAt: new Date(),
+            error: "No fields to translate",
+          },
+        });
+        return json({ success: false, error: "No fields to translate" }, { status: 400 });
+      }
+
+      // Create translation service with shop and taskId for queue management
+      const translationServiceWithTask = new TranslationService(provider, serviceConfig, session.shop, task.id);
+
+      await db.task.update({
+        where: { id: task.id },
+        data: { status: "queued", progress: 10 },
+      });
+
+      // Translate to only ONE specific locale
+      const allTranslations = await shopifyContentService.translateAllContent({
+        resourceId: itemId,
+        resourceType: contentConfig.resourceType as any,
+        fields: changedFields,
+        translationService: translationServiceWithTask,
+        db,
+        targetLocales: [targetLocale],
+        contentType: contentConfig.contentType,
+        taskId: task.id,
+      });
+
+      // Extract translations for the target locale
+      const translations = allTranslations[targetLocale] || {};
+
+      await db.task.update({
+        where: { id: task.id },
+        data: {
+          status: "completed",
+          progress: 100,
+          completedAt: new Date(),
+          result: JSON.stringify({
+            success: true,
+            targetLocale,
+            translations,
+          }),
+        },
+      });
+
+      return json({ success: true, translations, targetLocale });
+    } catch (error: any) {
+      await db.task.update({
+        where: { id: task.id },
+        data: {
+          status: "failed",
+          completedAt: new Date(),
+          error: error.message,
+        },
+      });
       return json({ success: false, error: error.message }, { status: 500 });
     }
   }
@@ -263,26 +584,86 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
     const fieldType = formData.get("fieldType") as string;
     const sourceText = formData.get("sourceText") as string;
     const targetLocalesStr = formData.get("targetLocales") as string;
+    const contextTitle = formData.get("contextTitle") as string;
+
+    // Create task entry
+    const task = await db.task.create({
+      data: {
+        shop: session.shop,
+        type: "bulkTranslation",
+        status: "pending",
+        resourceType: contentConfig.resourceType,
+        resourceId: itemId,
+        resourceTitle: contextTitle,
+        fieldType,
+        progress: 0,
+        expiresAt: getTaskExpirationDate(),
+      },
+    });
 
     try {
       const changedFields: any = {};
       changedFields[fieldType] = sourceText;
 
       if (!sourceText) {
+        await db.task.update({
+          where: { id: task.id },
+          data: {
+            status: "failed",
+            completedAt: new Date(),
+            error: "No source text to translate",
+          },
+        });
         return json({ success: false, error: "No source text to translate" }, { status: 400 });
       }
+
+      // Create translation service with shop and taskId for queue management
+      const translationServiceWithTask = new TranslationService(provider, serviceConfig, session.shop, task.id);
+
+      await db.task.update({
+        where: { id: task.id },
+        data: { status: "queued", progress: 10 },
+      });
 
       const allTranslations = await shopifyContentService.translateAllContent({
         resourceId: itemId,
         resourceType: contentConfig.resourceType as any,
         fields: changedFields,
-        translationService,
+        translationService: translationServiceWithTask,
         db,
         targetLocales: targetLocalesStr ? JSON.parse(targetLocalesStr) : undefined,
+        contentType: contentConfig.contentType,
+        taskId: task.id,
       });
 
-      return json({ success: true, translations: allTranslations, fieldType });
+      // Extract just the field value for each locale (frontend expects Record<locale, string>)
+      // allTranslations is Record<locale, Record<fieldType, string>>
+      // We need to flatten it to Record<locale, string>
+      const flattenedTranslations: Record<string, string> = {};
+      for (const [locale, fields] of Object.entries(allTranslations)) {
+        flattenedTranslations[locale] = (fields as any)[fieldType] || "";
+      }
+
+      await db.task.update({
+        where: { id: task.id },
+        data: {
+          status: "completed",
+          progress: 100,
+          completedAt: new Date(),
+          result: JSON.stringify({ translations: flattenedTranslations, fieldType }),
+        },
+      });
+
+      return json({ success: true, translations: flattenedTranslations, fieldType });
     } catch (error: any) {
+      await db.task.update({
+        where: { id: task.id },
+        data: {
+          status: "failed",
+          completedAt: new Date(),
+          error: error.message,
+        },
+      });
       return json({ success: false, error: error.message }, { status: 500 });
     }
   }
@@ -296,7 +677,42 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
     const primaryLocale = formData.get("primaryLocale") as string;
 
     try {
-      // Collect field updates
+      // Special handling for Products - use dedicated product update handler
+      if (contentConfig.resourceType === "Product") {
+        const { handleUpdateProduct } = await import("./product/update.actions");
+        const { prepareActionContext } = await import("./product/shared/action-context");
+
+        // Prepare context for product update
+        const context = await prepareActionContext(admin, session);
+
+        // Map unified field names to product-specific names
+        const productFormData = new FormData();
+        productFormData.set("action", "updateProduct");
+        productFormData.set("productId", itemId);
+        productFormData.set("locale", locale);
+        productFormData.set("primaryLocale", primaryLocale);
+
+        // Map field names
+        const fieldMapping: Record<string, string> = {
+          title: "title",
+          description: "descriptionHtml",
+          handle: "handle",
+          seoTitle: "seoTitle",
+          metaDescription: "metaDescription",
+        };
+
+        contentConfig.fieldDefinitions.forEach((field) => {
+          const value = formData.get(field.key) as string;
+          const productFieldName = fieldMapping[field.key] || field.key;
+          if (value !== null) {
+            productFormData.set(productFieldName, value);
+          }
+        });
+
+        return handleUpdateProduct(context, productFormData, itemId);
+      }
+
+      // For other content types (Collections, Pages, Blogs, Policies), use unified service
       const updates: any = {};
       contentConfig.fieldDefinitions.forEach((field) => {
         let value = formData.get(field.key) as string;
@@ -325,7 +741,13 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
 
       return json(result);
     } catch (error: any) {
-      console.error(`[UNIFIED-CONTENT-UPDATE] Error:`, error);
+      logger.error('Unified content update error', {
+        context: 'UnifiedContent',
+        action: 'updateContent',
+        itemId,
+        error: error.message,
+        stack: error.stack
+      });
       return json({ success: false, error: error.message }, { status: 500 });
     }
   }

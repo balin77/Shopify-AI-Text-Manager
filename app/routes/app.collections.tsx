@@ -170,6 +170,8 @@ export default function CollectionsPage() {
         fetcherState={fetcher.state}
         fetcherFormData={fetcher.formData}
         t={t}
+        hideItemListImages={true}
+        hideItemListStatusBars={true}
       />
     </>
   );

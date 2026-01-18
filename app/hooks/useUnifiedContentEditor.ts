@@ -5,7 +5,8 @@
  * Provides a complete state management and handler system for content editing.
  */
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
+import { useRevalidator } from "@remix-run/react";
 import { useNavigationGuard, useChangeTracking, getTranslatedValue } from "../utils/contentEditor.utils";
 import type {
   UseContentEditorProps,
@@ -16,6 +17,7 @@ import type {
 
 export function useUnifiedContentEditor(props: UseContentEditorProps): UseContentEditorReturn {
   const { config, items, shopLocales, primaryLocale, fetcher, showInfoBox, t } = props;
+  const revalidator = useRevalidator();
 
   // ============================================================================
   // STATE MANAGEMENT
@@ -31,6 +33,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   );
   // Track if we're in the middle of an accept-and-translate flow to prevent immediate deletion
   const [isAcceptAndTranslateFlow, setIsAcceptAndTranslateFlow] = useState(false);
+  // Track if we're currently loading data to prevent false change detection
+  // Initialize to true if an item is selected to prevent race condition
+  const [isLoadingData, setIsLoadingData] = useState(!!selectedItemId);
+  // Track if clear all confirmation modal is open
+  const [isClearAllModalOpen, setIsClearAllModalOpen] = useState(false);
+
+  // Alt-text state for images (indexed by image position)
+  const [imageAltTexts, setImageAltTexts] = useState<Record<number, string>>({});
+  const [altTextSuggestions, setAltTextSuggestions] = useState<Record<number, string>>({});
 
   const selectedItem = items.find((item) => item.id === selectedItemId);
 
@@ -43,21 +54,39 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     clearPendingNavigation,
   } = useNavigationGuard();
 
-  // Change tracking
+  // Change tracking - only track changes if we're not currently loading data
   const hasChanges = useChangeTracking(
-    selectedItem,
+    isLoadingData ? null : (selectedItem || null), // Pass null while loading to prevent false change detection
     currentLanguage,
     primaryLocale,
     editableValues as any, // TODO: Fix type mismatch
     config.contentType
   );
 
+  // DEBUG: Log whenever hasChanges or isLoadingData changes
+  useEffect(() => {
+    console.log('[DEBUG useUnifiedContentEditor]', {
+      hasChanges,
+      isLoadingData,
+      hasSelectedItem: !!selectedItem,
+      selectedItemId,
+      editableValuesKeys: Object.keys(editableValues),
+      editableValues
+    });
+  }, [hasChanges, isLoadingData, selectedItem, selectedItemId, editableValues]);
+
   // ============================================================================
   // LOAD ITEM DATA (when item or language changes)
   // ============================================================================
 
   useEffect(() => {
-    if (!selectedItem) return;
+    if (!selectedItem) {
+      setIsLoadingData(false);
+      return;
+    }
+
+    // Mark as loading immediately
+    setIsLoadingData(true);
 
     // Reset accept-and-translate flag when changing items or languages
     setIsAcceptAndTranslateFlow(false);
@@ -86,6 +115,18 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     setEditableValues(newValues);
   }, [selectedItemId, currentLanguage, selectedItem, config.fieldDefinitions, primaryLocale]);
 
+  // Mark loading as complete after editableValues have been updated
+  // This is in a separate useEffect to ensure the state update has completed
+  useEffect(() => {
+    if (selectedItem && isLoadingData) {
+      // Use setTimeout to ensure this runs after the render cycle
+      const timer = setTimeout(() => {
+        setIsLoadingData(false);
+      }, 0);
+      return () => clearTimeout(timer);
+    }
+  }, [editableValues, selectedItem, isLoadingData]);
+
   // ============================================================================
   // FETCHER RESPONSE HANDLERS (based on products implementation)
   // ============================================================================
@@ -108,6 +149,41 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       setEditableValues((prev) => ({
         ...prev,
         [fieldType]: translatedValue,
+      }));
+    }
+  }, [fetcher.data]);
+
+  // Handle single alt-text generation (show as suggestion)
+  useEffect(() => {
+    if (fetcher.data?.success && 'altText' in fetcher.data && 'imageIndex' in fetcher.data) {
+      const { altText, imageIndex } = fetcher.data as any;
+      setAltTextSuggestions(prev => ({
+        ...prev,
+        [imageIndex]: altText
+      }));
+    }
+  }, [fetcher.data]);
+
+  // Handle bulk alt-text generation (auto-accept all)
+  useEffect(() => {
+    if (fetcher.data?.success && 'generatedAltTexts' in fetcher.data) {
+      const { generatedAltTexts } = fetcher.data as any;
+      console.log('[ALT-TEXT] Auto-accepting bulk generated alt-texts:', generatedAltTexts);
+      setImageAltTexts(prev => ({
+        ...prev,
+        ...generatedAltTexts
+      }));
+    }
+  }, [fetcher.data]);
+
+  // Handle translated alt-text response
+  useEffect(() => {
+    if (fetcher.data?.success && 'translatedAltText' in fetcher.data) {
+      const { translatedAltText, imageIndex } = fetcher.data as any;
+      console.log('[ALT-TEXT] Setting translated alt-text for image', imageIndex, ':', translatedAltText);
+      setImageAltTexts(prev => ({
+        ...prev,
+        [imageIndex]: translatedAltText
       }));
     }
   }, [fetcher.data]);
@@ -143,13 +219,16 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             locale
           });
 
-          console.log(`[ACCEPT-AND-TRANSLATE] Updated ${fieldType} for ${locale}: ${translatedValue.substring(0, 50)}...`);
+          console.log(`[ACCEPT-AND-TRANSLATE] Updated ${fieldType} for ${locale}: ${String(translatedValue || '').substring(0, 50)}...`);
         }
 
         showInfoBox(
-          `${fieldType} wurde in ${Object.keys(translations).length} Sprache(n) übersetzt`,
+          t.common?.fieldTranslatedToLanguages
+            ?.replace("{fieldType}", fieldType)
+            .replace("{count}", String(Object.keys(translations).length))
+            || `${fieldType} translated to ${Object.keys(translations).length} language(s)`,
           "success",
-          "Erfolgreich"
+          t.common?.success || "Success"
         );
 
         // Reset the accept-and-translate flow flag after translations are complete
@@ -158,13 +237,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     }
   }, [fetcher.data, currentLanguage, selectedItem, config.fieldDefinitions, showInfoBox]);
 
-  // Handle "translateAll" response
+  // Handle "translateAll" response (translates to ALL enabled locales)
   useEffect(() => {
     if (
       fetcher.data?.success &&
       'translations' in fetcher.data &&
       !('locale' in fetcher.data) &&
-      !('fieldType' in fetcher.data)
+      !('fieldType' in fetcher.data) &&
+      !('targetLocale' in fetcher.data)
     ) {
       const translations = (fetcher.data as any).translations;
       if (selectedItem) {
@@ -204,6 +284,57 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       }
     }
   }, [fetcher.data, currentLanguage, selectedItem, config.fieldDefinitions]);
+
+  // Handle "translateAllForLocale" response (translates to ONE specific locale)
+  useEffect(() => {
+    if (
+      fetcher.data?.success &&
+      'translations' in fetcher.data &&
+      'targetLocale' in fetcher.data &&
+      !('fieldType' in fetcher.data)
+    ) {
+      const { translations, targetLocale } = fetcher.data as any;
+      if (selectedItem) {
+        const newTranslations: any[] = [];
+
+        // Map fields to translations for the specific locale
+        config.fieldDefinitions.forEach((fieldDef) => {
+          const value = translations[fieldDef.key];
+          if (value) {
+            newTranslations.push({
+              key: fieldDef.translationKey,
+              value,
+              locale: targetLocale,
+            });
+          }
+        });
+
+        // Store directly in item translations (replace existing for this locale)
+        selectedItem.translations = [
+          ...selectedItem.translations.filter((t: any) => t.locale !== targetLocale),
+          ...newTranslations,
+        ];
+
+        // If we're currently viewing this locale, update the editable fields
+        if (currentLanguage === targetLocale) {
+          const updatedValues = { ...editableValues };
+          config.fieldDefinitions.forEach((fieldDef) => {
+            const value = translations[fieldDef.key];
+            if (value) {
+              updatedValues[fieldDef.key] = value;
+            }
+          });
+          setEditableValues(updatedValues);
+        }
+
+        showInfoBox(
+          t.common?.translatedSuccessfully || `Successfully translated to ${targetLocale}`,
+          "success",
+          t.common?.success || "Success"
+        );
+      }
+    }
+  }, [fetcher.data, currentLanguage, selectedItem, config.fieldDefinitions, showInfoBox, t]);
 
   // Update item object after saving (both primary locale and translations)
   useEffect(() => {
@@ -260,22 +391,27 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     }
   }, [fetcher.data, selectedItem, currentLanguage, primaryLocale, editableValues, config.fieldDefinitions]);
 
-  // Show global InfoBox for success/error messages
+  // Show global InfoBox for success/error messages and revalidate after save
   useEffect(() => {
     if (
       fetcher.data?.success &&
       !(fetcher.data as any).generatedContent &&
-      !(fetcher.data as any).translatedValue
+      !(fetcher.data as any).translatedValue &&
+      !(fetcher.data as any).translations // Skip revalidate for bulk operations, they handle it differently
     ) {
       showInfoBox(
         t.common?.changesSaved || "Changes saved successfully!",
         "success",
         t.common?.success || "Success"
       );
+
+      // Revalidate to fetch fresh data from the database after successful save
+      // This ensures translations and all changes are reflected in the UI
+      revalidator.revalidate();
     } else if (fetcher.data && !fetcher.data.success && 'error' in fetcher.data) {
       showInfoBox(fetcher.data.error as string, "critical", t.common?.error || "Error");
     }
-  }, [fetcher.data, showInfoBox, t]);
+  }, [fetcher.data, showInfoBox, t, revalidator]);
 
   // ============================================================================
   // EVENT HANDLERS
@@ -283,6 +419,32 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
   const handleSave = () => {
     if (!selectedItemId || !hasChanges) return;
+
+    // If we're saving in the primary locale, clear all translations for changed fields
+    if (currentLanguage === primaryLocale && selectedItem) {
+      config.fieldDefinitions.forEach((field) => {
+        const currentValue = editableValues[field.key] || "";
+        const originalValue = getItemFieldValue(selectedItem, field.key, primaryLocale);
+
+        // Only clear translations if the value actually changed
+        if (currentValue !== originalValue && field.translationKey) {
+          const translationKey = field.translationKey;
+
+          // Remove all translations for this field across all locales
+          if (selectedItem.translations) {
+            const beforeCount = selectedItem.translations.length;
+            selectedItem.translations = selectedItem.translations.filter(
+              (t: any) => t.key !== translationKey
+            );
+            const afterCount = selectedItem.translations.length;
+
+            if (beforeCount !== afterCount) {
+              console.log(`[TRANSLATION-CLEAR] Cleared translations for field "${field.key}" (key: ${translationKey})`);
+            }
+          }
+        }
+      });
+    }
 
     const formDataObj: Record<string, string> = {
       action: "updateContent",
@@ -295,6 +457,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     config.fieldDefinitions.forEach((field) => {
       formDataObj[field.key] = editableValues[field.key] || "";
     });
+
+    // Add image alt-texts if there are any changes
+    if (Object.keys(imageAltTexts).length > 0) {
+      formDataObj.imageAltTexts = JSON.stringify(imageAltTexts);
+    }
 
     fetcher.submit(formDataObj, { method: "POST" });
     clearPendingNavigation();
@@ -353,7 +520,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
     const currentValue = editableValues[fieldKey] || "";
     if (!currentValue) {
-      showInfoBox("Kein Inhalt zum Formatieren vorhanden", "warning", "Warnung");
+      showInfoBox(
+        t.common?.noContentToFormat || "No content available to format",
+        "warning",
+        t.common?.warning || "Warning"
+      );
       return;
     }
 
@@ -407,7 +578,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // Filter out primary locale and disabled languages
     const targetLocales = enabledLanguages.filter(l => l !== primaryLocale);
     if (targetLocales.length === 0) {
-      showInfoBox("Keine Zielsprachen ausgewählt", "warning", "Warnung");
+      showInfoBox(
+        t.common?.noTargetLanguagesSelected || "No target languages selected",
+        "warning",
+        t.common?.warning || "Warning"
+      );
       return;
     }
 
@@ -424,6 +599,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       return;
     }
 
+    const contextTitle = getItemFieldValue(selectedItem, 'title', primaryLocale) || selectedItem.id || "";
+
     fetcher.submit(
       {
         action: "translateFieldToAllLocales",
@@ -431,6 +608,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         fieldType: fieldKey,
         sourceText,
         targetLocales: JSON.stringify(targetLocales),
+        contextTitle,
       },
       { method: "POST" }
     );
@@ -442,7 +620,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // Filter out primary locale and disabled languages
     const targetLocales = enabledLanguages.filter(l => l !== primaryLocale);
     if (targetLocales.length === 0) {
-      showInfoBox("Keine Zielsprachen ausgewählt", "warning", "Warnung");
+      showInfoBox(
+        t.common?.noTargetLanguagesSelected || "No target languages selected",
+        "warning",
+        t.common?.warning || "Warning"
+      );
       return;
     }
 
@@ -466,6 +648,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const handleAcceptSuggestion = (fieldKey: string) => {
     const suggestion = aiSuggestions[fieldKey];
     if (!suggestion) return;
+
+    // Force isLoadingData to false to ensure change detection works
+    setIsLoadingData(false);
 
     // Set flag to indicate we're accepting a suggestion (but not translating)
     // This allows the change but still clears translations since the primary text changed
@@ -503,18 +688,25 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // Then translate to all enabled locales (except primary)
     const targetLocales = enabledLanguages.filter(l => l !== primaryLocale);
     if (targetLocales.length === 0) {
-      showInfoBox("Keine Zielsprachen aktiviert", "warning", "Warnung");
+      showInfoBox(
+        t.common?.noTargetLanguagesEnabled || "No target languages enabled",
+        "warning",
+        t.common?.warning || "Warning"
+      );
       setIsAcceptAndTranslateFlow(false);
       return;
     }
 
     // Submit translation to all enabled locales
+    const contextTitle = getItemFieldValue(selectedItem!, 'title', primaryLocale) || selectedItem!.id || "";
+
     fetcher.submit({
       action: "translateFieldToAllLocales",
       itemId: selectedItemId,
       fieldType: fieldKey,
       sourceText: suggestion,
-      targetLocales: JSON.stringify(targetLocales)
+      targetLocales: JSON.stringify(targetLocales),
+      contextTitle
     }, { method: "POST" });
   };
 
@@ -550,27 +742,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   };
 
   const handleValueChange = (fieldKey: string, value: string) => {
+    // Force isLoadingData to false to ensure change detection works for manual changes
+    setIsLoadingData(false);
+
+    // Update the state immediately without any side effects
+    // This ensures the input field responds instantly to user typing
     setEditableValues((prev) => ({
       ...prev,
       [fieldKey]: value,
     }));
-
-    // If we're editing in the primary locale and NOT in an accept-and-translate flow,
-    // delete all translations for this field
-    if (currentLanguage === primaryLocale && !isAcceptAndTranslateFlow && selectedItem) {
-      const field = config.fieldDefinitions.find((f) => f.key === fieldKey);
-      if (!field) return;
-
-      const translationKey = field.translationKey;
-
-      // Remove all translations for this field across all locales
-      if (selectedItem.translations && translationKey) {
-        selectedItem.translations = selectedItem.translations.filter(
-          (t: any) => t.key !== translationKey
-        );
-        console.log(`[TRANSLATION-CLEAR] Cleared all translations for field "${fieldKey}" (key: ${translationKey})`);
-      }
-    }
   };
 
   const handleToggleHtmlMode = (fieldKey: string) => {
@@ -579,6 +759,201 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       [fieldKey]: prev[fieldKey] === "html" ? "rendered" : "html",
     }));
   };
+
+  const handleClearField = (fieldKey: string) => {
+    // Force isLoadingData to false to ensure change detection works
+    setIsLoadingData(false);
+
+    // Clear the field value
+    setEditableValues((prev) => ({
+      ...prev,
+      [fieldKey]: "",
+    }));
+  };
+
+  const handleClearAllClick = () => {
+    setIsClearAllModalOpen(true);
+  };
+
+  const handleClearAllConfirm = () => {
+    // Force isLoadingData to false to ensure change detection works
+    setIsLoadingData(false);
+
+    // Clear all field values except title (title should never be empty in primary locale)
+    const clearedValues: Record<string, string> = {};
+    config.fieldDefinitions.forEach((field) => {
+      if (field.key === "title") {
+        // Keep the current title value
+        clearedValues[field.key] = editableValues[field.key] || "";
+      } else {
+        // Clear all other fields
+        clearedValues[field.key] = "";
+      }
+    });
+    setEditableValues(clearedValues);
+
+    // Close modal
+    setIsClearAllModalOpen(false);
+  };
+
+  const handleClearAllCancel = () => {
+    setIsClearAllModalOpen(false);
+  };
+
+  const handleClearAllForLocaleClick = () => {
+    setIsClearAllModalOpen(true);
+  };
+
+  const handleClearAllForLocaleConfirm = () => {
+    // Force isLoadingData to false to ensure change detection works
+    setIsLoadingData(false);
+
+    // Clear all field values for the current foreign language
+    const clearedValues: Record<string, string> = {};
+    config.fieldDefinitions.forEach((field) => {
+      clearedValues[field.key] = "";
+    });
+    setEditableValues(clearedValues);
+
+    // Close modal
+    setIsClearAllModalOpen(false);
+  };
+
+  const handleTranslateAllForLocale = () => {
+    if (!selectedItemId || !selectedItem || currentLanguage === primaryLocale) return;
+
+    const formDataObj: Record<string, string> = {
+      action: "translateAllForLocale",
+      itemId: selectedItemId,
+      targetLocale: currentLanguage,
+    };
+
+    // Add all field values from primary locale
+    config.fieldDefinitions.forEach((field) => {
+      const value = getItemFieldValue(selectedItem, field.key, primaryLocale);
+      if (value) {
+        formDataObj[field.key] = value;
+      }
+    });
+
+    fetcher.submit(formDataObj, { method: "POST" });
+  };
+
+  // ============================================================================
+  // ALT-TEXT HANDLERS
+  // ============================================================================
+
+  const handleAltTextChange = (imageIndex: number, value: string) => {
+    setImageAltTexts(prev => ({
+      ...prev,
+      [imageIndex]: value
+    }));
+  };
+
+  const handleGenerateAltText = (imageIndex: number) => {
+    if (!selectedItem || !selectedItem.images || !selectedItem.images[imageIndex]) return;
+
+    const image = selectedItem.images[imageIndex];
+    const productTitle = getItemFieldValue(selectedItem, 'title', primaryLocale);
+
+    fetcher.submit({
+      action: "generateAltText",
+      productId: selectedItem.id,
+      imageIndex: String(imageIndex),
+      imageUrl: image.url,
+      productTitle
+    }, { method: "POST" });
+  };
+
+  const handleGenerateAllAltTexts = () => {
+    if (!selectedItem || !selectedItem.images || selectedItem.images.length === 0) return;
+
+    const productTitle = getItemFieldValue(selectedItem, 'title', primaryLocale);
+    const imagesData = selectedItem.images.map((img: any) => ({ url: img.url }));
+
+    fetcher.submit({
+      action: "generateAllAltTexts",
+      productId: selectedItem.id,
+      productTitle,
+      imagesData: JSON.stringify(imagesData)
+    }, { method: "POST" });
+  };
+
+  const handleTranslateAltText = (imageIndex: number) => {
+    if (!selectedItem || !selectedItem.images || !selectedItem.images[imageIndex]) return;
+
+    const image = selectedItem.images[imageIndex];
+    const sourceAltText = image.altText || "";
+
+    if (!sourceAltText) {
+      showInfoBox(
+        t.content?.noSourceText || "Kein Alt-Text in der Hauptsprache vorhanden zum Übersetzen",
+        "warning",
+        "Warnung"
+      );
+      return;
+    }
+
+    fetcher.submit({
+      action: "translateAltText",
+      productId: selectedItem.id,
+      imageIndex: String(imageIndex),
+      sourceAltText,
+      targetLocale: currentLanguage
+    }, { method: "POST" });
+  };
+
+  const handleAcceptAltTextSuggestion = (imageIndex: number) => {
+    const suggestion = altTextSuggestions[imageIndex];
+    if (!suggestion) return;
+
+    setImageAltTexts(prev => ({
+      ...prev,
+      [imageIndex]: suggestion
+    }));
+
+    setAltTextSuggestions(prev => {
+      const newSuggestions = { ...prev };
+      delete newSuggestions[imageIndex];
+      return newSuggestions;
+    });
+  };
+
+  const handleRejectAltTextSuggestion = (imageIndex: number) => {
+    setAltTextSuggestions(prev => {
+      const newSuggestions = { ...prev };
+      delete newSuggestions[imageIndex];
+      return newSuggestions;
+    });
+  };
+
+  // Reset alt-text state when product changes
+  useEffect(() => {
+    setImageAltTexts({});
+    setAltTextSuggestions({});
+  }, [selectedItemId]);
+
+  // Load translated alt-texts when language changes
+  useEffect(() => {
+    if (!selectedItem || !selectedItem.images) return;
+
+    if (currentLanguage === primaryLocale) {
+      // Reset to primary locale alt-texts
+      setImageAltTexts({});
+    } else {
+      // Load translated alt-texts from DB
+      const translatedAltTexts: Record<number, string> = {};
+      selectedItem.images.forEach((img: any, index: number) => {
+        const translation = img.altTextTranslations?.find(
+          (t: any) => t.locale === currentLanguage
+        );
+        if (translation) {
+          translatedAltTexts[index] = translation.altText;
+        }
+      });
+      setImageAltTexts(translatedAltTexts);
+    }
+  }, [currentLanguage, selectedItemId, primaryLocale, selectedItem]);
 
   // ============================================================================
   // HELPER FUNCTIONS
@@ -626,6 +1001,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     htmlModes,
     hasChanges,
     enabledLanguages,
+    imageAltTexts,
+    altTextSuggestions,
+    isClearAllModalOpen,
   };
 
   const handlers: EditorHandlers = {
@@ -644,6 +1022,19 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     handleItemSelect,
     handleValueChange,
     handleToggleHtmlMode,
+    handleClearField,
+    handleClearAllClick,
+    handleClearAllConfirm,
+    handleClearAllCancel,
+    handleClearAllForLocaleClick,
+    handleClearAllForLocaleConfirm,
+    handleTranslateAllForLocale,
+    handleAltTextChange,
+    handleGenerateAltText,
+    handleGenerateAllAltTexts,
+    handleTranslateAltText,
+    handleAcceptAltTextSuggestion,
+    handleRejectAltTextSuggestion,
   };
 
   return {

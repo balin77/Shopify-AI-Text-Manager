@@ -8,7 +8,7 @@ export type InfoBoxTone = "success" | "info" | "warning" | "critical";
 
 export type ContentType = 'products' | 'collections' | 'blogs' | 'pages' | 'policies';
 
-export type FieldType = 'text' | 'html' | 'slug' | 'textarea' | 'number';
+export type FieldType = 'text' | 'html' | 'slug' | 'textarea' | 'number' | 'image-gallery' | 'options';
 
 export interface FieldDefinition {
   /** Unique key for this field */
@@ -46,6 +46,9 @@ export interface FieldDefinition {
 
   /** Custom field-specific AI instructions key */
   aiInstructionsKey?: string;
+
+  /** Optional: Custom render function for special field types */
+  renderField?: (props: any) => React.ReactNode;
 }
 
 export interface ContentEditorConfig {
@@ -90,6 +93,9 @@ export interface EditorState {
   htmlModes: Record<string, 'html' | 'rendered'>;
   hasChanges: boolean;
   enabledLanguages: string[];
+  imageAltTexts: Record<number, string>;
+  altTextSuggestions: Record<number, string>;
+  isClearAllModalOpen: boolean;
 }
 
 export interface EditorHandlers {
@@ -108,6 +114,19 @@ export interface EditorHandlers {
   handleItemSelect: (itemId: string) => void;
   handleValueChange: (fieldKey: string, value: string) => void;
   handleToggleHtmlMode: (fieldKey: string) => void;
+  handleClearField: (fieldKey: string) => void;
+  handleClearAllClick: () => void;
+  handleClearAllConfirm: () => void;
+  handleClearAllCancel: () => void;
+  handleClearAllForLocaleClick: () => void;
+  handleClearAllForLocaleConfirm: () => void;
+  handleTranslateAllForLocale: () => void;
+  handleAltTextChange: (imageIndex: number, value: string) => void;
+  handleGenerateAltText: (imageIndex: number) => void;
+  handleGenerateAllAltTexts: () => void;
+  handleTranslateAltText: (imageIndex: number) => void;
+  handleAcceptAltTextSuggestion: (imageIndex: number) => void;
+  handleRejectAltTextSuggestion: (imageIndex: number) => void;
 }
 
 export interface UseContentEditorProps {

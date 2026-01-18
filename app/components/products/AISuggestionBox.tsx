@@ -1,4 +1,5 @@
 import { Text, BlockStack, InlineStack, Button } from "@shopify/polaris";
+import { useI18n } from "../../contexts/I18nContext";
 
 interface AISuggestionBoxProps {
   suggestion: string;
@@ -15,6 +16,13 @@ export function AISuggestionBox({
   onAcceptAndTranslate,
   onReject,
 }: AISuggestionBoxProps) {
+  const { t } = useI18n();
+
+  // Calculate character count (strip HTML tags for accurate count)
+  const charCount = isHtml
+    ? suggestion.replace(/<[^>]*>/g, '').length
+    : suggestion.length;
+
   return (
     <div
       style={{
@@ -27,7 +35,7 @@ export function AISuggestionBox({
     >
       <BlockStack gap="300">
         <Text as="p" variant="bodyMd" fontWeight="semibold">
-          KI-Vorschlag:
+          {t.products.aiSuggestion}
         </Text>
         {isHtml ? (
           <div dangerouslySetInnerHTML={{ __html: suggestion }} />
@@ -36,16 +44,21 @@ export function AISuggestionBox({
             {suggestion}
           </Text>
         )}
-        <InlineStack gap="200">
-          <Button size="slim" variant="primary" onClick={onAccept}>
-            Übernehmen
-          </Button>
-          <Button size="slim" onClick={onAcceptAndTranslate}>
-            Übernehmen & Übersetzen
-          </Button>
-          <Button size="slim" onClick={onReject}>
-            Ablehnen
-          </Button>
+        <InlineStack gap="200" align="space-between" blockAlign="center">
+          <InlineStack gap="200">
+            <Button size="slim" variant="primary" onClick={onAccept}>
+              {t.products.accept}
+            </Button>
+            <Button size="slim" onClick={onAcceptAndTranslate}>
+              {t.products.acceptTranslate}
+            </Button>
+            <Button size="slim" onClick={onReject}>
+              {t.products.decline}
+            </Button>
+          </InlineStack>
+          <Text as="p" variant="bodySm" tone="subdued">
+            {charCount} {t.products.characters}
+          </Text>
         </InlineStack>
       </BlockStack>
     </div>

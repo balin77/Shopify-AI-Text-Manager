@@ -36,10 +36,8 @@ import { ThemeContentViewer } from "../components/ThemeContentViewer";
 import { useI18n } from "../contexts/I18nContext";
 import { useNavigationHeight } from "../contexts/NavigationHeightContext";
 import { ContentService } from "../services/content.service";
-import {
-  contentEditorStyles,
-  getLocaleButtonStyle as getLocaleButtonStyleUtil,
-} from "../utils/contentEditor.utils";
+import { contentEditorStyles } from "../utils/contentEditor.utils";
+import { CONTENT_MAX_HEIGHT } from "../constants/layout";
 
 type ContentType = "collections" | "blogs" | "pages" | "policies" | "menus" | "templates" | "metaobjects" | "shopMetadata";
 
@@ -134,19 +132,22 @@ export default function ContentHub() {
   const CONTENT_TYPES = getContentTypes(t);
 
   // Get initial type from URL or localStorage
-  const getInitialType = (): ContentType => {
+  const getInitialType = (): ContentType | null => {
     const urlType = searchParams.get("type") as ContentType;
     if (urlType) return urlType;
 
     if (typeof window !== "undefined") {
       const stored = localStorage.getItem("lastContentHubType");
-      if (stored) return stored as ContentType;
+      if (stored && ["menus", "templates", "metaobjects", "shopMetadata"].includes(stored)) {
+        return stored as ContentType;
+      }
     }
 
-    return "menus"; // default
+    // If no type specified and no valid localStorage, redirect to collections
+    return null;
   };
 
-  const [selectedType, setSelectedType] = useState<ContentType>(getInitialType());
+  const [selectedType, setSelectedType] = useState<ContentType | null>(getInitialType());
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [currentLanguage, setCurrentLanguage] = useState(primaryLocale);
 
@@ -162,22 +163,29 @@ export default function ContentHub() {
     key => editableValues[key] !== originalValues[key]
   );
 
-  // Initialize URL on mount
+  // Initialize - redirect to collections if no type specified
   useEffect(() => {
     const urlType = searchParams.get("type");
     if (!urlType) {
-      navigate(`?type=${selectedType}`, { replace: true });
+      // Clear localStorage to prevent auto-selecting menus
+      if (typeof window !== "undefined") {
+        localStorage.removeItem("lastContentHubType");
+      }
+      // Always redirect to collections when accessing /app/content without type
+      navigate("/app/collections", { replace: true });
     }
   }, []);
 
   // Update URL and localStorage when type changes
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      localStorage.setItem("lastContentHubType", selectedType);
-    }
-    const urlType = searchParams.get("type");
-    if (urlType !== selectedType) {
-      navigate(`?type=${selectedType}`, { replace: true });
+    if (selectedType) {
+      if (typeof window !== "undefined") {
+        localStorage.setItem("lastContentHubType", selectedType);
+      }
+      const urlType = searchParams.get("type");
+      if (urlType !== selectedType) {
+        navigate(`?type=${selectedType}`, { replace: true });
+      }
     }
   }, [selectedType, navigate]);
 
@@ -326,7 +334,7 @@ export default function ContentHub() {
                 {CONTENT_TYPES.find((t: any) => t.id === selectedType)?.label} ({currentItems.length})
               </Text>
             </div>
-            <div style={{ maxHeight: "calc(100vh - 200px)", overflowY: "auto" }}>
+            <div style={{ maxHeight: CONTENT_MAX_HEIGHT, overflowY: "auto" }}>
               {currentItems.length > 0 ? (
                 <ResourceList
                   resourceName={{ singular: t.content.entry, plural: t.content.entries }}

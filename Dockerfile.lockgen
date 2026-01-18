@@ -1,0 +1,13 @@
+# Temporary Dockerfile to regenerate package-lock.json with Node 22
+FROM node:22-alpine
+
+WORKDIR /app
+
+# Copy only package.json
+COPY package.json ./
+
+# Generate lock file
+RUN npm install --package-lock-only
+
+# Output the lock file
+CMD ["cat", "package-lock.json"]

@@ -27,6 +27,7 @@ interface AIEditableFieldProps {
   onAcceptSuggestion?: () => void;
   onAcceptAndTranslate?: () => void;
   onRejectSuggestion?: () => void;
+  onClear?: () => void;
 }
 
 export function AIEditableField({
@@ -53,6 +54,7 @@ export function AIEditableField({
   onAcceptSuggestion,
   onAcceptAndTranslate,
   onRejectSuggestion,
+  onClear,
 }: AIEditableFieldProps) {
   const { t } = useI18n();
 
@@ -81,7 +83,19 @@ export function AIEditableField({
 
   return (
     <div>
-      <div className={`ai-editable-field-wrapper ${getBackgroundClass()}`}>
+      <div className={`ai-editable-field-wrapper ${getBackgroundClass()}`} style={{ position: "relative" }}>
+        {onClear && value && (
+          <div style={{ position: "absolute", top: "0", right: "0", zIndex: 10 }}>
+            <Button
+              size="slim"
+              onClick={onClear}
+              tone="critical"
+              variant="plain"
+            >
+              {t.common?.clear || t.products?.clear || "Clear"}
+            </Button>
+          </div>
+        )}
         <TextField
           label={<span style={{ fontWeight: 600 }}>{label}</span>}
           value={value}
@@ -134,7 +148,7 @@ export function AIEditableField({
               loading={isLoading}
               disabled={!value}
             >
-              🎨 Formatieren
+              🎨 {t.products.formatWithAI || "Formatieren"}
             </Button>
           )}
           {(onTranslate || onTranslateToAllLocales) && (
@@ -144,7 +158,7 @@ export function AIEditableField({
               loading={isLoading}
               disabled={(isPrimaryLocale && !onTranslateToAllLocales) || (!isPrimaryLocale && !sourceTextAvailable)}
             >
-              🌍 {isPrimaryLocale ? "Übersetzen" : t.products.translateFromPrimary}
+              🌍 {isPrimaryLocale ? (t.products.translate || "Übersetzen") : t.products.translateFromPrimary}
             </Button>
           )}
         </div>

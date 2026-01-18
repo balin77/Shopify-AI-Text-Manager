@@ -7,6 +7,92 @@
 import type { ContentEditorConfig } from "../types/content-editor.types";
 
 // ============================================================================
+// PRODUCTS
+// ============================================================================
+
+export const PRODUCTS_CONFIG: ContentEditorConfig = {
+  contentType: "products",
+  resourceType: "Product",
+  displayName: "Products",
+  displayNameSingular: "Product",
+  showSeoSidebar: true,
+  idPrefix: "ID:",
+
+  fieldDefinitions: [
+    // Product Images (rendered by FieldRenderer with type: "image-gallery")
+    {
+      key: "images",
+      type: "image-gallery",
+      label: "Product Images",
+      translationKey: "images", // Alt-texts are translated
+      supportsAI: true,
+      supportsTranslation: true,
+      aiInstructionsKey: "productAltText",
+    },
+    // Title
+    {
+      key: "title",
+      type: "text",
+      label: "Product Title",
+      translationKey: "title",
+      required: true,
+      supportsAI: true,
+      supportsFormatting: true,
+      supportsTranslation: true,
+      aiInstructionsKey: "productTitle",
+      helpText: (value) => `${(value || '').length} characters`,
+    },
+    // Description
+    {
+      key: "description",
+      type: "html",
+      label: "Description",
+      translationKey: "body_html",
+      supportsAI: true,
+      supportsFormatting: true,
+      supportsTranslation: true,
+      aiInstructionsKey: "productDescription",
+    },
+    // Handle (URL slug)
+    {
+      key: "handle",
+      type: "slug",
+      label: "URL Handle",
+      translationKey: "handle",
+      supportsAI: true,
+      supportsFormatting: true,
+      supportsTranslation: true,
+      aiInstructionsKey: "productHandle",
+    },
+    // SEO Title
+    {
+      key: "seoTitle",
+      type: "text",
+      label: "SEO Title",
+      translationKey: "meta_title",
+      supportsAI: true,
+      supportsFormatting: true,
+      supportsTranslation: true,
+      aiInstructionsKey: "productSeoTitle",
+      helpText: (value) => `${(value || '').length} characters (recommended: 50-60)`,
+    },
+    // Meta Description
+    {
+      key: "metaDescription",
+      type: "textarea",
+      label: "Meta Description",
+      translationKey: "meta_description",
+      multiline: 3,
+      supportsAI: true,
+      supportsFormatting: true,
+      supportsTranslation: true,
+      aiInstructionsKey: "productMetaDesc",
+      helpText: (value) => `${(value || '').length} characters (recommended: 150-160)`,
+    },
+  ],
+};
+
+// ============================================================================
 // COLLECTIONS
 // ============================================================================
 
@@ -29,7 +115,7 @@ export const COLLECTIONS_CONFIG: ContentEditorConfig = {
       supportsFormatting: true,
       supportsTranslation: true,
       aiInstructionsKey: "collectionTitle",
-      helpText: (value) => `${value.length} characters`,
+      helpText: (value) => `${(value || '').length} characters`,
     },
     {
       key: "description",
@@ -60,7 +146,7 @@ export const COLLECTIONS_CONFIG: ContentEditorConfig = {
       supportsFormatting: true,
       supportsTranslation: true,
       aiInstructionsKey: "collectionSeoTitle",
-      helpText: (value) => `${value.length} characters (recommended: 50-60)`,
+      helpText: (value) => `${(value || '').length} characters (recommended: 50-60)`,
     },
     {
       key: "metaDescription",
@@ -72,7 +158,7 @@ export const COLLECTIONS_CONFIG: ContentEditorConfig = {
       supportsFormatting: true,
       supportsTranslation: true,
       aiInstructionsKey: "collectionMetaDesc",
-      helpText: (value) => `${value.length} characters (recommended: 150-160)`,
+      helpText: (value) => `${(value || '').length} characters (recommended: 150-160)`,
     },
   ],
 };
@@ -101,7 +187,7 @@ export const BLOGS_CONFIG: ContentEditorConfig = {
       supportsFormatting: true,
       supportsTranslation: true,
       aiInstructionsKey: "blogTitle",
-      helpText: (value) => `${value.length} characters`,
+      helpText: (value) => `${(value || '').length} characters`,
     },
     {
       key: "body",
@@ -132,7 +218,7 @@ export const BLOGS_CONFIG: ContentEditorConfig = {
       supportsFormatting: true,
       supportsTranslation: true,
       aiInstructionsKey: "blogSeoTitle",
-      helpText: (value) => `${value.length} characters (recommended: 50-60)`,
+      helpText: (value) => `${(value || '').length} characters (recommended: 50-60)`,
     },
     {
       key: "metaDescription",
@@ -144,7 +230,7 @@ export const BLOGS_CONFIG: ContentEditorConfig = {
       supportsFormatting: true,
       supportsTranslation: true,
       aiInstructionsKey: "blogMetaDesc",
-      helpText: (value) => `${value.length} characters (recommended: 150-160)`,
+      helpText: (value) => `${(value || '').length} characters (recommended: 150-160)`,
     },
   ],
 };
@@ -172,7 +258,7 @@ export const PAGES_CONFIG: ContentEditorConfig = {
       supportsFormatting: true,
       supportsTranslation: true,
       aiInstructionsKey: "pageTitle",
-      helpText: (value) => `${value.length} characters`,
+      helpText: (value) => `${(value || '').length} characters`,
     },
     {
       key: "body",

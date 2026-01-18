@@ -3,7 +3,18 @@ import { installGlobals } from "@remix-run/node";
 import compression from "compression";
 import express from "express";
 import morgan from "morgan";
-import rateLimit from "express-rate-limit";
+import { createRequire } from "module";
+
+// Import rate limiters from CommonJS module
+const require = createRequire(import.meta.url);
+const {
+  apiRateLimit,
+  aiActionRateLimit,
+  webhookRateLimit,
+  authRateLimit,
+  strictRateLimit,
+  bulkOperationRateLimit,
+} = require("./app/middleware/rate-limit-cjs.cjs");
 
 installGlobals();
 
@@ -35,31 +46,51 @@ app.use((req, res, next) => {
   next();
 });
 
-// Rate limiter only for specific expensive API routes
-const apiLimiter = rateLimit({
-  windowMs: 60 * 1000, // 1 minute
-  max: 20, // 20 requests per minute
-  standardHeaders: true,
-  legacyHeaders: false,
-  // Note: Trust proxy is configured on the Express app (line 24)
-  // express-rate-limit automatically uses the app's trust proxy setting
-  skip: (req) => {
-    // Skip rate limiting for auth routes and assets
-    return req.path.startsWith('/auth') ||
-           req.path.startsWith('/assets') ||
-           req.path.startsWith('/_') ||
-           req.path === '/';
-  },
-  handler: (req, res) => {
-    res.status(429).json({
-      success: false,
-      error: 'Rate limit exceeded. Please wait before trying again.',
-    });
-  },
+// Apply granular rate limiting
+// Webhook rate limiting (high limit for Shopify bursts)
+app.use('/webhooks', webhookRateLimit);
+
+// Auth rate limiting (strict to prevent brute force)
+app.use('/auth', authRateLimit);
+
+// Strict rate limiting for sensitive settings
+app.use('/app/settings', strictRateLimit);
+
+// Bulk operation rate limiting for expensive operations
+app.use('/api/sync-products', bulkOperationRateLimit);
+app.use('/api/sync-content', bulkOperationRateLimit);
+
+// AI action rate limiting for generation/translation
+app.use((req, res, next) => {
+  // Check if this is an AI action based on form data
+  const contentType = req.headers['content-type'] || '';
+  if (contentType.includes('application/x-www-form-urlencoded') ||
+      contentType.includes('multipart/form-data')) {
+    // These might be AI actions, apply limit
+    if (req.path.includes('/app/products') ||
+        req.path.includes('/app/content') ||
+        req.path.includes('/app/collections')) {
+      return aiActionRateLimit(req, res, next);
+    }
+  }
+  next();
 });
 
-// Apply rate limiting only to API routes
-app.use('/api', apiLimiter);
+// General API rate limiting (catch-all for /api routes)
+// Exclude polling endpoints that have their own built-in backoff mechanisms
+app.use('/api', (req, res, next) => {
+  // Skip rate limiting for these endpoints - they have exponential backoff in the client
+  const excludedPaths = [
+    '/api/running-tasks-count',
+    '/api/recently-completed-tasks'
+  ];
+
+  if (excludedPaths.includes(req.path)) {
+    return next();
+  }
+
+  return apiRateLimit(req, res, next);
+});
 
 // handle asset requests
 if (viteDevServer) {
@@ -92,7 +123,7 @@ app.all(
 const port = process.env.PORT || 8080;
 const host = process.env.HOST || '0.0.0.0';
 
-app.listen(port, host, async () => {
+const server = app.listen(port, host, async () => {
   console.log(`Express server listening at http://${host}:${port}`);
 
   // Start task cleanup service
@@ -105,3 +136,46 @@ app.listen(port, host, async () => {
     console.error("❌ Failed to start task cleanup service:", error);
   }
 });
+
+// Graceful shutdown handler
+async function gracefulShutdown(signal) {
+  console.log(`\n${signal} received. Starting graceful shutdown...`);
+
+  // Stop accepting new connections
+  server.close(async () => {
+    console.log('HTTP server closed');
+
+    try {
+      // Stop task cleanup service
+      const { TaskCleanupService } = await import("./task-cleanup.service.js");
+      const cleanupService = TaskCleanupService.getInstance();
+      cleanupService.stop();
+      console.log('✅ Task cleanup service stopped');
+    } catch (error) {
+      console.error('Error stopping task cleanup service:', error);
+    }
+
+    try {
+      // Close Prisma connections
+      const { PrismaClient } = await import("@prisma/client");
+      const prisma = new PrismaClient();
+      await prisma.$disconnect();
+      console.log('✅ Database connections closed');
+    } catch (error) {
+      console.error('Error closing database connections:', error);
+    }
+
+    console.log('Graceful shutdown complete');
+    process.exit(0);
+  });
+
+  // Force shutdown after 10 seconds
+  setTimeout(() => {
+    console.error('Forced shutdown after timeout');
+    process.exit(1);
+  }, 10000);
+}
+
+// Handle shutdown signals
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
