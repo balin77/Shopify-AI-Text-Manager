@@ -5,7 +5,7 @@
  * which runs as a CommonJS module.
  */
 
-const rateLimit = require('express-rate-limit');
+const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 
 /**
  * Standard handler for rate limit exceeded
@@ -38,9 +38,7 @@ const apiRateLimit = rateLimit({
   legacyHeaders: false,
   handler: standardHandler,
   message: 'Too many API requests, please try again later',
-  keyGenerator: (req) => {
-    return req.ip || req.socket.remoteAddress || 'unknown';
-  },
+  keyGenerator: ipKeyGenerator,
 });
 
 /**
@@ -53,9 +51,7 @@ const aiActionRateLimit = rateLimit({
   legacyHeaders: false,
   handler: standardHandler,
   message: 'Too many AI requests, please try again later',
-  keyGenerator: (req) => {
-    return req.ip || req.socket.remoteAddress || 'unknown';
-  },
+  keyGenerator: ipKeyGenerator,
 });
 
 /**
@@ -74,7 +70,7 @@ const webhookRateLimit = rateLimit({
     if (shop) {
       return shop;
     }
-    return req.ip || req.socket.remoteAddress || 'unknown';
+    return ipKeyGenerator(req);
   },
 });
 
@@ -88,9 +84,7 @@ const authRateLimit = rateLimit({
   legacyHeaders: false,
   handler: standardHandler,
   message: 'Too many authentication attempts, please try again later',
-  keyGenerator: (req) => {
-    return req.ip || req.socket.remoteAddress || 'unknown';
-  },
+  keyGenerator: ipKeyGenerator,
 });
 
 /**
@@ -103,9 +97,7 @@ const strictRateLimit = rateLimit({
   legacyHeaders: false,
   handler: standardHandler,
   message: 'Too many requests to this endpoint, please slow down',
-  keyGenerator: (req) => {
-    return req.ip || req.socket.remoteAddress || 'unknown';
-  },
+  keyGenerator: ipKeyGenerator,
 });
 
 /**
@@ -118,9 +110,7 @@ const bulkOperationRateLimit = rateLimit({
   legacyHeaders: false,
   handler: standardHandler,
   message: 'Too many bulk operations, please wait before trying again',
-  keyGenerator: (req) => {
-    return req.ip || req.socket.remoteAddress || 'unknown';
-  },
+  keyGenerator: ipKeyGenerator,
 });
 
 module.exports = {
