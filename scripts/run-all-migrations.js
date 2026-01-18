@@ -3,10 +3,11 @@
  * Run all migrations for Railway Pre-deploy
  *
  * This script runs:
- * 1. Prisma migrations (if any)
- * 2. API Key encryption migration (idempotent)
- * 3. Session PII encryption migration (idempotent)
- * 4. Webhook Payload encryption migration (idempotent)
+ * 1. Generate Prisma Client
+ * 2. Prisma Schema Migrations (all 12 migrations)
+ * 3. API Key encryption migration (idempotent)
+ * 4. Session PII encryption migration (idempotent)
+ * 5. Webhook Payload encryption migration (idempotent)
  */
 
 import { execSync } from 'child_process';
@@ -57,7 +58,27 @@ async function main() {
   // 1. Generate Prisma Client
   runCommand('npx prisma generate', 'Generate Prisma Client');
 
-  // 2. Run API Key encryption migration (if ENCRYPTION_KEY is set)
+  // 2. Run Prisma Schema Migrations
+  log('\n📦 Running Prisma Schema Migrations...', 'blue');
+  const migrateSuccess = runCommand(
+    'npx prisma migrate deploy',
+    'Prisma Schema Migrations'
+  );
+
+  if (!migrateSuccess) {
+    log('⚠️  Prisma migrate deploy failed, trying db push as fallback...', 'yellow');
+    const pushSuccess = runCommand(
+      'npx prisma db push --skip-generate',
+      'Prisma DB Push (Fallback)'
+    );
+
+    if (!pushSuccess) {
+      log('❌ Both migrate deploy and db push failed!', 'red');
+      process.exit(1);
+    }
+  }
+
+  // 3. Run API Key encryption migration (if ENCRYPTION_KEY is set)
   if (process.env.ENCRYPTION_KEY) {
     log('\n📦 Running API Key Encryption Migration...', 'blue');
     const success = runCommand(
@@ -72,7 +93,7 @@ async function main() {
     log('\nℹ️  Skipping API Key encryption (ENCRYPTION_KEY not set)', 'blue');
   }
 
-  // 3. Run Session PII encryption migration (if ENCRYPTION_KEY is set)
+  // 4. Run Session PII encryption migration (if ENCRYPTION_KEY is set)
   if (process.env.ENCRYPTION_KEY) {
     log('\n📦 Running Session PII Encryption Migration...', 'blue');
     const success = runCommand(
@@ -87,7 +108,7 @@ async function main() {
     log('\nℹ️  Skipping Session PII encryption (ENCRYPTION_KEY not set)', 'blue');
   }
 
-  // 4. Run Webhook Payload encryption migration (if ENCRYPTION_KEY is set)
+  // 5. Run Webhook Payload encryption migration (if ENCRYPTION_KEY is set)
   if (process.env.ENCRYPTION_KEY) {
     log('\n📦 Running Webhook Payload Encryption Migration...', 'blue');
     const success = runCommand(
