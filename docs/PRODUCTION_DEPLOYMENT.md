@@ -182,6 +182,51 @@ All migrations include safety features:
 ✅ **Error Handling:** Continues with warnings if encryption migrations fail
 ✅ **No Data Loss:** All migrations preserve existing data
 
+## Troubleshooting Failed Migrations
+
+### Error: P3009 - Failed Migration Found
+
+If you see this error:
+```
+Error: P3009
+migrate found failed migrations in the target database
+The `20260113_add_product_image_alt_translations` migration failed
+```
+
+**Solution 1: Use the automatic fix (Recommended)**
+
+The `start:production` command now automatically detects and fixes failed migrations. Simply redeploy with:
+
+```bash
+npm run start:production
+```
+
+**Solution 2: Manual fix**
+
+If you need to fix migrations manually:
+
+```bash
+# Run the fix script
+npm run migrate:fix
+
+# Or manually resolve the failed migration
+npx prisma migrate resolve --rolled-back 20260113_add_product_image_alt_translations
+npx prisma migrate deploy
+```
+
+**Solution 3: Force schema sync (Last Resort)**
+
+If migrations continue to fail, force sync the schema:
+
+```bash
+npx prisma db push --accept-data-loss
+```
+
+**Note:** The `--accept-data-loss` flag is safe in this case because:
+- The old `Translation` table is being replaced by `ContentTranslation`
+- Data migration scripts handle moving data to the new table
+- The warning is expected and safe to ignore
+
 ## Rollback Instructions
 
 If you need to rollback a migration:

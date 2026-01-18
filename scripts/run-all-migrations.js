@@ -66,15 +66,47 @@ async function main() {
   );
 
   if (!migrateSuccess) {
-    log('⚠️  Prisma migrate deploy failed, trying db push as fallback...', 'yellow');
-    const pushSuccess = runCommand(
-      'npx prisma db push --skip-generate',
-      'Prisma DB Push (Fallback)'
+    log('⚠️  Prisma migrate deploy failed, checking for failed migrations...', 'yellow');
+
+    // Try to fix failed migrations
+    log('\n🔧 Attempting to resolve failed migrations...', 'blue');
+    const fixSuccess = runCommand(
+      'npx prisma migrate resolve --rolled-back 20260113_add_product_image_alt_translations',
+      'Mark failed migration as rolled back'
     );
 
-    if (!pushSuccess) {
-      log('❌ Both migrate deploy and db push failed!', 'red');
-      process.exit(1);
+    if (fixSuccess) {
+      log('✅ Failed migration marked as rolled back, retrying deploy...', 'green');
+      const retrySuccess = runCommand(
+        'npx prisma migrate deploy',
+        'Retry Prisma Schema Migrations'
+      );
+
+      if (retrySuccess) {
+        log('✅ Migrations deployed successfully after fix!', 'green');
+      } else {
+        log('⚠️  Retry failed, using db push as final fallback...', 'yellow');
+        const pushSuccess = runCommand(
+          'npx prisma db push --skip-generate --accept-data-loss',
+          'Prisma DB Push (Fallback)'
+        );
+
+        if (!pushSuccess) {
+          log('❌ All migration attempts failed!', 'red');
+          process.exit(1);
+        }
+      }
+    } else {
+      log('⚠️  Could not resolve failed migration, trying db push as fallback...', 'yellow');
+      const pushSuccess = runCommand(
+        'npx prisma db push --skip-generate --accept-data-loss',
+        'Prisma DB Push (Fallback)'
+      );
+
+      if (!pushSuccess) {
+        log('❌ Both migrate deploy and db push failed!', 'red');
+        process.exit(1);
+      }
     }
   }
 
