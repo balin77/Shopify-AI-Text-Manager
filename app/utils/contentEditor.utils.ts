@@ -624,4 +624,11 @@ export const contentEditorStyles = `
       box-shadow: 0 0 20px 10px rgba(59, 130, 246, 0.3);
     }
   }
+
+  /* Hide SEO sidebar on narrow screens */
+  @media (max-width: 1100px) {
+    .seo-sidebar-container {
+      display: none !important;
+    }
+  }
 `;

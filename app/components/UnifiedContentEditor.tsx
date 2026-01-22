@@ -190,7 +190,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
         />
 
         {/* Middle: Content Editor */}
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: "400px" }}>
           {selectedItem ? (
             <>
               {/* Fixed Header with Language Bar and Action Buttons */}
@@ -347,9 +347,9 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           )}
         </div>
 
-        {/* Right: Optional Sidebar (Fixed) */}
+        {/* Right: Optional Sidebar (Fixed) - Hidden on narrow screens via CSS */}
         {selectedItem && state.currentLanguage === primaryLocale && config.showSeoSidebar && (
-          <div style={{ width: "320px", flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+          <div className="seo-sidebar-container" style={{ width: "320px", flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
             <div style={{ flex: 1, overflowY: "auto" }}>
               {sidebarRenderer(selectedItem, state.editableValues)}
             </div>
