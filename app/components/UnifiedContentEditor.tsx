@@ -127,6 +127,16 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   const defaultRenderSidebar = (item: any, editableValues: Record<string, string>) => {
     if (!config.showSeoSidebar) return null;
 
+    // Calculate image alt text stats for SEO score
+    const images = item.images || [];
+    const totalImages = images.length;
+    const imagesWithAlt = images.filter((img: any, index: number) => {
+      // Check both local edits (state.imageAltTexts) and original altText
+      const localAltText = state.imageAltTexts?.[index];
+      const originalAltText = img.altText;
+      return !!(localAltText || originalAltText);
+    }).length;
+
     return (
       <SeoSidebar
         title={editableValues.title || ""}
@@ -134,6 +144,8 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
         handle={editableValues.handle || ""}
         seoTitle={editableValues.seoTitle || ""}
         metaDescription={editableValues.metaDescription || ""}
+        totalImages={totalImages}
+        imagesWithAlt={imagesWithAlt}
       />
     );
   };
