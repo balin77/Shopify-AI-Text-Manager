@@ -175,6 +175,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // Ref to track pending translation auto-save
   const pendingTranslationSaveRef = useRef<{values: Record<string, string>, locale: string} | null>(null);
 
+  // Ref to track pending Accept & Translate save (saves primary text after translations complete)
+  const pendingAcceptAndTranslateSaveRef = useRef<{values: Record<string, string>, locale: string} | null>(null);
+
   // Handle translated field response (single field translation)
   useEffect(() => {
     if (fetcher.data?.success && 'translatedValue' in fetcher.data) {
@@ -281,9 +284,17 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
         // Reset the accept-and-translate flow flag after translations are complete
         setIsAcceptAndTranslateFlow(false);
+
+        // Now save the primary text that was pending (set during handleAcceptAndTranslate)
+        if (pendingAcceptAndTranslateSaveRef.current) {
+          const { values, locale } = pendingAcceptAndTranslateSaveRef.current;
+          pendingAcceptAndTranslateSaveRef.current = null;
+          console.log('[AUTO-SAVE] Saving primary text after Accept & Translate completed');
+          performAutoSave(values, locale);
+        }
       }
     }
-  }, [fetcher.data, currentLanguage, selectedItem, config.fieldDefinitions, showInfoBox]);
+  }, [fetcher.data, currentLanguage, selectedItem, config.fieldDefinitions, showInfoBox, performAutoSave]);
 
   // Handle "translateAll" response (translates to ALL enabled locales)
   useEffect(() => {
@@ -746,10 +757,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       return newSuggestions;
     });
 
-    // Auto-save the primary text immediately
-    // (Translations will be saved server-side by translateFieldToAllLocales)
-    performSaveWithValues(newValues, primaryLocale);
-
     // Then translate to all enabled locales (except primary)
     const targetLocales = enabledLanguages.filter(l => l !== primaryLocale);
     if (targetLocales.length === 0) {
@@ -759,8 +766,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         t.common?.warning || "Warning"
       );
       setIsAcceptAndTranslateFlow(false);
+      // No translations needed, just save the primary text directly
+      performSaveWithValues(newValues, primaryLocale);
       return;
     }
+
+    // Mark primary text for saving AFTER translations complete
+    // (We can't call fetcher.submit twice - the second call would override the first)
+    pendingAcceptAndTranslateSaveRef.current = { values: newValues, locale: primaryLocale };
 
     // Submit translation to all enabled locales
     const contextTitle = getItemFieldValue(selectedItem!, 'title', primaryLocale) || selectedItem!.id || "";
