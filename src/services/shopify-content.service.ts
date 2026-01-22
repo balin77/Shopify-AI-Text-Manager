@@ -154,6 +154,56 @@ export class ShopifyContentService {
   }
 
   /**
+   * Delete all translations for specific keys across all foreign locales
+   */
+  async deleteAllTranslationsForKeys(params: {
+    resourceId: string;
+    translationKeys: string[];
+    foreignLocales: string[];
+  }) {
+    const { resourceId, translationKeys, foreignLocales } = params;
+
+    if (translationKeys.length === 0 || foreignLocales.length === 0) {
+      return { success: true };
+    }
+
+    console.log('[TRANSLATIONS-DELETE] Deleting translations for keys:', translationKeys, 'locales:', foreignLocales);
+
+    const response = await this.admin.graphql(
+      `#graphql
+        mutation removeTranslations($resourceId: ID!, $translationKeys: [String!]!, $locales: [String!]!) {
+          translationsRemove(resourceId: $resourceId, translationKeys: $translationKeys, locales: $locales) {
+            userErrors {
+              field
+              message
+            }
+            translations {
+              key
+              locale
+            }
+          }
+        }`,
+      {
+        variables: {
+          resourceId,
+          translationKeys,
+          locales: foreignLocales,
+        },
+      }
+    );
+
+    const data = await response.json();
+
+    if (data.data?.translationsRemove?.userErrors?.length > 0) {
+      console.error('[TRANSLATIONS-DELETE] Error:', data.data.translationsRemove.userErrors);
+      throw new Error(data.data.translationsRemove.userErrors[0].message);
+    }
+
+    console.log('[TRANSLATIONS-DELETE] Successfully deleted translations');
+    return { success: true };
+  }
+
+  /**
    * Load shop locales
    */
   async loadShopLocales() {
@@ -179,6 +229,7 @@ export class ShopifyContentService {
   /**
    * Update content in Shopify and database
    * Handles both primary locale updates and translations
+   * When updating primary locale, deletes all translations for changed fields
    */
   async updateContent(params: {
     resourceId: string;
@@ -189,8 +240,9 @@ export class ShopifyContentService {
     db: any;
     shop: string;
     policyType?: string;
+    changedFields?: string[]; // Fields that changed in primary locale - their translations will be deleted
   }) {
-    const { resourceId, resourceType, locale, primaryLocale, updates, db, shop, policyType } = params;
+    const { resourceId, resourceType, locale, primaryLocale, updates, db, shop, policyType, changedFields } = params;
 
     if (locale !== primaryLocale) {
       // Handle translations
@@ -360,6 +412,56 @@ export class ShopifyContentService {
             lastSyncedAt: new Date(),
           },
         });
+      }
+
+      // Delete translations for changed fields across ALL foreign locales
+      if (changedFields && changedFields.length > 0) {
+        // Map UI field names to Shopify translation keys
+        const keyMapping: Record<string, string> = {
+          title: 'title',
+          description: (resourceType === 'Page' || resourceType === 'Collection') ? 'body_html' : 'body',
+          body: resourceType === 'Page' ? 'body_html' : 'body',
+          handle: 'handle',
+          seoTitle: 'meta_title',
+          metaDescription: 'meta_description',
+        };
+
+        const translationKeysToDelete = changedFields
+          .map(field => keyMapping[field])
+          .filter(key => key !== undefined);
+
+        if (translationKeysToDelete.length > 0) {
+          // Get all foreign locales
+          const { shopLocales } = await this.loadShopLocales();
+          const foreignLocales = shopLocales
+            .filter((l: any) => !l.primary && l.published)
+            .map((l: any) => l.locale);
+
+          if (foreignLocales.length > 0) {
+            // Delete from Shopify
+            await this.deleteAllTranslationsForKeys({
+              resourceId,
+              translationKeys: translationKeysToDelete,
+              foreignLocales,
+            });
+
+            // Delete from database
+            for (const key of translationKeysToDelete) {
+              for (const locale of foreignLocales) {
+                await db.contentTranslation.deleteMany({
+                  where: {
+                    resourceId,
+                    resourceType,
+                    key,
+                    locale,
+                  },
+                });
+              }
+            }
+
+            console.log(`[PRIMARY-UPDATE] Deleted translations for fields: ${changedFields.join(', ')}`);
+          }
+        }
       }
 
       return { success: true, item: updatedResource };
