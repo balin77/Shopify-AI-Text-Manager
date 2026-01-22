@@ -413,7 +413,7 @@ export function ProductEditor({
                     <div
                       style={{
                         display: "grid",
-                        gridTemplateColumns: "repeat(4, 1fr)",
+                        gridTemplateColumns: "repeat(auto-fill, minmax(61px, 134px))",
                         gap: "12px",
                       }}
                     >
@@ -428,6 +428,10 @@ export function ProductEditor({
                         style={{
                           position: "relative",
                           width: "100%",
+                          minWidth: "61px",
+                          maxWidth: "134px",
+                          minHeight: "61px",
+                          maxHeight: "134px",
                           padding: 0,
                           border: isSelected ? "3px solid #005bd3" : "2px solid #e1e3e5",
                           borderRadius: "8px",

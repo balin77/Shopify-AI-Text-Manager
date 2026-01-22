@@ -18,8 +18,7 @@
  */
 
 import { useState, useEffect } from "react";
-import { BlockStack, InlineStack, Button, Text, Banner, Icon } from "@shopify/polaris";
-import { CheckIcon, XIcon } from "@shopify/polaris-icons";
+import { BlockStack, InlineStack, Button, Text, Banner } from "@shopify/polaris";
 import { AIEditableField } from "../AIEditableField";
 
 export interface ImageData {
@@ -205,10 +204,38 @@ export function ImageGalleryField({
                   boxShadow: "0 2px 4px rgba(0, 0, 0, 0.2)",
                 }}
               >
-                <Icon
-                  source={!!(altTexts[selectedImageIndex] || images[selectedImageIndex].altText) ? CheckIcon : XIcon}
-                  tone="base"
-                />
+                <svg
+                  width="20"
+                  height="20"
+                  viewBox="0 0 20 20"
+                  fill="none"
+                  xmlns="http://www.w3.org/2000/svg"
+                >
+                  {!!(altTexts[selectedImageIndex] || images[selectedImageIndex].altText) ? (
+                    <path
+                      d="M16 6L8 14L4 10"
+                      stroke="white"
+                      strokeWidth="2.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  ) : (
+                    <>
+                      <path
+                        d="M5 5L15 15"
+                        stroke="white"
+                        strokeWidth="2.5"
+                        strokeLinecap="round"
+                      />
+                      <path
+                        d="M15 5L5 15"
+                        stroke="white"
+                        strokeWidth="2.5"
+                        strokeLinecap="round"
+                      />
+                    </>
+                  )}
+                </svg>
               </div>
             )}
           </div>
@@ -227,7 +254,7 @@ export function ImageGalleryField({
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: "repeat(4, 1fr)",
+                gridTemplateColumns: "repeat(auto-fill, minmax(61px, 134px))",
                 gap: "12px",
               }}
             >
@@ -242,6 +269,10 @@ export function ImageGalleryField({
                     style={{
                       position: "relative",
                       width: "100%",
+                      minWidth: "61px",
+                      maxWidth: "134px",
+                      minHeight: "61px",
+                      maxHeight: "134px",
                       padding: 0,
                       border: isSelected ? "3px solid #005bd3" : "2px solid #e1e3e5",
                       borderRadius: "8px",
@@ -277,10 +308,38 @@ export function ImageGalleryField({
                         boxShadow: "0 2px 4px rgba(0, 0, 0, 0.2)",
                       }}
                     >
-                      <Icon
-                        source={hasAltText ? CheckIcon : XIcon}
-                        tone="base"
-                      />
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 20 20"
+                        fill="none"
+                        xmlns="http://www.w3.org/2000/svg"
+                      >
+                        {hasAltText ? (
+                          <path
+                            d="M16 6L8 14L4 10"
+                            stroke="white"
+                            strokeWidth="2.5"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        ) : (
+                          <>
+                            <path
+                              d="M5 5L15 15"
+                              stroke="white"
+                              strokeWidth="2.5"
+                              strokeLinecap="round"
+                            />
+                            <path
+                              d="M15 5L5 15"
+                              stroke="white"
+                              strokeWidth="2.5"
+                              strokeLinecap="round"
+                            />
+                          </>
+                        )}
+                      </svg>
                     </div>
                   </button>
                 );
