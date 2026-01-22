@@ -154,7 +154,7 @@ export function AIEditableHTMLField({
               tone="critical"
               variant="plain"
             >
-              {t.common?.clear || t.products?.clear || "Clear"}
+              {t.common?.clear || "Clear"}
             </Button>
           )}
         </InlineStack>

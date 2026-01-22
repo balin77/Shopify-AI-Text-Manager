@@ -410,7 +410,7 @@ interface FieldRendererProps {
   onAcceptSuggestion: () => void;
   onAcceptAndTranslate: () => void;
   onRejectSuggestion: () => void;
-  onClear: () => void;
+  onClear?: () => void;
   htmlMode: "html" | "rendered";
   onToggleHtmlMode: () => void;
   shopLocales: any[];
