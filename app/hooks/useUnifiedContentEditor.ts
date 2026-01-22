@@ -172,9 +172,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     }
   }, [fetcher.data]);
 
-  // Ref to track pending translation auto-save
-  const pendingTranslationSaveRef = useRef<{values: Record<string, string>, locale: string} | null>(null);
-
   // Ref to track pending translation AFTER save completes (for Accept & Translate flow)
   // This ensures: 1. Save primary text first, 2. Then translate
   const pendingTranslationAfterSaveRef = useRef<{
@@ -185,31 +182,45 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     itemId: string;
   } | null>(null);
 
+  // Ref to store current editableValues for use in effects without causing loops
+  const editableValuesRef = useRef(editableValues);
+  useEffect(() => {
+    editableValuesRef.current = editableValues;
+  }, [editableValues]);
+
   // Handle translated field response (single field translation)
+  // Auto-save immediately after receiving translation
   useEffect(() => {
     if (fetcher.data?.success && 'translatedValue' in fetcher.data) {
       const { fieldType, translatedValue, targetLocale } = fetcher.data as any;
-      setEditableValues((prev) => {
-        const newValues = {
-          ...prev,
-          [fieldType]: translatedValue,
-        };
-        // Mark for auto-save (will be processed in the next useEffect)
-        pendingTranslationSaveRef.current = { values: newValues, locale: targetLocale };
-        return newValues;
-      });
-    }
-  }, [fetcher.data]);
 
-  // Auto-save after translation is received
-  useEffect(() => {
-    if (pendingTranslationSaveRef.current) {
-      const { values, locale } = pendingTranslationSaveRef.current;
-      pendingTranslationSaveRef.current = null;
-      console.log('[AUTO-SAVE] Saving translation for locale:', locale);
-      performAutoSave(values, locale);
+      // Build new values with the translation (using ref to avoid dependency)
+      const newValues: Record<string, string> = {
+        ...editableValuesRef.current,
+        [fieldType]: translatedValue,
+      };
+
+      // Update UI
+      setEditableValues(newValues);
+
+      // Auto-save the translation immediately
+      console.log('[AUTO-SAVE] Saving translation for locale:', targetLocale);
+
+      // Build form data directly here to avoid dependency issues
+      if (selectedItemId) {
+        const formDataObj: Record<string, string> = {
+          action: "updateContent",
+          itemId: selectedItemId,
+          locale: targetLocale,
+          primaryLocale,
+        };
+        config.fieldDefinitions.forEach((field) => {
+          formDataObj[field.key] = newValues[field.key] || "";
+        });
+        fetcher.submit(formDataObj, { method: "POST" });
+      }
     }
-  }, [editableValues, performAutoSave]);
+  }, [fetcher.data, selectedItemId, primaryLocale, config.fieldDefinitions, fetcher]);
 
   // Handle single alt-text generation (show as suggestion)
   useEffect(() => {
