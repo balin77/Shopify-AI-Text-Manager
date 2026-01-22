@@ -5,7 +5,7 @@
  * Provides a complete state management and handler system for content editing.
  */
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useRevalidator } from "@remix-run/react";
 import { useNavigationGuard, useChangeTracking, getTranslatedValue } from "../utils/contentEditor.utils";
 import type {
@@ -128,6 +128,36 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   }, [editableValues, selectedItem, isLoadingData]);
 
   // ============================================================================
+  // AUTO-SAVE FUNCTION (defined early for use in response handlers)
+  // ============================================================================
+
+  // Internal save function that saves with specific values (for auto-save after AI acceptance/translation)
+  const performAutoSave = useCallback((valuesToSave: Record<string, string>, locale: string) => {
+    if (!selectedItemId) return;
+
+    const formDataObj: Record<string, string> = {
+      action: "updateContent",
+      itemId: selectedItemId,
+      locale: locale,
+      primaryLocale,
+    };
+
+    // Add all field values from the provided values
+    config.fieldDefinitions.forEach((field) => {
+      formDataObj[field.key] = valuesToSave[field.key] || "";
+    });
+
+    // Add image alt-texts if there are any changes
+    if (Object.keys(imageAltTexts).length > 0) {
+      formDataObj.imageAltTexts = JSON.stringify(imageAltTexts);
+    }
+
+    console.log('[AUTO-SAVE] Saving with values:', valuesToSave);
+    fetcher.submit(formDataObj, { method: "POST" });
+    clearPendingNavigation();
+  }, [selectedItemId, primaryLocale, config.fieldDefinitions, imageAltTexts, fetcher, clearPendingNavigation]);
+
+  // ============================================================================
   // FETCHER RESPONSE HANDLERS (based on products implementation)
   // ============================================================================
 
@@ -142,16 +172,34 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     }
   }, [fetcher.data]);
 
-  // Handle translated field response
+  // Ref to track pending translation auto-save
+  const pendingTranslationSaveRef = useRef<{values: Record<string, string>, locale: string} | null>(null);
+
+  // Handle translated field response (single field translation)
   useEffect(() => {
     if (fetcher.data?.success && 'translatedValue' in fetcher.data) {
-      const { fieldType, translatedValue } = fetcher.data as any;
-      setEditableValues((prev) => ({
-        ...prev,
-        [fieldType]: translatedValue,
-      }));
+      const { fieldType, translatedValue, targetLocale } = fetcher.data as any;
+      setEditableValues((prev) => {
+        const newValues = {
+          ...prev,
+          [fieldType]: translatedValue,
+        };
+        // Mark for auto-save (will be processed in the next useEffect)
+        pendingTranslationSaveRef.current = { values: newValues, locale: targetLocale };
+        return newValues;
+      });
     }
   }, [fetcher.data]);
+
+  // Auto-save after translation is received
+  useEffect(() => {
+    if (pendingTranslationSaveRef.current) {
+      const { values, locale } = pendingTranslationSaveRef.current;
+      pendingTranslationSaveRef.current = null;
+      console.log('[AUTO-SAVE] Saving translation for locale:', locale);
+      performAutoSave(values, locale);
+    }
+  }, [editableValues, performAutoSave]);
 
   // Handle single alt-text generation (show as suggestion)
   useEffect(() => {
@@ -417,6 +465,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // EVENT HANDLERS
   // ============================================================================
 
+  // Wrapper for performAutoSave with default locale
+  const performSaveWithValues = (valuesToSave: Record<string, string>, locale: string = currentLanguage) => {
+    performAutoSave(valuesToSave, locale);
+  };
+
   const handleSave = () => {
     if (!selectedItemId || !hasChanges) return;
 
@@ -652,18 +705,23 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // Force isLoadingData to false to ensure change detection works
     setIsLoadingData(false);
 
-    // Set flag to indicate we're accepting a suggestion (but not translating)
-    // This allows the change but still clears translations since the primary text changed
-    setEditableValues((prev) => ({
-      ...prev,
+    // Create the new values with the accepted suggestion
+    const newValues = {
+      ...editableValues,
       [fieldKey]: suggestion,
-    }));
+    };
+
+    // Update the UI state
+    setEditableValues(newValues);
 
     setAiSuggestions((prev) => {
       const newSuggestions = { ...prev };
       delete newSuggestions[fieldKey];
       return newSuggestions;
     });
+
+    // Auto-save immediately after accepting AI suggestion
+    performSaveWithValues(newValues);
   };
 
   const handleAcceptAndTranslate = (fieldKey: string) => {
@@ -673,17 +731,24 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // Set flag to prevent translation deletion during this flow
     setIsAcceptAndTranslateFlow(true);
 
-    // Accept the suggestion in the primary locale (without clearing translations)
-    setEditableValues((prev) => ({
-      ...prev,
+    // Create the new values with the accepted suggestion
+    const newValues = {
+      ...editableValues,
       [fieldKey]: suggestion,
-    }));
+    };
+
+    // Accept the suggestion in the primary locale (without clearing translations)
+    setEditableValues(newValues);
 
     setAiSuggestions((prev) => {
       const newSuggestions = { ...prev };
       delete newSuggestions[fieldKey];
       return newSuggestions;
     });
+
+    // Auto-save the primary text immediately
+    // (Translations will be saved server-side by translateFieldToAllLocales)
+    performSaveWithValues(newValues, primaryLocale);
 
     // Then translate to all enabled locales (except primary)
     const targetLocales = enabledLanguages.filter(l => l !== primaryLocale);
