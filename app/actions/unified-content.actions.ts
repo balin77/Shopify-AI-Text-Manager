@@ -728,6 +728,10 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
         updates[field.key] = value;
       });
 
+      // Get changed fields (for translation deletion when saving primary locale)
+      const changedFieldsStr = formData.get("changedFields") as string;
+      const changedFields = changedFieldsStr ? JSON.parse(changedFieldsStr) : undefined;
+
       // Use unified content service
       const result = await shopifyContentService.updateContent({
         resourceId: itemId,
@@ -737,6 +741,7 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
         updates,
         db,
         shop: session.shop,
+        changedFields: locale === primaryLocale ? changedFields : undefined, // Only pass for primary locale
       });
 
       return json(result);

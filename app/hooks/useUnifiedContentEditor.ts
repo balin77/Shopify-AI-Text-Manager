@@ -162,6 +162,23 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // AUTO-SAVE FUNCTION (defined early for use in response handlers)
   // ============================================================================
 
+  // Helper function to get which fields have changed compared to the original item
+  const getChangedFields = useCallback((valuesToCheck: Record<string, string>): string[] => {
+    if (!selectedItem) return [];
+
+    const changedFields: string[] = [];
+    config.fieldDefinitions.forEach((field) => {
+      const currentValue = valuesToCheck[field.key] || "";
+      const originalValue = getItemFieldValue(selectedItem, field.key, primaryLocale);
+
+      if (currentValue !== originalValue) {
+        changedFields.push(field.key);
+      }
+    });
+
+    return changedFields;
+  }, [selectedItem, config.fieldDefinitions, primaryLocale]);
+
   // Internal save function that saves with specific values (for auto-save after AI acceptance/translation)
   const performAutoSave = useCallback((valuesToSave: Record<string, string>, locale: string) => {
     if (!selectedItemId) return;
@@ -183,11 +200,30 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       formDataObj.imageAltTexts = JSON.stringify(imageAltTexts);
     }
 
+    // If saving primary locale, include changed fields for translation deletion
+    if (locale === primaryLocale && selectedItem) {
+      const changedFields = getChangedFields(valuesToSave);
+      if (changedFields.length > 0) {
+        formDataObj.changedFields = JSON.stringify(changedFields);
+        console.log('[AUTO-SAVE] Changed fields (translations will be deleted):', changedFields);
+
+        // Also clear translations locally for immediate UI update
+        changedFields.forEach((fieldKey) => {
+          const field = config.fieldDefinitions.find(f => f.key === fieldKey);
+          if (field?.translationKey && selectedItem.translations) {
+            selectedItem.translations = selectedItem.translations.filter(
+              (t: any) => t.key !== field.translationKey
+            );
+          }
+        });
+      }
+    }
+
     console.log('[AUTO-SAVE] Saving with values:', valuesToSave, 'locale:', locale);
     savedLocaleRef.current = locale; // Track which locale we're saving
     fetcher.submit(formDataObj, { method: "POST" });
     clearPendingNavigation();
-  }, [selectedItemId, primaryLocale, config.fieldDefinitions, imageAltTexts, fetcher, clearPendingNavigation]);
+  }, [selectedItemId, primaryLocale, config.fieldDefinitions, imageAltTexts, fetcher, clearPendingNavigation, getChangedFields, selectedItem]);
 
   // ============================================================================
   // FETCHER RESPONSE HANDLERS (based on products implementation)
@@ -639,6 +675,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // Add image alt-texts if there are any changes
     if (Object.keys(imageAltTexts).length > 0) {
       formDataObj.imageAltTexts = JSON.stringify(imageAltTexts);
+    }
+
+    // If saving primary locale, include changed fields for server-side translation deletion
+    if (currentLanguage === primaryLocale) {
+      const changedFields = getChangedFields(editableValues);
+      if (changedFields.length > 0) {
+        formDataObj.changedFields = JSON.stringify(changedFields);
+        console.log('[SAVE] Changed fields (translations will be deleted on server):', changedFields);
+      }
     }
 
     savedLocaleRef.current = currentLanguage; // Track which locale we're saving
