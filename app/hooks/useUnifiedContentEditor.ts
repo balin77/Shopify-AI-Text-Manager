@@ -182,6 +182,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     itemId: string;
   } | null>(null);
 
+  // Ref to track which fetcher responses have been processed (prevents duplicate processing)
+  const processedResponseRef = useRef<string | null>(null);
+
   // Ref to store current editableValues for use in effects without causing loops
   const editableValuesRef = useRef(editableValues);
   useEffect(() => {
@@ -266,8 +269,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       !('locale' in fetcher.data)
     ) {
       const { translations, fieldType } = fetcher.data as any;
-      // translations is Record<string, string> where key is locale and value is translated text
 
+      // Create a unique key for this response to prevent duplicate processing
+      const responseKey = `translateFieldToAllLocales-${fieldType}-${Object.keys(translations).join(',')}`;
+      if (processedResponseRef.current === responseKey) {
+        return; // Already processed this response
+      }
+      processedResponseRef.current = responseKey;
+
+      // translations is Record<string, string> where key is locale and value is translated text
       const field = config.fieldDefinitions.find(f => f.key === fieldType);
       if (!field) return;
 
@@ -303,11 +313,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         // Reset the accept-and-translate flow flag after translations are complete
         setIsAcceptAndTranslateFlow(false);
 
-        // Revalidate to sync with database
-        revalidator.revalidate();
+        // Mark as loading to reset change detection
+        // DON'T revalidate here - it would overwrite our local changes to selectedItem.translations
+        // The translations are already saved server-side by the action
+        setIsLoadingData(true);
       }
     }
-  }, [fetcher.data, currentLanguage, selectedItem, config.fieldDefinitions, showInfoBox, revalidator]);
+  }, [fetcher.data, selectedItem, config.fieldDefinitions, showInfoBox, t]); // Removed currentLanguage - not used
 
   // Handle "translateAll" response (translates to ALL enabled locales)
   useEffect(() => {
@@ -460,6 +472,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
         selectedItem.translations = existingTranslations;
       }
+
+      // Reset change detection after successful save
+      // This ensures hasChanges becomes false after we've updated selectedItem
+      setIsLoadingData(true);
     }
   }, [fetcher.data, selectedItem, currentLanguage, primaryLocale, editableValues, config.fieldDefinitions]);
 
@@ -772,6 +788,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const handleAcceptAndTranslate = (fieldKey: string) => {
     const suggestion = aiSuggestions[fieldKey];
     if (!suggestion || !selectedItemId) return;
+
+    // Reset processed response ref for new operation
+    processedResponseRef.current = null;
 
     // Set flag to prevent translation deletion during this flow
     setIsAcceptAndTranslateFlow(true);
