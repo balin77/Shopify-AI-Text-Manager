@@ -79,11 +79,42 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // LOAD ITEM DATA (when item or language changes)
   // ============================================================================
 
+  // Track previous selectedItemId to detect actual item changes vs revalidation
+  const prevSelectedItemIdRef = useRef<string | null>(null);
+  const prevCurrentLanguageRef = useRef<string>(currentLanguage);
+
   useEffect(() => {
     if (!selectedItem) {
       setIsLoadingData(false);
       return;
     }
+
+    // Check if we should skip this data load (after save/clear operations)
+    if (skipNextDataLoadRef.current) {
+      console.log('[DATA-LOAD] Skipping - skipNextDataLoadRef is true');
+      skipNextDataLoadRef.current = false;
+      setIsLoadingData(false);
+      return;
+    }
+
+    // Only reload data if:
+    // 1. The item ID actually changed (user selected a different item)
+    // 2. The language changed (user switched languages)
+    // Do NOT reload if only selectedItem object reference changed (from revalidation)
+    const itemIdChanged = prevSelectedItemIdRef.current !== selectedItemId;
+    const languageChanged = prevCurrentLanguageRef.current !== currentLanguage;
+
+    if (!itemIdChanged && !languageChanged) {
+      console.log('[DATA-LOAD] Skipping - neither itemId nor language changed (revalidation only)');
+      setIsLoadingData(false);
+      return;
+    }
+
+    // Update refs
+    prevSelectedItemIdRef.current = selectedItemId;
+    prevCurrentLanguageRef.current = currentLanguage;
+
+    console.log('[DATA-LOAD] Loading data for item:', selectedItemId, 'language:', currentLanguage);
 
     // Mark as loading immediately
     setIsLoadingData(true);
@@ -191,6 +222,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
   // Ref to track the locale that was active when the save was initiated
   const savedLocaleRef = useRef<string | null>(null);
+
+  // Ref to skip the next data load (prevents overwriting after save/clear operations)
+  const skipNextDataLoadRef = useRef(false);
 
   // Ref to store current editableValues for use in effects without causing loops
   const editableValuesRef = useRef(editableValues);
