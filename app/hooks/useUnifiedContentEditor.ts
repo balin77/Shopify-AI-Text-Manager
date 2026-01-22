@@ -175,8 +175,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // Ref to track pending translation auto-save
   const pendingTranslationSaveRef = useRef<{values: Record<string, string>, locale: string} | null>(null);
 
-  // Ref to track pending Accept & Translate save (saves primary text after translations complete)
-  const pendingAcceptAndTranslateSaveRef = useRef<{values: Record<string, string>, locale: string} | null>(null);
+  // Ref to track pending translation AFTER save completes (for Accept & Translate flow)
+  // This ensures: 1. Save primary text first, 2. Then translate
+  const pendingTranslationAfterSaveRef = useRef<{
+    fieldKey: string;
+    sourceText: string;
+    targetLocales: string[];
+    contextTitle: string;
+    itemId: string;
+  } | null>(null);
 
   // Handle translated field response (single field translation)
   useEffect(() => {
@@ -285,16 +292,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         // Reset the accept-and-translate flow flag after translations are complete
         setIsAcceptAndTranslateFlow(false);
 
-        // Now save the primary text that was pending (set during handleAcceptAndTranslate)
-        if (pendingAcceptAndTranslateSaveRef.current) {
-          const { values, locale } = pendingAcceptAndTranslateSaveRef.current;
-          pendingAcceptAndTranslateSaveRef.current = null;
-          console.log('[AUTO-SAVE] Saving primary text after Accept & Translate completed');
-          performAutoSave(values, locale);
-        }
+        // Revalidate to sync with database
+        revalidator.revalidate();
       }
     }
-  }, [fetcher.data, currentLanguage, selectedItem, config.fieldDefinitions, showInfoBox, performAutoSave]);
+  }, [fetcher.data, currentLanguage, selectedItem, config.fieldDefinitions, showInfoBox, revalidator]);
 
   // Handle "translateAll" response (translates to ALL enabled locales)
   useEffect(() => {
@@ -458,6 +460,27 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       !(fetcher.data as any).translatedValue &&
       !(fetcher.data as any).translations // Skip revalidate for bulk operations, they handle it differently
     ) {
+      // Check if there's a pending translation to start after this save
+      if (pendingTranslationAfterSaveRef.current) {
+        const { fieldKey, sourceText, targetLocales, contextTitle, itemId } = pendingTranslationAfterSaveRef.current;
+        pendingTranslationAfterSaveRef.current = null;
+
+        console.log('[ACCEPT-AND-TRANSLATE] Save completed, now starting translation');
+
+        // Start the translation (don't show "saved" message yet - will show after translation)
+        fetcher.submit({
+          action: "translateFieldToAllLocales",
+          itemId: itemId,
+          fieldType: fieldKey,
+          sourceText: sourceText,
+          targetLocales: JSON.stringify(targetLocales),
+          contextTitle: contextTitle
+        }, { method: "POST" });
+
+        // Don't revalidate yet - wait for translation to complete
+        return;
+      }
+
       showInfoBox(
         t.common?.changesSaved || "Changes saved successfully!",
         "success",
@@ -470,7 +493,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     } else if (fetcher.data && !fetcher.data.success && 'error' in fetcher.data) {
       showInfoBox(fetcher.data.error as string, "critical", t.common?.error || "Error");
     }
-  }, [fetcher.data, showInfoBox, t, revalidator]);
+  }, [fetcher.data, showInfoBox, t, revalidator, fetcher]);
 
   // ============================================================================
   // EVENT HANDLERS
@@ -748,7 +771,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       [fieldKey]: suggestion,
     };
 
-    // Accept the suggestion in the primary locale (without clearing translations)
+    // Accept the suggestion in the primary locale
     setEditableValues(newValues);
 
     setAiSuggestions((prev) => {
@@ -757,7 +780,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       return newSuggestions;
     });
 
-    // Then translate to all enabled locales (except primary)
+    // Check target locales first
     const targetLocales = enabledLanguages.filter(l => l !== primaryLocale);
     if (targetLocales.length === 0) {
       showInfoBox(
@@ -771,21 +794,22 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       return;
     }
 
-    // Mark primary text for saving AFTER translations complete
-    // (We can't call fetcher.submit twice - the second call would override the first)
-    pendingAcceptAndTranslateSaveRef.current = { values: newValues, locale: primaryLocale };
-
-    // Submit translation to all enabled locales
+    // Get context title for translation
     const contextTitle = getItemFieldValue(selectedItem!, 'title', primaryLocale) || selectedItem!.id || "";
 
-    fetcher.submit({
-      action: "translateFieldToAllLocales",
-      itemId: selectedItemId,
-      fieldType: fieldKey,
+    // Step 1: Set up pending translation (will be triggered AFTER save completes)
+    pendingTranslationAfterSaveRef.current = {
+      fieldKey,
       sourceText: suggestion,
-      targetLocales: JSON.stringify(targetLocales),
-      contextTitle
-    }, { method: "POST" });
+      targetLocales,
+      contextTitle,
+      itemId: selectedItemId
+    };
+
+    // Step 2: Save the primary text first
+    // After save completes, the useEffect will trigger the translation
+    console.log('[ACCEPT-AND-TRANSLATE] Saving primary text first, then will translate');
+    performSaveWithValues(newValues, primaryLocale);
   };
 
   const handleRejectSuggestion = (fieldKey: string) => {
