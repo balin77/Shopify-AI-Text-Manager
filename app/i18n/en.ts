@@ -333,6 +333,7 @@ export const en: Translation = {
     delete: "Delete",
     edit: "Edit",
     close: "Close",
+    clear: "Clear",
     loading: "Loading...",
     error: "Error",
     success: "Success!",

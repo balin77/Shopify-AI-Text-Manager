@@ -210,11 +210,10 @@ export async function handleTranslateFieldToAllLocales(
               // Use upsert to update or create only this specific field
               await db.contentTranslation.upsert({
                 where: {
-                  resourceId_resourceType_locale_key: {
+                  resourceId_key_locale: {
                     resourceId: productId,
-                    resourceType: "Product",
-                    locale: locale,
                     key: shopifyKey,
+                    locale: locale,
                   },
                 },
                 update: {
@@ -473,11 +472,10 @@ export async function handleTranslateAll(
           for (const translation of translationsInput) {
             await db.contentTranslation.upsert({
               where: {
-                resourceId_resourceType_locale_key: {
+                resourceId_key_locale: {
                   resourceId: productId,
-                  resourceType: "Product",
-                  locale: locale,
                   key: translation.key,
+                  locale: locale,
                 },
               },
               update: {

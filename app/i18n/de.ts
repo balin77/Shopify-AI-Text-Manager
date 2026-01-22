@@ -331,6 +331,7 @@ export const de = {
     delete: "Löschen",
     edit: "Bearbeiten",
     close: "Schließen",
+    clear: "Leeren",
     loading: "Lädt...",
     error: "Fehler",
     success: "Erfolg!",
