@@ -152,7 +152,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       formDataObj.imageAltTexts = JSON.stringify(imageAltTexts);
     }
 
-    console.log('[AUTO-SAVE] Saving with values:', valuesToSave);
+    console.log('[AUTO-SAVE] Saving with values:', valuesToSave, 'locale:', locale);
+    savedLocaleRef.current = locale; // Track which locale we're saving
     fetcher.submit(formDataObj, { method: "POST" });
     clearPendingNavigation();
   }, [selectedItemId, primaryLocale, config.fieldDefinitions, imageAltTexts, fetcher, clearPendingNavigation]);
@@ -184,6 +185,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
   // Ref to track which fetcher responses have been processed (prevents duplicate processing)
   const processedResponseRef = useRef<string | null>(null);
+
+  // Ref to track the last fetcher.data object (to detect actual data changes vs dependency re-runs)
+  const lastFetcherDataRef = useRef<any>(null);
+
+  // Ref to track the locale that was active when the save was initiated
+  const savedLocaleRef = useRef<string | null>(null);
 
   // Ref to store current editableValues for use in effects without causing loops
   const editableValuesRef = useRef(editableValues);
@@ -421,6 +428,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   }, [fetcher.data, currentLanguage, selectedItem, config.fieldDefinitions, showInfoBox, t]);
 
   // Update item object after saving (both primary locale and translations)
+  // IMPORTANT: We track which fetcher.data we've processed to prevent re-running on language change
   useEffect(() => {
     if (
       fetcher.data?.success &&
@@ -429,9 +437,26 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       !('translatedValue' in fetcher.data) &&
       selectedItem
     ) {
-      if (currentLanguage === primaryLocale) {
+      // Only process if fetcher.data has actually changed (not just a dependency re-run)
+      if (fetcher.data === lastFetcherDataRef.current) {
+        console.log('[SAVE-RESPONSE] Skipping - fetcher.data unchanged, only dependencies changed');
+        return;
+      }
+      lastFetcherDataRef.current = fetcher.data;
+
+      // Use the locale that was saved (tracked by savedLocaleRef), not the current language
+      const savedLocale = savedLocaleRef.current;
+      if (!savedLocale) {
+        console.log('[SAVE-RESPONSE] No savedLocale tracked, skipping update');
+        return;
+      }
+
+      console.log('[SAVE-RESPONSE] Processing save response for locale:', savedLocale);
+
+      if (savedLocale === primaryLocale) {
         // This was a successful update action for primary locale
         // Update the item object directly with new values
+        console.log('[SAVE-RESPONSE] Updating primary locale item values');
         config.fieldDefinitions.forEach((fieldDef) => {
           const value = editableValues[fieldDef.key];
 
@@ -454,18 +479,20 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         });
       } else {
         // This was a successful update action for a translation
+        // Use the saved locale, not the current viewing language
+        console.log('[SAVE-RESPONSE] Updating translation for saved locale:', savedLocale);
         const existingTranslations = selectedItem.translations.filter(
-          (t: any) => t.locale !== currentLanguage
+          (t: any) => t.locale !== savedLocale
         );
 
-        // Add new translations
+        // Add new translations for the saved locale
         config.fieldDefinitions.forEach((fieldDef) => {
           const value = editableValues[fieldDef.key];
           if (value) {
             existingTranslations.push({
               key: fieldDef.translationKey,
               value,
-              locale: currentLanguage,
+              locale: savedLocale,
             });
           }
         });
@@ -473,11 +500,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         selectedItem.translations = existingTranslations;
       }
 
+      // Clear the saved locale ref after processing
+      savedLocaleRef.current = null;
+
       // Reset change detection after successful save
       // This ensures hasChanges becomes false after we've updated selectedItem
       setIsLoadingData(true);
     }
-  }, [fetcher.data, selectedItem, currentLanguage, primaryLocale, editableValues, config.fieldDefinitions]);
+  }, [fetcher.data, selectedItem, primaryLocale, editableValues, config.fieldDefinitions]); // Removed currentLanguage from dependencies
 
   // Show global InfoBox for success/error messages and revalidate after save
   useEffect(() => {
@@ -577,6 +607,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       formDataObj.imageAltTexts = JSON.stringify(imageAltTexts);
     }
 
+    savedLocaleRef.current = currentLanguage; // Track which locale we're saving
     fetcher.submit(formDataObj, { method: "POST" });
     clearPendingNavigation();
   };
