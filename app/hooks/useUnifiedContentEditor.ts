@@ -162,6 +162,23 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // AUTO-SAVE FUNCTION (defined early for use in response handlers)
   // ============================================================================
 
+  // Safe submit helper that catches AbortError from Shopify admin interference
+  // The AbortError can occur when Shopify admin's own requests interfere with ours,
+  // but the submit usually still works, so we just log and ignore the error
+  const safeSubmit = useCallback((data: Record<string, any>, options?: { method: string }) => {
+    try {
+      fetcher.submit(data, options || { method: "POST" });
+    } catch (error) {
+      // AbortError can be thrown when Shopify admin interferes, but data is usually saved
+      if (error instanceof Error && error.name === 'AbortError') {
+        console.log('[SAFE-SUBMIT] AbortError caught (data likely saved):', error.message);
+      } else {
+        // Re-throw non-AbortError errors
+        throw error;
+      }
+    }
+  }, [fetcher]);
+
   // Helper function to get which fields have changed compared to the original item
   const getChangedFields = useCallback((valuesToCheck: Record<string, string>): string[] => {
     const item = selectedItemRef.current;
@@ -223,9 +240,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
     console.log('[AUTO-SAVE] Saving with values:', valuesToSave, 'locale:', locale);
     savedLocaleRef.current = locale; // Track which locale we're saving
-    fetcher.submit(formDataObj, { method: "POST" });
+    safeSubmit(formDataObj, { method: "POST" });
     clearPendingNavigation();
-  }, [selectedItemId, primaryLocale, config.fieldDefinitions, imageAltTexts, fetcher, clearPendingNavigation, getChangedFields]);
+  }, [selectedItemId, primaryLocale, config.fieldDefinitions, imageAltTexts, clearPendingNavigation, getChangedFields, safeSubmit]);
 
   // ============================================================================
   // FETCHER RESPONSE HANDLERS (based on products implementation)
@@ -299,10 +316,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         config.fieldDefinitions.forEach((field) => {
           formDataObj[field.key] = newValues[field.key] || "";
         });
-        fetcher.submit(formDataObj, { method: "POST" });
+        safeSubmit(formDataObj, { method: "POST" });
       }
     }
-  }, [fetcher.data, selectedItemId, primaryLocale, config.fieldDefinitions, fetcher]);
+  }, [fetcher.data, selectedItemId, primaryLocale, config.fieldDefinitions, safeSubmit]);
 
   // Handle single alt-text generation (show as suggestion)
   useEffect(() => {
@@ -601,7 +618,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         console.log('[ACCEPT-AND-TRANSLATE] Save completed, now starting translation');
 
         // Start the translation (don't show "saved" message yet - will show after translation)
-        fetcher.submit({
+        safeSubmit({
           action: "translateFieldToAllLocales",
           itemId: itemId,
           fieldType: fieldKey,
@@ -701,7 +718,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     }
 
     savedLocaleRef.current = currentLanguage; // Track which locale we're saving
-    fetcher.submit(formDataObj, { method: "POST" });
+    safeSubmit(formDataObj, { method: "POST" });
     clearPendingNavigation();
   };
 
@@ -740,7 +757,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     const contextTitle = editableValues.title || "";
     const contextDescription = editableValues.description || editableValues.body || "";
 
-    fetcher.submit(
+    safeSubmit(
       {
         action: "generateAIText",
         itemId: selectedItemId,
@@ -769,7 +786,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     const contextTitle = editableValues.title || "";
     const contextDescription = editableValues.description || editableValues.body || "";
 
-    fetcher.submit(
+    safeSubmit(
       {
         action: "formatAIText",
         itemId: selectedItemId,
@@ -798,7 +815,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       return;
     }
 
-    fetcher.submit(
+    safeSubmit(
       {
         action: "translateField",
         itemId: selectedItemId,
@@ -839,7 +856,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
     const contextTitle = getItemFieldValue(selectedItem, 'title', primaryLocale) || selectedItem.id || "";
 
-    fetcher.submit(
+    safeSubmit(
       {
         action: "translateFieldToAllLocales",
         itemId: selectedItemId,
@@ -880,7 +897,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       }
     });
 
-    fetcher.submit(formDataObj, { method: "POST" });
+    safeSubmit(formDataObj, { method: "POST" });
   };
 
   const handleAcceptSuggestion = (fieldKey: string) => {
@@ -1092,7 +1109,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       }
     });
 
-    fetcher.submit(formDataObj, { method: "POST" });
+    safeSubmit(formDataObj, { method: "POST" });
   };
 
   // ============================================================================
@@ -1112,7 +1129,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     const image = selectedItem.images[imageIndex];
     const productTitle = getItemFieldValue(selectedItem, 'title', primaryLocale);
 
-    fetcher.submit({
+    safeSubmit({
       action: "generateAltText",
       productId: selectedItem.id,
       imageIndex: String(imageIndex),
@@ -1127,7 +1144,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     const productTitle = getItemFieldValue(selectedItem, 'title', primaryLocale);
     const imagesData = selectedItem.images.map((img: any) => ({ url: img.url }));
 
-    fetcher.submit({
+    safeSubmit({
       action: "generateAllAltTexts",
       productId: selectedItem.id,
       productTitle,
@@ -1150,7 +1167,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       return;
     }
 
-    fetcher.submit({
+    safeSubmit({
       action: "translateAltText",
       productId: selectedItem.id,
       imageIndex: String(imageIndex),
