@@ -222,6 +222,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     const item = selectedItemRef.current;
     if (locale === primaryLocale && item) {
       const changedFields = getChangedFields(valuesToSave);
+      console.log('[AUTO-SAVE] Checking for changed fields, locale:', locale, 'primaryLocale:', primaryLocale);
+      console.log('[AUTO-SAVE] Values to save:', Object.keys(valuesToSave).map(k => `${k}: "${String(valuesToSave[k] || '').substring(0, 50)}..."`));
       if (changedFields.length > 0) {
         formDataObj.changedFields = JSON.stringify(changedFields);
         console.log('[AUTO-SAVE] Changed fields (translations will be deleted):', changedFields);
@@ -717,6 +719,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       }
     }
 
+    // Skip next data load to prevent revalidation from overwriting user changes
+    skipNextDataLoadRef.current = true;
+
     savedLocaleRef.current = currentLanguage; // Track which locale we're saving
     safeSubmit(formDataObj, { method: "POST" });
     clearPendingNavigation();
@@ -922,8 +927,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       return newSuggestions;
     });
 
+    // Skip next data load to prevent revalidation from overwriting user changes
+    skipNextDataLoadRef.current = true;
+
     // Auto-save immediately after accepting AI suggestion
-    performSaveWithValues(newValues);
+    // IMPORTANT: Always save to primary locale since AI suggestions are generated for primary content
+    console.log('[ACCEPT-SUGGESTION] Accepting AI suggestion for field:', fieldKey, 'saving to primary locale:', primaryLocale);
+    performSaveWithValues(newValues, primaryLocale);
   };
 
   const handleAcceptAndTranslate = (fieldKey: string) => {
@@ -976,6 +986,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       contextTitle,
       itemId: selectedItemId
     };
+
+    // Skip next data load to prevent revalidation from overwriting user changes
+    skipNextDataLoadRef.current = true;
 
     // Step 2: Save the primary text first
     // After save completes, the useEffect will trigger the translation
