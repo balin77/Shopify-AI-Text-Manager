@@ -556,15 +556,23 @@ async function updatePrimaryProduct(
         .filter((key): key is string => !!key);
 
       if (translationKeysToDelete.length > 0) {
-        // Get all shop locales from database
-        const shopLocales = await db.shopLocale.findMany({
-          where: { shop },
-          select: { locale: true, primary: true },
-        });
+        // Get all shop locales from Shopify API
+        const localesResponse = await gateway.graphql(
+          `#graphql
+            query getShopLocales {
+              shopLocales {
+                locale
+                primary
+                published
+              }
+            }`
+        );
+        const localesData = await localesResponse.json();
+        const shopLocales = localesData.data?.shopLocales || [];
 
-        // Filter out the primary locale
+        // Filter out the primary locale, only keep published foreign locales
         const foreignLocales = shopLocales
-          .filter((l: any) => !l.primary)
+          .filter((l: any) => !l.primary && l.published)
           .map((l: any) => l.locale);
 
         if (foreignLocales.length > 0) {
