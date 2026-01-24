@@ -69,18 +69,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     config.contentType
   );
 
-  // DEBUG: Log whenever hasChanges or isLoadingData changes
-  useEffect(() => {
-    console.log('[DEBUG useUnifiedContentEditor]', {
-      hasChanges,
-      isLoadingData,
-      hasSelectedItem: !!selectedItem,
-      selectedItemId,
-      editableValuesKeys: Object.keys(editableValues),
-      editableValues
-    });
-  }, [hasChanges, isLoadingData, selectedItem, selectedItemId, editableValues]);
-
   // ============================================================================
   // LOAD ITEM DATA (when item or language changes)
   // ============================================================================
