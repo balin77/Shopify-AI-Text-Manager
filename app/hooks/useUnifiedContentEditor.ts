@@ -375,6 +375,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
   // Handle "translateFieldToAllLocales" response (from Accept & Translate)
   useEffect(() => {
+    console.log('🔴🔴🔴 [FRONTEND] translateFieldToAllLocales handler triggered');
+    console.log('🔴 fetcher.data:', fetcher.data);
+    console.log('🔴 fetcher.data?.success:', fetcher.data?.success);
+    console.log('🔴 has translations:', 'translations' in (fetcher.data || {}));
+    console.log('🔴 has fieldType:', 'fieldType' in (fetcher.data || {}));
+    console.log('🔴 has locale:', 'locale' in (fetcher.data || {}));
+
     if (
       fetcher.data?.success &&
       'translations' in fetcher.data &&
@@ -383,12 +390,20 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     ) {
       const { translations, fieldType } = fetcher.data as any;
 
+      console.log('🔴 [FRONTEND] Matched! translations:', translations);
+      console.log('🔴 [FRONTEND] fieldType:', fieldType);
+
       // Create a unique key for this response to prevent duplicate processing
       const responseKey = `translateFieldToAllLocales-${fieldType}-${Object.keys(translations).join(',')}`;
+      console.log('🔴 [FRONTEND] responseKey:', responseKey);
+      console.log('🔴 [FRONTEND] processedResponseRef.current:', processedResponseRef.current);
+
       if (processedResponseRef.current === responseKey) {
+        console.log('🔴 [FRONTEND] SKIPPING - already processed');
         return; // Already processed this response
       }
       processedResponseRef.current = responseKey;
+      console.log('🔴 [FRONTEND] Processing response...');
 
       // translations is Record<string, string> where key is locale and value is translated text
       const field = config.fieldDefinitions.find(f => f.key === fieldType);
@@ -431,6 +446,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         // DON'T revalidate here - it would overwrite our local changes to selectedItem.translations
         // The translations are already saved server-side by the action
         setIsLoadingData(true);
+        console.log('🔴 [FRONTEND] ✓ All translations applied to item.translations');
+      } else {
+        console.log('🔴 [FRONTEND] ⚠️ item or shopifyKey missing - item:', !!item, 'shopifyKey:', shopifyKey);
       }
     }
   }, [fetcher.data, config.fieldDefinitions, showInfoBox, t]); // Use selectedItemRef instead of selectedItem
