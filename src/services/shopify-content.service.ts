@@ -502,8 +502,10 @@ export class ShopifyContentService {
     // Translate to all target locales
     for (const locale of targetLocales) {
       try {
+        console.log(`🔶 [translateAllContent] Translating to ${locale}, source fields:`, Object.keys(fields).map(k => `${k}: "${(fields[k] || '').substring(0, 30)}..."`));
         const localeTranslations = await translationService.translateProduct(fields, [locale], contentType);
         const translatedFields = localeTranslations[locale];
+        console.log(`🔶 [translateAllContent] AI returned for ${locale}:`, translatedFields ? Object.keys(translatedFields).map(k => `${k}: "${(translatedFields[k] || '').substring(0, 30)}..."`) : 'NONE');
 
         if (translatedFields) {
           allTranslations[locale] = translatedFields;
@@ -532,6 +534,14 @@ export class ShopifyContentService {
                 stringValue = (value as any).value || JSON.stringify(value);
               } else {
                 stringValue = String(value);
+              }
+
+              // IMPORTANT: Skip if the "translation" is the same as the source text
+              // This prevents storing the source text as a translation when AI fails
+              const sourceValue = fields[field];
+              if (sourceValue && stringValue.trim() === sourceValue.trim()) {
+                console.warn(`[translateAllContent] Skipping field '${field}' for locale '${locale}' - translation is same as source text`);
+                return;
               }
 
               const translationKey = keyMapping[field];
