@@ -675,6 +675,16 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
   if (action === "updateContent") {
     const locale = formData.get("locale") as string;
     const primaryLocale = formData.get("primaryLocale") as string;
+    const changedFieldsDebug = formData.get("changedFields") as string;
+
+    console.log('🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣');
+    console.log('🟣 [UNIFIED-ACTION] updateContent received');
+    console.log('🟣 ResourceType:', contentConfig.resourceType);
+    console.log('🟣 ItemId:', itemId);
+    console.log('🟣 Locale:', locale);
+    console.log('🟣 PrimaryLocale:', primaryLocale);
+    console.log('🟣 ChangedFields:', changedFieldsDebug);
+    console.log('🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣');
 
     try {
       // Special handling for Products - use dedicated product update handler
@@ -711,10 +721,15 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
 
         // Pass changedFields for translation deletion when primary locale changes
         const changedFieldsStr = formData.get("changedFields") as string;
+        console.log('🟣 [UNIFIED-ACTION] Passing changedFields to product handler:', changedFieldsStr);
         if (changedFieldsStr && locale === primaryLocale) {
           productFormData.set("changedFields", changedFieldsStr);
+          console.log('🟣 [UNIFIED-ACTION] changedFields SET in productFormData');
+        } else {
+          console.log('🟣 [UNIFIED-ACTION] changedFields NOT set (locale !== primaryLocale or empty)');
         }
 
+        console.log('🟣 [UNIFIED-ACTION] Calling handleUpdateProduct...');
         return handleUpdateProduct(context, productFormData, itemId);
       }
 
