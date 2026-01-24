@@ -575,8 +575,8 @@ function FieldRenderer(props: FieldRendererProps & { state?: any; handlers?: any
         isTranslated={isTranslated}
         isLoading={isLoading}
         sourceTextAvailable={sourceTextAvailable}
-        onGenerateAI={field.supportsAI !== false ? onGenerateAI : undefined}
-        onFormatAI={field.supportsFormatting !== false ? onFormatAI : undefined}
+        onGenerateAI={field.supportsAI !== false && isPrimaryLocale ? onGenerateAI : undefined}
+        onFormatAI={field.supportsFormatting !== false && isPrimaryLocale ? onFormatAI : undefined}
         onTranslate={field.supportsTranslation !== false ? onTranslate : undefined}
         onTranslateToAllLocales={field.supportsTranslation !== false ? onTranslateToAllLocales : undefined}
         onAcceptSuggestion={onAcceptSuggestion}
@@ -602,8 +602,8 @@ function FieldRenderer(props: FieldRendererProps & { state?: any; handlers?: any
       multiline={field.multiline}
       isLoading={isLoading}
       sourceTextAvailable={sourceTextAvailable}
-      onGenerateAI={field.supportsAI !== false ? onGenerateAI : undefined}
-      onFormatAI={field.supportsFormatting !== false ? onFormatAI : undefined}
+      onGenerateAI={field.supportsAI !== false && isPrimaryLocale ? onGenerateAI : undefined}
+      onFormatAI={field.supportsFormatting !== false && isPrimaryLocale ? onFormatAI : undefined}
       onTranslate={field.supportsTranslation !== false ? onTranslate : undefined}
       onTranslateToAllLocales={field.supportsTranslation !== false ? onTranslateToAllLocales : undefined}
       onAcceptSuggestion={onAcceptSuggestion}
