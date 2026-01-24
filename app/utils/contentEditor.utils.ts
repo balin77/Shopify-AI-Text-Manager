@@ -281,37 +281,72 @@ export function useChangeTracking(
   const prevItemIdRef = useRef<string | null>(null);
   const prevLanguageRef = useRef<string>(currentLanguage);
 
-  // Update cached original values only when item ID or language actually changes
-  const selectedItemId = selectedItem?.id || null;
+  // Track if selectedItem was null (used to detect post-save state)
+  const wasNullRef = useRef<boolean>(selectedItem === null);
 
-  if (selectedItem && (prevItemIdRef.current !== selectedItemId || prevLanguageRef.current !== currentLanguage)) {
-    prevItemIdRef.current = selectedItemId;
-    prevLanguageRef.current = currentLanguage;
-
+  // Helper function to get current item values
+  const getCurrentItemValues = useCallback((item: TranslatableItem) => {
     const descKey = CONTENT_TYPE_DESCRIPTION_KEY[contentType];
     const descFallback = (contentType === 'collections' || contentType === 'products')
-      ? (selectedItem.descriptionHtml || "")
-      : (selectedItem.body || "");
+      ? (item.descriptionHtml || "")
+      : (item.body || "");
 
     const getOriginalValue = (key: string, fallback: string) => {
       if (currentLanguage === primaryLocale) {
         return fallback;
       }
-      return getTranslatedValue(selectedItem, key, currentLanguage, "", primaryLocale);
+      return getTranslatedValue(item, key, currentLanguage, "", primaryLocale);
     };
 
-    originalValuesRef.current = {
-      itemId: selectedItemId,
-      language: currentLanguage,
+    return {
       title: contentType !== 'policies'
-        ? getOriginalValue(SHOPIFY_TRANSLATION_KEYS.TITLE, selectedItem.title || "")
+        ? getOriginalValue(SHOPIFY_TRANSLATION_KEYS.TITLE, item.title || "")
         : "",
       description: getOriginalValue(descKey, descFallback || ""),
-      handle: getOriginalValue(SHOPIFY_TRANSLATION_KEYS.HANDLE, selectedItem.handle || ""),
-      seoTitle: getOriginalValue(SHOPIFY_TRANSLATION_KEYS.META_TITLE, selectedItem.seo?.title || ""),
-      metaDescription: getOriginalValue(SHOPIFY_TRANSLATION_KEYS.META_DESCRIPTION, selectedItem.seo?.description || ""),
+      handle: getOriginalValue(SHOPIFY_TRANSLATION_KEYS.HANDLE, item.handle || ""),
+      seoTitle: getOriginalValue(SHOPIFY_TRANSLATION_KEYS.META_TITLE, item.seo?.title || ""),
+      metaDescription: getOriginalValue(SHOPIFY_TRANSLATION_KEYS.META_DESCRIPTION, item.seo?.description || ""),
     };
+  }, [contentType, currentLanguage, primaryLocale]);
+
+  const selectedItemId = selectedItem?.id || null;
+
+  // Update cached original values when:
+  // 1. Item ID or language changes
+  // 2. Item was null and is now non-null (post-save/load state - update to current editable values)
+  if (selectedItem) {
+    const itemIdChanged = prevItemIdRef.current !== selectedItemId;
+    const languageChanged = prevLanguageRef.current !== currentLanguage;
+    const wasNull = wasNullRef.current;
+
+    if (itemIdChanged || languageChanged) {
+      // Item or language changed - cache the item's current values as original
+      prevItemIdRef.current = selectedItemId;
+      prevLanguageRef.current = currentLanguage;
+
+      const itemValues = getCurrentItemValues(selectedItem);
+      originalValuesRef.current = {
+        itemId: selectedItemId,
+        language: currentLanguage,
+        ...itemValues,
+      };
+    } else if (wasNull && originalValuesRef.current) {
+      // Coming back from null state (after save/load) - update original values to match editable fields
+      // This ensures hasChanges becomes false after save
+      originalValuesRef.current = {
+        itemId: selectedItemId,
+        language: currentLanguage,
+        title: editableFields.title || "",
+        description: editableFields.body || editableFields.description || "",
+        handle: editableFields.handle || "",
+        seoTitle: editableFields.seoTitle || "",
+        metaDescription: editableFields.metaDescription || "",
+      };
+    }
   }
+
+  // Update wasNull tracking
+  wasNullRef.current = selectedItem === null;
 
   // Calculate hasChanges based on cached original values
   // This effect only depends on editableFields, not on selectedItem reference
