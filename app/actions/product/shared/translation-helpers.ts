@@ -185,24 +185,38 @@ export async function syncTranslationsToDB(
       },
     });
 
-    // Create new translations
-    const translationData = translations.map((t) => ({
-      resourceId: productId,
-      resourceType: "Product",
-      locale,
-      key: t.key,
-      value: t.value,
-    }));
+    // Create new translations (filter out null/undefined values)
+    const validTranslations = translations.filter(t => t.value != null && t.value !== undefined);
+    const skippedCount = translations.length - validTranslations.length;
 
-    await db.contentTranslation.createMany({
-      data: translationData,
-    });
+    if (skippedCount > 0) {
+      logger.debug("Skipping translations with null/undefined values", {
+        context: "TranslationHelper",
+        productId,
+        locale,
+        skippedCount,
+      });
+    }
+
+    if (validTranslations.length > 0) {
+      const translationData = validTranslations.map((t) => ({
+        resourceId: productId,
+        resourceType: "Product",
+        locale,
+        key: t.key,
+        value: t.value,
+      }));
+
+      await db.contentTranslation.createMany({
+        data: translationData,
+      });
+    }
 
     logger.info("Translations synced to database", {
       context: "TranslationHelper",
       productId,
       locale,
-      translationCount: translations.length,
+      translationCount: validTranslations.length,
     });
   } catch (error: any) {
     logger.error("Failed to sync translations to database", {

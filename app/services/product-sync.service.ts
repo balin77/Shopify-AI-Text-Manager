@@ -283,29 +283,39 @@ export class ProductSyncService {
 
     // Insert translations
     if (translations.length > 0) {
+      // Filter out translations with null/undefined values (required field in DB)
+      const validTranslations = translations.filter(t => t.value != null && t.value !== undefined);
+      const skippedCount = translations.length - validTranslations.length;
+
+      if (skippedCount > 0) {
+        console.log(`[ProductSync] Skipping ${skippedCount} translations with null/undefined values`);
+      }
+
       // Log what we're about to save for debugging
-      const translationsByLocale = translations.reduce((acc: any, t: any) => {
+      const translationsByLocale = validTranslations.reduce((acc: any, t: any) => {
         if (!acc[t.locale]) acc[t.locale] = [];
         acc[t.locale].push(t.key);
         return acc;
       }, {});
 
-      console.log(`[ProductSync] Saving ${translations.length} translations to database:`);
+      console.log(`[ProductSync] Saving ${validTranslations.length} translations to database:`);
       for (const [locale, keys] of Object.entries(translationsByLocale)) {
         console.log(`[ProductSync]   ${locale}: ${(keys as string[]).join(', ')}`);
       }
 
-      await db.contentTranslation.createMany({
-        data: translations.map(t => ({
-          resourceId: productData.id,
-          resourceType: "Product",
-          key: t.key,
-          value: t.value,
-          locale: t.locale,
-          digest: t.digest || null,
-        })),
-      });
-      console.log(`[ProductSync] ✓ Successfully saved ${translations.length} translations to database`);
+      if (validTranslations.length > 0) {
+        await db.contentTranslation.createMany({
+          data: validTranslations.map(t => ({
+            resourceId: productData.id,
+            resourceType: "Product",
+            key: t.key,
+            value: t.value,
+            locale: t.locale,
+            digest: t.digest || null,
+          })),
+        });
+        console.log(`[ProductSync] ✓ Successfully saved ${validTranslations.length} translations to database`);
+      }
     } else {
       console.log(`[ProductSync] No translations to save`);
     }
