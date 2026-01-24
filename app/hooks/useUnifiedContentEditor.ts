@@ -177,12 +177,17 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // AUTO-SAVE FUNCTION (defined early for use in response handlers)
   // ============================================================================
 
+  // Use a ref for fetcher to avoid dependency changes causing infinite loops
+  const fetcherRef = useRef(fetcher);
+  fetcherRef.current = fetcher;
+
   // Safe submit helper that catches AbortError from Shopify admin interference
   // The AbortError can occur when Shopify admin's own requests interfere with ours,
   // but the submit usually still works, so we just log and ignore the error
+  // IMPORTANT: Uses fetcherRef to avoid dependency on fetcher which changes frequently
   const safeSubmit = useCallback((data: Record<string, any>, options?: { method: string }) => {
     try {
-      fetcher.submit(data, options || { method: "POST" });
+      fetcherRef.current.submit(data, options || { method: "POST" });
     } catch (error) {
       // AbortError can be thrown when Shopify admin interferes, but data is usually saved
       if (error instanceof Error && error.name === 'AbortError') {
@@ -192,7 +197,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         throw error;
       }
     }
-  }, [fetcher]);
+  }, []); // Empty deps - stable reference using fetcherRef
 
   // Helper function to get which fields have changed compared to the original item
   const getChangedFields = useCallback((valuesToCheck: Record<string, string>): string[] => {
@@ -304,11 +309,25 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     editableValuesRef.current = editableValues;
   }, [editableValues]);
 
+  // Ref to track processed translateField responses (prevents duplicate processing/infinite loops)
+  const processedTranslateFieldRef = useRef<string | null>(null);
+
   // Handle translated field response (single field translation)
   // Auto-save immediately after receiving translation
   useEffect(() => {
     if (fetcher.data?.success && 'translatedValue' in fetcher.data) {
       const { fieldType, translatedValue, targetLocale } = fetcher.data as any;
+
+      console.log('🔵 [TRANSLATE-FIELD] Received translation response:', { fieldType, targetLocale, translatedValue: translatedValue?.substring(0, 50) });
+
+      // Create a unique key for this response to prevent duplicate processing
+      const responseKey = `translateField-${fieldType}-${targetLocale}-${translatedValue?.substring(0, 20)}`;
+      if (processedTranslateFieldRef.current === responseKey) {
+        console.log('🔵 [TRANSLATE-FIELD] Skipping - already processed:', responseKey);
+        return; // Already processed this response
+      }
+      console.log('🔵 [TRANSLATE-FIELD] Processing new response:', responseKey);
+      processedTranslateFieldRef.current = responseKey;
 
       // Clear deleted key for this field since we now have a new translation
       const field = config.fieldDefinitions.find(f => f.key === fieldType);
@@ -323,11 +342,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         [fieldType]: translatedValue,
       };
 
+      console.log('🔵 [TRANSLATE-FIELD] Updating editableValues with:', { [fieldType]: translatedValue?.substring(0, 50) });
+
       // Update UI
       setEditableValues(newValues);
 
       // Auto-save the translation immediately
-      console.log('[AUTO-SAVE] Saving translation for locale:', targetLocale);
+      console.log('🔵 [AUTO-SAVE] Saving translation for locale:', targetLocale);
 
       // Build form data directly here to avoid dependency issues
       if (selectedItemId) {
