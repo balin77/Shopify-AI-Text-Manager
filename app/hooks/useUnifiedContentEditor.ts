@@ -164,12 +164,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
   // Helper function to get which fields have changed compared to the original item
   const getChangedFields = useCallback((valuesToCheck: Record<string, string>): string[] => {
-    if (!selectedItem) return [];
+    const item = selectedItemRef.current;
+    if (!item) return [];
 
     const changedFields: string[] = [];
     config.fieldDefinitions.forEach((field) => {
       const currentValue = valuesToCheck[field.key] || "";
-      const originalValue = getItemFieldValue(selectedItem, field.key, primaryLocale);
+      const originalValue = getItemFieldValue(item, field.key, primaryLocale);
 
       if (currentValue !== originalValue) {
         changedFields.push(field.key);
@@ -177,7 +178,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     });
 
     return changedFields;
-  }, [selectedItem, config.fieldDefinitions, primaryLocale]);
+  }, [config.fieldDefinitions, primaryLocale]);
 
   // Internal save function that saves with specific values (for auto-save after AI acceptance/translation)
   const performAutoSave = useCallback((valuesToSave: Record<string, string>, locale: string) => {
@@ -201,7 +202,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     }
 
     // If saving primary locale, include changed fields for translation deletion
-    if (locale === primaryLocale && selectedItem) {
+    const item = selectedItemRef.current;
+    if (locale === primaryLocale && item) {
       const changedFields = getChangedFields(valuesToSave);
       if (changedFields.length > 0) {
         formDataObj.changedFields = JSON.stringify(changedFields);
@@ -210,8 +212,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         // Also clear translations locally for immediate UI update
         changedFields.forEach((fieldKey) => {
           const field = config.fieldDefinitions.find(f => f.key === fieldKey);
-          if (field?.translationKey && selectedItem.translations) {
-            selectedItem.translations = selectedItem.translations.filter(
+          if (field?.translationKey && item.translations) {
+            item.translations = item.translations.filter(
               (t: any) => t.key !== field.translationKey
             );
           }
@@ -223,7 +225,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     savedLocaleRef.current = locale; // Track which locale we're saving
     fetcher.submit(formDataObj, { method: "POST" });
     clearPendingNavigation();
-  }, [selectedItemId, primaryLocale, config.fieldDefinitions, imageAltTexts, fetcher, clearPendingNavigation, getChangedFields, selectedItem]);
+  }, [selectedItemId, primaryLocale, config.fieldDefinitions, imageAltTexts, fetcher, clearPendingNavigation, getChangedFields]);
 
   // ============================================================================
   // FETCHER RESPONSE HANDLERS (based on products implementation)
@@ -500,12 +502,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // Update item object after saving (both primary locale and translations)
   // IMPORTANT: We track which fetcher.data we've processed to prevent re-running on language change
   useEffect(() => {
+    const item = selectedItemRef.current;
     if (
       fetcher.data?.success &&
       !('translations' in fetcher.data) &&
       !('generatedContent' in fetcher.data) &&
       !('translatedValue' in fetcher.data) &&
-      selectedItem
+      item
     ) {
       // Only process if fetcher.data has actually changed (not just a dependency re-run)
       if (fetcher.data === lastFetcherDataRef.current) {
@@ -532,26 +535,26 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
           // Update based on field mapping
           if (fieldDef.key === 'title') {
-            selectedItem.title = value || '';
+            item.title = value || '';
           } else if (fieldDef.key === 'description') {
-            selectedItem.descriptionHtml = value || '';
+            item.descriptionHtml = value || '';
           } else if (fieldDef.key === 'body') {
-            selectedItem.body = value || '';
+            item.body = value || '';
           } else if (fieldDef.key === 'handle') {
-            selectedItem.handle = value || '';
+            item.handle = value || '';
           } else if (fieldDef.key === 'seoTitle') {
-            if (!selectedItem.seo) selectedItem.seo = {};
-            selectedItem.seo.title = value || '';
+            if (!item.seo) item.seo = {};
+            item.seo.title = value || '';
           } else if (fieldDef.key === 'metaDescription') {
-            if (!selectedItem.seo) selectedItem.seo = {};
-            selectedItem.seo.description = value || '';
+            if (!item.seo) item.seo = {};
+            item.seo.description = value || '';
           }
         });
       } else {
         // This was a successful update action for a translation
         // Use the saved locale, not the current viewing language
         console.log('[SAVE-RESPONSE] Updating translation for saved locale:', savedLocale);
-        const existingTranslations = selectedItem.translations.filter(
+        const existingTranslations = item.translations.filter(
           (t: any) => t.locale !== savedLocale
         );
 
@@ -567,7 +570,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           }
         });
 
-        selectedItem.translations = existingTranslations;
+        item.translations = existingTranslations;
       }
 
       // Clear the saved locale ref after processing
@@ -577,7 +580,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // This ensures hasChanges becomes false after we've updated selectedItem
       setIsLoadingData(true);
     }
-  }, [fetcher.data, selectedItem, primaryLocale, editableValues, config.fieldDefinitions]); // Removed currentLanguage from dependencies
+  }, [fetcher.data, primaryLocale, editableValues, config.fieldDefinitions]); // Removed selectedItem - use ref instead
 
   // Show global InfoBox for success/error messages and revalidate after save
   useEffect(() => {
@@ -1177,7 +1180,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
   // Load translated alt-texts when language changes
   useEffect(() => {
-    if (!selectedItem || !selectedItem.images) return;
+    const item = selectedItemRef.current;
+    if (!item || !item.images) return;
 
     if (currentLanguage === primaryLocale) {
       // Reset to primary locale alt-texts
@@ -1185,7 +1189,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     } else {
       // Load translated alt-texts from DB
       const translatedAltTexts: Record<number, string> = {};
-      selectedItem.images.forEach((img: any, index: number) => {
+      item.images.forEach((img: any, index: number) => {
         const translation = img.altTextTranslations?.find(
           (t: any) => t.locale === currentLanguage
         );
@@ -1195,7 +1199,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       });
       setImageAltTexts(translatedAltTexts);
     }
-  }, [currentLanguage, selectedItemId, primaryLocale, selectedItem]);
+  }, [currentLanguage, selectedItemId, primaryLocale]);
 
   // ============================================================================
   // HELPER FUNCTIONS
