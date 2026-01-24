@@ -36,6 +36,10 @@ export async function handleUpdateProduct(
 ): Promise<Response> {
   const { db } = await import("~/db.server");
 
+  // Parse changedFields if present (for translation deletion when primary locale changes)
+  const changedFieldsStr = formData.get("changedFields") as string;
+  const changedFields: string[] = changedFieldsStr ? JSON.parse(changedFieldsStr) : [];
+
   const params: UpdateProductParams = {
     locale: formData.get("locale") as string,
     primaryLocale: formData.get("primaryLocale") as string,
@@ -84,7 +88,7 @@ export async function handleUpdateProduct(
     if (params.locale !== params.primaryLocale) {
       return await updateTranslatedProduct(gateway, db, productId, params);
     } else {
-      return await updatePrimaryProduct(gateway, db, productId, params);
+      return await updatePrimaryProduct(gateway, db, productId, params, changedFields, context.session.shop);
     }
   } catch (error: any) {
     logger.error("Product update failed", {
@@ -430,14 +434,17 @@ async function updateTranslatedProduct(
 
 /**
  * Updates a primary locale product
+ * Also deletes translations for changed fields in all foreign languages
  */
 async function updatePrimaryProduct(
   gateway: ShopifyApiGateway,
   db: any,
   productId: string,
-  params: UpdateProductParams
+  params: UpdateProductParams,
+  changedFields: string[] = [],
+  shop: string
 ): Promise<Response> {
-  loggers.product("info", "Updating primary product", { productId });
+  loggers.product("info", "Updating primary product", { productId, changedFields });
 
   // Validate that title is not empty for primary locale
   if (!params.title || !params.title.trim()) {
@@ -530,6 +537,111 @@ async function updatePrimaryProduct(
       error: dbError.message,
     });
     // Don't fail the entire request if DB update fails - Shopify is source of truth
+  }
+
+  // Delete translations for changed fields in all foreign languages
+  if (changedFields.length > 0) {
+    try {
+      // Map field names to Shopify translation keys
+      const fieldToKeyMap: Record<string, string> = {
+        title: "title",
+        description: "body_html",
+        handle: "handle",
+        seoTitle: "meta_title",
+        metaDescription: "meta_description",
+      };
+
+      const translationKeysToDelete = changedFields
+        .map((field) => fieldToKeyMap[field])
+        .filter((key): key is string => !!key);
+
+      if (translationKeysToDelete.length > 0) {
+        // Get all shop locales from database
+        const shopLocales = await db.shopLocale.findMany({
+          where: { shop },
+          select: { locale: true, primary: true },
+        });
+
+        // Filter out the primary locale
+        const foreignLocales = shopLocales
+          .filter((l: any) => !l.primary)
+          .map((l: any) => l.locale);
+
+        if (foreignLocales.length > 0) {
+          loggers.product("info", "Deleting translations for changed fields", {
+            productId,
+            changedFields,
+            translationKeys: translationKeysToDelete,
+            locales: foreignLocales,
+          });
+
+          // Delete translations from Shopify
+          const response = await gateway.graphql(
+            `#graphql
+              mutation removeTranslations($resourceId: ID!, $translationKeys: [String!]!, $locales: [String!]!) {
+                translationsRemove(resourceId: $resourceId, translationKeys: $translationKeys, locales: $locales) {
+                  userErrors {
+                    field
+                    message
+                  }
+                  translations {
+                    key
+                    locale
+                  }
+                }
+              }`,
+            {
+              variables: {
+                resourceId: productId,
+                translationKeys: translationKeysToDelete,
+                locales: foreignLocales,
+              },
+            }
+          );
+
+          const responseData = await response.json();
+          if (responseData.data?.translationsRemove?.userErrors?.length > 0) {
+            logger.error("Shopify translationsRemove API error (primary update)", {
+              context: "UpdateProduct",
+              errors: responseData.data.translationsRemove.userErrors,
+            });
+            // Don't fail the request - primary update succeeded
+          } else {
+            loggers.product("info", "Deleted translations from Shopify", {
+              productId,
+              keys: translationKeysToDelete,
+              locales: foreignLocales,
+            });
+          }
+
+          // Delete translations from local database
+          for (const key of translationKeysToDelete) {
+            await db.contentTranslation.deleteMany({
+              where: {
+                resourceId: productId,
+                resourceType: "Product",
+                key: key,
+                locale: { in: foreignLocales },
+              },
+            });
+          }
+
+          loggers.product("info", "Deleted translations from DB", {
+            productId,
+            keys: translationKeysToDelete,
+            locales: foreignLocales,
+          });
+        }
+      }
+    } catch (translationError: any) {
+      logger.error("Failed to delete translations for changed fields", {
+        context: "UpdateProduct",
+        productId,
+        changedFields,
+        error: translationError.message,
+      });
+      // Don't fail the request - primary update succeeded
+    }
   }
 
   return json({ success: true, product: data.data.productUpdate.product });

@@ -709,6 +709,12 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
           }
         });
 
+        // Pass changedFields for translation deletion when primary locale changes
+        const changedFieldsStr = formData.get("changedFields") as string;
+        if (changedFieldsStr && locale === primaryLocale) {
+          productFormData.set("changedFields", changedFieldsStr);
+        }
+
         return handleUpdateProduct(context, productFormData, itemId);
       }
 
