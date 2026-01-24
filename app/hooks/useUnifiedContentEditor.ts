@@ -43,6 +43,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const [imageAltTexts, setImageAltTexts] = useState<Record<number, string>>({});
   const [altTextSuggestions, setAltTextSuggestions] = useState<Record<number, string>>({});
 
+  // Track deleted translation keys - these should not be shown even if revalidation brings them back temporarily
+  const deletedTranslationKeysRef = useRef<Set<string>>(new Set());
+
   // IMPORTANT: Memoize selectedItem to prevent infinite re-renders
   // Without this, items.find() returns a new object reference on every revalidation,
   // which triggers useChangeTracking and other effects, causing an infinite loop
@@ -112,6 +115,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // Reset accept-and-translate flag when changing items or languages
     setIsAcceptAndTranslateFlow(false);
 
+    // Clear deleted translation keys when switching to a different item
+    if (itemIdChanged) {
+      deletedTranslationKeysRef.current.clear();
+      console.log('[DATA-LOAD] Cleared deleted translation keys for new item');
+    }
+
     const newValues: Record<string, string> = {};
 
     if (currentLanguage === primaryLocale) {
@@ -122,6 +131,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     } else {
       // Load translated values
       config.fieldDefinitions.forEach((field) => {
+        // Check if this translation key was deleted - if so, show empty field
+        if (deletedTranslationKeysRef.current.has(field.translationKey)) {
+          console.log('[DATA-LOAD] Skipping deleted translation key:', field.translationKey);
+          newValues[field.key] = "";
+          return;
+        }
+
         const translatedValue = getTranslatedValue(
           item,
           field.translationKey,
@@ -220,13 +236,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         formDataObj.changedFields = JSON.stringify(changedFields);
         console.log('🟢🟢🟢 [AUTO-SAVE] Changed fields (translations will be deleted):', changedFields);
 
-        // Also clear translations locally for immediate UI update
+        // Track deleted translation keys for immediate UI update
+        // This ensures that even if revalidation brings back old data, we show empty fields
         changedFields.forEach((fieldKey) => {
           const field = config.fieldDefinitions.find(f => f.key === fieldKey);
-          if (field?.translationKey && item.translations) {
-            item.translations = item.translations.filter(
-              (t: any) => t.key !== field.translationKey
-            );
+          if (field?.translationKey) {
+            deletedTranslationKeysRef.current.add(field.translationKey);
+            console.log('🟢🟢🟢 [AUTO-SAVE] Marked translation key as deleted:', field.translationKey);
           }
         });
       }
