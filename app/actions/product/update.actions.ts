@@ -387,16 +387,17 @@ async function updateTranslatedProduct(
     for (const translation of translationsInput) {
       await db.contentTranslation.upsert({
         where: {
-          resourceId_resourceType_locale_key: {
+          // Unique constraint is: @@unique([resourceId, key, locale])
+          resourceId_key_locale: {
             resourceId: productId,
-            resourceType: "Product",
-            locale: translation.locale,
             key: translation.key,
+            locale: translation.locale,
           },
         },
         update: {
           value: translation.value,
           digest: null,
+          resourceType: "Product", // Update resourceType in case it changed
         },
         create: {
           resourceId: productId,

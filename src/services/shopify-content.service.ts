@@ -294,16 +294,17 @@ export class ShopifyContentService {
         for (const translation of translationsInput) {
           await db.contentTranslation.upsert({
             where: {
-              resourceId_resourceType_locale_key: {
+              // Unique constraint is: @@unique([resourceId, key, locale])
+              resourceId_key_locale: {
                 resourceId,
-                resourceType,
-                locale: translation.locale,
                 key: translation.key,
+                locale: translation.locale,
               },
             },
             update: {
               value: translation.value,
               digest: translation.translatableContentDigest || null,
+              resourceType, // Update resourceType in case it changed
             },
             create: {
               resourceId,
@@ -577,16 +578,17 @@ export class ShopifyContentService {
             for (const translation of translationsInput) {
               await db.contentTranslation.upsert({
                 where: {
-                  resourceId_resourceType_locale_key: {
+                  // Unique constraint is: @@unique([resourceId, key, locale])
+                  resourceId_key_locale: {
                     resourceId,
-                    resourceType,
-                    locale: translation.locale,
                     key: translation.key,
+                    locale: translation.locale,
                   },
                 },
                 update: {
                   value: translation.value,
                   digest: translation.translatableContentDigest || null,
+                  resourceType, // Update resourceType in case it changed
                 },
                 create: {
                   resourceId,
