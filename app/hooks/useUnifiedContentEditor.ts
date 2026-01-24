@@ -5,7 +5,7 @@
  * Provides a complete state management and handler system for content editing.
  */
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useRevalidator } from "@remix-run/react";
 import { useNavigationGuard, useChangeTracking, getTranslatedValue } from "../utils/contentEditor.utils";
 import type {
@@ -43,7 +43,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const [imageAltTexts, setImageAltTexts] = useState<Record<number, string>>({});
   const [altTextSuggestions, setAltTextSuggestions] = useState<Record<number, string>>({});
 
-  const selectedItem = items.find((item) => item.id === selectedItemId);
+  // IMPORTANT: Memoize selectedItem to prevent infinite re-renders
+  // Without this, items.find() returns a new object reference on every revalidation,
+  // which triggers useChangeTracking and other effects, causing an infinite loop
+  const selectedItem = useMemo(
+    () => items.find((item) => item.id === selectedItemId),
+    [items, selectedItemId]
+  );
 
   // Navigation guard
   const {
@@ -93,7 +99,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     if (skipNextDataLoadRef.current) {
       console.log('[DATA-LOAD] Skipping - skipNextDataLoadRef is true');
       skipNextDataLoadRef.current = false;
-      setIsLoadingData(false);
+      // Only update state if it was true to avoid unnecessary re-renders
+      if (isLoadingData) setIsLoadingData(false);
       return;
     }
 
@@ -106,7 +113,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
     if (!itemIdChanged && !languageChanged) {
       console.log('[DATA-LOAD] Skipping - neither itemId nor language changed (revalidation only)');
-      setIsLoadingData(false);
+      // Only update state if it was true to avoid unnecessary re-renders
+      if (isLoadingData) setIsLoadingData(false);
       return;
     }
 
