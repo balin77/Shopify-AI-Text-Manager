@@ -361,17 +361,18 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       if (!field) return;
 
       const shopifyKey = field.translationKey;
+      const item = selectedItemRef.current;
 
-      if (selectedItem && shopifyKey) {
+      if (item && shopifyKey) {
         // Update item translations for all locales
         for (const [locale, translatedValue] of Object.entries(translations as Record<string, string>)) {
           // Remove existing translation for this key and locale
-          selectedItem.translations = selectedItem.translations.filter(
+          item.translations = item.translations.filter(
             (t: any) => !(t.locale === locale && t.key === shopifyKey)
           );
 
           // Add new translation
-          selectedItem.translations.push({
+          item.translations.push({
             key: shopifyKey,
             value: translatedValue,
             locale
@@ -398,7 +399,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         setIsLoadingData(true);
       }
     }
-  }, [fetcher.data, selectedItem, config.fieldDefinitions, showInfoBox, t]); // Removed currentLanguage - not used
+  }, [fetcher.data, config.fieldDefinitions, showInfoBox, t]); // Use selectedItemRef instead of selectedItem
 
   // Handle "translateAll" response (translates to ALL enabled locales)
   useEffect(() => {
@@ -410,7 +411,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       !('targetLocale' in fetcher.data)
     ) {
       const translations = (fetcher.data as any).translations;
-      if (selectedItem) {
+      const item = selectedItemRef.current;
+      if (item) {
         for (const [locale, fields] of Object.entries(translations as any)) {
           const newTranslations: any[] = [];
 
@@ -427,8 +429,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           });
 
           // Store directly in item translations
-          selectedItem.translations = [
-            ...selectedItem.translations.filter((t: any) => t.locale !== locale),
+          item.translations = [
+            ...item.translations.filter((t: any) => t.locale !== locale),
             ...newTranslations,
           ];
 
@@ -446,7 +448,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         }
       }
     }
-  }, [fetcher.data, currentLanguage, selectedItem, config.fieldDefinitions]);
+  }, [fetcher.data, currentLanguage, config.fieldDefinitions]); // Use selectedItemRef instead of selectedItem
 
   // Handle "translateAllForLocale" response (translates to ONE specific locale)
   useEffect(() => {
@@ -457,7 +459,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       !('fieldType' in fetcher.data)
     ) {
       const { translations, targetLocale } = fetcher.data as any;
-      if (selectedItem) {
+      const item = selectedItemRef.current;
+      if (item) {
         const newTranslations: any[] = [];
 
         // Map fields to translations for the specific locale
@@ -473,8 +476,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         });
 
         // Store directly in item translations (replace existing for this locale)
-        selectedItem.translations = [
-          ...selectedItem.translations.filter((t: any) => t.locale !== targetLocale),
+        item.translations = [
+          ...item.translations.filter((t: any) => t.locale !== targetLocale),
           ...newTranslations,
         ];
 
@@ -497,7 +500,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         );
       }
     }
-  }, [fetcher.data, currentLanguage, selectedItem, config.fieldDefinitions, showInfoBox, t]);
+  }, [fetcher.data, currentLanguage, config.fieldDefinitions, showInfoBox, t]); // Use selectedItemRef instead of selectedItem
 
   // Update item object after saving (both primary locale and translations)
   // IMPORTANT: We track which fetcher.data we've processed to prevent re-running on language change
