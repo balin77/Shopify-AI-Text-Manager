@@ -107,7 +107,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     prevSelectedItemIdRef.current = selectedItemId;
     prevCurrentLanguageRef.current = currentLanguage;
 
-    console.log('[DATA-LOAD] Loading data for item:', selectedItemId, 'language:', currentLanguage);
+    console.log('🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵');
+    console.log('🔵 [DATA-LOAD] Loading data for item:', selectedItemId, 'language:', currentLanguage);
+    console.log('🔵 [DATA-LOAD] Primary locale:', primaryLocale);
+    console.log('🔵 [DATA-LOAD] Is primary locale:', currentLanguage === primaryLocale);
+    console.log('🔵 [DATA-LOAD] Item translations count:', item.translations?.length || 0);
+    console.log('🔵 [DATA-LOAD] Item translations:', item.translations?.map((t: any) => ({ key: t.key, locale: t.locale, value: t.value?.substring(0, 30) })));
+    console.log('🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵');
 
     // Mark as loading immediately
     setIsLoadingData(true);
@@ -149,6 +155,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       });
     }
 
+    console.log('🔵 [DATA-LOAD] Final values to set:', Object.keys(newValues).map(k => `${k}: "${(newValues[k] || '').substring(0, 50)}..."`));
     setEditableValues(newValues);
     // IMPORTANT: Only depend on selectedItemId, not selectedItem, to prevent re-runs on reference changes
   }, [selectedItemId, currentLanguage, config.fieldDefinitions, primaryLocale]);
