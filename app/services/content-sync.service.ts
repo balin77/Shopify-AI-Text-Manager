@@ -300,6 +300,13 @@ export class ContentSyncService {
     return data.data?.shopLocales || [];
   }
 
+  /**
+   * Fetch translations for all locales
+   *
+   * IMPORTANT: Only saves ACTUAL translations from Shopify.
+   * If a field has no translation in Shopify, it will NOT be stored in the database.
+   * This prevents the primary language text from appearing as a "translation".
+   */
   private async fetchAllTranslations(resourceId: string, locales: any[], resourceType: string) {
     const allTranslationsMap = new Map<string, any>(); // Deduplicate using key::locale
 
@@ -336,42 +343,38 @@ export class ContentSyncService {
 
       if (!resource) continue;
 
-      const translatableFieldsMap = new Map<string, any>();
       const digestMap = new Map<string, string>();
 
-      // Build translatable fields map
+      // Build digest map from translatableContent (for reference only)
+      // DO NOT store these as translations - they are source language text
       if (resource.translatableContent) {
         for (const content of resource.translatableContent) {
           digestMap.set(content.key, content.digest);
-          translatableFieldsMap.set(content.key, {
-            key: content.key,
-            value: content.value,
-            locale: locale.locale,
-            digest: content.digest,
-            resourceType,
-          });
         }
       }
 
-      // Override with actual translations
-      if (resource.translations) {
+      // ONLY save actual translations from Shopify
+      // DO NOT save translatableContent values - those are the source language text
+      if (resource.translations && resource.translations.length > 0) {
+        console.log(`[ContentSync] Actual translations for ${locale.locale}:`,
+          resource.translations.map((t: any) => t.key).join(', '));
+
         for (const translation of resource.translations) {
-          translatableFieldsMap.set(translation.key, {
-            key: translation.key,
-            value: translation.value,
-            locale: translation.locale,
-            digest: digestMap.get(translation.key),
-            resourceType,
-          });
+          const uniqueKey = `${translation.key}::${translation.locale}`;
+          if (!allTranslationsMap.has(uniqueKey)) {
+            allTranslationsMap.set(uniqueKey, {
+              key: translation.key,
+              value: translation.value,
+              locale: translation.locale,
+              digest: digestMap.get(translation.key),
+              resourceType,
+            });
+          }
         }
-      }
 
-      // Add to global map with deduplication
-      for (const [key, translation] of translatableFieldsMap) {
-        const uniqueKey = `${translation.key}::${translation.locale}`;
-        if (!allTranslationsMap.has(uniqueKey)) {
-          allTranslationsMap.set(uniqueKey, translation);
-        }
+        console.log(`[ContentSync] Saved ${resource.translations.length} actual translations for ${locale.locale}`);
+      } else {
+        console.log(`[ContentSync] No translations found for ${locale.locale} - nothing to save`);
       }
     }
 
