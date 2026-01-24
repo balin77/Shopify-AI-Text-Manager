@@ -77,9 +77,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const prevSelectedItemIdRef = useRef<string | null>(null);
   const prevCurrentLanguageRef = useRef<string>(currentLanguage);
 
+  // Ref to access selectedItem without adding it to effect dependencies
+  // This prevents the effect from re-running when selectedItem reference changes
+  const selectedItemRef = useRef(selectedItem);
+  selectedItemRef.current = selectedItem;
+
   useEffect(() => {
-    if (!selectedItem) {
-      setIsLoadingData(false);
+    const item = selectedItemRef.current;
+    if (!item) {
+      if (isLoadingData) setIsLoadingData(false);
       return;
     }
 
@@ -87,7 +93,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     if (skipNextDataLoadRef.current) {
       console.log('[DATA-LOAD] Skipping - skipNextDataLoadRef is true');
       skipNextDataLoadRef.current = false;
-      // Only update state if it was true to avoid unnecessary re-renders
       if (isLoadingData) setIsLoadingData(false);
       return;
     }
@@ -95,14 +100,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // Only reload data if:
     // 1. The item ID actually changed (user selected a different item)
     // 2. The language changed (user switched languages)
-    // Do NOT reload if only selectedItem object reference changed (from revalidation)
     const itemIdChanged = prevSelectedItemIdRef.current !== selectedItemId;
     const languageChanged = prevCurrentLanguageRef.current !== currentLanguage;
 
     if (!itemIdChanged && !languageChanged) {
-      console.log('[DATA-LOAD] Skipping - neither itemId nor language changed (revalidation only)');
-      // Only update state if it was true to avoid unnecessary re-renders
-      if (isLoadingData) setIsLoadingData(false);
+      // Don't log on skip to reduce console spam
       return;
     }
 
@@ -123,13 +125,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     if (currentLanguage === primaryLocale) {
       // Load primary locale values
       config.fieldDefinitions.forEach((field) => {
-        newValues[field.key] = getItemFieldValue(selectedItem, field.key, primaryLocale);
+        newValues[field.key] = getItemFieldValue(item, field.key, primaryLocale);
       });
     } else {
       // Load translated values
       config.fieldDefinitions.forEach((field) => {
         const translatedValue = getTranslatedValue(
-          selectedItem,
+          item,
           field.translationKey,
           currentLanguage,
           "",
@@ -140,19 +142,21 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     }
 
     setEditableValues(newValues);
-  }, [selectedItemId, currentLanguage, selectedItem, config.fieldDefinitions, primaryLocale]);
+    // IMPORTANT: Only depend on selectedItemId, not selectedItem, to prevent re-runs on reference changes
+  }, [selectedItemId, currentLanguage, config.fieldDefinitions, primaryLocale]);
 
   // Mark loading as complete after editableValues have been updated
   // This is in a separate useEffect to ensure the state update has completed
   useEffect(() => {
-    if (selectedItem && isLoadingData) {
+    if (selectedItemId && isLoadingData) {
       // Use setTimeout to ensure this runs after the render cycle
       const timer = setTimeout(() => {
         setIsLoadingData(false);
       }, 0);
       return () => clearTimeout(timer);
     }
-  }, [editableValues, selectedItem, isLoadingData]);
+    // Use selectedItemId instead of selectedItem to prevent re-runs on reference changes
+  }, [editableValues, selectedItemId, isLoadingData]);
 
   // ============================================================================
   // AUTO-SAVE FUNCTION (defined early for use in response handlers)
