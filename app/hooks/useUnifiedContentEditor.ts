@@ -222,11 +222,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     const item = selectedItemRef.current;
     if (locale === primaryLocale && item) {
       const changedFields = getChangedFields(valuesToSave);
-      console.log('[AUTO-SAVE] Checking for changed fields, locale:', locale, 'primaryLocale:', primaryLocale);
-      console.log('[AUTO-SAVE] Values to save:', Object.keys(valuesToSave).map(k => `${k}: "${String(valuesToSave[k] || '').substring(0, 50)}..."`));
+      console.log('🟡🟡🟡 [AUTO-SAVE] Checking for changed fields, locale:', locale, 'primaryLocale:', primaryLocale);
+      console.log('🟡🟡🟡 [AUTO-SAVE] Values to save:', Object.keys(valuesToSave).map(k => `${k}: "${String(valuesToSave[k] || '').substring(0, 50)}..."`));
       if (changedFields.length > 0) {
         formDataObj.changedFields = JSON.stringify(changedFields);
-        console.log('[AUTO-SAVE] Changed fields (translations will be deleted):', changedFields);
+        console.log('🟢🟢🟢 [AUTO-SAVE] Changed fields (translations will be deleted):', changedFields);
 
         // Also clear translations locally for immediate UI update
         changedFields.forEach((fieldKey) => {
@@ -932,7 +932,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
     // Auto-save immediately after accepting AI suggestion
     // IMPORTANT: Always save to primary locale since AI suggestions are generated for primary content
-    console.log('[ACCEPT-SUGGESTION] Accepting AI suggestion for field:', fieldKey, 'saving to primary locale:', primaryLocale);
+    console.log('🔴🔴🔴 [ACCEPT-SUGGESTION] Accepting AI suggestion for field:', fieldKey, 'saving to primary locale:', primaryLocale);
     performSaveWithValues(newValues, primaryLocale);
   };
 

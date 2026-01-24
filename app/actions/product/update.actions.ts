@@ -444,6 +444,11 @@ async function updatePrimaryProduct(
   changedFields: string[] = [],
   shop: string
 ): Promise<Response> {
+  console.log('🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴');
+  console.log('🔴 [UPDATE-PRIMARY-PRODUCT] Starting update');
+  console.log('🔴 ProductId:', productId);
+  console.log('🔴 ChangedFields:', changedFields);
+  console.log('🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴');
   loggers.product("info", "Updating primary product", { productId, changedFields });
 
   // Validate that title is not empty for primary locale
@@ -576,6 +581,13 @@ async function updatePrimaryProduct(
           .map((l: any) => l.locale);
 
         if (foreignLocales.length > 0) {
+          console.log('🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢');
+          console.log('🟢 [DELETE-TRANSLATIONS] Starting deletion');
+          console.log('🟢 ProductId:', productId);
+          console.log('🟢 ChangedFields:', changedFields);
+          console.log('🟢 TranslationKeys:', translationKeysToDelete);
+          console.log('🟢 ForeignLocales:', foreignLocales);
+          console.log('🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢');
           loggers.product("info", "Deleting translations for changed fields", {
             productId,
             changedFields,
