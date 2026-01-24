@@ -310,6 +310,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     if (fetcher.data?.success && 'translatedValue' in fetcher.data) {
       const { fieldType, translatedValue, targetLocale } = fetcher.data as any;
 
+      // Clear deleted key for this field since we now have a new translation
+      const field = config.fieldDefinitions.find(f => f.key === fieldType);
+      if (field?.translationKey && deletedTranslationKeysRef.current.has(field.translationKey)) {
+        deletedTranslationKeysRef.current.delete(field.translationKey);
+        console.log('[TRANSLATE-FIELD] Cleared translation key from deleted set:', field.translationKey);
+      }
+
       // Build new values with the translation (using ref to avoid dependency)
       const newValues: Record<string, string> = {
         ...editableValuesRef.current,
@@ -413,6 +420,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       const item = selectedItemRef.current;
 
       if (item && shopifyKey) {
+        // IMPORTANT: Clear this translation key from deleted set since we now have new translations
+        // This ensures the DATA-LOAD effect will load the new translation when switching languages
+        if (deletedTranslationKeysRef.current.has(shopifyKey)) {
+          deletedTranslationKeysRef.current.delete(shopifyKey);
+          console.log('🔴 [FRONTEND] Cleared translation key from deleted set:', shopifyKey);
+        }
+
         // Update item translations for all locales
         for (const [locale, translatedValue] of Object.entries(translations as Record<string, string>)) {
           // Remove existing translation for this key and locale
@@ -465,6 +479,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       const translations = (fetcher.data as any).translations;
       const item = selectedItemRef.current;
       if (item) {
+        // Clear all deleted keys since we're translating all fields
+        if (deletedTranslationKeysRef.current.size > 0) {
+          console.log('[TRANSLATE-ALL] Clearing all deleted translation keys:', Array.from(deletedTranslationKeysRef.current));
+          deletedTranslationKeysRef.current.clear();
+        }
+
         for (const [locale, fields] of Object.entries(translations as any)) {
           const newTranslations: any[] = [];
 
@@ -513,6 +533,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       const { translations, targetLocale } = fetcher.data as any;
       const item = selectedItemRef.current;
       if (item) {
+        // Clear all deleted keys since we're translating all fields for this locale
+        if (deletedTranslationKeysRef.current.size > 0) {
+          console.log('[TRANSLATE-ALL-FOR-LOCALE] Clearing all deleted translation keys:', Array.from(deletedTranslationKeysRef.current));
+          deletedTranslationKeysRef.current.clear();
+        }
+
         const newTranslations: any[] = [];
 
         // Map fields to translations for the specific locale
