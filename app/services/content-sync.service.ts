@@ -425,19 +425,28 @@ export class ContentSyncService {
       },
     });
 
-    // Insert new translations
+    // Insert new translations (filter out null/undefined values)
     if (translations.length > 0) {
-      await db.contentTranslation.createMany({
-        data: translations.map(t => ({
-          resourceId: collectionData.id,
-          resourceType: "Collection",
-          key: t.key,
-          value: t.value,
-          locale: t.locale,
-          digest: t.digest || null,
-        })),
-      });
-      console.log(`[ContentSync] ✓ Saved ${translations.length} translations`);
+      const validTranslations = translations.filter(t => t.value != null && t.value !== undefined);
+      const skippedCount = translations.length - validTranslations.length;
+
+      if (skippedCount > 0) {
+        console.log(`[ContentSync] Skipping ${skippedCount} translations with null/undefined values`);
+      }
+
+      if (validTranslations.length > 0) {
+        await db.contentTranslation.createMany({
+          data: validTranslations.map(t => ({
+            resourceId: collectionData.id,
+            resourceType: "Collection",
+            key: t.key,
+            value: t.value,
+            locale: t.locale,
+            digest: t.digest || null,
+          })),
+        });
+        console.log(`[ContentSync] ✓ Saved ${validTranslations.length} translations`);
+      }
     }
   }
 
@@ -488,19 +497,28 @@ export class ContentSyncService {
       },
     });
 
-    // Insert new translations
+    // Insert new translations (filter out null/undefined values)
     if (translations.length > 0) {
-      await db.contentTranslation.createMany({
-        data: translations.map(t => ({
-          resourceId: articleData.id,
-          resourceType: "Article",
-          key: t.key,
-          value: t.value,
-          locale: t.locale,
-          digest: t.digest || null,
-        })),
-      });
-      console.log(`[ContentSync] ✓ Saved ${translations.length} translations`);
+      const validTranslations = translations.filter(t => t.value != null && t.value !== undefined);
+      const skippedCount = translations.length - validTranslations.length;
+
+      if (skippedCount > 0) {
+        console.log(`[ContentSync] Skipping ${skippedCount} translations with null/undefined values`);
+      }
+
+      if (validTranslations.length > 0) {
+        await db.contentTranslation.createMany({
+          data: validTranslations.map(t => ({
+            resourceId: articleData.id,
+            resourceType: "Article",
+            key: t.key,
+            value: t.value,
+            locale: t.locale,
+            digest: t.digest || null,
+          })),
+        });
+        console.log(`[ContentSync] ✓ Saved ${validTranslations.length} translations`);
+      }
     }
   }
 
