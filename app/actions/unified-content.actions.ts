@@ -586,6 +586,10 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
     const targetLocalesStr = formData.get("targetLocales") as string;
     const contextTitle = formData.get("contextTitle") as string;
 
+    console.log('🟠🟠🟠 [translateFieldToAllLocales] Starting...');
+    console.log('🟠 fieldType:', fieldType);
+    console.log('🟠 targetLocales:', targetLocalesStr);
+
     // Create task entry
     const task = await db.task.create({
       data: {
@@ -639,10 +643,17 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
       // Extract just the field value for each locale (frontend expects Record<locale, string>)
       // allTranslations is Record<locale, Record<fieldType, string>>
       // We need to flatten it to Record<locale, string>
+      console.log('🟠 [translateFieldToAllLocales] allTranslations from service:', Object.keys(allTranslations));
+      console.log('🟠 [translateFieldToAllLocales] allTranslations detail:', JSON.stringify(allTranslations, null, 2));
+
       const flattenedTranslations: Record<string, string> = {};
       for (const [locale, fields] of Object.entries(allTranslations)) {
-        flattenedTranslations[locale] = (fields as any)[fieldType] || "";
+        const value = (fields as any)[fieldType] || "";
+        flattenedTranslations[locale] = value;
+        console.log(`🟠 [translateFieldToAllLocales] Extracted ${locale}.${fieldType} = "${value.substring(0, 50)}..."`);
       }
+
+      console.log('🟠🟠🟠 [translateFieldToAllLocales] RETURNING locales:', Object.keys(flattenedTranslations));
 
       await db.task.update({
         where: { id: task.id },
