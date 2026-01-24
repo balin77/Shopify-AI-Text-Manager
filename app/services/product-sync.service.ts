@@ -130,6 +130,10 @@ export class ProductSyncService {
 
   /**
    * Fetch translations for all locales
+   *
+   * IMPORTANT: Only saves ACTUAL translations from Shopify.
+   * If a field has no translation in Shopify, it will NOT be stored in the database.
+   * This prevents the primary language text from appearing as a "translation".
    */
   private async fetchAllTranslations(productId: string, locales: any[], productData: any) {
     const allTranslations = [];
@@ -171,61 +175,36 @@ export class ProductSyncService {
         continue;
       }
 
-      // Build a map of all translatable fields
-      const translatableFieldsMap = new Map<string, any>();
-
+      // Build digest map from translatableContent (for reference only)
       if (resource.translatableContent) {
         console.log(`[ProductSync] Available translatable keys for ${locale.locale}:`,
           resource.translatableContent.map((c: any) => c.key).join(', '));
 
         for (const content of resource.translatableContent) {
-          // Store digest for future updates
+          // Store digest for future updates - but DO NOT store as translation
           digestMap.set(content.key, content.digest);
-
-          // Store translatable field with default value from primary locale
-          translatableFieldsMap.set(content.key, {
-            key: content.key,
-            value: content.value, // Default value from primary locale
-            locale: locale.locale,
-            digest: content.digest,
-          });
         }
       }
 
-      // Override with actual translations if they exist
-      if (resource.translations) {
-        console.log(`[ProductSync] Existing translations for ${locale.locale}:`,
+      // ONLY save actual translations from Shopify
+      // DO NOT save translatableContent values - those are the source language text
+      if (resource.translations && resource.translations.length > 0) {
+        console.log(`[ProductSync] Actual translations for ${locale.locale}:`,
           resource.translations.map((t: any) => t.key).join(', '));
 
         for (const translation of resource.translations) {
-          translatableFieldsMap.set(translation.key, {
+          allTranslations.push({
             key: translation.key,
-            value: translation.value, // Actual translated value
+            value: translation.value,
             locale: translation.locale,
             digest: digestMap.get(translation.key),
           });
         }
-      }
 
-      // Collect all translations (both existing and translatable fields)
-      // Keep Shopify's field names as-is (meta_title, meta_description)
-      for (const translation of translatableFieldsMap.values()) {
-        allTranslations.push(translation);
+        console.log(`[ProductSync] Saved ${resource.translations.length} actual translations for ${locale.locale}`);
+      } else {
+        console.log(`[ProductSync] No translations found for ${locale.locale} - nothing to save`);
       }
-
-      // IMPORTANT: Shopify doesn't always return 'handle' in translatableContent
-      // Add it manually as a fallback if missing
-      if (!translatableFieldsMap.has('handle') && productData.handle) {
-        console.log(`[ProductSync] Adding missing 'handle' field for ${locale.locale} with fallback value`);
-        allTranslations.push({
-          key: 'handle',
-          value: productData.handle, // Use primary locale handle as fallback
-          locale: locale.locale,
-          digest: null, // No digest available for manually added fields
-        });
-      }
-
-      console.log(`[ProductSync] Found ${translatableFieldsMap.size} translatable fields for ${locale.locale}`);
     }
 
     return allTranslations;
