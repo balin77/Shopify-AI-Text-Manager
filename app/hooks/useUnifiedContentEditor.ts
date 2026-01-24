@@ -347,6 +347,22 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // Update UI
       setEditableValues(newValues);
 
+      // Update item.translations directly so hasChanges becomes false after save
+      const item = selectedItemRef.current;
+      if (item && field?.translationKey) {
+        // Remove existing translation for this key and locale
+        item.translations = item.translations.filter(
+          (t: any) => !(t.locale === targetLocale && t.key === field.translationKey)
+        );
+        // Add new translation
+        item.translations.push({
+          key: field.translationKey,
+          value: translatedValue,
+          locale: targetLocale,
+        });
+        console.log('🔵 [TRANSLATE-FIELD] Updated item.translations for:', field.translationKey);
+      }
+
       // Auto-save the translation immediately
       console.log('🔵 [AUTO-SAVE] Saving translation for locale:', targetLocale);
 
@@ -361,8 +377,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         config.fieldDefinitions.forEach((field) => {
           formDataObj[field.key] = newValues[field.key] || "";
         });
+
+        // Track which locale we're saving so the response handler knows
+        savedLocaleRef.current = targetLocale;
         safeSubmit(formDataObj, { method: "POST" });
       }
+
+      // Mark as loading to reset change detection after the save completes
+      setIsLoadingData(true);
     }
   }, [fetcher.data, selectedItemId, primaryLocale, config.fieldDefinitions, safeSubmit]);
 
