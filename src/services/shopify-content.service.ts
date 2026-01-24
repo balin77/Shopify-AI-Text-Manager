@@ -573,6 +573,7 @@ export class ShopifyContentService {
 
           // Update database - use upsert to preserve existing translations
           if (translationsInput.length > 0) {
+            console.log(`🔷 [translateAllContent] Saving ${translationsInput.length} translations to DB for ${locale}:`, translationsInput.map(t => `${t.key}="${t.value.substring(0, 30)}..."`));
             for (const translation of translationsInput) {
               await db.contentTranslation.upsert({
                 where: {
@@ -597,13 +598,19 @@ export class ShopifyContentService {
                 },
               });
             }
+            console.log(`🔷 [translateAllContent] ✓ DB save completed for ${locale}`);
+          } else {
+            console.warn(`🔷 [translateAllContent] ⚠️ No translations to save for ${locale} - translationsInput is empty`);
           }
+        } else {
+          console.warn(`🔷 [translateAllContent] ⚠️ No translatedFields for ${locale} - AI returned nothing for this locale`);
         }
       } catch (localeError: any) {
-        console.error(`Failed to translate to ${locale}:`, localeError);
+        console.error(`🔷 [translateAllContent] ❌ Failed to translate to ${locale}:`, localeError);
       }
     }
 
+    console.log(`🔷🔷🔷 [translateAllContent] FINAL: allTranslations contains locales:`, Object.keys(allTranslations));
     return allTranslations;
   }
 }
