@@ -89,14 +89,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       return;
     }
 
-    // Check if we should skip this data load (after save/clear operations)
-    if (skipNextDataLoadRef.current) {
-      console.log('[DATA-LOAD] Skipping - skipNextDataLoadRef is true');
-      skipNextDataLoadRef.current = false;
-      if (isLoadingData) setIsLoadingData(false);
-      return;
-    }
-
     // Only reload data if:
     // 1. The item ID actually changed (user selected a different item)
     // 2. The language changed (user switched languages)
