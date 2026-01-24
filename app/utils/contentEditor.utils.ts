@@ -3,7 +3,7 @@
  * Used by: app.collections.tsx, app.blog.tsx, app.pages.tsx, app.policies.tsx
  */
 
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import type { TranslatableItem, ContentType, ShopLocale } from "~/types/contentEditor.types";
 import {
   SHOPIFY_TRANSLATION_KEYS,
@@ -247,6 +247,8 @@ export function useNavigationGuard() {
 
 /**
  * Track changes in editable fields
+ * IMPORTANT: Uses refs to cache original values and prevent infinite re-renders
+ * when selectedItem reference changes (e.g., from Shopify admin revalidations)
  */
 export function useChangeTracking(
   selectedItem: TranslatableItem | null,
@@ -264,21 +266,32 @@ export function useChangeTracking(
 ) {
   const [hasChanges, setHasChanges] = useState(false);
 
-  useEffect(() => {
-    console.log('[DEBUG useChangeTracking] Running', {
-      hasSelectedItem: !!selectedItem,
-      selectedItemId: selectedItem?.id,
-      currentLanguage,
-      contentType,
-      editableFieldsKeys: Object.keys(editableFields),
-      editableFields
-    });
+  // Cache original values to prevent recalculation on every selectedItem reference change
+  const originalValuesRef = useRef<{
+    itemId: string | null;
+    language: string;
+    title: string;
+    description: string;
+    handle: string;
+    seoTitle: string;
+    metaDescription: string;
+  } | null>(null);
 
-    if (!selectedItem) {
-      console.log('[DEBUG useChangeTracking] No item - setting false');
-      setHasChanges(false);
-      return;
-    }
+  // Track previous item ID and language to detect actual changes
+  const prevItemIdRef = useRef<string | null>(null);
+  const prevLanguageRef = useRef<string>(currentLanguage);
+
+  // Update cached original values only when item ID or language actually changes
+  const selectedItemId = selectedItem?.id || null;
+
+  if (selectedItem && (prevItemIdRef.current !== selectedItemId || prevLanguageRef.current !== currentLanguage)) {
+    prevItemIdRef.current = selectedItemId;
+    prevLanguageRef.current = currentLanguage;
+
+    const descKey = CONTENT_TYPE_DESCRIPTION_KEY[contentType];
+    const descFallback = (contentType === 'collections' || contentType === 'products')
+      ? (selectedItem.descriptionHtml || "")
+      : (selectedItem.body || "");
 
     const getOriginalValue = (key: string, fallback: string) => {
       if (currentLanguage === primaryLocale) {
@@ -287,37 +300,44 @@ export function useChangeTracking(
       return getTranslatedValue(selectedItem, key, currentLanguage, "", primaryLocale);
     };
 
-    const descKey = CONTENT_TYPE_DESCRIPTION_KEY[contentType];
-    const descFallback = (contentType === 'collections' || contentType === 'products')
-      ? (selectedItem.descriptionHtml || "")
-      : (selectedItem.body || "");
+    originalValuesRef.current = {
+      itemId: selectedItemId,
+      language: currentLanguage,
+      title: contentType !== 'policies'
+        ? getOriginalValue(SHOPIFY_TRANSLATION_KEYS.TITLE, selectedItem.title || "")
+        : "",
+      description: getOriginalValue(descKey, descFallback || ""),
+      handle: getOriginalValue(SHOPIFY_TRANSLATION_KEYS.HANDLE, selectedItem.handle || ""),
+      seoTitle: getOriginalValue(SHOPIFY_TRANSLATION_KEYS.META_TITLE, selectedItem.seo?.title || ""),
+      metaDescription: getOriginalValue(SHOPIFY_TRANSLATION_KEYS.META_DESCRIPTION, selectedItem.seo?.description || ""),
+    };
+  }
 
-    // Get the actual description/body value from editableFields
-    // Pages and Blogs use 'body', Collections and Products use 'description'
+  // Calculate hasChanges based on cached original values
+  // This effect only depends on editableFields, not on selectedItem reference
+  useEffect(() => {
+    if (!selectedItem || !originalValuesRef.current) {
+      if (hasChanges) setHasChanges(false);
+      return;
+    }
+
+    const originals = originalValuesRef.current;
     const currentDescValue = editableFields.body || editableFields.description || "";
 
-    // Policies don't have translatable title field
     const titleChanged = contentType !== 'policies'
-      ? (editableFields.title || "") !== getOriginalValue(SHOPIFY_TRANSLATION_KEYS.TITLE, selectedItem.title || "")
+      ? (editableFields.title || "") !== originals.title
       : false;
-
-    const descChanged = currentDescValue !== getOriginalValue(descKey, descFallback || "");
-    const handleChanged = (editableFields.handle || "") !== getOriginalValue(SHOPIFY_TRANSLATION_KEYS.HANDLE, selectedItem.handle || "");
-    const seoTitleChanged = (editableFields.seoTitle || "") !== getOriginalValue(SHOPIFY_TRANSLATION_KEYS.META_TITLE, selectedItem.seo?.title || "");
-    const metaDescChanged = (editableFields.metaDescription || "") !== getOriginalValue(SHOPIFY_TRANSLATION_KEYS.META_DESCRIPTION, selectedItem.seo?.description || "");
+    const descChanged = currentDescValue !== originals.description;
+    const handleChanged = (editableFields.handle || "") !== originals.handle;
+    const seoTitleChanged = (editableFields.seoTitle || "") !== originals.seoTitle;
+    const metaDescChanged = (editableFields.metaDescription || "") !== originals.metaDescription;
 
     const newHasChanges = titleChanged || descChanged || handleChanged || seoTitleChanged || metaDescChanged;
 
-    console.log('[DEBUG useChangeTracking] Change detection', {
-      titleChanged,
-      descChanged,
-      handleChanged,
-      seoTitleChanged,
-      metaDescChanged,
-      newHasChanges
-    });
-
-    setHasChanges(newHasChanges);
+    // Only update state if value actually changed to prevent unnecessary re-renders
+    if (newHasChanges !== hasChanges) {
+      setHasChanges(newHasChanges);
+    }
   }, [
     editableFields.title,
     editableFields.description,
@@ -325,10 +345,11 @@ export function useChangeTracking(
     editableFields.handle,
     editableFields.seoTitle,
     editableFields.metaDescription,
-    selectedItem,
+    // Use selectedItem?.id instead of selectedItem to prevent re-runs on reference changes
+    selectedItem?.id,
     currentLanguage,
     contentType,
-    primaryLocale
+    hasChanges
   ]);
 
   return hasChanges;
