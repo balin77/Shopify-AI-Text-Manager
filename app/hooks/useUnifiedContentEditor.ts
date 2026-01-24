@@ -622,7 +622,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
       // Revalidate to fetch fresh data from the database after successful save
       // This ensures translations and all changes are reflected in the UI
-      revalidator.revalidate();
+      // Only revalidate if not already revalidating to prevent AbortError
+      if (revalidator.state === 'idle') {
+        try {
+          revalidator.revalidate();
+        } catch (error) {
+          // Ignore AbortError from Shopify admin interference
+          console.log('[REVALIDATE] Error during revalidation (ignored):', error);
+        }
+      }
     } else if (fetcher.data && !fetcher.data.success && 'error' in fetcher.data) {
       showInfoBox(fetcher.data.error as string, "critical", t.common?.error || "Error");
     }
