@@ -144,176 +144,214 @@ async function updateImageAltTexts(
   const mediaEdges = (productData.data?.product?.media?.edges || [])
     .filter((edge: any) => edge.node?.id); // Only keep nodes with an id (MediaImage type)
 
-  // Get DB product images
+  // Get DB product images (sorted by position to match UI order)
   const dbProduct = await db.product.findUnique({
     where: { id: productId },
-    include: { images: true },
+    include: {
+      images: {
+        orderBy: { position: 'asc' },
+      },
+    },
   });
 
   // Update each image with new alt-text
   for (const [indexStr, altText] of Object.entries(params.imageAltTexts || {})) {
     const index = parseInt(indexStr);
-    if (index < mediaEdges.length && mediaEdges[index]?.node?.id) {
-      const mediaImageId = mediaEdges[index].node.id; // e.g., gid://shopify/MediaImage/123456789
+    const dbImage = dbProduct?.images[index];
 
-      loggers.product("debug", "Updating image alt-text", {
+    // Prefer mediaId from DB (more reliable), fallback to Shopify query by index
+    let mediaImageId = dbImage?.mediaId;
+
+    if (!mediaImageId && index < mediaEdges.length && mediaEdges[index]?.node?.id) {
+      mediaImageId = mediaEdges[index].node.id;
+      loggers.product("debug", "Using mediaId from Shopify query (DB mediaId not found)", { index });
+    }
+
+    if (!mediaImageId) {
+      loggers.product("warn", "No mediaId found for image - skipping Shopify update", {
         index,
-        mediaImageId,
-        locale: params.locale,
-        isPrimary: params.locale === params.primaryLocale,
+        hasDbImage: !!dbImage,
+        dbImageMediaId: dbImage?.mediaId,
       });
+      // Still save to DB if we have a dbImage
+      if (dbImage) {
+        if (params.locale === params.primaryLocale) {
+          await db.productImage.update({
+            where: { id: dbImage.id },
+            data: { altText },
+          });
+        } else {
+          const existing = await db.productImageAltTranslation.findUnique({
+            where: { imageId_locale: { imageId: dbImage.id, locale: params.locale } },
+          });
+          if (existing) {
+            await db.productImageAltTranslation.update({ where: { id: existing.id }, data: { altText } });
+          } else {
+            await db.productImageAltTranslation.create({ data: { imageId: dbImage.id, locale: params.locale, altText } });
+          }
+        }
+        loggers.product("debug", "Saved alt-text to DB only (no Shopify sync)", { index, locale: params.locale });
+      }
+      continue;
+    }
 
-      if (params.locale === params.primaryLocale) {
-        // PRIMARY LOCALE: Use productUpdateMedia mutation
-        await gateway.graphql(
-          `#graphql
-            mutation updateMedia($media: [UpdateMediaInput!]!) {
-              productUpdateMedia(media: $media, productId: "${productId}") {
-                media {
-                  alt
-                  mediaErrors {
-                    code
-                    details
-                    message
-                  }
+    loggers.product("debug", "Updating image alt-text", {
+      index,
+      mediaImageId,
+      locale: params.locale,
+      isPrimary: params.locale === params.primaryLocale,
+      mediaIdSource: dbImage?.mediaId ? "database" : "shopify-query",
+    });
+
+    if (params.locale === params.primaryLocale) {
+      // PRIMARY LOCALE: Use productUpdateMedia mutation
+      await gateway.graphql(
+        `#graphql
+          mutation updateMedia($media: [UpdateMediaInput!]!) {
+            productUpdateMedia(media: $media, productId: "${productId}") {
+              media {
+                alt
+                mediaErrors {
+                  code
+                  details
+                  message
                 }
-                mediaUserErrors {
+              }
+              mediaUserErrors {
+                field
+                message
+              }
+              product {
+                id
+              }
+            }
+          }`,
+        {
+          variables: {
+            media: [
+              {
+                id: mediaImageId,
+                alt: altText,
+              },
+            ],
+          },
+        }
+      );
+      loggers.product("debug", "Updated primary alt-text via productUpdateMedia", { index });
+    } else {
+      // TRANSLATION: Use translationsRegister mutation with MEDIA_IMAGE resource type (API 2025-10+)
+      // First, fetch the translatable content to get the digest
+      const translatableResponse = await gateway.graphql(
+        `#graphql
+          query translatableContent($resourceId: ID!) {
+            translatableResource(resourceId: $resourceId) {
+              resourceId
+              translatableContent {
+                key
+                digest
+                value
+              }
+            }
+          }`,
+        { variables: { resourceId: mediaImageId } }
+      );
+
+      const translatableData = await translatableResponse.json();
+      const translatableContent = translatableData.data?.translatableResource?.translatableContent || [];
+      const altDigest = translatableContent.find((c: any) => c.key === "alt")?.digest;
+
+      if (altDigest) {
+        // Register the translation
+        const translateResponse = await gateway.graphql(
+          `#graphql
+            mutation translateMediaImage($resourceId: ID!, $translations: [TranslationInput!]!) {
+              translationsRegister(resourceId: $resourceId, translations: $translations) {
+                userErrors {
                   field
                   message
                 }
-                product {
-                  id
+                translations {
+                  locale
+                  key
+                  value
                 }
               }
             }`,
           {
             variables: {
-              media: [
+              resourceId: mediaImageId,
+              translations: [
                 {
-                  id: mediaImageId,
-                  alt: altText,
+                  key: "alt",
+                  value: altText,
+                  locale: params.locale,
+                  translatableContentDigest: altDigest,
                 },
               ],
             },
           }
         );
-        loggers.product("debug", "Updated primary alt-text via productUpdateMedia", { index });
-      } else {
-        // TRANSLATION: Use translationsRegister mutation with MEDIA_IMAGE resource type (API 2025-10+)
-        // First, fetch the translatable content to get the digest
-        const translatableResponse = await gateway.graphql(
-          `#graphql
-            query translatableContent($resourceId: ID!) {
-              translatableResource(resourceId: $resourceId) {
-                resourceId
-                translatableContent {
-                  key
-                  digest
-                  value
-                }
-              }
-            }`,
-          { variables: { resourceId: mediaImageId } }
-        );
 
-        const translatableData = await translatableResponse.json();
-        const translatableContent = translatableData.data?.translatableResource?.translatableContent || [];
-        const altDigest = translatableContent.find((c: any) => c.key === "alt")?.digest;
-
-        if (altDigest) {
-          // Register the translation
-          const translateResponse = await gateway.graphql(
-            `#graphql
-              mutation translateMediaImage($resourceId: ID!, $translations: [TranslationInput!]!) {
-                translationsRegister(resourceId: $resourceId, translations: $translations) {
-                  userErrors {
-                    field
-                    message
-                  }
-                  translations {
-                    locale
-                    key
-                    value
-                  }
-                }
-              }`,
-            {
-              variables: {
-                resourceId: mediaImageId,
-                translations: [
-                  {
-                    key: "alt",
-                    value: altText,
-                    locale: params.locale,
-                    translatableContentDigest: altDigest,
-                  },
-                ],
-              },
-            }
-          );
-
-          const translateData = await translateResponse.json();
-          if (translateData.data?.translationsRegister?.userErrors?.length > 0) {
-            loggers.product("error", "Failed to translate alt-text", {
-              index,
-              locale: params.locale,
-              errors: translateData.data.translationsRegister.userErrors,
-            });
-          } else {
-            loggers.product("debug", "Translated alt-text via translationsRegister", {
-              index,
-              locale: params.locale,
-            });
-          }
-        } else {
-          loggers.product("warn", "No digest found for alt-text translation", {
+        const translateData = await translateResponse.json();
+        if (translateData.data?.translationsRegister?.userErrors?.length > 0) {
+          loggers.product("error", "Failed to translate alt-text", {
             index,
-            mediaImageId,
+            locale: params.locale,
+            errors: translateData.data.translationsRegister.userErrors,
+          });
+        } else {
+          loggers.product("debug", "Translated alt-text via translationsRegister", {
+            index,
             locale: params.locale,
           });
         }
+      } else {
+        loggers.product("warn", "No digest found for alt-text translation", {
+          index,
+          mediaImageId,
+          locale: params.locale,
+        });
       }
+    }
 
-      // Save to Database
-      const dbImage = dbProduct?.images[index];
-      if (dbImage) {
-        if (params.locale === params.primaryLocale) {
-          // Primary locale: Update ProductImage table
-          await db.productImage.update({
-            where: { id: dbImage.id },
+    // Save to Database (dbImage was already fetched above)
+    if (dbImage) {
+      if (params.locale === params.primaryLocale) {
+        // Primary locale: Update ProductImage table
+        await db.productImage.update({
+          where: { id: dbImage.id },
+          data: { altText },
+        });
+        loggers.product("debug", "Updated primary alt-text in DB", { index });
+      } else {
+        // Translation: Update ProductImageAltTranslation table
+        const existing = await db.productImageAltTranslation.findUnique({
+          where: {
+            imageId_locale: {
+              imageId: dbImage.id,
+              locale: params.locale,
+            },
+          },
+        });
+
+        if (existing) {
+          await db.productImageAltTranslation.update({
+            where: { id: existing.id },
             data: { altText },
           });
-          loggers.product("debug", "Updated primary alt-text in DB", { index });
         } else {
-          // Translation: Update ProductImageAltTranslation table
-          const existing = await db.productImageAltTranslation.findUnique({
-            where: {
-              imageId_locale: {
-                imageId: dbImage.id,
-                locale: params.locale,
-              },
+          await db.productImageAltTranslation.create({
+            data: {
+              imageId: dbImage.id,
+              locale: params.locale,
+              altText: altText,
             },
           });
-
-          if (existing) {
-            await db.productImageAltTranslation.update({
-              where: { id: existing.id },
-              data: { altText },
-            });
-          } else {
-            await db.productImageAltTranslation.create({
-              data: {
-                imageId: dbImage.id,
-                locale: params.locale,
-                altText: altText,
-              },
-            });
-          }
-          loggers.product("debug", "Saved alt-text translation in DB", {
-            index,
-            locale: params.locale,
-          });
         }
+        loggers.product("debug", "Saved alt-text translation in DB", {
+          index,
+          locale: params.locale,
+        });
       }
     }
   }
