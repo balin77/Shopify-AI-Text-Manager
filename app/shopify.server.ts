@@ -5,7 +5,7 @@ import {
   shopifyApp,
 } from "@shopify/shopify-app-remix/server";
 import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prisma";
-import { restResources } from "@shopify/shopify-api/rest/admin/2024-10";
+import { restResources } from "@shopify/shopify-api/rest/admin/2025-10";
 import prisma from "./db.server";
 
 // Log Shopify configuration on startup
@@ -23,7 +23,7 @@ console.log("🔍 [SHOPIFY.SERVER] Parsed scopes (" + scopes.length + "):", scop
 const shopify = shopifyApp({
   apiKey: process.env.SHOPIFY_API_KEY!,
   apiSecretKey: process.env.SHOPIFY_API_SECRET || "",
-  apiVersion: ApiVersion.October24,
+  apiVersion: ApiVersion.October25,
   scopes: scopes,
   appUrl: process.env.SHOPIFY_APP_URL || "https://localhost:3000",
   authPathPrefix: "/auth",
@@ -80,7 +80,7 @@ const enhancedAuthenticate = {
 };
 
 export default shopify;
-export const apiVersion = ApiVersion.October24;
+export const apiVersion = ApiVersion.October25;
 export const addDocumentResponseHeaders = shopify.addDocumentResponseHeaders;
 export const authenticate = enhancedAuthenticate;
 export const unauthenticated = shopify.unauthenticated;
