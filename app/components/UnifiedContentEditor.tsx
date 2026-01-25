@@ -515,6 +515,7 @@ function FieldRenderer(props: FieldRendererProps & { state?: any; handlers?: any
         onGenerateAltText={handlers.handleGenerateAltText}
         onGenerateAllAltTexts={handlers.handleGenerateAllAltTexts}
         onTranslateAltText={handlers.handleTranslateAltText}
+        onTranslateAltTextToAllLocales={handlers.handleTranslateAltTextToAllLocales}
         altTextSuggestions={state.altTextSuggestions}
         onAcceptSuggestion={handlers.handleAcceptAltTextSuggestion}
         onRejectSuggestion={handlers.handleRejectAltTextSuggestion}
@@ -528,6 +529,7 @@ function FieldRenderer(props: FieldRendererProps & { state?: any; handlers?: any
             fetcherState === "submitting" &&
             (action === "generateAltText" && imageIndex === String(index)) ||
             (action === "translateAltText" && imageIndex === String(index)) ||
+            (action === "translateAltTextToAllLocales" && imageIndex === String(index)) ||
             (action === "generateAllAltTexts" && index === -1)
           );
         }}
