@@ -204,7 +204,7 @@ export function ImageGalleryField({
                   right: "8px",
                   backgroundColor: (altTexts[selectedImageIndex] !== undefined
                     ? altTexts[selectedImageIndex] !== ""
-                    : !!images[selectedImageIndex]?.altText) ? "#008060" : "#d72c0d",
+                    : (isPrimaryLocale && !!images[selectedImageIndex]?.altText)) ? "#008060" : "#d72c0d",
                   borderRadius: "50%",
                   width: "36px",
                   height: "36px",
@@ -223,7 +223,7 @@ export function ImageGalleryField({
                 >
                   {(altTexts[selectedImageIndex] !== undefined
                     ? altTexts[selectedImageIndex] !== ""
-                    : !!images[selectedImageIndex]?.altText) ? (
+                    : (isPrimaryLocale && !!images[selectedImageIndex]?.altText)) ? (
                     <path
                       d="M16 6L8 14L4 10"
                       stroke="white"
@@ -272,9 +272,10 @@ export function ImageGalleryField({
             >
               {images.map((image, index) => {
                 // Check if user explicitly cleared the alt-text (empty string) vs never edited (undefined)
+                // For foreign languages: only show as "has alt text" if there's a translation, not if primary has one
                 const hasAltText = altTexts[index] !== undefined
                   ? altTexts[index] !== ""
-                  : !!image.altText;
+                  : (isPrimaryLocale && !!image.altText);
                 const isSelected = index === selectedImageIndex;
 
                 return (
@@ -404,7 +405,9 @@ export function ImageGalleryField({
       {!isFreePlan && images && images.length > 0 && (
         <AIEditableField
           label={`${t.altTextForImage || "Alt-text for image"} ${selectedImageIndex + 1}`}
-          value={altTexts[selectedImageIndex] !== undefined ? altTexts[selectedImageIndex] : (images[selectedImageIndex]?.altText || "")}
+          value={altTexts[selectedImageIndex] !== undefined
+            ? altTexts[selectedImageIndex]
+            : (isPrimaryLocale ? (images[selectedImageIndex]?.altText || "") : "")}
           onChange={(value) => onAltTextChange(selectedImageIndex, value)}
           fieldType={`altText_${selectedImageIndex}`}
           fieldKey={`altText_${selectedImageIndex}`}

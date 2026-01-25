@@ -355,7 +355,7 @@ export function ProductEditor({
                           right: "8px",
                           backgroundColor: (imageAltTexts[selectedImageIndex] !== undefined
                             ? imageAltTexts[selectedImageIndex] !== ""
-                            : !!product.images[selectedImageIndex]?.altText) ? "#008060" : "#d72c0d",
+                            : (isPrimaryLocale && !!product.images[selectedImageIndex]?.altText)) ? "#008060" : "#d72c0d",
                           borderRadius: "50%",
                           width: "36px",
                           height: "36px",
@@ -374,7 +374,7 @@ export function ProductEditor({
                       >
                         {(imageAltTexts[selectedImageIndex] !== undefined
                           ? imageAltTexts[selectedImageIndex] !== ""
-                          : !!product.images[selectedImageIndex]?.altText) ? (
+                          : (isPrimaryLocale && !!product.images[selectedImageIndex]?.altText)) ? (
                           <path
                             d="M16 6L8 14L4 10"
                             stroke="white"
@@ -423,9 +423,10 @@ export function ProductEditor({
                     >
                     {product.images && product.images.map((image, index) => {
                     // Check if user explicitly cleared the alt-text (empty string) vs never edited (undefined)
+                    // For foreign languages: only show as "has alt text" if there's a translation, not if primary has one
                     const hasAltText = imageAltTexts[index] !== undefined
                       ? imageAltTexts[index] !== ""
-                      : !!image.altText;
+                      : (isPrimaryLocale && !!image.altText);
                     const isSelected = index === selectedImageIndex;
 
                     return (
@@ -557,7 +558,9 @@ export function ProductEditor({
               {!isFreePlan && product.images && (
                 <AIEditableField
                 label={`${t.products.altTextForImage} ${selectedImageIndex + 1}`}
-                value={imageAltTexts[selectedImageIndex] !== undefined ? imageAltTexts[selectedImageIndex] : (product.images[selectedImageIndex]?.altText || "")}
+                value={imageAltTexts[selectedImageIndex] !== undefined
+                  ? imageAltTexts[selectedImageIndex]
+                  : (isPrimaryLocale ? (product.images[selectedImageIndex]?.altText || "") : "")}
                 onChange={(value) => {
                   setImageAltTexts((prev) => ({
                     ...prev,
