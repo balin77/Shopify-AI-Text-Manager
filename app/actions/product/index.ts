@@ -32,6 +32,7 @@ import {
   handleGenerateAltText,
   handleGenerateAllAltTexts,
   handleTranslateAltText,
+  handleTranslateAltTextToAllLocales,
 } from "./alt-text.actions";
 
 /**
@@ -109,6 +110,9 @@ export async function handleProductActions({
 
       case "translateAltText":
         return handleTranslateAltText(context, formData);
+
+      case "translateAltTextToAllLocales":
+        return handleTranslateAltTextToAllLocales(context, formData);
 
       // Unknown action
       default:

@@ -453,6 +453,19 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     }
   }, [fetcher.data]); // Note: imageAltTexts intentionally not in deps to avoid loops
 
+  // Handle translated alt-text to all locales response (show success message)
+  useEffect(() => {
+    if (fetcher.data?.success && 'translatedAltTexts' in fetcher.data) {
+      const { targetLocales, imageIndex } = fetcher.data as any;
+      console.log('[ALT-TEXT] Translations to all locales completed for image', imageIndex);
+      showInfoBox(
+        t.content?.altTextTranslatedToAllLocales || `Alt-text for image ${imageIndex + 1} translated to ${targetLocales.length} languages`,
+        "success",
+        t.common?.success || "Success"
+      );
+    }
+  }, [fetcher.data]);
+
   // Execute pending alt-text auto-save
   useEffect(() => {
     const pendingAltTexts = pendingAltTextAutoSaveRef.current;
@@ -1393,6 +1406,41 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     }, { method: "POST" });
   };
 
+  const handleTranslateAltTextToAllLocales = (imageIndex: number) => {
+    if (!selectedItem || !selectedItem.images || !selectedItem.images[imageIndex]) return;
+
+    // Filter out primary locale and disabled languages
+    const targetLocales = enabledLanguages.filter(l => l !== primaryLocale);
+    if (targetLocales.length === 0) {
+      showInfoBox(
+        t.common?.noTargetLanguagesSelected || "No target languages selected",
+        "warning",
+        t.common?.warning || "Warning"
+      );
+      return;
+    }
+
+    const image = selectedItem.images[imageIndex];
+    const sourceAltText = imageAltTexts[imageIndex] || image.altText || "";
+
+    if (!sourceAltText) {
+      showInfoBox(
+        t.content?.noSourceText || "Kein Alt-Text in der Hauptsprache vorhanden zum Übersetzen",
+        "warning",
+        "Warnung"
+      );
+      return;
+    }
+
+    safeSubmit({
+      action: "translateAltTextToAllLocales",
+      productId: selectedItem.id,
+      imageIndex: String(imageIndex),
+      sourceAltText,
+      targetLocales: JSON.stringify(targetLocales)
+    }, { method: "POST" });
+  };
+
   const handleAcceptAltTextSuggestion = (imageIndex: number) => {
     const suggestion = altTextSuggestions[imageIndex];
     if (!suggestion || !selectedItemId) return;
@@ -1559,6 +1607,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     handleGenerateAltText,
     handleGenerateAllAltTexts,
     handleTranslateAltText,
+    handleTranslateAltTextToAllLocales,
     handleAcceptAltTextSuggestion,
     handleRejectAltTextSuggestion,
   };

@@ -58,8 +58,11 @@ interface ImageGalleryFieldProps {
   /** Callback to generate AI alt-text for all images */
   onGenerateAllAltTexts?: () => void;
 
-  /** Callback to translate alt-text */
+  /** Callback to translate alt-text (for non-primary locale) */
   onTranslateAltText: (imageIndex: number) => void;
+
+  /** Callback to translate alt-text to all locales (for primary locale) */
+  onTranslateAltTextToAllLocales?: (imageIndex: number) => void;
 
   /** AI suggestions for alt-texts (indexed by image position) */
   altTextSuggestions?: Record<number, string>;
@@ -98,6 +101,7 @@ export function ImageGalleryField({
   onGenerateAltText,
   onGenerateAllAltTexts,
   onTranslateAltText,
+  onTranslateAltTextToAllLocales,
   altTextSuggestions = {},
   onAcceptSuggestion,
   onRejectSuggestion,
@@ -400,6 +404,7 @@ export function ImageGalleryField({
           isLoading={isFieldLoading ? isFieldLoading(selectedImageIndex) : false}
           onGenerateAI={isPrimaryLocale ? () => onGenerateAltText(selectedImageIndex) : undefined}
           onTranslate={() => onTranslateAltText(selectedImageIndex)}
+          onTranslateToAllLocales={onTranslateAltTextToAllLocales ? () => onTranslateAltTextToAllLocales(selectedImageIndex) : undefined}
           onAcceptSuggestion={() => onAcceptSuggestion(selectedImageIndex)}
           onRejectSuggestion={() => onRejectSuggestion(selectedImageIndex)}
         />
