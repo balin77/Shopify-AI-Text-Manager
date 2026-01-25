@@ -89,11 +89,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     if (originalKeys.length === 0 && currentKeys.length === 0) return false;
 
     // Check if any values differ
+    // Important: Don't use || "" fallback - we need to distinguish undefined from ""
     const allKeys = new Set([...originalKeys, ...currentKeys]);
     for (const key of allKeys) {
       const numKey = Number(key);
-      const original = originalAltTexts[numKey] || "";
-      const current = imageAltTexts[numKey] || "";
+      const original = originalAltTexts[numKey];
+      const current = imageAltTexts[numKey];
+      // undefined !== "" should return true (user cleared the field)
       if (original !== current) return true;
     }
     return false;
@@ -241,6 +243,24 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     return changedFields;
   }, [config.fieldDefinitions, primaryLocale]);
 
+  // Helper function to get which alt-text indices have changed compared to the original item
+  const getChangedAltTextIndices = useCallback((): number[] => {
+    const item = selectedItemRef.current;
+    if (!item || !item.images) return [];
+
+    const changedIndices: number[] = [];
+    for (const [indexStr, currentValue] of Object.entries(imageAltTextsRef.current)) {
+      const index = parseInt(indexStr);
+      const originalValue = item.images[index]?.altText || "";
+      // Compare current value with original - if different, it's a change
+      if (currentValue !== originalValue) {
+        changedIndices.push(index);
+      }
+    }
+
+    return changedIndices;
+  }, []);
+
   // Internal save function that saves with specific values (for auto-save after AI acceptance/translation)
   const performAutoSave = useCallback((valuesToSave: Record<string, string>, locale: string) => {
     if (!selectedItemId) return;
@@ -278,13 +298,20 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           }
         });
       }
+
+      // Include changed alt-text indices for translation deletion
+      const changedAltTextIndices = getChangedAltTextIndices();
+      if (changedAltTextIndices.length > 0) {
+        formDataObj.changedAltTextIndices = JSON.stringify(changedAltTextIndices);
+        console.log('[AUTO-SAVE] Changed alt-text indices (translations will be deleted):', changedAltTextIndices);
+      }
     }
 
     console.log('[AUTO-SAVE] Saving with values:', valuesToSave, 'locale:', locale);
     savedLocaleRef.current = locale; // Track which locale we're saving
     safeSubmit(formDataObj, { method: "POST" });
     clearPendingNavigation();
-  }, [selectedItemId, primaryLocale, config.fieldDefinitions, imageAltTexts, clearPendingNavigation, getChangedFields, safeSubmit]);
+  }, [selectedItemId, primaryLocale, config.fieldDefinitions, imageAltTexts, clearPendingNavigation, getChangedFields, getChangedAltTextIndices, safeSubmit]);
 
   // ============================================================================
   // FETCHER RESPONSE HANDLERS (based on products implementation)
@@ -936,6 +963,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       if (changedFields.length > 0) {
         formDataObj.changedFields = JSON.stringify(changedFields);
         console.log('[SAVE] Changed fields (translations will be deleted on server):', changedFields);
+      }
+
+      // Include changed alt-text indices for translation deletion
+      const changedAltTextIndices = getChangedAltTextIndices();
+      if (changedAltTextIndices.length > 0) {
+        formDataObj.changedAltTextIndices = JSON.stringify(changedAltTextIndices);
+        console.log('[SAVE] Changed alt-text indices (translations will be deleted):', changedAltTextIndices);
       }
     }
 
