@@ -154,9 +154,9 @@ export function AIEditableField({
           {(onTranslate || onTranslateToAllLocales) && (
             <Button
               size="slim"
-              onClick={isPrimaryLocale ? onTranslateToAllLocales : onTranslate}
+              onClick={isPrimaryLocale ? (onTranslateToAllLocales || onTranslate) : onTranslate}
               loading={isLoading}
-              disabled={(isPrimaryLocale && !onTranslateToAllLocales) || (!isPrimaryLocale && !sourceTextAvailable)}
+              disabled={isPrimaryLocale ? (!onTranslateToAllLocales && !onTranslate) : !sourceTextAvailable}
             >
               🌍 {isPrimaryLocale ? (t.products.translate || "Übersetzen") : t.products.translateFromPrimary}
             </Button>
