@@ -127,6 +127,7 @@ export interface EditorHandlers {
   handleTranslateAltText: (imageIndex: number) => void;
   handleTranslateAltTextToAllLocales: (imageIndex: number) => void;
   handleAcceptAltTextSuggestion: (imageIndex: number) => void;
+  handleAcceptAndTranslateAltText: (imageIndex: number) => void;
   handleRejectAltTextSuggestion: (imageIndex: number) => void;
 }
 

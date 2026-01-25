@@ -103,6 +103,7 @@ interface ProductEditorProps {
   onGenerateAltText: (imageIndex: number) => void;
   onGenerateAllAltTexts: () => void;
   onTranslateAltText: (imageIndex: number) => void;
+  onAcceptAndTranslateAltText?: (imageIndex: number, altText: string) => void;
   fetcherData: any;
   imageAltTexts: Record<number, string>;
   setImageAltTexts: (value: Record<number, string> | ((prev: Record<number, string>) => Record<number, string>)) => void;
@@ -155,6 +156,7 @@ export function ProductEditor({
   onGenerateAltText,
   onGenerateAllAltTexts,
   onTranslateAltText,
+  onAcceptAndTranslateAltText,
   fetcherData,
   imageAltTexts,
   setImageAltTexts,
@@ -594,6 +596,21 @@ export function ProductEditor({
                     return newSuggestions;
                   });
                 }}
+                onAcceptAndTranslate={onAcceptAndTranslateAltText ? () => {
+                  const suggestion = altTextSuggestions[selectedImageIndex];
+                  if (suggestion) {
+                    setImageAltTexts((prev) => ({
+                      ...prev,
+                      [selectedImageIndex]: suggestion,
+                    }));
+                    setAltTextSuggestions((prev) => {
+                      const newSuggestions = { ...prev };
+                      delete newSuggestions[selectedImageIndex];
+                      return newSuggestions;
+                    });
+                    onAcceptAndTranslateAltText(selectedImageIndex, suggestion);
+                  }
+                } : undefined}
                 onRejectSuggestion={() => {
                   setAltTextSuggestions((prev) => {
                     const newSuggestions = { ...prev };

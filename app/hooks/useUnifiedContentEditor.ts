@@ -1535,6 +1535,83 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     setOriginalAltTexts(newAltTexts);
   };
 
+  const handleAcceptAndTranslateAltText = (imageIndex: number) => {
+    const suggestion = altTextSuggestions[imageIndex];
+    if (!suggestion || !selectedItemId) return;
+
+    const item = selectedItemRef.current;
+    if (!item) return;
+
+    // Create the new alt-texts with the accepted suggestion
+    const newAltTexts = {
+      ...imageAltTexts,
+      [imageIndex]: suggestion
+    };
+
+    // Update the UI state
+    setImageAltTexts(newAltTexts);
+
+    setAltTextSuggestions(prev => {
+      const newSuggestions = { ...prev };
+      delete newSuggestions[imageIndex];
+      return newSuggestions;
+    });
+
+    // Check target locales first
+    const targetLocales = enabledLanguages.filter(l => l !== primaryLocale);
+    if (targetLocales.length === 0) {
+      showInfoBox(
+        t.common?.noTargetLanguagesEnabled || "No target languages enabled",
+        "warning",
+        t.common?.warning || "Warning"
+      );
+      // No translations needed, just save the primary text directly
+      const formDataObj: Record<string, string> = {
+        action: "updateContent",
+        itemId: selectedItemId,
+        locale: primaryLocale,
+        primaryLocale,
+      };
+      config.fieldDefinitions.forEach((field) => {
+        formDataObj[field.key] = editableValues[field.key] || "";
+      });
+      formDataObj.imageAltTexts = JSON.stringify(newAltTexts);
+      savedLocaleRef.current = primaryLocale;
+      safeSubmit(formDataObj, { method: "POST" });
+      setOriginalAltTexts(newAltTexts);
+      return;
+    }
+
+    // Skip next data load to prevent revalidation from overwriting user changes
+    skipNextDataLoadRef.current = true;
+
+    console.log('[ACCEPT-AND-TRANSLATE-ALT-TEXT] Saving primary alt-text first, then will translate to all locales');
+
+    // Step 1: Save the primary alt-text first
+    const formDataObj: Record<string, string> = {
+      action: "updateContent",
+      itemId: selectedItemId,
+      locale: primaryLocale,
+      primaryLocale,
+    };
+    config.fieldDefinitions.forEach((field) => {
+      formDataObj[field.key] = editableValues[field.key] || "";
+    });
+    formDataObj.imageAltTexts = JSON.stringify(newAltTexts);
+    savedLocaleRef.current = primaryLocale;
+    safeSubmit(formDataObj, { method: "POST" });
+    setOriginalAltTexts(newAltTexts);
+
+    // Step 2: Translate to all locales
+    safeSubmit({
+      action: "translateAltTextToAllLocales",
+      productId: item.id,
+      imageIndex: String(imageIndex),
+      sourceAltText: suggestion,
+      targetLocales: JSON.stringify(targetLocales)
+    }, { method: "POST" });
+  };
+
   const handleRejectAltTextSuggestion = (imageIndex: number) => {
     setAltTextSuggestions(prev => {
       const newSuggestions = { ...prev };
@@ -1655,6 +1732,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     handleTranslateAltText,
     handleTranslateAltTextToAllLocales,
     handleAcceptAltTextSuggestion,
+    handleAcceptAndTranslateAltText,
     handleRejectAltTextSuggestion,
   };
 
