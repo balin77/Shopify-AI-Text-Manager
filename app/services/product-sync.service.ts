@@ -344,14 +344,24 @@ export class ProductSyncService {
       select: { mediaId: true, altText: true, altTextModifiedAt: true },
     });
 
+    // Debug: Log what we found
+    console.log(`🟤🟤🟤 [SYNC] Checking ${existingImages.length} existing images for recent modifications 🟤🟤🟤`);
+    console.log(`🟤 [SYNC] Cutoff time: ${cutoffTime.toISOString()}`);
+    existingImages.forEach((img, i) => {
+      const modifiedAt = img.altTextModifiedAt ? new Date(img.altTextModifiedAt).toISOString() : 'null';
+      const isRecent = img.altTextModifiedAt && new Date(img.altTextModifiedAt) > cutoffTime;
+      console.log(`🟤 [SYNC] Image ${i}: mediaId=${img.mediaId}, altText="${img.altText}", modifiedAt=${modifiedAt}, isRecent=${isRecent}`);
+    });
+
     // Map of mediaId -> preserved altText for recently modified images
     const preservedAltTexts = new Map<string, string | null>();
     for (const img of existingImages) {
       if (img.mediaId && img.altTextModifiedAt && img.altTextModifiedAt > cutoffTime) {
         preservedAltTexts.set(img.mediaId, img.altText);
-        console.log(`🟤 [SYNC] Preserving user-modified alt-text for mediaId ${img.mediaId}: "${img.altText}"`);
+        console.log(`🟤 [SYNC] ✅ PRESERVING user-modified alt-text for mediaId ${img.mediaId}: "${img.altText}"`);
       }
     }
+    console.log(`🟤 [SYNC] Total preserved: ${preservedAltTexts.size} images`);
 
     // Delete old relations and create new ones
     await db.contentTranslation.deleteMany({ where: { resourceId: productData.id, resourceType: "Product" } });
