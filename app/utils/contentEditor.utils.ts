@@ -125,9 +125,15 @@ function hasTranslationForField(
 
 /**
  * Get required translation fields for content type
+ * Note: For templates, returns empty array as templates have dynamic fields
+ * handled separately in hasPrimaryContentMissing and hasLocaleMissingTranslations
  */
 function getRequiredFieldsForContentType(contentType: ContentType): string[] {
-  if (contentType === 'collections' || contentType === 'products') {
+  if (contentType === 'templates') {
+    // Templates have dynamic fields in translatableContent
+    // The validation is handled separately in the calling functions
+    return [];
+  } else if (contentType === 'collections' || contentType === 'products') {
     return ["title", "body_html", "handle", "meta_title", "meta_description"];
   } else if (contentType === 'policies') {
     return ["body"];
@@ -483,12 +489,25 @@ export function isFieldTranslated(
 
 /**
  * Check if primary locale has any missing content
+ * For templates: checks if any translatableContent entry has empty value
  */
 export function hasPrimaryContentMissing(
   selectedItem: TranslatableItem | null,
   contentType: ContentType
 ): boolean {
   if (!selectedItem) return false;
+
+  // Templates have dynamic fields in translatableContent
+  if (contentType === 'templates') {
+    const translatableContent = (selectedItem as any).translatableContent;
+    if (!translatableContent || !Array.isArray(translatableContent) || translatableContent.length === 0) {
+      return false; // No content to check
+    }
+    // Check if any translatableContent entry has empty value
+    return translatableContent.some((item: { key: string; value: string }) =>
+      isFieldEmpty(item.value)
+    );
+  }
 
   const requiredFields = FIELD_CONFIGS[contentType];
   return hasAnyFieldMissing(selectedItem, requiredFields);
@@ -497,6 +516,7 @@ export function hasPrimaryContentMissing(
 /**
  * Check if a specific locale has missing translations
  * Only marks a field as missing if the primary locale has content for that field
+ * For templates: checks translations for dynamic translatableContent fields
  */
 export function hasLocaleMissingTranslations(
   selectedItem: TranslatableItem | null,
@@ -505,6 +525,29 @@ export function hasLocaleMissingTranslations(
   contentType: ContentType
 ): boolean {
   if (!selectedItem || locale === primaryLocale) return false;
+
+  // Templates have dynamic fields in translatableContent
+  if (contentType === 'templates') {
+    const translatableContent = (selectedItem as any).translatableContent;
+    if (!translatableContent || !Array.isArray(translatableContent) || translatableContent.length === 0) {
+      return false; // No content to check
+    }
+
+    const translations = selectedItem.translations || [];
+
+    // Check if any translatableContent entry with a value is missing a translation
+    return translatableContent.some((item: { key: string; value: string }) => {
+      // Only check if primary has content for this field
+      if (isFieldEmpty(item.value)) {
+        return false;
+      }
+      // Check if translation exists for this locale
+      const translation = translations.find(
+        (t: any) => t.key === item.key && t.locale === locale
+      );
+      return !translation || isFieldEmpty(translation.value);
+    });
+  }
 
   const requiredFields = getRequiredFieldsForContentType(contentType);
 
