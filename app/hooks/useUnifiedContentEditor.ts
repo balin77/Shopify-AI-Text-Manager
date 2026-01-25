@@ -584,6 +584,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           });
         }
 
+        // If the current language is one of the translated languages, update editableValues immediately
+        // This ensures the UI shows the new translation without needing to switch languages
+        if (translations[currentLanguage]) {
+          setEditableValues(prev => ({
+            ...prev,
+            [fieldType]: translations[currentLanguage]
+          }));
+        }
+
         showInfoBox(
           t.common?.fieldTranslatedToLanguages
             ?.replace("{fieldType}", fieldType)
@@ -602,7 +611,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         setIsLoadingData(true);
       }
     }
-  }, [fetcher.data, config.fieldDefinitions, showInfoBox, t]); // Use selectedItemRef instead of selectedItem
+  }, [fetcher.data, config.fieldDefinitions, showInfoBox, t, currentLanguage]); // Include currentLanguage to access current value
 
   // Handle "translateAll" response (translates to ALL enabled locales)
   useEffect(() => {
