@@ -238,21 +238,24 @@ async function updateImageAltTexts(
             media: [
               {
                 id: mediaImageId,
-                // Send null to Shopify to clear alt-text (empty string might be ignored)
-                alt: altText === "" ? null : altText,
+                // Send empty string to Shopify to clear alt-text (null means "don't change")
+                alt: altText,
               },
             ],
           },
         }
       );
       const updateMediaData = await updateMediaResponse.json();
+      // Log what Shopify returned
+      const returnedAlt = updateMediaData.data?.productUpdateMedia?.media?.[0]?.alt;
+      console.log(`🟡 [SHOPIFY-RESPONSE] mediaId: ${mediaImageId}, sent alt: "${altText}", returned alt: "${returnedAlt}"`);
       if (updateMediaData.data?.productUpdateMedia?.mediaUserErrors?.length > 0) {
         loggers.product("error", "productUpdateMedia errors", {
           index,
           errors: updateMediaData.data.productUpdateMedia.mediaUserErrors
         });
       }
-      loggers.product("debug", "Updated primary alt-text via productUpdateMedia", { index });
+      loggers.product("debug", "Updated primary alt-text via productUpdateMedia", { index, sentAlt: altText, returnedAlt });
     } else {
       // TRANSLATION: Use translationsRegister mutation with MEDIA_IMAGE resource type (API 2025-10+)
       // First, fetch the translatable content to get the digest
