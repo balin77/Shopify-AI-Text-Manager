@@ -372,8 +372,8 @@ export function ImageGalleryField({
         ) : null}
       </div>
 
-      {/* Auto-generate all button - below images */}
-      {!isFreePlan && onGenerateAllAltTexts && images && images.length > 1 && (
+      {/* Auto-generate all button - below images (only in primary locale) */}
+      {!isFreePlan && isPrimaryLocale && onGenerateAllAltTexts && images && images.length > 1 && (
         <InlineStack align="start">
           <Button
             size="slim"
@@ -398,7 +398,7 @@ export function ImageGalleryField({
           isTranslated={true}
           placeholder={t.altTextPlaceholder}
           isLoading={isFieldLoading ? isFieldLoading(selectedImageIndex) : false}
-          onGenerateAI={() => onGenerateAltText(selectedImageIndex)}
+          onGenerateAI={isPrimaryLocale ? () => onGenerateAltText(selectedImageIndex) : undefined}
           onTranslate={() => onTranslateAltText(selectedImageIndex)}
           onAcceptSuggestion={() => onAcceptSuggestion(selectedImageIndex)}
           onRejectSuggestion={() => onRejectSuggestion(selectedImageIndex)}
