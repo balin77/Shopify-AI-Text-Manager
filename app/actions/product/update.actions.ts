@@ -102,6 +102,9 @@ export async function handleUpdateProduct(
 
 /**
  * Updates image alt-texts for a product
+ *
+ * For primary locale: Uses productUpdateMedia mutation
+ * For translations: Uses translationsRegister mutation with MEDIA_IMAGE resource type (API 2025-10+)
  */
 async function updateImageAltTexts(
   gateway: ShopifyApiGateway,
@@ -111,6 +114,8 @@ async function updateImageAltTexts(
 ): Promise<void> {
   loggers.product("info", "Updating image alt-texts", {
     productId,
+    locale: params.locale,
+    isPrimary: params.locale === params.primaryLocale,
     count: Object.keys(params.imageAltTexts || {}).length,
   });
 
@@ -147,47 +152,125 @@ async function updateImageAltTexts(
   for (const [indexStr, altText] of Object.entries(params.imageAltTexts || {})) {
     const index = parseInt(indexStr);
     if (index < mediaEdges.length) {
-      const imageId = mediaEdges[index].node.id;
+      const mediaImageId = mediaEdges[index].node.id; // e.g., gid://shopify/MediaImage/123456789
 
       loggers.product("debug", "Updating image alt-text", {
         index,
-        imageId,
+        mediaImageId,
         locale: params.locale,
+        isPrimary: params.locale === params.primaryLocale,
       });
 
-      // Save to Shopify
-      await gateway.graphql(
-        `#graphql
-          mutation updateMedia($media: [UpdateMediaInput!]!) {
-            productUpdateMedia(media: $media, productId: "${productId}") {
-              media {
-                alt
-                mediaErrors {
-                  code
-                  details
+      if (params.locale === params.primaryLocale) {
+        // PRIMARY LOCALE: Use productUpdateMedia mutation
+        await gateway.graphql(
+          `#graphql
+            mutation updateMedia($media: [UpdateMediaInput!]!) {
+              productUpdateMedia(media: $media, productId: "${productId}") {
+                media {
+                  alt
+                  mediaErrors {
+                    code
+                    details
+                    message
+                  }
+                }
+                mediaUserErrors {
+                  field
                   message
                 }
+                product {
+                  id
+                }
               }
-              mediaUserErrors {
-                field
-                message
+            }`,
+          {
+            variables: {
+              media: [
+                {
+                  id: mediaImageId,
+                  alt: altText,
+                },
+              ],
+            },
+          }
+        );
+        loggers.product("debug", "Updated primary alt-text via productUpdateMedia", { index });
+      } else {
+        // TRANSLATION: Use translationsRegister mutation with MEDIA_IMAGE resource type (API 2025-10+)
+        // First, fetch the translatable content to get the digest
+        const translatableResponse = await gateway.graphql(
+          `#graphql
+            query translatableContent($resourceId: ID!) {
+              translatableResource(resourceId: $resourceId) {
+                resourceId
+                translatableContent {
+                  key
+                  digest
+                  value
+                }
               }
-              product {
-                id
-              }
-            }
-          }`,
-        {
-          variables: {
-            media: [
-              {
-                id: imageId,
-                alt: altText,
+            }`,
+          { variables: { resourceId: mediaImageId } }
+        );
+
+        const translatableData = await translatableResponse.json();
+        const translatableContent = translatableData.data?.translatableResource?.translatableContent || [];
+        const altDigest = translatableContent.find((c: any) => c.key === "alt")?.digest;
+
+        if (altDigest) {
+          // Register the translation
+          const translateResponse = await gateway.graphql(
+            `#graphql
+              mutation translateMediaImage($resourceId: ID!, $translations: [TranslationInput!]!) {
+                translationsRegister(resourceId: $resourceId, translations: $translations) {
+                  userErrors {
+                    field
+                    message
+                  }
+                  translations {
+                    locale
+                    key
+                    value
+                  }
+                }
+              }`,
+            {
+              variables: {
+                resourceId: mediaImageId,
+                translations: [
+                  {
+                    key: "alt",
+                    value: altText,
+                    locale: params.locale,
+                    translatableContentDigest: altDigest,
+                  },
+                ],
               },
-            ],
-          },
+            }
+          );
+
+          const translateData = await translateResponse.json();
+          if (translateData.data?.translationsRegister?.userErrors?.length > 0) {
+            loggers.product("error", "Failed to translate alt-text", {
+              index,
+              locale: params.locale,
+              errors: translateData.data.translationsRegister.userErrors,
+            });
+          } else {
+            loggers.product("debug", "Translated alt-text via translationsRegister", {
+              index,
+              locale: params.locale,
+            });
+          }
+        } else {
+          loggers.product("warn", "No digest found for alt-text translation", {
+            index,
+            mediaImageId,
+            locale: params.locale,
+          });
         }
-      );
+      }
 
       // Save to Database
       const dbImage = dbProduct?.images[index];
