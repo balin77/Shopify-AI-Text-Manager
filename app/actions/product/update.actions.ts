@@ -112,6 +112,13 @@ async function updateImageAltTexts(
   productId: string,
   params: UpdateProductParams
 ): Promise<void> {
+  console.log('🔵🔵🔵 [ALT-TEXT-UPDATE] Starting updateImageAltTexts');
+  console.log('🔵 productId:', productId);
+  console.log('🔵 locale:', params.locale);
+  console.log('🔵 primaryLocale:', params.primaryLocale);
+  console.log('🔵 isPrimary:', params.locale === params.primaryLocale);
+  console.log('🔵 imageAltTexts:', JSON.stringify(params.imageAltTexts, null, 2));
+
   loggers.product("info", "Updating image alt-texts", {
     productId,
     locale: params.locale,
@@ -120,6 +127,7 @@ async function updateImageAltTexts(
   });
 
   // Get product images from Shopify
+  console.log('🔵 [ALT-TEXT-UPDATE] Fetching media from Shopify...');
   const productResponse = await gateway.graphql(
     `#graphql
       query getProduct($id: ID!) {
@@ -140,11 +148,21 @@ async function updateImageAltTexts(
   );
 
   const productData = await productResponse.json();
+  console.log('🔵 [ALT-TEXT-UPDATE] Shopify response:', JSON.stringify(productData, null, 2));
+
   // Filter to only include valid MediaImage nodes (exclude videos, 3D models, etc.)
   const mediaEdges = (productData.data?.product?.media?.edges || [])
     .filter((edge: any) => edge.node?.id); // Only keep nodes with an id (MediaImage type)
 
+  console.log('🔵 [ALT-TEXT-UPDATE] Valid mediaEdges count:', mediaEdges.length);
+  console.log('🔵 [ALT-TEXT-UPDATE] MediaEdges:', mediaEdges.map((e: any, i: number) => ({
+    index: i,
+    id: e.node?.id,
+    alt: e.node?.alt,
+  })));
+
   // Get DB product images (sorted by position to match UI order)
+  console.log('🔵 [ALT-TEXT-UPDATE] Fetching DB product with images...');
   const dbProduct = await db.product.findUnique({
     where: { id: productId },
     include: {
@@ -154,20 +172,42 @@ async function updateImageAltTexts(
     },
   });
 
+  console.log('🔵 [ALT-TEXT-UPDATE] DB product found:', !!dbProduct);
+  console.log('🔵 [ALT-TEXT-UPDATE] DB images count:', dbProduct?.images?.length || 0);
+  console.log('🔵 [ALT-TEXT-UPDATE] DB images:', dbProduct?.images?.map((img: any, i: number) => ({
+    index: i,
+    id: img.id,
+    mediaId: img.mediaId,
+    position: img.position,
+    altText: img.altText,
+  })));
+
   // Update each image with new alt-text
   for (const [indexStr, altText] of Object.entries(params.imageAltTexts || {})) {
     const index = parseInt(indexStr);
+    console.log(`🔵 [ALT-TEXT-UPDATE] Processing image index ${index}, altText: "${altText}"`);
+
     const dbImage = dbProduct?.images[index];
+    console.log(`🔵 [ALT-TEXT-UPDATE] DB image for index ${index}:`, dbImage ? {
+      id: dbImage.id,
+      mediaId: dbImage.mediaId,
+      position: dbImage.position,
+    } : 'NOT FOUND');
 
     // Prefer mediaId from DB (more reliable), fallback to Shopify query by index
     let mediaImageId = dbImage?.mediaId;
+    console.log(`🔵 [ALT-TEXT-UPDATE] mediaId from DB: ${mediaImageId}`);
 
     if (!mediaImageId && index < mediaEdges.length && mediaEdges[index]?.node?.id) {
       mediaImageId = mediaEdges[index].node.id;
+      console.log(`🔵 [ALT-TEXT-UPDATE] Using mediaId from Shopify query: ${mediaImageId}`);
       loggers.product("debug", "Using mediaId from Shopify query (DB mediaId not found)", { index });
     }
 
+    console.log(`🔵 [ALT-TEXT-UPDATE] Final mediaImageId: ${mediaImageId}`);
+
     if (!mediaImageId) {
+      console.log(`🔵 [ALT-TEXT-UPDATE] ❌ No mediaId found for index ${index} - skipping Shopify update`);
       loggers.product("warn", "No mediaId found for image - skipping Shopify update", {
         index,
         hasDbImage: !!dbImage,
@@ -205,7 +245,8 @@ async function updateImageAltTexts(
 
     if (params.locale === params.primaryLocale) {
       // PRIMARY LOCALE: Use productUpdateMedia mutation
-      await gateway.graphql(
+      console.log(`🔵 [ALT-TEXT-UPDATE] PRIMARY LOCALE - Using productUpdateMedia for mediaId: ${mediaImageId}`);
+      const updateMediaResponse = await gateway.graphql(
         `#graphql
           mutation updateMedia($media: [UpdateMediaInput!]!) {
             productUpdateMedia(media: $media, productId: "${productId}") {
@@ -237,10 +278,19 @@ async function updateImageAltTexts(
           },
         }
       );
+      const updateMediaData = await updateMediaResponse.json();
+      console.log(`🔵 [ALT-TEXT-UPDATE] productUpdateMedia response:`, JSON.stringify(updateMediaData, null, 2));
+
+      if (updateMediaData.data?.productUpdateMedia?.mediaUserErrors?.length > 0) {
+        console.log(`🔵 [ALT-TEXT-UPDATE] ❌ productUpdateMedia errors:`, updateMediaData.data.productUpdateMedia.mediaUserErrors);
+      }
       loggers.product("debug", "Updated primary alt-text via productUpdateMedia", { index });
     } else {
       // TRANSLATION: Use translationsRegister mutation with MEDIA_IMAGE resource type (API 2025-10+)
+      console.log(`🔵 [ALT-TEXT-UPDATE] TRANSLATION - Using translationsRegister for mediaId: ${mediaImageId}, locale: ${params.locale}`);
+
       // First, fetch the translatable content to get the digest
+      console.log(`🔵 [ALT-TEXT-UPDATE] Fetching translatableContent for digest...`);
       const translatableResponse = await gateway.graphql(
         `#graphql
           query translatableContent($resourceId: ID!) {
@@ -257,11 +307,15 @@ async function updateImageAltTexts(
       );
 
       const translatableData = await translatableResponse.json();
+      console.log(`🔵 [ALT-TEXT-UPDATE] translatableContent response:`, JSON.stringify(translatableData, null, 2));
+
       const translatableContent = translatableData.data?.translatableResource?.translatableContent || [];
       const altDigest = translatableContent.find((c: any) => c.key === "alt")?.digest;
+      console.log(`🔵 [ALT-TEXT-UPDATE] altDigest found: ${altDigest}`);
 
       if (altDigest) {
         // Register the translation
+        console.log(`🔵 [ALT-TEXT-UPDATE] Calling translationsRegister...`);
         const translateResponse = await gateway.graphql(
           `#graphql
             mutation translateMediaImage($resourceId: ID!, $translations: [TranslationInput!]!) {
@@ -293,19 +347,24 @@ async function updateImageAltTexts(
         );
 
         const translateData = await translateResponse.json();
+        console.log(`🔵 [ALT-TEXT-UPDATE] translationsRegister response:`, JSON.stringify(translateData, null, 2));
+
         if (translateData.data?.translationsRegister?.userErrors?.length > 0) {
+          console.log(`🔵 [ALT-TEXT-UPDATE] ❌ translationsRegister errors:`, translateData.data.translationsRegister.userErrors);
           loggers.product("error", "Failed to translate alt-text", {
             index,
             locale: params.locale,
             errors: translateData.data.translationsRegister.userErrors,
           });
         } else {
+          console.log(`🔵 [ALT-TEXT-UPDATE] ✅ Translation saved successfully`);
           loggers.product("debug", "Translated alt-text via translationsRegister", {
             index,
             locale: params.locale,
           });
         }
       } else {
+        console.log(`🔵 [ALT-TEXT-UPDATE] ❌ No digest found for alt-text translation`);
         loggers.product("warn", "No digest found for alt-text translation", {
           index,
           mediaImageId,
@@ -355,6 +414,8 @@ async function updateImageAltTexts(
       }
     }
   }
+
+  console.log('🔵🔵🔵 [ALT-TEXT-UPDATE] ✅ updateImageAltTexts completed successfully');
 }
 
 /**
