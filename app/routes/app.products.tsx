@@ -99,16 +99,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
     console.log("[PRODUCTS-LOADER] Loaded", dbProducts.length, "products from database (no limit)");
 
-    // DEBUG: Log alt-text values from DB
-    dbProducts.forEach((p: any) => {
-      if (p.images && p.images.length > 0) {
-        console.log(`🔴🔴🔴 [PRODUCTS-LOADER] Product ${p.title} images alt-texts from DB:`);
-        p.images.forEach((img: any, i: number) => {
-          console.log(`🔴 Image ${i}: altText = "${img.altText}" (type: ${typeof img.altText}, isNull: ${img.altText === null}, isEmpty: ${img.altText === ""})`);
-        });
-      }
-    });
-
     // Group translations by resourceId (unified pattern)
     const translationsByResource = allTranslations.reduce((acc: Record<string, any[]>, trans) => {
       if (!acc[trans.resourceId]) {
