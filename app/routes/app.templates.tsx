@@ -254,6 +254,94 @@ Please provide improved content that is clear and concise.`;
         });
       }
 
+      case "translateFieldToAllLocales": {
+        const fieldType = formData.get("fieldType") as string;
+        const sourceText = formData.get("sourceText") as string;
+        const targetLocalesJson = formData.get("targetLocales") as string;
+        const primaryLocaleFromForm = formData.get("primaryLocale") as string;
+
+        if (!sourceText) {
+          return json({
+            success: false,
+            error: "No source text available"
+          }, { status: 400 });
+        }
+
+        const targetLocales = targetLocalesJson ? JSON.parse(targetLocalesJson) : [];
+        if (targetLocales.length === 0) {
+          return json({
+            success: false,
+            error: "No target locales specified"
+          }, { status: 400 });
+        }
+
+        const settings = await db.aISettings.findUnique({
+          where: { shop: session.shop }
+        });
+
+        const primaryLocale = primaryLocaleFromForm || "de";
+
+        const aiService = new AIService(
+          settings?.preferredProvider as any || 'huggingface',
+          {
+            huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
+            geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
+            claudeApiKey: decryptApiKey(settings?.claudeApiKey) || undefined,
+            openaiApiKey: decryptApiKey(settings?.openaiApiKey) || undefined,
+            grokApiKey: decryptApiKey(settings?.grokApiKey) || undefined,
+            deepseekApiKey: decryptApiKey(settings?.deepseekApiKey) || undefined,
+          }
+        );
+
+        // Translate the field to all target locales
+        const translations: Record<string, string> = {};
+
+        for (const locale of targetLocales) {
+          try {
+            const translatedValue = await aiService.translateContent(
+              sourceText,
+              primaryLocale,
+              locale
+            );
+            translations[locale] = translatedValue;
+
+            // Auto-save each translation
+            await db.themeTranslation.upsert({
+              where: {
+                shop_resourceId_groupId_key_locale: {
+                  shop: session.shop,
+                  resourceId: resourceId,
+                  groupId: groupId,
+                  key: fieldType,
+                  locale: locale
+                }
+              },
+              update: {
+                value: translatedValue,
+                updatedAt: new Date()
+              },
+              create: {
+                shop: session.shop,
+                groupId: groupId,
+                resourceId: resourceId,
+                locale: locale,
+                key: fieldType,
+                value: translatedValue
+              }
+            });
+          } catch (error) {
+            console.error(`Error translating field ${fieldType} to ${locale}:`, error);
+            translations[locale] = sourceText; // Fallback to original
+          }
+        }
+
+        return json({
+          success: true,
+          translations,
+          fieldType
+        });
+      }
+
       case "translateAll":
       case "translateAllForLocale": {
         const targetLocalesJson = formData.get("targetLocales") as string;
