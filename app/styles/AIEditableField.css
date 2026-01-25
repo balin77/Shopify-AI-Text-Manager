@@ -1,5 +1,16 @@
 /* AI Editable Field Styling - Background colors for translation states */
 
+/* Smooth transition for background colors to prevent flashing */
+.ai-editable-field-wrapper input,
+.ai-editable-field-wrapper textarea {
+  transition: background-color 150ms ease-in-out;
+}
+
+.ai-editable-html-field textarea,
+.ai-editable-html-field [contenteditable] {
+  transition: background-color 150ms ease-in-out;
+}
+
 /* White background for primary locale or translated fields */
 .ai-editable-field-wrapper.bg-white input,
 .ai-editable-field-wrapper.bg-white textarea {

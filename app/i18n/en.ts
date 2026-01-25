@@ -41,6 +41,7 @@ export const en: Translation = {
     html: "HTML",
     aiGenerate: "Generate / improve with AI",
     aiGenerateShort: "Generate with AI",
+    aiImprove: "Improve with AI",
     formatWithAI: "Format",
     aiSuggestion: "AI suggestion:",
     aiSuggestionCharCount: "{count} characters",

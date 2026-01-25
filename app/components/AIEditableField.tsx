@@ -137,8 +137,9 @@ export function AIEditableField({
               size="slim"
               onClick={onGenerateAI}
               loading={isLoading}
+              disabled={!value}
             >
-              ✨ {t.products.aiGenerate}
+              ✨ {t.products.aiImprove || "Improve with AI"}
             </Button>
           )}
           {onFormatAI && (

@@ -354,8 +354,8 @@ export function AIEditableHTMLField({
         </div>
         <div className="ai-field-footer-right">
           {onGenerateAI && (
-            <Button size="slim" onClick={onGenerateAI} loading={isLoading}>
-              ✨ {t.products.aiGenerate}
+            <Button size="slim" onClick={onGenerateAI} loading={isLoading} disabled={!value}>
+              ✨ {t.products.aiImprove || "Improve with AI"}
             </Button>
           )}
           {onFormatAI && (
