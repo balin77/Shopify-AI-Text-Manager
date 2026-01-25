@@ -5,7 +5,7 @@
  * Templates have dynamic fields loaded from translatableContent.
  */
 
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher } from "@remix-run/react";
 import { Page } from "@shopify/polaris";
@@ -453,29 +453,45 @@ export default function TemplatesPage() {
 
   // State for lazy-loaded theme data
   const [loadedThemes, setLoadedThemes] = useState<Record<string, any>>({});
+  const [loadedTranslations, setLoadedTranslations] = useState<Record<string, Record<string, any[]>>>({});
   const [isLoading, setIsLoading] = useState(false);
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
+  const editorRef = useRef<any>(null);
 
   // Get current theme data
   const currentThemeData = selectedGroupId ? loadedThemes[selectedGroupId] : null;
 
-  // Transform themes to items with loaded content
+  // Transform themes to items with loaded content and translations
   const items = useMemo(() => {
     return themes.map((theme: any) => {
       const loadedData = loadedThemes[theme.groupId];
+      const themeTranslations = loadedTranslations[theme.groupId] || {};
+
       if (loadedData) {
+        // Merge all translations from different locales
+        const allTranslations: any[] = [];
+        for (const [locale, translations] of Object.entries(themeTranslations)) {
+          for (const translation of translations as any[]) {
+            allTranslations.push({
+              key: translation.key,
+              value: translation.value,
+              locale: locale,
+            });
+          }
+        }
+
         return {
           ...theme,
           translatableContent: loadedData.translatableContent || [],
-          translations: loadedData.translations || [],
+          translations: allTranslations,
         };
       }
       return theme;
     });
-  }, [themes, loadedThemes]);
+  }, [themes, loadedThemes, loadedTranslations]);
 
-  // Load theme data on demand
-  const loadThemeData = async (groupId: string) => {
+  // Load theme data on demand (for initial load)
+  const loadThemeData = useCallback(async (groupId: string) => {
     if (loadedThemes[groupId]) return;
 
     setIsLoading(true);
@@ -498,9 +514,42 @@ export default function TemplatesPage() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [loadedThemes, showInfoBox, t]);
 
-  // Auto-load first item
+  // Load translations for a specific locale
+  const loadTranslationsForLocale = useCallback(async (groupId: string, locale: string) => {
+    // Skip if already loaded or if it's the primary locale (primary uses translatableContent)
+    if (loadedTranslations[groupId]?.[locale] || locale === primaryLocale) {
+      return;
+    }
+
+    try {
+      const formData = new FormData();
+      formData.append("action", "loadTranslations");
+      formData.append("itemId", `group_${groupId}`);
+      formData.append("locale", locale);
+
+      const response = await fetch(`/app/templates`, {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = await response.json();
+      if (data.success && data.translations) {
+        setLoadedTranslations(prev => ({
+          ...prev,
+          [groupId]: {
+            ...(prev[groupId] || {}),
+            [locale]: data.translations,
+          }
+        }));
+      }
+    } catch (error) {
+      console.error('Error loading translations:', error);
+    }
+  }, [loadedTranslations, primaryLocale]);
+
+  // Auto-load first item (data loading only)
   useEffect(() => {
     if (themes.length > 0 && !selectedGroupId) {
       const firstTheme = themes[0] as any;
@@ -509,16 +558,7 @@ export default function TemplatesPage() {
         loadThemeData(firstTheme.groupId);
       }
     }
-  }, [themes]);
-
-  // Custom item select handler that loads data
-  const handleItemSelect = (itemId: string) => {
-    const theme = themes.find((t: any) => t.id === itemId);
-    if (theme) {
-      setSelectedGroupId(theme.groupId);
-      loadThemeData(theme.groupId);
-    }
-  };
+  }, [themes, selectedGroupId, loadThemeData]);
 
   // Create editor with dynamic config
   const editor = useUnifiedContentEditor({
@@ -531,12 +571,86 @@ export default function TemplatesPage() {
     t,
   });
 
-  // Override item select handler
-  const originalHandleItemSelect = editor.handlers.handleItemSelect;
+  // Store original handler reference before overriding
+  const originalHandleItemSelectRef = useRef(editor.handlers.handleItemSelect);
+  originalHandleItemSelectRef.current = editor.handlers.handleItemSelect;
+
+  // Override item select handler to load data first
   editor.handlers.handleItemSelect = (itemId: string) => {
-    handleItemSelect(itemId);
-    originalHandleItemSelect(itemId);
+    const theme = themes.find((t: any) => t.id === itemId);
+    if (theme) {
+      setSelectedGroupId(theme.groupId);
+
+      // If already loaded, just select
+      if (loadedThemes[theme.groupId]) {
+        originalHandleItemSelectRef.current(itemId);
+      } else {
+        // Load data, then select
+        setIsLoading(true);
+        fetch(`/api/templates/${theme.groupId}`)
+          .then(response => response.json())
+          .then(data => {
+            setLoadedThemes(prev => ({
+              ...prev,
+              [theme.groupId]: data.theme
+            }));
+            // Select after data is loaded
+            setTimeout(() => {
+              originalHandleItemSelectRef.current(itemId);
+            }, 0);
+          })
+          .catch(error => {
+            console.error('Error loading theme data:', error);
+            showInfoBox("Error loading theme content", "critical", t.content?.error || "Error");
+          })
+          .finally(() => {
+            setIsLoading(false);
+          });
+      }
+    }
   };
+
+  // Select first item after data is loaded (must be after originalHandleItemSelectRef is defined)
+  const hasSelectedInitialItem = useRef(false);
+  useEffect(() => {
+    if (themes.length > 0 && selectedGroupId && loadedThemes[selectedGroupId] && !hasSelectedInitialItem.current) {
+      const theme = themes.find((t: any) => t.groupId === selectedGroupId);
+      if (theme && originalHandleItemSelectRef.current) {
+        hasSelectedInitialItem.current = true;
+        originalHandleItemSelectRef.current(theme.id);
+      }
+    }
+  }, [loadedThemes, selectedGroupId, themes]);
+
+  // Load translations when language changes
+  useEffect(() => {
+    const currentLanguage = editor.state.currentLanguage;
+    if (selectedGroupId && currentLanguage && currentLanguage !== primaryLocale) {
+      loadTranslationsForLocale(selectedGroupId, currentLanguage);
+    }
+  }, [editor.state.currentLanguage, selectedGroupId, primaryLocale, loadTranslationsForLocale]);
+
+  // Update editable values when translations are loaded for the current language
+  useEffect(() => {
+    const currentLanguage = editor.state.currentLanguage;
+    if (!selectedGroupId || !currentLanguage || currentLanguage === primaryLocale) return;
+
+    const translations = loadedTranslations[selectedGroupId]?.[currentLanguage];
+    if (!translations || translations.length === 0) return;
+
+    // Get the loaded theme data for field definitions
+    const themeData = loadedThemes[selectedGroupId];
+    if (!themeData?.translatableContent) return;
+
+    // Update editable values with loaded translations
+    for (const translation of translations) {
+      const currentValue = editor.helpers.getEditableValue(translation.key);
+      // Only update if the value is different (avoid loops)
+      if (currentValue !== translation.value) {
+        editor.helpers.setEditableValue(translation.key, translation.value);
+      }
+    }
+  }, [loadedTranslations, selectedGroupId, editor.state.currentLanguage, primaryLocale, loadedThemes, editor.helpers]);
 
   // Handle response messages
   useEffect(() => {

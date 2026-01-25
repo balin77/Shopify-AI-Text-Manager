@@ -27,7 +27,7 @@ export function createTemplateFieldDefinitions(
     label: extractReadableName(item.key),
     translationKey: item.key, // For templates, key IS the translation key
     supportsAI: true,
-    supportsFormatting: true,
+    supportsFormatting: false, // Templates don't support formatting
     supportsTranslation: true,
     aiInstructionsKey: "themeContent",
   }));
