@@ -137,12 +137,20 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
     console.log("[PRODUCTS-LOADER] Total translations loaded:", products.reduce((sum, p) => sum + p.translations.length, 0));
 
-    // Log first product's image alt-texts for debugging (only first product to avoid spam)
-    if (products.length > 0 && products[0].images?.length > 0) {
-      console.log(`🟠🟠🟠 [LOADER] First product "${products[0].title}" image alt-texts: 🟠🟠🟠`);
-      products[0].images.forEach((img: any, i: number) => {
-        console.log(`🟠 [LOADER] Image ${i}: altText="${img.altText}" (isNull: ${img.altText === null})`);
+    // Log products with null alt-texts to debug clearing issue
+    const productsWithNullAlt = products.filter((p: any) =>
+      p.images?.some((img: any) => img.altText === null)
+    );
+    if (productsWithNullAlt.length > 0) {
+      console.log(`🟠🟠🟠 [LOADER] Products with null alt-texts: ${productsWithNullAlt.length} 🟠🟠🟠`);
+      productsWithNullAlt.slice(0, 3).forEach((p: any) => {
+        console.log(`🟠 [LOADER] Product "${p.title}" (${p.id}):`);
+        p.images?.forEach((img: any, i: number) => {
+          console.log(`🟠   Image ${i}: altText="${img.altText}" (isNull: ${img.altText === null})`);
+        });
       });
+    } else {
+      console.log(`🟠 [LOADER] No products with null alt-texts found`);
     }
 
     return json({
