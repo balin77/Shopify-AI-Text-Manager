@@ -8,6 +8,48 @@ import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prism
 import { restResources } from "@shopify/shopify-api/rest/admin/2025-10";
 import prisma from "./db.server";
 
+/**
+ * Map string API version (e.g., "2025-10") to ApiVersion enum
+ * Falls back to October25 (2025-10) if not found or not set
+ */
+function getApiVersion(versionString?: string): ApiVersion {
+  const versionMap: Record<string, ApiVersion> = {
+    "2022-10": ApiVersion.October22,
+    "2023-01": ApiVersion.January23,
+    "2023-04": ApiVersion.April23,
+    "2023-07": ApiVersion.July23,
+    "2023-10": ApiVersion.October23,
+    "2024-01": ApiVersion.January24,
+    "2024-04": ApiVersion.April24,
+    "2024-07": ApiVersion.July24,
+    "2024-10": ApiVersion.October24,
+    "2025-01": ApiVersion.January25,
+    "2025-04": ApiVersion.April25,
+    "2025-07": ApiVersion.July25,
+    "2025-10": ApiVersion.October25,
+    "2026-01": ApiVersion.January26,
+    "2026-04": ApiVersion.April26,
+    "unstable": ApiVersion.Unstable,
+  };
+
+  const defaultVersion = ApiVersion.October25; // Default to 2025-10 for MEDIA_IMAGE translation support
+
+  if (!versionString) {
+    return defaultVersion;
+  }
+
+  const version = versionMap[versionString.toLowerCase()];
+  if (!version) {
+    console.warn(`[SHOPIFY.SERVER] Unknown API version "${versionString}", falling back to 2025-10`);
+    return defaultVersion;
+  }
+
+  return version;
+}
+
+// Get API version from environment variable
+const selectedApiVersion = getApiVersion(process.env.SHOPIFY_API_VERSION);
+
 // Log Shopify configuration on startup
 console.log("🚀 [SHOPIFY.SERVER] Initializing Shopify App...");
 console.log("🔍 [SHOPIFY.SERVER] Environment Variables:");
@@ -15,15 +57,17 @@ console.log("  - SHOPIFY_API_KEY:", process.env.SHOPIFY_API_KEY ? `${process.env
 console.log("  - SHOPIFY_API_SECRET:", process.env.SHOPIFY_API_SECRET ? "✅ SET" : "❌ MISSING");
 console.log("  - SHOPIFY_APP_URL:", process.env.SHOPIFY_APP_URL || "❌ MISSING (using default)");
 console.log("  - SHOPIFY_SCOPES:", process.env.SHOPIFY_SCOPES || "❌ MISSING");
+console.log("  - SHOPIFY_API_VERSION:", process.env.SHOPIFY_API_VERSION || "❌ MISSING (using default: 2025-10)");
 console.log("  - NODE_ENV:", process.env.NODE_ENV || "development");
 
 const scopes = process.env.SHOPIFY_SCOPES?.split(",") || [];
 console.log("🔍 [SHOPIFY.SERVER] Parsed scopes (" + scopes.length + "):", scopes);
+console.log("🔍 [SHOPIFY.SERVER] Using API version:", selectedApiVersion);
 
 const shopify = shopifyApp({
   apiKey: process.env.SHOPIFY_API_KEY!,
   apiSecretKey: process.env.SHOPIFY_API_SECRET || "",
-  apiVersion: ApiVersion.October25,
+  apiVersion: selectedApiVersion,
   scopes: scopes,
   appUrl: process.env.SHOPIFY_APP_URL || "https://localhost:3000",
   authPathPrefix: "/auth",
@@ -80,7 +124,7 @@ const enhancedAuthenticate = {
 };
 
 export default shopify;
-export const apiVersion = ApiVersion.October25;
+export const apiVersion = selectedApiVersion;
 export const addDocumentResponseHeaders = shopify.addDocumentResponseHeaders;
 export const authenticate = enhancedAuthenticate;
 export const unauthenticated = shopify.unauthenticated;
