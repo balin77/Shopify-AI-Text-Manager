@@ -280,6 +280,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // Add image alt-texts if there are any changes
     if (Object.keys(imageAltTexts).length > 0) {
       formDataObj.imageAltTexts = JSON.stringify(imageAltTexts);
+      console.log('[AUTO-SAVE] 🖼️ imageAltTexts being sent:', JSON.stringify(imageAltTexts));
     }
 
     // If saving primary locale, include changed fields for translation deletion
@@ -955,6 +956,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // Add image alt-texts if there are any changes
     if (Object.keys(imageAltTexts).length > 0) {
       formDataObj.imageAltTexts = JSON.stringify(imageAltTexts);
+      console.log('[SAVE] 🖼️ imageAltTexts being sent:', JSON.stringify(imageAltTexts));
     }
 
     // If saving primary locale, include changed fields for server-side translation deletion
