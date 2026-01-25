@@ -137,6 +137,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
     console.log("[PRODUCTS-LOADER] Total translations loaded:", products.reduce((sum, p) => sum + p.translations.length, 0));
 
+    // Log first product's image alt-texts for debugging (only first product to avoid spam)
+    if (products.length > 0 && products[0].images?.length > 0) {
+      console.log(`🟠🟠🟠 [LOADER] First product "${products[0].title}" image alt-texts: 🟠🟠🟠`);
+      products[0].images.forEach((img: any, i: number) => {
+        console.log(`🟠 [LOADER] Image ${i}: altText="${img.altText}" (isNull: ${img.altText === null})`);
+      });
+    }
+
     return json({
       products,
       shop: session.shop,

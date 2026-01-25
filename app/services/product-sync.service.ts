@@ -385,14 +385,22 @@ export class ProductSyncService {
       .map((edge: any) => edge.node) || [];
 
     if (mediaImages.length > 0) {
+      // Log what Shopify returned for alt-texts
+      console.log(`🔵🔵🔵 [SYNC] Syncing ${mediaImages.length} images from Shopify 🔵🔵🔵`);
+      mediaImages.forEach((media: any, index: number) => {
+        console.log(`🔵 [SYNC] Image ${index}: mediaId=${media.id}, alt="${media.alt}" (isNull: ${media.alt === null}, isEmpty: ${media.alt === ""})`);
+      });
+
       // Create images with mediaId for translation support
       const createdImages = await Promise.all(
         mediaImages.map(async (media: any, index: number) => {
+          const altTextToSave = media.alt || null;
+          console.log(`🔵 [SYNC] Saving image ${index}: altText="${altTextToSave}"`);
           return db.productImage.create({
             data: {
               productId: productData.id,
               url: media.image.url,
-              altText: media.alt || null,
+              altText: altTextToSave,
               mediaId: media.id, // Store Shopify Media ID for translations
               position: index,
             },

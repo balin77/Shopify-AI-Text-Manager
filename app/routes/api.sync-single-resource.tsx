@@ -39,6 +39,7 @@ export async function action({ request }: ActionFunctionArgs) {
     switch (resourceType) {
       case "product":
       case "products": {
+        console.log(`🔴🔴🔴 [RELOAD-BUTTON] Product reload triggered for ${resourceId} 🔴🔴🔴`);
         const productSyncService = new ProductSyncService(
           admin,
           session.shop
@@ -50,13 +51,14 @@ export async function action({ request }: ActionFunctionArgs) {
           : resourceId;
 
         // Sync single product with plan-aware image loading
+        console.log(`🔴 [RELOAD-BUTTON] Calling syncSingleProduct for ${shopifyId}...`);
         result = await productSyncService.syncSingleProduct(
           shopifyId,
           planLimits.cacheEnabled.productImages // true for all images, false for featured only
         );
 
         console.log(
-          `[Manual Sync] Product ${shopifyId} synced successfully (images: ${planLimits.cacheEnabled.productImages ? "all" : "featured only"})`
+          `🔴 [RELOAD-BUTTON] Product ${shopifyId} synced successfully (images: ${planLimits.cacheEnabled.productImages ? "all" : "featured only"})`
         );
         break;
       }
