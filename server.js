@@ -109,6 +109,12 @@ app.use(express.static("build/client", { maxAge: "1h" }));
 
 app.use(morgan("tiny"));
 
+// Health check endpoint for Railway deployment
+// This endpoint is called by Railway to determine if the app is ready to receive traffic
+app.get("/health", (req, res) => {
+  res.status(200).json({ status: "ok", timestamp: new Date().toISOString() });
+});
+
 // handle SSR requests
 app.all(
   "*",
