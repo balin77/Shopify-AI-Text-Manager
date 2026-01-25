@@ -20,6 +20,7 @@ import { useInfoBox } from "../contexts/InfoBoxContext";
 import { AIService } from "../../src/services/ai.service";
 import { TranslationService } from "../../src/services/translation.service";
 import { decryptApiKey } from "../utils/encryption.server";
+import { getTaskExpirationDate } from "../../src/utils/task.utils";
 
 // ============================================================================
 // LOADER - Load navigation metadata (groups list)
@@ -152,36 +153,83 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         const currentValue = formData.get("currentValue") as string;
         const mainLanguage = formData.get("mainLanguage") as string;
 
-        const settings = await db.aISettings.findUnique({
-          where: { shop: session.shop }
+        // Create task entry
+        const task = await db.task.create({
+          data: {
+            shop: session.shop,
+            type: "aiGeneration",
+            status: "pending",
+            resourceType: "templates",
+            resourceId: `group_${groupId}`,
+            resourceTitle: firstGroup.groupName,
+            fieldType,
+            progress: 0,
+            expiresAt: getTaskExpirationDate(),
+          },
         });
 
-        const aiService = new AIService(
-          settings?.preferredProvider as any || 'huggingface',
-          {
-            huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
-            geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
-            claudeApiKey: decryptApiKey(settings?.claudeApiKey) || undefined,
-            openaiApiKey: decryptApiKey(settings?.openaiApiKey) || undefined,
-            grokApiKey: decryptApiKey(settings?.grokApiKey) || undefined,
-            deepseekApiKey: decryptApiKey(settings?.deepseekApiKey) || undefined,
-          }
-        );
+        try {
+          const settings = await db.aISettings.findUnique({
+            where: { shop: session.shop }
+          });
 
-        const prompt = `Improve or generate content for this field: ${fieldType}
+          // Update task to running
+          await db.task.update({
+            where: { id: task.id },
+            data: { status: "running", progress: 20 },
+          });
+
+          const aiService = new AIService(
+            settings?.preferredProvider as any || 'huggingface',
+            {
+              huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
+              geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
+              claudeApiKey: decryptApiKey(settings?.claudeApiKey) || undefined,
+              openaiApiKey: decryptApiKey(settings?.openaiApiKey) || undefined,
+              grokApiKey: decryptApiKey(settings?.grokApiKey) || undefined,
+              deepseekApiKey: decryptApiKey(settings?.deepseekApiKey) || undefined,
+            },
+            session.shop,
+            task.id
+          );
+
+          const prompt = `Improve or generate content for this field: ${fieldType}
 Current value: ${currentValue}
 Context: ${firstGroup.groupName}
 Language: ${mainLanguage}
 
 Please provide improved content that is clear and concise.`;
 
-        const generatedContent = await aiService['askAI'](prompt);
+          const generatedContent = await aiService['askAI'](prompt);
 
-        return json({
-          success: true,
-          generatedContent,
-          fieldType
-        });
+          // Update task to completed
+          await db.task.update({
+            where: { id: task.id },
+            data: {
+              status: "completed",
+              progress: 100,
+              completedAt: new Date(),
+              result: generatedContent.substring(0, 1000),
+            },
+          });
+
+          return json({
+            success: true,
+            generatedContent,
+            fieldType
+          });
+        } catch (error: any) {
+          // Update task to failed
+          await db.task.update({
+            where: { id: task.id },
+            data: {
+              status: "failed",
+              completedAt: new Date(),
+              error: (error.message || String(error)).substring(0, 1000),
+            },
+          });
+          return json({ success: false, error: error.message }, { status: 500 });
+        }
       }
 
       case "translateField": {
@@ -197,61 +245,109 @@ Please provide improved content that is clear and concise.`;
           }, { status: 400 });
         }
 
-        const settings = await db.aISettings.findUnique({
-          where: { shop: session.shop }
-        });
-
-        const primaryLocale = primaryLocaleFromForm || "de";
-
-        const aiService = new AIService(
-          settings?.preferredProvider as any || 'huggingface',
-          {
-            huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
-            geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
-            claudeApiKey: decryptApiKey(settings?.claudeApiKey) || undefined,
-            openaiApiKey: decryptApiKey(settings?.openaiApiKey) || undefined,
-            grokApiKey: decryptApiKey(settings?.grokApiKey) || undefined,
-            deepseekApiKey: decryptApiKey(settings?.deepseekApiKey) || undefined,
-          }
-        );
-
-        const translatedValue = await aiService.translateContent(
-          sourceText,
-          primaryLocale,
-          targetLocale
-        );
-
-        // Auto-save the translation
-        await db.themeTranslation.upsert({
-          where: {
-            shop_resourceId_groupId_key_locale: {
-              shop: session.shop,
-              resourceId: resourceId,
-              groupId: groupId,
-              key: fieldType,
-              locale: targetLocale
-            }
-          },
-          update: {
-            value: translatedValue,
-            updatedAt: new Date()
-          },
-          create: {
+        // Create task entry
+        const task = await db.task.create({
+          data: {
             shop: session.shop,
-            groupId: groupId,
-            resourceId: resourceId,
-            locale: targetLocale,
-            key: fieldType,
-            value: translatedValue
-          }
+            type: "translation",
+            status: "pending",
+            resourceType: "templates",
+            resourceId: `group_${groupId}`,
+            resourceTitle: firstGroup.groupName,
+            fieldType,
+            targetLocale,
+            progress: 0,
+            expiresAt: getTaskExpirationDate(),
+          },
         });
 
-        return json({
-          success: true,
-          translatedValue,
-          fieldType,
-          targetLocale
-        });
+        try {
+          const settings = await db.aISettings.findUnique({
+            where: { shop: session.shop }
+          });
+
+          // Update task to running
+          await db.task.update({
+            where: { id: task.id },
+            data: { status: "running", progress: 20 },
+          });
+
+          const primaryLocale = primaryLocaleFromForm || "de";
+
+          const aiService = new AIService(
+            settings?.preferredProvider as any || 'huggingface',
+            {
+              huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
+              geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
+              claudeApiKey: decryptApiKey(settings?.claudeApiKey) || undefined,
+              openaiApiKey: decryptApiKey(settings?.openaiApiKey) || undefined,
+              grokApiKey: decryptApiKey(settings?.grokApiKey) || undefined,
+              deepseekApiKey: decryptApiKey(settings?.deepseekApiKey) || undefined,
+            },
+            session.shop,
+            task.id
+          );
+
+          const translatedValue = await aiService.translateContent(
+            sourceText,
+            primaryLocale,
+            targetLocale
+          );
+
+          // Auto-save the translation
+          await db.themeTranslation.upsert({
+            where: {
+              shop_resourceId_groupId_key_locale: {
+                shop: session.shop,
+                resourceId: resourceId,
+                groupId: groupId,
+                key: fieldType,
+                locale: targetLocale
+              }
+            },
+            update: {
+              value: translatedValue,
+              updatedAt: new Date()
+            },
+            create: {
+              shop: session.shop,
+              groupId: groupId,
+              resourceId: resourceId,
+              locale: targetLocale,
+              key: fieldType,
+              value: translatedValue
+            }
+          });
+
+          // Update task to completed
+          await db.task.update({
+            where: { id: task.id },
+            data: {
+              status: "completed",
+              progress: 100,
+              completedAt: new Date(),
+              result: translatedValue.substring(0, 1000),
+            },
+          });
+
+          return json({
+            success: true,
+            translatedValue,
+            fieldType,
+            targetLocale
+          });
+        } catch (error: any) {
+          // Update task to failed
+          await db.task.update({
+            where: { id: task.id },
+            data: {
+              status: "failed",
+              completedAt: new Date(),
+              error: (error.message || String(error)).substring(0, 1000),
+            },
+          });
+          return json({ success: false, error: error.message }, { status: 500 });
+        }
       }
 
       case "translateFieldToAllLocales": {
@@ -275,71 +371,127 @@ Please provide improved content that is clear and concise.`;
           }, { status: 400 });
         }
 
-        const settings = await db.aISettings.findUnique({
-          where: { shop: session.shop }
+        // Create task entry
+        const task = await db.task.create({
+          data: {
+            shop: session.shop,
+            type: "translationBulk",
+            status: "pending",
+            resourceType: "templates",
+            resourceId: `group_${groupId}`,
+            resourceTitle: firstGroup.groupName,
+            fieldType,
+            progress: 0,
+            expiresAt: getTaskExpirationDate(),
+          },
         });
 
-        const primaryLocale = primaryLocaleFromForm || "de";
+        try {
+          const settings = await db.aISettings.findUnique({
+            where: { shop: session.shop }
+          });
 
-        const aiService = new AIService(
-          settings?.preferredProvider as any || 'huggingface',
-          {
-            huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
-            geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
-            claudeApiKey: decryptApiKey(settings?.claudeApiKey) || undefined,
-            openaiApiKey: decryptApiKey(settings?.openaiApiKey) || undefined,
-            grokApiKey: decryptApiKey(settings?.grokApiKey) || undefined,
-            deepseekApiKey: decryptApiKey(settings?.deepseekApiKey) || undefined,
-          }
-        );
+          // Update task to running
+          await db.task.update({
+            where: { id: task.id },
+            data: { status: "running", progress: 10 },
+          });
 
-        // Translate the field to all target locales
-        const translations: Record<string, string> = {};
+          const primaryLocale = primaryLocaleFromForm || "de";
 
-        for (const locale of targetLocales) {
-          try {
-            const translatedValue = await aiService.translateContent(
-              sourceText,
-              primaryLocale,
-              locale
-            );
-            translations[locale] = translatedValue;
+          const aiService = new AIService(
+            settings?.preferredProvider as any || 'huggingface',
+            {
+              huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
+              geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
+              claudeApiKey: decryptApiKey(settings?.claudeApiKey) || undefined,
+              openaiApiKey: decryptApiKey(settings?.openaiApiKey) || undefined,
+              grokApiKey: decryptApiKey(settings?.grokApiKey) || undefined,
+              deepseekApiKey: decryptApiKey(settings?.deepseekApiKey) || undefined,
+            },
+            session.shop,
+            task.id
+          );
 
-            // Auto-save each translation
-            await db.themeTranslation.upsert({
-              where: {
-                shop_resourceId_groupId_key_locale: {
+          // Translate the field to all target locales
+          const translations: Record<string, string> = {};
+          const totalLocales = targetLocales.length;
+
+          for (let i = 0; i < targetLocales.length; i++) {
+            const locale = targetLocales[i];
+            try {
+              const translatedValue = await aiService.translateContent(
+                sourceText,
+                primaryLocale,
+                locale
+              );
+              translations[locale] = translatedValue;
+
+              // Auto-save each translation
+              await db.themeTranslation.upsert({
+                where: {
+                  shop_resourceId_groupId_key_locale: {
+                    shop: session.shop,
+                    resourceId: resourceId,
+                    groupId: groupId,
+                    key: fieldType,
+                    locale: locale
+                  }
+                },
+                update: {
+                  value: translatedValue,
+                  updatedAt: new Date()
+                },
+                create: {
                   shop: session.shop,
-                  resourceId: resourceId,
                   groupId: groupId,
+                  resourceId: resourceId,
+                  locale: locale,
                   key: fieldType,
-                  locale: locale
+                  value: translatedValue
                 }
-              },
-              update: {
-                value: translatedValue,
-                updatedAt: new Date()
-              },
-              create: {
-                shop: session.shop,
-                groupId: groupId,
-                resourceId: resourceId,
-                locale: locale,
-                key: fieldType,
-                value: translatedValue
-              }
-            });
-          } catch (error) {
-            console.error(`Error translating field ${fieldType} to ${locale}:`, error);
-            translations[locale] = sourceText; // Fallback to original
-          }
-        }
+              });
 
-        return json({
-          success: true,
-          translations,
-          fieldType
-        });
+              // Update progress
+              const progress = Math.round(10 + ((i + 1) / totalLocales) * 80);
+              await db.task.update({
+                where: { id: task.id },
+                data: { progress },
+              });
+            } catch (error) {
+              console.error(`Error translating field ${fieldType} to ${locale}:`, error);
+              translations[locale] = sourceText; // Fallback to original
+            }
+          }
+
+          // Update task to completed
+          await db.task.update({
+            where: { id: task.id },
+            data: {
+              status: "completed",
+              progress: 100,
+              completedAt: new Date(),
+              result: `Translated to ${Object.keys(translations).length} locales`,
+            },
+          });
+
+          return json({
+            success: true,
+            translations,
+            fieldType
+          });
+        } catch (error: any) {
+          // Update task to failed
+          await db.task.update({
+            where: { id: task.id },
+            data: {
+              status: "failed",
+              completedAt: new Date(),
+              error: (error.message || String(error)).substring(0, 1000),
+            },
+          });
+          return json({ success: false, error: error.message }, { status: 500 });
+        }
       }
 
       case "translateAll":
@@ -359,82 +511,138 @@ Please provide improved content that is clear and concise.`;
           }
         }
 
-        const settings = await db.aISettings.findUnique({
-          where: { shop: session.shop }
+        // Create task entry
+        const task = await db.task.create({
+          data: {
+            shop: session.shop,
+            type: "translationBulk",
+            status: "pending",
+            resourceType: "templates",
+            resourceId: `group_${groupId}`,
+            resourceTitle: firstGroup.groupName,
+            progress: 0,
+            expiresAt: getTaskExpirationDate(),
+          },
         });
 
-        const aiService = new AIService(
-          settings?.preferredProvider as any || 'huggingface',
-          {
-            huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
-            geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
-            claudeApiKey: decryptApiKey(settings?.claudeApiKey) || undefined,
-            openaiApiKey: decryptApiKey(settings?.openaiApiKey) || undefined,
-            grokApiKey: decryptApiKey(settings?.grokApiKey) || undefined,
-            deepseekApiKey: decryptApiKey(settings?.deepseekApiKey) || undefined,
-          }
-        );
+        try {
+          const settings = await db.aISettings.findUnique({
+            where: { shop: session.shop }
+          });
 
-        const primaryLocale = formData.get("primaryLocale") as string || "de";
+          // Update task to running
+          await db.task.update({
+            where: { id: task.id },
+            data: { status: "running", progress: 5 },
+          });
 
-        // Translate to all target locales
-        const translations: Record<string, Record<string, string>> = {};
+          const aiService = new AIService(
+            settings?.preferredProvider as any || 'huggingface',
+            {
+              huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
+              geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
+              claudeApiKey: decryptApiKey(settings?.claudeApiKey) || undefined,
+              openaiApiKey: decryptApiKey(settings?.openaiApiKey) || undefined,
+              grokApiKey: decryptApiKey(settings?.grokApiKey) || undefined,
+              deepseekApiKey: decryptApiKey(settings?.deepseekApiKey) || undefined,
+            },
+            session.shop,
+            task.id
+          );
 
-        for (const locale of targetLocales) {
-          translations[locale] = {};
+          const primaryLocale = formData.get("primaryLocale") as string || "de";
 
-          for (const [key, item] of uniqueContent.entries()) {
-            try {
-              const translated = await aiService.translateContent(
-                item.value,
-                primaryLocale,
-                locale
-              );
-              translations[locale][key] = translated;
+          // Translate to all target locales
+          const translations: Record<string, Record<string, string>> = {};
+          const totalItems = targetLocales.length * uniqueContent.size;
+          let completedItems = 0;
 
-              // Save translation to database
-              await db.themeTranslation.upsert({
-                where: {
-                  shop_resourceId_groupId_key_locale: {
+          for (const locale of targetLocales) {
+            translations[locale] = {};
+
+            for (const [key, item] of uniqueContent.entries()) {
+              try {
+                const translated = await aiService.translateContent(
+                  item.value,
+                  primaryLocale,
+                  locale
+                );
+                translations[locale][key] = translated;
+
+                // Save translation to database
+                await db.themeTranslation.upsert({
+                  where: {
+                    shop_resourceId_groupId_key_locale: {
+                      shop: session.shop,
+                      resourceId: resourceId,
+                      groupId: groupId,
+                      key: key,
+                      locale: locale
+                    }
+                  },
+                  update: {
+                    value: translated,
+                    updatedAt: new Date()
+                  },
+                  create: {
                     shop: session.shop,
-                    resourceId: resourceId,
                     groupId: groupId,
+                    resourceId: resourceId,
+                    locale: locale,
                     key: key,
-                    locale: locale
+                    value: translated
                   }
-                },
-                update: {
-                  value: translated,
-                  updatedAt: new Date()
-                },
-                create: {
-                  shop: session.shop,
-                  groupId: groupId,
-                  resourceId: resourceId,
-                  locale: locale,
-                  key: key,
-                  value: translated
-                }
-              });
-            } catch (error) {
-              console.error(`Error translating field ${key}:`, error);
-              translations[locale][key] = item.value;
+                });
+
+                // Update progress
+                completedItems++;
+                const progress = Math.round(5 + (completedItems / totalItems) * 90);
+                await db.task.update({
+                  where: { id: task.id },
+                  data: { progress },
+                });
+              } catch (error) {
+                console.error(`Error translating field ${key}:`, error);
+                translations[locale][key] = item.value;
+              }
             }
           }
-        }
 
-        if (actionType === "translateAllForLocale") {
+          // Update task to completed
+          await db.task.update({
+            where: { id: task.id },
+            data: {
+              status: "completed",
+              progress: 100,
+              completedAt: new Date(),
+              result: `Translated ${uniqueContent.size} fields to ${targetLocales.length} locales`,
+            },
+          });
+
+          if (actionType === "translateAllForLocale") {
+            return json({
+              success: true,
+              translations: translations[targetLocale] || {},
+              targetLocale
+            });
+          }
+
           return json({
             success: true,
-            translations: translations[targetLocale] || {},
-            targetLocale
+            translations
           });
+        } catch (error: any) {
+          // Update task to failed
+          await db.task.update({
+            where: { id: task.id },
+            data: {
+              status: "failed",
+              completedAt: new Date(),
+              error: (error.message || String(error)).substring(0, 1000),
+            },
+          });
+          return json({ success: false, error: error.message }, { status: 500 });
         }
-
-        return json({
-          success: true,
-          translations
-        });
       }
 
       case "updateContent": {
