@@ -458,6 +458,10 @@ export default function TemplatesPage() {
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const editorRef = useRef<any>(null);
 
+  // Ref to track loaded translations without triggering re-renders
+  const loadedTranslationsRef = useRef(loadedTranslations);
+  loadedTranslationsRef.current = loadedTranslations;
+
   // Get current theme data
   const currentThemeData = selectedGroupId ? loadedThemes[selectedGroupId] : null;
 
@@ -490,6 +494,54 @@ export default function TemplatesPage() {
     });
   }, [themes, loadedThemes, loadedTranslations]);
 
+  // Preload all foreign language translations for a group (parallel loading)
+  const preloadAllTranslations = useCallback(async (groupId: string) => {
+    const foreignLocales = loaderShopLocales.filter((l: any) => !l.primary);
+    if (foreignLocales.length === 0) return;
+
+    // Use ref to check already loaded locales (avoids stale closure)
+    const currentLoaded = loadedTranslationsRef.current;
+    const localesToLoad = foreignLocales.filter(
+      (l: any) => !currentLoaded[groupId]?.[l.locale]
+    );
+    if (localesToLoad.length === 0) return;
+
+    // Load all translations in parallel
+    const results = await Promise.allSettled(
+      localesToLoad.map(async (locale: any) => {
+        const formData = new FormData();
+        formData.append("action", "loadTranslations");
+        formData.append("itemId", `group_${groupId}`);
+        formData.append("locale", locale.locale);
+
+        const response = await fetch("/app/templates", {
+          method: "POST",
+          body: formData,
+        });
+        const data = await response.json();
+        return { locale: locale.locale, translations: data.translations || [] };
+      })
+    );
+
+    // Update state with all loaded translations
+    const newTranslations: Record<string, any[]> = {};
+    results.forEach((result) => {
+      if (result.status === "fulfilled" && result.value.translations) {
+        newTranslations[result.value.locale] = result.value.translations;
+      }
+    });
+
+    if (Object.keys(newTranslations).length > 0) {
+      setLoadedTranslations(prev => ({
+        ...prev,
+        [groupId]: {
+          ...(prev[groupId] || {}),
+          ...newTranslations,
+        }
+      }));
+    }
+  }, [loaderShopLocales]);
+
   // Load theme data on demand (for initial load)
   const loadThemeData = useCallback(async (groupId: string) => {
     if (loadedThemes[groupId]) return;
@@ -504,6 +556,9 @@ export default function TemplatesPage() {
         ...prev,
         [groupId]: data.theme
       }));
+
+      // Preload all foreign language translations in background
+      preloadAllTranslations(groupId);
     } catch (error) {
       console.error('Error loading theme data:', error);
       showInfoBox(
@@ -514,7 +569,7 @@ export default function TemplatesPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [loadedThemes, showInfoBox, t]);
+  }, [loadedThemes, showInfoBox, t, preloadAllTranslations]);
 
   // Separate fetcher for loading translations (to not interfere with main actions)
   const translationFetcher = useFetcher();
@@ -571,9 +626,11 @@ export default function TemplatesPage() {
     if (theme) {
       setSelectedGroupId(theme.groupId);
 
-      // If already loaded, just select
+      // If already loaded, just select and preload translations
       if (loadedThemes[theme.groupId]) {
         originalHandleItemSelectRef.current(itemId);
+        // Preload translations if not already loaded
+        preloadAllTranslations(theme.groupId);
       } else {
         // Load data, then select
         setIsLoading(true);
@@ -584,6 +641,8 @@ export default function TemplatesPage() {
               ...prev,
               [theme.groupId]: data.theme
             }));
+            // Preload all foreign language translations in background
+            preloadAllTranslations(theme.groupId);
             // Select after data is loaded
             setTimeout(() => {
               originalHandleItemSelectRef.current(itemId);
