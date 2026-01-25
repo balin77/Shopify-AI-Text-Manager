@@ -70,6 +70,9 @@ interface ImageGalleryFieldProps {
   /** Callback when AI suggestion is accepted */
   onAcceptSuggestion: (imageIndex: number) => void;
 
+  /** Callback when AI suggestion is accepted and should be translated to all locales */
+  onAcceptAndTranslateSuggestion?: (imageIndex: number) => void;
+
   /** Callback when AI suggestion is rejected */
   onRejectSuggestion: (imageIndex: number) => void;
 
@@ -107,6 +110,7 @@ export function ImageGalleryField({
   onTranslateAltTextToAllLocales,
   altTextSuggestions = {},
   onAcceptSuggestion,
+  onAcceptAndTranslateSuggestion,
   onRejectSuggestion,
   onClearAltText,
   isFieldLoading,
@@ -420,6 +424,7 @@ export function ImageGalleryField({
           onTranslate={() => onTranslateAltText(selectedImageIndex)}
           onTranslateToAllLocales={onTranslateAltTextToAllLocales ? () => onTranslateAltTextToAllLocales(selectedImageIndex) : undefined}
           onAcceptSuggestion={() => onAcceptSuggestion(selectedImageIndex)}
+          onAcceptAndTranslate={onAcceptAndTranslateSuggestion ? () => onAcceptAndTranslateSuggestion(selectedImageIndex) : undefined}
           onRejectSuggestion={() => onRejectSuggestion(selectedImageIndex)}
           onClear={onClearAltText ? () => onClearAltText(selectedImageIndex) : undefined}
         />

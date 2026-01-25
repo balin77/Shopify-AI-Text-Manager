@@ -518,6 +518,7 @@ function FieldRenderer(props: FieldRendererProps & { state?: any; handlers?: any
         onTranslateAltTextToAllLocales={handlers.handleTranslateAltTextToAllLocales}
         altTextSuggestions={state.altTextSuggestions}
         onAcceptSuggestion={handlers.handleAcceptAltTextSuggestion}
+        onAcceptAndTranslateSuggestion={handlers.handleAcceptAndTranslateAltText}
         onRejectSuggestion={handlers.handleRejectAltTextSuggestion}
         onClearAltText={(imageIndex) => handlers.handleAltTextChange(imageIndex, "")}
         isFieldLoading={(index) => {
