@@ -17,6 +17,7 @@ interface AIEditableFieldProps {
   maxLength?: number;
   placeholder?: string;
   isLoading?: boolean;
+  isDataLoading?: boolean;
   sourceTextAvailable?: boolean;
   hasMissingTranslations?: boolean;
   hasFieldMissingTranslations?: boolean;
@@ -44,6 +45,7 @@ export function AIEditableField({
   maxLength,
   placeholder,
   isLoading = false,
+  isDataLoading = false,
   sourceTextAvailable = true,
   hasMissingTranslations = false,
   hasFieldMissingTranslations = false,
@@ -60,6 +62,9 @@ export function AIEditableField({
 
   // Determine background color class based on translation state
   const getBackgroundClass = () => {
+    // During initial data loading, show white to prevent flash
+    if (isDataLoading) return "bg-white";
+
     // Priority 1: AI suggestion is active (light blue)
     if (suggestion) return "bg-suggestion";
 

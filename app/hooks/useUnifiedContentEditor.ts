@@ -36,6 +36,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // Track if we're currently loading data to prevent false change detection
   // Initialize to true if an item is selected to prevent race condition
   const [isLoadingData, setIsLoadingData] = useState(!!selectedItemId);
+  // Track when initial data is ready (used to prevent field flash on load)
+  const [isInitialDataReady, setIsInitialDataReady] = useState(false);
   // Track if clear all confirmation modal is open
   const [isClearAllModalOpen, setIsClearAllModalOpen] = useState(false);
 
@@ -170,6 +172,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       processedResponseRef.current = null;
       processedTranslateFieldRef.current = null;
       retryCountRef.current = 0; // Reset retry count for new item
+      setIsInitialDataReady(false); // Reset data ready flag for new item
       console.log('[DATA-LOAD] Cleared refs for new item');
     }
 
@@ -209,10 +212,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // This is in a separate useEffect to ensure the state update has completed
   useEffect(() => {
     if (selectedItemId && isLoadingData) {
-      // Use setTimeout to ensure this runs after the render cycle
+      // Use longer timeout to ensure React render cycle is complete
+      // This prevents the yellow "untranslated" flash on initial load
       const timer = setTimeout(() => {
         setIsLoadingData(false);
-      }, 0);
+        setIsInitialDataReady(true);
+      }, 50);
       return () => clearTimeout(timer);
     }
     // Use selectedItemId instead of selectedItem to prevent re-runs on reference changes
@@ -1806,6 +1811,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     imageAltTexts,
     altTextSuggestions,
     isClearAllModalOpen,
+    isInitialDataReady,
   };
 
   const handlers: EditorHandlers = {

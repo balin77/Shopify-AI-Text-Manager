@@ -421,6 +421,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         isPrimaryLocale={state.currentLanguage === primaryLocale}
                         isTranslated={helpers.isFieldTranslated(field.key)}
                         isLoading={fetcherState !== "idle" && fetcherFormData?.get("fieldType") === field.key}
+                        isDataLoading={!state.isInitialDataReady}
                         sourceTextAvailable={!!getSourceText(selectedItem, field.key, primaryLocale)}
                         onGenerateAI={field.supportsAI !== false ? () => handlers.handleGenerateAI(field.key) : undefined}
                         onFormatAI={field.supportsFormatting !== false ? () => handlers.handleFormatAI(field.key) : undefined}
@@ -548,6 +549,7 @@ interface FieldRendererProps {
   isPrimaryLocale: boolean;
   isTranslated: boolean;
   isLoading: boolean;
+  isDataLoading?: boolean;
   sourceTextAvailable: boolean;
   onGenerateAI?: () => void;
   onFormatAI?: () => void;
@@ -575,6 +577,7 @@ function FieldRenderer(props: FieldRendererProps & { state?: any; handlers?: any
     isPrimaryLocale,
     isTranslated,
     isLoading,
+    isDataLoading,
     sourceTextAvailable,
     onGenerateAI,
     onFormatAI,
@@ -724,6 +727,7 @@ function FieldRenderer(props: FieldRendererProps & { state?: any; handlers?: any
         isPrimaryLocale={isPrimaryLocale}
         isTranslated={isTranslated}
         isLoading={isLoading}
+        isDataLoading={isDataLoading}
         sourceTextAvailable={sourceTextAvailable}
         onGenerateAI={field.supportsAI !== false && isPrimaryLocale ? onGenerateAI : undefined}
         onFormatAI={field.supportsFormatting !== false && isPrimaryLocale ? onFormatAI : undefined}
@@ -751,6 +755,7 @@ function FieldRenderer(props: FieldRendererProps & { state?: any; handlers?: any
       helpText={helpText}
       multiline={field.multiline}
       isLoading={isLoading}
+      isDataLoading={isDataLoading}
       sourceTextAvailable={sourceTextAvailable}
       onGenerateAI={field.supportsAI !== false && isPrimaryLocale ? onGenerateAI : undefined}
       onFormatAI={field.supportsFormatting !== false && isPrimaryLocale ? onFormatAI : undefined}

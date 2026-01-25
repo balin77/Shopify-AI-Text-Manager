@@ -115,6 +115,7 @@ export interface EditorState {
   imageAltTexts: Record<number, string>;
   altTextSuggestions: Record<number, string>;
   isClearAllModalOpen: boolean;
+  isInitialDataReady: boolean;
 }
 
 export interface EditorHandlers {

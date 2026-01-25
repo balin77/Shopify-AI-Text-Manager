@@ -17,6 +17,7 @@ interface AIEditableHTMLFieldProps {
   isPrimaryLocale: boolean;
   isTranslated?: boolean;
   isLoading?: boolean;
+  isDataLoading?: boolean;
   sourceTextAvailable?: boolean;
   hasMissingTranslations?: boolean;
   hasFieldMissingTranslations?: boolean;
@@ -42,6 +43,7 @@ export function AIEditableHTMLField({
   isPrimaryLocale,
   isTranslated = true,
   isLoading = false,
+  isDataLoading = false,
   sourceTextAvailable = true,
   hasMissingTranslations = false,
   hasFieldMissingTranslations = false,
@@ -111,6 +113,9 @@ export function AIEditableHTMLField({
 
   // Determine background color class based on translation state
   const getBackgroundClass = () => {
+    // During initial data loading, show white to prevent flash
+    if (isDataLoading) return "bg-white";
+
     // Priority 1: AI suggestion is active (light blue)
     if (suggestion) return "bg-suggestion";
 
