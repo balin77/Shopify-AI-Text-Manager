@@ -5,7 +5,7 @@ import { useFetcher, useRevalidator } from "@remix-run/react";
 
 interface ReloadButtonProps {
   resourceId: string;
-  resourceType: "product" | "collection" | "article" | "page" | "policy";
+  resourceType: "product" | "collection" | "article" | "page" | "policy" | "templates";
   locale: string;
   onReloadComplete?: () => void;
 }

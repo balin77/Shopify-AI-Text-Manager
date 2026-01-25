@@ -525,6 +525,182 @@ export class BackgroundSyncService {
   }
 
   // ============================================
+  // SINGLE THEME GROUP SYNC
+  // ============================================
+
+  /**
+   * Sync a single theme group by groupId (public method for manual reload)
+   */
+  async syncSingleThemeGroup(groupId: string): Promise<any> {
+    console.log(`[BackgroundSync] Syncing single theme group: ${groupId}`);
+
+    const { db } = await import("../db.server");
+
+    // Get existing theme content from database to find the resourceId
+    const existingThemeContent = await db.themeContent.findFirst({
+      where: {
+        shop: this.shop,
+        groupId: groupId,
+      },
+    });
+
+    if (!existingThemeContent) {
+      throw new Error(`Theme group not found: ${groupId}`);
+    }
+
+    const resourceId = existingThemeContent.resourceId;
+
+    // Get shop locales
+    const locales = await this.fetchShopLocales();
+    const nonPrimaryLocales = locales.filter((l: any) => !l.primary);
+
+    // Fetch fresh translatable content from Shopify
+    const translatableResponse = await this.gateway.graphql(
+      `#graphql
+        query getThemeTranslatableResource($resourceId: ID!) {
+          translatableResource(resourceId: $resourceId) {
+            resourceId
+            translatableContent {
+              key
+              value
+              digest
+              locale
+            }
+          }
+        }`,
+      { variables: { resourceId } }
+    );
+
+    const translatableData = await translatableResponse.json();
+
+    if (translatableData.errors) {
+      console.error(`[BackgroundSync] GraphQL error:`, translatableData.errors);
+      throw new Error(translatableData.errors[0]?.message || "GraphQL error");
+    }
+
+    const resource = translatableData.data?.translatableResource;
+    if (!resource) {
+      throw new Error(`Resource not found in Shopify: ${resourceId}`);
+    }
+
+    // Filter content that belongs to this group
+    const allContent = resource.translatableContent || [];
+    const groupContent = allContent.filter((item: any) => {
+      // Match items that were originally in this group
+      const existingKeys = (existingThemeContent.translatableContent as any[]).map(c => c.key);
+      return existingKeys.includes(item.key);
+    });
+
+    console.log(`[BackgroundSync] Found ${groupContent.length} translatable fields for group ${groupId}`);
+
+    // Fetch translations for all non-primary locales
+    const allTranslations: any[] = [];
+
+    for (const locale of nonPrimaryLocales) {
+      try {
+        const translationsResponse = await this.gateway.graphql(
+          `#graphql
+            query getThemeTranslations($resourceId: ID!, $locale: String!) {
+              translatableResource(resourceId: $resourceId) {
+                translations(locale: $locale) {
+                  key
+                  value
+                  locale
+                  outdated
+                }
+              }
+            }`,
+          { variables: { resourceId, locale: locale.locale } }
+        );
+
+        const translationsData = await translationsResponse.json();
+
+        if (!translationsData.errors) {
+          const translations = translationsData.data?.translatableResource?.translations || [];
+          // Filter translations that belong to this group
+          const groupTranslations = translations.filter((t: any) =>
+            groupContent.some((c: any) => c.key === t.key)
+          );
+          allTranslations.push(...groupTranslations);
+        }
+      } catch (error: any) {
+        console.error(`[BackgroundSync] Error fetching translations for locale ${locale.locale}:`, error.message);
+      }
+    }
+
+    console.log(`[BackgroundSync] Fetched ${allTranslations.length} translations for group ${groupId}`);
+
+    // Update ThemeContent
+    await db.themeContent.update({
+      where: {
+        shop_resourceId_groupId: {
+          shop: this.shop,
+          resourceId: resourceId,
+          groupId: groupId,
+        },
+      },
+      data: {
+        translatableContent: groupContent,
+        lastSyncedAt: new Date(),
+      },
+    });
+
+    // Update translations
+    for (const t of allTranslations) {
+      await db.themeTranslation.upsert({
+        where: {
+          shop_resourceId_groupId_key_locale: {
+            shop: this.shop,
+            resourceId: resourceId,
+            groupId: groupId,
+            key: t.key,
+            locale: t.locale,
+          },
+        },
+        create: {
+          shop: this.shop,
+          resourceId: resourceId,
+          groupId: groupId,
+          key: t.key,
+          value: t.value,
+          locale: t.locale,
+          outdated: t.outdated || false,
+        },
+        update: {
+          value: t.value,
+          outdated: t.outdated || false,
+          updatedAt: new Date(),
+        },
+      });
+    }
+
+    // Return fresh data
+    const updatedThemeContent = await db.themeContent.findUnique({
+      where: {
+        shop_resourceId_groupId: {
+          shop: this.shop,
+          resourceId: resourceId,
+          groupId: groupId,
+        },
+      },
+    });
+
+    const updatedTranslations = await db.themeTranslation.findMany({
+      where: {
+        shop: this.shop,
+        groupId: groupId,
+      },
+    });
+
+    console.log(`[BackgroundSync] Successfully synced theme group ${groupId}`);
+
+    return {
+      ...updatedThemeContent,
+      translations: updatedTranslations,
+    };
+  }
+
+  // ============================================
   // THEMES SYNC
   // ============================================
 

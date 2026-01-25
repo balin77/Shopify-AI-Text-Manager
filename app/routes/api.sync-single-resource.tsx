@@ -118,6 +118,22 @@ export async function action({ request }: ActionFunctionArgs) {
         break;
       }
 
+      case "templates": {
+        const backgroundSyncService = new BackgroundSyncService(
+          admin,
+          session.shop
+        );
+
+        // Extract groupId from resourceId (format: "group_xxx")
+        const groupId = resourceId.startsWith("group_")
+          ? resourceId.replace("group_", "")
+          : resourceId;
+
+        result = await backgroundSyncService.syncSingleThemeGroup(groupId);
+        console.log(`[Manual Sync] Theme group ${groupId} synced successfully`);
+        break;
+      }
+
       default:
         return json(
           { success: false, error: `Unknown resource type: ${resourceType}` },

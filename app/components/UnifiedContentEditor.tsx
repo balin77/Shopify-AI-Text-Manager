@@ -781,13 +781,14 @@ function getSourceText(item: any, fieldKey: string, primaryLocale: string): stri
   return fieldMappings[fieldKey] || "";
 }
 
-function getResourceType(contentType: string): "product" | "collection" | "page" | "article" | "policy" {
-  const resourceTypeMap: Record<string, "product" | "collection" | "page" | "article" | "policy"> = {
+function getResourceType(contentType: string): "product" | "collection" | "page" | "article" | "policy" | "templates" {
+  const resourceTypeMap: Record<string, "product" | "collection" | "page" | "article" | "policy" | "templates"> = {
     blogs: "article",
     pages: "page",
     policies: "policy",
     collections: "collection",
     products: "product",
+    templates: "templates",
   };
   return resourceTypeMap[contentType] || contentType as any;
 }
