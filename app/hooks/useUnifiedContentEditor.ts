@@ -1331,18 +1331,50 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
   const handleAcceptAltTextSuggestion = (imageIndex: number) => {
     const suggestion = altTextSuggestions[imageIndex];
-    if (!suggestion) return;
+    if (!suggestion || !selectedItemId) return;
 
-    setImageAltTexts(prev => ({
-      ...prev,
+    // Create the new alt-texts with the accepted suggestion
+    const newAltTexts = {
+      ...imageAltTexts,
       [imageIndex]: suggestion
-    }));
+    };
+
+    // Update the UI state
+    setImageAltTexts(newAltTexts);
 
     setAltTextSuggestions(prev => {
       const newSuggestions = { ...prev };
       delete newSuggestions[imageIndex];
       return newSuggestions;
     });
+
+    // Skip next data load to prevent revalidation from overwriting user changes
+    skipNextDataLoadRef.current = true;
+
+    // Auto-save immediately after accepting AI suggestion
+    console.log('[ACCEPT-ALT-TEXT] Accepting AI suggestion for image:', imageIndex, 'auto-saving...');
+
+    // Build form data for save
+    const formDataObj: Record<string, string> = {
+      action: "updateContent",
+      itemId: selectedItemId,
+      locale: currentLanguage,
+      primaryLocale,
+    };
+
+    // Add all field values
+    config.fieldDefinitions.forEach((field) => {
+      formDataObj[field.key] = editableValues[field.key] || "";
+    });
+
+    // Add the new image alt-texts
+    formDataObj.imageAltTexts = JSON.stringify(newAltTexts);
+
+    savedLocaleRef.current = currentLanguage;
+    safeSubmit(formDataObj, { method: "POST" });
+
+    // Update original alt-texts so hasChanges becomes false after save completes
+    setOriginalAltTexts(newAltTexts);
   };
 
   const handleRejectAltTextSuggestion = (imageIndex: number) => {
