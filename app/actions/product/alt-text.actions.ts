@@ -26,12 +26,14 @@ interface GenerateAltTextParams {
   imageUrl: string;
   productTitle: string;
   productId: string;
+  mainLanguage?: string;
 }
 
 interface GenerateAllAltTextsParams {
   imagesData: Array<{ url: string }>;
   productTitle: string;
   productId: string;
+  mainLanguage?: string;
 }
 
 interface TranslateAltTextParams {
@@ -58,6 +60,7 @@ export async function handleGenerateAltText(
     imageUrl: formData.get("imageUrl") as string,
     productTitle: formData.get("productTitle") as string,
     productId,
+    mainLanguage: formData.get("mainLanguage") as string || undefined,
   };
 
   loggers.ai("info", "Generating alt-text for image", {
@@ -97,7 +100,7 @@ Image URL: ${params.imageUrl}`;
       prompt += `\n\nInstructions:\n${aiInstructions.productAltTextInstructions}`;
     }
 
-    prompt += `\n\nReturn ONLY the alt text, without explanations. Output the result in the main language of the product.`;
+    prompt += `\n\nReturn ONLY the alt text, without explanations.${params.mainLanguage ? ` Output the result in ${params.mainLanguage}.` : ''}`;
 
     const altText = await aiService.generateImageAltText(params.imageUrl, params.productTitle, prompt);
 
@@ -136,6 +139,7 @@ export async function handleGenerateAllAltTexts(
     imagesData: JSON.parse(formData.get("imagesData") as string),
     productTitle: formData.get("productTitle") as string,
     productId,
+    mainLanguage: formData.get("mainLanguage") as string || undefined,
   };
 
   const totalImages = params.imagesData.length;
@@ -185,7 +189,7 @@ Image URL: ${image.url}`;
           prompt += `\n\nInstructions:\n${aiInstructions.productAltTextInstructions}`;
         }
 
-        prompt += `\n\nReturn ONLY the alt text, without explanations.`;
+        prompt += `\n\nReturn ONLY the alt text, without explanations.${params.mainLanguage ? ` Output the result in ${params.mainLanguage}.` : ''}`;
 
         const altText = await aiService.generateImageAltText(image.url, params.productTitle, prompt);
         generatedAltTexts[i] = altText;
