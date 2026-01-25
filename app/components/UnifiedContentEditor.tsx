@@ -778,7 +778,20 @@ function getSourceText(item: any, fieldKey: string, primaryLocale: string): stri
     body: item.body || "",
   };
 
-  return fieldMappings[fieldKey] || "";
+  // Check predefined field mappings first
+  if (fieldMappings[fieldKey]) {
+    return fieldMappings[fieldKey];
+  }
+
+  // For dynamic fields (e.g., templates), check translatableContent
+  if (item.translatableContent && Array.isArray(item.translatableContent)) {
+    const contentItem = item.translatableContent.find((c: any) => c.key === fieldKey);
+    if (contentItem?.value) {
+      return contentItem.value;
+    }
+  }
+
+  return "";
 }
 
 function getResourceType(contentType: string): "product" | "collection" | "page" | "article" | "policy" | "templates" {
