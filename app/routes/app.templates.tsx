@@ -516,38 +516,28 @@ export default function TemplatesPage() {
     }
   }, [loadedThemes, showInfoBox, t]);
 
-  // Load translations for a specific locale
-  const loadTranslationsForLocale = useCallback(async (groupId: string, locale: string) => {
+  // Separate fetcher for loading translations (to not interfere with main actions)
+  const translationFetcher = useFetcher();
+
+  // Load translations for a specific locale using fetcher
+  const loadTranslationsForLocale = useCallback((groupId: string, locale: string) => {
     // Skip if already loaded or if it's the primary locale (primary uses translatableContent)
     if (loadedTranslations[groupId]?.[locale] || locale === primaryLocale) {
       return;
     }
 
-    try {
-      const formData = new FormData();
-      formData.append("action", "loadTranslations");
-      formData.append("itemId", `group_${groupId}`);
-      formData.append("locale", locale);
-
-      const response = await fetch(`/app/templates`, {
-        method: "POST",
-        body: formData,
-      });
-
-      const data = await response.json();
-      if (data.success && data.translations) {
-        setLoadedTranslations(prev => ({
-          ...prev,
-          [groupId]: {
-            ...(prev[groupId] || {}),
-            [locale]: data.translations,
-          }
-        }));
-      }
-    } catch (error) {
-      console.error('Error loading translations:', error);
+    // Skip if already loading
+    if (translationFetcher.state !== 'idle') {
+      return;
     }
-  }, [loadedTranslations, primaryLocale]);
+
+    const formData = new FormData();
+    formData.append("action", "loadTranslations");
+    formData.append("itemId", `group_${groupId}`);
+    formData.append("locale", locale);
+
+    translationFetcher.submit(formData, { method: "POST" });
+  }, [loadedTranslations, primaryLocale, translationFetcher]);
 
   // Auto-load first item (data loading only)
   useEffect(() => {
@@ -625,32 +615,61 @@ export default function TemplatesPage() {
   // Load translations when language changes
   useEffect(() => {
     const currentLanguage = editor.state.currentLanguage;
-    if (selectedGroupId && currentLanguage && currentLanguage !== primaryLocale) {
-      loadTranslationsForLocale(selectedGroupId, currentLanguage);
-    }
-  }, [editor.state.currentLanguage, selectedGroupId, primaryLocale, loadTranslationsForLocale]);
-
-  // Update editable values when translations are loaded for the current language
-  useEffect(() => {
-    const currentLanguage = editor.state.currentLanguage;
     if (!selectedGroupId || !currentLanguage || currentLanguage === primaryLocale) return;
 
-    const translations = loadedTranslations[selectedGroupId]?.[currentLanguage];
-    if (!translations || translations.length === 0) return;
+    // Check if already cached
+    const cachedTranslations = loadedTranslations[selectedGroupId]?.[currentLanguage];
+    if (cachedTranslations) {
+      // Use cached translations - update editable values directly
+      const themeData = loadedThemes[selectedGroupId];
+      if (themeData?.translatableContent) {
+        themeData.translatableContent.forEach((item: any) => {
+          const translation = cachedTranslations.find((t: any) => t.key === item.key);
+          editor.helpers.setEditableValue(item.key, translation?.value || "");
+        });
+      }
+    } else {
+      // Load from server
+      loadTranslationsForLocale(selectedGroupId, currentLanguage);
+    }
+  }, [editor.state.currentLanguage, selectedGroupId, primaryLocale, loadTranslationsForLocale, loadedTranslations, loadedThemes, editor.helpers]);
 
-    // Get the loaded theme data for field definitions
-    const themeData = loadedThemes[selectedGroupId];
-    if (!themeData?.translatableContent) return;
+  // Handle translation fetcher response
+  useEffect(() => {
+    const data = translationFetcher.data as any;
+    if (!data?.success || !data?.translations || !data?.locale) return;
 
-    // Update editable values with loaded translations
-    for (const translation of translations) {
-      const currentValue = editor.helpers.getEditableValue(translation.key);
-      // Only update if the value is different (avoid loops)
-      if (currentValue !== translation.value) {
-        editor.helpers.setEditableValue(translation.key, translation.value);
+    const { translations, locale } = data;
+
+    // Store translations in cache
+    if (selectedGroupId) {
+      setLoadedTranslations(prev => ({
+        ...prev,
+        [selectedGroupId]: {
+          ...(prev[selectedGroupId] || {}),
+          [locale]: translations,
+        }
+      }));
+
+      // If this is the current language, update editable values directly
+      if (locale === editor.state.currentLanguage) {
+        const themeData = loadedThemes[selectedGroupId];
+        if (themeData?.translatableContent) {
+          // Build new values object with translations
+          const newValues: Record<string, string> = {};
+          themeData.translatableContent.forEach((item: any) => {
+            const translation = translations.find((t: any) => t.key === item.key);
+            newValues[item.key] = translation?.value || "";
+          });
+
+          // Update all values at once
+          Object.entries(newValues).forEach(([key, value]) => {
+            editor.helpers.setEditableValue(key, value);
+          });
+        }
       }
     }
-  }, [loadedTranslations, selectedGroupId, editor.state.currentLanguage, primaryLocale, loadedThemes, editor.helpers]);
+  }, [translationFetcher.data, selectedGroupId, editor.state.currentLanguage, loadedThemes, editor.helpers]);
 
   // Handle response messages
   useEffect(() => {
