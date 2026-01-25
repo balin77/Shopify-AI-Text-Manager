@@ -6,7 +6,7 @@
 
 export type InfoBoxTone = "success" | "info" | "warning" | "critical";
 
-export type ContentType = 'products' | 'collections' | 'blogs' | 'pages' | 'policies';
+export type ContentType = 'products' | 'collections' | 'blogs' | 'pages' | 'policies' | 'templates';
 
 export type FieldType = 'text' | 'html' | 'slug' | 'textarea' | 'number' | 'image-gallery' | 'options';
 
@@ -78,6 +78,25 @@ export interface ContentEditorConfig {
 
   /** ID prefix for display */
   idPrefix?: string;
+
+  /** Whether this content type uses dynamic fields (e.g., templates) */
+  dynamicFields?: boolean;
+
+  /** Function to generate field definitions dynamically from an item */
+  getFieldDefinitions?: (item: any) => FieldDefinition[];
+
+  /** Custom function to get field value from item (for non-standard data structures) */
+  getFieldValue?: (item: any, fieldKey: string) => string;
+
+  /** Lazy loading configuration */
+  lazyLoading?: {
+    /** Whether lazy loading is enabled */
+    enabled: boolean;
+    /** Function to load item data on demand. Returns the loaded item data. */
+    loadItem?: (itemId: string) => Promise<any>;
+    /** Key to extract item ID for loading (e.g., "groupId" for templates) */
+    itemIdKey?: string;
+  };
 }
 
 export interface ContentItem {
@@ -180,4 +199,7 @@ export interface UseContentEditorReturn {
     getEditableValue: (fieldKey: string) => string;
     setEditableValue: (fieldKey: string, value: string) => void;
   };
+
+  /** Effective field definitions (dynamic for templates, static for other content types) */
+  effectiveFieldDefinitions: FieldDefinition[];
 }

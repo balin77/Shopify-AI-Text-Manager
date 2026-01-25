@@ -62,6 +62,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     [items, selectedItemId]
   );
 
+  // Compute effective field definitions (supports dynamic fields for templates)
+  const effectiveFieldDefinitions = useMemo(() => {
+    if (config.dynamicFields && config.getFieldDefinitions && selectedItem) {
+      return config.getFieldDefinitions(selectedItem);
+    }
+    return config.fieldDefinitions;
+  }, [config.dynamicFields, config.getFieldDefinitions, config.fieldDefinitions, selectedItem]);
+
   // Navigation guard
   const {
     pendingNavigation,
@@ -158,12 +166,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
     if (currentLanguage === primaryLocale) {
       // Load primary locale values
-      config.fieldDefinitions.forEach((field) => {
-        newValues[field.key] = getItemFieldValue(item, field.key, primaryLocale);
+      effectiveFieldDefinitions.forEach((field) => {
+        newValues[field.key] = getItemFieldValue(item, field.key, primaryLocale, config);
       });
     } else {
       // Load translated values
-      config.fieldDefinitions.forEach((field) => {
+      effectiveFieldDefinitions.forEach((field) => {
         // Check if this translation key was deleted - if so, show empty field
         if (deletedTranslationKeysRef.current.has(field.translationKey)) {
           console.log('[DATA-LOAD] Skipping deleted translation key:', field.translationKey);
@@ -184,7 +192,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
     setEditableValues(newValues);
     // IMPORTANT: Only depend on selectedItemId, not selectedItem, to prevent re-runs on reference changes
-  }, [selectedItemId, currentLanguage, config.fieldDefinitions, primaryLocale]);
+  }, [selectedItemId, currentLanguage, effectiveFieldDefinitions, primaryLocale, config]);
 
   // Mark loading as complete after editableValues have been updated
   // This is in a separate useEffect to ensure the state update has completed
@@ -231,9 +239,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     if (!item) return [];
 
     const changedFields: string[] = [];
-    config.fieldDefinitions.forEach((field) => {
+    effectiveFieldDefinitions.forEach((field) => {
       const currentValue = valuesToCheck[field.key] || "";
-      const originalValue = getItemFieldValue(item, field.key, primaryLocale);
+      const originalValue = getItemFieldValue(item, field.key, primaryLocale, config);
 
       if (currentValue !== originalValue) {
         changedFields.push(field.key);
@@ -241,7 +249,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     });
 
     return changedFields;
-  }, [config.fieldDefinitions, primaryLocale]);
+  }, [effectiveFieldDefinitions, primaryLocale, config]);
 
   // Helper function to get which alt-text indices have changed compared to the original item
   const getChangedAltTextIndices = useCallback((): number[] => {
@@ -273,7 +281,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     };
 
     // Add all field values from the provided values
-    config.fieldDefinitions.forEach((field) => {
+    effectiveFieldDefinitions.forEach((field) => {
       formDataObj[field.key] = valuesToSave[field.key] || "";
     });
 
@@ -293,7 +301,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         // Track deleted translation keys for immediate UI update
         // This ensures that even if revalidation brings back old data, we show empty fields
         changedFields.forEach((fieldKey) => {
-          const field = config.fieldDefinitions.find(f => f.key === fieldKey);
+          const field = effectiveFieldDefinitions.find(f => f.key === fieldKey);
           if (field?.translationKey) {
             deletedTranslationKeysRef.current.add(field.translationKey);
           }
@@ -312,7 +320,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     savedLocaleRef.current = locale; // Track which locale we're saving
     safeSubmit(formDataObj, { method: "POST" });
     clearPendingNavigation();
-  }, [selectedItemId, primaryLocale, config.fieldDefinitions, imageAltTexts, clearPendingNavigation, getChangedFields, getChangedAltTextIndices, safeSubmit]);
+  }, [selectedItemId, primaryLocale, effectiveFieldDefinitions, imageAltTexts, clearPendingNavigation, getChangedFields, getChangedAltTextIndices, safeSubmit]);
 
   // ============================================================================
   // FETCHER RESPONSE HANDLERS (based on products implementation)
@@ -377,7 +385,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       processedTranslateFieldRef.current = responseKey;
 
       // Clear deleted key for this field since we now have a new translation
-      const field = config.fieldDefinitions.find(f => f.key === fieldType);
+      const field = effectiveFieldDefinitions.find(f => f.key === fieldType);
       if (field?.translationKey && deletedTranslationKeysRef.current.has(field.translationKey)) {
         deletedTranslationKeysRef.current.delete(field.translationKey);
       }
@@ -416,7 +424,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           locale: targetLocale,
           primaryLocale,
         };
-        config.fieldDefinitions.forEach((field) => {
+        effectiveFieldDefinitions.forEach((field) => {
           formDataObj[field.key] = newValues[field.key] || "";
         });
 
@@ -428,7 +436,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // Mark as loading to reset change detection after the save completes
       setIsLoadingData(true);
     }
-  }, [fetcher.data, selectedItemId, primaryLocale, config.fieldDefinitions, safeSubmit]);
+  }, [fetcher.data, selectedItemId, primaryLocale, effectiveFieldDefinitions, safeSubmit]);
 
   // Handle single alt-text generation (show as suggestion)
   useEffect(() => {
@@ -526,7 +534,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     };
 
     // Add all field values
-    config.fieldDefinitions.forEach((field) => {
+    effectiveFieldDefinitions.forEach((field) => {
       formDataObj[field.key] = editableValues[field.key] || "";
     });
 
@@ -535,7 +543,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
     savedLocaleRef.current = currentLanguage;
     safeSubmit(formDataObj, { method: "POST" });
-  }, [imageAltTexts, selectedItemId, currentLanguage, primaryLocale, config.fieldDefinitions, editableValues, safeSubmit]);
+  }, [imageAltTexts, selectedItemId, currentLanguage, primaryLocale, effectiveFieldDefinitions, editableValues, safeSubmit]);
 
   // Handle "translateFieldToAllLocales" response (from Accept & Translate)
   useEffect(() => {
@@ -556,7 +564,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       processedResponseRef.current = responseKey;
 
       // translations is Record<string, string> where key is locale and value is translated text
-      const field = config.fieldDefinitions.find(f => f.key === fieldType);
+      const field = effectiveFieldDefinitions.find(f => f.key === fieldType);
       if (!field) return;
 
       const shopifyKey = field.translationKey;
@@ -611,7 +619,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         setIsLoadingData(true);
       }
     }
-  }, [fetcher.data, config.fieldDefinitions, showInfoBox, t, currentLanguage]); // Include currentLanguage to access current value
+  }, [fetcher.data, effectiveFieldDefinitions, showInfoBox, t, currentLanguage]); // Include currentLanguage to access current value
 
   // Handle "translateAll" response (translates to ALL enabled locales)
   useEffect(() => {
@@ -635,7 +643,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           const newTranslations: any[] = [];
 
           // Map fields to translations
-          config.fieldDefinitions.forEach((fieldDef) => {
+          effectiveFieldDefinitions.forEach((fieldDef) => {
             const value = (fields as any)[fieldDef.key];
             if (value) {
               newTranslations.push({
@@ -655,7 +663,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           // If we're currently viewing this locale, update the editable fields
           if (currentLanguage === locale) {
             const updatedValues = { ...editableValues };
-            config.fieldDefinitions.forEach((fieldDef) => {
+            effectiveFieldDefinitions.forEach((fieldDef) => {
               const value = (fields as any)[fieldDef.key];
               if (value) {
                 updatedValues[fieldDef.key] = value;
@@ -666,7 +674,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         }
       }
     }
-  }, [fetcher.data, currentLanguage, config.fieldDefinitions]); // Use selectedItemRef instead of selectedItem
+  }, [fetcher.data, currentLanguage, effectiveFieldDefinitions]); // Use selectedItemRef instead of selectedItem
 
   // Handle "translateAllForLocale" response (translates to ONE specific locale)
   useEffect(() => {
@@ -688,7 +696,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         const newTranslations: any[] = [];
 
         // Map fields to translations for the specific locale
-        config.fieldDefinitions.forEach((fieldDef) => {
+        effectiveFieldDefinitions.forEach((fieldDef) => {
           const value = translations[fieldDef.key];
           if (value) {
             newTranslations.push({
@@ -708,7 +716,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         // If we're currently viewing this locale, update the editable fields
         if (currentLanguage === targetLocale) {
           const updatedValues = { ...editableValues };
-          config.fieldDefinitions.forEach((fieldDef) => {
+          effectiveFieldDefinitions.forEach((fieldDef) => {
             const value = translations[fieldDef.key];
             if (value) {
               updatedValues[fieldDef.key] = value;
@@ -724,7 +732,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         );
       }
     }
-  }, [fetcher.data, currentLanguage, config.fieldDefinitions, showInfoBox, t]); // Use selectedItemRef instead of selectedItem
+  }, [fetcher.data, currentLanguage, effectiveFieldDefinitions, showInfoBox, t]); // Use selectedItemRef instead of selectedItem
 
   // Update item object after saving (both primary locale and translations)
   // IMPORTANT: We track which fetcher.data we've processed to prevent re-running on language change
@@ -757,7 +765,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         // This was a successful update action for primary locale
         // Update the item object directly with new values
         console.log('[SAVE-RESPONSE] Updating primary locale item values');
-        config.fieldDefinitions.forEach((fieldDef) => {
+        effectiveFieldDefinitions.forEach((fieldDef) => {
           const value = editableValues[fieldDef.key];
 
           // Update based on field mapping
@@ -797,7 +805,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         );
 
         // Add new translations for the saved locale
-        config.fieldDefinitions.forEach((fieldDef) => {
+        effectiveFieldDefinitions.forEach((fieldDef) => {
           const value = editableValues[fieldDef.key];
           if (value) {
             existingTranslations.push({
@@ -846,7 +854,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // This ensures hasChanges becomes false after we've updated selectedItem
       setIsLoadingData(true);
     }
-  }, [fetcher.data, primaryLocale, editableValues, config.fieldDefinitions]); // Removed selectedItem - use ref instead
+  }, [fetcher.data, primaryLocale, editableValues, effectiveFieldDefinitions]); // Removed selectedItem - use ref instead
 
   // Show global InfoBox for success/error messages and revalidate after save
   useEffect(() => {
@@ -926,9 +934,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
     // If we're saving in the primary locale, clear all translations for changed fields
     if (currentLanguage === primaryLocale && selectedItem) {
-      config.fieldDefinitions.forEach((field) => {
+      effectiveFieldDefinitions.forEach((field) => {
         const currentValue = editableValues[field.key] || "";
-        const originalValue = getItemFieldValue(selectedItem, field.key, primaryLocale);
+        const originalValue = getItemFieldValue(selectedItem, field.key, primaryLocale, config);
 
         // Only clear translations if the value actually changed
         if (currentValue !== originalValue && field.translationKey) {
@@ -958,7 +966,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     };
 
     // Add all field values
-    config.fieldDefinitions.forEach((field) => {
+    effectiveFieldDefinitions.forEach((field) => {
       formDataObj[field.key] = editableValues[field.key] || "";
     });
 
@@ -999,12 +1007,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
     if (currentLanguage === primaryLocale) {
       // Reset to primary locale values
-      config.fieldDefinitions.forEach((field) => {
-        newValues[field.key] = getItemFieldValue(selectedItem, field.key, primaryLocale);
+      effectiveFieldDefinitions.forEach((field) => {
+        newValues[field.key] = getItemFieldValue(selectedItem, field.key, primaryLocale, config);
       });
     } else {
       // Reset to translated values
-      config.fieldDefinitions.forEach((field) => {
+      effectiveFieldDefinitions.forEach((field) => {
         const translatedValue = getTranslatedValue(
           selectedItem,
           field.translationKey,
@@ -1076,10 +1084,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const handleTranslateField = (fieldKey: string) => {
     if (!selectedItemId || !selectedItem) return;
 
-    const field = config.fieldDefinitions.find((f) => f.key === fieldKey);
+    const field = effectiveFieldDefinitions.find((f) => f.key === fieldKey);
     if (!field) return;
 
-    const sourceText = getItemFieldValue(selectedItem, fieldKey, primaryLocale);
+    const sourceText = getItemFieldValue(selectedItem, fieldKey, primaryLocale, config);
     if (!sourceText) {
       showInfoBox(
         t.content?.noSourceText || "Kein Text in der Hauptsprache vorhanden zum Übersetzen",
@@ -1115,10 +1123,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       return;
     }
 
-    const field = config.fieldDefinitions.find((f) => f.key === fieldKey);
+    const field = effectiveFieldDefinitions.find((f) => f.key === fieldKey);
     if (!field) return;
 
-    const sourceText = getItemFieldValue(selectedItem, fieldKey, primaryLocale);
+    const sourceText = getItemFieldValue(selectedItem, fieldKey, primaryLocale, config);
     if (!sourceText) {
       showInfoBox(
         t.content?.noSourceText || "Kein Text in der Hauptsprache vorhanden zum Übersetzen",
@@ -1128,7 +1136,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       return;
     }
 
-    const contextTitle = getItemFieldValue(selectedItem, 'title', primaryLocale) || selectedItem.id || "";
+    const contextTitle = getItemFieldValue(selectedItem, 'title', primaryLocale, config) || selectedItem.id || "";
 
     safeSubmit(
       {
@@ -1164,8 +1172,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     };
 
     // Add all field values from primary locale
-    config.fieldDefinitions.forEach((field) => {
-      const value = getItemFieldValue(selectedItem, field.key, primaryLocale);
+    effectiveFieldDefinitions.forEach((field) => {
+      const value = getItemFieldValue(selectedItem, field.key, primaryLocale, config);
       if (value) {
         formDataObj[field.key] = value;
       }
@@ -1244,7 +1252,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     }
 
     // Get context title for translation
-    const contextTitle = getItemFieldValue(selectedItem!, 'title', primaryLocale) || selectedItem!.id || "";
+    const contextTitle = getItemFieldValue(selectedItem!, 'title', primaryLocale, config) || selectedItem!.id || "";
 
     // Step 1: Set up pending translation (will be triggered AFTER save completes)
     pendingTranslationAfterSaveRef.current = {
@@ -1335,7 +1343,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
     // Clear all field values except title (title should never be empty in primary locale)
     const clearedValues: Record<string, string> = {};
-    config.fieldDefinitions.forEach((field) => {
+    effectiveFieldDefinitions.forEach((field) => {
       if (field.key === "title") {
         // Keep the current title value
         clearedValues[field.key] = editableValues[field.key] || "";
@@ -1364,7 +1372,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
     // Clear all field values for the current foreign language
     const clearedValues: Record<string, string> = {};
-    config.fieldDefinitions.forEach((field) => {
+    effectiveFieldDefinitions.forEach((field) => {
       clearedValues[field.key] = "";
     });
     setEditableValues(clearedValues);
@@ -1383,8 +1391,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     };
 
     // Add all field values from primary locale
-    config.fieldDefinitions.forEach((field) => {
-      const value = getItemFieldValue(selectedItem, field.key, primaryLocale);
+    effectiveFieldDefinitions.forEach((field) => {
+      const value = getItemFieldValue(selectedItem, field.key, primaryLocale, config);
       if (value) {
         formDataObj[field.key] = value;
       }
@@ -1408,7 +1416,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     if (!selectedItem || !selectedItem.images || !selectedItem.images[imageIndex]) return;
 
     const image = selectedItem.images[imageIndex];
-    const productTitle = getItemFieldValue(selectedItem, 'title', primaryLocale);
+    const productTitle = getItemFieldValue(selectedItem, 'title', primaryLocale, config);
     const mainLanguage = shopLocales.find((l: any) => l.locale === primaryLocale)?.name || primaryLocale;
 
     safeSubmit({
@@ -1424,7 +1432,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const handleGenerateAllAltTexts = () => {
     if (!selectedItem || !selectedItem.images || selectedItem.images.length === 0) return;
 
-    const productTitle = getItemFieldValue(selectedItem, 'title', primaryLocale);
+    const productTitle = getItemFieldValue(selectedItem, 'title', primaryLocale, config);
     const mainLanguage = shopLocales.find((l: any) => l.locale === primaryLocale)?.name || primaryLocale;
     const imagesData = selectedItem.images.map((img: any) => ({ url: img.url }));
 
@@ -1530,7 +1538,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     };
 
     // Add all field values
-    config.fieldDefinitions.forEach((field) => {
+    effectiveFieldDefinitions.forEach((field) => {
       formDataObj[field.key] = editableValues[field.key] || "";
     });
 
@@ -1581,7 +1589,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         locale: primaryLocale,
         primaryLocale,
       };
-      config.fieldDefinitions.forEach((field) => {
+      effectiveFieldDefinitions.forEach((field) => {
         formDataObj[field.key] = editableValues[field.key] || "";
       });
       formDataObj.imageAltTexts = JSON.stringify(newAltTexts);
@@ -1603,7 +1611,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       locale: primaryLocale,
       primaryLocale,
     };
-    config.fieldDefinitions.forEach((field) => {
+    effectiveFieldDefinitions.forEach((field) => {
       formDataObj[field.key] = editableValues[field.key] || "";
     });
     formDataObj.imageAltTexts = JSON.stringify(newAltTexts);
@@ -1667,7 +1675,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
   const getFieldBackgroundColor = (fieldKey: string): string => {
     const hasTranslation = selectedItem?.translations?.some(
-      (t: any) => t.key === config.fieldDefinitions.find(f => f.key === fieldKey)?.translationKey && t.locale === currentLanguage
+      (t: any) => t.key === effectiveFieldDefinitions.find(f => f.key === fieldKey)?.translationKey && t.locale === currentLanguage
     );
 
     if (currentLanguage === primaryLocale) {
@@ -1679,7 +1687,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
   const isFieldTranslated = (fieldKey: string): boolean => {
     if (!selectedItem) return false;
-    const field = config.fieldDefinitions.find((f) => f.key === fieldKey);
+    const field = effectiveFieldDefinitions.find((f) => f.key === fieldKey);
     if (!field) return false;
 
     return selectedItem.translations?.some(
@@ -1762,6 +1770,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       getEditableValue,
       setEditableValue,
     },
+    // Dynamic field definitions (for templates and other dynamic content types)
+    effectiveFieldDefinitions,
   };
 }
 
@@ -1771,9 +1781,21 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
 /**
  * Get field value from item based on field key and primary locale
+ * Supports both standard content types and templates with dynamic fields
  */
-function getItemFieldValue(item: any, fieldKey: string, primaryLocale: string): string {
-  // Common field mappings
+function getItemFieldValue(item: any, fieldKey: string, primaryLocale: string, config?: any): string {
+  // Templates: Use custom getter if available or check translatableContent
+  if (config?.getFieldValue) {
+    return config.getFieldValue(item, fieldKey);
+  }
+
+  // Templates: Check translatableContent array
+  if (item?.translatableContent && Array.isArray(item.translatableContent)) {
+    const content = item.translatableContent.find((c: any) => c.key === fieldKey);
+    return content?.value || "";
+  }
+
+  // Standard content types: Common field mappings
   const fieldMappings: Record<string, string> = {
     title: item.title || "",
     description: item.descriptionHtml || item.body || "",

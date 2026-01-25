@@ -1,33 +1,29 @@
 /**
  * Theme Templates Management - View and manage theme translatable content
  *
- * Displays theme content grouped by resource type with full editing capabilities
+ * Uses the UnifiedContentEditor system for code reuse and consistency.
+ * Templates have dynamic fields loaded from translatableContent.
  */
 
-import { useState, useEffect, useRef } from "react";
-import { json, type LoaderFunctionArgs } from "@remix-run/node";
+import { useState, useEffect, useMemo, useRef } from "react";
+import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher } from "@remix-run/react";
-import {
-  Page,
-  Card,
-  Text,
-  BlockStack,
-  ResourceList,
-  ResourceItem,
-  Button,
-  Banner,
-  InlineStack,
-} from "@shopify/polaris";
+import { Page } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
 import { ContentTypeNavigation } from "../components/ContentTypeNavigation";
-import { ThemeContentViewer } from "../components/ThemeContentViewer";
-import { SaveDiscardButtons } from "../components/SaveDiscardButtons";
-import { LocaleNavigationButtons } from "../components/LocaleNavigationButtons";
+import { UnifiedContentEditor } from "../components/UnifiedContentEditor";
+import { useUnifiedContentEditor } from "../hooks/useUnifiedContentEditor";
+import { TEMPLATES_CONFIG } from "../config/content-fields.config";
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
-import { useNavigationHeight } from "../contexts/NavigationHeightContext";
-import { CONTENT_MAX_HEIGHT } from "../constants/layout";
+import { AIService } from "../../src/services/ai.service";
+import { TranslationService } from "../../src/services/translation.service";
+import { decryptApiKey } from "../utils/encryption.server";
+
+// ============================================================================
+// LOADER - Load navigation metadata (groups list)
+// ============================================================================
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
@@ -54,7 +50,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const { db } = await import("../db.server");
 
     // OPTIMIZED: Use groupBy to get unique groups with counts in a single efficient query
-    // This uses Prisma's aggregation which is executed at the database level
     const groupsWithCounts = await db.themeContent.groupBy({
       by: ['groupId', 'groupName', 'groupIcon'],
       where: { shop: session.shop },
@@ -68,13 +63,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       .map(group => ({
         id: `group_${group.groupId}`,
         title: group.groupName,
-        name: group.groupName,
+        groupName: group.groupName,
         icon: group.groupIcon,
         groupId: group.groupId,
         role: 'THEME_GROUP',
-        contentCount: group._count.groupId
+        contentCount: group._count.groupId,
+        // Required for UnifiedContentEditor compatibility
+        translatableContent: [], // Will be loaded on demand
+        translations: [],
       }))
-      .sort((a, b) => a.title.localeCompare(b.title)); // Alphabetical sort
+      .sort((a, b) => a.title.localeCompare(b.title));
 
     return json({
       themes,
@@ -95,201 +93,470 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   }
 };
 
+// ============================================================================
+// ACTION - Handle content updates
+// ============================================================================
+
+export const action = async ({ request }: ActionFunctionArgs) => {
+  const { admin, session } = await authenticate.admin(request);
+  const formData = await request.formData();
+  const actionType = formData.get("action") as string;
+  const itemId = formData.get("itemId") as string;
+
+  // Extract groupId from itemId (format: group_xxx)
+  const groupId = itemId?.replace("group_", "");
+
+  if (!groupId) {
+    return json({ success: false, error: "groupId is required" }, { status: 400 });
+  }
+
+  const { db } = await import("../db.server");
+
+  // Load group data
+  const themeGroups = await db.themeContent.findMany({
+    where: {
+      shop: session.shop,
+      groupId: groupId
+    }
+  });
+
+  if (themeGroups.length === 0) {
+    return json({ success: false, error: "Group not found" }, { status: 404 });
+  }
+
+  const firstGroup = themeGroups[0];
+  const resourceId = firstGroup.resourceId;
+
+  try {
+    switch (actionType) {
+      case "loadTranslations": {
+        const locale = formData.get("locale") as string;
+
+        const translations = await db.themeTranslation.findMany({
+          where: {
+            shop: session.shop,
+            groupId: groupId,
+            locale: locale
+          }
+        });
+
+        return json({
+          success: true,
+          translations,
+          locale
+        });
+      }
+
+      case "generateAIText": {
+        const fieldType = formData.get("fieldType") as string;
+        const currentValue = formData.get("currentValue") as string;
+        const mainLanguage = formData.get("mainLanguage") as string;
+
+        const settings = await db.aISettings.findUnique({
+          where: { shop: session.shop }
+        });
+
+        const aiService = new AIService(
+          settings?.preferredProvider as any || 'huggingface',
+          {
+            huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
+            geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
+            claudeApiKey: decryptApiKey(settings?.claudeApiKey) || undefined,
+            openaiApiKey: decryptApiKey(settings?.openaiApiKey) || undefined,
+            grokApiKey: decryptApiKey(settings?.grokApiKey) || undefined,
+            deepseekApiKey: decryptApiKey(settings?.deepseekApiKey) || undefined,
+          }
+        );
+
+        const prompt = `Improve or generate content for this field: ${fieldType}
+Current value: ${currentValue}
+Context: ${firstGroup.groupName}
+Language: ${mainLanguage}
+
+Please provide improved content that is clear and concise.`;
+
+        const generatedContent = await aiService['askAI'](prompt);
+
+        return json({
+          success: true,
+          generatedContent,
+          fieldType
+        });
+      }
+
+      case "translateField": {
+        const fieldType = formData.get("fieldType") as string;
+        const sourceText = formData.get("sourceText") as string;
+        const targetLocale = formData.get("targetLocale") as string;
+        const primaryLocaleFromForm = formData.get("primaryLocale") as string;
+
+        if (!sourceText) {
+          return json({
+            success: false,
+            error: "No source text available"
+          }, { status: 400 });
+        }
+
+        const settings = await db.aISettings.findUnique({
+          where: { shop: session.shop }
+        });
+
+        const primaryLocale = primaryLocaleFromForm || "de";
+
+        const aiService = new AIService(
+          settings?.preferredProvider as any || 'huggingface',
+          {
+            huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
+            geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
+            claudeApiKey: decryptApiKey(settings?.claudeApiKey) || undefined,
+            openaiApiKey: decryptApiKey(settings?.openaiApiKey) || undefined,
+            grokApiKey: decryptApiKey(settings?.grokApiKey) || undefined,
+            deepseekApiKey: decryptApiKey(settings?.deepseekApiKey) || undefined,
+          }
+        );
+
+        const translatedValue = await aiService.translateContent(
+          sourceText,
+          primaryLocale,
+          targetLocale
+        );
+
+        // Auto-save the translation
+        await db.themeTranslation.upsert({
+          where: {
+            shop_resourceId_groupId_key_locale: {
+              shop: session.shop,
+              resourceId: resourceId,
+              groupId: groupId,
+              key: fieldType,
+              locale: targetLocale
+            }
+          },
+          update: {
+            value: translatedValue,
+            updatedAt: new Date()
+          },
+          create: {
+            shop: session.shop,
+            groupId: groupId,
+            resourceId: resourceId,
+            locale: targetLocale,
+            key: fieldType,
+            value: translatedValue
+          }
+        });
+
+        return json({
+          success: true,
+          translatedValue,
+          fieldType,
+          targetLocale
+        });
+      }
+
+      case "translateAll":
+      case "translateAllForLocale": {
+        const targetLocalesJson = formData.get("targetLocales") as string;
+        const targetLocale = formData.get("targetLocale") as string;
+        const targetLocales = targetLocalesJson ? JSON.parse(targetLocalesJson) : [targetLocale];
+
+        // Get all translatable content
+        const allContent = themeGroups.flatMap((group) => group.translatableContent as any[]);
+
+        // Deduplicate
+        const uniqueContent = new Map<string, any>();
+        for (const item of allContent) {
+          if (!uniqueContent.has(item.key) && item.value) {
+            uniqueContent.set(item.key, item);
+          }
+        }
+
+        const settings = await db.aISettings.findUnique({
+          where: { shop: session.shop }
+        });
+
+        const aiService = new AIService(
+          settings?.preferredProvider as any || 'huggingface',
+          {
+            huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
+            geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
+            claudeApiKey: decryptApiKey(settings?.claudeApiKey) || undefined,
+            openaiApiKey: decryptApiKey(settings?.openaiApiKey) || undefined,
+            grokApiKey: decryptApiKey(settings?.grokApiKey) || undefined,
+            deepseekApiKey: decryptApiKey(settings?.deepseekApiKey) || undefined,
+          }
+        );
+
+        const primaryLocale = formData.get("primaryLocale") as string || "de";
+
+        // Translate to all target locales
+        const translations: Record<string, Record<string, string>> = {};
+
+        for (const locale of targetLocales) {
+          translations[locale] = {};
+
+          for (const [key, item] of uniqueContent.entries()) {
+            try {
+              const translated = await aiService.translateContent(
+                item.value,
+                primaryLocale,
+                locale
+              );
+              translations[locale][key] = translated;
+
+              // Save translation to database
+              await db.themeTranslation.upsert({
+                where: {
+                  shop_resourceId_groupId_key_locale: {
+                    shop: session.shop,
+                    resourceId: resourceId,
+                    groupId: groupId,
+                    key: key,
+                    locale: locale
+                  }
+                },
+                update: {
+                  value: translated,
+                  updatedAt: new Date()
+                },
+                create: {
+                  shop: session.shop,
+                  groupId: groupId,
+                  resourceId: resourceId,
+                  locale: locale,
+                  key: key,
+                  value: translated
+                }
+              });
+            } catch (error) {
+              console.error(`Error translating field ${key}:`, error);
+              translations[locale][key] = item.value;
+            }
+          }
+        }
+
+        if (actionType === "translateAllForLocale") {
+          return json({
+            success: true,
+            translations: translations[targetLocale] || {},
+            targetLocale
+          });
+        }
+
+        return json({
+          success: true,
+          translations
+        });
+      }
+
+      case "updateContent": {
+        const locale = formData.get("locale") as string;
+        const primaryLocale = formData.get("primaryLocale") as string;
+
+        // Collect all field values from form data
+        const updatedFields: Record<string, string> = {};
+
+        // Get all translatable content keys
+        const allContent = themeGroups.flatMap((group) => group.translatableContent as any[]);
+        const uniqueKeys = new Set(allContent.map((item) => item.key));
+
+        for (const key of uniqueKeys) {
+          const value = formData.get(key);
+          if (value !== null) {
+            updatedFields[key] = value as string;
+          }
+        }
+
+        if (Object.keys(updatedFields).length === 0) {
+          return json({ success: true }); // No changes
+        }
+
+        if (locale === primaryLocale) {
+          // Update primary locale: Update translatableContent in ThemeContent
+          for (const group of themeGroups) {
+            const content = group.translatableContent as any[];
+            let hasChanges = false;
+
+            for (const item of content) {
+              if (updatedFields[item.key] !== undefined) {
+                item.value = updatedFields[item.key];
+                hasChanges = true;
+              }
+            }
+
+            if (hasChanges) {
+              await db.themeContent.update({
+                where: {
+                  shop_resourceId_groupId: {
+                    shop: session.shop,
+                    resourceId: group.resourceId,
+                    groupId: groupId
+                  }
+                },
+                data: {
+                  translatableContent: content,
+                  lastSyncedAt: new Date()
+                }
+              });
+            }
+          }
+        } else {
+          // Update translation: Use ThemeTranslation table
+          for (const [key, value] of Object.entries(updatedFields)) {
+            await db.themeTranslation.upsert({
+              where: {
+                shop_resourceId_groupId_key_locale: {
+                  shop: session.shop,
+                  resourceId: resourceId,
+                  groupId: groupId,
+                  key: key,
+                  locale: locale
+                }
+              },
+              update: {
+                value: value,
+                updatedAt: new Date()
+              },
+              create: {
+                shop: session.shop,
+                groupId: groupId,
+                resourceId: resourceId,
+                locale: locale,
+                key: key,
+                value: value
+              }
+            });
+          }
+        }
+
+        return json({ success: true });
+      }
+
+      default:
+        return json({ success: false, error: "Unknown action" }, { status: 400 });
+    }
+  } catch (error: any) {
+    console.error(`[TEMPLATES-ACTION] Error:`, error);
+    return json({ success: false, error: error.message }, { status: 500 });
+  }
+};
+
+// ============================================================================
+// COMPONENT
+// ============================================================================
+
 export default function TemplatesPage() {
-  const { themes, shop, shopLocales, primaryLocale, error } = useLoaderData<typeof loader>();
-  const fetcher = useFetcher();
+  const { themes, shop, shopLocales: loaderShopLocales, primaryLocale, error } = useLoaderData<typeof loader>();
+  const fetcher = useFetcher<typeof action>();
   const { t } = useI18n();
   const { showInfoBox } = useInfoBox();
-  const { getTotalNavHeight } = useNavigationHeight();
-  const saveButtonRef = useRef<HTMLDivElement>(null);
 
-  const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
-  const [currentLanguage, setCurrentLanguage] = useState(primaryLocale);
+  // State for lazy-loaded theme data
   const [loadedThemes, setLoadedThemes] = useState<Record<string, any>>({});
   const [isLoading, setIsLoading] = useState(false);
-  const [enabledLanguages, setEnabledLanguages] = useState<string[]>(
-    shopLocales.map((l: any) => l.locale)
-  );
+  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
 
-  // Editable state
-  const [editableValues, setEditableValues] = useState<Record<string, string>>({});
-  const [originalValues, setOriginalValues] = useState<Record<string, string>>({});
-  const [aiSuggestions, setAiSuggestions] = useState<Record<string, string>>({});
-  const [htmlModes, setHtmlModes] = useState<Record<string, "html" | "rendered">>({});
-  const [loadedTranslations, setLoadedTranslations] = useState<Record<string, any[]>>({});
+  // Get current theme data
+  const currentThemeData = selectedGroupId ? loadedThemes[selectedGroupId] : null;
 
-  // Get current group ID
-  const currentGroupId = selectedItemId ? themes.find((t: any) => t.id === selectedItemId)?.groupId : null;
-  const selectedItem = currentGroupId ? loadedThemes[currentGroupId] : null;
-
-
-  // Check for changes
-  const hasChanges = Object.keys(editableValues).some(
-    key => editableValues[key] !== originalValues[key]
-  );
-
-  // Auto-select and load first item on mount
-  useEffect(() => {
-    if (themes.length > 0 && !selectedItemId) {
-      const firstTheme = themes[0];
-      if (firstTheme) {
-        setSelectedItemId(firstTheme.id);
-        loadThemeData(firstTheme.groupId);
+  // Transform themes to items with loaded content
+  const items = useMemo(() => {
+    return themes.map((theme: any) => {
+      const loadedData = loadedThemes[theme.groupId];
+      if (loadedData) {
+        return {
+          ...theme,
+          translatableContent: loadedData.translatableContent || [],
+          translations: loadedData.translations || [],
+        };
       }
-    }
-  }, [themes]);
+      return theme;
+    });
+  }, [themes, loadedThemes]);
 
-  // Function to load theme data on-demand
+  // Load theme data on demand
   const loadThemeData = async (groupId: string) => {
-    // Check if already loaded
-    if (loadedThemes[groupId]) {
-      return;
-    }
+    if (loadedThemes[groupId]) return;
 
     setIsLoading(true);
     try {
       const response = await fetch(`/api/templates/${groupId}`);
+      if (!response.ok) throw new Error('Failed to load theme data');
 
-      if (!response.ok) {
-        throw new Error('Failed to load theme data');
-      }
       const data = await response.json();
-
       setLoadedThemes(prev => ({
         ...prev,
         [groupId]: data.theme
       }));
     } catch (error) {
       console.error('Error loading theme data:', error);
+      showInfoBox(
+        "Error loading theme content",
+        "critical",
+        t.content?.error || "Error"
+      );
     } finally {
       setIsLoading(false);
     }
   };
 
-  // Load translations when language changes (for non-primary locales)
+  // Auto-load first item
   useEffect(() => {
-    if (!selectedItem || !currentGroupId) {
-      return;
-    }
-
-    if (currentLanguage === primaryLocale) {
-      // Load primary locale values
-      const values: Record<string, string> = {};
-      selectedItem.translatableContent?.forEach((item: any) => {
-        values[item.key] = item.value || "";
-      });
-
-      // Only update if values actually changed (prevent infinite loop)
-      const hasChanged = Object.keys(values).length !== Object.keys(editableValues).length ||
-        Object.keys(values).some(key => values[key] !== editableValues[key]);
-
-      if (hasChanged) {
-        setEditableValues(values);
-        setOriginalValues({ ...values });
+    if (themes.length > 0 && !selectedGroupId) {
+      const firstTheme = themes[0] as any;
+      if (firstTheme) {
+        setSelectedGroupId(firstTheme.groupId);
+        loadThemeData(firstTheme.groupId);
       }
-    } else {
-      // Check if translations are already loaded
-      const translationKey = `${currentGroupId}_${currentLanguage}`;
-      const hasTranslations = loadedTranslations[translationKey];
+    }
+  }, [themes]);
 
-      if (!hasTranslations) {
-        // Only load if not already loading
-        if (fetcher.state === 'idle') {
-          // Load translations
-          const formData = new FormData();
-          formData.append("action", "loadTranslations");
-          formData.append("locale", currentLanguage);
+  // Custom item select handler that loads data
+  const handleItemSelect = (itemId: string) => {
+    const theme = themes.find((t: any) => t.id === itemId);
+    if (theme) {
+      setSelectedGroupId(theme.groupId);
+      loadThemeData(theme.groupId);
+    }
+  };
 
-          fetcher.submit(formData, {
-            method: "POST",
-            action: `/api/templates/${currentGroupId}`
-          });
+  // Create editor with dynamic config
+  const editor = useUnifiedContentEditor({
+    config: TEMPLATES_CONFIG,
+    items,
+    shopLocales: loaderShopLocales,
+    primaryLocale,
+    fetcher,
+    showInfoBox,
+    t,
+  });
+
+  // Override item select handler
+  const originalHandleItemSelect = editor.handlers.handleItemSelect;
+  editor.handlers.handleItemSelect = (itemId: string) => {
+    handleItemSelect(itemId);
+    originalHandleItemSelect(itemId);
+  };
+
+  // Handle response messages
+  useEffect(() => {
+    if (fetcher.data && typeof fetcher.data === 'object') {
+      if ('success' in fetcher.data && fetcher.data.success) {
+        // Don't show message for translation responses (they have their own)
+        if (!('translatedValue' in fetcher.data) && !('generatedContent' in fetcher.data) && !('translations' in fetcher.data)) {
+          showInfoBox(
+            t.content?.changesSaved || "Changes saved successfully!",
+            "success",
+            t.content?.success || "Success"
+          );
         }
-      } else {
-        // Use loaded translations
-        const values: Record<string, string> = {};
-        selectedItem.translatableContent?.forEach((item: any) => {
-          const translation = hasTranslations.find((t: any) => t.key === item.key);
-          values[item.key] = translation?.value || "";
-        });
-
-        // Only update if values actually changed (prevent infinite loop)
-        const hasChanged = Object.keys(values).length !== Object.keys(editableValues).length ||
-          Object.keys(values).some(key => values[key] !== editableValues[key]);
-
-        if (hasChanged) {
-          setEditableValues(values);
-          setOriginalValues({ ...values });
-        }
+      } else if ('error' in fetcher.data) {
+        showInfoBox(
+          (fetcher.data as any).error,
+          "critical",
+          t.content?.error || "Error"
+        );
       }
-    }
-    // IMPORTANT: We include loadedTranslations in dependencies to trigger when translations are loaded
-    // The hasChanged check prevents infinite loops
-  }, [selectedItem, currentLanguage, currentGroupId, primaryLocale, fetcher.state, loadedTranslations]);
-
-  // Handle loaded translations from fetcher
-  useEffect(() => {
-    if (fetcher.data && typeof fetcher.data === 'object' && 'success' in fetcher.data && fetcher.data.success && 'translations' in fetcher.data && 'locale' in fetcher.data) {
-      const { translations, locale } = fetcher.data as any;
-      const translationKey = `${currentGroupId}_${locale}`;
-
-      setLoadedTranslations(prev => ({
-        ...prev,
-        [translationKey]: translations
-      }));
-
-      // Update editable values if this is the current language
-      if (locale === currentLanguage && selectedItem) {
-        const values: Record<string, string> = {};
-        selectedItem.translatableContent?.forEach((item: any) => {
-          const translation = translations.find((t: any) => t.key === item.key);
-          values[item.key] = translation?.value || "";
-        });
-        setEditableValues(values);
-        setOriginalValues({ ...values });
-      }
-    }
-  }, [fetcher.data, currentLanguage, currentGroupId, selectedItem]);
-
-  // Handle AI generation response
-  useEffect(() => {
-    if (fetcher.data && typeof fetcher.data === 'object' && 'success' in fetcher.data && fetcher.data.success && 'generatedContent' in fetcher.data && 'fieldKey' in fetcher.data) {
-      const { generatedContent, fieldKey } = fetcher.data as any;
-      setAiSuggestions(prev => ({
-        ...prev,
-        [fieldKey]: generatedContent
-      }));
-    }
-  }, [fetcher.data]);
-
-  // Handle translated field response
-  useEffect(() => {
-    if (fetcher.data && typeof fetcher.data === 'object' && 'success' in fetcher.data && fetcher.data.success && 'translatedValue' in fetcher.data && 'fieldKey' in fetcher.data) {
-      const { translatedValue, fieldKey } = fetcher.data as any;
-      setEditableValues(prev => ({
-        ...prev,
-        [fieldKey]: translatedValue
-      }));
-    }
-  }, [fetcher.data]);
-
-  // Handle translateAll response
-  useEffect(() => {
-    if (fetcher.data && typeof fetcher.data === 'object' && 'success' in fetcher.data && fetcher.data.success && 'translatedFields' in fetcher.data) {
-      const { translatedFields } = fetcher.data as any;
-      setEditableValues(prev => ({
-        ...prev,
-        ...translatedFields
-      }));
-    }
-  }, [fetcher.data]);
-
-  // Show global InfoBox for success/error messages
-  useEffect(() => {
-    if (fetcher.data && typeof fetcher.data === 'object' && 'success' in fetcher.data && fetcher.data.success && !(fetcher.data as any).generatedContent && !(fetcher.data as any).translatedValue) {
-      showInfoBox(t.content?.changesSaved || "Changes saved successfully!", "success", t.content?.success || "Success");
-    } else if (fetcher.data && typeof fetcher.data === 'object' && 'success' in fetcher.data && !fetcher.data.success && 'error' in fetcher.data) {
-      showInfoBox(fetcher.data.error as string, "critical", t.content?.error || "Error");
     }
   }, [fetcher.data, showInfoBox, t]);
 
@@ -300,337 +567,22 @@ export default function TemplatesPage() {
     }
   }, [error, showInfoBox, t]);
 
-  // Handle item click: load data if not loaded, then select
-  const handleItemClick = (itemId: string, groupId: string) => {
-    if (hasChanges) {
-      if (!confirm(t.content?.unsavedChanges || "You have unsaved changes. Do you want to discard them?")) {
-        return;
-      }
-    }
-
-    // If clicking the same item, force reload by clearing state
-    const isSameItem = selectedItemId === itemId;
-
-    setAiSuggestions({});
-
-    if (isSameItem) {
-      // Force reload: directly reload the values from the cached theme data
-      const themeData = loadedThemes[groupId];
-      if (themeData && themeData.translatableContent) {
-        // Reload values based on current language
-        if (currentLanguage === primaryLocale) {
-          // Reload primary locale values
-          const values: Record<string, string> = {};
-          themeData.translatableContent.forEach((item: any) => {
-            values[item.key] = item.value || "";
-          });
-          setEditableValues(values);
-          setOriginalValues({ ...values });
-        } else {
-          // Reload translation values
-          const translationKey = `${groupId}_${currentLanguage}`;
-          const translations = loadedTranslations[translationKey];
-
-          if (translations) {
-            const values: Record<string, string> = {};
-            themeData.translatableContent.forEach((item: any) => {
-              const translation = translations.find((t: any) => t.key === item.key);
-              values[item.key] = translation?.value || "";
-            });
-            setEditableValues(values);
-            setOriginalValues({ ...values });
-          }
-        }
-      }
-    } else {
-      // Different item: clear state and load new data
-      setSelectedItemId(itemId);
-      setEditableValues({});
-      setOriginalValues({});
-      loadThemeData(groupId);
-    }
-  };
-
-  const handleLanguageChange = (locale: string) => {
-    if (hasChanges) {
-      if (!confirm(t.content?.unsavedChanges || "You have unsaved changes. Do you want to discard them?")) {
-        return;
-      }
-    }
-
-    setCurrentLanguage(locale);
-    setAiSuggestions({});
-  };
-
-  const handleToggleLanguage = (locale: string) => {
-    // Don't allow disabling the primary locale
-    if (locale === primaryLocale) return;
-
-    setEnabledLanguages((prev) => {
-      if (prev.includes(locale)) {
-        // Disable this language
-        return prev.filter((l) => l !== locale);
-      } else {
-        // Enable this language
-        return [...prev, locale];
-      }
-    });
-  };
-
-  const handleValueChange = (key: string, value: string) => {
-    setEditableValues(prev => ({
-      ...prev,
-      [key]: value
-    }));
-  };
-
-  const handleGenerateAI = (fieldKey: string) => {
-    if (!currentGroupId) return;
-
-    const formData = new FormData();
-    formData.append("action", "generateAIText");
-    formData.append("fieldKey", fieldKey);
-    formData.append("currentValue", editableValues[fieldKey] || "");
-
-    fetcher.submit(formData, {
-      method: "POST",
-      action: `/api/templates/${currentGroupId}`
-    });
-  };
-
-  const handleTranslate = (fieldKey: string) => {
-    if (!currentGroupId || !selectedItem) return;
-
-    // Get source text from primary locale
-    const sourceItem = selectedItem.translatableContent?.find((item: any) => item.key === fieldKey);
-    const sourceText = sourceItem?.value || "";
-
-    if (!sourceText) {
-      alert(t.content?.noSourceText || "No source text available for translation");
-      return;
-    }
-
-    const formData = new FormData();
-    formData.append("action", "translateField");
-    formData.append("fieldKey", fieldKey);
-    formData.append("sourceText", sourceText);
-    formData.append("targetLocale", currentLanguage);
-    formData.append("primaryLocale", primaryLocale);
-
-    fetcher.submit(formData, {
-      method: "POST",
-      action: `/api/templates/${currentGroupId}`
-    });
-  };
-
-  const handleTranslateAll = () => {
-    if (!currentGroupId) return;
-
-    const formData = new FormData();
-    formData.append("action", "translateAll");
-    formData.append("primaryLocale", primaryLocale);
-    formData.append("targetLocale", currentLanguage);
-
-    fetcher.submit(formData, {
-      method: "POST",
-      action: `/api/templates/${currentGroupId}`
-    });
-  };
-
-  const handleAcceptSuggestion = (fieldKey: string) => {
-    const suggestion = aiSuggestions[fieldKey];
-    if (suggestion) {
-      setEditableValues(prev => ({
-        ...prev,
-        [fieldKey]: suggestion
-      }));
-      setAiSuggestions(prev => {
-        const newSuggestions = { ...prev };
-        delete newSuggestions[fieldKey];
-        return newSuggestions;
-      });
-    }
-  };
-
-  const handleRejectSuggestion = (fieldKey: string) => {
-    setAiSuggestions(prev => {
-      const newSuggestions = { ...prev };
-      delete newSuggestions[fieldKey];
-      return newSuggestions;
-    });
-  };
-
-  const handleToggleHtmlMode = (fieldKey: string) => {
-    setHtmlModes(prev => ({
-      ...prev,
-      [fieldKey]: prev[fieldKey] === "html" ? "rendered" : "html"
-    }));
-  };
-
-  const handleSave = () => {
-    if (!currentGroupId || !hasChanges) return;
-
-    // Collect only changed fields
-    const changedFields: Record<string, string> = {};
-    Object.keys(editableValues).forEach(key => {
-      if (editableValues[key] !== originalValues[key]) {
-        changedFields[key] = editableValues[key];
-      }
-    });
-
-    const formData = new FormData();
-    formData.append("action", "updateContent");
-    formData.append("locale", currentLanguage);
-    formData.append("primaryLocale", primaryLocale);
-    formData.append("updatedFields", JSON.stringify(changedFields));
-
-    fetcher.submit(formData, {
-      method: "POST",
-      action: `/api/templates/${currentGroupId}`
-    });
-
-    // Update original values
-    setOriginalValues({ ...editableValues });
-  };
-
-  const handleDiscard = () => {
-    setEditableValues({ ...originalValues });
-    setAiSuggestions({});
-  };
-
   return (
-    <Page fullWidth>
+    <>
       <MainNavigation />
       <ContentTypeNavigation />
-
-      <div style={{ height: `calc(100vh - ${getTotalNavHeight()}px)`, display: "flex", gap: "1rem", padding: "1rem", overflow: "hidden" }}>
-        {/* Left Sidebar - Theme Resources List */}
-        <div style={{ width: "350px", flexShrink: 0 }}>
-          <Card padding="0">
-            <div style={{ padding: "1rem", borderBottom: "1px solid #e1e3e5" }}>
-              <Text as="h2" variant="headingMd">
-                {t.content?.templates || "Theme Content"} ({themes.length})
-              </Text>
-            </div>
-            <div style={{ maxHeight: CONTENT_MAX_HEIGHT, overflowY: "auto" }}>
-              {themes.length > 0 ? (
-                <ResourceList
-                  resourceName={{ singular: "Resource", plural: "Resources" }}
-                  items={themes}
-                  renderItem={(item: any) => {
-                    const { id, title, icon, contentCount, groupId } = item;
-                    const isSelected = selectedItemId === id;
-
-                    return (
-                      <ResourceItem
-                        id={id}
-                        onClick={() => handleItemClick(id, groupId)}
-                      >
-                        <BlockStack gap="100">
-                          <Text as="p" variant="bodyMd" fontWeight={isSelected ? "bold" : "regular"}>
-                            {icon && <span style={{ marginRight: "0.5rem" }}>{icon}</span>}
-                            {title}
-                          </Text>
-                          <Text as="p" variant="bodySm" tone="subdued">
-                            {contentCount} translatable fields
-                          </Text>
-                        </BlockStack>
-                      </ResourceItem>
-                    );
-                  }}
-                />
-              ) : (
-                <div style={{ padding: "2rem", textAlign: "center" }}>
-                  <Text as="p" variant="bodySm" tone="subdued">
-                    {t.content?.noEntries || "No theme resources found"}
-                  </Text>
-                </div>
-              )}
-            </div>
-          </Card>
-        </div>
-
-        {/* Middle: Theme Content Viewer */}
-        <div style={{ flex: 1, overflow: "auto", minWidth: 0 }}>
-          <Card padding="600">
-            {isLoading ? (
-              <div style={{ textAlign: "center", padding: "4rem 2rem" }}>
-                <BlockStack gap="300">
-                  <Text as="p" variant="headingLg">
-                    Loading...
-                  </Text>
-                  <Text as="p" variant="bodySm" tone="subdued">
-                    Loading theme content data
-                  </Text>
-                </BlockStack>
-              </div>
-            ) : selectedItem ? (
-              <BlockStack gap="500">
-                {/* Language Selector & Save Buttons */}
-                <InlineStack align="space-between" blockAlign="center" gap="400">
-                  <div style={{ flex: 1 }}>
-                    <LocaleNavigationButtons
-                      shopLocales={shopLocales}
-                      currentLanguage={currentLanguage}
-                      primaryLocaleSuffix={t.content?.primaryLanguageSuffix || "Primary"}
-                      selectedItem={selectedItem}
-                      primaryLocale={primaryLocale}
-                      contentType="pages"
-                      hasChanges={hasChanges}
-                      onLanguageChange={handleLanguageChange}
-                      enabledLanguages={enabledLanguages}
-                      onToggleLanguage={handleToggleLanguage}
-                    />
-                  </div>
-
-                  {/* Save/Discard Buttons */}
-                  <SaveDiscardButtons
-                    hasChanges={hasChanges}
-                    onSave={handleSave}
-                    onDiscard={handleDiscard}
-                    highlightSaveButton={false}
-                    saveText={t.content?.saveChanges || "Save Changes"}
-                    discardText={t.content?.discardChanges || "Discard"}
-                    action="updateContent"
-                    fetcherState={fetcher.state}
-                    fetcherFormData={fetcher.formData}
-                  />
-                </InlineStack>
-
-                {/* Item ID */}
-                <Text as="p" variant="bodySm" tone="subdued">
-                  {t.content?.idPrefix || "ID:"} {selectedItem.id.split("/").pop()}
-                </Text>
-
-                {/* Theme Content Viewer */}
-                <ThemeContentViewer
-                  themeResource={selectedItem}
-                  currentLanguage={currentLanguage}
-                  shopLocales={shopLocales}
-                  primaryLocale={primaryLocale}
-                  editableValues={editableValues}
-                  onValueChange={handleValueChange}
-                  aiSuggestions={aiSuggestions}
-                  onGenerateAI={handleGenerateAI}
-                  onTranslate={handleTranslate}
-                  onTranslateAll={handleTranslateAll}
-                  onAcceptSuggestion={handleAcceptSuggestion}
-                  onRejectSuggestion={handleRejectSuggestion}
-                  isLoading={fetcher.state === "submitting"}
-                  htmlModes={htmlModes}
-                  onToggleHtmlMode={handleToggleHtmlMode}
-                />
-              </BlockStack>
-            ) : (
-              <div style={{ textAlign: "center", padding: "4rem 2rem" }}>
-                <Text as="p" variant="headingLg" tone="subdued">
-                  {t.content?.selectFromList || "Select a theme resource from the list"}
-                </Text>
-              </div>
-            )}
-          </Card>
-        </div>
-      </div>
-    </Page>
+      <UnifiedContentEditor
+        config={TEMPLATES_CONFIG}
+        items={items}
+        shopLocales={loaderShopLocales}
+        primaryLocale={primaryLocale}
+        editor={editor}
+        fetcherState={fetcher.state}
+        fetcherFormData={fetcher.formData}
+        t={t}
+        hideItemListImages={true}
+        hideItemListStatusBars={true}
+      />
+    </>
   );
 }

@@ -84,8 +84,11 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     planLimit,
   } = props;
 
-  const { state, handlers, selectedItem, navigationGuard, helpers } = editor;
+  const { state, handlers, selectedItem, navigationGuard, helpers, effectiveFieldDefinitions } = editor;
   const { getMaxProducts } = usePlan();
+
+  // Use effective field definitions (dynamic for templates, static for other content types)
+  const fieldDefinitions = effectiveFieldDefinitions || config.fieldDefinitions;
 
   // Transform items to UnifiedItem format
   const unifiedItems: UnifiedItem[] = items.map((item) => ({
@@ -300,7 +303,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                     </Text>
 
                     {/* Dynamic Fields */}
-                    {config.fieldDefinitions.map((field) => (
+                    {fieldDefinitions.map((field) => (
                       <FieldRenderer
                         key={field.key}
                         field={field}

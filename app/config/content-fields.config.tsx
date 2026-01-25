@@ -5,6 +5,7 @@
  */
 
 import type { ContentEditorConfig } from "../types/content-editor.types";
+import { createTemplateFieldDefinitions, getTemplateFieldValue } from "../utils/templates-field-factory";
 
 // ============================================================================
 // PRODUCTS
@@ -309,6 +310,33 @@ export const POLICIES_CONFIG: ContentEditorConfig = {
       aiInstructionsKey: "policyDescription",
     },
   ],
+};
+
+// ============================================================================
+// TEMPLATES (THEME CONTENT)
+// ============================================================================
+
+export const TEMPLATES_CONFIG: ContentEditorConfig = {
+  contentType: "templates",
+  resourceType: "OnlineStoreTheme",
+  displayName: "Theme Content",
+  displayNameSingular: "Theme Group",
+  showSeoSidebar: false,
+  idPrefix: "Group:",
+  getPrimaryField: (item) => item.title || item.groupName,
+  getSubtitle: (item) => `${item.contentCount || 0} translatable fields`,
+
+  // Templates use dynamic fields - this is just a fallback
+  fieldDefinitions: [],
+
+  // Enable dynamic field generation
+  dynamicFields: true,
+
+  // Generate field definitions from item's translatableContent
+  getFieldDefinitions: (item) => createTemplateFieldDefinitions(item?.translatableContent),
+
+  // Custom value getter for template data structure
+  getFieldValue: (item, fieldKey) => getTemplateFieldValue(item, fieldKey),
 };
 
 // ============================================================================
