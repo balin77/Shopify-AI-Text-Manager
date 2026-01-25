@@ -202,6 +202,7 @@ model ProductImage {
   altText            String? // Primary locale alt-text
   mediaId            String? // Shopify Media ID (gid://shopify/MediaImage/123) for translations
   position           Int?
+  altTextModifiedAt  DateTime? // Timestamp when user last modified alt-text (prevents webhook sync overwrite)
   altTextTranslations ProductImageAltTranslation[]
 
   @@index([productId])

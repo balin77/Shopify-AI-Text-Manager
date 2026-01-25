@@ -185,7 +185,10 @@ async function updateImageAltTexts(
           const altTextToSave = altText === "" ? null : altText;
           await db.productImage.update({
             where: { id: dbImage.id },
-            data: { altText: altTextToSave },
+            data: {
+              altText: altTextToSave,
+              altTextModifiedAt: new Date(), // Prevent webhook sync from overwriting
+            },
           });
         } else {
           const existing = await db.productImageAltTranslation.findUnique({
@@ -344,7 +347,10 @@ async function updateImageAltTexts(
         console.log(`🟢 altText to save: "${altTextToSave}" (original: "${altText}", isEmpty: ${altText === ""})`);
         await db.productImage.update({
           where: { id: dbImage.id },
-          data: { altText: altTextToSave },
+          data: {
+            altText: altTextToSave,
+            altTextModifiedAt: new Date(), // Prevent webhook sync from overwriting
+          },
         });
         // Verify the save worked
         const savedImage = await db.productImage.findUnique({
