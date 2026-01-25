@@ -519,6 +519,7 @@ function FieldRenderer(props: FieldRendererProps & { state?: any; handlers?: any
         altTextSuggestions={state.altTextSuggestions}
         onAcceptSuggestion={handlers.handleAcceptAltTextSuggestion}
         onRejectSuggestion={handlers.handleRejectAltTextSuggestion}
+        onClearAltText={(imageIndex) => handlers.handleAltTextChange(imageIndex, "")}
         isFieldLoading={(index) => {
           // Check if we're loading this specific image's alt-text
           const formData = fetcherFormData;

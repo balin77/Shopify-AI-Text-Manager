@@ -73,6 +73,9 @@ interface ImageGalleryFieldProps {
   /** Callback when AI suggestion is rejected */
   onRejectSuggestion: (imageIndex: number) => void;
 
+  /** Callback to clear alt-text */
+  onClearAltText?: (imageIndex: number) => void;
+
   /** Whether a specific field is loading */
   isFieldLoading?: (imageIndex: number) => boolean;
 
@@ -105,6 +108,7 @@ export function ImageGalleryField({
   altTextSuggestions = {},
   onAcceptSuggestion,
   onRejectSuggestion,
+  onClearAltText,
   isFieldLoading,
   t = {},
 }: ImageGalleryFieldProps) {
@@ -198,7 +202,9 @@ export function ImageGalleryField({
                   position: "absolute",
                   top: "8px",
                   right: "8px",
-                  backgroundColor: !!(altTexts[selectedImageIndex] || images[selectedImageIndex].altText) ? "#008060" : "#d72c0d",
+                  backgroundColor: (altTexts[selectedImageIndex] !== undefined
+                    ? altTexts[selectedImageIndex] !== ""
+                    : !!images[selectedImageIndex]?.altText) ? "#008060" : "#d72c0d",
                   borderRadius: "50%",
                   width: "36px",
                   height: "36px",
@@ -215,7 +221,9 @@ export function ImageGalleryField({
                   fill="none"
                   xmlns="http://www.w3.org/2000/svg"
                 >
-                  {!!(altTexts[selectedImageIndex] || images[selectedImageIndex].altText) ? (
+                  {(altTexts[selectedImageIndex] !== undefined
+                    ? altTexts[selectedImageIndex] !== ""
+                    : !!images[selectedImageIndex]?.altText) ? (
                     <path
                       d="M16 6L8 14L4 10"
                       stroke="white"
@@ -263,7 +271,10 @@ export function ImageGalleryField({
               }}
             >
               {images.map((image, index) => {
-                const hasAltText = !!(altTexts[index] || image.altText);
+                // Check if user explicitly cleared the alt-text (empty string) vs never edited (undefined)
+                const hasAltText = altTexts[index] !== undefined
+                  ? altTexts[index] !== ""
+                  : !!image.altText;
                 const isSelected = index === selectedImageIndex;
 
                 return (
@@ -393,7 +404,7 @@ export function ImageGalleryField({
       {!isFreePlan && images && images.length > 0 && (
         <AIEditableField
           label={`${t.altTextForImage || "Alt-text for image"} ${selectedImageIndex + 1}`}
-          value={altTexts[selectedImageIndex] || images[selectedImageIndex]?.altText || ""}
+          value={altTexts[selectedImageIndex] !== undefined ? altTexts[selectedImageIndex] : (images[selectedImageIndex]?.altText || "")}
           onChange={(value) => onAltTextChange(selectedImageIndex, value)}
           fieldType={`altText_${selectedImageIndex}`}
           fieldKey={`altText_${selectedImageIndex}`}
@@ -407,6 +418,7 @@ export function ImageGalleryField({
           onTranslateToAllLocales={onTranslateAltTextToAllLocales ? () => onTranslateAltTextToAllLocales(selectedImageIndex) : undefined}
           onAcceptSuggestion={() => onAcceptSuggestion(selectedImageIndex)}
           onRejectSuggestion={() => onRejectSuggestion(selectedImageIndex)}
+          onClear={onClearAltText ? () => onClearAltText(selectedImageIndex) : undefined}
         />
       )}
     </BlockStack>
