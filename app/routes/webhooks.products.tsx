@@ -141,6 +141,7 @@ async function processWebhookAsync(
     const syncService = new ProductSyncService(admin, shop);
 
     if (topic === "products/create" || topic === "products/update") {
+      console.log(`🟣🟣🟣 [WEBHOOK] ${topic} received for ${productId} 🟣🟣🟣`);
       logger.info('Syncing product', {
         context: 'Webhook',
         productId,
