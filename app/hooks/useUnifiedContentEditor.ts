@@ -51,6 +51,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // Track pending auto-save for alt-texts (set by bulk generation and translation effects)
   const pendingAltTextAutoSaveRef = useRef<Record<number, string> | null>(null);
 
+  // Retry mechanism for empty fields
+  const retryCountRef = useRef(0);
+  const MAX_RETRIES = 3;
+  const RETRY_DELAY_MS = 300;
+
   // Track deleted translation keys - these should not be shown even if revalidation brings them back temporarily
   const deletedTranslationKeysRef = useRef<Set<string>>(new Set());
 
@@ -153,12 +158,18 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // Reset accept-and-translate flag when changing items or languages
     setIsAcceptAndTranslateFlow(false);
 
+    // Reset retry count when changing languages (to allow fresh retries)
+    if (languageChanged) {
+      retryCountRef.current = 0;
+    }
+
     // Clear deleted translation keys and processed response refs when switching to a different item
     if (itemIdChanged) {
       deletedTranslationKeysRef.current.clear();
       processedSaveResponseRef.current = null;
       processedResponseRef.current = null;
       processedTranslateFieldRef.current = null;
+      retryCountRef.current = 0; // Reset retry count for new item
       console.log('[DATA-LOAD] Cleared refs for new item');
     }
 
@@ -206,6 +217,83 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     }
     // Use selectedItemId instead of selectedItem to prevent re-runs on reference changes
   }, [editableValues, selectedItemId, isLoadingData]);
+
+  // Retry mechanism: If all fields are empty but item has data, retry loading
+  useEffect(() => {
+    const item = selectedItemRef.current;
+    if (!item || !selectedItemId || isLoadingData) return;
+
+    // Check if we have field definitions
+    if (effectiveFieldDefinitions.length === 0) return;
+
+    // Check if ALL editable values are empty
+    const allValuesEmpty = Object.values(editableValues).every(v => !v || v === "");
+    if (!allValuesEmpty) {
+      // Values loaded successfully, reset retry count
+      retryCountRef.current = 0;
+      return;
+    }
+
+    // Check if item should have data
+    let itemHasData = false;
+
+    if (currentLanguage === primaryLocale) {
+      // Primary locale: check if item has any data to load
+      itemHasData = effectiveFieldDefinitions.some(field => {
+        const value = getItemFieldValue(item, field.key, primaryLocale, config);
+        return value && value.length > 0;
+      });
+    } else {
+      // Foreign locale: check if item has any translations for this locale
+      itemHasData = effectiveFieldDefinitions.some(field => {
+        const translatedValue = getTranslatedValue(
+          item,
+          field.translationKey,
+          currentLanguage,
+          "",
+          primaryLocale
+        );
+        return translatedValue && translatedValue.length > 0;
+      });
+    }
+
+    // If item has data but values are empty, and we haven't exceeded retries, try again
+    if (itemHasData && retryCountRef.current < MAX_RETRIES) {
+      retryCountRef.current += 1;
+      console.log(`[RETRY] Fields empty but item has data. Retry ${retryCountRef.current}/${MAX_RETRIES} in ${RETRY_DELAY_MS}ms`);
+
+      const timer = setTimeout(() => {
+        // Trigger a re-load by briefly changing refs to force the main load effect to run
+        const newValues: Record<string, string> = {};
+
+        if (currentLanguage === primaryLocale) {
+          effectiveFieldDefinitions.forEach((field) => {
+            newValues[field.key] = getItemFieldValue(item, field.key, primaryLocale, config);
+          });
+        } else {
+          effectiveFieldDefinitions.forEach((field) => {
+            if (deletedTranslationKeysRef.current.has(field.translationKey)) {
+              newValues[field.key] = "";
+              return;
+            }
+            const translatedValue = getTranslatedValue(
+              item,
+              field.translationKey,
+              currentLanguage,
+              "",
+              primaryLocale
+            );
+            newValues[field.key] = translatedValue;
+          });
+        }
+
+        console.log(`[RETRY] Reloaded values:`, Object.keys(newValues).length, 'fields');
+        setEditableValues(newValues);
+      }, RETRY_DELAY_MS);
+
+      return () => clearTimeout(timer);
+    }
+  }, [editableValues, selectedItemId, isLoadingData, currentLanguage, primaryLocale, effectiveFieldDefinitions, config]);
 
   // ============================================================================
   // AUTO-SAVE FUNCTION (defined early for use in response handlers)
