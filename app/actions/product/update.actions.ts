@@ -116,12 +116,14 @@ async function updateImageAltTexts(
   productId: string,
   params: UpdateProductParams
 ): Promise<void> {
-  console.log('🔵🔵🔵 [ALT-TEXT-UPDATE] Starting updateImageAltTexts');
-  console.log('🔵 productId:', productId);
-  console.log('🔵 locale:', params.locale);
-  console.log('🔵 primaryLocale:', params.primaryLocale);
-  console.log('🔵 isPrimary:', params.locale === params.primaryLocale);
-  console.log('🔵 imageAltTexts:', JSON.stringify(params.imageAltTexts, null, 2));
+  console.log('🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡');
+  console.log('🟡 [ALT-TEXT-UPDATE] Starting updateImageAltTexts');
+  console.log('🟡 productId:', productId);
+  console.log('🟡 locale:', params.locale);
+  console.log('🟡 primaryLocale:', params.primaryLocale);
+  console.log('🟡 isPrimary:', params.locale === params.primaryLocale);
+  console.log('🟡 imageAltTexts received:', JSON.stringify(params.imageAltTexts, null, 2));
+  console.log('🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡');
 
   loggers.product("info", "Updating image alt-texts", {
     productId,
@@ -249,7 +251,10 @@ async function updateImageAltTexts(
 
     if (params.locale === params.primaryLocale) {
       // PRIMARY LOCALE: Use productUpdateMedia mutation
-      console.log(`🔵 [ALT-TEXT-UPDATE] PRIMARY LOCALE - Using productUpdateMedia for mediaId: ${mediaImageId}`);
+      console.log('🟡🟡🟡 PRIMARY LOCALE - Updating alt-text in Shopify 🟡🟡🟡');
+      console.log(`🟡 mediaId: ${mediaImageId}`);
+      console.log(`🟡 altText value: "${altText}" (length: ${altText.length}, isEmpty: ${altText === ""})`);
+      console.log(`🟡 altText type: ${typeof altText}`);
       const updateMediaResponse = await gateway.graphql(
         `#graphql
           mutation updateMedia($media: [UpdateMediaInput!]!) {
@@ -381,10 +386,14 @@ async function updateImageAltTexts(
     if (dbImage) {
       if (params.locale === params.primaryLocale) {
         // Primary locale: Update ProductImage table
+        console.log('🟢🟢🟢 SAVING ALT-TEXT TO DATABASE (PRIMARY) 🟢🟢🟢');
+        console.log(`🟢 dbImage.id: ${dbImage.id}`);
+        console.log(`🟢 altText to save: "${altText}" (isEmpty: ${altText === ""})`);
         await db.productImage.update({
           where: { id: dbImage.id },
           data: { altText },
         });
+        console.log('🟢 ✅ DB update completed for primary alt-text');
         loggers.product("debug", "Updated primary alt-text in DB", { index });
       } else {
         // Translation: Update ProductImageAltTranslation table
@@ -419,7 +428,9 @@ async function updateImageAltTexts(
     }
   }
 
-  console.log('🔵🔵🔵 [ALT-TEXT-UPDATE] ✅ updateImageAltTexts completed successfully');
+  console.log('🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡');
+  console.log('🟡 ✅ updateImageAltTexts COMPLETED');
+  console.log('🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡');
 }
 
 /**
