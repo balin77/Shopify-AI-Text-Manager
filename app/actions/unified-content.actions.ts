@@ -749,6 +749,13 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
           console.log('🟣 [UNIFIED-ACTION] imageAltTexts SET in productFormData:', imageAltTextsStr);
         }
 
+        // Pass changedAltTextIndices for alt-text translation deletion when primary locale changes
+        const changedAltTextIndicesStr = formData.get("changedAltTextIndices") as string;
+        if (changedAltTextIndicesStr && locale === primaryLocale) {
+          productFormData.set("changedAltTextIndices", changedAltTextIndicesStr);
+          console.log('🟣 [UNIFIED-ACTION] changedAltTextIndices SET in productFormData:', changedAltTextIndicesStr);
+        }
+
         console.log('🟣 [UNIFIED-ACTION] Calling handleUpdateProduct...');
         return handleUpdateProduct(context, productFormData, itemId);
       }

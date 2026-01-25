@@ -40,6 +40,10 @@ export async function handleUpdateProduct(
   const changedFieldsStr = formData.get("changedFields") as string;
   const changedFields: string[] = changedFieldsStr ? JSON.parse(changedFieldsStr) : [];
 
+  // Parse changedAltTextIndices if present (for alt-text translation deletion when primary locale changes)
+  const changedAltTextIndicesStr = formData.get("changedAltTextIndices") as string;
+  const changedAltTextIndices: number[] = changedAltTextIndicesStr ? JSON.parse(changedAltTextIndicesStr) : [];
+
   const params: UpdateProductParams = {
     locale: formData.get("locale") as string,
     primaryLocale: formData.get("primaryLocale") as string,
@@ -88,7 +92,7 @@ export async function handleUpdateProduct(
     if (params.locale !== params.primaryLocale) {
       return await updateTranslatedProduct(gateway, db, productId, params);
     } else {
-      return await updatePrimaryProduct(gateway, db, productId, params, changedFields, context.session.shop);
+      return await updatePrimaryProduct(gateway, db, productId, params, changedFields, changedAltTextIndices, context.session.shop);
     }
   } catch (error: any) {
     logger.error("Product update failed", {
@@ -695,9 +699,10 @@ async function updatePrimaryProduct(
   productId: string,
   params: UpdateProductParams,
   changedFields: string[] = [],
+  changedAltTextIndices: number[] = [],
   shop: string
 ): Promise<Response> {
-  loggers.product("info", "Updating primary product", { productId, changedFields });
+  loggers.product("info", "Updating primary product", { productId, changedFields, changedAltTextIndices });
 
   // Validate that title is not empty for primary locale
   if (!params.title || !params.title.trim()) {
@@ -900,6 +905,124 @@ async function updatePrimaryProduct(
         productId,
         changedFields,
         error: translationError.message,
+      });
+      // Don't fail the request - primary update succeeded
+    }
+  }
+
+  // Delete alt-text translations for changed image indices in all foreign languages
+  if (changedAltTextIndices.length > 0) {
+    try {
+      // Get all shop locales from Shopify API (reuse if already fetched above)
+      const localesResponse = await gateway.graphql(
+        `#graphql
+          query getShopLocales {
+            shopLocales {
+              locale
+              primary
+              published
+            }
+          }`
+      );
+      const localesData = await localesResponse.json();
+      const shopLocales = localesData.data?.shopLocales || [];
+
+      // Filter out the primary locale, only keep published foreign locales
+      const foreignLocales = shopLocales
+        .filter((l: any) => !l.primary && l.published)
+        .map((l: any) => l.locale);
+
+      if (foreignLocales.length > 0) {
+        // Get product images from DB to find mediaIds
+        const dbProduct = await db.product.findUnique({
+          where: { id: productId },
+          include: {
+            images: {
+              orderBy: { position: 'asc' },
+            },
+          },
+        });
+
+        if (dbProduct?.images) {
+          for (const imageIndex of changedAltTextIndices) {
+            const dbImage = dbProduct.images[imageIndex];
+            if (!dbImage) continue;
+
+            const mediaImageId = dbImage.mediaId;
+
+            loggers.product("info", "Deleting alt-text translations for changed image", {
+              productId,
+              imageIndex,
+              mediaImageId,
+              locales: foreignLocales,
+            });
+
+            // Delete translations from Shopify if we have the mediaId
+            if (mediaImageId) {
+              const response = await gateway.graphql(
+                `#graphql
+                  mutation removeTranslations($resourceId: ID!, $translationKeys: [String!]!, $locales: [String!]!) {
+                    translationsRemove(resourceId: $resourceId, translationKeys: $translationKeys, locales: $locales) {
+                      userErrors {
+                        field
+                        message
+                      }
+                      translations {
+                        key
+                        locale
+                      }
+                    }
+                  }`,
+                {
+                  variables: {
+                    resourceId: mediaImageId,
+                    translationKeys: ["alt"],
+                    locales: foreignLocales,
+                  },
+                }
+              );
+
+              const responseData = await response.json();
+              if (responseData.data?.translationsRemove?.userErrors?.length > 0) {
+                logger.error("Shopify translationsRemove API error (alt-text)", {
+                  context: "UpdateProduct",
+                  imageIndex,
+                  mediaImageId,
+                  errors: responseData.data.translationsRemove.userErrors,
+                });
+              } else {
+                loggers.product("info", "Deleted alt-text translations from Shopify", {
+                  productId,
+                  imageIndex,
+                  mediaImageId,
+                  locales: foreignLocales,
+                });
+              }
+            }
+
+            // Delete translations from local database
+            await db.productImageAltTranslation.deleteMany({
+              where: {
+                imageId: dbImage.id,
+                locale: { in: foreignLocales },
+              },
+            });
+
+            loggers.product("info", "Deleted alt-text translations from DB", {
+              productId,
+              imageIndex,
+              imageId: dbImage.id,
+              locales: foreignLocales,
+            });
+          }
+        }
+      }
+    } catch (altTextTranslationError: any) {
+      logger.error("Failed to delete alt-text translations for changed images", {
+        context: "UpdateProduct",
+        productId,
+        changedAltTextIndices,
+        error: altTextTranslationError.message,
       });
       // Don't fail the request - primary update succeeded
     }
