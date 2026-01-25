@@ -42,8 +42,15 @@ export class ProductSyncService {
       );
       console.log(`[ProductSync] Fetched ${allTranslations.length} translations`);
 
-      // 4. Save to database
-      await this.saveToDatabase(productData, allTranslations);
+      // 4. Fetch image alt-text translations (API 2025-10+)
+      const imageAltTranslations = await this.fetchImageAltTextTranslations(
+        productData,
+        locales.filter((l: any) => !l.primary && l.published)
+      );
+      console.log(`[ProductSync] Fetched ${imageAltTranslations.length} image alt-text translations`);
+
+      // 5. Save to database
+      await this.saveToDatabase(productData, allTranslations, imageAltTranslations);
 
       console.log(`[ProductSync] Successfully synced product: ${productId}`);
     } catch (error) {
@@ -53,7 +60,70 @@ export class ProductSyncService {
   }
 
   /**
+   * Fetch alt-text translations for all product images (API 2025-10+)
+   * Uses TranslatableResourceType.MEDIA_IMAGE
+   */
+  private async fetchImageAltTextTranslations(
+    productData: any,
+    locales: any[]
+  ): Promise<Array<{ mediaId: string; locale: string; altText: string }>> {
+    const altTranslations: Array<{ mediaId: string; locale: string; altText: string }> = [];
+
+    // Get all media images from product
+    const mediaImages = productData.media?.edges
+      ?.filter((edge: any) => edge.node.id) // Filter out non-MediaImage types
+      .map((edge: any) => edge.node) || [];
+
+    if (mediaImages.length === 0) {
+      console.log(`[ProductSync] No media images found for alt-text translations`);
+      return altTranslations;
+    }
+
+    console.log(`[ProductSync] Fetching alt-text translations for ${mediaImages.length} images`);
+
+    // For each locale, fetch translations for all images
+    for (const locale of locales) {
+      for (const media of mediaImages) {
+        try {
+          const response = await this.admin.graphql(
+            `#graphql
+              query getMediaImageTranslations($resourceId: ID!, $locale: String!) {
+                translatableResource(resourceId: $resourceId) {
+                  translations(locale: $locale) {
+                    key
+                    value
+                    locale
+                  }
+                }
+              }`,
+            { variables: { resourceId: media.id, locale: locale.locale } }
+          );
+
+          const data = await response.json();
+          const translations = data.data?.translatableResource?.translations || [];
+
+          // Find the alt translation
+          const altTranslation = translations.find((t: any) => t.key === "alt");
+          if (altTranslation && altTranslation.value) {
+            altTranslations.push({
+              mediaId: media.id,
+              locale: locale.locale,
+              altText: altTranslation.value,
+            });
+            console.log(`[ProductSync] Found alt-text translation for ${media.id} in ${locale.locale}`);
+          }
+        } catch (error) {
+          console.warn(`[ProductSync] Failed to fetch alt-text for ${media.id} in ${locale.locale}:`, error);
+        }
+      }
+    }
+
+    return altTranslations;
+  }
+
+  /**
    * Fetch product data from Shopify
+   * Uses media query instead of images to get MediaImage IDs for translations (API 2025-10+)
    */
   private async fetchProductData(productId: string) {
     const response = await this.admin.graphql(
@@ -74,11 +144,16 @@ export class ProductSyncService {
               url
               altText
             }
-            images(first: 250) {
+            media(first: 250) {
               edges {
                 node {
-                  url
-                  altText
+                  ... on MediaImage {
+                    id
+                    alt
+                    image {
+                      url
+                    }
+                  }
                 }
               }
             }
@@ -212,8 +287,13 @@ export class ProductSyncService {
 
   /**
    * Save product and translations to database
+   * Includes image alt-text translations from Shopify (API 2025-10+)
    */
-  private async saveToDatabase(productData: any, translations: any[]) {
+  private async saveToDatabase(
+    productData: any,
+    translations: any[],
+    imageAltTranslations: Array<{ mediaId: string; locale: string; altText: string }> = []
+  ) {
     const { db } = await import("../db.server");
 
     console.log(`[ProductSync] Saving product to database: ${productData.id}`);
@@ -299,18 +379,58 @@ export class ProductSyncService {
       console.log(`[ProductSync] No translations to save`);
     }
 
-    // Insert images
-    const images = productData.images?.edges?.map((edge: any) => edge.node) || [];
-    if (images.length > 0) {
-      await db.productImage.createMany({
-        data: images.map((img: any, index: number) => ({
-          productId: productData.id,
-          url: img.url,
-          altText: img.altText || null,
-          position: index,
-        })),
-      });
-      console.log(`[ProductSync] Saved ${images.length} images`);
+    // Insert images with mediaId (from media query instead of images query)
+    const mediaImages = productData.media?.edges
+      ?.filter((edge: any) => edge.node.id && edge.node.image?.url) // Filter valid MediaImage types
+      .map((edge: any) => edge.node) || [];
+
+    if (mediaImages.length > 0) {
+      // Create images with mediaId for translation support
+      const createdImages = await Promise.all(
+        mediaImages.map(async (media: any, index: number) => {
+          return db.productImage.create({
+            data: {
+              productId: productData.id,
+              url: media.image.url,
+              altText: media.alt || null,
+              mediaId: media.id, // Store Shopify Media ID for translations
+              position: index,
+            },
+          });
+        })
+      );
+
+      console.log(`[ProductSync] Saved ${createdImages.length} images with mediaIds`);
+
+      // Insert image alt-text translations from Shopify
+      if (imageAltTranslations.length > 0) {
+        // Create a map of mediaId -> dbImageId for quick lookup
+        const mediaIdToDbId = new Map<string, string>();
+        createdImages.forEach((img) => {
+          if (img.mediaId) {
+            mediaIdToDbId.set(img.mediaId, img.id);
+          }
+        });
+
+        let savedAltTranslations = 0;
+        for (const altTrans of imageAltTranslations) {
+          const dbImageId = mediaIdToDbId.get(altTrans.mediaId);
+          if (dbImageId) {
+            await db.productImageAltTranslation.create({
+              data: {
+                imageId: dbImageId,
+                locale: altTrans.locale,
+                altText: altTrans.altText,
+              },
+            });
+            savedAltTranslations++;
+          }
+        }
+
+        if (savedAltTranslations > 0) {
+          console.log(`[ProductSync] ✓ Saved ${savedAltTranslations} image alt-text translations`);
+        }
+      }
     }
 
     // Insert options
@@ -391,7 +511,11 @@ export class ProductSyncService {
           },
         },
         include: {
-          images: includeAllImages,
+          images: includeAllImages ? {
+            include: {
+              altTextTranslations: true, // Include alt-text translations
+            },
+          } : false,
           options: true,
           metafields: true,
         },
