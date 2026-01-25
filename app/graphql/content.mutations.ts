@@ -17,7 +17,7 @@ export const TRANSLATE_CONTENT = `#graphql
 `;
 
 export const UPDATE_PAGE = `#graphql
-  mutation updatePage($id: ID!, $page: PageInput!) {
+  mutation updatePage($id: ID!, $page: PageUpdateInput!) {
     pageUpdate(id: $id, page: $page) {
       page {
         id
