@@ -1037,5 +1037,195 @@ Image URL: ${image.url}`;
     }
   }
 
+  // ============================================================================
+  // TRANSLATE ALT-TEXT TO ALL LOCALES
+  // ============================================================================
+
+  if (action === "translateAltTextToAllLocales") {
+    const imageIndex = parseInt(formData.get("imageIndex") as string);
+    const sourceAltText = formData.get("sourceAltText") as string;
+    const targetLocalesStr = formData.get("targetLocales") as string;
+    const targetLocales = JSON.parse(targetLocalesStr);
+
+    // Create task entry
+    const task = await db.task.create({
+      data: {
+        shop: session.shop,
+        type: "translation",
+        status: "pending",
+        resourceType: contentConfig.resourceType,
+        resourceId: itemId,
+        fieldType: `altText_${imageIndex}`,
+        targetLocale: targetLocales.join(","),
+        progress: 0,
+        expiresAt: getTaskExpirationDate(),
+      },
+    });
+
+    try {
+      const translationServiceWithTask = new TranslationService(provider, serviceConfig, session.shop, task.id);
+
+      const changedFields: any = {};
+      changedFields[`altText_${imageIndex}`] = sourceAltText;
+
+      await db.task.update({
+        where: { id: task.id },
+        data: { status: "queued", progress: 10 },
+      });
+
+      const translations = await translationServiceWithTask.translateProduct(
+        changedFields,
+        targetLocales,
+        "product"
+      );
+
+      // Extract translated alt-texts for each locale
+      const translatedAltTexts: Record<string, string> = {};
+      for (const locale of targetLocales) {
+        translatedAltTexts[locale] = translations[locale]?.[`altText_${imageIndex}`] || "";
+      }
+
+      await db.task.update({
+        where: { id: task.id },
+        data: { status: "running", progress: 50 },
+      });
+
+      // Now save the translations to Shopify and DB
+      const { ShopifyApiGateway } = await import("~/services/shopify-api-gateway.service");
+      const gateway = new ShopifyApiGateway(admin, session.shop);
+
+      // Get DB product image to find mediaId
+      const dbProduct = await db.product.findUnique({
+        where: { id: itemId },
+        include: {
+          images: {
+            orderBy: { position: 'asc' },
+          },
+        },
+      });
+
+      const dbImage = dbProduct?.images?.[imageIndex];
+
+      if (dbImage?.mediaId) {
+        // First, fetch the translatable content to get the digest
+        const translatableResponse = await gateway.graphql(
+          `#graphql
+            query translatableContent($resourceId: ID!) {
+              translatableResource(resourceId: $resourceId) {
+                resourceId
+                translatableContent {
+                  key
+                  digest
+                  value
+                }
+              }
+            }`,
+          { variables: { resourceId: dbImage.mediaId } }
+        );
+
+        const translatableData = await translatableResponse.json();
+        const translatableContent = translatableData.data?.translatableResource?.translatableContent || [];
+        const altDigest = translatableContent.find((c: any) => c.key === "alt")?.digest;
+
+        if (altDigest) {
+          // Save each translation to Shopify
+          for (const locale of targetLocales) {
+            const altText = translatedAltTexts[locale];
+            if (!altText) continue;
+
+            await gateway.graphql(
+              `#graphql
+                mutation translateMediaImage($resourceId: ID!, $translations: [TranslationInput!]!) {
+                  translationsRegister(resourceId: $resourceId, translations: $translations) {
+                    userErrors {
+                      field
+                      message
+                    }
+                    translations {
+                      locale
+                      key
+                      value
+                    }
+                  }
+                }`,
+              {
+                variables: {
+                  resourceId: dbImage.mediaId,
+                  translations: [
+                    {
+                      key: "alt",
+                      value: altText,
+                      locale: locale,
+                      translatableContentDigest: altDigest,
+                    },
+                  ],
+                },
+              }
+            );
+          }
+        }
+      }
+
+      // Save translations to DB
+      if (dbImage) {
+        for (const locale of targetLocales) {
+          const altText = translatedAltTexts[locale];
+          if (!altText) continue;
+
+          const existing = await db.productImageAltTranslation.findUnique({
+            where: {
+              imageId_locale: {
+                imageId: dbImage.id,
+                locale: locale,
+              },
+            },
+          });
+
+          if (existing) {
+            await db.productImageAltTranslation.update({
+              where: { id: existing.id },
+              data: { altText },
+            });
+          } else {
+            await db.productImageAltTranslation.create({
+              data: {
+                imageId: dbImage.id,
+                locale: locale,
+                altText: altText,
+              },
+            });
+          }
+        }
+      }
+
+      await db.task.update({
+        where: { id: task.id },
+        data: {
+          status: "completed",
+          progress: 100,
+          completedAt: new Date(),
+          result: JSON.stringify({ translatedAltTexts, imageIndex, targetLocales }),
+        },
+      });
+
+      return json({
+        success: true,
+        translatedAltTexts,
+        imageIndex,
+        targetLocales,
+      });
+    } catch (error: any) {
+      await db.task.update({
+        where: { id: task.id },
+        data: {
+          status: "failed",
+          completedAt: new Date(),
+          error: error.message,
+        },
+      });
+      return json({ success: false, error: error.message }, { status: 500 });
+    }
+  }
+
   return json({ success: false, error: "Unknown action" }, { status: 400 });
 }
