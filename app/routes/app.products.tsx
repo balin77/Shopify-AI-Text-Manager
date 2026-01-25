@@ -83,6 +83,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
             include: {
               altTextTranslations: true,
             },
+            orderBy: {
+              position: 'asc', // CRITICAL: Must match order used in save action
+            },
           } : false, // Don't load images if not cached in free plan
           // NOTE: Options excluded for now
         },
