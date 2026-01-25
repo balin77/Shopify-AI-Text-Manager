@@ -508,18 +508,16 @@ export default function TemplatesPage() {
 
     console.log("[TEMPLATES] Preloading translations for locales:", localesToLoad.map((l: any) => l.locale));
 
-    // Load all translations in parallel using current page URL
+    // Load all translations in parallel using API route
     const results = await Promise.allSettled(
       localesToLoad.map(async (locale: any) => {
         const formData = new FormData();
         formData.append("action", "loadTranslations");
-        formData.append("itemId", `group_${groupId}`);
         formData.append("locale", locale.locale);
 
-        const response = await fetch(window.location.pathname, {
+        const response = await fetch(`/api/templates/${groupId}`, {
           method: "POST",
           body: formData,
-          credentials: "same-origin",
         });
 
         if (!response.ok) {
