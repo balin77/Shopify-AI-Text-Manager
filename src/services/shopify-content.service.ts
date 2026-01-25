@@ -486,6 +486,7 @@ export class ShopifyContentService {
 
     // Fetch digest map once for all translations
     const digestMap = await this.loadTranslatableContent(resourceId);
+    console.log(`🔶 [translateAllContent] digestMap for ${resourceId}:`, Object.keys(digestMap));
 
     // Get target locales (use custom list if provided, otherwise all published locales)
     let targetLocales: string[];
@@ -546,11 +547,19 @@ export class ShopifyContentService {
               }
 
               const translationKey = keyMapping[field];
+              const digest = digestMap[translationKey];
+
+              // Skip if no digest exists - Shopify doesn't support translation for this field
+              if (!digest) {
+                console.warn(`[translateAllContent] ⚠️ No digest for key '${translationKey}' (field '${field}') - Shopify may not support translation for this field`);
+                return;
+              }
+
               translationsInput.push({
                 key: translationKey,
                 value: stringValue,
                 locale,
-                translatableContentDigest: digestMap[translationKey]
+                translatableContentDigest: digest
               });
             }
           });
