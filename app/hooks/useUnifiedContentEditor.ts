@@ -148,10 +148,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // Reset accept-and-translate flag when changing items or languages
     setIsAcceptAndTranslateFlow(false);
 
-    // Clear deleted translation keys when switching to a different item
+    // Clear deleted translation keys and processed response refs when switching to a different item
     if (itemIdChanged) {
       deletedTranslationKeysRef.current.clear();
-      console.log('[DATA-LOAD] Cleared deleted translation keys for new item');
+      processedSaveResponseRef.current = null;
+      processedResponseRef.current = null;
+      processedTranslateFieldRef.current = null;
+      console.log('[DATA-LOAD] Cleared refs for new item');
     }
 
     const newValues: Record<string, string> = {};
@@ -338,6 +341,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
   // Ref to track processed translateField responses (prevents duplicate processing/infinite loops)
   const processedTranslateFieldRef = useRef<string | null>(null);
+
+  // Ref to track processed save responses (prevents duplicate InfoBox/revalidation on re-renders)
+  const processedSaveResponseRef = useRef<any>(null);
 
   // Handle translated field response (single field translation)
   // Auto-save immediately after receiving translation
@@ -735,12 +741,20 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
   // Show global InfoBox for success/error messages and revalidate after save
   useEffect(() => {
+    // Skip if this response was already processed (prevents duplicate processing on re-renders)
+    if (fetcher.data === processedSaveResponseRef.current) {
+      return;
+    }
+
     if (
       fetcher.data?.success &&
       !(fetcher.data as any).generatedContent &&
       !(fetcher.data as any).translatedValue &&
       !(fetcher.data as any).translations // Skip revalidate for bulk operations, they handle it differently
     ) {
+      // Mark this response as processed
+      processedSaveResponseRef.current = fetcher.data;
+
       // Check if there's a pending translation to start after this save
       if (pendingTranslationAfterSaveRef.current) {
         const { fieldKey, sourceText, targetLocales, contextTitle, itemId } = pendingTranslationAfterSaveRef.current;
@@ -783,9 +797,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         }
       }
     } else if (fetcher.data && !fetcher.data.success && 'error' in fetcher.data) {
+      // Also mark error responses as processed
+      processedSaveResponseRef.current = fetcher.data;
       showInfoBox(fetcher.data.error as string, "critical", t.common?.error || "Error");
     }
-  }, [fetcher.data, showInfoBox, t, revalidator, fetcher]);
+  }, [fetcher.data, showInfoBox, t, revalidator, safeSubmit]);
 
   // ============================================================================
   // EVENT HANDLERS
