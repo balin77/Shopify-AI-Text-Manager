@@ -453,7 +453,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     }
   }, [fetcher.data]); // Note: imageAltTexts intentionally not in deps to avoid loops
 
-  // Handle translated alt-text to all locales response (show success message)
+  // Handle translated alt-text to all locales response (show success message + revalidate)
   useEffect(() => {
     if (fetcher.data?.success && 'translatedAltTexts' in fetcher.data) {
       const { targetLocales, imageIndex } = fetcher.data as any;
@@ -463,8 +463,18 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         "success",
         t.common?.success || "Success"
       );
+
+      // Revalidate to fetch fresh data with the new translations
+      if (revalidator.state === 'idle') {
+        try {
+          console.log('[ALT-TEXT] Triggering revalidation after translate to all locales');
+          revalidator.revalidate();
+        } catch (error) {
+          console.log('[ALT-TEXT] Revalidation error (ignored):', error);
+        }
+      }
     }
-  }, [fetcher.data]);
+  }, [fetcher.data, revalidator]);
 
   // Execute pending alt-text auto-save
   useEffect(() => {

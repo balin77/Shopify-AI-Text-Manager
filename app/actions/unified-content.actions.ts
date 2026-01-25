@@ -1094,10 +1094,6 @@ Image URL: ${image.url}`;
       const { ShopifyApiGateway } = await import("~/services/shopify-api-gateway.service");
       const gateway = new ShopifyApiGateway(admin, session.shop);
 
-      console.log('🔴🔴🔴 [translateAltTextToAllLocales] Looking for product in DB');
-      console.log('🔴 itemId:', itemId);
-      console.log('🔴 shop:', session.shop);
-
       // Get DB product image to find mediaId
       const dbProduct = await db.product.findUnique({
         where: { id: itemId },
@@ -1108,14 +1104,7 @@ Image URL: ${image.url}`;
         },
       });
 
-      console.log('🔴 dbProduct found:', !!dbProduct);
-      console.log('🔴 dbProduct.images count:', dbProduct?.images?.length || 0);
-      console.log('🔴 imageIndex:', imageIndex);
-
       const dbImage = dbProduct?.images?.[imageIndex];
-      console.log('🔴 dbImage found:', !!dbImage);
-      console.log('🔴 dbImage.id:', dbImage?.id);
-      console.log('🔴 dbImage.mediaId:', dbImage?.mediaId);
 
       if (dbImage?.mediaId) {
         // First, fetch the translatable content to get the digest
@@ -1178,17 +1167,10 @@ Image URL: ${image.url}`;
       }
 
       // Save translations to DB
-      console.log('🔴 [translateAltTextToAllLocales] Saving to DB...');
-      console.log('🔴 dbImage available:', !!dbImage);
       if (dbImage) {
-        console.log('🔴 Saving translations for locales:', targetLocales);
         for (const locale of targetLocales) {
           const altText = translatedAltTexts[locale];
-          console.log(`🔴 Processing locale ${locale}, altText: "${altText?.substring(0, 30)}..."`);
-          if (!altText) {
-            console.log(`🔴 Skipping locale ${locale} - no altText`);
-            continue;
-          }
+          if (!altText) continue;
 
           const existing = await db.productImageAltTranslation.findUnique({
             where: {
@@ -1199,14 +1181,11 @@ Image URL: ${image.url}`;
             },
           });
 
-          console.log(`🔴 Existing translation for ${locale}:`, !!existing);
-
           if (existing) {
             await db.productImageAltTranslation.update({
               where: { id: existing.id },
               data: { altText },
             });
-            console.log(`🔴 ✅ Updated translation for ${locale}`);
           } else {
             await db.productImageAltTranslation.create({
               data: {
@@ -1215,12 +1194,8 @@ Image URL: ${image.url}`;
                 altText: altText,
               },
             });
-            console.log(`🔴 ✅ Created translation for ${locale}`);
           }
         }
-        console.log('🔴 ✅ All DB saves completed');
-      } else {
-        console.log('🔴 ❌ No dbImage found - skipping DB save!');
       }
 
       await db.task.update({
