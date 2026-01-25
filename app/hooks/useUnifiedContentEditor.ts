@@ -137,14 +137,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     prevSelectedItemIdRef.current = selectedItemId;
     prevCurrentLanguageRef.current = currentLanguage;
 
-    console.log('🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵');
-    console.log('🔵 [DATA-LOAD] Loading data for item:', selectedItemId, 'language:', currentLanguage);
-    console.log('🔵 [DATA-LOAD] Primary locale:', primaryLocale);
-    console.log('🔵 [DATA-LOAD] Is primary locale:', currentLanguage === primaryLocale);
-    console.log('🔵 [DATA-LOAD] Item translations count:', item.translations?.length || 0);
-    console.log('🔵 [DATA-LOAD] Item translations:', item.translations?.map((t: any) => ({ key: t.key, locale: t.locale, value: t.value?.substring(0, 30) })));
-    console.log('🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵🔵');
-
     // Mark as loading immediately
     setIsLoadingData(true);
 
@@ -188,7 +180,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       });
     }
 
-    console.log('🔵 [DATA-LOAD] Final values to set:', Object.keys(newValues).map(k => `${k}: "${(newValues[k] || '').substring(0, 50)}..."`));
     setEditableValues(newValues);
     // IMPORTANT: Only depend on selectedItemId, not selectedItem, to prevent re-runs on reference changes
   }, [selectedItemId, currentLanguage, config.fieldDefinitions, primaryLocale]);
@@ -275,11 +266,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     const item = selectedItemRef.current;
     if (locale === primaryLocale && item) {
       const changedFields = getChangedFields(valuesToSave);
-      console.log('🟡🟡🟡 [AUTO-SAVE] Checking for changed fields, locale:', locale, 'primaryLocale:', primaryLocale);
-      console.log('🟡🟡🟡 [AUTO-SAVE] Values to save:', Object.keys(valuesToSave).map(k => `${k}: "${String(valuesToSave[k] || '').substring(0, 50)}..."`));
       if (changedFields.length > 0) {
         formDataObj.changedFields = JSON.stringify(changedFields);
-        console.log('🟢🟢🟢 [AUTO-SAVE] Changed fields (translations will be deleted):', changedFields);
 
         // Track deleted translation keys for immediate UI update
         // This ensures that even if revalidation brings back old data, we show empty fields
@@ -287,7 +275,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           const field = config.fieldDefinitions.find(f => f.key === fieldKey);
           if (field?.translationKey) {
             deletedTranslationKeysRef.current.add(field.translationKey);
-            console.log('🟢🟢🟢 [AUTO-SAVE] Marked translation key as deleted:', field.translationKey);
           }
         });
       }
@@ -354,22 +341,17 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     if (fetcher.data?.success && 'translatedValue' in fetcher.data) {
       const { fieldType, translatedValue, targetLocale } = fetcher.data as any;
 
-      console.log('🔵 [TRANSLATE-FIELD] Received translation response:', { fieldType, targetLocale, translatedValue: translatedValue?.substring(0, 50) });
-
       // Create a unique key for this response to prevent duplicate processing
       const responseKey = `translateField-${fieldType}-${targetLocale}-${translatedValue?.substring(0, 20)}`;
       if (processedTranslateFieldRef.current === responseKey) {
-        console.log('🔵 [TRANSLATE-FIELD] Skipping - already processed:', responseKey);
         return; // Already processed this response
       }
-      console.log('🔵 [TRANSLATE-FIELD] Processing new response:', responseKey);
       processedTranslateFieldRef.current = responseKey;
 
       // Clear deleted key for this field since we now have a new translation
       const field = config.fieldDefinitions.find(f => f.key === fieldType);
       if (field?.translationKey && deletedTranslationKeysRef.current.has(field.translationKey)) {
         deletedTranslationKeysRef.current.delete(field.translationKey);
-        console.log('[TRANSLATE-FIELD] Cleared translation key from deleted set:', field.translationKey);
       }
 
       // Build new values with the translation (using ref to avoid dependency)
@@ -377,8 +359,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         ...editableValuesRef.current,
         [fieldType]: translatedValue,
       };
-
-      console.log('🔵 [TRANSLATE-FIELD] Updating editableValues with:', { [fieldType]: translatedValue?.substring(0, 50) });
 
       // Update UI
       setEditableValues(newValues);
@@ -396,11 +376,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           value: translatedValue,
           locale: targetLocale,
         });
-        console.log('🔵 [TRANSLATE-FIELD] Updated item.translations for:', field.translationKey);
       }
 
       // Auto-save the translation immediately
-      console.log('🔵 [AUTO-SAVE] Saving translation for locale:', targetLocale);
 
       // Build form data directly here to avoid dependency issues
       if (selectedItemId) {
@@ -510,13 +488,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
   // Handle "translateFieldToAllLocales" response (from Accept & Translate)
   useEffect(() => {
-    console.log('🔴🔴🔴 [FRONTEND] translateFieldToAllLocales handler triggered');
-    console.log('🔴 fetcher.data:', fetcher.data);
-    console.log('🔴 fetcher.data?.success:', fetcher.data?.success);
-    console.log('🔴 has translations:', 'translations' in (fetcher.data || {}));
-    console.log('🔴 has fieldType:', 'fieldType' in (fetcher.data || {}));
-    console.log('🔴 has locale:', 'locale' in (fetcher.data || {}));
-
     if (
       fetcher.data?.success &&
       'translations' in fetcher.data &&
@@ -525,20 +496,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     ) {
       const { translations, fieldType } = fetcher.data as any;
 
-      console.log('🔴 [FRONTEND] Matched! translations:', translations);
-      console.log('🔴 [FRONTEND] fieldType:', fieldType);
-
       // Create a unique key for this response to prevent duplicate processing
       const responseKey = `translateFieldToAllLocales-${fieldType}-${Object.keys(translations).join(',')}`;
-      console.log('🔴 [FRONTEND] responseKey:', responseKey);
-      console.log('🔴 [FRONTEND] processedResponseRef.current:', processedResponseRef.current);
 
       if (processedResponseRef.current === responseKey) {
-        console.log('🔴 [FRONTEND] SKIPPING - already processed');
         return; // Already processed this response
       }
       processedResponseRef.current = responseKey;
-      console.log('🔴 [FRONTEND] Processing response...');
 
       // translations is Record<string, string> where key is locale and value is translated text
       const field = config.fieldDefinitions.find(f => f.key === fieldType);
@@ -552,7 +516,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         // This ensures the DATA-LOAD effect will load the new translation when switching languages
         if (deletedTranslationKeysRef.current.has(shopifyKey)) {
           deletedTranslationKeysRef.current.delete(shopifyKey);
-          console.log('🔴 [FRONTEND] Cleared translation key from deleted set:', shopifyKey);
         }
 
         // Update item translations for all locales
@@ -568,8 +531,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             value: translatedValue,
             locale
           });
-
-          console.log(`[ACCEPT-AND-TRANSLATE] Updated ${fieldType} for ${locale}: ${String(translatedValue || '').substring(0, 50)}...`);
         }
 
         showInfoBox(
@@ -588,9 +549,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         // DON'T revalidate here - it would overwrite our local changes to selectedItem.translations
         // The translations are already saved server-side by the action
         setIsLoadingData(true);
-        console.log('🔴 [FRONTEND] ✓ All translations applied to item.translations');
-      } else {
-        console.log('🔴 [FRONTEND] ⚠️ item or shopifyKey missing - item:', !!item, 'shopifyKey:', shopifyKey);
       }
     }
   }, [fetcher.data, config.fieldDefinitions, showInfoBox, t]); // Use selectedItemRef instead of selectedItem
@@ -1175,7 +1133,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
     // Auto-save immediately after accepting AI suggestion
     // IMPORTANT: Always save to primary locale since AI suggestions are generated for primary content
-    console.log('🔴🔴🔴 [ACCEPT-SUGGESTION] Accepting AI suggestion for field:', fieldKey, 'saving to primary locale:', primaryLocale);
     performSaveWithValues(newValues, primaryLocale);
   };
 

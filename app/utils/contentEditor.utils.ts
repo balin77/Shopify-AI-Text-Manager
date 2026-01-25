@@ -184,35 +184,16 @@ export function getTranslatedValue(
   fallback: string,
   primaryLocale: string
 ): string {
-  console.log('🔵🔵🔵 [GET-TRANSLATED-VALUE] Called with:', {
-    itemId: item?.id,
-    key,
-    locale,
-    fallback: fallback ? `"${fallback.substring(0, 30)}..."` : '""',
-    primaryLocale,
-    isPrimaryLocale: locale === primaryLocale,
-  });
-
   if (!item || locale === primaryLocale) {
-    console.log('🔵 [GET-TRANSLATED-VALUE] Returning fallback (isPrimary or no item):', fallback ? `"${fallback.substring(0, 30)}..."` : '""');
     return fallback;
   }
 
   const translations = item.translations || [];
-  console.log('🔵 [GET-TRANSLATED-VALUE] Item has', translations.length, 'translations');
-
-  // Log all translations for this key
-  const translationsForKey = translations.filter((t) => t.key === key);
-  console.log('🔵 [GET-TRANSLATED-VALUE] Translations for key', key, ':', translationsForKey.map(t => ({ locale: t.locale, value: t.value?.substring(0, 30) })));
-
   const translation = translations.find(
     (t) => t.key === key && t.locale === locale
   );
 
-  const result = translation?.value || "";
-  console.log('🔵 [GET-TRANSLATED-VALUE] Found translation:', translation ? `"${result.substring(0, 30)}..."` : 'NONE, returning ""');
-
-  return result;
+  return translation?.value || "";
 }
 
 /**
