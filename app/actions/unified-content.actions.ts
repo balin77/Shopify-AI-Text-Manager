@@ -30,7 +30,7 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
   const { admin, session, formData, contentConfig, db, aiSettings, aiInstructions } = config;
 
   const action = formData.get("action") as string;
-  const itemId = formData.get("itemId") as string;
+  const itemId = formData.get("itemId") as string || formData.get("productId") as string;
 
   // Initialize services
   const provider = (aiSettings?.preferredProvider as any) || process.env.AI_PROVIDER || "huggingface";
@@ -76,6 +76,7 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
     const currentValue = formData.get("currentValue") as string;
     const contextTitle = formData.get("contextTitle") as string;
     const contextDescription = formData.get("contextDescription") as string;
+    const mainLanguage = formData.get("mainLanguage") as string;
 
     // Create task entry
     const task = await db.task.create({
@@ -145,7 +146,7 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
           prompt += `\n- "Kontakt & Impressum" → "kontakt-impressum"`;
         }
 
-        prompt += `\n\nContext:\n${contextDescription || currentValue}\n\nReturn ONLY the ${field.label}, without explanations. Output the result in the main language of the content.`;
+        prompt += `\n\nContext:\n${contextDescription || currentValue}\n\nReturn ONLY the ${field.label}, without explanations. Output the result in ${mainLanguage}.`;
         generatedContent = await aiServiceWithTask.generateProductTitle(prompt);
 
         if (field.type === "slug") {
@@ -161,7 +162,7 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
           prompt += `\n\nInstructions:\n${aiInstructions[instructionsTextKey]}`;
         }
 
-        prompt += `\n\nCurrent Content:\n${currentValue}\n\nReturn ONLY the ${field.label}, without explanations. Output the result in the main language of the content.`;
+        prompt += `\n\nContext:\n${contextDescription || currentValue}\n\nCurrent Content:\n${currentValue}\n\nReturn ONLY the ${field.label}, without explanations. Output the result in ${mainLanguage}.`;
         generatedContent = await aiServiceWithTask.generateProductDescription(contextTitle, prompt);
       }
 
@@ -208,6 +209,7 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
     const currentValue = formData.get("currentValue") as string;
     const contextTitle = formData.get("contextTitle") as string;
     const contextDescription = formData.get("contextDescription") as string;
+    const mainLanguage = formData.get("mainLanguage") as string;
 
     // Create task entry
     const task = await db.task.create({
@@ -270,7 +272,7 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
           prompt += `\n- Umlauts MUST be converted (ä→ae, ö→oe, ü→ue, ß→ss)`;
         }
 
-        prompt += `\n\nReturn ONLY the formatted ${field.label}, without explanations. Output the result in the main language of the content.`;
+        prompt += `\n\nReturn ONLY the formatted ${field.label}, without explanations. Output the result in ${mainLanguage}.`;
         formattedContent = await aiServiceWithTask.generateProductTitle(prompt);
 
         if (field.type === "slug") {
@@ -286,7 +288,7 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
           prompt += `\n\nFormatting Instructions:\n${aiInstructions[instructionsTextKey]}`;
         }
 
-        prompt += `\n\nKeep the content but format according to the guidelines. Return only the formatted text. Output the result in the main language of the content.`;
+        prompt += `\n\nKeep the content but format according to the guidelines. Return only the formatted text. Output the result in ${mainLanguage}.`;
         formattedContent = await aiServiceWithTask.generateProductDescription(currentValue, prompt);
       }
 
@@ -784,6 +786,243 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
         itemId,
         error: error.message,
         stack: error.stack
+      });
+      return json({ success: false, error: error.message }, { status: 500 });
+    }
+  }
+
+  // ============================================================================
+  // GENERATE ALT-TEXT (single image)
+  // ============================================================================
+
+  if (action === "generateAltText") {
+    const imageIndex = parseInt(formData.get("imageIndex") as string);
+    const imageUrl = formData.get("imageUrl") as string;
+    const productTitle = formData.get("productTitle") as string;
+
+    // Create task entry
+    const task = await db.task.create({
+      data: {
+        shop: session.shop,
+        type: "aiGeneration",
+        status: "pending",
+        resourceType: contentConfig.resourceType,
+        resourceId: itemId,
+        resourceTitle: productTitle,
+        fieldType: `altText_${imageIndex}`,
+        progress: 0,
+        expiresAt: getTaskExpirationDate(),
+      },
+    });
+
+    try {
+      const aiServiceWithTask = new AIService(provider, serviceConfig, session.shop, task.id);
+
+      await db.task.update({
+        where: { id: task.id },
+        data: { status: "queued", progress: 10 },
+      });
+
+      let prompt = `Create an optimized alt text for a product image.
+Product: ${productTitle}
+Image URL: ${imageUrl}`;
+
+      if (aiInstructions?.productAltTextFormat) {
+        prompt += `\n\nFormat Example:\n${aiInstructions.productAltTextFormat}`;
+      }
+
+      if (aiInstructions?.productAltTextInstructions) {
+        prompt += `\n\nInstructions:\n${aiInstructions.productAltTextInstructions}`;
+      }
+
+      prompt += `\n\nReturn ONLY the alt text, without explanations. Output the result in the main language of the product.`;
+
+      const altText = await aiServiceWithTask.generateImageAltText(imageUrl, productTitle, prompt);
+
+      await db.task.update({
+        where: { id: task.id },
+        data: {
+          status: "completed",
+          progress: 100,
+          completedAt: new Date(),
+          result: JSON.stringify({ altText, imageIndex }),
+        },
+      });
+
+      return json({ success: true, altText, imageIndex });
+    } catch (error: any) {
+      await db.task.update({
+        where: { id: task.id },
+        data: {
+          status: "failed",
+          completedAt: new Date(),
+          error: error.message,
+        },
+      });
+      return json({ success: false, error: error.message }, { status: 500 });
+    }
+  }
+
+  // ============================================================================
+  // GENERATE ALL ALT-TEXTS (bulk)
+  // ============================================================================
+
+  if (action === "generateAllAltTexts") {
+    const imagesData = JSON.parse(formData.get("imagesData") as string);
+    const productTitle = formData.get("productTitle") as string;
+    const totalImages = imagesData.length;
+
+    // Create task entry
+    const task = await db.task.create({
+      data: {
+        shop: session.shop,
+        type: "bulkAIGeneration",
+        status: "pending",
+        resourceType: contentConfig.resourceType,
+        resourceId: itemId,
+        resourceTitle: productTitle,
+        fieldType: "allAltTexts",
+        progress: 0,
+        total: totalImages,
+        processed: 0,
+        expiresAt: getTaskExpirationDate(),
+      },
+    });
+
+    try {
+      const generatedAltTexts: Record<number, string> = {};
+
+      await db.task.update({
+        where: { id: task.id },
+        data: { status: "queued", progress: 10 },
+      });
+
+      const aiServiceWithTask = new AIService(provider, serviceConfig, session.shop, task.id);
+
+      for (let i = 0; i < imagesData.length; i++) {
+        const image = imagesData[i];
+        try {
+          let prompt = `Create an optimized alt text for a product image.
+Product: ${productTitle}
+Image URL: ${image.url}`;
+
+          if (aiInstructions?.productAltTextFormat) {
+            prompt += `\n\nFormat Example:\n${aiInstructions.productAltTextFormat}`;
+          }
+
+          if (aiInstructions?.productAltTextInstructions) {
+            prompt += `\n\nInstructions:\n${aiInstructions.productAltTextInstructions}`;
+          }
+
+          prompt += `\n\nReturn ONLY the alt text, without explanations.`;
+
+          const altText = await aiServiceWithTask.generateImageAltText(image.url, productTitle, prompt);
+          generatedAltTexts[i] = altText;
+
+          const progressPercent = Math.round(10 + ((i + 1) / totalImages) * 90);
+          await db.task.update({
+            where: { id: task.id },
+            data: { progress: progressPercent, processed: i + 1 },
+          });
+        } catch (error: any) {
+          logger.error("Failed to generate alt-text for image", {
+            context: "UnifiedContent",
+            imageIndex: i,
+            error: error.message,
+          });
+        }
+      }
+
+      await db.task.update({
+        where: { id: task.id },
+        data: {
+          status: "completed",
+          progress: 100,
+          completedAt: new Date(),
+          result: JSON.stringify({ generatedAltTexts }),
+        },
+      });
+
+      return json({ success: true, generatedAltTexts });
+    } catch (error: any) {
+      await db.task.update({
+        where: { id: task.id },
+        data: {
+          status: "failed",
+          completedAt: new Date(),
+          error: error.message,
+        },
+      });
+      return json({ success: false, error: error.message }, { status: 500 });
+    }
+  }
+
+  // ============================================================================
+  // TRANSLATE ALT-TEXT
+  // ============================================================================
+
+  if (action === "translateAltText") {
+    const imageIndex = parseInt(formData.get("imageIndex") as string);
+    const sourceAltText = formData.get("sourceAltText") as string;
+    const targetLocale = formData.get("targetLocale") as string;
+
+    // Create task entry
+    const task = await db.task.create({
+      data: {
+        shop: session.shop,
+        type: "translation",
+        status: "pending",
+        resourceType: contentConfig.resourceType,
+        resourceId: itemId,
+        fieldType: `altText_${imageIndex}`,
+        targetLocale,
+        progress: 0,
+        expiresAt: getTaskExpirationDate(),
+      },
+    });
+
+    try {
+      const translationServiceWithTask = new TranslationService(provider, serviceConfig, session.shop, task.id);
+
+      const changedFields: any = {};
+      changedFields[`altText_${imageIndex}`] = sourceAltText;
+
+      await db.task.update({
+        where: { id: task.id },
+        data: { status: "queued", progress: 10 },
+      });
+
+      const translations = await translationServiceWithTask.translateProduct(
+        changedFields,
+        [targetLocale],
+        "product"
+      );
+      const translatedAltText = translations[targetLocale]?.[`altText_${imageIndex}`] || "";
+
+      await db.task.update({
+        where: { id: task.id },
+        data: {
+          status: "completed",
+          progress: 100,
+          completedAt: new Date(),
+          result: JSON.stringify({ translatedAltText, imageIndex, targetLocale }),
+        },
+      });
+
+      return json({
+        success: true,
+        translatedAltText,
+        imageIndex,
+        targetLocale,
+      });
+    } catch (error: any) {
+      await db.task.update({
+        where: { id: task.id },
+        data: {
+          status: "failed",
+          completedAt: new Date(),
+          error: error.message,
+        },
       });
       return json({ success: false, error: error.message }, { status: 500 });
     }
