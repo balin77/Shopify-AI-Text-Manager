@@ -217,7 +217,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       const timer = setTimeout(() => {
         setIsLoadingData(false);
         setIsInitialDataReady(true);
-      }, 500);
+      }, 2000);
       return () => clearTimeout(timer);
     }
     // Use selectedItemId instead of selectedItem to prevent re-runs on reference changes
