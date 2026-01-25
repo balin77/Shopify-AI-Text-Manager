@@ -48,6 +48,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const imageAltTextsRef = useRef<Record<number, string>>({});
   imageAltTextsRef.current = imageAltTexts;
 
+  // Track pending auto-save for alt-texts (set by bulk generation and translation effects)
+  const pendingAltTextAutoSaveRef = useRef<Record<number, string> | null>(null);
+
   // Track deleted translation keys - these should not be shown even if revalidation brings them back temporarily
   const deletedTranslationKeysRef = useRef<Set<string>>(new Set());
 
@@ -432,29 +435,78 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     }
   }, [fetcher.data]);
 
-  // Handle bulk alt-text generation (auto-accept all)
+  // Handle bulk alt-text generation (auto-accept all and auto-save)
   useEffect(() => {
     if (fetcher.data?.success && 'generatedAltTexts' in fetcher.data) {
       const { generatedAltTexts } = fetcher.data as any;
       console.log('[ALT-TEXT] Auto-accepting bulk generated alt-texts:', generatedAltTexts);
-      setImageAltTexts(prev => ({
-        ...prev,
-        ...generatedAltTexts
-      }));
-    }
-  }, [fetcher.data]);
 
-  // Handle translated alt-text response
+      // Merge with existing alt-texts
+      const newAltTexts = {
+        ...imageAltTexts,
+        ...generatedAltTexts
+      };
+
+      setImageAltTexts(newAltTexts);
+      // Set original to match so hasChanges = false after save
+      setOriginalAltTexts(newAltTexts);
+      // Schedule auto-save
+      pendingAltTextAutoSaveRef.current = newAltTexts;
+    }
+  }, [fetcher.data]); // Note: imageAltTexts intentionally not in deps to avoid loops
+
+  // Handle translated alt-text response (auto-save)
   useEffect(() => {
     if (fetcher.data?.success && 'translatedAltText' in fetcher.data) {
       const { translatedAltText, imageIndex } = fetcher.data as any;
       console.log('[ALT-TEXT] Setting translated alt-text for image', imageIndex, ':', translatedAltText);
-      setImageAltTexts(prev => ({
-        ...prev,
+
+      // Merge with existing alt-texts
+      const newAltTexts = {
+        ...imageAltTexts,
         [imageIndex]: translatedAltText
-      }));
+      };
+
+      setImageAltTexts(newAltTexts);
+      // Set original to match so hasChanges = false after save
+      setOriginalAltTexts(newAltTexts);
+      // Schedule auto-save
+      pendingAltTextAutoSaveRef.current = newAltTexts;
     }
-  }, [fetcher.data]);
+  }, [fetcher.data]); // Note: imageAltTexts intentionally not in deps to avoid loops
+
+  // Execute pending alt-text auto-save
+  useEffect(() => {
+    const pendingAltTexts = pendingAltTextAutoSaveRef.current;
+    if (!pendingAltTexts || !selectedItemId) return;
+
+    // Clear the pending save ref immediately to prevent re-execution
+    pendingAltTextAutoSaveRef.current = null;
+
+    console.log('[ALT-TEXT] Executing auto-save for alt-texts:', pendingAltTexts);
+
+    // Skip next data load to prevent revalidation from overwriting
+    skipNextDataLoadRef.current = true;
+
+    // Build form data for save
+    const formDataObj: Record<string, string> = {
+      action: "updateContent",
+      itemId: selectedItemId,
+      locale: currentLanguage,
+      primaryLocale,
+    };
+
+    // Add all field values
+    config.fieldDefinitions.forEach((field) => {
+      formDataObj[field.key] = editableValues[field.key] || "";
+    });
+
+    // Add the alt-texts
+    formDataObj.imageAltTexts = JSON.stringify(pendingAltTexts);
+
+    savedLocaleRef.current = currentLanguage;
+    safeSubmit(formDataObj, { method: "POST" });
+  }, [imageAltTexts, selectedItemId, currentLanguage, primaryLocale, config.fieldDefinitions, editableValues, safeSubmit]);
 
   // Handle "translateFieldToAllLocales" response (from Accept & Translate)
   useEffect(() => {
