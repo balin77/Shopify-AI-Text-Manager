@@ -140,7 +140,9 @@ async function updateImageAltTexts(
   );
 
   const productData = await productResponse.json();
-  const mediaEdges = productData.data?.product?.media?.edges || [];
+  // Filter to only include valid MediaImage nodes (exclude videos, 3D models, etc.)
+  const mediaEdges = (productData.data?.product?.media?.edges || [])
+    .filter((edge: any) => edge.node?.id); // Only keep nodes with an id (MediaImage type)
 
   // Get DB product images
   const dbProduct = await db.product.findUnique({
@@ -151,7 +153,7 @@ async function updateImageAltTexts(
   // Update each image with new alt-text
   for (const [indexStr, altText] of Object.entries(params.imageAltTexts || {})) {
     const index = parseInt(indexStr);
-    if (index < mediaEdges.length) {
+    if (index < mediaEdges.length && mediaEdges[index]?.node?.id) {
       const mediaImageId = mediaEdges[index].node.id; // e.g., gid://shopify/MediaImage/123456789
 
       loggers.product("debug", "Updating image alt-text", {
