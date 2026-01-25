@@ -863,6 +863,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     const currentValue = editableValues[fieldKey] || "";
     const contextTitle = editableValues.title || "";
     const contextDescription = editableValues.description || editableValues.body || "";
+    const mainLanguage = shopLocales.find((l: any) => l.locale === primaryLocale)?.name || primaryLocale;
 
     safeSubmit(
       {
@@ -872,6 +873,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         currentValue,
         contextTitle,
         contextDescription,
+        mainLanguage,
       },
       { method: "POST" }
     );
@@ -892,6 +894,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
     const contextTitle = editableValues.title || "";
     const contextDescription = editableValues.description || editableValues.body || "";
+    const mainLanguage = shopLocales.find((l: any) => l.locale === primaryLocale)?.name || primaryLocale;
 
     safeSubmit(
       {
@@ -901,6 +904,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         currentValue,
         contextTitle,
         contextDescription,
+        mainLanguage,
       },
       { method: "POST" }
     );
@@ -1243,13 +1247,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
     const image = selectedItem.images[imageIndex];
     const productTitle = getItemFieldValue(selectedItem, 'title', primaryLocale);
+    const mainLanguage = shopLocales.find((l: any) => l.locale === primaryLocale)?.name || primaryLocale;
 
     safeSubmit({
       action: "generateAltText",
       productId: selectedItem.id,
       imageIndex: String(imageIndex),
       imageUrl: image.url,
-      productTitle
+      productTitle,
+      mainLanguage
     }, { method: "POST" });
   };
 
@@ -1257,12 +1263,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     if (!selectedItem || !selectedItem.images || selectedItem.images.length === 0) return;
 
     const productTitle = getItemFieldValue(selectedItem, 'title', primaryLocale);
+    const mainLanguage = shopLocales.find((l: any) => l.locale === primaryLocale)?.name || primaryLocale;
     const imagesData = selectedItem.images.map((img: any) => ({ url: img.url }));
 
     safeSubmit({
       action: "generateAllAltTexts",
       productId: selectedItem.id,
       productTitle,
+      mainLanguage,
       imagesData: JSON.stringify(imagesData)
     }, { method: "POST" });
   };

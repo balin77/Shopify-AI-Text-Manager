@@ -73,7 +73,7 @@ export class AIService {
     }
   }
 
-  async generateSEO(productTitle: string, productDescription: string): Promise<{
+  async generateSEO(productTitle: string, productDescription: string, language?: string): Promise<{
     seoTitle: string;
     metaDescription: string;
     reasoning: string;
@@ -84,6 +84,8 @@ export class AIService {
       fieldType: 'description',
       allowNewlines: true
     });
+
+    const languageInstruction = language ? `Output the result in ${language}.` : 'Output the result in the same language as the product title.';
 
     const prompt = `You are an SEO expert for e-commerce. Optimize the following product information for search engines.
 
@@ -102,7 +104,7 @@ Respond in the following JSON format:
   "reasoning": "..."
 }
 
-Output the result in the main language of the product.`;
+${languageInstruction}`;
 
     const responseText = await this.askAI(prompt);
     return this.parseJSONResponse(responseText);
@@ -246,7 +248,7 @@ Respond in the following JSON format:
   "reasoning": "Brief explanation of the strategy"
 }
 
-Output the result in the main language of the product (${language}).`;
+Output the result in ${language}.`;
     } else {
       // Improve existing content
       prompt = `You are an e-commerce expert and content writer. Improve the following ${fieldLabel}.
@@ -277,7 +279,7 @@ Respond in the following JSON format:
   "reasoning": "Brief explanation of the improvements made"
 }
 
-Output the result in the main language of the product (${language}).`;
+Output the result in ${language}.`;
     }
 
     const responseText = await this.askAI(prompt);
@@ -471,7 +473,7 @@ The alt text should:
 - Contain no filler words
 - Be formulated in an accessible way
 
-Return only the alt text, without additional explanations. Output the result in the main language of the product.`;
+Return only the alt text, without additional explanations. Output the result in the same language as the product title.`;
 
     return await this.askAI(prompt);
   }

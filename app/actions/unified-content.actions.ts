@@ -799,6 +799,7 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
     const imageIndex = parseInt(formData.get("imageIndex") as string);
     const imageUrl = formData.get("imageUrl") as string;
     const productTitle = formData.get("productTitle") as string;
+    const mainLanguage = formData.get("mainLanguage") as string;
 
     // Create task entry
     const task = await db.task.create({
@@ -835,7 +836,7 @@ Image URL: ${imageUrl}`;
         prompt += `\n\nInstructions:\n${aiInstructions.productAltTextInstructions}`;
       }
 
-      prompt += `\n\nReturn ONLY the alt text, without explanations. Output the result in the main language of the product.`;
+      prompt += `\n\nReturn ONLY the alt text, without explanations. Output the result in ${mainLanguage}.`;
 
       const altText = await aiServiceWithTask.generateImageAltText(imageUrl, productTitle, prompt);
 
@@ -870,6 +871,7 @@ Image URL: ${imageUrl}`;
   if (action === "generateAllAltTexts") {
     const imagesData = JSON.parse(formData.get("imagesData") as string);
     const productTitle = formData.get("productTitle") as string;
+    const mainLanguage = formData.get("mainLanguage") as string;
     const totalImages = imagesData.length;
 
     // Create task entry
@@ -914,7 +916,7 @@ Image URL: ${image.url}`;
             prompt += `\n\nInstructions:\n${aiInstructions.productAltTextInstructions}`;
           }
 
-          prompt += `\n\nReturn ONLY the alt text, without explanations.`;
+          prompt += `\n\nReturn ONLY the alt text, without explanations. Output the result in ${mainLanguage}.`;
 
           const altText = await aiServiceWithTask.generateImageAltText(image.url, productTitle, prompt);
           generatedAltTexts[i] = altText;

@@ -265,7 +265,7 @@ function buildGeneratePrompt(
       if (aiInstructions?.productTitleInstructions) {
         prompt += `\n\nInstructions:\n${aiInstructions.productTitleInstructions}`;
       }
-      prompt += `\n\nContext:\n${contextDescription || currentValue}\n\nReturn ONLY the title, without explanations. Output the result in the main language of the product.`;
+      prompt += `\n\nContext:\n${contextDescription || currentValue}\n\nReturn ONLY the title, without explanations. Output the result in the same language as the product title.`;
       break;
 
     case "description":
@@ -276,7 +276,7 @@ function buildGeneratePrompt(
       if (aiInstructions?.productDescriptionInstructions) {
         prompt += `\n\nInstructions:\n${aiInstructions.productDescriptionInstructions}`;
       }
-      prompt += `\n\nCurrent Content:\n${currentValue}\n\nReturn ONLY the description, without explanations. Output the result in the main language of the product.`;
+      prompt += `\n\nCurrent Content:\n${currentValue}\n\nReturn ONLY the description, without explanations. Output the result in the same language as the product title.`;
       break;
 
     case "handle":
@@ -287,7 +287,7 @@ function buildGeneratePrompt(
       if (aiInstructions?.productHandleInstructions) {
         prompt += `\n\nInstructions:\n${aiInstructions.productHandleInstructions}`;
       }
-      prompt += `\n\nReturn ONLY the URL slug, without explanations. Output the result in the main language of the product.`;
+      prompt += `\n\nReturn ONLY the URL slug, without explanations. Output the result in the same language as the product title.`;
       break;
 
     case "seoTitle":
@@ -298,7 +298,7 @@ function buildGeneratePrompt(
       if (aiInstructions?.productSeoTitleInstructions) {
         prompt += `\n\nInstructions:\n${aiInstructions.productSeoTitleInstructions}`;
       }
-      prompt += `\n\nReturn ONLY the SEO title, without explanations. Output the result in the main language of the product.`;
+      prompt += `\n\nReturn ONLY the SEO title, without explanations. Output the result in the same language as the product title.`;
       break;
 
     case "metaDescription":
@@ -309,7 +309,7 @@ function buildGeneratePrompt(
       if (aiInstructions?.productMetaDescInstructions) {
         prompt += `\n\nInstructions:\n${aiInstructions.productMetaDescInstructions}`;
       }
-      prompt += `\n\nReturn ONLY the meta description, without explanations. Output the result in the main language of the product.`;
+      prompt += `\n\nReturn ONLY the meta description, without explanations. Output the result in the same language as the product title.`;
       break;
   }
 
@@ -337,7 +337,7 @@ function buildFormatPrompt(
       if (aiInstructions?.productTitleInstructions) {
         prompt += `\n\nFormatting Instructions:\n${aiInstructions.productTitleInstructions}`;
       }
-      prompt += `\n\nReturn ONLY the formatted title, without explanations. Output the result in the main language of the product.`;
+      prompt += `\n\nReturn ONLY the formatted title, without explanations. Output the result in the same language as the product title.`;
       break;
 
     case "description":
@@ -348,7 +348,7 @@ function buildFormatPrompt(
       if (aiInstructions?.productDescriptionInstructions) {
         prompt += `\n\nFormatting Instructions:\n${aiInstructions.productDescriptionInstructions}`;
       }
-      prompt += `\n\nReturn ONLY the formatted description, without explanations. Output the result in the main language of the product.`;
+      prompt += `\n\nReturn ONLY the formatted description, without explanations. Output the result in the same language as the product title.`;
       break;
 
     case "handle":
@@ -359,7 +359,7 @@ function buildFormatPrompt(
       if (aiInstructions?.productHandleInstructions) {
         prompt += `\n\nFormatting Instructions:\n${aiInstructions.productHandleInstructions}`;
       }
-      prompt += `\n\nReturn ONLY the formatted URL slug, without explanations. Output the result in the main language of the product.`;
+      prompt += `\n\nReturn ONLY the formatted URL slug, without explanations. Output the result in the same language as the product title.`;
       break;
 
     case "seoTitle":
@@ -370,7 +370,7 @@ function buildFormatPrompt(
       if (aiInstructions?.productSeoTitleInstructions) {
         prompt += `\n\nFormatting Instructions:\n${aiInstructions.productSeoTitleInstructions}`;
       }
-      prompt += `\n\nReturn ONLY the formatted SEO title, without explanations. Output the result in the main language of the product.`;
+      prompt += `\n\nReturn ONLY the formatted SEO title, without explanations. Output the result in the same language as the product title.`;
       break;
 
     case "metaDescription":
@@ -381,7 +381,7 @@ function buildFormatPrompt(
       if (aiInstructions?.productMetaDescInstructions) {
         prompt += `\n\nFormatting Instructions:\n${aiInstructions.productMetaDescInstructions}`;
       }
-      prompt += `\n\nReturn ONLY the formatted meta description, without explanations. Output the result in the main language of the product.`;
+      prompt += `\n\nReturn ONLY the formatted meta description, without explanations. Output the result in the same language as the product title.`;
       break;
   }
 
