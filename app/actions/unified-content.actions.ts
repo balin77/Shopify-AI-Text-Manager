@@ -742,6 +742,13 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
           console.log('🟣 [UNIFIED-ACTION] changedFields NOT set (locale !== primaryLocale or empty)');
         }
 
+        // Pass imageAltTexts if present
+        const imageAltTextsStr = formData.get("imageAltTexts") as string;
+        if (imageAltTextsStr) {
+          productFormData.set("imageAltTexts", imageAltTextsStr);
+          console.log('🟣 [UNIFIED-ACTION] imageAltTexts SET in productFormData:', imageAltTextsStr);
+        }
+
         console.log('🟣 [UNIFIED-ACTION] Calling handleUpdateProduct...');
         return handleUpdateProduct(context, productFormData, itemId);
       }
