@@ -163,7 +163,8 @@ async function updateImageAltTexts(
               media {
                 alt
                 mediaErrors {
-                  field
+                  code
+                  details
                   message
                 }
               }
