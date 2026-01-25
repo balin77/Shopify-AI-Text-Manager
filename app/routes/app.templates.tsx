@@ -458,6 +458,16 @@ export default function TemplatesPage() {
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const editorRef = useRef<any>(null);
 
+  // Field pagination state
+  const [fieldPagination, setFieldPagination] = useState<Record<string, {
+    page: number;
+    limit: number;
+    totalCount: number;
+    totalPages: number;
+    search: string;
+  }>>({});
+  const DEFAULT_FIELDS_PER_PAGE = 25;
+
   // Ref to track loaded translations without triggering re-renders
   const loadedTranslationsRef = useRef(loadedTranslations);
   loadedTranslationsRef.current = loadedTranslations;
@@ -546,17 +556,31 @@ export default function TemplatesPage() {
     }
   }, [loaderShopLocales]);
 
-  // Load theme data on demand (for initial load)
-  const loadThemeData = useCallback(async (groupId: string) => {
-    if (loadedThemes[groupId]) {
-      // Data already loaded, but still preload translations if needed
+  // Load theme data on demand (for initial load) with pagination
+  const loadThemeData = useCallback(async (groupId: string, page: number = 1, search: string = "") => {
+    const paginationKey = groupId;
+    const currentPagination = fieldPagination[paginationKey];
+
+    // Check if we need to reload (different page/search or not loaded yet)
+    const needsReload = !loadedThemes[groupId] ||
+      currentPagination?.page !== page ||
+      currentPagination?.search !== search;
+
+    if (!needsReload) {
+      // Data already loaded with same pagination, but still preload translations if needed
       preloadAllTranslations(groupId);
       return;
     }
 
     setIsLoading(true);
     try {
-      const response = await fetch(`/api/templates/${groupId}`);
+      const params = new URLSearchParams({
+        page: String(page),
+        limit: String(DEFAULT_FIELDS_PER_PAGE),
+        ...(search && { search })
+      });
+
+      const response = await fetch(`/api/templates/${groupId}?${params}`);
       if (!response.ok) throw new Error('Failed to load theme data');
 
       const data = await response.json();
@@ -564,6 +588,20 @@ export default function TemplatesPage() {
         ...prev,
         [groupId]: data.theme
       }));
+
+      // Store pagination metadata
+      if (data.theme?.pagination) {
+        setFieldPagination(prev => ({
+          ...prev,
+          [groupId]: {
+            page: data.theme.pagination.page,
+            limit: data.theme.pagination.limit,
+            totalCount: data.theme.pagination.totalCount,
+            totalPages: data.theme.pagination.totalPages,
+            search: search,
+          }
+        }));
+      }
 
       // Preload all foreign language translations in background
       preloadAllTranslations(groupId);
@@ -577,7 +615,7 @@ export default function TemplatesPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [loadedThemes, showInfoBox, t, preloadAllTranslations]);
+  }, [loadedThemes, fieldPagination, showInfoBox, t, preloadAllTranslations]);
 
   // Separate fetcher for loading translations (to not interfere with main actions)
   const translationFetcher = useFetcher();
@@ -601,6 +639,22 @@ export default function TemplatesPage() {
 
     translationFetcher.submit(formData, { method: "POST" });
   }, [loadedTranslations, primaryLocale, translationFetcher]);
+
+  // Field pagination handlers
+  const handleFieldPageChange = useCallback((newPage: number) => {
+    if (!selectedGroupId) return;
+    const currentSearch = fieldPagination[selectedGroupId]?.search || "";
+    loadThemeData(selectedGroupId, newPage, currentSearch);
+  }, [selectedGroupId, fieldPagination, loadThemeData]);
+
+  const handleFieldSearch = useCallback((searchQuery: string) => {
+    if (!selectedGroupId) return;
+    // Reset to page 1 when searching
+    loadThemeData(selectedGroupId, 1, searchQuery);
+  }, [selectedGroupId, loadThemeData]);
+
+  // Get current field pagination for selected group
+  const currentFieldPagination = selectedGroupId ? fieldPagination[selectedGroupId] : null;
 
   // Auto-load first item (data loading only)
   useEffect(() => {
@@ -635,20 +689,40 @@ export default function TemplatesPage() {
       setSelectedGroupId(theme.groupId);
 
       // If already loaded, just select and preload translations
-      if (loadedThemes[theme.groupId]) {
+      if (loadedThemes[theme.groupId] && fieldPagination[theme.groupId]) {
         originalHandleItemSelectRef.current(itemId);
         // Preload translations if not already loaded
         preloadAllTranslations(theme.groupId);
       } else {
-        // Load data, then select
+        // Load data with pagination, then select
         setIsLoading(true);
-        fetch(`/api/templates/${theme.groupId}`)
+        const params = new URLSearchParams({
+          page: "1",
+          limit: String(DEFAULT_FIELDS_PER_PAGE),
+        });
+
+        fetch(`/api/templates/${theme.groupId}?${params}`)
           .then(response => response.json())
           .then(data => {
             setLoadedThemes(prev => ({
               ...prev,
               [theme.groupId]: data.theme
             }));
+
+            // Store pagination metadata
+            if (data.theme?.pagination) {
+              setFieldPagination(prev => ({
+                ...prev,
+                [theme.groupId]: {
+                  page: data.theme.pagination.page,
+                  limit: data.theme.pagination.limit,
+                  totalCount: data.theme.pagination.totalCount,
+                  totalPages: data.theme.pagination.totalPages,
+                  search: "",
+                }
+              }));
+            }
+
             // Preload all foreign language translations in background
             preloadAllTranslations(theme.groupId);
             // Select after data is loaded
@@ -782,6 +856,10 @@ export default function TemplatesPage() {
         t={t}
         hideItemListImages={true}
         hideItemListStatusBars={true}
+        fieldPagination={currentFieldPagination}
+        onFieldPageChange={handleFieldPageChange}
+        onFieldSearch={handleFieldSearch}
+        isFieldsLoading={isLoading}
       />
     </>
   );

@@ -5,7 +5,9 @@
  * Based on the products page structure with all bug fixes included.
  */
 
-import { Page, Card, Text, BlockStack, InlineStack, Button, Modal, TextContainer } from "@shopify/polaris";
+import { useState } from "react";
+import { Page, Card, Text, BlockStack, InlineStack, Button, Modal, TextContainer, TextField, Icon, Spinner } from "@shopify/polaris";
+import { SearchIcon, ChevronLeftIcon, ChevronRightIcon } from "@shopify/polaris-icons";
 import { AIEditableField } from "./AIEditableField";
 import { AIEditableHTMLField } from "./AIEditableHTMLField";
 import { UnifiedItemList } from "./unified/UnifiedItemList";
@@ -65,6 +67,24 @@ interface UnifiedContentEditorProps {
     currentPlan: string;
     nextPlan?: string;
   };
+
+  /** Optional: Field pagination for templates */
+  fieldPagination?: {
+    page: number;
+    limit: number;
+    totalCount: number;
+    totalPages: number;
+    search: string;
+  } | null;
+
+  /** Optional: Handler for field page changes */
+  onFieldPageChange?: (page: number) => void;
+
+  /** Optional: Handler for field search */
+  onFieldSearch?: (search: string) => void;
+
+  /** Optional: Loading state for field pagination */
+  isFieldsLoading?: boolean;
 }
 
 export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
@@ -82,7 +102,14 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     hideItemListImages = false,
     hideItemListStatusBars = false,
     planLimit,
+    fieldPagination,
+    onFieldPageChange,
+    onFieldSearch,
+    isFieldsLoading = false,
   } = props;
+
+  // Local state for search input (debounced)
+  const [fieldSearchInput, setFieldSearchInput] = useState(fieldPagination?.search || "");
 
   const { state, handlers, selectedItem, navigationGuard, helpers, effectiveFieldDefinitions } = editor;
   const { getMaxProducts } = usePlan();
@@ -302,8 +329,89 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                       {config.idPrefix || t.content?.idPrefix || "ID:"} {selectedItem.id.split("/").pop()}
                     </Text>
 
+                    {/* Field Pagination Header (for templates with many fields) */}
+                    {fieldPagination && fieldPagination.totalCount > fieldPagination.limit && (
+                      <div style={{
+                        padding: "0.75rem",
+                        backgroundColor: "var(--p-color-bg-surface-secondary)",
+                        borderRadius: "8px",
+                        marginBottom: "0.5rem"
+                      }}>
+                        <BlockStack gap="300">
+                          {/* Search */}
+                          {onFieldSearch && (
+                            <TextField
+                              label=""
+                              value={fieldSearchInput}
+                              onChange={(value) => {
+                                setFieldSearchInput(value);
+                              }}
+                              onBlur={() => {
+                                if (fieldSearchInput !== fieldPagination.search) {
+                                  onFieldSearch(fieldSearchInput);
+                                }
+                              }}
+                              placeholder={t.content?.searchFields || "Search fields..."}
+                              autoComplete="off"
+                              prefix={<Icon source={SearchIcon} />}
+                              clearButton
+                              onClearButtonClick={() => {
+                                setFieldSearchInput("");
+                                onFieldSearch("");
+                              }}
+                              connectedRight={
+                                <Button onClick={() => onFieldSearch(fieldSearchInput)} size="slim">
+                                  {t.content?.search || "Search"}
+                                </Button>
+                              }
+                            />
+                          )}
+
+                          {/* Pagination Info & Controls */}
+                          <InlineStack align="space-between" blockAlign="center">
+                            <Text as="p" variant="bodySm" tone="subdued">
+                              {t.content?.showingFields || "Showing"} {((fieldPagination.page - 1) * fieldPagination.limit) + 1}-
+                              {Math.min(fieldPagination.page * fieldPagination.limit, fieldPagination.totalCount)} {t.content?.of || "of"}{" "}
+                              {fieldPagination.totalCount} {t.content?.fields || "fields"}
+                              {fieldPagination.search && (
+                                <> ({t.content?.filtered || "filtered"})</>
+                              )}
+                            </Text>
+                            {onFieldPageChange && fieldPagination.totalPages > 1 && (
+                              <InlineStack gap="200" blockAlign="center">
+                                <Button
+                                  icon={ChevronLeftIcon}
+                                  onClick={() => onFieldPageChange(fieldPagination.page - 1)}
+                                  disabled={fieldPagination.page <= 1 || isFieldsLoading}
+                                  accessibilityLabel={t.content?.previousPage || "Previous page"}
+                                  size="slim"
+                                />
+                                <Text as="span" variant="bodySm">
+                                  {fieldPagination.page} / {fieldPagination.totalPages}
+                                </Text>
+                                <Button
+                                  icon={ChevronRightIcon}
+                                  onClick={() => onFieldPageChange(fieldPagination.page + 1)}
+                                  disabled={fieldPagination.page >= fieldPagination.totalPages || isFieldsLoading}
+                                  accessibilityLabel={t.content?.nextPage || "Next page"}
+                                  size="slim"
+                                />
+                              </InlineStack>
+                            )}
+                          </InlineStack>
+                        </BlockStack>
+                      </div>
+                    )}
+
+                    {/* Loading indicator */}
+                    {isFieldsLoading && (
+                      <div style={{ display: "flex", justifyContent: "center", padding: "1rem" }}>
+                        <Spinner size="small" />
+                      </div>
+                    )}
+
                     {/* Dynamic Fields */}
-                    {fieldDefinitions.map((field) => (
+                    {!isFieldsLoading && fieldDefinitions.map((field) => (
                       <FieldRenderer
                         key={field.key}
                         field={field}
@@ -335,6 +443,41 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         fetcherFormData={fetcherFormData}
                       />
                     ))}
+
+                    {/* Bottom Pagination (for easier navigation after scrolling) */}
+                    {fieldPagination && fieldPagination.totalPages > 1 && onFieldPageChange && !isFieldsLoading && (
+                      <div style={{
+                        padding: "0.75rem",
+                        backgroundColor: "var(--p-color-bg-surface-secondary)",
+                        borderRadius: "8px",
+                        marginTop: "0.5rem"
+                      }}>
+                        <InlineStack align="space-between" blockAlign="center">
+                          <Text as="p" variant="bodySm" tone="subdued">
+                            {t.content?.page || "Page"} {fieldPagination.page} {t.content?.of || "of"} {fieldPagination.totalPages}
+                          </Text>
+                          <InlineStack gap="200" blockAlign="center">
+                            <Button
+                              icon={ChevronLeftIcon}
+                              onClick={() => onFieldPageChange(fieldPagination.page - 1)}
+                              disabled={fieldPagination.page <= 1}
+                              accessibilityLabel={t.content?.previousPage || "Previous page"}
+                              size="slim"
+                            />
+                            <Text as="span" variant="bodySm">
+                              {fieldPagination.page} / {fieldPagination.totalPages}
+                            </Text>
+                            <Button
+                              icon={ChevronRightIcon}
+                              onClick={() => onFieldPageChange(fieldPagination.page + 1)}
+                              disabled={fieldPagination.page >= fieldPagination.totalPages}
+                              accessibilityLabel={t.content?.nextPage || "Next page"}
+                              size="slim"
+                            />
+                          </InlineStack>
+                        </InlineStack>
+                      </div>
+                    )}
                   </BlockStack>
                 </Card>
               </div>

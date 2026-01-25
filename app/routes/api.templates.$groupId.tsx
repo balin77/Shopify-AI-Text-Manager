@@ -19,6 +19,12 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     return json({ error: "groupId is required" }, { status: 400 });
   }
 
+  // Parse pagination parameters from URL
+  const url = new URL(request.url);
+  const page = parseInt(url.searchParams.get("page") || "1", 10);
+  const limit = parseInt(url.searchParams.get("limit") || "25", 10);
+  const search = url.searchParams.get("search") || "";
+
   try {
     const { db } = await import("../db.server");
 
@@ -45,9 +51,24 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         uniqueContent.set(item.key, item);
       }
     }
-    const deduplicatedContent = Array.from(uniqueContent.values());
+    let deduplicatedContent = Array.from(uniqueContent.values());
 
-    console.log(`[API-TEMPLATES-LOADER] Group ${groupId}: ${allContent.length} total items, ${deduplicatedContent.length} unique keys`);
+    // Apply search filter if provided
+    if (search) {
+      const searchLower = search.toLowerCase();
+      deduplicatedContent = deduplicatedContent.filter((item) =>
+        item.key.toLowerCase().includes(searchLower) ||
+        (item.value && item.value.toLowerCase().includes(searchLower))
+      );
+    }
+
+    // Calculate pagination
+    const totalCount = deduplicatedContent.length;
+    const totalPages = Math.ceil(totalCount / limit);
+    const startIndex = (page - 1) * limit;
+    const paginatedContent = deduplicatedContent.slice(startIndex, startIndex + limit);
+
+    console.log(`[API-TEMPLATES-LOADER] Group ${groupId}: ${totalCount} unique keys, page ${page}/${totalPages}, showing ${paginatedContent.length} items`);
 
     // Get group metadata from first item
     const firstGroup = themeGroups[0];
@@ -59,8 +80,17 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       icon: firstGroup.groupIcon,
       groupId: groupId,
       role: 'THEME_GROUP',
-      translatableContent: deduplicatedContent,
-      contentCount: deduplicatedContent.length
+      translatableContent: paginatedContent,
+      contentCount: totalCount,
+      // Pagination metadata
+      pagination: {
+        page,
+        limit,
+        totalCount,
+        totalPages,
+        hasNextPage: page < totalPages,
+        hasPreviousPage: page > 1,
+      }
     };
 
     console.log(`[API-TEMPLATES-LOADER] Loaded ${themeGroups.length} resources with ${allContent.length} translatable fields for group ${groupId}`);
