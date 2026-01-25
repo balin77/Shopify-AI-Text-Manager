@@ -107,8 +107,18 @@ export function UnifiedLanguageBar({
         const isPrimary = locale.primary;
         const isCurrentLanguage = currentLanguage === locale.locale;
 
+        // Combine existing buttonStyle with selected state styling
+        const combinedStyle: React.CSSProperties = {
+          ...buttonStyle,
+          ...(isCurrentLanguage ? {
+            backgroundColor: "rgba(0, 128, 96, 0.1)",
+            borderRadius: "8px",
+            padding: "2px 4px",
+          } : {}),
+        };
+
         return (
-          <div key={locale.locale} style={buttonStyle}>
+          <div key={locale.locale} style={combinedStyle}>
             <Button
               variant={isCurrentLanguage ? "primary" : undefined}
               onClick={() => {
