@@ -334,6 +334,25 @@ export class ProductSyncService {
       },
     });
 
+    // Before deleting images, preserve alt-texts that were recently modified by user
+    // This prevents webhook-triggered syncs from overwriting user changes
+    const PRESERVE_WINDOW_MS = 5 * 60 * 1000; // 5 minutes
+    const cutoffTime = new Date(Date.now() - PRESERVE_WINDOW_MS);
+
+    const existingImages = await db.productImage.findMany({
+      where: { productId: productData.id },
+      select: { mediaId: true, altText: true, altTextModifiedAt: true },
+    });
+
+    // Map of mediaId -> preserved altText for recently modified images
+    const preservedAltTexts = new Map<string, string | null>();
+    for (const img of existingImages) {
+      if (img.mediaId && img.altTextModifiedAt && img.altTextModifiedAt > cutoffTime) {
+        preservedAltTexts.set(img.mediaId, img.altText);
+        console.log(`🟤 [SYNC] Preserving user-modified alt-text for mediaId ${img.mediaId}: "${img.altText}"`);
+      }
+    }
+
     // Delete old relations and create new ones
     await db.contentTranslation.deleteMany({ where: { resourceId: productData.id, resourceType: "Product" } });
     await db.productImage.deleteMany({ where: { productId: productData.id } });
@@ -394,8 +413,18 @@ export class ProductSyncService {
       // Create images with mediaId for translation support
       const createdImages = await Promise.all(
         mediaImages.map(async (media: any, index: number) => {
-          const altTextToSave = media.alt || null;
-          console.log(`🔵 [SYNC] Saving image ${index}: altText="${altTextToSave}"`);
+          // Check if this image's alt-text was recently modified by user
+          const wasRecentlyModified = preservedAltTexts.has(media.id);
+          const altTextToSave = wasRecentlyModified
+            ? preservedAltTexts.get(media.id) // Use preserved user value
+            : (media.alt || null); // Use Shopify value
+
+          if (wasRecentlyModified) {
+            console.log(`🟤 [SYNC] Using preserved alt-text for image ${index}: "${altTextToSave}" (ignoring Shopify: "${media.alt}")`);
+          } else {
+            console.log(`🔵 [SYNC] Saving image ${index}: altText="${altTextToSave}"`);
+          }
+
           return db.productImage.create({
             data: {
               productId: productData.id,
@@ -403,6 +432,8 @@ export class ProductSyncService {
               altText: altTextToSave,
               mediaId: media.id, // Store Shopify Media ID for translations
               position: index,
+              // Preserve the modification timestamp if we're keeping user's alt-text
+              altTextModifiedAt: wasRecentlyModified ? new Date() : null,
             },
           });
         })
