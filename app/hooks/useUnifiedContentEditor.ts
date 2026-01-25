@@ -707,6 +707,17 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             item.seo.description = value || '';
           }
         });
+
+        // Update image alt-texts for primary locale
+        if (item.images && Object.keys(imageAltTextsRef.current).length > 0) {
+          for (const [indexStr, altText] of Object.entries(imageAltTextsRef.current)) {
+            const index = parseInt(indexStr);
+            if (item.images[index]) {
+              item.images[index].altText = altText;
+              console.log('[SAVE-RESPONSE] Updated primary alt-text for image', index);
+            }
+          }
+        }
       } else {
         // This was a successful update action for a translation
         // Use the saved locale, not the current viewing language
@@ -728,7 +739,35 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         });
 
         item.translations = existingTranslations;
+
+        // Update image alt-text translations for foreign locale
+        if (item.images && Object.keys(imageAltTextsRef.current).length > 0) {
+          for (const [indexStr, altText] of Object.entries(imageAltTextsRef.current)) {
+            const index = parseInt(indexStr);
+            if (item.images[index]) {
+              // Initialize altTextTranslations array if it doesn't exist
+              if (!item.images[index].altTextTranslations) {
+                item.images[index].altTextTranslations = [];
+              }
+              // Remove existing translation for this locale
+              item.images[index].altTextTranslations = item.images[index].altTextTranslations.filter(
+                (t: any) => t.locale !== savedLocale
+              );
+              // Add new translation
+              item.images[index].altTextTranslations.push({
+                locale: savedLocale,
+                altText: altText,
+              });
+              console.log('[SAVE-RESPONSE] Updated alt-text translation for image', index, 'locale:', savedLocale);
+            }
+          }
+        }
       }
+
+      // Update originalAltTexts immediately after saving to reset change detection
+      // This is critical to make hasAltTextChanges = false after save
+      setOriginalAltTexts({ ...imageAltTextsRef.current });
+      console.log('[SAVE-RESPONSE] Updated originalAltTexts:', { ...imageAltTextsRef.current });
 
       // Clear the saved locale ref after processing
       savedLocaleRef.current = null;
