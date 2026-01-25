@@ -191,11 +191,13 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
           }
         );
 
-        const prompt = `Improve or generate content for this field: ${fieldKey}
+        const prompt = `Improve the following template field content.
+
+Field: ${fieldKey}
 Current value: ${currentValue}
 Context: ${firstGroup.groupName}
 
-Please provide improved content that is clear and concise.`;
+IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no options, no formatting, no labels. Just output the single best improved version of the content.`;
 
         const generatedContent = await aiService['askAI'](prompt);
 
