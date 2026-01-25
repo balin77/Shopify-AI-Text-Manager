@@ -42,8 +42,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // Alt-text state for images (indexed by image position)
   const [imageAltTexts, setImageAltTexts] = useState<Record<number, string>>({});
   const [altTextSuggestions, setAltTextSuggestions] = useState<Record<number, string>>({});
-  // Track original alt-texts to detect changes
-  const originalAltTextsRef = useRef<Record<number, string>>({});
+  // Track original alt-texts to detect changes (using state to trigger re-renders)
+  const [originalAltTexts, setOriginalAltTexts] = useState<Record<number, string>>({});
   // Ref to access imageAltTexts in effects without adding as dependency
   const imageAltTextsRef = useRef<Record<number, string>>({});
   imageAltTextsRef.current = imageAltTexts;
@@ -79,7 +79,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
   // Check for alt-text changes
   const hasAltTextChanges = useMemo(() => {
-    const originalKeys = Object.keys(originalAltTextsRef.current);
+    const originalKeys = Object.keys(originalAltTexts);
     const currentKeys = Object.keys(imageAltTexts);
 
     // If no alt-texts at all, no changes
@@ -89,12 +89,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     const allKeys = new Set([...originalKeys, ...currentKeys]);
     for (const key of allKeys) {
       const numKey = Number(key);
-      const original = originalAltTextsRef.current[numKey] || "";
+      const original = originalAltTexts[numKey] || "";
       const current = imageAltTexts[numKey] || "";
       if (original !== current) return true;
     }
     return false;
-  }, [imageAltTexts]);
+  }, [imageAltTexts, originalAltTexts]);
 
   // Combined hasChanges
   const hasChanges = hasFieldChanges || hasAltTextChanges;
@@ -769,7 +769,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       );
 
       // Update original alt-texts to match current values (so hasChanges becomes false)
-      originalAltTextsRef.current = { ...imageAltTextsRef.current };
+      setOriginalAltTexts({ ...imageAltTextsRef.current });
 
       // Revalidate to fetch fresh data from the database after successful save
       // This ensures translations and all changes are reflected in the UI
@@ -1357,7 +1357,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   useEffect(() => {
     setImageAltTexts({});
     setAltTextSuggestions({});
-    originalAltTextsRef.current = {};
+    setOriginalAltTexts({});
   }, [selectedItemId]);
 
   // Load translated alt-texts when language changes
@@ -1368,7 +1368,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     if (currentLanguage === primaryLocale) {
       // Reset to primary locale alt-texts
       setImageAltTexts({});
-      originalAltTextsRef.current = {};
+      setOriginalAltTexts({});
     } else {
       // Load translated alt-texts from DB
       const translatedAltTexts: Record<number, string> = {};
@@ -1381,7 +1381,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         }
       });
       setImageAltTexts(translatedAltTexts);
-      originalAltTextsRef.current = { ...translatedAltTexts };
+      setOriginalAltTexts({ ...translatedAltTexts });
     }
   }, [currentLanguage, selectedItemId, primaryLocale]);
 
