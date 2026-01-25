@@ -756,6 +756,10 @@ export default function TemplatesPage() {
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const editorRef = useRef<any>(null);
 
+  // Track previous language and groupId to prevent re-loading values on every render
+  const previousLanguageRef = useRef<string | null>(null);
+  const previousGroupIdRef = useRef<string | null>(null);
+
   // Field pagination state
   const [fieldPagination, setFieldPagination] = useState<Record<string, {
     page: number;
@@ -1051,9 +1055,19 @@ export default function TemplatesPage() {
     }
   }, [loadedThemes, selectedGroupId, themes]);
 
-  // Load translations when language changes
+  // Load translations when language or group changes
   useEffect(() => {
     const currentLanguage = editor.state.currentLanguage;
+
+    // Only run when language or group actually changes (prevents re-loading on every render)
+    const languageChanged = previousLanguageRef.current !== currentLanguage;
+    const groupChanged = previousGroupIdRef.current !== selectedGroupId;
+
+    if (!languageChanged && !groupChanged) return;
+
+    previousLanguageRef.current = currentLanguage;
+    previousGroupIdRef.current = selectedGroupId;
+
     if (!selectedGroupId || !currentLanguage || currentLanguage === primaryLocale) return;
 
     // Check if already cached
