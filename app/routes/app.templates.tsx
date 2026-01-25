@@ -506,8 +506,6 @@ export default function TemplatesPage() {
     );
     if (localesToLoad.length === 0) return;
 
-    console.log("[TEMPLATES] Preloading translations for locales:", localesToLoad.map((l: any) => l.locale));
-
     // Load all translations in parallel using API route
     const results = await Promise.allSettled(
       localesToLoad.map(async (locale: any) => {
@@ -521,12 +519,10 @@ export default function TemplatesPage() {
         });
 
         if (!response.ok) {
-          console.error(`[TEMPLATES] Failed to load translations for ${locale.locale}:`, response.status);
           return { locale: locale.locale, translations: [] };
         }
 
         const data = await response.json();
-        console.log(`[TEMPLATES] Loaded ${data.translations?.length || 0} translations for ${locale.locale}`);
         return { locale: locale.locale, translations: data.translations || [] };
       })
     );
@@ -540,7 +536,6 @@ export default function TemplatesPage() {
     });
 
     if (Object.keys(newTranslations).length > 0) {
-      console.log("[TEMPLATES] Updating state with translations for locales:", Object.keys(newTranslations));
       setLoadedTranslations(prev => ({
         ...prev,
         [groupId]: {
@@ -555,14 +550,12 @@ export default function TemplatesPage() {
   const loadThemeData = useCallback(async (groupId: string) => {
     if (loadedThemes[groupId]) {
       // Data already loaded, but still preload translations if needed
-      console.log("[TEMPLATES] Theme data already loaded, preloading translations for:", groupId);
       preloadAllTranslations(groupId);
       return;
     }
 
     setIsLoading(true);
     try {
-      console.log("[TEMPLATES] Loading theme data for:", groupId);
       const response = await fetch(`/api/templates/${groupId}`);
       if (!response.ok) throw new Error('Failed to load theme data');
 
@@ -573,7 +566,6 @@ export default function TemplatesPage() {
       }));
 
       // Preload all foreign language translations in background
-      console.log("[TEMPLATES] Theme data loaded, preloading translations for:", groupId);
       preloadAllTranslations(groupId);
     } catch (error) {
       console.error('Error loading theme data:', error);

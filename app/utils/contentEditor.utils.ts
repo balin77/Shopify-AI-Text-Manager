@@ -627,16 +627,20 @@ export function getLocaleButtonStyle(
 
   if (primaryContentMissing) {
     // Pulsing border animation (orange) when primary content is missing
+    // 1s delay to allow data loading, smooth fade-in start
     return {
-      animation: `pulse ${TIMING.HIGHLIGHT_DURATION_MS}ms ease-in-out infinite`,
+      animation: `pulseFadeIn 500ms ease-out forwards, pulse ${TIMING.HIGHLIGHT_DURATION_MS}ms ease-in-out 1.5s infinite`,
+      animationDelay: "1s, 1.5s",
       borderRadius: "8px",
     };
   }
 
   if (foreignTranslationMissing) {
     // Pulsing border animation (blue) when translations are missing
+    // 1s delay to allow data loading, smooth fade-in start
     return {
-      animation: `pulseBlue ${TIMING.HIGHLIGHT_DURATION_MS}ms ease-in-out infinite`,
+      animation: `pulseBlueFadeIn 500ms ease-out forwards, pulseBlue ${TIMING.HIGHLIGHT_DURATION_MS}ms ease-in-out 1.5s infinite`,
+      animationDelay: "1s, 1.5s",
       borderRadius: "8px",
     };
   }
@@ -661,16 +665,20 @@ export function useLocaleButtonStyle(
 
     if (primaryContentMissing) {
       // Pulsing border animation (orange) when primary content is missing
+      // 1s delay to allow data loading, smooth fade-in start
       return {
-        animation: `pulse ${TIMING.HIGHLIGHT_DURATION_MS}ms ease-in-out infinite`,
+        animation: `pulseFadeIn 500ms ease-out forwards, pulse ${TIMING.HIGHLIGHT_DURATION_MS}ms ease-in-out 1.5s infinite`,
+        animationDelay: "1s, 1.5s",
         borderRadius: "8px",
       };
     }
 
     if (foreignTranslationMissing) {
       // Pulsing border animation (blue) when translations are missing
+      // 1s delay to allow data loading, smooth fade-in start
       return {
-        animation: `pulseBlue ${TIMING.HIGHLIGHT_DURATION_MS}ms ease-in-out infinite`,
+        animation: `pulseBlueFadeIn 500ms ease-out forwards, pulseBlue ${TIMING.HIGHLIGHT_DURATION_MS}ms ease-in-out 1.5s infinite`,
+        animationDelay: "1s, 1.5s",
         borderRadius: "8px",
       };
     }
@@ -704,6 +712,26 @@ export const contentEditorStyles = `
   .description-editor ul, .description-editor ol {
     margin: 1em 0;
     padding-left: 40px;
+  }
+
+  /* Fade-in animations for smooth start (orange) */
+  @keyframes pulseFadeIn {
+    0% {
+      box-shadow: 0 0 0 0 rgba(255, 149, 0, 0);
+    }
+    100% {
+      box-shadow: 0 0 0 0 rgba(255, 149, 0, 0.7);
+    }
+  }
+
+  /* Fade-in animations for smooth start (blue) */
+  @keyframes pulseBlueFadeIn {
+    0% {
+      box-shadow: 0 0 0 0 rgba(59, 130, 246, 0);
+    }
+    100% {
+      box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.7);
+    }
   }
 
   @keyframes pulse {
