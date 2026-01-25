@@ -464,39 +464,55 @@ export async function handleTranslateAltTextToAllLocales(
     }
 
     // Save translations to DB
+    // Note: We wrap this in a try-catch because a concurrent product sync
+    // could delete and recreate images, causing a FK constraint violation
     if (dbImage) {
-      for (const locale of params.targetLocales) {
-        const altText = translatedAltTexts[locale];
-        if (!altText) continue;
+      try {
+        for (const locale of params.targetLocales) {
+          const altText = translatedAltTexts[locale];
+          if (!altText) continue;
 
-        const existing = await db.productImageAltTranslation.findUnique({
-          where: {
-            imageId_locale: {
-              imageId: dbImage.id,
-              locale: locale,
+          const existing = await db.productImageAltTranslation.findUnique({
+            where: {
+              imageId_locale: {
+                imageId: dbImage.id,
+                locale: locale,
+              },
             },
-          },
-        });
+          });
 
-        if (existing) {
-          await db.productImageAltTranslation.update({
-            where: { id: existing.id },
-            data: { altText },
+          if (existing) {
+            await db.productImageAltTranslation.update({
+              where: { id: existing.id },
+              data: { altText },
+            });
+          } else {
+            await db.productImageAltTranslation.create({
+              data: {
+                imageId: dbImage.id,
+                locale: locale,
+                altText: altText,
+              },
+            });
+          }
+        }
+        loggers.translation("debug", "Saved alt-text translations to DB", {
+          imageIndex: params.imageIndex,
+          locales: params.targetLocales,
+        });
+      } catch (dbError: any) {
+        // If the image was deleted by a concurrent sync, log and continue
+        // The translations were still saved to Shopify, they'll be synced on next reload
+        if (dbError.code === 'P2003' || dbError.message?.includes('Foreign key constraint')) {
+          loggers.translation("warn", "Image was deleted during translation save (concurrent sync)", {
+            imageIndex: params.imageIndex,
+            productId: params.productId,
+            error: dbError.message,
           });
         } else {
-          await db.productImageAltTranslation.create({
-            data: {
-              imageId: dbImage.id,
-              locale: locale,
-              altText: altText,
-            },
-          });
+          throw dbError; // Re-throw other errors
         }
       }
-      loggers.translation("debug", "Saved alt-text translations to DB", {
-        imageIndex: params.imageIndex,
-        locales: params.targetLocales,
-      });
     }
 
     await completeTask(task.id, {
