@@ -376,7 +376,7 @@ export async function handleTranslateAltTextToAllLocales(
       translatedAltTexts[locale] = translations[locale]?.[`altText_${params.imageIndex}`] || "";
     }
 
-    await updateTaskProgress(task.id, 50, { translationsGenerated: true });
+    await updateTaskProgress(task.id, 50);
 
     // Now save the translations to Shopify and DB
     const gateway = new ShopifyApiGateway(context.admin, context.session.shop);
