@@ -64,6 +64,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // Track original template values for change detection (templates use dynamic fields)
   const originalTemplateValuesRef = useRef<Record<string, string>>({});
 
+  // Track if initial data load was successful - disables retry mechanism after successful load
+  // Reset when item or language changes, allowing retry during new load cycles
+  const initialLoadSuccessfulRef = useRef(false);
+
   // IMPORTANT: Memoize selectedItem to prevent infinite re-renders
   // Without this, items.find() returns a new object reference on every revalidation,
   // which triggers useChangeTracking and other effects, causing an infinite loop
@@ -192,10 +196,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // Reset accept-and-translate flag when changing items or languages
     setIsAcceptAndTranslateFlow(false);
 
-    // Reset retry count when changing languages (to allow fresh retries)
-    if (languageChanged) {
-      retryCountRef.current = 0;
-    }
+    // Reset retry mechanism flags when changing items or languages (allow fresh retries)
+    initialLoadSuccessfulRef.current = false;
+    retryCountRef.current = 0;
 
     // Clear deleted translation keys and processed response refs when switching to a different item
     if (itemIdChanged) {
@@ -203,7 +206,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       processedSaveResponseRef.current = null;
       processedResponseRef.current = null;
       processedTranslateFieldRef.current = null;
-      retryCountRef.current = 0; // Reset retry count for new item
       setIsInitialDataReady(false); // Reset data ready flag for new item
       console.log('[DATA-LOAD] Cleared refs for new item');
     }
@@ -264,8 +266,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // Retry mechanism: If all fields are empty but item has data, retry loading
   // NOTE: Disabled for templates because users can intentionally clear all fields
   useEffect(() => {
-    // Skip retry mechanism for templates - users can intentionally clear fields
-    if (config.contentType === 'templates') return;
+    // Skip retry mechanism if initial load was already successful
+    // This prevents reloading old values when user intentionally clears fields
+    if (initialLoadSuccessfulRef.current) return;
 
     const item = selectedItemRef.current;
     if (!item || !selectedItemId || isLoadingData) return;
@@ -276,7 +279,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // Check if ALL editable values are empty
     const allValuesEmpty = Object.values(editableValues).every(v => !v || v === "");
     if (!allValuesEmpty) {
-      // Values loaded successfully, reset retry count
+      // Values loaded successfully - mark as successful and disable further retries
+      initialLoadSuccessfulRef.current = true;
       retryCountRef.current = 0;
       return;
     }
