@@ -304,11 +304,12 @@ export function MainNavigation() {
       console.log("📦 [MainNavigation] Plan change response:", planFetcher.data);
 
       if (planFetcher.data.success) {
-        console.log("✅ [MainNavigation] Plan change complete, reloading page...");
-        if (planFetcher.data.syncStats?.synced) {
-          console.log(`📦 [MainNavigation] Synced ${planFetcher.data.syncStats.synced} additional products`);
-        }
-        window.location.reload();
+        console.log("✅ [MainNavigation] Plan change complete, reloading with sync...");
+
+        // Add sync=true parameter to trigger product sync after plan upgrade
+        const url = new URL(window.location.href);
+        url.searchParams.set("sync", "true");
+        window.location.href = url.toString();
       } else {
         console.error("❌ [MainNavigation] Plan change failed:", planFetcher.data.error);
         setIsChangingPlan(false);

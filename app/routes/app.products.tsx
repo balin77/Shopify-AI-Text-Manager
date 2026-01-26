@@ -100,12 +100,17 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
     console.log("[PRODUCTS-LOADER] Loaded", initialDbProducts.length, "products from database");
 
-    // 3. Auto-sync missing products if we have capacity
-    // This handles the case where plan was upgraded and products need to be synced
+    // 3. Auto-sync missing products ONLY if sync=true parameter is set
+    // This is triggered after a plan upgrade to fetch additional products
+    const url = new URL(request.url);
+    const shouldSync = url.searchParams.get("sync") === "true";
+
     let dbProducts = initialDbProducts;
     let syncedCount = 0;
 
-    if (initialDbProducts.length < planLimits.maxProducts) {
+    if (shouldSync && initialDbProducts.length < planLimits.maxProducts) {
+      console.log(`[PRODUCTS-LOADER] Sync requested, checking for missing products...`);
+
       const maxToFetch = planLimits.maxProducts === Infinity ? 250 : planLimits.maxProducts;
 
       // Fetch product IDs from Shopify
@@ -131,7 +136,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       const missingProductIds = shopifyProductIds.filter((id: string) => !existingIds.has(id));
 
       if (missingProductIds.length > 0) {
-        console.log(`[PRODUCTS-LOADER] Found ${missingProductIds.length} products to sync (plan upgrade detected)`);
+        console.log(`[PRODUCTS-LOADER] Found ${missingProductIds.length} products to sync`);
 
         // Sync missing products
         const { ProductSyncService } = await import("../services/product-sync.service");
@@ -162,6 +167,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
           });
           console.log(`[PRODUCTS-LOADER] Reloaded ${dbProducts.length} products after sync`);
         }
+      } else {
+        console.log(`[PRODUCTS-LOADER] No missing products to sync`);
       }
     }
 
@@ -303,6 +310,15 @@ export default function ProductsPage() {
   useEffect(() => {
     setContentNavHeight(0);
   }, [setContentNavHeight]);
+
+  // Remove sync parameter from URL after loading (to prevent re-sync on refresh)
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (url.searchParams.has("sync")) {
+      url.searchParams.delete("sync");
+      window.history.replaceState({}, "", url.toString());
+    }
+  }, []);
 
   // Show loader error
   useEffect(() => {
