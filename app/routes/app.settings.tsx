@@ -13,6 +13,7 @@ import {
   Divider,
 } from "@shopify/polaris";
 import { PLAN_CONFIG, PLAN_DISPLAY_NAMES, type Plan } from "../config/plans";
+import { BILLING_PLANS, getAvailablePlans, type BillingPlan } from "../config/billing";
 import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
 import { AIInstructionsTabs } from "../components/AIInstructionsTabs";
@@ -533,9 +534,64 @@ export default function SettingsPage() {
   const [hasAIChanges, setHasAIChanges] = useState(false);
   const [hasLanguageChanges, setHasLanguageChanges] = useState(false);
   const [hasInstructionsChanges, setHasInstructionsChanges] = useState(false);
+  const [planLoading, setPlanLoading] = useState<string | null>(null);
+  const [planError, setPlanError] = useState<string | null>(null);
 
   // Check if there are any unsaved changes across tabs
   const hasUnsavedChanges = hasAIChanges || hasLanguageChanges || hasInstructionsChanges;
+
+  // Get available plans for billing
+  const availablePlans = getAvailablePlans();
+
+  // Handle plan selection
+  const handleSelectPlan = async (plan: BillingPlan) => {
+    if (plan === 'free') {
+      if (window.confirm(t.settings.confirmDowngrade)) {
+        setPlanLoading('free');
+        setPlanError(null);
+
+        try {
+          const response = await fetch('/api/billing/cancel-subscription', {
+            method: 'POST',
+          });
+
+          if (!response.ok) {
+            throw new Error('Failed to cancel subscription');
+          }
+
+          window.location.reload();
+        } catch (err) {
+          setPlanError(err instanceof Error ? err.message : t.settings.errorOccurred);
+          setPlanLoading(null);
+        }
+      }
+      return;
+    }
+
+    setPlanLoading(plan);
+    setPlanError(null);
+
+    try {
+      const response = await fetch('/api/billing/create-subscription', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plan }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to create subscription');
+      }
+
+      if (data.confirmationUrl) {
+        window.location.href = data.confirmationUrl;
+      }
+    } catch (err) {
+      setPlanError(err instanceof Error ? err.message : t.settings.errorOccurred);
+      setPlanLoading(null);
+    }
+  };
 
   // Handle section navigation with unsaved changes warning
   const handleSectionChange = (newSection: "setup" | "ai" | "instructions" | "language" | "plan") => {
@@ -732,90 +788,102 @@ export default function SettingsPage() {
 
               {/* Plan Settings */}
               {selectedSection === "plan" && (
-                <Card>
-                  <BlockStack gap="400">
-                    <Text as="h2" variant="headingLg">
-                      {t.settings.planTitle}
-                    </Text>
-                    <Text as="p" variant="bodyMd" tone="subdued">
-                      {t.settings.planDescription}
-                    </Text>
+                <BlockStack gap="400">
+                  {planError && (
+                    <Banner tone="critical" title={t.common.error} onDismiss={() => setPlanError(null)}>
+                      <p>{planError}</p>
+                    </Banner>
+                  )}
 
-                    <Divider />
+                  <Text as="h2" variant="headingLg">
+                    {t.settings.availablePlans}
+                  </Text>
 
-                    <BlockStack gap="300">
-                      <InlineStack gap="200" align="start" blockAlign="center">
-                        <Text as="p" variant="bodyMd" fontWeight="semibold">
-                          {t.settings.currentPlan}:
-                        </Text>
-                        <Badge
-                          tone={subscriptionPlan === "free" ? "info" : subscriptionPlan === "max" ? "warning" : "success"}
-                        >
-                          {PLAN_DISPLAY_NAMES[subscriptionPlan as Plan]}
-                        </Badge>
-                      </InlineStack>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px' }}>
+                    {availablePlans.map(({ id, config }) => {
+                      const planDetails = PLAN_CONFIG[id];
+                      const isCurrentPlan = id === subscriptionPlan;
+                      const price = config ? `€${config.price.toFixed(2)}${t.settings.perMonth}` : t.settings.free;
 
-                      <Divider />
+                      return (
+                        <Card key={id}>
+                          <BlockStack gap="300">
+                            <InlineStack align="space-between" blockAlign="start">
+                              <Text as="h3" variant="headingMd">
+                                {PLAN_DISPLAY_NAMES[id]}
+                              </Text>
+                              {isCurrentPlan && <Badge tone="success">{t.settings.active}</Badge>}
+                            </InlineStack>
 
+                            <Text as="p" variant="headingLg" fontWeight="bold">
+                              {price}
+                            </Text>
+
+                            <Divider />
+
+                            <BlockStack gap="200">
+                              <Text as="p" variant="bodyMd">
+                                <strong>{t.settings.products}:</strong>{' '}
+                                {planDetails.maxProducts === Infinity
+                                  ? t.settings.unlimited
+                                  : planDetails.maxProducts}
+                              </Text>
+                              <Text as="p" variant="bodyMd">
+                                <strong>{t.settings.images}:</strong>{' '}
+                                {planDetails.productImages === 'all' ? t.settings.allImages : t.settings.featuredImageOnly}
+                              </Text>
+                              <Text as="p" variant="bodyMd">
+                                <strong>{t.settings.contentTypes}:</strong> {planDetails.contentTypes.length}
+                              </Text>
+                              <BlockStack gap="100">
+                                {planDetails.contentTypes.slice(0, 4).map((type) => (
+                                  <Text key={type} as="p" variant="bodySm" tone="success">
+                                    ✓ {type}
+                                  </Text>
+                                ))}
+                                {planDetails.contentTypes.length > 4 && (
+                                  <Text as="p" variant="bodySm" tone="subdued">
+                                    +{planDetails.contentTypes.length - 4} {t.settings.more}
+                                  </Text>
+                                )}
+                              </BlockStack>
+                            </BlockStack>
+
+                            <Button
+                              variant={isCurrentPlan ? 'secondary' : 'primary'}
+                              disabled={isCurrentPlan || planLoading !== null}
+                              loading={planLoading === id}
+                              onClick={() => handleSelectPlan(id)}
+                              fullWidth
+                            >
+                              {isCurrentPlan ? t.settings.currentPlanButton : id === 'free' ? t.settings.downgrade : t.settings.select}
+                            </Button>
+                          </BlockStack>
+                        </Card>
+                      );
+                    })}
+                  </div>
+
+                  <Card>
+                    <BlockStack gap="200">
                       <Text as="h3" variant="headingMd">
-                        {t.settings.planFeatures}
+                        {t.settings.planNotes}
                       </Text>
-
-                      <BlockStack gap="200">
-                        <InlineStack gap="200">
-                          <Text as="span" variant="bodyMd" fontWeight="semibold">
-                            {t.settings.maxProducts}:
-                          </Text>
-                          <Text as="span" variant="bodyMd">
-                            {PLAN_CONFIG[subscriptionPlan as Plan].maxProducts === Infinity
-                              ? "∞"
-                              : PLAN_CONFIG[subscriptionPlan as Plan].maxProducts}
-                          </Text>
-                        </InlineStack>
-
-                        <InlineStack gap="200">
-                          <Text as="span" variant="bodyMd" fontWeight="semibold">
-                            {t.settings.productImages}:
-                          </Text>
-                          <Text as="span" variant="bodyMd">
-                            {PLAN_CONFIG[subscriptionPlan as Plan].productImages === "all"
-                              ? t.settings.allImages
-                              : t.settings.featuredImageOnly}
-                          </Text>
-                        </InlineStack>
-
-                        <InlineStack gap="200">
-                          <Text as="span" variant="bodyMd" fontWeight="semibold">
-                            {t.settings.contentTypes}:
-                          </Text>
-                          <Text as="span" variant="bodyMd">
-                            {PLAN_CONFIG[subscriptionPlan as Plan].contentTypes.length}
-                          </Text>
-                        </InlineStack>
-
-                        <InlineStack gap="200">
-                          <Text as="span" variant="bodyMd" fontWeight="semibold">
-                            {t.settings.aiInstructionsEditable}:
-                          </Text>
-                          <Text as="span" variant="bodyMd">
-                            {PLAN_CONFIG[subscriptionPlan as Plan].aiInstructionsEditable
-                              ? t.settings.yes
-                              : t.settings.no}
-                          </Text>
-                        </InlineStack>
-                      </BlockStack>
+                      <Text as="p" variant="bodyMd" tone="subdued">
+                        • {t.settings.planNote1}
+                      </Text>
+                      <Text as="p" variant="bodyMd" tone="subdued">
+                        • {t.settings.planNote2}
+                      </Text>
+                      <Text as="p" variant="bodyMd" tone="subdued">
+                        • {t.settings.planNote3}
+                      </Text>
+                      <Text as="p" variant="bodyMd" tone="subdued">
+                        • {t.settings.planNote4}
+                      </Text>
                     </BlockStack>
-
-                    <Divider />
-
-                    <Button
-                      variant="primary"
-                      onClick={() => navigate("/app/billing")}
-                    >
-                      {subscriptionPlan === "max" ? t.settings.changePlan : t.settings.upgradePlan}
-                    </Button>
-                  </BlockStack>
-                </Card>
+                  </Card>
+                </BlockStack>
               )}
             </BlockStack>
           </div>
