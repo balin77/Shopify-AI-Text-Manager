@@ -51,6 +51,7 @@ export async function createSubscription(
         name: planConfig.name,
         returnUrl,
         test: process.env.NODE_ENV === 'development',
+        trialDays: planConfig.trialDays || 0,
         lineItems: [
           {
             plan: {
