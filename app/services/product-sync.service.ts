@@ -288,6 +288,7 @@ export class ProductSyncService {
   /**
    * Save product and translations to database
    * Includes image alt-text translations from Shopify (API 2025-10+)
+   * Uses a transaction to ensure data consistency
    */
   private async saveToDatabase(
     productData: any,
@@ -298,43 +299,7 @@ export class ProductSyncService {
 
     console.log(`[ProductSync] Saving product to database: ${productData.id}`);
 
-    // Upsert product
-    await db.product.upsert({
-      where: {
-        shop_id: {
-          shop: this.shop,
-          id: productData.id,
-        },
-      },
-      create: {
-        id: productData.id,
-        shop: this.shop,
-        title: productData.title,
-        descriptionHtml: productData.descriptionHtml || "",
-        handle: productData.handle,
-        status: productData.status,
-        seoTitle: productData.seo?.title || null,
-        seoDescription: productData.seo?.description || null,
-        featuredImageUrl: productData.featuredImage?.url || null,
-        featuredImageAlt: productData.featuredImage?.altText || null,
-        shopifyUpdatedAt: new Date(productData.updatedAt),
-        lastSyncedAt: new Date(),
-      },
-      update: {
-        title: productData.title,
-        descriptionHtml: productData.descriptionHtml || "",
-        handle: productData.handle,
-        status: productData.status,
-        seoTitle: productData.seo?.title || null,
-        seoDescription: productData.seo?.description || null,
-        featuredImageUrl: productData.featuredImage?.url || null,
-        featuredImageAlt: productData.featuredImage?.altText || null,
-        shopifyUpdatedAt: new Date(productData.updatedAt),
-        lastSyncedAt: new Date(),
-      },
-    });
-
-    // Before deleting images, preserve alt-texts that were recently modified by user
+    // Before starting transaction, preserve alt-texts that were recently modified by user
     // This prevents webhook-triggered syncs from overwriting user changes
     const PRESERVE_WINDOW_MS = 5 * 60 * 1000; // 5 minutes
     const cutoffTime = new Date(Date.now() - PRESERVE_WINDOW_MS);
@@ -363,36 +328,76 @@ export class ProductSyncService {
     }
     console.log(`🟤 [SYNC] Total preserved: ${preservedAltTexts.size} images`);
 
-    // Delete old relations and create new ones
-    await db.contentTranslation.deleteMany({ where: { resourceId: productData.id, resourceType: "Product" } });
-    await db.productImage.deleteMany({ where: { productId: productData.id } });
-    await db.productOption.deleteMany({ where: { productId: productData.id } });
-    await db.productMetafield.deleteMany({ where: { productId: productData.id } });
+    // Prepare data outside transaction
+    const validTranslations = translations.filter(t => t.value != null && t.value !== undefined);
+    const skippedCount = translations.length - validTranslations.length;
+    if (skippedCount > 0) {
+      console.log(`[ProductSync] Skipping ${skippedCount} translations with null/undefined values`);
+    }
 
-    // Insert translations
-    if (translations.length > 0) {
-      // Filter out translations with null/undefined values (required field in DB)
-      const validTranslations = translations.filter(t => t.value != null && t.value !== undefined);
-      const skippedCount = translations.length - validTranslations.length;
+    const mediaImages = productData.media?.edges
+      ?.filter((edge: any) => edge.node.id && edge.node.image?.url)
+      .map((edge: any) => edge.node) || [];
 
-      if (skippedCount > 0) {
-        console.log(`[ProductSync] Skipping ${skippedCount} translations with null/undefined values`);
-      }
+    // Use transaction to ensure all-or-nothing data consistency
+    await db.$transaction(async (tx) => {
+      // Upsert product
+      await tx.product.upsert({
+        where: {
+          shop_id: {
+            shop: this.shop,
+            id: productData.id,
+          },
+        },
+        create: {
+          id: productData.id,
+          shop: this.shop,
+          title: productData.title,
+          descriptionHtml: productData.descriptionHtml || "",
+          handle: productData.handle,
+          status: productData.status,
+          seoTitle: productData.seo?.title || null,
+          seoDescription: productData.seo?.description || null,
+          featuredImageUrl: productData.featuredImage?.url || null,
+          featuredImageAlt: productData.featuredImage?.altText || null,
+          shopifyUpdatedAt: new Date(productData.updatedAt),
+          lastSyncedAt: new Date(),
+        },
+        update: {
+          title: productData.title,
+          descriptionHtml: productData.descriptionHtml || "",
+          handle: productData.handle,
+          status: productData.status,
+          seoTitle: productData.seo?.title || null,
+          seoDescription: productData.seo?.description || null,
+          featuredImageUrl: productData.featuredImage?.url || null,
+          featuredImageAlt: productData.featuredImage?.altText || null,
+          shopifyUpdatedAt: new Date(productData.updatedAt),
+          lastSyncedAt: new Date(),
+        },
+      });
 
-      // Log what we're about to save for debugging
-      const translationsByLocale = validTranslations.reduce((acc: any, t: any) => {
-        if (!acc[t.locale]) acc[t.locale] = [];
-        acc[t.locale].push(t.key);
-        return acc;
-      }, {});
+      // Delete old relations and create new ones (all within transaction)
+      await tx.contentTranslation.deleteMany({ where: { resourceId: productData.id, resourceType: "Product" } });
+      await tx.productImage.deleteMany({ where: { productId: productData.id } });
+      await tx.productOption.deleteMany({ where: { productId: productData.id } });
+      await tx.productMetafield.deleteMany({ where: { productId: productData.id } });
 
-      console.log(`[ProductSync] Saving ${validTranslations.length} translations to database:`);
-      for (const [locale, keys] of Object.entries(translationsByLocale)) {
-        console.log(`[ProductSync]   ${locale}: ${(keys as string[]).join(', ')}`);
-      }
-
+      // Insert translations
       if (validTranslations.length > 0) {
-        await db.contentTranslation.createMany({
+        // Log what we're about to save for debugging
+        const translationsByLocale = validTranslations.reduce((acc: any, t: any) => {
+          if (!acc[t.locale]) acc[t.locale] = [];
+          acc[t.locale].push(t.key);
+          return acc;
+        }, {});
+
+        console.log(`[ProductSync] Saving ${validTranslations.length} translations to database:`);
+        for (const [locale, keys] of Object.entries(translationsByLocale)) {
+          console.log(`[ProductSync]   ${locale}: ${(keys as string[]).join(', ')}`);
+        }
+
+        await tx.contentTranslation.createMany({
           data: validTranslations.map(t => ({
             resourceId: productData.id,
             resourceType: "Product",
@@ -403,114 +408,112 @@ export class ProductSyncService {
           })),
         });
         console.log(`[ProductSync] ✓ Successfully saved ${validTranslations.length} translations to database`);
+      } else {
+        console.log(`[ProductSync] No translations to save`);
       }
-    } else {
-      console.log(`[ProductSync] No translations to save`);
-    }
 
-    // Insert images with mediaId (from media query instead of images query)
-    const mediaImages = productData.media?.edges
-      ?.filter((edge: any) => edge.node.id && edge.node.image?.url) // Filter valid MediaImage types
-      .map((edge: any) => edge.node) || [];
-
-    if (mediaImages.length > 0) {
-      // Log what Shopify returned for alt-texts
-      console.log(`🔵🔵🔵 [SYNC] Syncing ${mediaImages.length} images from Shopify 🔵🔵🔵`);
-      mediaImages.forEach((media: any, index: number) => {
-        console.log(`🔵 [SYNC] Image ${index}: mediaId=${media.id}, alt="${media.alt}" (isNull: ${media.alt === null}, isEmpty: ${media.alt === ""})`);
-      });
-
-      // Create images with mediaId for translation support
-      const createdImages = await Promise.all(
-        mediaImages.map(async (media: any, index: number) => {
-          // Check if this image's alt-text was recently modified by user
-          const wasRecentlyModified = preservedAltTexts.has(media.id);
-          const altTextToSave = wasRecentlyModified
-            ? preservedAltTexts.get(media.id) // Use preserved user value
-            : (media.alt || null); // Use Shopify value
-
-          if (wasRecentlyModified) {
-            console.log(`🟤 [SYNC] Using preserved alt-text for image ${index}: "${altTextToSave}" (ignoring Shopify: "${media.alt}")`);
-          } else {
-            console.log(`🔵 [SYNC] Saving image ${index}: altText="${altTextToSave}"`);
-          }
-
-          return db.productImage.create({
-            data: {
-              productId: productData.id,
-              url: media.image.url,
-              altText: altTextToSave,
-              mediaId: media.id, // Store Shopify Media ID for translations
-              position: index,
-              // Preserve the modification timestamp if we're keeping user's alt-text
-              altTextModifiedAt: wasRecentlyModified ? new Date() : null,
-            },
-          });
-        })
-      );
-
-      console.log(`[ProductSync] Saved ${createdImages.length} images with mediaIds`);
-
-      // Insert image alt-text translations from Shopify
-      if (imageAltTranslations.length > 0) {
-        // Create a map of mediaId -> dbImageId for quick lookup
-        const mediaIdToDbId = new Map<string, string>();
-        createdImages.forEach((img) => {
-          if (img.mediaId) {
-            mediaIdToDbId.set(img.mediaId, img.id);
-          }
+      // Insert images with mediaId (from media query instead of images query)
+      if (mediaImages.length > 0) {
+        // Log what Shopify returned for alt-texts
+        console.log(`🔵🔵🔵 [SYNC] Syncing ${mediaImages.length} images from Shopify 🔵🔵🔵`);
+        mediaImages.forEach((media: any, index: number) => {
+          console.log(`🔵 [SYNC] Image ${index}: mediaId=${media.id}, alt="${media.alt}" (isNull: ${media.alt === null}, isEmpty: ${media.alt === ""})`);
         });
 
-        let savedAltTranslations = 0;
-        for (const altTrans of imageAltTranslations) {
-          const dbImageId = mediaIdToDbId.get(altTrans.mediaId);
-          if (dbImageId) {
-            await db.productImageAltTranslation.create({
+        // Create images with mediaId for translation support
+        const createdImages = await Promise.all(
+          mediaImages.map(async (media: any, index: number) => {
+            // Check if this image's alt-text was recently modified by user
+            const wasRecentlyModified = preservedAltTexts.has(media.id);
+            const altTextToSave = wasRecentlyModified
+              ? preservedAltTexts.get(media.id) // Use preserved user value
+              : (media.alt || null); // Use Shopify value
+
+            if (wasRecentlyModified) {
+              console.log(`🟤 [SYNC] Using preserved alt-text for image ${index}: "${altTextToSave}" (ignoring Shopify: "${media.alt}")`);
+            } else {
+              console.log(`🔵 [SYNC] Saving image ${index}: altText="${altTextToSave}"`);
+            }
+
+            return tx.productImage.create({
               data: {
-                imageId: dbImageId,
-                locale: altTrans.locale,
-                altText: altTrans.altText,
+                productId: productData.id,
+                url: media.image.url,
+                altText: altTextToSave,
+                mediaId: media.id, // Store Shopify Media ID for translations
+                position: index,
+                // Preserve the modification timestamp if we're keeping user's alt-text
+                altTextModifiedAt: wasRecentlyModified ? new Date() : null,
               },
             });
-            savedAltTranslations++;
+          })
+        );
+
+        console.log(`[ProductSync] Saved ${createdImages.length} images with mediaIds`);
+
+        // Insert image alt-text translations from Shopify
+        if (imageAltTranslations.length > 0) {
+          // Create a map of mediaId -> dbImageId for quick lookup
+          const mediaIdToDbId = new Map<string, string>();
+          createdImages.forEach((img) => {
+            if (img.mediaId) {
+              mediaIdToDbId.set(img.mediaId, img.id);
+            }
+          });
+
+          let savedAltTranslations = 0;
+          for (const altTrans of imageAltTranslations) {
+            const dbImageId = mediaIdToDbId.get(altTrans.mediaId);
+            if (dbImageId) {
+              await tx.productImageAltTranslation.create({
+                data: {
+                  imageId: dbImageId,
+                  locale: altTrans.locale,
+                  altText: altTrans.altText,
+                },
+              });
+              savedAltTranslations++;
+            }
+          }
+
+          if (savedAltTranslations > 0) {
+            console.log(`[ProductSync] ✓ Saved ${savedAltTranslations} image alt-text translations`);
           }
         }
-
-        if (savedAltTranslations > 0) {
-          console.log(`[ProductSync] ✓ Saved ${savedAltTranslations} image alt-text translations`);
-        }
       }
-    }
 
-    // Insert options
-    if (productData.options && productData.options.length > 0) {
-      await db.productOption.createMany({
-        data: productData.options.map((opt: any) => ({
-          id: opt.id,
-          productId: productData.id,
-          name: opt.name,
-          position: opt.position,
-          values: JSON.stringify(opt.values),
-        })),
-      });
-      console.log(`[ProductSync] Saved ${productData.options.length} options`);
-    }
+      // Insert options
+      if (productData.options && productData.options.length > 0) {
+        await tx.productOption.createMany({
+          data: productData.options.map((opt: any) => ({
+            id: opt.id,
+            productId: productData.id,
+            name: opt.name,
+            position: opt.position,
+            values: JSON.stringify(opt.values),
+          })),
+        });
+        console.log(`[ProductSync] Saved ${productData.options.length} options`);
+      }
 
-    // Insert metafields
-    const metafields = productData.metafields?.edges?.map((edge: any) => edge.node) || [];
-    if (metafields.length > 0) {
-      await db.productMetafield.createMany({
-        data: metafields.map((mf: any) => ({
-          id: mf.id,
-          productId: productData.id,
-          namespace: mf.namespace,
-          key: mf.key,
-          value: mf.value,
-          type: mf.type,
-        })),
-      });
-      console.log(`[ProductSync] Saved ${metafields.length} metafields`);
-    }
+      // Insert metafields
+      const metafields = productData.metafields?.edges?.map((edge: any) => edge.node) || [];
+      if (metafields.length > 0) {
+        await tx.productMetafield.createMany({
+          data: metafields.map((mf: any) => ({
+            id: mf.id,
+            productId: productData.id,
+            namespace: mf.namespace,
+            key: mf.key,
+            value: mf.value,
+            type: mf.type,
+          })),
+        });
+        console.log(`[ProductSync] Saved ${metafields.length} metafields`);
+      }
+    });
+
+    console.log(`[ProductSync] ✓ Transaction completed successfully for product ${productData.id}`);
   }
 
   /**

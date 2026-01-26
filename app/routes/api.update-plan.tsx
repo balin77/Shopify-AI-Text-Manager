@@ -91,9 +91,29 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
 
     // Cleanup cache based on new plan (for downgrades)
+    // This is a "best effort" operation - if cleanup fails, the plan update is still valid
     console.log("🧹 [API/UpdatePlan] Starting cache cleanup...");
-    const cleanupStats = await cleanupCacheForPlan(session.shop, newPlan);
-    console.log("✅ [API/UpdatePlan] Cleanup complete:", cleanupStats);
+    let cleanupStats: Awaited<ReturnType<typeof cleanupCacheForPlan>>;
+    try {
+      cleanupStats = await cleanupCacheForPlan(session.shop, newPlan);
+      console.log("✅ [API/UpdatePlan] Cleanup complete:", cleanupStats);
+    } catch (cleanupError) {
+      console.error("⚠️ [API/UpdatePlan] Cache cleanup failed (plan update still successful):", cleanupError);
+      // Return default stats if cleanup failed - the plan update was still successful
+      cleanupStats = {
+        deletedProducts: 0,
+        deletedProductImages: 0,
+        deletedProductOptions: 0,
+        deletedProductMetafields: 0,
+        deletedProductTranslations: 0,
+        deletedArticles: 0,
+        deletedPages: 0,
+        deletedPolicies: 0,
+        deletedThemeContent: 0,
+        deletedThemeTranslations: 0,
+        deletedContentTranslations: 0,
+      };
+    }
 
     // Get cache stats after cleanup
     const cacheStatsAfter = await getCacheStats(session.shop);

@@ -2,12 +2,23 @@
  * API Route: Cancel Billing Subscription
  *
  * Cancels the current active subscription
+ *
+ * IMPORTANT: This operation involves external API calls (Shopify) and DB updates.
+ * We prioritize DB update success with retry logic since Shopify cancellation
+ * cannot be rolled back.
  */
 
 import type { ActionFunctionArgs } from '@remix-run/node';
 import { json } from '@remix-run/node';
 import { authenticate } from '~/shopify.server';
 import { cancelSubscription, getCurrentSubscription, syncSubscriptionToDatabase } from '~/services/billing.server';
+
+const MAX_DB_RETRIES = 3;
+const RETRY_DELAY_MS = 500;
+
+async function sleep(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
@@ -24,11 +35,41 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return json({ error: 'No active subscription found' }, { status: 404 });
     }
 
-    // Cancel the subscription
+    // Cancel the subscription via Shopify API (cannot be rolled back)
     await cancelSubscription(admin, subscription.id);
 
-    // Update database to free plan
-    await syncSubscriptionToDatabase(session.shop, 'free');
+    // Update database to free plan with retry logic
+    // This ensures DB state is consistent even if first attempt fails
+    let dbUpdateSuccess = false;
+    let lastError: Error | null = null;
+
+    for (let attempt = 1; attempt <= MAX_DB_RETRIES; attempt++) {
+      try {
+        await syncSubscriptionToDatabase(session.shop, 'free');
+        dbUpdateSuccess = true;
+        break;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        console.error(`[Billing] DB update attempt ${attempt}/${MAX_DB_RETRIES} failed:`, lastError.message);
+
+        if (attempt < MAX_DB_RETRIES) {
+          await sleep(RETRY_DELAY_MS * attempt); // Exponential backoff
+        }
+      }
+    }
+
+    if (!dbUpdateSuccess) {
+      // Critical: Shopify subscription cancelled but DB not updated
+      console.error('[Billing] CRITICAL: Shopify subscription cancelled but DB update failed after all retries');
+      return json(
+        {
+          error: 'Subscription cancelled but database update failed. Please contact support.',
+          shopifyCancelled: true,
+          dbUpdateFailed: true
+        },
+        { status: 500 }
+      );
+    }
 
     return json({ success: true, message: 'Subscription cancelled successfully' });
   } catch (error) {

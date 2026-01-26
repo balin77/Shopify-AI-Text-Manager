@@ -165,7 +165,7 @@ async function deleteProductMetafields(shop: string): Promise<number> {
 }
 
 /**
- * Delete all articles and their translations
+ * Delete all articles and their translations (using transaction for consistency)
  */
 async function deleteArticles(shop: string): Promise<{ articles: number; translations: number }> {
   // Get article IDs first
@@ -176,27 +176,35 @@ async function deleteArticles(shop: string): Promise<{ articles: number; transla
 
   const articleIds = articles.map((a) => a.id);
 
-  // Delete content translations for articles
-  const translationResult = await db.contentTranslation.deleteMany({
-    where: {
-      resourceType: "Article",
-      resourceId: { in: articleIds },
-    },
-  });
+  // Use transaction to ensure both deletes succeed or fail together
+  const { translationsCount, articlesCount } = await db.$transaction(async (tx) => {
+    // Delete content translations for articles
+    const translationResult = await tx.contentTranslation.deleteMany({
+      where: {
+        resourceType: "Article",
+        resourceId: { in: articleIds },
+      },
+    });
 
-  // Delete articles
-  const articleResult = await db.article.deleteMany({
-    where: { shop },
+    // Delete articles
+    const articleResult = await tx.article.deleteMany({
+      where: { shop },
+    });
+
+    return {
+      translationsCount: translationResult.count,
+      articlesCount: articleResult.count,
+    };
   });
 
   return {
-    articles: articleResult.count,
-    translations: translationResult.count,
+    articles: articlesCount,
+    translations: translationsCount,
   };
 }
 
 /**
- * Delete all pages and their translations
+ * Delete all pages and their translations (using transaction for consistency)
  */
 async function deletePages(shop: string): Promise<{ pages: number; translations: number }> {
   const pages = await db.page.findMany({
@@ -206,25 +214,33 @@ async function deletePages(shop: string): Promise<{ pages: number; translations:
 
   const pageIds = pages.map((p) => p.id);
 
-  const translationResult = await db.contentTranslation.deleteMany({
-    where: {
-      resourceType: "Page",
-      resourceId: { in: pageIds },
-    },
-  });
+  // Use transaction to ensure both deletes succeed or fail together
+  const { translationsCount, pagesCount } = await db.$transaction(async (tx) => {
+    const translationResult = await tx.contentTranslation.deleteMany({
+      where: {
+        resourceType: "Page",
+        resourceId: { in: pageIds },
+      },
+    });
 
-  const pageResult = await db.page.deleteMany({
-    where: { shop },
+    const pageResult = await tx.page.deleteMany({
+      where: { shop },
+    });
+
+    return {
+      translationsCount: translationResult.count,
+      pagesCount: pageResult.count,
+    };
   });
 
   return {
-    pages: pageResult.count,
-    translations: translationResult.count,
+    pages: pagesCount,
+    translations: translationsCount,
   };
 }
 
 /**
- * Delete all shop policies and their translations
+ * Delete all shop policies and their translations (using transaction for consistency)
  */
 async function deletePolicies(shop: string): Promise<{ policies: number; translations: number }> {
   const policies = await db.shopPolicy.findMany({
@@ -234,40 +250,56 @@ async function deletePolicies(shop: string): Promise<{ policies: number; transla
 
   const policyIds = policies.map((p) => p.id);
 
-  const translationResult = await db.contentTranslation.deleteMany({
-    where: {
-      resourceType: "ShopPolicy",
-      resourceId: { in: policyIds },
-    },
-  });
+  // Use transaction to ensure both deletes succeed or fail together
+  const { translationsCount, policiesCount } = await db.$transaction(async (tx) => {
+    const translationResult = await tx.contentTranslation.deleteMany({
+      where: {
+        resourceType: "ShopPolicy",
+        resourceId: { in: policyIds },
+      },
+    });
 
-  const policyResult = await db.shopPolicy.deleteMany({
-    where: { shop },
+    const policyResult = await tx.shopPolicy.deleteMany({
+      where: { shop },
+    });
+
+    return {
+      translationsCount: translationResult.count,
+      policiesCount: policyResult.count,
+    };
   });
 
   return {
-    policies: policyResult.count,
-    translations: translationResult.count,
+    policies: policiesCount,
+    translations: translationsCount,
   };
 }
 
 /**
- * Delete all theme content and translations
+ * Delete all theme content and translations (using transaction for consistency)
  */
 async function deleteThemeContent(
   shop: string
 ): Promise<{ themeContent: number; themeTranslations: number }> {
-  const themeTranslationResult = await db.themeTranslation.deleteMany({
-    where: { shop },
-  });
+  // Use transaction to ensure both deletes succeed or fail together
+  const { themeTranslationsCount, themeContentCount } = await db.$transaction(async (tx) => {
+    const themeTranslationResult = await tx.themeTranslation.deleteMany({
+      where: { shop },
+    });
 
-  const themeContentResult = await db.themeContent.deleteMany({
-    where: { shop },
+    const themeContentResult = await tx.themeContent.deleteMany({
+      where: { shop },
+    });
+
+    return {
+      themeTranslationsCount: themeTranslationResult.count,
+      themeContentCount: themeContentResult.count,
+    };
   });
 
   return {
-    themeContent: themeContentResult.count,
-    themeTranslations: themeTranslationResult.count,
+    themeContent: themeContentCount,
+    themeTranslations: themeTranslationsCount,
   };
 }
 

@@ -390,55 +390,56 @@ export class ContentSyncService {
 
     console.log(`[ContentSync] Saving collection to database: ${collectionData.id}`);
 
-    // Upsert collection
-    await db.collection.upsert({
-      where: {
-        shop_id: {
-          shop: this.shop,
-          id: collectionData.id,
+    // Prepare valid translations outside transaction
+    const validTranslations = translations.filter(t => t.value != null && t.value !== undefined);
+    const skippedCount = translations.length - validTranslations.length;
+    if (skippedCount > 0) {
+      console.log(`[ContentSync] Skipping ${skippedCount} translations with null/undefined values`);
+    }
+
+    // Use transaction to ensure all-or-nothing data consistency
+    await db.$transaction(async (tx) => {
+      // Upsert collection
+      await tx.collection.upsert({
+        where: {
+          shop_id: {
+            shop: this.shop,
+            id: collectionData.id,
+          },
         },
-      },
-      create: {
-        id: collectionData.id,
-        shop: this.shop,
-        title: collectionData.title,
-        descriptionHtml: collectionData.descriptionHtml || "",
-        handle: collectionData.handle,
-        seoTitle: collectionData.seo?.title || null,
-        seoDescription: collectionData.seo?.description || null,
-        shopifyUpdatedAt: new Date(collectionData.updatedAt),
-        lastSyncedAt: new Date(),
-      },
-      update: {
-        title: collectionData.title,
-        descriptionHtml: collectionData.descriptionHtml || "",
-        handle: collectionData.handle,
-        seoTitle: collectionData.seo?.title || null,
-        seoDescription: collectionData.seo?.description || null,
-        shopifyUpdatedAt: new Date(collectionData.updatedAt),
-        lastSyncedAt: new Date(),
-      },
-    });
+        create: {
+          id: collectionData.id,
+          shop: this.shop,
+          title: collectionData.title,
+          descriptionHtml: collectionData.descriptionHtml || "",
+          handle: collectionData.handle,
+          seoTitle: collectionData.seo?.title || null,
+          seoDescription: collectionData.seo?.description || null,
+          shopifyUpdatedAt: new Date(collectionData.updatedAt),
+          lastSyncedAt: new Date(),
+        },
+        update: {
+          title: collectionData.title,
+          descriptionHtml: collectionData.descriptionHtml || "",
+          handle: collectionData.handle,
+          seoTitle: collectionData.seo?.title || null,
+          seoDescription: collectionData.seo?.description || null,
+          shopifyUpdatedAt: new Date(collectionData.updatedAt),
+          lastSyncedAt: new Date(),
+        },
+      });
 
-    // Delete old translations
-    await db.contentTranslation.deleteMany({
-      where: {
-        resourceId: collectionData.id,
-        resourceType: "Collection",
-      },
-    });
+      // Delete old translations
+      await tx.contentTranslation.deleteMany({
+        where: {
+          resourceId: collectionData.id,
+          resourceType: "Collection",
+        },
+      });
 
-    // Insert new translations (filter out null/undefined values)
-    if (translations.length > 0) {
-      const validTranslations = translations.filter(t => t.value != null && t.value !== undefined);
-      const skippedCount = translations.length - validTranslations.length;
-
-      if (skippedCount > 0) {
-        console.log(`[ContentSync] Skipping ${skippedCount} translations with null/undefined values`);
-      }
-
+      // Insert new translations
       if (validTranslations.length > 0) {
-        await db.contentTranslation.createMany({
+        await tx.contentTranslation.createMany({
           data: validTranslations.map(t => ({
             resourceId: collectionData.id,
             resourceType: "Collection",
@@ -450,7 +451,9 @@ export class ContentSyncService {
         });
         console.log(`[ContentSync] ✓ Saved ${validTranslations.length} translations`);
       }
-    }
+    });
+
+    console.log(`[ContentSync] ✓ Transaction completed successfully for collection ${collectionData.id}`);
   }
 
   private async saveArticleToDatabase(articleData: any, translations: any[]) {
@@ -458,59 +461,60 @@ export class ContentSyncService {
 
     console.log(`[ContentSync] Saving article to database: ${articleData.id}`);
 
-    // Upsert article
-    await db.article.upsert({
-      where: {
-        shop_id: {
-          shop: this.shop,
-          id: articleData.id,
+    // Prepare valid translations outside transaction
+    const validTranslations = translations.filter(t => t.value != null && t.value !== undefined);
+    const skippedCount = translations.length - validTranslations.length;
+    if (skippedCount > 0) {
+      console.log(`[ContentSync] Skipping ${skippedCount} translations with null/undefined values`);
+    }
+
+    // Use transaction to ensure all-or-nothing data consistency
+    await db.$transaction(async (tx) => {
+      // Upsert article
+      await tx.article.upsert({
+        where: {
+          shop_id: {
+            shop: this.shop,
+            id: articleData.id,
+          },
         },
-      },
-      create: {
-        id: articleData.id,
-        shop: this.shop,
-        blogId: articleData.blog?.id || "",
-        blogTitle: articleData.blog?.title || "",
-        title: articleData.title,
-        body: articleData.body || "",
-        handle: articleData.handle,
-        seoTitle: articleData.seo?.title || null,
-        seoDescription: articleData.seo?.description || null,
-        shopifyUpdatedAt: new Date(articleData.updatedAt),
-        lastSyncedAt: new Date(),
-      },
-      update: {
-        blogId: articleData.blog?.id || "",
-        blogTitle: articleData.blog?.title || "",
-        title: articleData.title,
-        body: articleData.body || "",
-        handle: articleData.handle,
-        seoTitle: articleData.seo?.title || null,
-        seoDescription: articleData.seo?.description || null,
-        shopifyUpdatedAt: new Date(articleData.updatedAt),
-        lastSyncedAt: new Date(),
-      },
-    });
+        create: {
+          id: articleData.id,
+          shop: this.shop,
+          blogId: articleData.blog?.id || "",
+          blogTitle: articleData.blog?.title || "",
+          title: articleData.title,
+          body: articleData.body || "",
+          handle: articleData.handle,
+          seoTitle: articleData.seo?.title || null,
+          seoDescription: articleData.seo?.description || null,
+          shopifyUpdatedAt: new Date(articleData.updatedAt),
+          lastSyncedAt: new Date(),
+        },
+        update: {
+          blogId: articleData.blog?.id || "",
+          blogTitle: articleData.blog?.title || "",
+          title: articleData.title,
+          body: articleData.body || "",
+          handle: articleData.handle,
+          seoTitle: articleData.seo?.title || null,
+          seoDescription: articleData.seo?.description || null,
+          shopifyUpdatedAt: new Date(articleData.updatedAt),
+          lastSyncedAt: new Date(),
+        },
+      });
 
-    // Delete old translations
-    await db.contentTranslation.deleteMany({
-      where: {
-        resourceId: articleData.id,
-        resourceType: "Article",
-      },
-    });
+      // Delete old translations
+      await tx.contentTranslation.deleteMany({
+        where: {
+          resourceId: articleData.id,
+          resourceType: "Article",
+        },
+      });
 
-    // Insert new translations (filter out null/undefined values)
-    if (translations.length > 0) {
-      const validTranslations = translations.filter(t => t.value != null && t.value !== undefined);
-      const skippedCount = translations.length - validTranslations.length;
-
-      if (skippedCount > 0) {
-        console.log(`[ContentSync] Skipping ${skippedCount} translations with null/undefined values`);
-      }
-
+      // Insert new translations
       if (validTranslations.length > 0) {
-        await db.contentTranslation.createMany({
+        await tx.contentTranslation.createMany({
           data: validTranslations.map(t => ({
             resourceId: articleData.id,
             resourceType: "Article",
@@ -522,7 +526,9 @@ export class ContentSyncService {
         });
         console.log(`[ContentSync] ✓ Saved ${validTranslations.length} translations`);
       }
-    }
+    });
+
+    console.log(`[ContentSync] ✓ Transaction completed successfully for article ${articleData.id}`);
   }
 
   private async saveMenuToDatabase(menuData: any) {

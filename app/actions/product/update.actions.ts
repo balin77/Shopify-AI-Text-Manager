@@ -633,44 +633,47 @@ async function updateTranslatedProduct(
   });
 
   if (product) {
-    // Use upsert to preserve existing translations for other fields
-    for (const translation of translationsInput) {
-      await db.contentTranslation.upsert({
-        where: {
-          // Unique constraint is: @@unique([resourceId, key, locale])
-          resourceId_key_locale: {
-            resourceId: productId,
-            key: translation.key,
-            locale: translation.locale,
+    // Use transaction to ensure all upserts and deletes succeed or fail together
+    await db.$transaction(async (tx: any) => {
+      // Use upsert to preserve existing translations for other fields
+      for (const translation of translationsInput) {
+        await tx.contentTranslation.upsert({
+          where: {
+            // Unique constraint is: @@unique([resourceId, key, locale])
+            resourceId_key_locale: {
+              resourceId: productId,
+              key: translation.key,
+              locale: translation.locale,
+            },
           },
-        },
-        update: {
-          value: translation.value,
-          digest: null,
-          resourceType: "Product", // Update resourceType in case it changed
-        },
-        create: {
-          resourceId: productId,
-          resourceType: "Product",
-          key: translation.key,
-          value: translation.value,
-          locale: translation.locale,
-          digest: null,
-        },
-      });
-    }
+          update: {
+            value: translation.value,
+            digest: null,
+            resourceType: "Product", // Update resourceType in case it changed
+          },
+          create: {
+            resourceId: productId,
+            resourceType: "Product",
+            key: translation.key,
+            value: translation.value,
+            locale: translation.locale,
+            digest: null,
+          },
+        });
+      }
 
-    // Delete translations that were cleared by the user
-    for (const key of translationsToDelete) {
-      await db.contentTranslation.deleteMany({
-        where: {
-          resourceId: productId,
-          resourceType: "Product",
-          locale: params.locale,
-          key: key,
-        },
-      });
-    }
+      // Delete translations that were cleared by the user
+      for (const key of translationsToDelete) {
+        await tx.contentTranslation.deleteMany({
+          where: {
+            resourceId: productId,
+            resourceType: "Product",
+            locale: params.locale,
+            key: key,
+          },
+        });
+      }
+    });
 
     loggers.product("info", "Saved translations to DB (ContentTranslation)", {
       productId,
@@ -874,17 +877,19 @@ async function updatePrimaryProduct(
             });
           }
 
-          // Delete translations from local database
-          for (const key of translationKeysToDelete) {
-            await db.contentTranslation.deleteMany({
-              where: {
-                resourceId: productId,
-                resourceType: "Product",
-                key: key,
-                locale: { in: foreignLocales },
-              },
-            });
-          }
+          // Delete translations from local database (using transaction for consistency)
+          await db.$transaction(async (tx: any) => {
+            for (const key of translationKeysToDelete) {
+              await tx.contentTranslation.deleteMany({
+                where: {
+                  resourceId: productId,
+                  resourceType: "Product",
+                  key: key,
+                  locale: { in: foreignLocales },
+                },
+              });
+            }
+          });
 
           loggers.product("info", "Deleted translations from DB", {
             productId,
@@ -938,11 +943,16 @@ async function updatePrimaryProduct(
         });
 
         if (dbProduct?.images) {
+          // Collect all Shopify API calls first, then batch DB deletes in a transaction
+          const shopifyDeletePromises: Promise<void>[] = [];
+          const imageIdsToDeleteTranslations: string[] = [];
+
           for (const imageIndex of changedAltTextIndices) {
             const dbImage = dbProduct.images[imageIndex];
             if (!dbImage) continue;
 
             const mediaImageId = dbImage.mediaId;
+            imageIdsToDeleteTranslations.push(dbImage.id);
 
             loggers.product("info", "Deleting alt-text translations for changed image", {
               productId,
@@ -953,59 +963,71 @@ async function updatePrimaryProduct(
 
             // Delete translations from Shopify if we have the mediaId
             if (mediaImageId) {
-              const response = await gateway.graphql(
-                `#graphql
-                  mutation removeTranslations($resourceId: ID!, $translationKeys: [String!]!, $locales: [String!]!) {
-                    translationsRemove(resourceId: $resourceId, translationKeys: $translationKeys, locales: $locales) {
-                      userErrors {
-                        field
-                        message
-                      }
-                      translations {
-                        key
-                        locale
-                      }
+              shopifyDeletePromises.push(
+                (async () => {
+                  const response = await gateway.graphql(
+                    `#graphql
+                      mutation removeTranslations($resourceId: ID!, $translationKeys: [String!]!, $locales: [String!]!) {
+                        translationsRemove(resourceId: $resourceId, translationKeys: $translationKeys, locales: $locales) {
+                          userErrors {
+                            field
+                            message
+                          }
+                          translations {
+                            key
+                            locale
+                          }
+                        }
+                      }`,
+                    {
+                      variables: {
+                        resourceId: mediaImageId,
+                        translationKeys: ["alt"],
+                        locales: foreignLocales,
+                      },
                     }
-                  }`,
-                {
-                  variables: {
-                    resourceId: mediaImageId,
-                    translationKeys: ["alt"],
-                    locales: foreignLocales,
-                  },
-                }
-              );
+                  );
 
-              const responseData = await response.json();
-              if (responseData.data?.translationsRemove?.userErrors?.length > 0) {
-                logger.error("Shopify translationsRemove API error (alt-text)", {
-                  context: "UpdateProduct",
-                  imageIndex,
-                  mediaImageId,
-                  errors: responseData.data.translationsRemove.userErrors,
-                });
-              } else {
-                loggers.product("info", "Deleted alt-text translations from Shopify", {
-                  productId,
-                  imageIndex,
-                  mediaImageId,
-                  locales: foreignLocales,
+                  const responseData = await response.json();
+                  if (responseData.data?.translationsRemove?.userErrors?.length > 0) {
+                    logger.error("Shopify translationsRemove API error (alt-text)", {
+                      context: "UpdateProduct",
+                      imageIndex,
+                      mediaImageId,
+                      errors: responseData.data.translationsRemove.userErrors,
+                    });
+                  } else {
+                    loggers.product("info", "Deleted alt-text translations from Shopify", {
+                      productId,
+                      imageIndex,
+                      mediaImageId,
+                      locales: foreignLocales,
+                    });
+                  }
+                })()
+              );
+            }
+          }
+
+          // Execute Shopify API calls (these can't be in a DB transaction)
+          await Promise.all(shopifyDeletePromises);
+
+          // Delete translations from local database (using transaction for consistency)
+          if (imageIdsToDeleteTranslations.length > 0) {
+            await db.$transaction(async (tx: any) => {
+              for (const imageId of imageIdsToDeleteTranslations) {
+                await tx.productImageAltTranslation.deleteMany({
+                  where: {
+                    imageId: imageId,
+                    locale: { in: foreignLocales },
+                  },
                 });
               }
-            }
-
-            // Delete translations from local database
-            await db.productImageAltTranslation.deleteMany({
-              where: {
-                imageId: dbImage.id,
-                locale: { in: foreignLocales },
-              },
             });
 
             loggers.product("info", "Deleted alt-text translations from DB", {
               productId,
-              imageIndex,
-              imageId: dbImage.id,
+              imageIds: imageIdsToDeleteTranslations,
               locales: foreignLocales,
             });
           }
