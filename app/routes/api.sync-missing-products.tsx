@@ -1,10 +1,11 @@
 /**
- * API Route: Sync Missing Products
+ * API Route: Sync Missing Products (FAST VERSION)
  *
  * Syncs products from Shopify that are not yet in the database.
- * Used after plan upgrades to fetch additional products.
+ * Uses BULK fetch to get all products in ONE request, then saves to DB.
+ * Does NOT fetch translations - those are loaded on-demand when editing.
  *
- * Returns the count of synced products for progress tracking.
+ * This is MUCH faster than the old approach (1 request vs 20+ per product).
  */
 
 import { json } from "@remix-run/node";
@@ -12,10 +13,9 @@ import type { ActionFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
 import { getPlanLimits } from "../utils/planUtils";
-import { ProductSyncService } from "../services/product-sync.service";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  console.log("🔄 [SYNC-MISSING] Starting sync of missing products...");
+  console.log("🚀 [SYNC-MISSING] Starting FAST sync of missing products...");
 
   try {
     const { admin, session } = await authenticate.admin(request);
@@ -49,16 +49,44 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
     }
 
-    // Fetch products from Shopify
+    // FAST: Fetch ALL products with their data in ONE bulk request
     const maxToFetch = planLimits.maxProducts === Infinity ? 250 : planLimits.maxProducts;
+
+    console.log(`[SYNC-MISSING] Fetching up to ${maxToFetch} products from Shopify (bulk)...`);
 
     const response = await admin.graphql(
       `#graphql
-        query getProducts($first: Int!) {
+        query getProductsBulk($first: Int!) {
           products(first: $first) {
             edges {
               node {
                 id
+                title
+                descriptionHtml
+                handle
+                status
+                updatedAt
+                seo {
+                  title
+                  description
+                }
+                featuredImage {
+                  url
+                  altText
+                }
+                media(first: 20) {
+                  edges {
+                    node {
+                      ... on MediaImage {
+                        id
+                        alt
+                        image {
+                          url
+                        }
+                      }
+                    }
+                  }
+                }
               }
             }
           }
@@ -67,14 +95,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     );
 
     const data = await response.json();
-    const shopifyProductIds = data.data?.products?.edges?.map((e: any) => e.node.id) || [];
+    const shopifyProducts = data.data?.products?.edges?.map((e: any) => e.node) || [];
 
-    console.log(`[SYNC-MISSING] Found ${shopifyProductIds.length} products in Shopify`);
+    console.log(`[SYNC-MISSING] Fetched ${shopifyProducts.length} products from Shopify`);
 
-    // Find products not in our database
-    const missingProductIds = shopifyProductIds.filter((id: string) => !existingIds.has(id));
+    // Filter to only products we don't have
+    const missingProducts = shopifyProducts.filter((p: any) => !existingIds.has(p.id));
 
-    if (missingProductIds.length === 0) {
+    if (missingProducts.length === 0) {
       console.log(`[SYNC-MISSING] No missing products to sync`);
       return json({
         success: true,
@@ -84,39 +112,86 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
     }
 
-    console.log(`[SYNC-MISSING] Found ${missingProductIds.length} products to sync`);
+    console.log(`[SYNC-MISSING] Saving ${missingProducts.length} new products to database...`);
 
-    // Sync missing products in PARALLEL (5 at a time for speed)
-    const syncService = new ProductSyncService(admin, session.shop);
+    // Save all products to database
     let synced = 0;
     let failed = 0;
 
-    // Process in batches of 5 for parallel syncing
-    const BATCH_SIZE = 5;
-    for (let i = 0; i < missingProductIds.length; i += BATCH_SIZE) {
-      const batch = missingProductIds.slice(i, i + BATCH_SIZE);
+    for (const product of missingProducts) {
+      try {
+        // Upsert product (basic data only - no translations)
+        await db.product.upsert({
+          where: {
+            shop_id: {
+              shop: session.shop,
+              id: product.id,
+            },
+          },
+          create: {
+            id: product.id,
+            shop: session.shop,
+            title: product.title,
+            descriptionHtml: product.descriptionHtml || "",
+            handle: product.handle,
+            status: product.status,
+            seoTitle: product.seo?.title || null,
+            seoDescription: product.seo?.description || null,
+            featuredImageUrl: product.featuredImage?.url || null,
+            featuredImageAlt: product.featuredImage?.altText || null,
+            shopifyUpdatedAt: new Date(product.updatedAt),
+            lastSyncedAt: new Date(),
+          },
+          update: {
+            title: product.title,
+            descriptionHtml: product.descriptionHtml || "",
+            handle: product.handle,
+            status: product.status,
+            seoTitle: product.seo?.title || null,
+            seoDescription: product.seo?.description || null,
+            featuredImageUrl: product.featuredImage?.url || null,
+            featuredImageAlt: product.featuredImage?.altText || null,
+            shopifyUpdatedAt: new Date(product.updatedAt),
+            lastSyncedAt: new Date(),
+          },
+        });
 
-      const results = await Promise.allSettled(
-        batch.map(async (productId: string) => {
-          await syncService.syncProduct(productId);
-          return productId;
-        })
-      );
+        // Save images if plan allows
+        if (planLimits.cacheEnabled.productImages) {
+          const mediaImages = product.media?.edges
+            ?.filter((edge: any) => edge.node.id && edge.node.image?.url)
+            .map((edge: any) => edge.node) || [];
 
-      // Count results
-      for (const result of results) {
-        if (result.status === "fulfilled") {
-          synced++;
-        } else {
-          failed++;
-          console.error(`[SYNC-MISSING] Failed:`, result.reason?.message || result.reason);
+          if (mediaImages.length > 0) {
+            // Delete existing images first
+            await db.productImage.deleteMany({ where: { productId: product.id } });
+
+            // Create new images
+            await db.productImage.createMany({
+              data: mediaImages.map((media: any, index: number) => ({
+                productId: product.id,
+                url: media.image.url,
+                altText: media.alt || null,
+                mediaId: media.id,
+                position: index,
+              })),
+            });
+          }
         }
-      }
 
-      console.log(`[SYNC-MISSING] Progress: ${synced + failed}/${missingProductIds.length} (${synced} ok, ${failed} failed)`);
+        synced++;
+
+        // Log progress every 10 products
+        if (synced % 10 === 0) {
+          console.log(`[SYNC-MISSING] Progress: ${synced}/${missingProducts.length}`);
+        }
+      } catch (error: any) {
+        console.error(`[SYNC-MISSING] Failed to save ${product.id}:`, error.message);
+        failed++;
+      }
     }
 
-    console.log(`✅ [SYNC-MISSING] Sync complete: ${synced} synced, ${failed} failed`);
+    console.log(`✅ [SYNC-MISSING] FAST sync complete: ${synced} synced, ${failed} failed`);
 
     return json({
       success: true,
