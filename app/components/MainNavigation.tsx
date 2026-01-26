@@ -296,16 +296,29 @@ export function MainNavigation() {
         { plan: newPlan },
         { method: "POST", action: "/api/update-plan", encType: "application/json" }
       );
-
-      // Reload the page after plan change to refresh all data
-      setTimeout(() => {
-        window.location.reload();
-      }, 1000);
+      // Response handling is done in the useEffect below
     } catch (error) {
       console.error("❌ [MainNavigation] Error changing plan:", error);
       setIsChangingPlan(false);
     }
   };
+
+  // Handle plan change completion - wait for API response before reloading
+  useEffect(() => {
+    if (isChangingPlan && fetcher.state === "idle" && fetcher.data) {
+      const data = fetcher.data as { success?: boolean; syncStats?: { synced: number } };
+      if (data.success) {
+        console.log("✅ [MainNavigation] Plan change complete, reloading page...");
+        if (data.syncStats?.synced) {
+          console.log(`📦 [MainNavigation] Synced ${data.syncStats.synced} additional products`);
+        }
+        window.location.reload();
+      } else {
+        console.error("❌ [MainNavigation] Plan change failed");
+        setIsChangingPlan(false);
+      }
+    }
+  }, [isChangingPlan, fetcher.state, fetcher.data]);
 
   const plans: Plan[] = ["free", "basic", "pro", "max"];
 
