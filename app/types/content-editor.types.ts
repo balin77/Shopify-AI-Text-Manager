@@ -4,11 +4,148 @@
  * Shared types for the unified content editor system
  */
 
+import type { FetcherWithComponents } from "@remix-run/react";
+
 export type InfoBoxTone = "success" | "info" | "warning" | "critical";
+
+// ============================================================================
+// SHOP & LOCALE TYPES
+// ============================================================================
+
+export interface ShopLocale {
+  locale: string;
+  primary: boolean;
+  name?: string;
+}
+
+export interface Translation {
+  key: string;
+  locale: string;
+  value: string;
+}
+
+// ============================================================================
+// IMAGE TYPES
+// ============================================================================
+
+export interface AltTextTranslation {
+  locale: string;
+  altText: string;
+}
+
+export interface ContentImage {
+  url: string;
+  altText?: string;
+  altTextTranslations?: AltTextTranslation[];
+}
+
+// ============================================================================
+// CONTENT ITEM TYPES
+// ============================================================================
+
+export interface TranslatableContentItem {
+  id: string;
+  title?: string;
+  descriptionHtml?: string;
+  body?: string;
+  handle?: string;
+  seo?: { title?: string; description?: string };
+  translations: Translation[];
+  images?: ContentImage[];
+  translatableContent?: Array<{ key: string; value: string }>;
+}
+
+// ============================================================================
+// FETCHER RESPONSE TYPES
+// ============================================================================
+
+export interface FetcherDataBase {
+  success: boolean;
+  error?: string;
+}
+
+export interface GeneratedContentResponse extends FetcherDataBase {
+  generatedContent: string;
+  fieldType: string;
+}
+
+export interface TranslatedValueResponse extends FetcherDataBase {
+  translatedValue: string;
+  fieldType: string;
+  targetLocale: string;
+}
+
+export interface TranslationsResponse extends FetcherDataBase {
+  translations: Record<string, string | Record<string, string>>;
+  fieldType?: string;
+  targetLocale?: string;
+}
+
+export interface AltTextResponse extends FetcherDataBase {
+  altText: string;
+  imageIndex: number;
+}
+
+export interface BulkAltTextsResponse extends FetcherDataBase {
+  generatedAltTexts: Record<number, string>;
+}
+
+export interface TranslatedAltTextResponse extends FetcherDataBase {
+  translatedAltText: string;
+  imageIndex: number;
+}
+
+export interface TranslatedAltTextsResponse extends FetcherDataBase {
+  translatedAltTexts: Record<string, string>;
+  targetLocales: string[];
+  imageIndex: number;
+}
+
+export type FetcherData =
+  | FetcherDataBase
+  | GeneratedContentResponse
+  | TranslatedValueResponse
+  | TranslationsResponse
+  | AltTextResponse
+  | BulkAltTextsResponse
+  | TranslatedAltTextResponse
+  | TranslatedAltTextsResponse;
+
+// ============================================================================
+// TRANSLATION STRINGS TYPE
+// ============================================================================
+
+export interface TranslationStrings {
+  common?: {
+    success?: string;
+    error?: string;
+    warning?: string;
+    changesSaved?: string;
+    noContentToFormat?: string;
+    noTargetLanguagesSelected?: string;
+    noTargetLanguagesEnabled?: string;
+    fieldTranslatedToLanguages?: string;
+    translatedSuccessfully?: string;
+    [key: string]: string | undefined;
+  };
+  content?: {
+    noSourceText?: string;
+    altTextTranslatedToAllLocales?: string;
+    [key: string]: string | undefined;
+  };
+  [key: string]: Record<string, string | undefined> | undefined;
+}
 
 export type ContentType = 'products' | 'collections' | 'blogs' | 'pages' | 'policies' | 'templates';
 
 export type FieldType = 'text' | 'html' | 'slug' | 'textarea' | 'number' | 'image-gallery' | 'options';
+
+export interface FieldRenderProps {
+  value: string;
+  onChange: (value: string) => void;
+  field: FieldDefinition;
+  disabled?: boolean;
+}
 
 export interface FieldDefinition {
   /** Unique key for this field */
@@ -48,7 +185,7 @@ export interface FieldDefinition {
   aiInstructionsKey?: string;
 
   /** Optional: Custom render function for special field types */
-  renderField?: (props: any) => React.ReactNode;
+  renderField?: (props: FieldRenderProps) => React.ReactNode;
 }
 
 export interface ContentEditorConfig {
@@ -71,10 +208,10 @@ export interface ContentEditorConfig {
   showSeoSidebar?: boolean;
 
   /** Custom primary field getter */
-  getPrimaryField?: (item: any) => string;
+  getPrimaryField?: (item: TranslatableContentItem) => string;
 
   /** Custom subtitle field getter (for list items) */
-  getSubtitle?: (item: any) => string;
+  getSubtitle?: (item: TranslatableContentItem) => string;
 
   /** ID prefix for display */
   idPrefix?: string;
@@ -83,26 +220,24 @@ export interface ContentEditorConfig {
   dynamicFields?: boolean;
 
   /** Function to generate field definitions dynamically from an item */
-  getFieldDefinitions?: (item: any) => FieldDefinition[];
+  getFieldDefinitions?: (item: TranslatableContentItem) => FieldDefinition[];
 
   /** Custom function to get field value from item (for non-standard data structures) */
-  getFieldValue?: (item: any, fieldKey: string) => string;
+  getFieldValue?: (item: TranslatableContentItem, fieldKey: string) => string;
 
   /** Lazy loading configuration */
   lazyLoading?: {
     /** Whether lazy loading is enabled */
     enabled: boolean;
     /** Function to load item data on demand. Returns the loaded item data. */
-    loadItem?: (itemId: string) => Promise<any>;
+    loadItem?: (itemId: string) => Promise<TranslatableContentItem>;
     /** Key to extract item ID for loading (e.g., "groupId" for templates) */
     itemIdKey?: string;
   };
 }
 
-export interface ContentItem {
-  id: string;
-  [key: string]: any;
-}
+/** @deprecated Use TranslatableContentItem instead */
+export type ContentItem = TranslatableContentItem;
 
 export interface EditorState {
   selectedItemId: string | null;
@@ -156,22 +291,22 @@ export interface UseContentEditorProps {
   config: ContentEditorConfig;
 
   /** Array of items to edit */
-  items: ContentItem[];
+  items: TranslatableContentItem[];
 
   /** Shop locales */
-  shopLocales: any[];
+  shopLocales: ShopLocale[];
 
   /** Primary locale */
   primaryLocale: string;
 
   /** Fetcher from useFetcher() */
-  fetcher: any;
+  fetcher: FetcherWithComponents<FetcherData>;
 
   /** ShowInfoBox function */
   showInfoBox: (message: string, tone?: InfoBoxTone, title?: string) => void;
 
-  /** Translation function */
-  t: any;
+  /** Translation strings object */
+  t: TranslationStrings;
 }
 
 export interface UseContentEditorReturn {
