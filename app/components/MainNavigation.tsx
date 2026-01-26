@@ -13,7 +13,7 @@ export function MainNavigation() {
   const navigation = useNavigation();
   const matches = useMatches();
   const { t } = useI18n();
-  const { infoBox, hideInfoBox, showInfoBox } = useInfoBox();
+  const { infoBox, hideInfoBox, showInfoBox, isGlobalLoading } = useInfoBox();
   const { plan, getPlanDisplayName, getMaxProducts } = usePlan();
   const { setMainNavHeight } = useNavigationHeight();
   const planFetcher = useFetcher<{ success?: boolean; syncStats?: { synced: number }; error?: string }>();
@@ -264,7 +264,7 @@ export function MainNavigation() {
     return () => {
       window.removeEventListener('resize', updateHeight);
     };
-  }, [infoBox, showLoadingIndicator, setMainNavHeight]); // Re-measure when infoBox or loading indicator changes
+  }, [infoBox, showLoadingIndicator, isGlobalLoading, setMainNavHeight]); // Re-measure when infoBox or loading indicator changes
 
   const tabs = [
     { id: "products", label: t.nav.products, path: "/app/products" },
@@ -409,8 +409,8 @@ export function MainNavigation() {
             })}
           </InlineStack>
 
-          {/* Loading Indicator - nur anzeigen wenn länger als 1 Sekunde */}
-          {showLoadingIndicator && (
+          {/* Loading Indicator - shows for navigation or global loading state */}
+          {(showLoadingIndicator || isGlobalLoading) && (
             <div
               style={{
                 display: "flex",

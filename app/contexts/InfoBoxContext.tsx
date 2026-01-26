@@ -13,12 +13,16 @@ interface InfoBoxContextType {
   infoBox: InfoBoxState | null;
   showInfoBox: (message: string, tone?: InfoBoxTone, title?: string) => void;
   hideInfoBox: () => void;
+  isGlobalLoading: boolean;
+  setGlobalLoading: (loading: boolean, message?: string) => void;
 }
 
 const InfoBoxContext = createContext<InfoBoxContextType | undefined>(undefined);
 
 export function InfoBoxProvider({ children }: { children: ReactNode }) {
   const [infoBox, setInfoBox] = useState<InfoBoxState | null>(null);
+  const [isGlobalLoading, setIsGlobalLoading] = useState(false);
+  const [globalLoadingMessage, setGlobalLoadingMessage] = useState<string | undefined>();
   const dismissedMessages = useRef<Set<string>>(new Set());
   const autoHideTimer = useRef<NodeJS.Timeout | null>(null);
 
@@ -70,8 +74,13 @@ export function InfoBoxProvider({ children }: { children: ReactNode }) {
     setInfoBox(null);
   }, [infoBox]);
 
+  const setGlobalLoading = useCallback((loading: boolean, message?: string) => {
+    setIsGlobalLoading(loading);
+    setGlobalLoadingMessage(loading ? message : undefined);
+  }, []);
+
   return (
-    <InfoBoxContext.Provider value={{ infoBox, showInfoBox, hideInfoBox }}>
+    <InfoBoxContext.Provider value={{ infoBox, showInfoBox, hideInfoBox, isGlobalLoading, setGlobalLoading }}>
       {children}
     </InfoBoxContext.Provider>
   );

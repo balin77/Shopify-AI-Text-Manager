@@ -223,7 +223,7 @@ export default function ProductsPage() {
   const fetcher = useFetcher<typeof action>();
   const syncFetcher = useFetcher<{ success: boolean; synced: number; total: number }>();
   const { t } = useI18n();
-  const { showInfoBox } = useInfoBox();
+  const { showInfoBox, setGlobalLoading } = useInfoBox();
   const { getNextPlanUpgrade } = usePlan();
   const { setContentNavHeight } = useNavigationHeight();
   const [isSyncing, setIsSyncing] = useState(false);
@@ -255,7 +255,8 @@ export default function ProductsPage() {
       url.searchParams.delete("sync");
       window.history.replaceState({}, "", url.toString());
 
-      // Show loading message via InfoBox
+      // Show loading spinner and message via InfoBox
+      setGlobalLoading(true);
       showInfoBox(t.products.syncInProgress, "info");
 
       // Trigger the sync API
@@ -264,12 +265,15 @@ export default function ProductsPage() {
         { method: "POST", action: "/api/sync-missing-products" }
       );
     }
-  }, [isSyncing, syncFetcher, showInfoBox, t]);
+  }, [isSyncing, syncFetcher, showInfoBox, setGlobalLoading, t]);
 
   // Handle sync completion
   useEffect(() => {
     if (isSyncing && syncFetcher.state === "idle" && syncFetcher.data) {
       console.log("✅ [ProductsPage] Sync complete:", syncFetcher.data);
+
+      // Hide loading spinner
+      setGlobalLoading(false);
 
       if (syncFetcher.data.success && syncFetcher.data.synced > 0) {
         const message = t.products.syncComplete.replace("{count}", String(syncFetcher.data.synced));
@@ -280,7 +284,7 @@ export default function ProductsPage() {
         setIsSyncing(false);
       }
     }
-  }, [isSyncing, syncFetcher.state, syncFetcher.data, showInfoBox, t]);
+  }, [isSyncing, syncFetcher.state, syncFetcher.data, showInfoBox, setGlobalLoading, t]);
 
   // Show loader error
   useEffect(() => {
