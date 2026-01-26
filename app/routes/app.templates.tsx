@@ -980,6 +980,10 @@ export default function TemplatesPage() {
     t,
   });
 
+  // Ref to store editor helpers to avoid triggering effects on every render
+  const editorHelpersRef = useRef(editor.helpers);
+  editorHelpersRef.current = editor.helpers;
+
   // Store original handler reference before overriding
   const originalHandleItemSelectRef = useRef(editor.handlers.handleItemSelect);
   originalHandleItemSelectRef.current = editor.handlers.handleItemSelect;
@@ -1081,16 +1085,16 @@ export default function TemplatesPage() {
           const translation = cachedTranslations.find((t: any) => t.key === item.key);
           const value = translation?.value || "";
           newValues[item.key] = value;
-          editor.helpers.setEditableValue(item.key, value);
+          editorHelpersRef.current.setEditableValue(item.key, value);
         });
         // Update original values so hasChanges is false after language switch
-        editor.helpers.setOriginalTemplateValues(newValues);
+        editorHelpersRef.current.setOriginalTemplateValues(newValues);
       }
     } else {
       // Load from server
       loadTranslationsForLocale(selectedGroupId, currentLanguage);
     }
-  }, [editor.state.currentLanguage, selectedGroupId, primaryLocale, loadTranslationsForLocale, loadedTranslations, loadedThemes, editor.helpers]);
+  }, [editor.state.currentLanguage, selectedGroupId, primaryLocale, loadTranslationsForLocale, loadedTranslations, loadedThemes]);
 
   // Handle translation fetcher response
   useEffect(() => {
@@ -1122,15 +1126,15 @@ export default function TemplatesPage() {
 
           // Update all values at once
           Object.entries(newValues).forEach(([key, value]) => {
-            editor.helpers.setEditableValue(key, value);
+            editorHelpersRef.current.setEditableValue(key, value);
           });
 
           // Update original values so hasChanges is false after language switch
-          editor.helpers.setOriginalTemplateValues(newValues);
+          editorHelpersRef.current.setOriginalTemplateValues(newValues);
         }
       }
     }
-  }, [translationFetcher.data, selectedGroupId, editor.state.currentLanguage, loadedThemes, editor.helpers]);
+  }, [translationFetcher.data, selectedGroupId, editor.state.currentLanguage, loadedThemes]);
 
   // Track processed save responses to prevent duplicate processing
   const processedSaveRef = useRef<any>(null);
