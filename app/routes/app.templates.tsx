@@ -655,6 +655,14 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
         const changedFieldsStr = formData.get("changedFields") as string;
         const changedFields: string[] = changedFieldsStr ? JSON.parse(changedFieldsStr) : [];
 
+        console.log(`[TEMPLATES-ACTION] 📝 updateContent called:`, {
+          locale,
+          primaryLocale,
+          changedFieldsStr,
+          changedFields,
+          isPrimaryLocale: locale === primaryLocale
+        });
+
         // Collect all field values from form data
         const updatedFields: Record<string, string> = {};
 

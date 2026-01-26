@@ -243,6 +243,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
     // For templates: Store original values for change detection
     if (config.contentType === 'templates') {
+      console.log('[DATA-LOAD] Setting originalTemplateValuesRef:', newValues);
       originalTemplateValuesRef.current = { ...newValues };
     }
     // IMPORTANT: Only depend on selectedItemId and currentLanguage to prevent unnecessary re-runs
@@ -375,9 +376,16 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // Helper function to get which fields have changed compared to the original item
   const getChangedFields = useCallback((valuesToCheck: Record<string, string>): string[] => {
     const item = selectedItemRef.current;
-    if (!item) return [];
+    if (!item) {
+      console.log('[getChangedFields] No item selected');
+      return [];
+    }
 
     const changedFields: string[] = [];
+    console.log('[getChangedFields] contentType:', config.contentType);
+    console.log('[getChangedFields] originalTemplateValuesRef:', originalTemplateValuesRef.current);
+    console.log('[getChangedFields] valuesToCheck:', valuesToCheck);
+
     effectiveFieldDefinitions.forEach((field) => {
       const currentValue = valuesToCheck[field.key] || "";
 
@@ -391,10 +399,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       }
 
       if (currentValue !== originalValue) {
+        console.log(`[getChangedFields] Field "${field.key}" changed: "${originalValue}" -> "${currentValue}"`);
         changedFields.push(field.key);
       }
     });
 
+    console.log('[getChangedFields] Result:', changedFields);
     return changedFields;
   }, [effectiveFieldDefinitions, primaryLocale, config]);
 
