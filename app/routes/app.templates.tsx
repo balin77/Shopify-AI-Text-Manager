@@ -655,6 +655,12 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
         const changedFieldsStr = formData.get("changedFields") as string;
         const changedFields: string[] = changedFieldsStr ? JSON.parse(changedFieldsStr) : [];
 
+        // Debug: Log all form data keys
+        const allFormDataKeys: string[] = [];
+        formData.forEach((value, key) => {
+          allFormDataKeys.push(key);
+        });
+        console.log(`[TEMPLATES-ACTION] 📝 updateContent - All FormData keys:`, allFormDataKeys);
         console.log(`[TEMPLATES-ACTION] 📝 updateContent called:`, {
           locale,
           primaryLocale,
