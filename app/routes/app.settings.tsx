@@ -799,67 +799,68 @@ export default function SettingsPage() {
                     {t.settings.availablePlans}
                   </Text>
 
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px', alignItems: 'stretch' }}>
                     {availablePlans.map(({ id, config }) => {
                       const planDetails = PLAN_CONFIG[id];
                       const isCurrentPlan = id === subscriptionPlan;
                       const price = config ? `€${config.price.toFixed(2)}${t.settings.perMonth}` : t.settings.free;
 
                       return (
-                        <Card key={id}>
-                          <BlockStack gap="300">
-                            <InlineStack align="space-between" blockAlign="start">
-                              <Text as="h3" variant="headingMd">
-                                {PLAN_DISPLAY_NAMES[id]}
-                              </Text>
-                              {isCurrentPlan && <Badge tone="success">{t.settings.active}</Badge>}
-                            </InlineStack>
-
-                            <Text as="p" variant="headingLg" fontWeight="bold">
-                              {price}
-                            </Text>
-
-                            <Divider />
-
-                            <BlockStack gap="200">
-                              <Text as="p" variant="bodyMd">
-                                <strong>{t.settings.products}:</strong>{' '}
-                                {planDetails.maxProducts === Infinity
-                                  ? t.settings.unlimited
-                                  : planDetails.maxProducts}
-                              </Text>
-                              <Text as="p" variant="bodyMd">
-                                <strong>{t.settings.images}:</strong>{' '}
-                                {planDetails.productImages === 'all' ? t.settings.allImages : t.settings.featuredImageOnly}
-                              </Text>
-                              <Text as="p" variant="bodyMd">
-                                <strong>{t.settings.contentTypes}:</strong> {planDetails.contentTypes.length}
-                              </Text>
-                              <BlockStack gap="100">
-                                {planDetails.contentTypes.slice(0, 4).map((type) => (
-                                  <Text key={type} as="p" variant="bodySm" tone="success">
-                                    ✓ {type}
+                        <div key={id} style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+                          <Card>
+                            <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: '400px' }}>
+                              <BlockStack gap="300">
+                                <InlineStack align="space-between" blockAlign="start">
+                                  <Text as="h3" variant="headingMd">
+                                    {PLAN_DISPLAY_NAMES[id]}
                                   </Text>
-                                ))}
-                                {planDetails.contentTypes.length > 4 && (
-                                  <Text as="p" variant="bodySm" tone="subdued">
-                                    +{planDetails.contentTypes.length - 4} {t.settings.more}
+                                  {isCurrentPlan && <Badge tone="success">{t.settings.active}</Badge>}
+                                </InlineStack>
+
+                                <Text as="p" variant="headingLg" fontWeight="bold">
+                                  {price}
+                                </Text>
+
+                                <Divider />
+
+                                <BlockStack gap="200">
+                                  <Text as="p" variant="bodyMd">
+                                    <strong>{t.settings.products}:</strong>{' '}
+                                    {planDetails.maxProducts === Infinity
+                                      ? t.settings.unlimited
+                                      : planDetails.maxProducts}
                                   </Text>
-                                )}
+                                  <Text as="p" variant="bodyMd">
+                                    <strong>{t.settings.images}:</strong>{' '}
+                                    {planDetails.productImages === 'all' ? t.settings.allImages : t.settings.featuredImageOnly}
+                                  </Text>
+                                  <Text as="p" variant="bodyMd">
+                                    <strong>{t.settings.contentTypes}:</strong>
+                                  </Text>
+                                  <BlockStack gap="100">
+                                    {planDetails.contentTypes.map((type) => (
+                                      <Text key={type} as="p" variant="bodySm" tone="success">
+                                        ✓ {type}
+                                      </Text>
+                                    ))}
+                                  </BlockStack>
+                                </BlockStack>
                               </BlockStack>
-                            </BlockStack>
 
-                            <Button
-                              variant={isCurrentPlan ? 'secondary' : 'primary'}
-                              disabled={isCurrentPlan || planLoading !== null}
-                              loading={planLoading === id}
-                              onClick={() => handleSelectPlan(id)}
-                              fullWidth
-                            >
-                              {isCurrentPlan ? t.settings.currentPlanButton : id === 'free' ? t.settings.downgrade : t.settings.select}
-                            </Button>
-                          </BlockStack>
-                        </Card>
+                              <div style={{ marginTop: 'auto', paddingTop: '16px' }}>
+                                <Button
+                                  variant={isCurrentPlan ? 'secondary' : 'primary'}
+                                  disabled={isCurrentPlan || planLoading !== null}
+                                  loading={planLoading === id}
+                                  onClick={() => handleSelectPlan(id)}
+                                  fullWidth
+                                >
+                                  {isCurrentPlan ? t.settings.currentPlanButton : id === 'free' ? t.settings.downgrade : t.settings.select}
+                                </Button>
+                              </div>
+                            </div>
+                          </Card>
+                        </div>
                       );
                     })}
                   </div>
