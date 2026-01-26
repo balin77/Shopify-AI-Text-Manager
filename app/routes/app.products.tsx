@@ -255,13 +255,16 @@ export default function ProductsPage() {
       url.searchParams.delete("sync");
       window.history.replaceState({}, "", url.toString());
 
+      // Show loading message via InfoBox
+      showInfoBox(t.products.syncInProgress, "info");
+
       // Trigger the sync API
       syncFetcher.submit(
         {},
         { method: "POST", action: "/api/sync-missing-products" }
       );
     }
-  }, [isSyncing, syncFetcher]);
+  }, [isSyncing, syncFetcher, showInfoBox, t]);
 
   // Handle sync completion
   useEffect(() => {
@@ -269,18 +272,15 @@ export default function ProductsPage() {
       console.log("✅ [ProductsPage] Sync complete:", syncFetcher.data);
 
       if (syncFetcher.data.success && syncFetcher.data.synced > 0) {
-        showInfoBox(
-          `${syncFetcher.data.synced} neue Produkte geladen`,
-          "success",
-          "Sync abgeschlossen"
-        );
+        const message = t.products.syncComplete.replace("{count}", String(syncFetcher.data.synced));
+        showInfoBox(message, "success", t.products.syncCompleteTitle);
         // Reload to show new products
         window.location.reload();
       } else {
         setIsSyncing(false);
       }
     }
-  }, [isSyncing, syncFetcher.state, syncFetcher.data, showInfoBox]);
+  }, [isSyncing, syncFetcher.state, syncFetcher.data, showInfoBox, t]);
 
   // Show loader error
   useEffect(() => {
@@ -289,39 +289,9 @@ export default function ProductsPage() {
     }
   }, [error, showInfoBox, t]);
 
-  // Show syncing indicator
-  const showSyncingBanner = isSyncing || syncFetcher.state !== "idle";
-
   return (
     <>
       <MainNavigation />
-      {showSyncingBanner && (
-        <div style={{
-          padding: "12px 20px",
-          backgroundColor: "#e3f2fd",
-          borderBottom: "1px solid #2196f3",
-          display: "flex",
-          alignItems: "center",
-          gap: "12px",
-        }}>
-          <div style={{
-            width: "16px",
-            height: "16px",
-            border: "2px solid #2196f3",
-            borderTopColor: "transparent",
-            borderRadius: "50%",
-            animation: "spin 1s linear infinite",
-          }} />
-          <span style={{ color: "#1565c0" }}>
-            Lade zusätzliche Produkte nach Plan-Upgrade...
-          </span>
-          <style>{`
-            @keyframes spin {
-              to { transform: rotate(360deg); }
-            }
-          `}</style>
-        </div>
-      )}
       <UnifiedContentEditor
         config={PRODUCTS_CONFIG}
         items={products as ContentItem[]}

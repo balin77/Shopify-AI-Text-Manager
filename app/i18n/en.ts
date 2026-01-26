@@ -97,6 +97,10 @@ export const en: Translation = {
       previous: "Previous page",
       next: "Next page",
     },
+    // Plan upgrade sync
+    syncInProgress: "Loading additional products after plan upgrade...",
+    syncComplete: "{count} new products loaded",
+    syncCompleteTitle: "Sync complete",
   },
 
   // Content Page

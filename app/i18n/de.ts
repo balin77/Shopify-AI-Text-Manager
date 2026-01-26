@@ -95,6 +95,10 @@ export const de = {
       previous: "Vorherige Seite",
       next: "Nächste Seite",
     },
+    // Plan upgrade sync
+    syncInProgress: "Lade zusätzliche Produkte nach Plan-Upgrade...",
+    syncComplete: "{count} neue Produkte geladen",
+    syncCompleteTitle: "Sync abgeschlossen",
   },
 
   // Content Page
