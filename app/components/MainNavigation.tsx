@@ -16,7 +16,7 @@ export function MainNavigation() {
   const { infoBox, hideInfoBox, showInfoBox } = useInfoBox();
   const { plan, getPlanDisplayName, getMaxProducts } = usePlan();
   const { setMainNavHeight } = useNavigationHeight();
-  const fetcher = useFetcher();
+  const planFetcher = useFetcher<{ success?: boolean; syncStats?: { synced: number }; error?: string }>();
   const tasksFetcher = useFetcher<{ count: number }>();
   const completedTasksFetcher = useFetcher<{ tasks: any[] }>();
   const [isChangingPlan, setIsChangingPlan] = useState(false);
@@ -291,34 +291,30 @@ export function MainNavigation() {
     console.log("🔄 [MainNavigation] Changing plan:", plan, "->", newPlan);
     setIsChangingPlan(true);
 
-    try {
-      fetcher.submit(
-        { plan: newPlan },
-        { method: "POST", action: "/api/update-plan", encType: "application/json" }
-      );
-      // Response handling is done in the useEffect below
-    } catch (error) {
-      console.error("❌ [MainNavigation] Error changing plan:", error);
-      setIsChangingPlan(false);
-    }
+    planFetcher.submit(
+      { plan: newPlan },
+      { method: "POST", action: "/api/update-plan", encType: "application/json" }
+    );
   };
 
   // Handle plan change completion - wait for API response before reloading
   useEffect(() => {
-    if (isChangingPlan && fetcher.state === "idle" && fetcher.data) {
-      const data = fetcher.data as { success?: boolean; syncStats?: { synced: number } };
-      if (data.success) {
+    // Only process when fetcher has finished (went from loading/submitting to idle with data)
+    if (planFetcher.state === "idle" && planFetcher.data && isChangingPlan) {
+      console.log("📦 [MainNavigation] Plan change response:", planFetcher.data);
+
+      if (planFetcher.data.success) {
         console.log("✅ [MainNavigation] Plan change complete, reloading page...");
-        if (data.syncStats?.synced) {
-          console.log(`📦 [MainNavigation] Synced ${data.syncStats.synced} additional products`);
+        if (planFetcher.data.syncStats?.synced) {
+          console.log(`📦 [MainNavigation] Synced ${planFetcher.data.syncStats.synced} additional products`);
         }
         window.location.reload();
       } else {
-        console.error("❌ [MainNavigation] Plan change failed");
+        console.error("❌ [MainNavigation] Plan change failed:", planFetcher.data.error);
         setIsChangingPlan(false);
       }
     }
-  }, [isChangingPlan, fetcher.state, fetcher.data]);
+  }, [planFetcher.state, planFetcher.data, isChangingPlan]);
 
   const plans: Plan[] = ["free", "basic", "pro", "max"];
 
