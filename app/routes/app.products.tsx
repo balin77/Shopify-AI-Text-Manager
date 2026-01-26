@@ -71,9 +71,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     console.log("[PRODUCTS-LOADER] Primary locale:", primaryLocale);
     console.log("[PRODUCTS-LOADER] Available locales:", shopLocales.length);
 
-    // 2. Fetch ALL products from DATABASE (no limit)
-    // Load products and translations separately (unified pattern like Collections)
-    const [dbProducts, allTranslations, aiSettings] = await Promise.all([
+    // 2. Fetch products from DATABASE and translations
+    const [initialDbProducts, allTranslations, aiSettings] = await Promise.all([
       db.product.findMany({
         where: {
           shop: session.shop,
@@ -92,7 +91,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         orderBy: {
           title: "asc",
         },
-        // NO LIMIT - load all products
       }),
       db.contentTranslation.findMany({
         where: { resourceType: 'Product' }
@@ -100,7 +98,72 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       loadAISettingsForValidation(db, session.shop),
     ]);
 
-    console.log("[PRODUCTS-LOADER] Loaded", dbProducts.length, "products from database (no limit)");
+    console.log("[PRODUCTS-LOADER] Loaded", initialDbProducts.length, "products from database");
+
+    // 3. Auto-sync missing products if we have capacity
+    // This handles the case where plan was upgraded and products need to be synced
+    let dbProducts = initialDbProducts;
+    let syncedCount = 0;
+
+    if (initialDbProducts.length < planLimits.maxProducts) {
+      const maxToFetch = planLimits.maxProducts === Infinity ? 250 : planLimits.maxProducts;
+
+      // Fetch product IDs from Shopify
+      const shopifyProductsResponse = await admin.graphql(
+        `#graphql
+          query getProductIds($first: Int!) {
+            products(first: $first) {
+              edges {
+                node {
+                  id
+                }
+              }
+            }
+          }`,
+        { variables: { first: maxToFetch } }
+      );
+
+      const shopifyData = await shopifyProductsResponse.json();
+      const shopifyProductIds = shopifyData.data?.products?.edges?.map((e: any) => e.node.id) || [];
+
+      // Find products not in our database
+      const existingIds = new Set(initialDbProducts.map(p => p.id));
+      const missingProductIds = shopifyProductIds.filter((id: string) => !existingIds.has(id));
+
+      if (missingProductIds.length > 0) {
+        console.log(`[PRODUCTS-LOADER] Found ${missingProductIds.length} products to sync (plan upgrade detected)`);
+
+        // Sync missing products
+        const { ProductSyncService } = await import("../services/product-sync.service");
+        const syncService = new ProductSyncService(admin, session.shop);
+
+        for (const productId of missingProductIds) {
+          try {
+            await syncService.syncProduct(productId);
+            syncedCount++;
+          } catch (error: any) {
+            console.error(`[PRODUCTS-LOADER] Failed to sync ${productId}:`, error.message);
+          }
+        }
+
+        console.log(`[PRODUCTS-LOADER] Synced ${syncedCount} new products`);
+
+        // Reload products from database after sync
+        if (syncedCount > 0) {
+          dbProducts = await db.product.findMany({
+            where: { shop: session.shop },
+            include: {
+              images: planLimits.cacheEnabled.productImages ? {
+                include: { altTextTranslations: true },
+                orderBy: { position: 'asc' },
+              } : false,
+            },
+            orderBy: { title: "asc" },
+          });
+          console.log(`[PRODUCTS-LOADER] Reloaded ${dbProducts.length} products after sync`);
+        }
+      }
+    }
 
     // Group translations by resourceId (unified pattern)
     const translationsByResource = allTranslations.reduce((acc: Record<string, any[]>, trans) => {
