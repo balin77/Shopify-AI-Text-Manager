@@ -262,7 +262,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   }, [editableValues, selectedItemId, isLoadingData]);
 
   // Retry mechanism: If all fields are empty but item has data, retry loading
+  // NOTE: Disabled for templates because users can intentionally clear all fields
   useEffect(() => {
+    // Skip retry mechanism for templates - users can intentionally clear fields
+    if (config.contentType === 'templates') return;
+
     const item = selectedItemRef.current;
     if (!item || !selectedItemId || isLoadingData) return;
 
