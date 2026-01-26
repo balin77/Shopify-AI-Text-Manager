@@ -655,19 +655,21 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
         const changedFieldsStr = formData.get("changedFields") as string;
         const changedFields: string[] = changedFieldsStr ? JSON.parse(changedFieldsStr) : [];
 
-        // Debug: Log all form data keys
+        // Debug: Log all form data keys with clear visual markers
         const allFormDataKeys: string[] = [];
         formData.forEach((value, key) => {
           allFormDataKeys.push(key);
         });
-        console.log(`[TEMPLATES-ACTION] 📝 updateContent - All FormData keys:`, allFormDataKeys);
-        console.log(`[TEMPLATES-ACTION] 📝 updateContent called:`, {
-          locale,
-          primaryLocale,
-          changedFieldsStr,
-          changedFields,
-          isPrimaryLocale: locale === primaryLocale
-        });
+        console.log(`\n${'*'.repeat(80)}`);
+        console.log(`******** 🔴🔴🔴 TEMPLATES UPDATE CONTENT - START 🔴🔴🔴 ********`);
+        console.log(`${'*'.repeat(80)}`);
+        console.log(`All FormData keys:`, allFormDataKeys);
+        console.log(`locale: ${locale}`);
+        console.log(`primaryLocale: ${primaryLocale}`);
+        console.log(`isPrimaryLocale: ${locale === primaryLocale}`);
+        console.log(`changedFieldsStr: ${changedFieldsStr}`);
+        console.log(`changedFields:`, changedFields);
+        console.log(`${'*'.repeat(80)}\n`);
 
         // Collect all field values from form data
         const updatedFields: Record<string, string> = {};
@@ -719,9 +721,13 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
 
           // Delete translations for changed fields (they are now outdated)
           if (changedFields.length > 0) {
-            console.log(`[TEMPLATES-ACTION] 🗑️ Deleting translations for changed fields:`, changedFields);
+            console.log(`\n${'#'.repeat(80)}`);
+            console.log(`######## 🗑️🗑️🗑️ DELETING TRANSLATIONS 🗑️🗑️🗑️ ########`);
+            console.log(`${'#'.repeat(80)}`);
+            console.log(`Keys to delete:`, changedFields);
+            console.log(`GroupId: ${groupId}`);
 
-            await db.themeTranslation.deleteMany({
+            const deleteResult = await db.themeTranslation.deleteMany({
               where: {
                 shop: session.shop,
                 groupId: groupId,
@@ -729,7 +735,10 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
               }
             });
 
-            console.log(`[TEMPLATES-ACTION] ✅ Translations deleted for keys:`, changedFields);
+            console.log(`Deleted ${deleteResult.count} translation entries`);
+            console.log(`${'#'.repeat(80)}\n`);
+          } else {
+            console.log(`\n⚠️ No changedFields to delete translations for\n`);
           }
         } else {
           // Update translation: Use ThemeTranslation table
