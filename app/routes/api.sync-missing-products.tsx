@@ -86,24 +86,34 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     console.log(`[SYNC-MISSING] Found ${missingProductIds.length} products to sync`);
 
-    // Sync missing products
+    // Sync missing products in PARALLEL (5 at a time for speed)
     const syncService = new ProductSyncService(admin, session.shop);
     let synced = 0;
     let failed = 0;
 
-    for (const productId of missingProductIds) {
-      try {
-        await syncService.syncProduct(productId);
-        synced++;
+    // Process in batches of 5 for parallel syncing
+    const BATCH_SIZE = 5;
+    for (let i = 0; i < missingProductIds.length; i += BATCH_SIZE) {
+      const batch = missingProductIds.slice(i, i + BATCH_SIZE);
 
-        // Log progress every 5 products
-        if (synced % 5 === 0) {
-          console.log(`[SYNC-MISSING] Progress: ${synced}/${missingProductIds.length}`);
+      const results = await Promise.allSettled(
+        batch.map(async (productId: string) => {
+          await syncService.syncProduct(productId);
+          return productId;
+        })
+      );
+
+      // Count results
+      for (const result of results) {
+        if (result.status === "fulfilled") {
+          synced++;
+        } else {
+          failed++;
+          console.error(`[SYNC-MISSING] Failed:`, result.reason?.message || result.reason);
         }
-      } catch (error: any) {
-        console.error(`[SYNC-MISSING] Failed to sync ${productId}:`, error.message);
-        failed++;
       }
+
+      console.log(`[SYNC-MISSING] Progress: ${synced + failed}/${missingProductIds.length} (${synced} ok, ${failed} failed)`);
     }
 
     console.log(`✅ [SYNC-MISSING] Sync complete: ${synced} synced, ${failed} failed`);
