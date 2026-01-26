@@ -1181,7 +1181,7 @@ export default function TemplatesPage() {
   // Track processed save responses to prevent duplicate processing
   const processedSaveRef = useRef<any>(null);
 
-  // Update loadedThemes cache after successful save (so changes persist on reload)
+  // Update caches after successful save
   useEffect(() => {
     if (!fetcher.data || typeof fetcher.data !== 'object') return;
     if (!('success' in fetcher.data) || !fetcher.data.success) return;
@@ -1193,28 +1193,69 @@ export default function TemplatesPage() {
     if (processedSaveRef.current === fetcher.data) return;
     processedSaveRef.current = fetcher.data;
 
-    // Update the cached loadedThemes with current editable values
-    if (selectedGroupId && loadedThemes[selectedGroupId] && editor.state.currentLanguage === primaryLocale) {
-      const currentValues = editor.state.editableValues;
+    const currentLanguage = editor.state.currentLanguage;
+    const currentValues = editor.state.editableValues;
+
+    if (selectedGroupId && loadedThemes[selectedGroupId]) {
       const themeData = loadedThemes[selectedGroupId];
 
-      if (themeData.translatableContent && Array.isArray(themeData.translatableContent)) {
-        // Create updated translatableContent with new values
-        const updatedContent = themeData.translatableContent.map((item: any) => {
-          if (currentValues[item.key] !== undefined) {
-            return { ...item, value: currentValues[item.key] };
-          }
-          return item;
-        });
+      if (currentLanguage === primaryLocale) {
+        // PRIMARY LOCALE SAVE: Update loadedThemes and invalidate translation cache
+        if (themeData.translatableContent && Array.isArray(themeData.translatableContent)) {
+          // Create updated translatableContent with new values
+          const updatedContent = themeData.translatableContent.map((item: any) => {
+            if (currentValues[item.key] !== undefined) {
+              return { ...item, value: currentValues[item.key] };
+            }
+            return item;
+          });
 
-        // Update the cache
-        setLoadedThemes(prev => ({
-          ...prev,
-          [selectedGroupId]: {
-            ...prev[selectedGroupId],
-            translatableContent: updatedContent
-          }
-        }));
+          // Update the loadedThemes cache
+          setLoadedThemes(prev => ({
+            ...prev,
+            [selectedGroupId]: {
+              ...prev[selectedGroupId],
+              translatableContent: updatedContent
+            }
+          }));
+
+          // IMPORTANT: Invalidate ALL translation caches for this group
+          // This ensures that deleted translations are not shown from cache
+          setLoadedTranslations(prev => {
+            const newCache = { ...prev };
+            delete newCache[selectedGroupId]; // Remove all cached translations for this group
+            console.log(`[CACHE] Invalidated translation cache for group: ${selectedGroupId}`);
+            return newCache;
+          });
+        }
+      } else {
+        // FOREIGN LOCALE SAVE: Update loadedTranslations cache with new values
+        setLoadedTranslations(prev => {
+          const groupCache = prev[selectedGroupId] || {};
+          const localeCache = groupCache[currentLanguage] || [];
+
+          // Update or add translations for changed keys
+          const updatedCache = [...localeCache];
+          Object.entries(currentValues).forEach(([key, value]) => {
+            const existingIndex = updatedCache.findIndex((t: any) => t.key === key);
+            if (existingIndex >= 0) {
+              updatedCache[existingIndex] = { ...updatedCache[existingIndex], value };
+            } else if (value) {
+              // Only add if there's actually a value
+              updatedCache.push({ key, value, locale: currentLanguage });
+            }
+          });
+
+          console.log(`[CACHE] Updated translation cache for group: ${selectedGroupId}, locale: ${currentLanguage}`);
+
+          return {
+            ...prev,
+            [selectedGroupId]: {
+              ...groupCache,
+              [currentLanguage]: updatedCache
+            }
+          };
+        });
       }
     }
   }, [fetcher.data, selectedGroupId, loadedThemes, editor.state.editableValues, editor.state.currentLanguage, primaryLocale]);
