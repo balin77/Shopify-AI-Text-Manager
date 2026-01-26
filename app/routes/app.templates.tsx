@@ -1076,10 +1076,15 @@ export default function TemplatesPage() {
       // Use cached translations - update editable values directly
       const themeData = loadedThemes[selectedGroupId];
       if (themeData?.translatableContent) {
+        const newValues: Record<string, string> = {};
         themeData.translatableContent.forEach((item: any) => {
           const translation = cachedTranslations.find((t: any) => t.key === item.key);
-          editor.helpers.setEditableValue(item.key, translation?.value || "");
+          const value = translation?.value || "";
+          newValues[item.key] = value;
+          editor.helpers.setEditableValue(item.key, value);
         });
+        // Update original values so hasChanges is false after language switch
+        editor.helpers.setOriginalTemplateValues(newValues);
       }
     } else {
       // Load from server
@@ -1119,6 +1124,9 @@ export default function TemplatesPage() {
           Object.entries(newValues).forEach(([key, value]) => {
             editor.helpers.setEditableValue(key, value);
           });
+
+          // Update original values so hasChanges is false after language switch
+          editor.helpers.setOriginalTemplateValues(newValues);
         }
       }
     }

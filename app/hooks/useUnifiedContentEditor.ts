@@ -1834,6 +1834,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     handleValueChange(fieldKey, value);
   };
 
+  // Helper to update original template values (used after loading translations)
+  const setOriginalTemplateValues = (values: Record<string, string>) => {
+    if (config.contentType === 'templates') {
+      originalTemplateValuesRef.current = { ...values };
+    }
+  };
+
   // ============================================================================
   // RETURN
   // ============================================================================
@@ -1901,6 +1908,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       isFieldTranslated,
       getEditableValue,
       setEditableValue,
+      setOriginalTemplateValues,
     },
     // Dynamic field definitions (for templates and other dynamic content types)
     effectiveFieldDefinitions,

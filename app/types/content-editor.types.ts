@@ -199,6 +199,7 @@ export interface UseContentEditorReturn {
     isFieldTranslated: (fieldKey: string) => boolean;
     getEditableValue: (fieldKey: string) => string;
     setEditableValue: (fieldKey: string, value: string) => void;
+    setOriginalTemplateValues: (values: Record<string, string>) => void;
   };
 
   /** Effective field definitions (dynamic for templates, static for other content types) */
