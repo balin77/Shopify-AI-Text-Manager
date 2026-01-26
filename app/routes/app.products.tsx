@@ -24,7 +24,7 @@ import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { usePlan } from "../contexts/PlanContext";
 import { useNavigationHeight } from "../contexts/NavigationHeightContext";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import type { ContentItem } from "../types/content-editor.types";
 
 // ============================================================================
@@ -100,77 +100,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
     console.log("[PRODUCTS-LOADER] Loaded", initialDbProducts.length, "products from database");
 
-    // 3. Auto-sync missing products ONLY if sync=true parameter is set
-    // This is triggered after a plan upgrade to fetch additional products
-    const url = new URL(request.url);
-    const shouldSync = url.searchParams.get("sync") === "true";
-
-    let dbProducts = initialDbProducts;
-    let syncedCount = 0;
-
-    if (shouldSync && initialDbProducts.length < planLimits.maxProducts) {
-      console.log(`[PRODUCTS-LOADER] Sync requested, checking for missing products...`);
-
-      const maxToFetch = planLimits.maxProducts === Infinity ? 250 : planLimits.maxProducts;
-
-      // Fetch product IDs from Shopify
-      const shopifyProductsResponse = await admin.graphql(
-        `#graphql
-          query getProductIds($first: Int!) {
-            products(first: $first) {
-              edges {
-                node {
-                  id
-                }
-              }
-            }
-          }`,
-        { variables: { first: maxToFetch } }
-      );
-
-      const shopifyData = await shopifyProductsResponse.json();
-      const shopifyProductIds = shopifyData.data?.products?.edges?.map((e: any) => e.node.id) || [];
-
-      // Find products not in our database
-      const existingIds = new Set(initialDbProducts.map(p => p.id));
-      const missingProductIds = shopifyProductIds.filter((id: string) => !existingIds.has(id));
-
-      if (missingProductIds.length > 0) {
-        console.log(`[PRODUCTS-LOADER] Found ${missingProductIds.length} products to sync`);
-
-        // Sync missing products
-        const { ProductSyncService } = await import("../services/product-sync.service");
-        const syncService = new ProductSyncService(admin, session.shop);
-
-        for (const productId of missingProductIds) {
-          try {
-            await syncService.syncProduct(productId);
-            syncedCount++;
-          } catch (error: any) {
-            console.error(`[PRODUCTS-LOADER] Failed to sync ${productId}:`, error.message);
-          }
-        }
-
-        console.log(`[PRODUCTS-LOADER] Synced ${syncedCount} new products`);
-
-        // Reload products from database after sync
-        if (syncedCount > 0) {
-          dbProducts = await db.product.findMany({
-            where: { shop: session.shop },
-            include: {
-              images: planLimits.cacheEnabled.productImages ? {
-                include: { altTextTranslations: true },
-                orderBy: { position: 'asc' },
-              } : false,
-            },
-            orderBy: { title: "asc" },
-          });
-          console.log(`[PRODUCTS-LOADER] Reloaded ${dbProducts.length} products after sync`);
-        }
-      } else {
-        console.log(`[PRODUCTS-LOADER] No missing products to sync`);
-      }
-    }
+    // Use initialDbProducts directly - sync is now done via separate API call
+    const dbProducts = initialDbProducts;
 
     // Group translations by resourceId (unified pattern)
     const translationsByResource = allTranslations.reduce((acc: Record<string, any[]>, trans) => {
@@ -290,10 +221,12 @@ export const action = async (args: ActionFunctionArgs) => {
 export default function ProductsPage() {
   const { products, shopLocales, primaryLocale, error, aiSettings, plan, maxProducts } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
+  const syncFetcher = useFetcher<{ success: boolean; synced: number; total: number }>();
   const { t } = useI18n();
   const { showInfoBox } = useInfoBox();
   const { getNextPlanUpgrade } = usePlan();
   const { setContentNavHeight } = useNavigationHeight();
+  const [isSyncing, setIsSyncing] = useState(false);
 
   // Initialize unified content editor
   const editor = useUnifiedContentEditor({
@@ -311,14 +244,43 @@ export default function ProductsPage() {
     setContentNavHeight(0);
   }, [setContentNavHeight]);
 
-  // Remove sync parameter from URL after loading (to prevent re-sync on refresh)
+  // Check for sync parameter and trigger background sync
   useEffect(() => {
     const url = new URL(window.location.href);
-    if (url.searchParams.has("sync")) {
+    if (url.searchParams.has("sync") && !isSyncing && syncFetcher.state === "idle") {
+      console.log("🔄 [ProductsPage] Triggering background sync...");
+      setIsSyncing(true);
+
+      // Remove sync parameter from URL
       url.searchParams.delete("sync");
       window.history.replaceState({}, "", url.toString());
+
+      // Trigger the sync API
+      syncFetcher.submit(
+        {},
+        { method: "POST", action: "/api/sync-missing-products" }
+      );
     }
-  }, []);
+  }, [isSyncing, syncFetcher]);
+
+  // Handle sync completion
+  useEffect(() => {
+    if (isSyncing && syncFetcher.state === "idle" && syncFetcher.data) {
+      console.log("✅ [ProductsPage] Sync complete:", syncFetcher.data);
+
+      if (syncFetcher.data.success && syncFetcher.data.synced > 0) {
+        showInfoBox(
+          `${syncFetcher.data.synced} neue Produkte geladen`,
+          "success",
+          "Sync abgeschlossen"
+        );
+        // Reload to show new products
+        window.location.reload();
+      } else {
+        setIsSyncing(false);
+      }
+    }
+  }, [isSyncing, syncFetcher.state, syncFetcher.data, showInfoBox]);
 
   // Show loader error
   useEffect(() => {
@@ -327,9 +289,39 @@ export default function ProductsPage() {
     }
   }, [error, showInfoBox, t]);
 
+  // Show syncing indicator
+  const showSyncingBanner = isSyncing || syncFetcher.state !== "idle";
+
   return (
     <>
       <MainNavigation />
+      {showSyncingBanner && (
+        <div style={{
+          padding: "12px 20px",
+          backgroundColor: "#e3f2fd",
+          borderBottom: "1px solid #2196f3",
+          display: "flex",
+          alignItems: "center",
+          gap: "12px",
+        }}>
+          <div style={{
+            width: "16px",
+            height: "16px",
+            border: "2px solid #2196f3",
+            borderTopColor: "transparent",
+            borderRadius: "50%",
+            animation: "spin 1s linear infinite",
+          }} />
+          <span style={{ color: "#1565c0" }}>
+            Lade zusätzliche Produkte nach Plan-Upgrade...
+          </span>
+          <style>{`
+            @keyframes spin {
+              to { transform: rotate(360deg); }
+            }
+          `}</style>
+        </div>
+      )}
       <UnifiedContentEditor
         config={PRODUCTS_CONFIG}
         items={products as ContentItem[]}
