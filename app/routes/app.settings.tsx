@@ -1,13 +1,18 @@
 import { useState, useEffect } from "react";
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useFetcher } from "@remix-run/react";
+import { useLoaderData, useFetcher, useNavigate } from "@remix-run/react";
 import {
   Page,
   Card,
   Text,
   BlockStack,
   Banner,
+  Button,
+  Badge,
+  InlineStack,
+  Divider,
 } from "@shopify/polaris";
+import { PLAN_CONFIG, PLAN_DISPLAY_NAMES, type Plan } from "../config/plans";
 import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
 import { AIInstructionsTabs } from "../components/AIInstructionsTabs";
@@ -517,13 +522,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 export default function SettingsPage() {
   const { shop, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, subscriptionPlan } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
+  const navigate = useNavigate();
   const { t } = useI18n();
   const { showInfoBox } = useInfoBox();
   const isFreePlan = subscriptionPlan === "free";
   const isBasicPlan = subscriptionPlan === "basic";
   const aiInstructionsReadOnly = isFreePlan || isBasicPlan;
 
-  const [selectedSection, setSelectedSection] = useState<"setup" | "ai" | "instructions" | "language">("setup");
+  const [selectedSection, setSelectedSection] = useState<"setup" | "ai" | "instructions" | "language" | "plan">("setup");
   const [hasAIChanges, setHasAIChanges] = useState(false);
   const [hasLanguageChanges, setHasLanguageChanges] = useState(false);
   const [hasInstructionsChanges, setHasInstructionsChanges] = useState(false);
@@ -532,7 +538,7 @@ export default function SettingsPage() {
   const hasUnsavedChanges = hasAIChanges || hasLanguageChanges || hasInstructionsChanges;
 
   // Handle section navigation with unsaved changes warning
-  const handleSectionChange = (newSection: "setup" | "ai" | "instructions" | "language") => {
+  const handleSectionChange = (newSection: "setup" | "ai" | "instructions" | "language" | "plan") => {
     if (hasUnsavedChanges) {
       const message = t.settings?.unsavedChangesMessage ||
         "Sie haben ungespeicherte Änderungen. Möchten Sie wirklich fortfahren? Ihre Änderungen gehen verloren.";
@@ -645,6 +651,24 @@ export default function SettingsPage() {
                   {t.settings.appLanguage}
                 </Text>
               </button>
+              <button
+                onClick={() => handleSectionChange("plan")}
+                style={{
+                  width: "100%",
+                  padding: "1rem",
+                  background: selectedSection === "plan" ? "#f1f8f5" : "white",
+                  borderLeft: selectedSection === "plan" ? "3px solid #008060" : "3px solid transparent",
+                  border: "none",
+                  borderTop: "1px solid #e1e3e5",
+                  textAlign: "left",
+                  cursor: "pointer",
+                  transition: "all 0.2s",
+                }}
+              >
+                <Text as="p" variant="bodyMd" fontWeight={selectedSection === "plan" ? "semibold" : "regular"}>
+                  {t.settings.plan}
+                </Text>
+              </button>
             </Card>
           </div>
 
@@ -704,6 +728,94 @@ export default function SettingsPage() {
                   t={t}
                   onHasChangesChange={setHasLanguageChanges}
                 />
+              )}
+
+              {/* Plan Settings */}
+              {selectedSection === "plan" && (
+                <Card>
+                  <BlockStack gap="400">
+                    <Text as="h2" variant="headingLg">
+                      {t.settings.planTitle}
+                    </Text>
+                    <Text as="p" variant="bodyMd" tone="subdued">
+                      {t.settings.planDescription}
+                    </Text>
+
+                    <Divider />
+
+                    <BlockStack gap="300">
+                      <InlineStack gap="200" align="start" blockAlign="center">
+                        <Text as="p" variant="bodyMd" fontWeight="semibold">
+                          {t.settings.currentPlan}:
+                        </Text>
+                        <Badge
+                          tone={subscriptionPlan === "free" ? "info" : subscriptionPlan === "max" ? "warning" : "success"}
+                        >
+                          {PLAN_DISPLAY_NAMES[subscriptionPlan as Plan]}
+                        </Badge>
+                      </InlineStack>
+
+                      <Divider />
+
+                      <Text as="h3" variant="headingMd">
+                        {t.settings.planFeatures}
+                      </Text>
+
+                      <BlockStack gap="200">
+                        <InlineStack gap="200">
+                          <Text as="span" variant="bodyMd" fontWeight="semibold">
+                            {t.settings.maxProducts}:
+                          </Text>
+                          <Text as="span" variant="bodyMd">
+                            {PLAN_CONFIG[subscriptionPlan as Plan].maxProducts === Infinity
+                              ? "∞"
+                              : PLAN_CONFIG[subscriptionPlan as Plan].maxProducts}
+                          </Text>
+                        </InlineStack>
+
+                        <InlineStack gap="200">
+                          <Text as="span" variant="bodyMd" fontWeight="semibold">
+                            {t.settings.productImages}:
+                          </Text>
+                          <Text as="span" variant="bodyMd">
+                            {PLAN_CONFIG[subscriptionPlan as Plan].productImages === "all"
+                              ? t.settings.allImages
+                              : t.settings.featuredImageOnly}
+                          </Text>
+                        </InlineStack>
+
+                        <InlineStack gap="200">
+                          <Text as="span" variant="bodyMd" fontWeight="semibold">
+                            {t.settings.contentTypes}:
+                          </Text>
+                          <Text as="span" variant="bodyMd">
+                            {PLAN_CONFIG[subscriptionPlan as Plan].contentTypes.length}
+                          </Text>
+                        </InlineStack>
+
+                        <InlineStack gap="200">
+                          <Text as="span" variant="bodyMd" fontWeight="semibold">
+                            {t.settings.aiInstructionsEditable}:
+                          </Text>
+                          <Text as="span" variant="bodyMd">
+                            {PLAN_CONFIG[subscriptionPlan as Plan].aiInstructionsEditable
+                              ? t.settings.yes
+                              : t.settings.no}
+                          </Text>
+                        </InlineStack>
+                      </BlockStack>
+                    </BlockStack>
+
+                    <Divider />
+
+                    <Button
+                      variant="primary"
+                      onClick={() => navigate("/app/billing")}
+                    >
+                      {subscriptionPlan === "max" ? t.settings.changePlan : t.settings.upgradePlan}
+                    </Button>
+                  </BlockStack>
+                </Card>
               )}
             </BlockStack>
           </div>
