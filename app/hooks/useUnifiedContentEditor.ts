@@ -360,6 +360,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // but the submit usually still works, so we just log and ignore the error
   // IMPORTANT: Uses fetcherRef to avoid dependency on fetcher which changes frequently
   const safeSubmit = useCallback((data: Record<string, any>, options?: { method: string }) => {
+    console.log('[SAFE-SUBMIT] Submitting data:', data);
+    console.log('[SAFE-SUBMIT] Options:', options);
     try {
       fetcherRef.current.submit(data, options || { method: "POST" });
     } catch (error) {
