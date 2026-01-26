@@ -1,8 +1,9 @@
 /**
  * App Index - Redirects to Products page
  *
- * This route immediately redirects to the products page,
- * which is the main entry point of the application.
+ * This route:
+ * 1. Triggers initial setup (webhooks + fast product sync) if not done yet
+ * 2. Redirects to the products page
  */
 
 import { useEffect } from "react";
@@ -10,22 +11,38 @@ import { useNavigate, useFetcher } from "@remix-run/react";
 
 export default function AppIndex() {
   const navigate = useNavigate();
-  const fetcher = useFetcher();
+  const setupFetcher = useFetcher();
 
-  // Trigger initial sync on app start
+  // Trigger initial setup on app start (webhooks + products)
   useEffect(() => {
     // Only trigger if not already loading/submitting and no data yet
-    if (fetcher.state === 'idle' && !fetcher.data) {
-      console.log('[APP] Triggering initial background sync...');
-      fetcher.submit(
+    if (setupFetcher.state === 'idle' && !setupFetcher.data) {
+      console.log('[APP] Triggering initial setup (webhooks + products)...');
+      setupFetcher.submit(
         {},
         {
           method: 'POST',
-          action: '/api/sync-content?types=pages,policies,themes'
+          action: '/api/initial-setup'
         }
       );
     }
   }, []);
+
+  // Log setup result
+  useEffect(() => {
+    if (setupFetcher.data) {
+      const data = setupFetcher.data as { success: boolean; skipped?: boolean; productsSynced?: number; message?: string };
+      if (data.success) {
+        if (data.skipped) {
+          console.log('[APP] Initial setup skipped (already completed)');
+        } else {
+          console.log(`[APP] Initial setup complete! Products synced: ${data.productsSynced}`);
+        }
+      } else {
+        console.error('[APP] Initial setup failed:', data);
+      }
+    }
+  }, [setupFetcher.data]);
 
   // Redirect to products page
   useEffect(() => {
