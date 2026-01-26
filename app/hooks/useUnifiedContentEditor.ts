@@ -61,6 +61,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // Track deleted translation keys - these should not be shown even if revalidation brings them back temporarily
   const deletedTranslationKeysRef = useRef<Set<string>>(new Set());
 
+  // Track original template values for change detection (templates use dynamic fields)
+  const originalTemplateValuesRef = useRef<Record<string, string>>({});
+
   // IMPORTANT: Memoize selectedItem to prevent infinite re-renders
   // Without this, items.find() returns a new object reference on every revalidation,
   // which triggers useChangeTracking and other effects, causing an infinite loop
@@ -87,13 +90,38 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   } = useNavigationGuard();
 
   // Change tracking - only track changes if we're not currently loading data
-  const hasFieldChanges = useChangeTracking(
-    isLoadingData ? null : (selectedItem || null), // Pass null while loading to prevent false change detection
+  // For templates, use custom dynamic field comparison
+  const standardHasFieldChanges = useChangeTracking(
+    isLoadingData ? null : (config.contentType !== 'templates' ? (selectedItem || null) : null), // Skip for templates
     currentLanguage,
     primaryLocale,
-    editableValues as any, // TODO: Fix type mismatch
+    editableValues as any,
     config.contentType
   );
+
+  // Template-specific change detection: compare editableValues with originalTemplateValuesRef
+  const templateHasFieldChanges = useMemo(() => {
+    if (config.contentType !== 'templates' || isLoadingData || !selectedItem) {
+      return false;
+    }
+
+    const originalValues = originalTemplateValuesRef.current;
+    if (Object.keys(originalValues).length === 0) {
+      return false; // No original values yet
+    }
+
+    // Compare each editable value with the original
+    for (const [key, value] of Object.entries(editableValues)) {
+      const originalValue = originalValues[key] || "";
+      if (value !== originalValue) {
+        return true;
+      }
+    }
+    return false;
+  }, [config.contentType, isLoadingData, selectedItem, editableValues]);
+
+  // Combined field changes: use template logic for templates, standard for others
+  const hasFieldChanges = config.contentType === 'templates' ? templateHasFieldChanges : standardHasFieldChanges;
 
   // Check for alt-text changes
   const hasAltTextChanges = useMemo(() => {
@@ -205,6 +233,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     }
 
     setEditableValues(newValues);
+
+    // For templates: Store original values for change detection
+    if (config.contentType === 'templates') {
+      originalTemplateValuesRef.current = { ...newValues };
+    }
     // IMPORTANT: Only depend on selectedItemId, not selectedItem, to prevent re-runs on reference changes
   }, [selectedItemId, currentLanguage, effectiveFieldDefinitions, primaryLocale, config]);
 
@@ -994,6 +1027,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
       // Update original alt-texts to match current values (so hasChanges becomes false)
       setOriginalAltTexts({ ...imageAltTextsRef.current });
+
+      // For templates: Update original values to match current values (so hasChanges becomes false)
+      if (config.contentType === 'templates') {
+        originalTemplateValuesRef.current = { ...editableValues };
+      }
 
       // Revalidate to fetch fresh data from the database after successful save
       // This ensures translations and all changes are reflected in the UI

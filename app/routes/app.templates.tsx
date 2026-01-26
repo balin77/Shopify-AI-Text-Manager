@@ -1124,19 +1124,52 @@ export default function TemplatesPage() {
     }
   }, [translationFetcher.data, selectedGroupId, editor.state.currentLanguage, loadedThemes, editor.helpers]);
 
-  // Handle response messages
+  // Track processed save responses to prevent duplicate processing
+  const processedSaveRef = useRef<any>(null);
+
+  // Update loadedThemes cache after successful save (so changes persist on reload)
+  useEffect(() => {
+    if (!fetcher.data || typeof fetcher.data !== 'object') return;
+    if (!('success' in fetcher.data) || !fetcher.data.success) return;
+
+    // Only process content update saves, not translations or AI responses
+    if ('translatedValue' in fetcher.data || 'generatedContent' in fetcher.data || 'translations' in fetcher.data) return;
+
+    // Skip if already processed
+    if (processedSaveRef.current === fetcher.data) return;
+    processedSaveRef.current = fetcher.data;
+
+    // Update the cached loadedThemes with current editable values
+    if (selectedGroupId && loadedThemes[selectedGroupId] && editor.state.currentLanguage === primaryLocale) {
+      const currentValues = editor.state.editableValues;
+      const themeData = loadedThemes[selectedGroupId];
+
+      if (themeData.translatableContent && Array.isArray(themeData.translatableContent)) {
+        // Create updated translatableContent with new values
+        const updatedContent = themeData.translatableContent.map((item: any) => {
+          if (currentValues[item.key] !== undefined) {
+            return { ...item, value: currentValues[item.key] };
+          }
+          return item;
+        });
+
+        // Update the cache
+        setLoadedThemes(prev => ({
+          ...prev,
+          [selectedGroupId]: {
+            ...prev[selectedGroupId],
+            translatableContent: updatedContent
+          }
+        }));
+      }
+    }
+  }, [fetcher.data, selectedGroupId, loadedThemes, editor.state.editableValues, editor.state.currentLanguage, primaryLocale]);
+
+  // Handle response messages - NOTE: Success messages are handled by useUnifiedContentEditor hook
+  // Only show error messages here to avoid duplicates
   useEffect(() => {
     if (fetcher.data && typeof fetcher.data === 'object') {
-      if ('success' in fetcher.data && fetcher.data.success) {
-        // Don't show message for translation responses (they have their own)
-        if (!('translatedValue' in fetcher.data) && !('generatedContent' in fetcher.data) && !('translations' in fetcher.data)) {
-          showInfoBox(
-            t.content?.changesSaved || "Changes saved successfully!",
-            "success",
-            t.content?.success || "Success"
-          );
-        }
-      } else if ('error' in fetcher.data) {
+      if ('error' in fetcher.data && !fetcher.data.success) {
         showInfoBox(
           (fetcher.data as any).error,
           "critical",
