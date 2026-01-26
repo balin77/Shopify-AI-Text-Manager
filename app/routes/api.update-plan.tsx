@@ -22,6 +22,7 @@ interface UpdatePlanResponse {
     synced: number;
     failed: number;
     resyncedForImages: number;
+    pending: number;  // Products being synced in background
   };
   cacheStats: {
     before: Awaited<ReturnType<typeof getCacheStats>>;
@@ -95,47 +96,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       currentPlanLimits.productImages === "featured-only" &&
       newPlanLimits.productImages === "all";
 
-    let syncStats: { synced: number; failed: number; resyncedForImages: number } | undefined;
+    let syncStats: { synced: number; failed: number; resyncedForImages: number; pending: number } | undefined;
 
     // Handle upgrades (more products available) or image upgrades
+    // IMPORTANT: Run sync in background to avoid blocking the response
     if ((isUpgrade && currentProductCount < newPlanLimits.maxProducts) || isImageUpgrade) {
       console.log(`🔄 [API/UpdatePlan] Upgrading from ${currentPlan} to ${newPlan}...`);
 
-      const syncService = new ProductSyncService(admin, session.shop);
-      let synced = 0;
-      let failed = 0;
-      let resyncedForImages = 0;
+      // Count how many products need to be synced (for immediate feedback)
+      let pendingSync = 0;
 
-      // If upgrading image access, re-sync existing products to get all images
-      if (isImageUpgrade) {
-        const existingProducts = await db.product.findMany({
-          where: { shop: session.shop },
-          select: { id: true },
-        });
-
-        if (existingProducts.length > 0) {
-          console.log(`🖼️ [API/UpdatePlan] Image upgrade detected - re-syncing ${existingProducts.length} existing products for all images...`);
-
-          for (const product of existingProducts) {
-            try {
-              console.log(`[API/UpdatePlan] Re-syncing product for images ${resyncedForImages + 1}/${existingProducts.length}: ${product.id}`);
-              await syncService.syncProduct(product.id);
-              resyncedForImages++;
-            } catch (error: any) {
-              console.error(`[API/UpdatePlan] Failed to re-sync ${product.id}:`, error.message);
-              failed++;
-            }
-          }
-
-          console.log(`✅ [API/UpdatePlan] Re-synced ${resyncedForImages} existing products for all images`);
-        }
-      }
-
-      // If upgrading product limit, sync additional products
       if (isUpgrade && currentProductCount < newPlanLimits.maxProducts) {
-        console.log(`📦 [API/UpdatePlan] Product limit increased - checking for additional products to sync...`);
-
-        // Fetch products from Shopify that we might not have yet
+        // Fetch products from Shopify to count how many we need to sync
         const maxToSync = newPlanLimits.maxProducts === Infinity ? 250 : newPlanLimits.maxProducts;
 
         const response = await admin.graphql(
@@ -155,8 +127,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         const data = await response.json();
         const allProductIds = data.data?.products?.edges?.map((e: any) => e.node.id) || [];
 
-        console.log(`📦 [API/UpdatePlan] Found ${allProductIds.length} products in Shopify`);
-
         // Get existing product IDs from database
         const existingProducts = await db.product.findMany({
           where: { shop: session.shop },
@@ -166,27 +136,75 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
         // Find products we don't have yet
         const productsToSync = allProductIds.filter((id: string) => !existingIds.has(id));
+        pendingSync = productsToSync.length;
 
-        console.log(`🔄 [API/UpdatePlan] Need to sync ${productsToSync.length} new products`);
+        console.log(`📦 [API/UpdatePlan] Found ${pendingSync} products to sync in background`);
 
-        // Now sync new products
+        // Start background sync (fire-and-forget) - don't await!
         if (productsToSync.length > 0) {
-          for (const productId of productsToSync) {
-            try {
-              console.log(`[API/UpdatePlan] Syncing new product ${synced + 1}/${productsToSync.length}: ${productId}`);
-              await syncService.syncProduct(productId);
-              synced++;
-            } catch (error: any) {
-              console.error(`[API/UpdatePlan] Failed to sync ${productId}:`, error.message);
-              failed++;
-            }
-          }
+          const syncService = new ProductSyncService(admin, session.shop);
 
-          console.log(`✅ [API/UpdatePlan] Product sync complete: ${synced} new products synced, ${failed} failed`);
+          // Run sync in background without blocking
+          (async () => {
+            let synced = 0;
+            let failed = 0;
+            console.log(`🚀 [API/UpdatePlan] Starting background sync of ${productsToSync.length} products...`);
+
+            for (const productId of productsToSync) {
+              try {
+                await syncService.syncProduct(productId);
+                synced++;
+                if (synced % 10 === 0) {
+                  console.log(`[API/UpdatePlan] Background sync progress: ${synced}/${productsToSync.length}`);
+                }
+              } catch (error: any) {
+                console.error(`[API/UpdatePlan] Failed to sync ${productId}:`, error.message);
+                failed++;
+              }
+            }
+
+            console.log(`✅ [API/UpdatePlan] Background sync complete: ${synced} synced, ${failed} failed`);
+          })().catch(err => {
+            console.error(`❌ [API/UpdatePlan] Background sync error:`, err);
+          });
         }
       }
 
-      syncStats = { synced, failed, resyncedForImages };
+      // Image upgrade sync in background
+      if (isImageUpgrade) {
+        const existingProducts = await db.product.findMany({
+          where: { shop: session.shop },
+          select: { id: true },
+        });
+
+        if (existingProducts.length > 0) {
+          console.log(`🖼️ [API/UpdatePlan] Starting background image re-sync for ${existingProducts.length} products...`);
+
+          const syncService = new ProductSyncService(admin, session.shop);
+
+          // Run image sync in background without blocking
+          (async () => {
+            let resyncedForImages = 0;
+            let failed = 0;
+
+            for (const product of existingProducts) {
+              try {
+                await syncService.syncProduct(product.id);
+                resyncedForImages++;
+              } catch (error: any) {
+                console.error(`[API/UpdatePlan] Failed to re-sync ${product.id}:`, error.message);
+                failed++;
+              }
+            }
+
+            console.log(`✅ [API/UpdatePlan] Background image sync complete: ${resyncedForImages} re-synced, ${failed} failed`);
+          })().catch(err => {
+            console.error(`❌ [API/UpdatePlan] Background image sync error:`, err);
+          });
+        }
+      }
+
+      syncStats = { synced: 0, failed: 0, resyncedForImages: 0, pending: pendingSync };
     }
 
     // Cleanup cache based on new plan (for downgrades)
@@ -207,8 +225,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         before: cacheStatsBefore,
         after: cacheStatsAfter,
       },
-      message: syncStats
-        ? `Successfully switched to ${newPlan} plan. Synced ${syncStats.synced} new products${syncStats.resyncedForImages > 0 ? ` and re-synced ${syncStats.resyncedForImages} existing products to fetch all images` : ""}`
+      message: syncStats?.pending
+        ? `Successfully switched to ${newPlan} plan. Syncing ${syncStats.pending} products in background...`
         : `Successfully switched to ${newPlan} plan`,
     };
 
