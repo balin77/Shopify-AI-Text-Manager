@@ -297,6 +297,13 @@ export function MainNavigation() {
     );
   };
 
+  // Debug: Log fetcher state changes
+  useEffect(() => {
+    if (isChangingPlan) {
+      console.log("🔍 [MainNavigation] planFetcher state:", planFetcher.state, "data:", planFetcher.data);
+    }
+  }, [planFetcher.state, planFetcher.data, isChangingPlan]);
+
   // Handle plan change completion - wait for API response before reloading
   useEffect(() => {
     // Only process when fetcher has finished (went from loading/submitting to idle with data)
