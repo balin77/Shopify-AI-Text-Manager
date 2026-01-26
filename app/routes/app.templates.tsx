@@ -1260,6 +1260,53 @@ export default function TemplatesPage() {
     }
   }, [fetcher.data, selectedGroupId, loadedThemes, editor.state.editableValues, editor.state.currentLanguage, primaryLocale]);
 
+  // Track processed translation responses to prevent duplicate cache updates
+  const processedTranslationRef = useRef<any>(null);
+
+  // Update loadedTranslations cache after translateFieldToAllLocales completes
+  useEffect(() => {
+    if (!fetcher.data || typeof fetcher.data !== 'object') return;
+    if (!('success' in fetcher.data) || !fetcher.data.success) return;
+    if (!('translations' in fetcher.data) || !('fieldType' in fetcher.data)) return;
+    // Make sure it's translateFieldToAllLocales (has translations object, not array)
+    if ('locale' in fetcher.data) return; // Skip single locale translations
+
+    // Skip if already processed
+    if (processedTranslationRef.current === fetcher.data) return;
+    processedTranslationRef.current = fetcher.data;
+
+    const { translations, fieldType } = fetcher.data as { translations: Record<string, string>; fieldType: string };
+
+    if (!selectedGroupId) return;
+
+    console.log(`[CACHE] Updating translation cache after translateFieldToAllLocales for field: ${fieldType}`);
+
+    // Update the loadedTranslations cache with new translations
+    setLoadedTranslations(prev => {
+      const newCache = { ...prev };
+      const groupCache = newCache[selectedGroupId] || {};
+
+      // Update each locale's cache with the new translation
+      for (const [locale, translatedValue] of Object.entries(translations)) {
+        const localeCache = [...(groupCache[locale] || [])];
+
+        // Find and update or add the translation
+        const existingIndex = localeCache.findIndex((t: any) => t.key === fieldType);
+        if (existingIndex >= 0) {
+          localeCache[existingIndex] = { ...localeCache[existingIndex], value: translatedValue };
+        } else {
+          localeCache.push({ key: fieldType, value: translatedValue, locale });
+        }
+
+        groupCache[locale] = localeCache;
+      }
+
+      newCache[selectedGroupId] = groupCache;
+      console.log(`[CACHE] Updated translations for ${Object.keys(translations).length} locales`);
+      return newCache;
+    });
+  }, [fetcher.data, selectedGroupId]);
+
   // Handle response messages - NOTE: Success messages are handled by useUnifiedContentEditor hook
   // Only show error messages here to avoid duplicates
   useEffect(() => {
