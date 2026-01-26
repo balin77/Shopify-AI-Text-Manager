@@ -1118,6 +1118,9 @@ export default function TemplatesPage() {
 
     // Check if already cached
     const cachedTranslations = loadedTranslations[selectedGroupId]?.[currentLanguage];
+    console.log(`[NAV-LOAD] Group: ${selectedGroupId}, Language: ${currentLanguage}`);
+    console.log(`[NAV-LOAD] Cache exists: ${!!cachedTranslations}, Cache size: ${cachedTranslations?.length || 0}`);
+
     if (cachedTranslations) {
       // Use cached translations - update editable values directly
       const themeData = loadedThemes[selectedGroupId];
@@ -1129,11 +1132,13 @@ export default function TemplatesPage() {
           newValues[item.key] = value;
           editorHelpersRef.current.setEditableValue(item.key, value);
         });
+        console.log(`[NAV-LOAD] Applied ${Object.keys(newValues).length} values from cache`);
         // Update original values so hasChanges is false after language switch
         editorHelpersRef.current.setOriginalTemplateValues(newValues);
       }
     } else {
       // Load from server
+      console.log(`[NAV-LOAD] No cache, loading from server...`);
       loadTranslationsForLocale(selectedGroupId, currentLanguage);
     }
   }, [editor.state.currentLanguage, selectedGroupId, primaryLocale, loadTranslationsForLocale, loadedTranslations, loadedThemes]);
