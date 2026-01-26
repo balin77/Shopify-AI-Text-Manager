@@ -651,6 +651,10 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
         const locale = formData.get("locale") as string;
         const primaryLocale = formData.get("primaryLocale") as string;
 
+        // Parse changedFields if present (for translation deletion when primary locale changes)
+        const changedFieldsStr = formData.get("changedFields") as string;
+        const changedFields: string[] = changedFieldsStr ? JSON.parse(changedFieldsStr) : [];
+
         // Collect all field values from form data
         const updatedFields: Record<string, string> = {};
 
@@ -697,6 +701,21 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
                 }
               });
             }
+          }
+
+          // Delete translations for changed fields (they are now outdated)
+          if (changedFields.length > 0) {
+            console.log(`[TEMPLATES-ACTION] 🗑️ Deleting translations for changed fields:`, changedFields);
+
+            await db.themeTranslation.deleteMany({
+              where: {
+                shop: session.shop,
+                groupId: groupId,
+                key: { in: changedFields }
+              }
+            });
+
+            console.log(`[TEMPLATES-ACTION] ✅ Translations deleted for keys:`, changedFields);
           }
         } else {
           // Update translation: Use ThemeTranslation table

@@ -321,6 +321,10 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
         const updatedFieldsJson = formData.get("updatedFields") as string;
         const updatedFields = JSON.parse(updatedFieldsJson);
 
+        // Parse changedFields if present (for translation deletion when primary locale changes)
+        const changedFieldsStr = formData.get("changedFields") as string;
+        const changedFields: string[] = changedFieldsStr ? JSON.parse(changedFieldsStr) : [];
+
         // STEP 1: Register translations with Shopify FIRST
         const translationInputs = Object.entries(updatedFields).map(([key, value]) => ({
           key,
@@ -379,6 +383,21 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
                 }
               });
             }
+          }
+
+          // STEP 3: Delete translations for changed fields (they are now outdated)
+          if (changedFields.length > 0) {
+            console.log(`[API-TEMPLATES-ACTION] 🗑️ Deleting translations for changed fields:`, changedFields);
+
+            await db.themeTranslation.deleteMany({
+              where: {
+                shop: session.shop,
+                groupId: groupId,
+                key: { in: changedFields }
+              }
+            });
+
+            console.log(`[API-TEMPLATES-ACTION] ✅ Translations deleted for keys:`, changedFields);
           }
 
           return json({ success: true });

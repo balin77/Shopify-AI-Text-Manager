@@ -380,7 +380,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     const changedFields: string[] = [];
     effectiveFieldDefinitions.forEach((field) => {
       const currentValue = valuesToCheck[field.key] || "";
-      const originalValue = getItemFieldValue(item, field.key, primaryLocale, config);
+
+      // For templates: Use originalTemplateValuesRef which stores the true original values
+      // This is necessary because item.translatableContent may be updated after loading
+      let originalValue: string;
+      if (config.contentType === 'templates') {
+        originalValue = originalTemplateValuesRef.current[field.key] || "";
+      } else {
+        originalValue = getItemFieldValue(item, field.key, primaryLocale, config);
+      }
 
       if (currentValue !== originalValue) {
         changedFields.push(field.key);
