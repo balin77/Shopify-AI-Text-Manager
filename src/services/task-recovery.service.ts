@@ -3,7 +3,8 @@
  * Recovers pending/queued tasks after server restart
  */
 
-import { AIQueueService, AIProvider } from './ai-queue.service';
+import { AIQueueService } from './ai-queue.service';
+import type { AIProvider } from './ai-queue.service';
 
 // Task type from Prisma
 interface Task {

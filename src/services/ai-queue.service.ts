@@ -1,7 +1,7 @@
-import { AIProvider, AIServiceConfig } from './ai.service';
+import type { AIProvider, AIServiceConfig } from './ai.service';
 
 // Re-export AIProvider for use in other services
-export { AIProvider } from './ai.service';
+export type { AIProvider } from './ai.service';
 
 interface RateLimitConfig {
   maxTokensPerMinute: number;
