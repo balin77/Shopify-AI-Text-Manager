@@ -11,7 +11,7 @@ export type ContentType =
   | "articles"
   | "pages"
   | "policies"
-  | "themes"
+  | "templates"
   | "menus"
   | "metaobjects"
   | "metadata";
@@ -72,7 +72,7 @@ export const PLAN_CONFIG: Record<Plan, PlanLimits> = {
   pro: {
     maxProducts: 150,
     productImages: "all",
-    contentTypes: ["products", "collections", "articles", "pages", "policies", "themes", "menus"],
+    contentTypes: ["products", "collections", "articles", "pages", "policies", "templates", "menus"],
     aiInstructionsEditable: true,
     cacheEnabled: {
       products: true,
@@ -89,7 +89,7 @@ export const PLAN_CONFIG: Record<Plan, PlanLimits> = {
   max: {
     maxProducts: Infinity,
     productImages: "all",
-    contentTypes: ["products", "collections", "articles", "pages", "policies", "themes", "menus", "metaobjects", "metadata"],
+    contentTypes: ["products", "collections", "articles", "pages", "policies", "templates", "menus", "metaobjects", "metadata"],
     aiInstructionsEditable: true,
     cacheEnabled: {
       products: true,

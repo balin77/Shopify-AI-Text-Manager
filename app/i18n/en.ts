@@ -216,6 +216,8 @@ export const en: Translation = {
     downgrade: "Downgrade",
     select: "Select",
     more: "more",
+    readOnly: "read-only",
+    comingSoon: "coming soon",
     planNotes: "Notes",
     planNote1: "All prices are per 30 days",
     planNote2: "You can upgrade or downgrade at any time",

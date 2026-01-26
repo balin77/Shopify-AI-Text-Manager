@@ -838,11 +838,22 @@ export default function SettingsPage() {
                                     <strong>{t.settings.contentTypes}:</strong>
                                   </Text>
                                   <BlockStack gap="100">
-                                    {planDetails.contentTypes.map((type) => (
-                                      <Text key={type} as="p" variant="bodySm" tone="success">
-                                        ✓ {type}
-                                      </Text>
-                                    ))}
+                                    {planDetails.contentTypes.map((type) => {
+                                      let displayName = type;
+                                      let note = "";
+
+                                      if (type === "menus") {
+                                        note = ` (${t.settings.readOnly || "read-only"})`;
+                                      } else if (type === "metaobjects" || type === "metadata") {
+                                        note = ` (${t.settings.comingSoon || "coming soon"})`;
+                                      }
+
+                                      return (
+                                        <Text key={type} as="p" variant="bodySm" tone="success">
+                                          ✓ {displayName}{note}
+                                        </Text>
+                                      );
+                                    })}
                                   </BlockStack>
                                 </BlockStack>
                               </BlockStack>

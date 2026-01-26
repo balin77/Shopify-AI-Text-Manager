@@ -214,6 +214,8 @@ export const de = {
     downgrade: "Downgrade",
     select: "Auswählen",
     more: "mehr",
+    readOnly: "nur lesen",
+    comingSoon: "demnächst",
     planNotes: "Hinweise",
     planNote1: "Alle Preise verstehen sich pro 30 Tage",
     planNote2: "Sie können jederzeit upgraden oder downgraden",
