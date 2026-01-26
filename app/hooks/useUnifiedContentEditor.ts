@@ -80,6 +80,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     return config.fieldDefinitions;
   }, [config.dynamicFields, config.getFieldDefinitions, config.fieldDefinitions, selectedItem]);
 
+  // Ref to store field definitions to avoid triggering data load effect
+  const effectiveFieldDefinitionsRef = useRef(effectiveFieldDefinitions);
+  effectiveFieldDefinitionsRef.current = effectiveFieldDefinitions;
+
   // Navigation guard
   const {
     pendingNavigation,
@@ -205,15 +209,16 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     }
 
     const newValues: Record<string, string> = {};
+    const fieldDefs = effectiveFieldDefinitionsRef.current;
 
     if (currentLanguage === primaryLocale) {
       // Load primary locale values
-      effectiveFieldDefinitions.forEach((field) => {
+      fieldDefs.forEach((field) => {
         newValues[field.key] = getItemFieldValue(item, field.key, primaryLocale, config);
       });
     } else {
       // Load translated values
-      effectiveFieldDefinitions.forEach((field) => {
+      fieldDefs.forEach((field) => {
         // Check if this translation key was deleted - if so, show empty field
         if (deletedTranslationKeysRef.current.has(field.translationKey)) {
           console.log('[DATA-LOAD] Skipping deleted translation key:', field.translationKey);
@@ -238,8 +243,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     if (config.contentType === 'templates') {
       originalTemplateValuesRef.current = { ...newValues };
     }
-    // IMPORTANT: Only depend on selectedItemId, not selectedItem, to prevent re-runs on reference changes
-  }, [selectedItemId, currentLanguage, effectiveFieldDefinitions, primaryLocale, config]);
+    // IMPORTANT: Only depend on selectedItemId and currentLanguage to prevent unnecessary re-runs
+  }, [selectedItemId, currentLanguage, primaryLocale, config]);
 
   // Mark loading as complete after editableValues have been updated
   // This is in a separate useEffect to ensure the state update has completed
