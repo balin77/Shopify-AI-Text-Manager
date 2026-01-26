@@ -152,6 +152,7 @@ model Task {
   queuePosition   Int? // Position in queue (null if not queued)
   retryCount      Int  @default(0) // Number of retries attempted
   estimatedTokens Int? // Estimated tokens for this task
+  provider        String? // AI provider used (huggingface, gemini, claude, openai, grok, deepseek) - for recovery
 
   startedAt   DateTime  @default(now())
   completedAt DateTime?

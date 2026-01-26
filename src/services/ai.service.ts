@@ -386,7 +386,10 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       const { db } = await import('../../app/db.server');
       await db.task.update({
         where: { id: this.taskId },
-        data: { prompt },
+        data: {
+          prompt,
+          provider: this.provider, // Save provider for recovery after server restart
+        },
       });
     } catch (error) {
       console.error('Failed to save prompt to task:', error);

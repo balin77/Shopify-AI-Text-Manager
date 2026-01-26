@@ -1,4 +1,7 @@
-import { AIProvider } from './ai.service';
+import { AIProvider, AIServiceConfig } from './ai.service';
+
+// Re-export AIProvider for use in other services
+export { AIProvider } from './ai.service';
 
 interface RateLimitConfig {
   maxTokensPerMinute: number;
@@ -379,6 +382,112 @@ export class AIQueueService {
       });
     } catch (error) {
       console.error('[AIQueue] Error updating retry count:', error);
+    }
+  }
+
+  /**
+   * Re-enqueue a task from the database (for recovery after server restart)
+   * Uses the stored prompt directly without creating a new AIService instance
+   */
+  async enqueueFromTask(
+    task: {
+      id: string;
+      shop: string;
+      prompt: string;
+      provider: string;
+      estimatedTokens: number | null;
+      retryCount: number;
+    },
+    aiSettings: AIServiceConfig
+  ): Promise<void> {
+    const provider = task.provider as AIProvider;
+    const estimatedTokens = task.estimatedTokens || 2500; // Default estimate
+
+    // Import AIService dynamically to avoid circular dependency
+    const { AIService } = await import('./ai.service');
+
+    // Create a new AIService instance with the stored provider
+    const aiService = new AIService(provider, aiSettings, task.shop, task.id);
+
+    // Create the execute function that will re-run the AI request
+    const execute = async () => {
+      // Use the internal executeAIRequest method via askAI
+      // Since prompt is already saved, we call the method that executes the request
+      return (aiService as any).executeAIRequest(task.prompt);
+    };
+
+    // Enqueue the task (fire and forget - result handling is done by the original caller)
+    return new Promise((resolve, reject) => {
+      const request: QueuedRequest = {
+        id: `recovery-${Date.now()}-${Math.random()}`,
+        shop: task.shop,
+        taskId: task.id,
+        provider,
+        estimatedTokens,
+        execute,
+        resolve: (result) => {
+          // Update task as completed
+          this.completeRecoveredTask(task.id, result);
+          resolve();
+        },
+        reject: (error) => {
+          // Update task as failed
+          this.failRecoveredTask(task.id, error);
+          reject(error);
+        },
+        retryCount: task.retryCount,
+        createdAt: new Date(),
+      };
+
+      this.queue.push(request);
+      console.log(`[AIQueue] Re-enqueued recovered task ${task.id}. Queue size: ${this.queue.length}`);
+
+      // Update task queue position in database
+      this.updateQueuePositions(task.shop);
+    });
+  }
+
+  /**
+   * Mark a recovered task as completed
+   */
+  private async completeRecoveredTask(taskId: string, result: any) {
+    try {
+      const { db } = await import('../../app/db.server');
+
+      await db.task.update({
+        where: { id: taskId },
+        data: {
+          status: 'completed',
+          progress: 100,
+          result: typeof result === 'string' ? result.substring(0, 500) : JSON.stringify(result).substring(0, 500),
+          completedAt: new Date(),
+        },
+      });
+
+      console.log(`[AIQueue] Recovered task ${taskId} completed successfully`);
+    } catch (error) {
+      console.error(`[AIQueue] Error completing recovered task ${taskId}:`, error);
+    }
+  }
+
+  /**
+   * Mark a recovered task as failed
+   */
+  private async failRecoveredTask(taskId: string, error: any) {
+    try {
+      const { db } = await import('../../app/db.server');
+
+      await db.task.update({
+        where: { id: taskId },
+        data: {
+          status: 'failed',
+          error: error?.message || 'Unknown error during recovery',
+        },
+      });
+
+      console.log(`[AIQueue] Recovered task ${taskId} failed: ${error?.message}`);
+    } catch (dbError) {
+      console.error(`[AIQueue] Error failing recovered task ${taskId}:`, dbError);
     }
   }
 

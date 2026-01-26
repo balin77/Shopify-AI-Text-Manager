@@ -158,6 +158,16 @@ const server = app.listen(port, host, async () => {
   } catch (error) {
     console.error("❌ Failed to start task cleanup service:", error);
   }
+
+  // Recover pending tasks after server restart
+  try {
+    const { TaskRecoveryService } = await import("./src/services/task-recovery.service.js");
+    const recoveryService = TaskRecoveryService.getInstance();
+    const result = await recoveryService.recoverPendingTasks();
+    console.log(`✅ Task recovery: ${result.recovered} recovered, ${result.failed} marked as failed`);
+  } catch (error) {
+    console.error("❌ Failed to recover tasks:", error);
+  }
 });
 
 // Graceful shutdown handler
