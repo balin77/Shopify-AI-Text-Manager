@@ -10,8 +10,8 @@ export interface Translation {
 }
 
 export interface SEO {
-  title: string | null;
-  description: string | null;
+  title?: string | null;
+  description?: string | null;
 }
 
 export interface TranslatableItem {

@@ -165,11 +165,25 @@ export class TaskRecoveryService {
     // Get the queue service
     const queue = AIQueueService.getInstance();
 
+    // Convert Prisma settings (null) to AIServiceConfig (undefined)
+    const serviceConfig = {
+      huggingfaceApiKey: aiSettings.huggingfaceApiKey ?? undefined,
+      geminiApiKey: aiSettings.geminiApiKey ?? undefined,
+      claudeApiKey: aiSettings.claudeApiKey ?? undefined,
+      openaiApiKey: aiSettings.openaiApiKey ?? undefined,
+      grokApiKey: aiSettings.grokApiKey ?? undefined,
+      deepseekApiKey: aiSettings.deepseekApiKey ?? undefined,
+    };
+
     // Update queue rate limits from settings
     await queue.updateRateLimits(aiSettings);
 
-    // Re-enqueue the task
-    await queue.enqueueFromTask(task, aiSettings);
+    // Re-enqueue the task (prompt and provider are guaranteed non-null by the check above)
+    await queue.enqueueFromTask({
+      ...task,
+      prompt: task.prompt!, // Non-null assertion safe due to check on line 144
+      provider: task.provider!, // Non-null assertion safe due to check on line 144
+    }, serviceConfig);
 
     return true;
   }

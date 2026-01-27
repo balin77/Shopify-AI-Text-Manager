@@ -343,7 +343,8 @@ export const TEMPLATES_CONFIG: ContentEditorConfig = {
 // UTILITY FUNCTIONS
 // ============================================================================
 
-function getPolicyTypeName(type: string): string {
+function getPolicyTypeName(type: string | undefined): string {
+  if (!type) return "";
   const typeMap: Record<string, string> = {
     CONTACT_INFORMATION: "Kontaktinformationen",
     LEGAL_NOTICE: "Impressum",

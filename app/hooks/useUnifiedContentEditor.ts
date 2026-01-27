@@ -14,6 +14,7 @@ import type {
   EditorState,
   EditorHandlers,
   Translation,
+  AltTextTranslation,
   ShopLocale,
   ContentImage,
   TranslatableContentItem,
@@ -473,7 +474,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // The AbortError can occur when Shopify admin's own requests interfere with ours,
   // but the submit usually still works, so we just log and ignore the error
   // IMPORTANT: Uses fetcherRef to avoid dependency on fetcher which changes frequently
-  const safeSubmit = useCallback((data: Record<string, any>, options?: { method: string }) => {
+  const safeSubmit = useCallback((data: Record<string, any>, options?: { method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" }) => {
     debugLog.submit(' Submitting data:', data);
     debugLog.submit(' Options:', options);
     try {
@@ -1102,7 +1103,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
               }
               // Remove existing translation for this locale
               item.images[index].altTextTranslations = item.images[index].altTextTranslations.filter(
-                (t: Translation) => t.locale !== savedLocale
+                (t: AltTextTranslation) => t.locale !== savedLocale
               );
               // Add new translation
               item.images[index].altTextTranslations.push({

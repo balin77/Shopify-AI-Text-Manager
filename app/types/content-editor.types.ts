@@ -49,10 +49,16 @@ export interface TranslatableContentItem {
   descriptionHtml?: string;
   body?: string;
   handle?: string;
-  seo?: { title?: string; description?: string };
+  seo?: { title?: string | null; description?: string | null } | null;
   translations: Translation[];
   images?: ContentImage[];
   translatableContent?: Array<{ key: string; value: string }>;
+  // Additional properties for specific content types
+  blogTitle?: string; // For articles
+  type?: string; // For policies
+  groupName?: string; // For templates
+  contentCount?: number; // For templates
+  featuredImage?: ContentImage; // For products
 }
 
 // ============================================================================
@@ -115,6 +121,8 @@ export type FetcherData =
 // TRANSLATION STRINGS TYPE
 // ============================================================================
 
+export type TranslationValue = string | Record<string, string> | undefined;
+
 export interface TranslationStrings {
   common?: {
     success?: string;
@@ -126,14 +134,15 @@ export interface TranslationStrings {
     noTargetLanguagesEnabled?: string;
     fieldTranslatedToLanguages?: string;
     translatedSuccessfully?: string;
-    [key: string]: string | undefined;
+    [key: string]: TranslationValue;
   };
   content?: {
     noSourceText?: string;
     altTextTranslatedToAllLocales?: string;
-    [key: string]: string | undefined;
+    policyTypes?: Record<string, string>;
+    [key: string]: TranslationValue;
   };
-  [key: string]: Record<string, string | undefined> | undefined;
+  [key: string]: Record<string, TranslationValue> | undefined;
 }
 
 export type ContentType = 'products' | 'collections' | 'blogs' | 'pages' | 'policies' | 'templates';
@@ -145,6 +154,23 @@ export interface FieldRenderProps {
   onChange: (value: string) => void;
   field: FieldDefinition;
   disabled?: boolean;
+  suggestion?: string;
+  isPrimaryLocale?: boolean;
+  isTranslated?: boolean;
+  isLoading?: boolean;
+  sourceTextAvailable?: boolean;
+  onGenerateAI?: () => void;
+  onFormatAI?: () => void;
+  onTranslate?: () => void;
+  onTranslateToAllLocales?: () => void;
+  onAcceptSuggestion?: () => void;
+  onAcceptAndTranslate?: () => void;
+  onRejectSuggestion?: () => void;
+  htmlMode?: 'html' | 'rendered';
+  onToggleHtmlMode?: () => void;
+  shopLocales?: ShopLocale[];
+  currentLanguage?: string;
+  t?: TranslationStrings;
 }
 
 export interface FieldDefinition {
@@ -208,10 +234,10 @@ export interface ContentEditorConfig {
   showSeoSidebar?: boolean;
 
   /** Custom primary field getter */
-  getPrimaryField?: (item: TranslatableContentItem) => string;
+  getPrimaryField?: (item: TranslatableContentItem) => string | undefined;
 
   /** Custom subtitle field getter (for list items) */
-  getSubtitle?: (item: TranslatableContentItem) => string;
+  getSubtitle?: (item: TranslatableContentItem) => string | undefined;
 
   /** ID prefix for display */
   idPrefix?: string;

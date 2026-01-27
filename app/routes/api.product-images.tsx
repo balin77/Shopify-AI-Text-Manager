@@ -46,7 +46,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       { variables: { id: productId } }
     );
 
-    const data = await response.json();
+    const data = await response.json() as { data?: any; errors?: Array<{ message: string }> };
 
     if (data.errors) {
       console.error("[API:ProductImages] GraphQL error:", data.errors);

@@ -243,10 +243,12 @@ class SyncSchedulerService {
       });
 
       // 4. Delete orphaned image alt-text translations (images that no longer exist)
+      // Note: Cascading delete should handle orphaned translations automatically
+      // This is a safety cleanup that uses isNot to find records where the image relation doesn't exist
       const orphanedAltTexts = await db.productImageAltTranslation.deleteMany({
         where: {
-          image: {
-            is: null // Cascading delete should handle this, but just in case
+          imageId: {
+            notIn: (await db.productImage.findMany({ select: { id: true } })).map(img => img.id)
           }
         }
       });
