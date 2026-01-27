@@ -161,7 +161,7 @@ const server = app.listen(port, host, async () => {
 
   // Recover pending tasks after server restart
   try {
-    const { TaskRecoveryService } = await import("./src/services/task-recovery.service.js");
+    const { TaskRecoveryService } = await import("./task-recovery.service.js");
     const recoveryService = TaskRecoveryService.getInstance();
     const result = await recoveryService.recoverPendingTasks();
     console.log(`✅ Task recovery: ${result.recovered} recovered, ${result.failed} marked as failed`);
