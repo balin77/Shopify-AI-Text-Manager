@@ -14,6 +14,12 @@ import {
   canEditAIInstructions,
   shouldCacheAllProductImages,
   getAccessibleContentTypes,
+  getMaxForResource,
+  getUsagePercentage,
+  isApproachingLimit,
+  isAtLimit,
+  getResourcesApproachingLimits,
+  type ResourceType,
 } from "../utils/planUtils";
 
 interface PlanContextValue {
@@ -28,6 +34,12 @@ interface PlanContextValue {
   shouldCacheAllProductImages: () => boolean;
   getAccessibleContentTypes: () => ContentType[];
   getMaxProducts: () => number;
+  // New limit functions
+  getMaxForResource: (resourceType: ResourceType) => number;
+  getUsagePercentage: (resourceType: ResourceType, currentCount: number) => number;
+  isApproachingLimit: (resourceType: ResourceType, currentCount: number, threshold?: number) => boolean;
+  isAtLimit: (resourceType: ResourceType, currentCount: number) => boolean;
+  getResourcesApproachingLimits: (counts: Record<ResourceType, number>, threshold?: number) => ResourceType[];
 }
 
 const PlanContext = createContext<PlanContextValue | null>(null);
@@ -49,6 +61,12 @@ export function PlanProvider({ plan, children }: PlanProviderProps) {
     shouldCacheAllProductImages: () => shouldCacheAllProductImages(plan),
     getAccessibleContentTypes: () => getAccessibleContentTypes(plan),
     getMaxProducts: () => getPlanLimits(plan).maxProducts,
+    // New limit functions
+    getMaxForResource: (resourceType: ResourceType) => getMaxForResource(plan, resourceType),
+    getUsagePercentage: (resourceType: ResourceType, currentCount: number) => getUsagePercentage(plan, resourceType, currentCount),
+    isApproachingLimit: (resourceType: ResourceType, currentCount: number, threshold?: number) => isApproachingLimit(plan, resourceType, currentCount, threshold),
+    isAtLimit: (resourceType: ResourceType, currentCount: number) => isAtLimit(plan, resourceType, currentCount),
+    getResourcesApproachingLimits: (counts: Record<ResourceType, number>, threshold?: number) => getResourcesApproachingLimits(plan, counts, threshold),
   }), [plan]);
 
   return <PlanContext.Provider value={value}>{children}</PlanContext.Provider>;

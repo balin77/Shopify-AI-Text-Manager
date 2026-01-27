@@ -13,6 +13,7 @@ export interface CleanupStats {
   deletedProductOptions: number;
   deletedProductMetafields: number;
   deletedProductTranslations: number;
+  deletedCollections: number;
   deletedArticles: number;
   deletedPages: number;
   deletedPolicies: number;
@@ -32,6 +33,7 @@ export async function cleanupCacheForPlan(shop: string, newPlan: Plan): Promise<
     deletedProductOptions: 0,
     deletedProductMetafields: 0,
     deletedProductTranslations: 0,
+    deletedCollections: 0,
     deletedArticles: 0,
     deletedPages: 0,
     deletedPolicies: 0,
@@ -60,29 +62,47 @@ export async function cleanupCacheForPlan(shop: string, newPlan: Plan): Promise<
     stats.deletedProductMetafields = await deleteProductMetafields(shop);
   }
 
-  // 3. Delete content types not allowed in plan
-  if (!limits.cacheEnabled.articles) {
+  // 3. Delete collections over limit
+  const { collections, collectionTranslations } = await deleteCollectionsOverLimit(shop, limits.maxCollections);
+  stats.deletedCollections = collections;
+  stats.deletedContentTranslations += collectionTranslations;
+
+  // 4. Delete articles over limit or entirely if disabled
+  if (!limits.cacheEnabled.articles || limits.maxArticles === 0) {
     const { articles, translations } = await deleteArticles(shop);
+    stats.deletedArticles = articles;
+    stats.deletedContentTranslations += translations;
+  } else if (limits.maxArticles > 0) {
+    const { articles, translations } = await deleteArticlesOverLimit(shop, limits.maxArticles);
     stats.deletedArticles = articles;
     stats.deletedContentTranslations += translations;
   }
 
-  if (!limits.cacheEnabled.pages) {
+  // 5. Delete pages over limit or entirely if disabled
+  if (!limits.cacheEnabled.pages || limits.maxPages === 0) {
     const { pages, translations } = await deletePages(shop);
+    stats.deletedPages = pages;
+    stats.deletedContentTranslations += translations;
+  } else if (limits.maxPages > 0) {
+    const { pages, translations } = await deletePagesOverLimit(shop, limits.maxPages);
     stats.deletedPages = pages;
     stats.deletedContentTranslations += translations;
   }
 
+  // 6. Delete policies if disabled
   if (!limits.cacheEnabled.policies) {
     const { policies, translations } = await deletePolicies(shop);
     stats.deletedPolicies = policies;
     stats.deletedContentTranslations += translations;
   }
 
-  if (!limits.cacheEnabled.themes) {
+  // 7. Delete theme content if disabled or over limit
+  if (!limits.cacheEnabled.themes || limits.maxThemeTranslations === 0) {
     const { themeContent, themeTranslations } = await deleteThemeContent(shop);
     stats.deletedThemeContent = themeContent;
     stats.deletedThemeTranslations = themeTranslations;
+  } else if (limits.maxThemeTranslations > 0) {
+    stats.deletedThemeTranslations = await deleteThemeTranslationsOverLimit(shop, limits.maxThemeTranslations);
   }
 
   console.log(`[PlanCleanup] Cleanup complete:`, stats);
@@ -301,6 +321,165 @@ async function deleteThemeContent(
     themeContent: themeContentCount,
     themeTranslations: themeTranslationsCount,
   };
+}
+
+/**
+ * Delete collections over the specified limit (keep newest collections)
+ */
+async function deleteCollectionsOverLimit(shop: string, maxCollections: number): Promise<{ collections: number; collectionTranslations: number }> {
+  const collections = await db.collection.findMany({
+    where: { shop },
+    orderBy: { lastSyncedAt: "desc" },
+    select: { id: true },
+  });
+
+  if (collections.length <= maxCollections) {
+    return { collections: 0, collectionTranslations: 0 };
+  }
+
+  const collectionsToDelete = collections.slice(maxCollections);
+  const collectionIds = collectionsToDelete.map((c) => c.id);
+
+  const { translationsCount, collectionsCount } = await db.$transaction(async (tx) => {
+    const translationResult = await tx.contentTranslation.deleteMany({
+      where: {
+        resourceType: "Collection",
+        resourceId: { in: collectionIds },
+      },
+    });
+
+    const collectionResult = await tx.collection.deleteMany({
+      where: {
+        shop,
+        id: { in: collectionIds },
+      },
+    });
+
+    return {
+      translationsCount: translationResult.count,
+      collectionsCount: collectionResult.count,
+    };
+  });
+
+  return {
+    collections: collectionsCount,
+    collectionTranslations: translationsCount,
+  };
+}
+
+/**
+ * Delete articles over the specified limit (keep newest articles)
+ */
+async function deleteArticlesOverLimit(shop: string, maxArticles: number): Promise<{ articles: number; translations: number }> {
+  const articles = await db.article.findMany({
+    where: { shop },
+    orderBy: { lastSyncedAt: "desc" },
+    select: { id: true },
+  });
+
+  if (articles.length <= maxArticles) {
+    return { articles: 0, translations: 0 };
+  }
+
+  const articlesToDelete = articles.slice(maxArticles);
+  const articleIds = articlesToDelete.map((a) => a.id);
+
+  const { translationsCount, articlesCount } = await db.$transaction(async (tx) => {
+    const translationResult = await tx.contentTranslation.deleteMany({
+      where: {
+        resourceType: "Article",
+        resourceId: { in: articleIds },
+      },
+    });
+
+    const articleResult = await tx.article.deleteMany({
+      where: {
+        shop,
+        id: { in: articleIds },
+      },
+    });
+
+    return {
+      translationsCount: translationResult.count,
+      articlesCount: articleResult.count,
+    };
+  });
+
+  return {
+    articles: articlesCount,
+    translations: translationsCount,
+  };
+}
+
+/**
+ * Delete pages over the specified limit (keep newest pages)
+ */
+async function deletePagesOverLimit(shop: string, maxPages: number): Promise<{ pages: number; translations: number }> {
+  const pages = await db.page.findMany({
+    where: { shop },
+    orderBy: { lastSyncedAt: "desc" },
+    select: { id: true },
+  });
+
+  if (pages.length <= maxPages) {
+    return { pages: 0, translations: 0 };
+  }
+
+  const pagesToDelete = pages.slice(maxPages);
+  const pageIds = pagesToDelete.map((p) => p.id);
+
+  const { translationsCount, pagesCount } = await db.$transaction(async (tx) => {
+    const translationResult = await tx.contentTranslation.deleteMany({
+      where: {
+        resourceType: "Page",
+        resourceId: { in: pageIds },
+      },
+    });
+
+    const pageResult = await tx.page.deleteMany({
+      where: {
+        shop,
+        id: { in: pageIds },
+      },
+    });
+
+    return {
+      translationsCount: translationResult.count,
+      pagesCount: pageResult.count,
+    };
+  });
+
+  return {
+    pages: pagesCount,
+    translations: translationsCount,
+  };
+}
+
+/**
+ * Delete theme translations over the specified limit (keep newest)
+ */
+async function deleteThemeTranslationsOverLimit(shop: string, maxTranslations: number): Promise<number> {
+  const translations = await db.themeTranslation.findMany({
+    where: { shop },
+    orderBy: { updatedAt: "desc" },
+    select: { id: true },
+  });
+
+  if (translations.length <= maxTranslations) {
+    return 0;
+  }
+
+  const translationsToDelete = translations.slice(maxTranslations);
+  const translationIds = translationsToDelete.map((t) => t.id);
+
+  const result = await db.themeTranslation.deleteMany({
+    where: {
+      shop,
+      id: { in: translationIds },
+    },
+  });
+
+  return result.count;
 }
 
 /**

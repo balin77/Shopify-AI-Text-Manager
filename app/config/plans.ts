@@ -18,6 +18,11 @@ export type ContentType =
 
 export interface PlanLimits {
   maxProducts: number;
+  maxLocales: number;
+  maxCollections: number;
+  maxArticles: number;
+  maxPages: number;
+  maxThemeTranslations: number;
   productImages: "featured-only" | "all";
   contentTypes: ContentType[];
   aiInstructionsEditable: boolean;
@@ -37,6 +42,11 @@ export interface PlanLimits {
 export const PLAN_CONFIG: Record<Plan, PlanLimits> = {
   free: {
     maxProducts: 15,
+    maxLocales: 2,
+    maxCollections: 100,
+    maxArticles: 0,
+    maxPages: 0,
+    maxThemeTranslations: 0,
     productImages: "featured-only",
     contentTypes: ["products", "collections"],
     aiInstructionsEditable: false,
@@ -54,6 +64,11 @@ export const PLAN_CONFIG: Record<Plan, PlanLimits> = {
   },
   basic: {
     maxProducts: 50,
+    maxLocales: 5,
+    maxCollections: 200,
+    maxArticles: 0,
+    maxPages: 20,
+    maxThemeTranslations: 0,
     productImages: "all",
     contentTypes: ["products", "collections", "pages", "policies"],
     aiInstructionsEditable: false,
@@ -71,6 +86,11 @@ export const PLAN_CONFIG: Record<Plan, PlanLimits> = {
   },
   pro: {
     maxProducts: 150,
+    maxLocales: 10,
+    maxCollections: 300,
+    maxArticles: 100,
+    maxPages: 50,
+    maxThemeTranslations: 5000,
     productImages: "all",
     contentTypes: ["products", "collections", "articles", "pages", "policies", "templates", "menus"],
     aiInstructionsEditable: true,
@@ -87,7 +107,12 @@ export const PLAN_CONFIG: Record<Plan, PlanLimits> = {
     },
   },
   max: {
-    maxProducts: Infinity,
+    maxProducts: 5000,
+    maxLocales: 20,
+    maxCollections: 500,
+    maxArticles: 300,
+    maxPages: 200,
+    maxThemeTranslations: 10000,
     productImages: "all",
     contentTypes: ["products", "collections", "articles", "pages", "policies", "templates", "menus", "metaobjects", "metadata"],
     aiInstructionsEditable: true,

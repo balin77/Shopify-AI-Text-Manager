@@ -569,10 +569,13 @@ export class ContentSyncService {
   // ============================================
 
   /**
-   * Sync all collections
+   * Sync all collections (respects plan limit if provided)
    */
-  async syncAllCollections(): Promise<number> {
+  async syncAllCollections(maxCount?: number): Promise<number> {
     console.log(`[ContentSync] Syncing all collections...`);
+    if (maxCount !== undefined) {
+      console.log(`[ContentSync] Plan limit: ${maxCount} collections`);
+    }
 
     const response = await this.admin.graphql(
       `#graphql
@@ -588,9 +591,15 @@ export class ContentSyncService {
     );
 
     const data = await response.json();
-    const collections = data.data?.collections?.edges?.map((e: any) => e.node) || [];
+    let collections = data.data?.collections?.edges?.map((e: any) => e.node) || [];
 
-    console.log(`[ContentSync] Found ${collections.length} collections to sync`);
+    // Apply plan limit if specified
+    if (maxCount !== undefined && maxCount > 0 && collections.length > maxCount) {
+      console.log(`[ContentSync] Limiting to ${maxCount} collections (found ${collections.length})`);
+      collections = collections.slice(0, maxCount);
+    }
+
+    console.log(`[ContentSync] Syncing ${collections.length} collections`);
 
     for (const collection of collections) {
       await this.syncCollection(collection.id);
@@ -600,10 +609,19 @@ export class ContentSyncService {
   }
 
   /**
-   * Sync all articles
+   * Sync all articles (respects plan limit if provided)
    */
-  async syncAllArticles(): Promise<number> {
+  async syncAllArticles(maxCount?: number): Promise<number> {
     console.log(`[ContentSync] Syncing all articles...`);
+    if (maxCount !== undefined) {
+      console.log(`[ContentSync] Plan limit: ${maxCount} articles`);
+    }
+
+    // If limit is 0, skip articles entirely
+    if (maxCount === 0) {
+      console.log(`[ContentSync] Articles disabled for this plan, skipping`);
+      return 0;
+    }
 
     // First, get all blogs
     const blogsResponse = await this.admin.graphql(
@@ -630,13 +648,19 @@ export class ContentSyncService {
     const blogs = blogsData.data?.blogs?.edges?.map((e: any) => e.node) || [];
 
     // Collect all articles
-    const allArticles = [];
+    let allArticles: any[] = [];
     for (const blog of blogs) {
       const articles = blog.articles?.edges?.map((e: any) => e.node) || [];
       allArticles.push(...articles);
     }
 
-    console.log(`[ContentSync] Found ${allArticles.length} articles to sync`);
+    // Apply plan limit if specified
+    if (maxCount !== undefined && maxCount > 0 && allArticles.length > maxCount) {
+      console.log(`[ContentSync] Limiting to ${maxCount} articles (found ${allArticles.length})`);
+      allArticles = allArticles.slice(0, maxCount);
+    }
+
+    console.log(`[ContentSync] Syncing ${allArticles.length} articles`);
 
     for (const article of allArticles) {
       await this.syncArticle(article.id);

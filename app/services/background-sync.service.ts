@@ -40,10 +40,19 @@ export class BackgroundSyncService {
   // ============================================
 
   /**
-   * Sync all pages with their translations
+   * Sync all pages with their translations (respects plan limit if provided)
    */
-  async syncAllPages(): Promise<number> {
+  async syncAllPages(maxCount?: number): Promise<number> {
     console.log(`[BackgroundSync] Syncing all pages for shop: ${this.shop}`);
+    if (maxCount !== undefined) {
+      console.log(`[BackgroundSync] Plan limit: ${maxCount} pages`);
+    }
+
+    // If limit is 0, skip pages entirely
+    if (maxCount === 0) {
+      console.log(`[BackgroundSync] Pages disabled for this plan, skipping`);
+      return 0;
+    }
 
     try {
       const { db } = await import("../db.server");
@@ -67,9 +76,15 @@ export class BackgroundSyncService {
       );
 
       const pagesData = await pagesResponse.json();
-      const pages = pagesData.data?.pages?.edges?.map((e: any) => e.node) || [];
+      let pages = pagesData.data?.pages?.edges?.map((e: any) => e.node) || [];
 
       console.log(`[BackgroundSync] Found ${pages.length} pages from Shopify`);
+
+      // Apply plan limit if specified
+      if (maxCount !== undefined && maxCount > 0 && pages.length > maxCount) {
+        console.log(`[BackgroundSync] Limiting to ${maxCount} pages (found ${pages.length})`);
+        pages = pages.slice(0, maxCount);
+      }
 
       // 2. AGGRESSIVE CLEANUP: Delete pages that no longer exist in Shopify (using transaction)
       const shopifyPageIds = pages.map((p: any) => p.id);

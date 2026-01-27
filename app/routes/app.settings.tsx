@@ -20,6 +20,7 @@ import { AIInstructionsTabs } from "../components/AIInstructionsTabs";
 import { SettingsSetupTab } from "../components/SettingsSetupTab";
 import { SettingsAITab } from "../components/SettingsAITab";
 import { SettingsLanguageTab } from "../components/SettingsLanguageTab";
+import { SettingsUsageLimitsTab } from "../components/SettingsUsageLimitsTab";
 import { db } from "../db.server";
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
@@ -245,6 +246,17 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       where: { shop: session.shop },
     });
 
+    const pageCount = await db.page.count({
+      where: { shop: session.shop },
+    });
+
+    const themeTranslationCount = await db.themeTranslation.count({
+      where: { shop: session.shop },
+    });
+
+    // Count active locales from shop locales
+    const localeCount = localesData.data.shopLocales?.length || 1;
+
     // Get subscription plan
     const subscriptionPlan = settings.subscriptionPlan || "basic";
 
@@ -279,6 +291,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       webhookCount,
       collectionCount,
       articleCount,
+      pageCount,
+      themeTranslationCount,
+      localeCount,
       subscriptionPlan,
       settings: {
         ...decryptedKeys,
@@ -521,7 +536,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function SettingsPage() {
-  const { shop, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, subscriptionPlan } = useLoaderData<typeof loader>();
+  const { shop, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, localeCount, subscriptionPlan } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const navigate = useNavigate();
   const { t } = useI18n();
@@ -530,7 +545,7 @@ export default function SettingsPage() {
   const isBasicPlan = subscriptionPlan === "basic";
   const aiInstructionsReadOnly = isFreePlan || isBasicPlan;
 
-  const [selectedSection, setSelectedSection] = useState<"setup" | "ai" | "instructions" | "language" | "plan">("setup");
+  const [selectedSection, setSelectedSection] = useState<"setup" | "usage" | "ai" | "instructions" | "language" | "plan">("setup");
   const [hasAIChanges, setHasAIChanges] = useState(false);
   const [hasLanguageChanges, setHasLanguageChanges] = useState(false);
   const [hasInstructionsChanges, setHasInstructionsChanges] = useState(false);
@@ -594,7 +609,7 @@ export default function SettingsPage() {
   };
 
   // Handle section navigation with unsaved changes warning
-  const handleSectionChange = (newSection: "setup" | "ai" | "instructions" | "language" | "plan") => {
+  const handleSectionChange = (newSection: "setup" | "usage" | "ai" | "instructions" | "language" | "plan") => {
     if (hasUnsavedChanges) {
       const message = t.settings?.unsavedChangesMessage ||
         "Sie haben ungespeicherte Änderungen. Möchten Sie wirklich fortfahren? Ihre Änderungen gehen verloren.";
@@ -651,6 +666,24 @@ export default function SettingsPage() {
               >
                 <Text as="p" variant="bodyMd" fontWeight={selectedSection === "setup" ? "semibold" : "regular"}>
                   {t.settings.appSetup}
+                </Text>
+              </button>
+              <button
+                onClick={() => handleSectionChange("usage")}
+                style={{
+                  width: "100%",
+                  padding: "1rem",
+                  background: selectedSection === "usage" ? "#f1f8f5" : "white",
+                  borderLeft: selectedSection === "usage" ? "3px solid #008060" : "3px solid transparent",
+                  border: "none",
+                  borderTop: "1px solid #e1e3e5",
+                  textAlign: "left",
+                  cursor: "pointer",
+                  transition: "all 0.2s",
+                }}
+              >
+                <Text as="p" variant="bodyMd" fontWeight={selectedSection === "usage" ? "semibold" : "regular"}>
+                  {t.settings?.usageLimits || "Nutzung & Limits"}
                 </Text>
               </button>
               <button
@@ -740,6 +773,19 @@ export default function SettingsPage() {
                   articleCount={articleCount}
                   translationCount={translationCount}
                   webhookCount={webhookCount}
+                  t={t}
+                />
+              )}
+
+              {/* Usage & Limits Section */}
+              {selectedSection === "usage" && (
+                <SettingsUsageLimitsTab
+                  productCount={productCount}
+                  localeCount={localeCount}
+                  collectionCount={collectionCount}
+                  articleCount={articleCount}
+                  pageCount={pageCount}
+                  themeTranslationCount={themeTranslationCount}
                   t={t}
                 />
               )}

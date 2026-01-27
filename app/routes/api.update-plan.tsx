@@ -106,6 +106,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         deletedProductOptions: 0,
         deletedProductMetafields: 0,
         deletedProductTranslations: 0,
+        deletedCollections: 0,
         deletedArticles: 0,
         deletedPages: 0,
         deletedPolicies: 0,

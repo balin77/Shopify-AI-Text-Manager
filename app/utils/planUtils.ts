@@ -104,3 +104,136 @@ export function getPlanLimitDescription(plan: Plan): string {
 export function isCacheEnabled(plan: Plan, cacheType: keyof PlanLimits["cacheEnabled"]): boolean {
   return getPlanLimits(plan).cacheEnabled[cacheType];
 }
+
+// ============================================
+// New Limit Check Functions
+// ============================================
+
+export type ResourceType =
+  | "products"
+  | "locales"
+  | "collections"
+  | "articles"
+  | "pages"
+  | "themeTranslations";
+
+/**
+ * Check if the current locale count is within the plan's limit
+ */
+export function isWithinLocaleLimit(plan: Plan, currentCount: number): boolean {
+  const limits = getPlanLimits(plan);
+  return currentCount <= limits.maxLocales;
+}
+
+/**
+ * Check if the current collection count is within the plan's limit
+ */
+export function isWithinCollectionLimit(plan: Plan, currentCount: number): boolean {
+  const limits = getPlanLimits(plan);
+  return currentCount <= limits.maxCollections;
+}
+
+/**
+ * Check if the current article count is within the plan's limit
+ */
+export function isWithinArticleLimit(plan: Plan, currentCount: number): boolean {
+  const limits = getPlanLimits(plan);
+  return currentCount <= limits.maxArticles;
+}
+
+/**
+ * Check if the current page count is within the plan's limit
+ */
+export function isWithinPageLimit(plan: Plan, currentCount: number): boolean {
+  const limits = getPlanLimits(plan);
+  return currentCount <= limits.maxPages;
+}
+
+/**
+ * Check if the current theme translation count is within the plan's limit
+ */
+export function isWithinThemeTranslationsLimit(plan: Plan, currentCount: number): boolean {
+  const limits = getPlanLimits(plan);
+  return currentCount <= limits.maxThemeTranslations;
+}
+
+/**
+ * Get the maximum value for a specific resource type
+ */
+export function getMaxForResource(plan: Plan, resourceType: ResourceType): number {
+  const limits = getPlanLimits(plan);
+  switch (resourceType) {
+    case "products":
+      return limits.maxProducts;
+    case "locales":
+      return limits.maxLocales;
+    case "collections":
+      return limits.maxCollections;
+    case "articles":
+      return limits.maxArticles;
+    case "pages":
+      return limits.maxPages;
+    case "themeTranslations":
+      return limits.maxThemeTranslations;
+    default:
+      return 0;
+  }
+}
+
+/**
+ * Check if the current count is within the limit for a specific resource type
+ */
+export function isWithinLimit(plan: Plan, resourceType: ResourceType, currentCount: number): boolean {
+  const max = getMaxForResource(plan, resourceType);
+  return currentCount <= max;
+}
+
+/**
+ * Calculate usage percentage for a resource type (0-100)
+ * Returns 0 if max is 0 (feature disabled)
+ */
+export function getUsagePercentage(plan: Plan, resourceType: ResourceType, currentCount: number): number {
+  const max = getMaxForResource(plan, resourceType);
+  if (max === 0) return 0;
+  if (max === Infinity) return 0;
+  return Math.min(100, Math.round((currentCount / max) * 100));
+}
+
+/**
+ * Check if approaching the limit for a resource type
+ * Default threshold is 80%
+ */
+export function isApproachingLimit(
+  plan: Plan,
+  resourceType: ResourceType,
+  currentCount: number,
+  threshold: number = 0.8
+): boolean {
+  const max = getMaxForResource(plan, resourceType);
+  if (max === 0 || max === Infinity) return false;
+  return currentCount >= max * threshold;
+}
+
+/**
+ * Check if at or over the limit for a resource type
+ */
+export function isAtLimit(plan: Plan, resourceType: ResourceType, currentCount: number): boolean {
+  const max = getMaxForResource(plan, resourceType);
+  if (max === 0) return true; // Feature disabled = always at limit
+  if (max === Infinity) return false;
+  return currentCount >= max;
+}
+
+/**
+ * Get all resources that are approaching their limits
+ */
+export function getResourcesApproachingLimits(
+  plan: Plan,
+  counts: Record<ResourceType, number>,
+  threshold: number = 0.8
+): ResourceType[] {
+  const resources: ResourceType[] = ["products", "locales", "collections", "articles", "pages", "themeTranslations"];
+  return resources.filter(resource =>
+    isApproachingLimit(plan, resource, counts[resource], threshold)
+  );
+}

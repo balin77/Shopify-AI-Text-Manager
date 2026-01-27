@@ -3,6 +3,8 @@ import type { ActionFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import { ContentSyncService } from "../services/content-sync.service";
 import { BackgroundSyncService } from "../services/background-sync.service";
+import { db } from "../db.server";
+import { getPlanLimits, type Plan } from "../utils/planUtils";
 
 /**
  * API Route: Sync Content
@@ -30,6 +32,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     console.log(`[SYNC-CONTENT] Syncing content for shop: ${session.shop}`);
     console.log(`[SYNC-CONTENT] Types to sync: ${types.join(', ')}`);
 
+    // Load plan limits
+    const settings = await db.aISettings.findUnique({
+      where: { shop: session.shop },
+    });
+    const plan = (settings?.subscriptionPlan || "basic") as Plan;
+    const planLimits = getPlanLimits(plan);
+
+    console.log(`[SYNC-CONTENT] Plan: ${plan}`);
+    console.log(`[SYNC-CONTENT] Limits - Collections: ${planLimits.maxCollections}, Articles: ${planLimits.maxArticles}, Pages: ${planLimits.maxPages}`);
+
     const syncService = new ContentSyncService(admin, session.shop);
     const bgSyncService = new BackgroundSyncService(admin, session.shop);
 
@@ -40,7 +52,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     if (types.includes('collections')) {
       promises.push(
-        syncService.syncAllCollections()
+        syncService.syncAllCollections(planLimits.maxCollections)
           .then(count => { results.collections = count; })
           .catch(err => {
             console.error('[SYNC-CONTENT] Collections sync failed:', err);
@@ -51,7 +63,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     if (types.includes('articles')) {
       promises.push(
-        syncService.syncAllArticles()
+        syncService.syncAllArticles(planLimits.maxArticles)
           .then(count => { results.articles = count; })
           .catch(err => {
             console.error('[SYNC-CONTENT] Articles sync failed:', err);
@@ -62,7 +74,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     if (types.includes('pages')) {
       promises.push(
-        bgSyncService.syncAllPages()
+        bgSyncService.syncAllPages(planLimits.maxPages)
           .then(count => { results.pages = count; })
           .catch(err => {
             console.error('[SYNC-CONTENT] Pages sync failed:', err);
