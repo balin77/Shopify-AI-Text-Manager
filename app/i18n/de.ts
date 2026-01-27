@@ -226,6 +226,7 @@ export const de = {
     trialPeriod: "Sie befinden sich in der {days}-tägigen Testphase.",
     confirmDowngrade: "Möchten Sie wirklich zum kostenlosen Plan wechseln? Ihr aktuelles Abo wird gekündigt.",
     errorOccurred: "Ein Fehler ist aufgetreten",
+    trialInfo: "Alle kostenpflichtigen Pläne beinhalten eine 7-tägige kostenlose Testphase. Sie werden erst nach Ablauf der Testphase belastet.",
     // AI Instructions Tab Labels
     tabProducts: "Produkte",
     tabCollections: "Collections",

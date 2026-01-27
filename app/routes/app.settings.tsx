@@ -941,6 +941,15 @@ export default function SettingsPage() {
                     );
                   })()}
 
+                  {/* Trial info for free plan users */}
+                  {subscriptionPlan === 'free' && (
+                    <Banner tone="info">
+                      <Text as="p">
+                        {t.settings?.trialInfo || "Alle kostenpflichtigen Pläne beinhalten eine 7-tägige kostenlose Testphase. Sie werden erst nach Ablauf der Testphase belastet."}
+                      </Text>
+                    </Banner>
+                  )}
+
                   {/* Usage & Limits */}
                   <SettingsUsageLimitsTab
                     productCount={productCount}

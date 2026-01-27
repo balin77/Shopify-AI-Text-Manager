@@ -228,6 +228,7 @@ export const en: Translation = {
     trialPeriod: "You are in the {days}-day trial period.",
     confirmDowngrade: "Do you really want to switch to the free plan? Your current subscription will be cancelled.",
     errorOccurred: "An error occurred",
+    trialInfo: "All paid plans include a 7-day free trial. You will only be charged after the trial period ends.",
     // AI Instructions Tab Labels
     tabProducts: "Products",
     tabCollections: "Collections",
