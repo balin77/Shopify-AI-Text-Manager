@@ -260,6 +260,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // Track previous language to detect language changes
   const prevCurrentLanguageRef = useRef<string>(currentLanguage);
 
+  // Track previous item ID for data loading (separate from image loading ref to avoid race condition)
+  const prevItemIdForDataLoadRef = useRef<string | null>(null);
+
   // Ref to access selectedItem without adding it to effect dependencies
   // This prevents the effect from re-running when selectedItem reference changes
   const selectedItemRef = useRef(selectedItem);
@@ -275,7 +278,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // Only reload data if:
     // 1. The item ID actually changed (user selected a different item)
     // 2. The language changed (user switched languages)
-    const itemIdChanged = prevSelectedItemIdRef.current !== selectedItemId;
+    // NOTE: Use separate ref from image loading to avoid race condition
+    const itemIdChanged = prevItemIdForDataLoadRef.current !== selectedItemId;
     const languageChanged = prevCurrentLanguageRef.current !== currentLanguage;
 
     if (!itemIdChanged && !languageChanged) {
@@ -284,7 +288,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     }
 
     // Update refs
-    prevSelectedItemIdRef.current = selectedItemId;
+    prevItemIdForDataLoadRef.current = selectedItemId;
     prevCurrentLanguageRef.current = currentLanguage;
 
     // Mark as loading immediately
