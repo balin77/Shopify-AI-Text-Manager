@@ -372,7 +372,7 @@ async function syncProductsWithProgress(
                   url
                   altText
                 }
-                media(first: 20) {
+                media(first: 250) {
                   edges {
                     node {
                       ... on MediaImage {
