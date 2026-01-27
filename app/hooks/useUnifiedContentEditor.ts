@@ -74,6 +74,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // Track deleted translation keys - these should not be shown even if revalidation brings them back temporarily
   const deletedTranslationKeysRef = useRef<Set<string>>(new Set());
 
+  // Track locally added translations from Accept & Translate flow
+  // This is needed because item.translations mutations can be lost when items array is recreated
+  // Format: Record<translationKey, Record<locale, value>>
+  const localTranslationsRef = useRef<Record<string, Record<string, string>>>({});
+
   // Track original template values for change detection (templates use dynamic fields)
   const originalTemplateValuesRef = useRef<Record<string, string>>({});
 
@@ -305,6 +310,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // Clear deleted translation keys and processed response refs when switching to a different item
     if (itemIdChanged) {
       deletedTranslationKeysRef.current.clear();
+      localTranslationsRef.current = {};
       processedSaveResponseRef.current = null;
       processedResponseRef.current = null;
       processedTranslateFieldRef.current = null;
@@ -341,6 +347,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         if (deletedTranslationKeysRef.current.has(field.translationKey)) {
           debugLog.dataLoad(' Skipping deleted translation key:', field.translationKey);
           newValues[field.key] = "";
+          return;
+        }
+
+        // First check local translations ref (from Accept & Translate flow)
+        // This is needed because item.translations mutations can be lost when items array is recreated
+        const localValue = localTranslationsRef.current[field.translationKey]?.[currentLanguage];
+        if (localValue) {
+          debugLog.dataLoad(' Using local translation for', field.translationKey, ':', currentLanguage);
+          newValues[field.key] = localValue;
           return;
         }
 
@@ -874,6 +889,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             locale
           });
         }
+
+        // Store translations locally as backup (item.translations mutations can be lost on re-render)
+        if (!localTranslationsRef.current[shopifyKey]) {
+          localTranslationsRef.current[shopifyKey] = {};
+        }
+        for (const [locale, translatedValue] of Object.entries(translations as Record<string, string>)) {
+          localTranslationsRef.current[shopifyKey][locale] = translatedValue;
+        }
+        debugLog.acceptAndTranslate(' Stored local translations for', shopifyKey, ':', Object.keys(translations));
 
         // If the current language is one of the translated languages, update editableValues immediately
         // This ensures the UI shows the new translation without needing to switch languages
