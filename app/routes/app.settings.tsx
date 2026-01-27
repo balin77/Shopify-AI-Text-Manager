@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useFetcher, useNavigate } from "@remix-run/react";
+import { useLoaderData, useFetcher, useNavigate, useSearchParams } from "@remix-run/react";
 import {
   Page,
   Card,
@@ -545,13 +545,23 @@ export default function SettingsPage() {
   const { shop, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, localeCount, subscriptionPlan } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { t } = useI18n();
   const { showInfoBox } = useInfoBox();
   const isFreePlan = subscriptionPlan === "free";
   const isBasicPlan = subscriptionPlan === "basic";
   const aiInstructionsReadOnly = isFreePlan || isBasicPlan;
 
-  const [selectedSection, setSelectedSection] = useState<"setup" | "ai" | "instructions" | "language" | "plan">("setup");
+  // Get initial tab from URL parameter (e.g., ?tab=plan)
+  const getInitialSection = (): "setup" | "ai" | "instructions" | "language" | "plan" => {
+    const tabParam = searchParams.get("tab");
+    if (tabParam && ["setup", "ai", "instructions", "language", "plan"].includes(tabParam)) {
+      return tabParam as "setup" | "ai" | "instructions" | "language" | "plan";
+    }
+    return "setup";
+  };
+
+  const [selectedSection, setSelectedSection] = useState<"setup" | "ai" | "instructions" | "language" | "plan">(getInitialSection);
   const [hasAIChanges, setHasAIChanges] = useState(false);
   const [hasLanguageChanges, setHasLanguageChanges] = useState(false);
   const [hasInstructionsChanges, setHasInstructionsChanges] = useState(false);
@@ -603,6 +613,12 @@ export default function SettingsPage() {
 
       if (!response.ok) {
         throw new Error(data.error || 'Failed to create subscription');
+      }
+
+      // In development mode, directly reload the page (no Shopify Billing redirect)
+      if (data.directUpdate) {
+        window.location.reload();
+        return;
       }
 
       if (data.confirmationUrl) {

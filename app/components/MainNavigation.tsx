@@ -16,10 +16,8 @@ export function MainNavigation() {
   const { infoBox, hideInfoBox, showInfoBox, isGlobalLoading } = useInfoBox();
   const { plan, getPlanDisplayName, getMaxProducts } = usePlan();
   const { setMainNavHeight } = useNavigationHeight();
-  const planFetcher = useFetcher<{ success?: boolean; syncStats?: { synced: number }; error?: string }>();
   const tasksFetcher = useFetcher<{ count: number }>();
   const completedTasksFetcher = useFetcher<{ tasks: any[] }>();
-  const [isChangingPlan, setIsChangingPlan] = useState(false);
   const [showLoadingIndicator, setShowLoadingIndicator] = useState(false);
   const navRef = useRef<HTMLDivElement>(null);
   const [navHeight, setNavHeight] = useState(73);
@@ -285,37 +283,12 @@ export function MainNavigation() {
     navigate(newPath);
   };
 
-  const handlePlanChange = async (newPlan: Plan) => {
-    if (newPlan === plan || isChangingPlan) return;
-
-    console.log("🔄 [MainNavigation] Changing plan:", plan, "->", newPlan);
-    setIsChangingPlan(true);
-
-    planFetcher.submit(
-      { plan: newPlan },
-      { method: "POST", action: "/api/update-plan", encType: "application/json" }
-    );
+  // Navigate to settings/plan page when any plan button is clicked
+  const handlePlanNavigation = () => {
+    const searchParams = new URLSearchParams(location.search);
+    searchParams.set("tab", "plan");
+    navigate(`/app/settings?${searchParams.toString()}`);
   };
-
-  // Handle plan change completion - wait for API response before reloading
-  useEffect(() => {
-    // Only process when fetcher has finished (went from loading/submitting to idle with data)
-    if (planFetcher.state === "idle" && planFetcher.data && isChangingPlan) {
-      console.log("📦 [MainNavigation] Plan change response:", planFetcher.data);
-
-      if (planFetcher.data.success) {
-        console.log("✅ [MainNavigation] Plan change complete, reloading with sync...");
-
-        // Add sync=true parameter to trigger product sync after plan upgrade
-        const url = new URL(window.location.href);
-        url.searchParams.set("sync", "true");
-        window.location.href = url.toString();
-      } else {
-        console.error("❌ [MainNavigation] Plan change failed:", planFetcher.data.error);
-        setIsChangingPlan(false);
-      }
-    }
-  }, [planFetcher.state, planFetcher.data, isChangingPlan]);
 
   const plans: Plan[] = ["free", "basic", "pro", "max"];
 
@@ -474,15 +447,14 @@ export function MainNavigation() {
             </div>
           )}
 
-          {/* Plan Selector */}
+          {/* Plan Selector - click navigates to settings/plan */}
           <div style={{ marginLeft: "auto" }}>
             <ButtonGroup variant="segmented">
               {plans.map((planOption) => (
                 <Button
                   key={planOption}
                   pressed={plan === planOption}
-                  onClick={() => handlePlanChange(planOption)}
-                  disabled={isChangingPlan}
+                  onClick={handlePlanNavigation}
                   size="slim"
                 >
                   {planOption.charAt(0).toUpperCase() + planOption.slice(1)}
