@@ -13,7 +13,6 @@ import {
   Divider,
 } from "@shopify/polaris";
 import { PLAN_CONFIG, PLAN_DISPLAY_NAMES, type Plan } from "../config/plans";
-import { getPlanLimits, isApproachingLimit, type ResourceType } from "../utils/planUtils";
 import { BILLING_PLANS, getAvailablePlans, type BillingPlan } from "../config/billing";
 import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
@@ -546,7 +545,7 @@ export default function SettingsPage() {
   const isBasicPlan = subscriptionPlan === "basic";
   const aiInstructionsReadOnly = isFreePlan || isBasicPlan;
 
-  const [selectedSection, setSelectedSection] = useState<"setup" | "usage" | "ai" | "instructions" | "language" | "plan">("setup");
+  const [selectedSection, setSelectedSection] = useState<"setup" | "ai" | "instructions" | "language" | "plan">("setup");
   const [hasAIChanges, setHasAIChanges] = useState(false);
   const [hasLanguageChanges, setHasLanguageChanges] = useState(false);
   const [hasInstructionsChanges, setHasInstructionsChanges] = useState(false);
@@ -610,7 +609,7 @@ export default function SettingsPage() {
   };
 
   // Handle section navigation with unsaved changes warning
-  const handleSectionChange = (newSection: "setup" | "usage" | "ai" | "instructions" | "language" | "plan") => {
+  const handleSectionChange = (newSection: "setup" | "ai" | "instructions" | "language" | "plan") => {
     if (hasUnsavedChanges) {
       const message = t.settings?.unsavedChangesMessage ||
         "Sie haben ungespeicherte Änderungen. Möchten Sie wirklich fortfahren? Ihre Änderungen gehen verloren.";
@@ -667,24 +666,6 @@ export default function SettingsPage() {
               >
                 <Text as="p" variant="bodyMd" fontWeight={selectedSection === "setup" ? "semibold" : "regular"}>
                   {t.settings.appSetup}
-                </Text>
-              </button>
-              <button
-                onClick={() => handleSectionChange("usage")}
-                style={{
-                  width: "100%",
-                  padding: "1rem",
-                  background: selectedSection === "usage" ? "#f1f8f5" : "white",
-                  borderLeft: selectedSection === "usage" ? "3px solid #008060" : "3px solid transparent",
-                  border: "none",
-                  borderTop: "1px solid #e1e3e5",
-                  textAlign: "left",
-                  cursor: "pointer",
-                  transition: "all 0.2s",
-                }}
-              >
-                <Text as="p" variant="bodyMd" fontWeight={selectedSection === "usage" ? "semibold" : "regular"}>
-                  {t.settings?.usageLimits || "Nutzung & Limits"}
                 </Text>
               </button>
               <button
@@ -774,19 +755,6 @@ export default function SettingsPage() {
                   articleCount={articleCount}
                   translationCount={translationCount}
                   webhookCount={webhookCount}
-                  t={t}
-                />
-              )}
-
-              {/* Usage & Limits Section */}
-              {selectedSection === "usage" && (
-                <SettingsUsageLimitsTab
-                  productCount={productCount}
-                  localeCount={localeCount}
-                  collectionCount={collectionCount}
-                  articleCount={articleCount}
-                  pageCount={pageCount}
-                  themeTranslationCount={themeTranslationCount}
                   t={t}
                 />
               )}
@@ -923,44 +891,17 @@ export default function SettingsPage() {
                     })}
                   </div>
 
-                  {/* Limit Warning */}
-                  {(() => {
-                    const limits = getPlanLimits(subscriptionPlan as Plan);
-                    const resourceLabels: Record<ResourceType, string> = {
-                      products: t.settings?.usageProducts || "Produkte",
-                      locales: t.settings?.usageLocales || "Sprachen",
-                      collections: t.settings?.usageCollections || "Kollektionen",
-                      articles: t.settings?.usageArticles || "Artikel",
-                      pages: t.settings?.usagePages || "Seiten",
-                      themeTranslations: t.settings?.usageThemeTranslations || "Theme-Übersetzungen",
-                    };
-                    const counts: Record<ResourceType, number> = {
-                      products: productCount,
-                      locales: localeCount,
-                      collections: collectionCount,
-                      articles: articleCount,
-                      pages: pageCount,
-                      themeTranslations: themeTranslationCount,
-                    };
-                    const approaching = (Object.keys(counts) as ResourceType[]).filter(
-                      (r) => limits[`max${r.charAt(0).toUpperCase() + r.slice(1)}` as keyof typeof limits] !== 0 &&
-                             isApproachingLimit(subscriptionPlan as Plan, r, counts[r])
-                    );
-                    if (approaching.length === 0) return null;
-                    const resourceNames = approaching.map(r => resourceLabels[r]).join(", ");
-                    return (
-                      <Banner tone="warning" title={t.settings?.limitWarningTitle || "Plan-Limits werden erreicht"}>
-                        <p>
-                          {(t.settings?.limitWarningDescription || "Sie nähern sich Ihren Plan-Limits für: {resources}").replace("{resources}", resourceNames)}
-                        </p>
-                        <div style={{ marginTop: "8px" }}>
-                          <Button url="#" onClick={() => handleSectionChange("usage")}>
-                            {t.settings?.usageLimits || "Nutzung & Limits"}
-                          </Button>
-                        </div>
-                      </Banner>
-                    );
-                  })()}
+                  {/* Usage & Limits */}
+                  <SettingsUsageLimitsTab
+                    productCount={productCount}
+                    localeCount={localeCount}
+                    collectionCount={collectionCount}
+                    articleCount={articleCount}
+                    pageCount={pageCount}
+                    themeTranslationCount={themeTranslationCount}
+                    t={t}
+                    hideUpgradeCard
+                  />
 
                   <Card>
                     <BlockStack gap="200">

@@ -11,6 +11,7 @@ interface SettingsUsageLimitsTabProps {
   pageCount: number;
   themeTranslationCount: number;
   t: any;
+  hideUpgradeCard?: boolean;
 }
 
 interface UsageRowProps {
@@ -102,6 +103,7 @@ export function SettingsUsageLimitsTab({
   pageCount,
   themeTranslationCount,
   t,
+  hideUpgradeCard = false,
 }: SettingsUsageLimitsTabProps) {
   const {
     plan,
@@ -155,7 +157,7 @@ export function SettingsUsageLimitsTab({
         <Banner
           title={t.settings?.limitWarningTitle || "Plan-Limits werden erreicht"}
           tone="warning"
-          action={nextPlan ? {
+          action={!hideUpgradeCard && nextPlan ? {
             content: t.settings?.upgradeForMore || "Plan upgraden",
             onAction: () => navigate("/app/settings?section=plan")
           } : undefined}
@@ -206,7 +208,7 @@ export function SettingsUsageLimitsTab({
         </BlockStack>
       </Card>
 
-      {nextPlan && (
+      {!hideUpgradeCard && nextPlan && (
         <Card>
           <BlockStack gap="400">
             <Text as="h2" variant="headingMd">
