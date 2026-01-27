@@ -45,12 +45,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         handle: true,
         seoTitle: true,
         seoDescription: true,
+        featuredImageUrl: true,
         featuredImageAlt: true,
         images: {
           select: {
+            url: true,
             altText: true,
+            mediaId: true,
             altTextTranslations: {
-              select: { altText: true }
+              select: { altText: true, locale: true }
             }
           }
         },
@@ -70,11 +73,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       productBytes += getByteSize(p.handle);
       productBytes += getByteSize(p.seoTitle);
       productBytes += getByteSize(p.seoDescription);
+      productBytes += getByteSize(p.featuredImageUrl);
       productBytes += getByteSize(p.featuredImageAlt);
       for (const img of p.images) {
+        productBytes += getByteSize(img.url);
         productBytes += getByteSize(img.altText);
+        productBytes += getByteSize(img.mediaId);
         for (const trans of img.altTextTranslations) {
           productBytes += getByteSize(trans.altText);
+          productBytes += getByteSize(trans.locale);
         }
       }
       for (const opt of p.options) {
@@ -157,6 +164,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         title: true,
         body: true,
         type: true,
+        url: true,
       }
     });
 
@@ -165,20 +173,31 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       policyBytes += getByteSize(p.title);
       policyBytes += getByteSize(p.body);
       policyBytes += getByteSize(p.type);
+      policyBytes += getByteSize(p.url);
     }
 
     // Calculate storage for Theme Content
     const themeContent = await db.themeContent.findMany({
       where: { shop },
       select: {
+        resourceId: true,
+        resourceType: true,
+        resourceTypeLabel: true,
+        groupId: true,
         groupName: true,
+        groupIcon: true,
         translatableContent: true,
       }
     });
 
     let themeContentBytes = 0;
     for (const tc of themeContent) {
+      themeContentBytes += getByteSize(tc.resourceId);
+      themeContentBytes += getByteSize(tc.resourceType);
+      themeContentBytes += getByteSize(tc.resourceTypeLabel);
+      themeContentBytes += getByteSize(tc.groupId);
       themeContentBytes += getByteSize(tc.groupName);
+      themeContentBytes += getByteSize(tc.groupIcon);
       themeContentBytes += getByteSize(JSON.stringify(tc.translatableContent));
     }
 
