@@ -1,16 +1,20 @@
 import { useState, useEffect } from "react";
-import { BlockStack, Text, Button, InlineStack, Card } from "@shopify/polaris";
+import { BlockStack, Text, Button, InlineStack, Card, TextField } from "@shopify/polaris";
 import { AIInstructionFieldGroup } from "./AIInstructionFieldGroup";
 import { SaveDiscardButtons } from "./SaveDiscardButtons";
 import {
   getDefaultInstructions,
   getDefaultForField,
+  DEFAULT_GENERAL_INSTRUCTIONS,
   type EntityType
 } from "../constants/aiInstructionsDefaults";
 import type { FetcherWithComponents } from "@remix-run/react";
 import { useI18n } from "../contexts/I18nContext";
 
 interface Instructions {
+  // General (Format Instructions)
+  formatPreserveInstructions: string;
+
   // Products
   productTitleFormat: string;
   productTitleInstructions: string;
@@ -80,6 +84,11 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, on
   const [htmlModes, setHtmlModes] = useState<Record<string, "html" | "rendered">>({});
 
   const tabs = [
+    {
+      id: 'general',
+      content: t.settings.tabGeneral || 'General',
+      panelID: 'general-panel',
+    },
     {
       id: 'products',
       content: t.settings.tabProducts,
@@ -249,8 +258,42 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, on
       {/* Tab Content */}
       <div style={{ opacity: readOnly ? 0.6 : 1, pointerEvents: readOnly ? "none" : "auto" }}>
         <BlockStack gap="400" inlineAlign="stretch">
-            {/* PRODUCTS TAB */}
+            {/* GENERAL TAB */}
             {selectedTab === 0 && (
+              <>
+                <Text as="p" variant="bodyMd" tone="subdued">
+                  {t.settings.generalTabDescription || 'These instructions control how the "Format" function behaves. The Format function preserves your original text and only applies formatting changes.'}
+                </Text>
+
+                <BlockStack gap="400">
+                  <Text as="h3" variant="headingMd">
+                    {t.settings.formatPreserveInstructionsLabel || 'Format Instructions'}
+                  </Text>
+                  <TextField
+                    label={t.settings.formatPreserveInstructionsLabel || 'Format Instructions'}
+                    labelHidden
+                    value={localInstructions.formatPreserveInstructions || ''}
+                    onChange={(v) => handleFieldChange('formatPreserveInstructions', v)}
+                    multiline={10}
+                    placeholder={t.settings.formatPreserveInstructionsPlaceholder || 'Instructions for the Format function...'}
+                    helpText={t.settings.formatPreserveInstructionsHelp || 'These instructions tell the AI how to format text without changing its content.'}
+                    autoComplete="off"
+                  />
+                  <InlineStack align="start">
+                    <Button
+                      onClick={() => handleFieldChange('formatPreserveInstructions', DEFAULT_GENERAL_INSTRUCTIONS.formatPreserveInstructions)}
+                      tone="critical"
+                      size="slim"
+                    >
+                      {t.settings?.resetField || "Reset"}
+                    </Button>
+                  </InlineStack>
+                </BlockStack>
+              </>
+            )}
+
+            {/* PRODUCTS TAB */}
+            {selectedTab === 1 && (
               <>
                 <AIInstructionFieldGroup
                   fieldName={t.settings.fieldAltText}
@@ -354,7 +397,7 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, on
             )}
 
             {/* COLLECTIONS TAB */}
-            {selectedTab === 1 && (
+            {selectedTab === 2 && (
               <>
                 <AIInstructionFieldGroup
                   fieldName={t.settings.fieldTitle}
@@ -442,7 +485,7 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, on
             )}
 
             {/* BLOGS TAB */}
-            {selectedTab === 2 && (
+            {selectedTab === 3 && (
               <>
                 <AIInstructionFieldGroup
                   fieldName={t.settings.fieldTitle}
@@ -530,7 +573,7 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, on
             )}
 
             {/* PAGES TAB */}
-            {selectedTab === 3 && (
+            {selectedTab === 4 && (
               <>
                 <AIInstructionFieldGroup
                   fieldName={t.settings.fieldTitle}
@@ -586,7 +629,7 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, on
             )}
 
             {/* POLICIES TAB */}
-            {selectedTab === 4 && (
+            {selectedTab === 5 && (
               <>
                 <Text as="p" variant="bodyMd" tone="subdued">
                   {t.settings.policyNotice}

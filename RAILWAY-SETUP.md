@@ -64,7 +64,6 @@ Dieses Projekt nutzt zwei Railway Environments für eine saubere Trennung:
 NODE_ENV=production
 SHOPIFY_API_KEY=<dein-production-api-key>
 SHOPIFY_API_SECRET=<dein-production-api-secret>
-SHOPIFY_SHOP_NAME=<dein-shop>.myshopify.com
 SHOPIFY_API_VERSION=2025-10
 SHOPIFY_SCOPES=read_legal_policies,write_legal_policies,read_locales,read_online_store_navigation,write_online_store_navigation,read_online_store_pages,write_online_store_pages,read_product_listings,write_product_listings,read_products,write_products,read_content,write_content,read_themes,write_themes,read_translations,write_translations
 SHOPIFY_APP_URL=${{RAILWAY_PUBLIC_DOMAIN}} oder deine Custom Domain
@@ -75,12 +74,13 @@ ENCRYPTION_KEY=<dein-encryption-key>
 DATABASE_URL=${{Postgres.DATABASE_URL}} (automatisch gesetzt)
 ```
 
+> **Hinweis**: Shop-Name und Access-Token werden automatisch aus der Datenbank-Session geladen (Multi-Tenant SaaS).
+
 #### Development Environment Variables:
 ```
 NODE_ENV=development
 SHOPIFY_API_KEY=<dein-dev-api-key oder gleich wie prod>
 SHOPIFY_API_SECRET=<dein-dev-api-secret oder gleich wie prod>
-SHOPIFY_SHOP_NAME=<dein-dev-shop oder gleich wie prod>
 SHOPIFY_API_VERSION=2025-10
 SHOPIFY_SCOPES=<gleiche wie oben>
 SHOPIFY_APP_URL=${{RAILWAY_PUBLIC_DOMAIN}}

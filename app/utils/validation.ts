@@ -83,6 +83,9 @@ export const AISettingsSchema = z.object({
  * AI Instructions validation schema - Entity-specific fields
  */
 export const AIInstructionsSchema = z.object({
+  // GENERAL (Format Instructions)
+  formatPreserveInstructions: z.string().max(3000).optional().or(z.literal('')),
+
   // PRODUCTS
   productTitleFormat: z.string().max(500).optional().or(z.literal('')),
   productTitleInstructions: z.string().max(2000).optional().or(z.literal('')),

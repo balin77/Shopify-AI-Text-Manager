@@ -230,11 +230,17 @@ export const en: Translation = {
     errorOccurred: "An error occurred",
     trialInfo: "All paid plans include a 7-day free trial. You will only be charged after the trial period ends.",
     // AI Instructions Tab Labels
+    tabGeneral: "General",
     tabProducts: "Products",
     tabCollections: "Collections",
     tabBlogs: "Blogs",
     tabPages: "Pages",
     tabPolicies: "Policies",
+    // General Tab
+    generalTabDescription: "These instructions control how the \"Format\" function behaves. The Format function preserves your original text and only applies formatting changes.",
+    formatPreserveInstructionsLabel: "Format Instructions",
+    formatPreserveInstructionsPlaceholder: "Instructions for the Format function...",
+    formatPreserveInstructionsHelp: "These instructions tell the AI how to format text without changing its content.",
     // AI Instructions Field Names
     fieldAltText: "Alt Text (Images)",
     fieldTitle: "Title",

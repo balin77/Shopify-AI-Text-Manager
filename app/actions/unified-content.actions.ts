@@ -256,39 +256,85 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
       const formatKey = `${instructionsKey}Format`;
       const instructionsTextKey = `${instructionsKey}Instructions`;
 
-      if (field.type === "text" || field.type === "slug") {
-        let prompt = `Format the following ${field.label} according to the formatting guidelines:\n\nCurrent ${field.label}:\n${currentValue}`;
+      // Default formatting instruction
+      const defaultPreserveInstruction = `CRITICAL: You must PRESERVE the original text content. DO NOT rewrite, rephrase, or generate new content.
+Only apply formatting changes such as:
+- Adding separators (| or - or :)
+- Adjusting capitalization
+- Adding HTML tags for structure (<strong>, <em>, <h2>, <h3>, <ul>, <li>, <p>)
+- Fixing punctuation and spacing
+- Removing redundant characters
 
-        if (aiInstructions?.[formatKey]) {
-          prompt += `\n\nFormat Example:\n${aiInstructions[formatKey]}`;
-        }
-        if (aiInstructions?.[instructionsTextKey]) {
-          prompt += `\n\nFormatting Instructions:\n${aiInstructions[instructionsTextKey]}`;
-        }
+The meaning, words, and information must stay the same. Only the presentation/formatting changes.`;
+
+      // Use custom instructions if provided, otherwise use default
+      const preserveTextInstruction = aiInstructions?.formatPreserveInstructions || defaultPreserveInstruction;
+
+      if (field.type === "text" || field.type === "slug") {
+        let prompt = "";
 
         if (field.type === "slug") {
-          prompt += `\n\nIMPORTANT - The URL slug MUST follow this format:`;
-          prompt += `\n- ONLY lowercase letters (a-z), ONLY digits (0-9), ONLY hyphens (-)`;
-          prompt += `\n- Umlauts MUST be converted (ä→ae, ö→oe, ü→ue, ß→ss)`;
+          prompt = `Format the following URL slug. Keep the core words intact.
+
+Original Slug:
+${currentValue}
+
+${preserveTextInstruction}
+
+Allowed formatting changes for handles:
+- Convert to lowercase
+- Replace spaces with hyphens
+- Convert umlauts (ä→ae, ö→oe, ü→ue, ß→ss)
+- Remove special characters
+- Remove excessive hyphens`;
+          if (aiInstructions?.[formatKey]) {
+            prompt += `\n\nFormat Style Example:\n${aiInstructions[formatKey]}`;
+          }
+          prompt += `\n\nReturn ONLY the formatted URL slug. Keep the original keywords.`;
+        } else {
+          prompt = `Apply formatting to the following ${field.label}. Keep all words and meaning intact.
+
+Original ${field.label} (preserve this content):
+${currentValue}
+
+${preserveTextInstruction}
+
+Allowed formatting changes:
+- Add separators like | or - or – between parts
+- Adjust capitalization (e.g., Title Case)
+- Remove excessive punctuation
+- Fix spacing issues`;
+          if (aiInstructions?.[formatKey]) {
+            prompt += `\n\nFormat Style Example (for structure reference only, do NOT copy the content):\n${aiInstructions[formatKey]}`;
+          }
+          prompt += `\n\nReturn ONLY the formatted ${field.label}. Keep the original language. Do NOT add new information or rewrite the text. Output the result in ${mainLanguage}.`;
         }
 
-        prompt += `\n\nReturn ONLY the formatted ${field.label}, without explanations. Output the result in ${mainLanguage}.`;
         formattedContent = await aiServiceWithTask.generateProductTitle(prompt);
 
         if (field.type === "slug") {
           formattedContent = sanitizeSlug(formattedContent);
         }
       } else if (field.type === "html" || field.type === "textarea") {
-        let prompt = `Format the following ${field.label} according to the formatting guidelines:\n\nCurrent ${field.label}:\n${currentValue}`;
+        let prompt = `Apply HTML formatting to the following ${field.label}. Keep all words, sentences, and information intact.
+
+Original ${field.label} (preserve this content):
+${currentValue}
+
+${preserveTextInstruction}
+
+Allowed formatting changes:
+- Add HTML structure tags: <h2>, <h3>, <p>, <ul>, <li>
+- Add emphasis: <strong>, <em>
+- Convert plain lists to <ul>/<li> format
+- Add paragraph breaks with <p> tags
+- Fix spacing and punctuation`;
 
         if (aiInstructions?.[formatKey]) {
-          prompt += `\n\nFormat Example:\n${aiInstructions[formatKey]}`;
-        }
-        if (aiInstructions?.[instructionsTextKey]) {
-          prompt += `\n\nFormatting Instructions:\n${aiInstructions[instructionsTextKey]}`;
+          prompt += `\n\nFormat Style Example (for HTML structure reference only):\n${aiInstructions[formatKey]}`;
         }
 
-        prompt += `\n\nKeep the content but format according to the guidelines. Return only the formatted text. Output the result in ${mainLanguage}.`;
+        prompt += `\n\nReturn ONLY the formatted HTML ${field.label}. Keep the original language and all original content. Do NOT add new sentences or rewrite existing ones. Output the result in ${mainLanguage}.`;
         formattedContent = await aiServiceWithTask.generateProductDescription(currentValue, prompt);
       }
 

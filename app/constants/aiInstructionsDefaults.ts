@@ -5,6 +5,23 @@
  * Each entity type (Products, Collections, Blogs, Pages, Policies) has its own set of instructions.
  */
 
+// General formatting instructions used by the "Format" action
+export interface GeneralInstructions {
+  formatPreserveInstructions: string;
+}
+
+export const DEFAULT_GENERAL_INSTRUCTIONS: GeneralInstructions = {
+  formatPreserveInstructions: `CRITICAL: You must PRESERVE the original text content. DO NOT rewrite, rephrase, or generate new content.
+Only apply formatting changes such as:
+- Adding separators (| or - or :)
+- Adjusting capitalization
+- Adding HTML tags for structure (<strong>, <em>, <h2>, <h3>, <ul>, <li>, <p>)
+- Fixing punctuation and spacing
+- Removing redundant characters
+
+The meaning, words, and information must stay the same. Only the presentation/formatting changes.`,
+};
+
 export interface EntityInstructions {
   titleFormat: string;
   titleInstructions: string;

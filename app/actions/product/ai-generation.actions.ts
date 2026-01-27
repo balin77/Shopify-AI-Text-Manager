@@ -318,6 +318,9 @@ function buildGeneratePrompt(
 
 /**
  * Builds prompt for content formatting
+ *
+ * IMPORTANT: Format prompts preserve the original text and only apply formatting.
+ * They do NOT rewrite or generate new content.
  */
 function buildFormatPrompt(
   fieldType: FieldType,
@@ -326,62 +329,124 @@ function buildFormatPrompt(
   contextDescription: string,
   aiInstructions: any
 ): string {
+  // Default formatting instruction
+  const defaultPreserveInstruction = `CRITICAL: You must PRESERVE the original text content. DO NOT rewrite, rephrase, or generate new content.
+Only apply formatting changes such as:
+- Adding separators (| or - or :)
+- Adjusting capitalization
+- Adding HTML tags for structure (<strong>, <em>, <h2>, <h3>, <ul>, <li>, <p>)
+- Fixing punctuation and spacing
+- Removing redundant characters
+
+The meaning, words, and information must stay the same. Only the presentation/formatting changes.`;
+
+  // Use custom instructions if provided, otherwise use default
+  const preserveTextInstruction = aiInstructions?.formatPreserveInstructions || defaultPreserveInstruction;
+
   let prompt = "";
 
   switch (fieldType) {
     case "title":
-      prompt = `Format the following product title according to the formatting guidelines:\n\nCurrent Title:\n${currentValue}`;
+      prompt = `Apply formatting to the following product title. Keep all words and meaning intact.
+
+Original Title (preserve this content):
+${currentValue}
+
+${preserveTextInstruction}
+
+Allowed formatting changes for titles:
+- Add separators like | or - or – between parts
+- Adjust capitalization (e.g., Title Case)
+- Remove excessive punctuation
+- Fix spacing issues`;
       if (aiInstructions?.productTitleFormat) {
-        prompt += `\n\nFormat Example:\n${aiInstructions.productTitleFormat}`;
+        prompt += `\n\nFormat Style Example (for structure reference only, do NOT copy the content):\n${aiInstructions.productTitleFormat}`;
       }
-      if (aiInstructions?.productTitleInstructions) {
-        prompt += `\n\nFormatting Instructions:\n${aiInstructions.productTitleInstructions}`;
-      }
-      prompt += `\n\nReturn ONLY the formatted title, without explanations. Output the result in the same language as the product title.`;
+      prompt += `\n\nReturn ONLY the formatted title. Keep the original language. Do NOT add new information or rewrite the text.`;
       break;
 
     case "description":
-      prompt = `Format the following product description according to the formatting guidelines:\n\nCurrent Description:\n${currentValue}`;
+      prompt = `Apply HTML formatting to the following product description. Keep all words, sentences, and information intact.
+
+Original Description (preserve this content):
+${currentValue}
+
+${preserveTextInstruction}
+
+Allowed formatting changes for descriptions:
+- Add HTML structure tags: <h2>, <h3>, <p>, <ul>, <li>
+- Add emphasis: <strong>, <em>
+- Convert plain lists to <ul>/<li> format
+- Add paragraph breaks with <p> tags
+- Fix spacing and punctuation`;
       if (aiInstructions?.productDescriptionFormat) {
-        prompt += `\n\nFormat Example:\n${aiInstructions.productDescriptionFormat}`;
+        prompt += `\n\nFormat Style Example (for HTML structure reference only):\n${aiInstructions.productDescriptionFormat}`;
       }
-      if (aiInstructions?.productDescriptionInstructions) {
-        prompt += `\n\nFormatting Instructions:\n${aiInstructions.productDescriptionInstructions}`;
-      }
-      prompt += `\n\nReturn ONLY the formatted description, without explanations. Output the result in the same language as the product title.`;
+      prompt += `\n\nReturn ONLY the formatted HTML description. Keep the original language and all original content. Do NOT add new sentences or rewrite existing ones.`;
       break;
 
     case "handle":
-      prompt = `Format the following URL slug according to the formatting guidelines:\n\nCurrent Slug:\n${currentValue}\n\nContext - Title: ${contextTitle}`;
+      prompt = `Format the following URL slug. Keep the core words intact.
+
+Original Slug:
+${currentValue}
+
+Context - Title: ${contextTitle}
+
+${preserveTextInstruction}
+
+Allowed formatting changes for handles:
+- Convert to lowercase
+- Replace spaces with hyphens
+- Convert umlauts (ä→ae, ö→oe, ü→ue, ß→ss)
+- Remove special characters
+- Remove excessive hyphens`;
       if (aiInstructions?.productHandleFormat) {
-        prompt += `\n\nFormat Example:\n${aiInstructions.productHandleFormat}`;
+        prompt += `\n\nFormat Style Example:\n${aiInstructions.productHandleFormat}`;
       }
-      if (aiInstructions?.productHandleInstructions) {
-        prompt += `\n\nFormatting Instructions:\n${aiInstructions.productHandleInstructions}`;
-      }
-      prompt += `\n\nReturn ONLY the formatted URL slug, without explanations. Output the result in the same language as the product title.`;
+      prompt += `\n\nReturn ONLY the formatted URL slug. Keep the original keywords.`;
       break;
 
     case "seoTitle":
-      prompt = `Format the following SEO title according to the formatting guidelines:\n\nCurrent SEO Title:\n${currentValue}\n\nContext - Title: ${contextTitle}\nDescription: ${contextDescription}`;
+      prompt = `Apply formatting to the following SEO title. Keep all words and meaning intact.
+
+Original SEO Title (preserve this content):
+${currentValue}
+
+Context - Title: ${contextTitle}
+
+${preserveTextInstruction}
+
+Allowed formatting changes for SEO titles:
+- Add separators like | or - between parts
+- Adjust capitalization
+- Fix spacing and punctuation
+- Trim to appropriate length if too long`;
       if (aiInstructions?.productSeoTitleFormat) {
-        prompt += `\n\nFormat Example:\n${aiInstructions.productSeoTitleFormat}`;
+        prompt += `\n\nFormat Style Example (for structure reference only):\n${aiInstructions.productSeoTitleFormat}`;
       }
-      if (aiInstructions?.productSeoTitleInstructions) {
-        prompt += `\n\nFormatting Instructions:\n${aiInstructions.productSeoTitleInstructions}`;
-      }
-      prompt += `\n\nReturn ONLY the formatted SEO title, without explanations. Output the result in the same language as the product title.`;
+      prompt += `\n\nReturn ONLY the formatted SEO title. Keep the original language. Do NOT rewrite or add new content.`;
       break;
 
     case "metaDescription":
-      prompt = `Format the following meta description according to the formatting guidelines:\n\nCurrent Meta Description:\n${currentValue}\n\nContext - Title: ${contextTitle}\nDescription: ${contextDescription}`;
+      prompt = `Apply formatting to the following meta description. Keep all words and meaning intact.
+
+Original Meta Description (preserve this content):
+${currentValue}
+
+Context - Title: ${contextTitle}
+
+${preserveTextInstruction}
+
+Allowed formatting changes for meta descriptions:
+- Fix punctuation and spacing
+- Adjust sentence structure slightly for flow
+- Trim to 150-160 characters if too long
+- Ensure it ends properly (with punctuation)`;
       if (aiInstructions?.productMetaDescFormat) {
-        prompt += `\n\nFormat Example:\n${aiInstructions.productMetaDescFormat}`;
+        prompt += `\n\nFormat Style Example (for style reference only):\n${aiInstructions.productMetaDescFormat}`;
       }
-      if (aiInstructions?.productMetaDescInstructions) {
-        prompt += `\n\nFormatting Instructions:\n${aiInstructions.productMetaDescInstructions}`;
-      }
-      prompt += `\n\nReturn ONLY the formatted meta description, without explanations. Output the result in the same language as the product title.`;
+      prompt += `\n\nReturn ONLY the formatted meta description. Keep the original language and meaning. Do NOT rewrite or add new content.`;
       break;
   }
 

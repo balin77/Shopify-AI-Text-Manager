@@ -30,6 +30,7 @@ import { AISettingsSchema, AIInstructionsSchema, parseFormData } from "../utils/
 import { toSafeErrorResponse } from "../utils/error-handler";
 import { encryptApiKey, decryptApiKey } from "../utils/encryption.server";
 import {
+  DEFAULT_GENERAL_INSTRUCTIONS,
   DEFAULT_PRODUCT_INSTRUCTIONS,
   DEFAULT_COLLECTION_INSTRUCTIONS,
   DEFAULT_BLOG_INSTRUCTIONS,
@@ -84,6 +85,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     instructions = await db.aIInstructions.create({
       data: {
         shop: session.shop,
+        // General (Format Instructions)
+        formatPreserveInstructions: DEFAULT_GENERAL_INSTRUCTIONS.formatPreserveInstructions,
         // Products
         productTitleFormat: DEFAULT_PRODUCT_INSTRUCTIONS.titleFormat,
         productTitleInstructions: DEFAULT_PRODUCT_INSTRUCTIONS.titleInstructions,
@@ -405,6 +408,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
       // Sanitize HTML content in format examples (for description fields)
       const sanitizedData = {
+        // General (Format Instructions)
+        formatPreserveInstructions: data.formatPreserveInstructions || null,
+
         // Products
         productTitleFormat: data.productTitleFormat || null,
         productTitleInstructions: data.productTitleInstructions || null,

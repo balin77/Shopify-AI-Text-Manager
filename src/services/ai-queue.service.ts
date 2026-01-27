@@ -30,6 +30,16 @@ interface UsageWindow {
 /**
  * AI Queue Service
  * Manages all AI requests with rate limiting and retry logic
+ *
+ * MULTI-TENANT NOTE:
+ * Rate limits are tracked GLOBALLY per AI provider, not per shop.
+ * This is intentional for SaaS deployments where:
+ * - The SaaS operator provides shared AI API keys
+ * - Rate limits are applied at the application level, not per tenant
+ *
+ * If you need per-shop rate limiting (e.g., shops bring their own API keys),
+ * modify usageWindows and rateLimits to be Map<string, Map<AIProvider, ...>>
+ * keyed by shop domain.
  */
 export class AIQueueService {
   private static instance: AIQueueService;
@@ -37,9 +47,11 @@ export class AIQueueService {
   private processing = false;
 
   // Track usage per provider using sliding window
+  // NOTE: Global rate limiting - shared across all shops
   private usageWindows: Map<AIProvider, UsageWindow[]> = new Map();
 
   // Rate limit configurations per provider
+  // NOTE: Global limits - to implement per-shop limits, key by shop domain
   private rateLimits: Map<AIProvider, RateLimitConfig> = new Map();
 
   private constructor() {

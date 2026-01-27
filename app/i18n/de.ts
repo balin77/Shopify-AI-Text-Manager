@@ -228,11 +228,17 @@ export const de = {
     errorOccurred: "Ein Fehler ist aufgetreten",
     trialInfo: "Alle kostenpflichtigen Pläne beinhalten eine 7-tägige kostenlose Testphase. Sie werden erst nach Ablauf der Testphase belastet.",
     // AI Instructions Tab Labels
+    tabGeneral: "Allgemein",
     tabProducts: "Produkte",
     tabCollections: "Collections",
     tabBlogs: "Blogs",
     tabPages: "Seiten",
     tabPolicies: "Richtlinien",
+    // General Tab
+    generalTabDescription: "Diese Anweisungen steuern, wie die \"Formatieren\"-Funktion funktioniert. Die Formatieren-Funktion behält Ihren Originaltext bei und wendet nur Formatierungsänderungen an.",
+    formatPreserveInstructionsLabel: "Format-Anweisungen",
+    formatPreserveInstructionsPlaceholder: "Anweisungen für die Formatieren-Funktion...",
+    formatPreserveInstructionsHelp: "Diese Anweisungen sagen der KI, wie sie Text formatieren soll, ohne dessen Inhalt zu ändern.",
     // AI Instructions Field Names
     fieldAltText: "Alt-Text (Bilder)",
     fieldTitle: "Titel",

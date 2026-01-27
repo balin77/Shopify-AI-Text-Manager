@@ -1,3 +1,19 @@
+/**
+ * @deprecated LEGACY SCRIPT - LOCAL DEVELOPMENT ONLY
+ *
+ * This script is NOT compatible with multi-tenant SaaS deployments.
+ * It uses a single hardcoded shop from environment variables.
+ *
+ * For production SaaS:
+ * - OAuth is handled automatically by @shopify/shopify-app-remix
+ * - Shop credentials are stored in the database per-tenant
+ * - See app/shopify.server.ts for the production OAuth flow
+ *
+ * Only use this script for:
+ * - Initial local development setup
+ * - Testing with a single development shop
+ */
+
 import '@shopify/shopify-api/adapters/node';
 import { shopifyApi, ApiVersion } from '@shopify/shopify-api';
 import express from 'express';
@@ -10,12 +26,23 @@ dotenv.config();
 const API_KEY = process.env.SHOPIFY_API_KEY!;
 const API_SECRET = process.env.SHOPIFY_API_SECRET!;
 const SCOPES = process.env.SHOPIFY_SCOPES?.split(',') || ['read_products', 'write_products'];
-const SHOP = process.env.SHOPIFY_SHOP_NAME!;
+const SHOP = process.env.SHOPIFY_SHOP_NAME; // Optional for legacy local dev
 const HOST = process.env.SHOPIFY_REDIRECT_URI || 'http://localhost:3000/api/auth/callback';
 const API_VERSION = (process.env.SHOPIFY_API_VERSION || '2025-01') as ApiVersion;
 
-if (!API_KEY || !API_SECRET || !SHOP) {
-  console.error('❌ Fehler: SHOPIFY_API_KEY, SHOPIFY_API_SECRET und SHOPIFY_SHOP_NAME müssen in der .env Datei gesetzt sein!');
+if (!API_KEY || !API_SECRET) {
+  console.error('❌ Fehler: SHOPIFY_API_KEY und SHOPIFY_API_SECRET müssen in der .env Datei gesetzt sein!');
+  console.error('');
+  console.error('⚠️  HINWEIS: Dieses Script ist nur für lokale Entwicklung gedacht.');
+  console.error('   Für SaaS-Deployment wird OAuth automatisch vom Shopify App Framework gehandhabt.');
+  process.exit(1);
+}
+
+if (!SHOP) {
+  console.error('❌ Fehler: SHOPIFY_SHOP_NAME muss für dieses Legacy-Script gesetzt sein.');
+  console.error('');
+  console.error('⚠️  HINWEIS: Dieses Script ist nur für lokale Entwicklung gedacht.');
+  console.error('   Für SaaS-Deployment wird OAuth automatisch vom Shopify App Framework gehandhabt.');
   process.exit(1);
 }
 

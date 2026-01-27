@@ -73,6 +73,9 @@ model AIInstructions {
   id   String @id @default(cuid())
   shop String @unique
 
+  // GENERAL - Format Instructions (used by the "Format" function)
+  formatPreserveInstructions String? @db.Text
+
   // PRODUCTS - All fields available
   productTitleFormat             String? @db.Text
   productTitleInstructions       String? @db.Text

@@ -90,9 +90,8 @@ const shopify = shopifyApp({
       }
     },
   },
-  ...(process.env.SHOP_CUSTOM_DOMAIN
-    ? { customShopDomains: [process.env.SHOP_CUSTOM_DOMAIN] }
-    : {}),
+  // Note: customShopDomains removed for multi-tenant SaaS compatibility
+  // Each shop's custom domain is handled automatically by Shopify's OAuth flow
 });
 
 console.log("✅ [SHOPIFY.SERVER] Shopify App initialized");

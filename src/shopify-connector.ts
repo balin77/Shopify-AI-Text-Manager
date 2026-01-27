@@ -10,6 +10,13 @@ export interface ShopifyConfig {
   apiVersion?: string;
 }
 
+/**
+ * ShopifyConnector for direct API access
+ *
+ * NOTE: This class is intended for CLI scripts and testing only.
+ * For the SaaS web app, use the authenticated admin client from shopify.server.ts
+ * which automatically gets credentials from the database session.
+ */
 export class ShopifyConnector {
   private shopify;
   private session: Session;
@@ -17,10 +24,10 @@ export class ShopifyConnector {
   private accessToken: string;
   private apiVersion: string;
 
-  constructor(config?: ShopifyConfig) {
-    const shopName = config?.shopName || process.env.SHOPIFY_SHOP_NAME;
-    const accessToken = config?.accessToken || process.env.SHOPIFY_ACCESS_TOKEN;
-    const apiVersion = config?.apiVersion || process.env.SHOPIFY_API_VERSION || '2025-01';
+  constructor(config: ShopifyConfig) {
+    const shopName = config.shopName;
+    const accessToken = config.accessToken;
+    const apiVersion = config.apiVersion || process.env.SHOPIFY_API_VERSION || '2025-01';
     const apiKey = process.env.SHOPIFY_API_KEY || 'not-needed-for-admin-api';
     const apiSecret = process.env.SHOPIFY_API_SECRET || 'not-needed-for-admin-api';
 
