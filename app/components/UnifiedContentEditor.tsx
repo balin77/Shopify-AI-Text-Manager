@@ -620,6 +620,18 @@ function FieldRenderer(props: FieldRendererProps & { state?: any; handlers?: any
     helpText = `${value.length} ${t.content?.characters || "characters"}`;
   }
 
+  // Map field keys to help tooltip keys
+  const helpKeyMap: Record<string, string> = {
+    title: "title",
+    description: "description",
+    body: "description",
+    handle: "handle",
+    seoTitle: "seoTitle",
+    metaDescription: "metaDescription",
+    altText: "altText",
+  };
+  const helpKey = helpKeyMap[field.key];
+
   // Render based on field type
 
   // Custom render function (if provided)
@@ -730,6 +742,7 @@ function FieldRenderer(props: FieldRendererProps & { state?: any; handlers?: any
         suggestion={suggestion}
         isPrimaryLocale={isPrimaryLocale}
         isTranslated={isTranslated}
+        helpKey={helpKey}
         isLoading={isLoading}
         isDataLoading={isDataLoading}
         sourceTextAvailable={sourceTextAvailable}
@@ -758,6 +771,7 @@ function FieldRenderer(props: FieldRendererProps & { state?: any; handlers?: any
       isPrimaryLocale={isPrimaryLocale}
       isTranslated={isTranslated}
       helpText={helpText}
+      helpKey={helpKey}
       multiline={field.multiline}
       isLoading={isLoading}
       isDataLoading={isDataLoading}

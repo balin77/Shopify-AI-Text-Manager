@@ -1,5 +1,6 @@
-import { TextField, Button } from "@shopify/polaris";
+import { TextField, Button, InlineStack } from "@shopify/polaris";
 import { AISuggestionBanner } from "./AISuggestionBanner";
+import { HelpTooltip } from "./HelpTooltip";
 import { useI18n } from "../contexts/I18nContext";
 import "../styles/AIEditableField.css";
 
@@ -13,6 +14,8 @@ interface AIEditableFieldProps {
   isPrimaryLocale: boolean;
   isTranslated?: boolean;
   helpText?: string;
+  /** Key for help tooltip content from translations (e.g., "title", "description") */
+  helpKey?: string;
   multiline?: number;
   maxLength?: number;
   placeholder?: string;
@@ -43,6 +46,7 @@ export function AIEditableField({
   isPrimaryLocale,
   isTranslated = true,
   helpText,
+  helpKey,
   multiline,
   maxLength,
   placeholder,
@@ -105,7 +109,12 @@ export function AIEditableField({
           </div>
         )}
         <TextField
-          label={<span style={{ fontWeight: 600 }}>{label}</span>}
+          label={
+            <InlineStack gap="100" blockAlign="center">
+              <span style={{ fontWeight: 600 }}>{label}</span>
+              {helpKey && <HelpTooltip helpKey={helpKey} />}
+            </InlineStack>
+          }
           value={value}
           onChange={onChange}
           autoComplete="off"

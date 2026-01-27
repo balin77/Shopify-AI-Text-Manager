@@ -425,6 +425,8 @@ export const de = {
     settingsSaved: "Ihre Einstellungen wurden aktualisiert.",
     changesSaved: "Änderungen erfolgreich gespeichert!",
     warning: "Warnung",
+    learnMore: "Mehr erfahren",
+    examples: "Beispiele:",
     // InfoBox messages
     noContentToFormat: "Kein Inhalt zum Formatieren vorhanden",
     noTargetLanguagesSelected: "Keine Zielsprachen ausgewählt",
@@ -555,6 +557,260 @@ export const de = {
       description: "Beschreibung (mind. 150 Zeichen)",
       metaDescription: "Meta-Description (120-160 Zeichen)",
       imageAlt: "Alle Bilder haben Alt-Texte",
+    },
+  },
+
+  // Help Tooltips
+  help: {
+    // Settings - AI API Access
+    apiKey: {
+      title: "API-Schlüssel",
+      summary: "Ihr geheimer Schlüssel für den Zugriff auf KI-Dienste. Wird sicher verschlüsselt gespeichert.",
+      details: "API-Schlüssel authentifizieren Ihre Anfragen an KI-Anbieter. Jeder Anbieter hat eigene Preismodelle und Limits. Bewahren Sie Ihre Schlüssel sicher auf und teilen Sie sie niemals. Bei Verdacht auf Kompromittierung können Sie in der Konsole des Anbieters neue Schlüssel generieren.",
+      tips: [
+        "Geben Sie den Schlüssel niemals weiter",
+        "Bei Verlust: In der Anbieter-Konsole neuen generieren",
+        "Prüfen Sie regelmäßig Ihre API-Kosten",
+      ],
+    },
+    preferredProvider: {
+      title: "Bevorzugter KI-Anbieter",
+      summary: "Der Standard-Anbieter für alle KI-Funktionen wie Generierung und Übersetzung.",
+      details: "Der bevorzugte Anbieter wird für alle KI-Operationen verwendet. Verschiedene Anbieter haben unterschiedliche Stärken: OpenAI (GPT-4) ist vielseitig, Claude ist gut bei längeren Texten, Gemini bietet ein großzügiges kostenloses Kontingent, DeepSeek ist kostengünstig.",
+      tips: [
+        "Stellen Sie sicher, dass ein API-Key für den gewählten Anbieter hinterlegt ist",
+        "Testen Sie verschiedene Anbieter für Ihre Anwendungsfälle",
+      ],
+    },
+    maxTokensPerMinute: {
+      title: "Max Tokens pro Minute",
+      summary: "Maximale Anzahl an Tokens, die pro Minute verarbeitet werden können.",
+      details: "Tokens sind die Grundeinheiten der KI-Verarbeitung (ca. 4 Zeichen = 1 Token). Dieses Limit verhindert, dass Sie die Rate-Limits Ihres API-Anbieters überschreiten. Setzen Sie es nicht höher als Ihr Anbieterlimit erlaubt.",
+      tips: [
+        "OpenAI: 60.000-150.000 TPM je nach Tier",
+        "Gemini: 60.000 TPM im kostenlosen Tier",
+        "Niedrigere Werte = langsamere, aber stabilere Verarbeitung",
+      ],
+    },
+    maxRequestsPerMinute: {
+      title: "Max Anfragen pro Minute",
+      summary: "Maximale Anzahl an API-Aufrufen pro Minute.",
+      details: "Begrenzt, wie viele separate API-Anfragen pro Minute gesendet werden. Wichtig bei Bulk-Operationen wie \"Alle übersetzen\". Zu hohe Werte können zu Fehlern führen, wenn das Anbieterlimit überschritten wird.",
+      tips: [
+        "OpenAI: 60-500 RPM je nach Tier",
+        "Gemini: 15 RPM im kostenlosen Tier",
+        "Für Bulk-Operationen niedrig halten",
+      ],
+    },
+
+    // Settings - AI Instructions
+    formatInstructions: {
+      title: "Format-Anweisungen",
+      summary: "Steuert, wie die KI Text formatiert, ohne den Inhalt zu ändern.",
+      details: "Diese Anweisungen werden bei der \"Formatieren\"-Funktion verwendet. Die KI behält den Inhalt bei, passt aber Groß-/Kleinschreibung, Interpunktion und Struktur an. Nützlich für konsistente Formatierung über alle Produkte hinweg.",
+      tips: [
+        "Beispiel: 'Ersten Buchstaben groß, keine Punkte am Ende'",
+        "Wird für alle Inhaltstypen verwendet",
+      ],
+    },
+    translateInstructions: {
+      title: "Übersetzungs-Anweisungen",
+      summary: "Steuert Stil und Ton der KI-Übersetzungen.",
+      details: "Diese Anweisungen beeinflussen, wie die KI Texte übersetzt. Sie können Tonalität (formal/informell), Fachbegriffe oder kulturelle Anpassungen festlegen.",
+      tips: [
+        "Beispiel: 'Formelle Ansprache (Sie), Fachbegriffe beibehalten'",
+        "Geben Sie branchenspezifische Terminologie an",
+      ],
+    },
+    fieldFormat: {
+      title: "Formatbeispiel",
+      summary: "Ein Beispiel, wie das ideale Ergebnis aussehen soll.",
+      details: "Geben Sie der KI ein konkretes Beispiel, an dem sie sich orientieren kann. Je präziser das Beispiel, desto konsistenter die Ergebnisse. Das Beispiel sollte Länge, Struktur und Stil des gewünschten Outputs zeigen.",
+      tips: [
+        "Verwenden Sie ein reales Beispiel aus Ihrem Shop",
+        "Zeigen Sie die gewünschte Länge und Struktur",
+      ],
+      examples: [
+        "Premium Leder Geldbörse - Handgefertigt & Zeitlos",
+      ],
+    },
+    fieldInstructions: {
+      title: "Feld-Anweisungen",
+      summary: "Detaillierte Regeln für die KI-Generierung dieses Feldes.",
+      details: "Spezifische Anweisungen, die die KI beim Generieren dieses Feldtyps befolgen soll. Hier können Sie Längenvorgaben, Stil, Keywords und andere Anforderungen definieren.",
+      tips: [
+        "Seien Sie präzise: '50-60 Zeichen' statt 'nicht zu lang'",
+        "Nennen Sie Must-haves: 'Immer Material erwähnen'",
+      ],
+    },
+
+    // Content Fields
+    title: {
+      title: "Titel",
+      summary: "Der Haupttitel, der in Suchergebnissen und im Shop angezeigt wird.",
+      details: "Ein guter Titel ist prägnant, enthält wichtige Keywords und weckt Interesse. Er erscheint in Google-Suchergebnissen und ist oft das Erste, was Kunden sehen.",
+      tips: [
+        "30-70 Zeichen optimal für SEO",
+        "Wichtigste Keywords am Anfang",
+        "Klar und beschreibend",
+      ],
+      examples: [
+        "Premium Leder Geldbörse - Handgefertigt in Deutschland",
+      ],
+    },
+    description: {
+      title: "Beschreibung",
+      summary: "Ausführliche Beschreibung mit Details zu Features, Vorteilen und Anwendung.",
+      details: "Die Beschreibung überzeugt Kunden vom Kauf. Sie sollte alle relevanten Informationen enthalten, gut strukturiert sein (mit Überschriften und Listen) und sowohl informativ als auch verkaufsfördernd wirken.",
+      tips: [
+        "150-300 Wörter für Produkte",
+        "Überschriften (H2/H3) für Struktur nutzen",
+        "Vorteile statt nur Features beschreiben",
+      ],
+    },
+    handle: {
+      title: "URL-Slug",
+      summary: "Der Teil der URL, der nach dem Domain-Namen erscheint.",
+      details: "Der URL-Slug (Handle) sollte kurz, lesbar und keyword-optimiert sein. Er wird in der Browser-Adressleiste angezeigt und beeinflusst SEO. Verwenden Sie nur Kleinbuchstaben, Zahlen und Bindestriche.",
+      tips: [
+        "Nur Kleinbuchstaben und Bindestriche",
+        "Keine Umlaute (ä→ae, ö→oe, ü→ue)",
+        "Max. 50 Zeichen empfohlen",
+      ],
+      examples: [
+        "premium-leder-geldboerse",
+      ],
+    },
+    seoTitle: {
+      title: "SEO-Titel",
+      summary: "Der Titel, der in Google-Suchergebnissen angezeigt wird.",
+      details: "Der SEO-Titel (Meta Title) erscheint als klickbare Überschrift in Suchergebnissen. Er ist einer der wichtigsten SEO-Faktoren. Optimal sind 50-60 Zeichen, danach wird abgeschnitten.",
+      tips: [
+        "50-60 Zeichen optimal",
+        "Hauptkeyword am Anfang",
+        "Markenname am Ende (optional)",
+      ],
+      examples: [
+        "Premium Leder Geldbörse kaufen | Handgefertigt | ShopName",
+      ],
+    },
+    metaDescription: {
+      title: "Meta-Beschreibung",
+      summary: "Der Beschreibungstext unter dem Titel in Suchergebnissen.",
+      details: "Die Meta-Description erscheint als Snippet unter dem SEO-Titel in Google. Sie beeinflusst die Klickrate (CTR). Eine gute Meta-Description fasst den Inhalt zusammen und enthält einen Call-to-Action.",
+      tips: [
+        "150-160 Zeichen optimal",
+        "Enthält relevante Keywords",
+        "Endet mit Handlungsaufforderung",
+      ],
+      examples: [
+        "Handgefertigte Premium Leder Geldbörse aus Vollrindleder. Zeitloses Design, langlebig & elegant. Jetzt entdecken und versandkostenfrei bestellen!",
+      ],
+    },
+    altText: {
+      title: "Alt-Text",
+      summary: "Beschreibender Text für Bilder, wichtig für SEO und Barrierefreiheit.",
+      details: "Alt-Texte beschreiben Bilder für Suchmaschinen und Screenreader. Sie verbessern die Bild-SEO und machen Ihren Shop für sehbehinderte Nutzer zugänglich.",
+      tips: [
+        "60-125 Zeichen empfohlen",
+        "Beschreiben, was zu sehen ist",
+        "Keywords natürlich einbauen",
+      ],
+      examples: [
+        "Dunkelbraune Leder Geldbörse aufgeklappt mit Kartenfächern",
+      ],
+    },
+
+    // AI Actions
+    generateAI: {
+      title: "Mit KI generieren",
+      summary: "Erstellt neuen Inhalt basierend auf Produktdaten und Ihren Anweisungen.",
+      details: "Die KI analysiert vorhandene Produktinformationen (Titel, Bilder, Tags) und generiert passenden Content. Das Ergebnis basiert auf Ihren konfigurierten KI-Anweisungen unter Einstellungen.",
+      tips: [
+        "Funktioniert am besten mit vollständigen Produktdaten",
+        "Ergebnis erscheint als Vorschlag zum Übernehmen",
+        "Anweisungen in Einstellungen > KI-Anweisungen anpassen",
+      ],
+    },
+    formatAI: {
+      title: "Mit KI formatieren",
+      summary: "Verbessert die Formatierung ohne den Inhalt zu ändern.",
+      details: "Passt Groß-/Kleinschreibung, Interpunktion und Struktur an, behält aber den eigentlichen Text bei. Nützlich für konsistente Formatierung über alle Produkte hinweg.",
+      tips: [
+        "Ändert nur Formatierung, nicht den Inhalt",
+        "Ideal für Batch-Korrekturen",
+      ],
+    },
+    translate: {
+      title: "Übersetzen",
+      summary: "Übersetzt den Text aus der Hauptsprache in die aktuelle Sprache.",
+      details: "Verwendet KI für natürliche, kontextbezogene Übersetzungen. Berücksichtigt Ihre Übersetzungs-Anweisungen für Tonalität und Fachbegriffe.",
+      tips: [
+        "Erfordert Text in der Hauptsprache",
+        "Nur bei Fremdsprachen verfügbar",
+      ],
+    },
+    translateAll: {
+      title: "In alle Sprachen übersetzen",
+      summary: "Übersetzt dieses Feld in alle aktiven Shop-Sprachen gleichzeitig.",
+      details: "Startet Übersetzungs-Tasks für alle konfigurierten Sprachen. Die Übersetzungen laufen im Hintergrund und erscheinen unter Aufgaben.",
+      tips: [
+        "Nur in der Hauptsprache verfügbar",
+        "Fortschritt unter Aufgaben sichtbar",
+        "Berücksichtigt Rate-Limits",
+      ],
+    },
+
+    // Tasks
+    taskStatus: {
+      title: "Task-Status",
+      summary: "Zeigt den aktuellen Bearbeitungsstand der Aufgabe.",
+      details: "Wartend = In der Warteschlange. Läuft = Wird gerade verarbeitet. Abgeschlossen = Erfolgreich fertig. Fehlgeschlagen = Fehler aufgetreten (Details im Task).",
+    },
+    taskPending: {
+      title: "Wartend",
+      summary: "Die Aufgabe wartet in der Warteschlange auf Verarbeitung.",
+    },
+    taskRunning: {
+      title: "Läuft",
+      summary: "Die Aufgabe wird gerade von der KI verarbeitet.",
+    },
+    taskCompleted: {
+      title: "Abgeschlossen",
+      summary: "Die Aufgabe wurde erfolgreich fertiggestellt.",
+    },
+    taskFailed: {
+      title: "Fehlgeschlagen",
+      summary: "Bei der Aufgabe ist ein Fehler aufgetreten. Details im Task sichtbar.",
+    },
+
+    // Plan & Usage
+    usageProducts: {
+      title: "Produkte",
+      summary: "Anzahl der synchronisierten Produkte im Vergleich zum Plan-Limit.",
+      details: "Zeigt, wie viele Produkte Sie derzeit nutzen. Beim Erreichen des Limits können keine weiteren Produkte synchronisiert werden. Upgrade erhöht das Limit.",
+    },
+    usageLocales: {
+      title: "Sprachen",
+      summary: "Anzahl der aktiven Übersetzungssprachen.",
+      details: "Zeigt, wie viele Sprachen Sie für Übersetzungen nutzen können. Mehr Sprachen erfordern einen höheren Plan.",
+    },
+    usageCollections: {
+      title: "Kollektionen",
+      summary: "Anzahl der synchronisierten Produktkollektionen.",
+    },
+    usageArticles: {
+      title: "Artikel",
+      summary: "Anzahl der Blog-Artikel, die Sie verwalten können.",
+    },
+    usagePages: {
+      title: "Seiten",
+      summary: "Anzahl der Shop-Seiten (About, Kontakt, etc.).",
+    },
+    usageThemeTranslations: {
+      title: "Theme-Übersetzungen",
+      summary: "Anzahl der übersetzbaren Theme-Textbausteine.",
+      details: "Theme-Texte sind Buttons, Labels und Meldungen in Ihrem Shopify-Theme. Pro+ Pläne ermöglichen die Übersetzung dieser Elemente.",
     },
   },
 };

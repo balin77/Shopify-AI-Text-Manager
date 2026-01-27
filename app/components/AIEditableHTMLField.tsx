@@ -1,6 +1,7 @@
 import { useRef, useEffect } from "react";
 import { Text, Button, ButtonGroup, InlineStack, Tooltip } from "@shopify/polaris";
 import { AISuggestionBanner } from "./AISuggestionBanner";
+import { HelpTooltip } from "./HelpTooltip";
 import { useI18n } from "../contexts/I18nContext";
 import { useHtmlFormatting } from "../hooks/useHtmlFormatting";
 import "../styles/AIEditableField.css";
@@ -16,6 +17,8 @@ interface AIEditableHTMLFieldProps {
   suggestion?: string;
   isPrimaryLocale: boolean;
   isTranslated?: boolean;
+  /** Key for help tooltip content from translations (e.g., "description") */
+  helpKey?: string;
   isLoading?: boolean;
   isDataLoading?: boolean;
   sourceTextAvailable?: boolean;
@@ -44,6 +47,7 @@ export function AIEditableHTMLField({
   suggestion,
   isPrimaryLocale,
   isTranslated = true,
+  helpKey,
   isLoading = false,
   isDataLoading = false,
   sourceTextAvailable = true,
@@ -150,9 +154,12 @@ export function AIEditableHTMLField({
   return (
     <div className={`ai-editable-html-field ${getBackgroundClass()}`}>
       <InlineStack align="space-between" blockAlign="center">
-        <Text as="p" variant="bodyMd" fontWeight="bold">
-          {label}
-        </Text>
+        <InlineStack gap="100" blockAlign="center">
+          <Text as="p" variant="bodyMd" fontWeight="bold">
+            {label}
+          </Text>
+          {helpKey && <HelpTooltip helpKey={helpKey} />}
+        </InlineStack>
         <InlineStack gap="200">
           <Button size="slim" onClick={onToggleMode}>
             {mode === "html" ? t.products.preview : t.products.html}

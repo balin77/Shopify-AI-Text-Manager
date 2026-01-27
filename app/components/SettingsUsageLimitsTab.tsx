@@ -4,6 +4,7 @@ import { usePlan } from "../contexts/PlanContext";
 import type { ResourceType } from "../utils/planUtils";
 import { useNavigate, useFetcher } from "@remix-run/react";
 import { StoragePieChart, type StorageData } from "./StoragePieChart";
+import { HelpTooltip } from "./HelpTooltip";
 
 interface SettingsUsageLimitsTabProps {
   productCount: number;
@@ -24,10 +25,11 @@ interface UsageRowProps {
   isApproaching: boolean;
   isAtLimit: boolean;
   disabled?: boolean;
+  helpKey?: string;
   t: any;
 }
 
-function UsageRow({ label, current, max, percentage, isApproaching, isAtLimit, disabled, t }: UsageRowProps) {
+function UsageRow({ label, current, max, percentage, isApproaching, isAtLimit, disabled, helpKey, t }: UsageRowProps) {
   const getProgressTone = (): "highlight" | "primary" | "success" | "critical" => {
     if (isAtLimit) return "critical";
     if (isApproaching) return "highlight";
@@ -56,7 +58,10 @@ function UsageRow({ label, current, max, percentage, isApproaching, isAtLimit, d
     }}>
       <BlockStack gap="200">
         <InlineStack align="space-between">
-          <Text as="span" fontWeight="semibold">{label}</Text>
+          <InlineStack gap="100" blockAlign="center">
+            <Text as="span" fontWeight="semibold">{label}</Text>
+            {helpKey && <HelpTooltip helpKey={helpKey} />}
+          </InlineStack>
           <Text as="span" tone={disabled ? "subdued" : undefined}>
             {disabled ? "0 / 0" : `${current.toLocaleString()} / ${formatMax(max)}`}
           </Text>
@@ -205,6 +210,15 @@ export function SettingsUsageLimitsTab({
     themeTranslations: t.settings?.usageThemeTranslations || "Theme-Ubersetzungen",
   };
 
+  const helpKeyMap: Record<ResourceType, string> = {
+    products: "usageProducts",
+    locales: "usageLocales",
+    collections: "usageCollections",
+    articles: "usageArticles",
+    pages: "usagePages",
+    themeTranslations: "usageThemeTranslations",
+  };
+
   const getResourceData = (resource: ResourceType) => ({
     label: resourceLabels[resource],
     current: counts[resource],
@@ -213,6 +227,7 @@ export function SettingsUsageLimitsTab({
     isApproaching: isApproachingLimit(resource, counts[resource]),
     isAtLimit: isAtLimit(resource, counts[resource]),
     disabled: (limits[`max${resource.charAt(0).toUpperCase() + resource.slice(1)}` as keyof typeof limits] as number) === 0,
+    helpKey: helpKeyMap[resource],
   });
 
   return (

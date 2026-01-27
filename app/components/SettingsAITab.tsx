@@ -13,6 +13,7 @@ import {
 } from "@shopify/polaris";
 import { ViewIcon, HideIcon } from "@shopify/polaris-icons";
 import { SaveDiscardButtons } from "./SaveDiscardButtons";
+import { HelpTooltip } from "./HelpTooltip";
 import { hasApiKeyForProvider, getProviderDisplayName, type AIProvider } from "../utils/api-key-validation";
 
 interface Settings {
@@ -225,7 +226,12 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
         )}
 
         <Select
-          label={t.settings.preferredProvider}
+          label={
+            <InlineStack gap="100" blockAlign="center">
+              <span>{t.settings.preferredProvider}</span>
+              <HelpTooltip helpKey="preferredProvider" />
+            </InlineStack>
+          }
           options={AI_PROVIDERS}
           value={provider}
           onChange={setProvider}
@@ -241,7 +247,10 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
             {/* OpenAI */}
             <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
               <BlockStack gap="400">
-                <Text as="h3" variant="headingMd">OpenAI</Text>
+                <InlineStack gap="100" blockAlign="center">
+                  <Text as="h3" variant="headingMd">OpenAI</Text>
+                  <HelpTooltip helpKey="apiKey" />
+                </InlineStack>
                 <TextField
                   label="API Key"
                   value={openaiKey}
@@ -281,7 +290,12 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                 <InlineStack gap="400">
                   <div style={{ flex: 1 }}>
                     <TextField
-                      label={t.settings.maxTokensPerMinute}
+                      label={
+                        <InlineStack gap="100" blockAlign="center">
+                          <span>{t.settings.maxTokensPerMinute}</span>
+                          <HelpTooltip helpKey="maxTokensPerMinute" />
+                        </InlineStack>
+                      }
                       value={openaiMaxTokensPerMinute}
                       onChange={setOpenaiMaxTokensPerMinute}
                       type="number"
@@ -290,7 +304,12 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                   </div>
                   <div style={{ flex: 1 }}>
                     <TextField
-                      label={t.settings.maxRequestsPerMinute}
+                      label={
+                        <InlineStack gap="100" blockAlign="center">
+                          <span>{t.settings.maxRequestsPerMinute}</span>
+                          <HelpTooltip helpKey="maxRequestsPerMinute" />
+                        </InlineStack>
+                      }
                       value={openaiMaxRequestsPerMinute}
                       onChange={setOpenaiMaxRequestsPerMinute}
                       type="number"

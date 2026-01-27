@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { BlockStack, Text, Button, InlineStack, Card, TextField } from "@shopify/polaris";
 import { AIInstructionFieldGroup } from "./AIInstructionFieldGroup";
 import { SaveDiscardButtons } from "./SaveDiscardButtons";
+import { HelpTooltip } from "./HelpTooltip";
 import {
   getDefaultInstructions,
   getDefaultForField,
@@ -270,9 +271,12 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, on
                 {/* Format Instructions */}
                 <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
                   <BlockStack gap="400">
-                    <Text as="h3" variant="headingMd">
-                      {t.settings.formatPreserveInstructionsLabel || 'Format Instructions'}
-                    </Text>
+                    <InlineStack gap="100" blockAlign="center">
+                      <Text as="h3" variant="headingMd">
+                        {t.settings.formatPreserveInstructionsLabel || 'Format Instructions'}
+                      </Text>
+                      <HelpTooltip helpKey="formatInstructions" />
+                    </InlineStack>
                     <div>
                       <InlineStack align="space-between" blockAlign="center">
                         <Text as="p" variant="bodyMd" fontWeight="medium">
@@ -303,9 +307,12 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, on
                 {/* Translate Instructions */}
                 <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
                   <BlockStack gap="400">
-                    <Text as="h3" variant="headingMd">
-                      {t.settings.translateInstructionsLabel || 'Translate Instructions'}
-                    </Text>
+                    <InlineStack gap="100" blockAlign="center">
+                      <Text as="h3" variant="headingMd">
+                        {t.settings.translateInstructionsLabel || 'Translate Instructions'}
+                      </Text>
+                      <HelpTooltip helpKey="translateInstructions" />
+                    </InlineStack>
                     <div>
                       <InlineStack align="space-between" blockAlign="center">
                         <Text as="p" variant="bodyMd" fontWeight="medium">

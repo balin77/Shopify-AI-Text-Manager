@@ -427,6 +427,8 @@ export const en: Translation = {
     settingsSaved: "Your settings have been updated.",
     changesSaved: "Changes saved successfully!",
     warning: "Warning",
+    learnMore: "Learn more",
+    examples: "Examples:",
     // InfoBox messages
     noContentToFormat: "No content available to format",
     noTargetLanguagesSelected: "No target languages selected",
@@ -557,6 +559,260 @@ export const en: Translation = {
       description: "Description (min. 150 characters)",
       metaDescription: "Meta description (120-160 characters)",
       imageAlt: "All images have alt texts",
+    },
+  },
+
+  // Help Tooltips
+  help: {
+    // Settings - AI API Access
+    apiKey: {
+      title: "API Key",
+      summary: "Your secret key for accessing AI services. Stored securely encrypted.",
+      details: "API keys authenticate your requests to AI providers. Each provider has its own pricing and limits. Keep your keys safe and never share them. If you suspect compromise, generate new keys in the provider's console.",
+      tips: [
+        "Never share your API key",
+        "If compromised: Generate a new one in the provider console",
+        "Monitor your API costs regularly",
+      ],
+    },
+    preferredProvider: {
+      title: "Preferred AI Provider",
+      summary: "The default provider for all AI functions like generation and translation.",
+      details: "The preferred provider is used for all AI operations. Different providers have different strengths: OpenAI (GPT-4) is versatile, Claude excels at longer texts, Gemini offers a generous free tier, DeepSeek is cost-effective.",
+      tips: [
+        "Make sure an API key is configured for the selected provider",
+        "Test different providers for your use cases",
+      ],
+    },
+    maxTokensPerMinute: {
+      title: "Max Tokens per Minute",
+      summary: "Maximum number of tokens that can be processed per minute.",
+      details: "Tokens are the basic units of AI processing (approx. 4 characters = 1 token). This limit prevents exceeding your API provider's rate limits. Don't set it higher than your provider allows.",
+      tips: [
+        "OpenAI: 60,000-150,000 TPM depending on tier",
+        "Gemini: 60,000 TPM in free tier",
+        "Lower values = slower but more stable processing",
+      ],
+    },
+    maxRequestsPerMinute: {
+      title: "Max Requests per Minute",
+      summary: "Maximum number of API calls per minute.",
+      details: "Limits how many separate API requests are sent per minute. Important for bulk operations like \"Translate All\". Too high values can cause errors when the provider limit is exceeded.",
+      tips: [
+        "OpenAI: 60-500 RPM depending on tier",
+        "Gemini: 15 RPM in free tier",
+        "Keep low for bulk operations",
+      ],
+    },
+
+    // Settings - AI Instructions
+    formatInstructions: {
+      title: "Format Instructions",
+      summary: "Controls how the AI formats text without changing the content.",
+      details: "These instructions are used by the \"Format\" function. The AI preserves the content but adjusts capitalization, punctuation, and structure. Useful for consistent formatting across all products.",
+      tips: [
+        "Example: 'Capitalize first letter, no periods at end'",
+        "Applied to all content types",
+      ],
+    },
+    translateInstructions: {
+      title: "Translation Instructions",
+      summary: "Controls the style and tone of AI translations.",
+      details: "These instructions affect how the AI translates texts. You can specify tonality (formal/informal), technical terms, or cultural adaptations.",
+      tips: [
+        "Example: 'Formal address, keep technical terms'",
+        "Specify industry-specific terminology",
+      ],
+    },
+    fieldFormat: {
+      title: "Format Example",
+      summary: "An example of what the ideal result should look like.",
+      details: "Give the AI a concrete example to follow. The more precise the example, the more consistent the results. The example should show the desired length, structure, and style of the output.",
+      tips: [
+        "Use a real example from your shop",
+        "Show the desired length and structure",
+      ],
+      examples: [
+        "Premium Leather Wallet - Handcrafted & Timeless",
+      ],
+    },
+    fieldInstructions: {
+      title: "Field Instructions",
+      summary: "Detailed rules for AI generation of this field.",
+      details: "Specific instructions that the AI should follow when generating this field type. Here you can define length requirements, style, keywords, and other requirements.",
+      tips: [
+        "Be precise: '50-60 characters' instead of 'not too long'",
+        "List must-haves: 'Always mention material'",
+      ],
+    },
+
+    // Content Fields
+    title: {
+      title: "Title",
+      summary: "The main title displayed in search results and in the shop.",
+      details: "A good title is concise, contains important keywords, and sparks interest. It appears in Google search results and is often the first thing customers see.",
+      tips: [
+        "30-70 characters optimal for SEO",
+        "Most important keywords at the beginning",
+        "Clear and descriptive",
+      ],
+      examples: [
+        "Premium Leather Wallet - Handcrafted in Germany",
+      ],
+    },
+    description: {
+      title: "Description",
+      summary: "Detailed description with features, benefits, and usage information.",
+      details: "The description convinces customers to buy. It should contain all relevant information, be well-structured (with headings and lists), and be both informative and sales-promoting.",
+      tips: [
+        "150-300 words for products",
+        "Use headings (H2/H3) for structure",
+        "Describe benefits, not just features",
+      ],
+    },
+    handle: {
+      title: "URL Slug",
+      summary: "The part of the URL that appears after the domain name.",
+      details: "The URL slug (handle) should be short, readable, and keyword-optimized. It's displayed in the browser address bar and affects SEO. Use only lowercase letters, numbers, and hyphens.",
+      tips: [
+        "Only lowercase and hyphens",
+        "No special characters or umlauts",
+        "Max. 50 characters recommended",
+      ],
+      examples: [
+        "premium-leather-wallet",
+      ],
+    },
+    seoTitle: {
+      title: "SEO Title",
+      summary: "The title displayed in Google search results.",
+      details: "The SEO title (Meta Title) appears as the clickable headline in search results. It's one of the most important SEO factors. 50-60 characters is optimal, anything longer gets truncated.",
+      tips: [
+        "50-60 characters optimal",
+        "Main keyword at the beginning",
+        "Brand name at the end (optional)",
+      ],
+      examples: [
+        "Buy Premium Leather Wallet | Handcrafted | ShopName",
+      ],
+    },
+    metaDescription: {
+      title: "Meta Description",
+      summary: "The description text below the title in search results.",
+      details: "The meta description appears as a snippet below the SEO title in Google. It affects click-through rate (CTR). A good meta description summarizes the content and includes a call-to-action.",
+      tips: [
+        "150-160 characters optimal",
+        "Contains relevant keywords",
+        "Ends with call-to-action",
+      ],
+      examples: [
+        "Handcrafted premium leather wallet from full-grain leather. Timeless design, durable & elegant. Discover now and order with free shipping!",
+      ],
+    },
+    altText: {
+      title: "Alt Text",
+      summary: "Descriptive text for images, important for SEO and accessibility.",
+      details: "Alt texts describe images for search engines and screen readers. They improve image SEO and make your shop accessible to visually impaired users.",
+      tips: [
+        "60-125 characters recommended",
+        "Describe what is visible",
+        "Include keywords naturally",
+      ],
+      examples: [
+        "Dark brown leather wallet open showing card slots",
+      ],
+    },
+
+    // AI Actions
+    generateAI: {
+      title: "Generate with AI",
+      summary: "Creates new content based on product data and your instructions.",
+      details: "The AI analyzes existing product information (title, images, tags) and generates suitable content. The result is based on your configured AI instructions in Settings.",
+      tips: [
+        "Works best with complete product data",
+        "Result appears as a suggestion to accept",
+        "Customize instructions in Settings > AI Instructions",
+      ],
+    },
+    formatAI: {
+      title: "Format with AI",
+      summary: "Improves formatting without changing the content.",
+      details: "Adjusts capitalization, punctuation, and structure but preserves the actual text. Useful for consistent formatting across all products.",
+      tips: [
+        "Only changes formatting, not content",
+        "Ideal for batch corrections",
+      ],
+    },
+    translate: {
+      title: "Translate",
+      summary: "Translates the text from the primary language to the current language.",
+      details: "Uses AI for natural, context-aware translations. Considers your translation instructions for tonality and technical terms.",
+      tips: [
+        "Requires text in primary language",
+        "Only available for foreign languages",
+      ],
+    },
+    translateAll: {
+      title: "Translate to All Languages",
+      summary: "Translates this field to all active shop languages simultaneously.",
+      details: "Starts translation tasks for all configured languages. Translations run in the background and appear under Tasks.",
+      tips: [
+        "Only available in primary language",
+        "Progress visible under Tasks",
+        "Respects rate limits",
+      ],
+    },
+
+    // Tasks
+    taskStatus: {
+      title: "Task Status",
+      summary: "Shows the current processing status of the task.",
+      details: "Pending = In queue. Running = Currently being processed. Completed = Successfully finished. Failed = Error occurred (see task details).",
+    },
+    taskPending: {
+      title: "Pending",
+      summary: "The task is waiting in the queue for processing.",
+    },
+    taskRunning: {
+      title: "Running",
+      summary: "The task is currently being processed by the AI.",
+    },
+    taskCompleted: {
+      title: "Completed",
+      summary: "The task has been successfully completed.",
+    },
+    taskFailed: {
+      title: "Failed",
+      summary: "An error occurred during the task. Details visible in the task.",
+    },
+
+    // Plan & Usage
+    usageProducts: {
+      title: "Products",
+      summary: "Number of synced products compared to plan limit.",
+      details: "Shows how many products you are currently using. When the limit is reached, no more products can be synced. Upgrading increases the limit.",
+    },
+    usageLocales: {
+      title: "Languages",
+      summary: "Number of active translation languages.",
+      details: "Shows how many languages you can use for translations. More languages require a higher plan.",
+    },
+    usageCollections: {
+      title: "Collections",
+      summary: "Number of synced product collections.",
+    },
+    usageArticles: {
+      title: "Articles",
+      summary: "Number of blog articles you can manage.",
+    },
+    usagePages: {
+      title: "Pages",
+      summary: "Number of shop pages (About, Contact, etc.).",
+    },
+    usageThemeTranslations: {
+      title: "Theme Translations",
+      summary: "Number of translatable theme text elements.",
+      details: "Theme texts are buttons, labels, and messages in your Shopify theme. Pro+ plans allow translation of these elements.",
     },
   },
 };
