@@ -7,7 +7,8 @@
  * 1. Old theme content and translations (since theme sync is disabled)
  * 2. Expired tasks (older than 3 days)
  * 3. Old webhook logs (older than 24 hours)
- * 4. Orphaned translations (translations without parent resources)
+ * 4. Excess product images (only first image is kept, others loaded on-demand)
+ * 5. Orphaned translations (translations without parent resources)
  *
  * Run this manually or schedule it as a cron job on Railway.
  */
@@ -55,8 +56,17 @@ async function cleanupDatabase() {
     });
     console.log(`   ✓ Deleted ${webhookLogsDeleted.count} old webhook logs`);
 
-    // 4. Find and delete orphaned content translations
-    console.log('\n4️⃣ Finding orphaned content translations...');
+    // 4. Delete excess product images (keep only first image per product)
+    console.log('\n4️⃣ Cleaning up excess product images...');
+    const excessImagesDeleted = await db.productImage.deleteMany({
+      where: {
+        position: { gt: 0 } // Delete all images except the first one (position 0)
+      }
+    });
+    console.log(`   ✓ Deleted ${excessImagesDeleted.count} excess product images (keeping only first image)`);
+
+    // 5. Find and delete orphaned content translations
+    console.log('\n5️⃣ Finding orphaned content translations...');
 
     // Get all unique resourceIds from ContentTranslation
     const translations = await db.contentTranslation.findMany({
@@ -110,8 +120,8 @@ async function cleanupDatabase() {
 
     console.log(`   ✓ Deleted ${orphanedCount} orphaned content translations`);
 
-    // 5. Run VACUUM to reclaim disk space (PostgreSQL specific)
-    console.log('\n5️⃣ Running VACUUM to reclaim disk space...');
+    // 6. Run VACUUM to reclaim disk space (PostgreSQL specific)
+    console.log('\n6️⃣ Running VACUUM to reclaim disk space...');
     try {
       await db.$executeRawUnsafe('VACUUM FULL;');
       console.log('   ✓ VACUUM completed successfully');
@@ -128,12 +138,14 @@ async function cleanupDatabase() {
     console.log(`  • Theme content: ${themeContentDeleted.count}`);
     console.log(`  • Expired tasks: ${expiredTasksDeleted.count}`);
     console.log(`  • Webhook logs: ${webhookLogsDeleted.count}`);
+    console.log(`  • Excess product images: ${excessImagesDeleted.count}`);
     console.log(`  • Orphaned translations: ${orphanedCount}`);
     console.log(`  • Total records deleted: ${
       themeTranslationsDeleted.count +
       themeContentDeleted.count +
       expiredTasksDeleted.count +
       webhookLogsDeleted.count +
+      excessImagesDeleted.count +
       orphanedCount
     }`);
     console.log('='.repeat(50));

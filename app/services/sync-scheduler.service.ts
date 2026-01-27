@@ -234,7 +234,24 @@ class SyncSchedulerService {
         }
       });
 
-      console.log(`[SyncScheduler] Cleanup complete: ${expiredTasks.count} tasks, ${webhookLogs.count} logs`);
+      // 3. Delete excess product images (keep only first image per product)
+      // Images beyond position 0 are loaded on-demand from Shopify API
+      const excessImages = await db.productImage.deleteMany({
+        where: {
+          position: { gt: 0 } // Delete all images except the first one (position 0)
+        }
+      });
+
+      // 4. Delete orphaned image alt-text translations (images that no longer exist)
+      const orphanedAltTexts = await db.productImageAltTranslation.deleteMany({
+        where: {
+          image: {
+            is: null // Cascading delete should handle this, but just in case
+          }
+        }
+      });
+
+      console.log(`[SyncScheduler] Cleanup complete: ${expiredTasks.count} tasks, ${webhookLogs.count} logs, ${excessImages.count} excess images`);
       console.log(`[SyncScheduler] Note: Theme data cleanup is now handled by aggressive sync (every 40s)`);
     } catch (error) {
       console.error('[SyncScheduler] Cleanup error:', error);
