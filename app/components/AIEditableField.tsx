@@ -21,6 +21,8 @@ interface AIEditableFieldProps {
   sourceTextAvailable?: boolean;
   hasMissingTranslations?: boolean;
   hasFieldMissingTranslations?: boolean;
+  /** If true, only "Improve with AI" is shown (disabled when empty). Used for templates. */
+  disableGeneration?: boolean;
   onGenerateAI?: () => void;
   onFormatAI?: () => void;
   onTranslate?: () => void;
@@ -49,6 +51,7 @@ export function AIEditableField({
   sourceTextAvailable = true,
   hasMissingTranslations = false,
   hasFieldMissingTranslations = false,
+  disableGeneration = false,
   onGenerateAI,
   onFormatAI,
   onTranslate,
@@ -142,9 +145,11 @@ export function AIEditableField({
               size="slim"
               onClick={onGenerateAI}
               loading={isLoading}
-              disabled={!value}
+              disabled={disableGeneration && !value}
             >
-              ✨ {t.products.aiImprove || "Improve with AI"}
+              ✨ {disableGeneration || value
+                ? (t.products.aiImprove || "Improve with AI")
+                : (t.products.aiGenerateShort || "Generate with AI")}
             </Button>
           )}
           {onFormatAI && (
