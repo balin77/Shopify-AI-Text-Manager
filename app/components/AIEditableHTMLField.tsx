@@ -1,7 +1,8 @@
 import { useRef, useEffect } from "react";
-import { Text, Button, ButtonGroup, InlineStack, Tooltip } from "@shopify/polaris";
+import { Text, Button, InlineStack } from "@shopify/polaris";
 import { AISuggestionBanner } from "./AISuggestionBanner";
 import { HelpTooltip } from "./HelpTooltip";
+import { HtmlFormattingToolbar } from "./HtmlFormattingToolbar";
 import { useI18n } from "../contexts/I18nContext";
 import { useHtmlFormatting } from "../hooks/useHtmlFormatting";
 import "../styles/AIEditableField.css";
@@ -178,139 +179,8 @@ export function AIEditableHTMLField({
       </InlineStack>
 
       {mode === "rendered" && (
-        <div
-          style={{
-            marginTop: "0.5rem",
-            display: "flex",
-            gap: "0.25rem",
-            flexWrap: "wrap",
-            padding: "0.5rem",
-            background: "#f6f6f7",
-            border: "1px solid #c9cccf",
-            borderRadius: "8px 8px 0 0",
-          }}
-        >
-          {/* Text Formatting */}
-          <ButtonGroup variant="segmented">
-            <Tooltip content="Fett">
-              <Button size="slim" onClick={() => handleFormatText("bold")}>
-                B
-              </Button>
-            </Tooltip>
-            <Tooltip content="Kursiv">
-              <Button size="slim" onClick={() => handleFormatText("italic")}>
-                I
-              </Button>
-            </Tooltip>
-            <Tooltip content="Unterstrichen">
-              <Button size="slim" onClick={() => handleFormatText("underline")}>
-                U
-              </Button>
-            </Tooltip>
-            <Tooltip content="Durchgestrichen">
-              <Button size="slim" onClick={() => handleFormatText("strikethrough")}>
-                S
-              </Button>
-            </Tooltip>
-          </ButtonGroup>
-
-          {/* Headings & Normal Text */}
-          <ButtonGroup variant="segmented">
-            <Tooltip content="Überschrift 1">
-              <Button size="slim" onClick={() => handleFormatText("h1")}>
-                H1
-              </Button>
-            </Tooltip>
-            <Tooltip content="Überschrift 2">
-              <Button size="slim" onClick={() => handleFormatText("h2")}>
-                H2
-              </Button>
-            </Tooltip>
-            <Tooltip content="Überschrift 3">
-              <Button size="slim" onClick={() => handleFormatText("h3")}>
-                H3
-              </Button>
-            </Tooltip>
-            <Tooltip content="Normaler Text / Absatz">
-              <Button size="slim" onClick={() => handleFormatText("p")}>
-                Text
-              </Button>
-            </Tooltip>
-          </ButtonGroup>
-
-          {/* Lists */}
-          <ButtonGroup variant="segmented">
-            <Tooltip content="Aufzählungsliste">
-              <Button size="slim" onClick={() => handleFormatText("ul")}>
-                {t.products.formatting.list}
-              </Button>
-            </Tooltip>
-            <Tooltip content="Nummerierte Liste">
-              <Button size="slim" onClick={() => handleFormatText("ol")}>
-                {t.products.formatting.numberedList}
-              </Button>
-            </Tooltip>
-          </ButtonGroup>
-
-          {/* Special Formats */}
-          <ButtonGroup variant="segmented">
-            <Tooltip content="Zitat-Block">
-              <Button size="slim" onClick={() => handleFormatText("blockquote")}>
-                ""
-              </Button>
-            </Tooltip>
-            <Tooltip content="Code-Block">
-              <Button size="slim" onClick={() => handleFormatText("code")}>
-                {"</>"}
-              </Button>
-            </Tooltip>
-          </ButtonGroup>
-
-          {/* Links */}
-          <ButtonGroup variant="segmented">
-            <Tooltip content="Link einfügen">
-              <Button size="slim" onClick={() => handleFormatText("link")}>
-                🔗
-              </Button>
-            </Tooltip>
-            <Tooltip content="Link entfernen">
-              <Button size="slim" onClick={() => handleFormatText("unlink")}>
-                🔗✖
-              </Button>
-            </Tooltip>
-          </ButtonGroup>
-
-          {/* Line Break */}
-          <ButtonGroup variant="segmented">
-            <Tooltip content="Zeilenumbruch">
-              <Button size="slim" onClick={() => handleFormatText("br")}>
-                {t.products.formatting.lineBreak}
-              </Button>
-            </Tooltip>
-          </ButtonGroup>
-
-          {/* Undo/Redo */}
-          <ButtonGroup variant="segmented">
-            <Tooltip content="Rückgängig">
-              <Button size="slim" onClick={() => handleFormatText("undo")}>
-                ↶
-              </Button>
-            </Tooltip>
-            <Tooltip content="Wiederholen">
-              <Button size="slim" onClick={() => handleFormatText("redo")}>
-                ↷
-              </Button>
-            </Tooltip>
-          </ButtonGroup>
-
-          {/* Clear Formatting */}
-          <ButtonGroup variant="segmented">
-            <Tooltip content="Formatierung entfernen">
-              <Button size="slim" onClick={() => handleFormatText("removeFormat")} tone="critical">
-                ✖
-              </Button>
-            </Tooltip>
-          </ButtonGroup>
+        <div style={{ marginTop: "0.5rem" }}>
+          <HtmlFormattingToolbar onCommand={handleFormatText} />
         </div>
       )}
 
