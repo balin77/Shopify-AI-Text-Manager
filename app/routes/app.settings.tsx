@@ -879,35 +879,55 @@ export default function SettingsPage() {
 
                                 <BlockStack gap="200">
                                   <Text as="p" variant="bodyMd">
-                                    <strong>{t.settings?.usageProducts || "Produkte"}:</strong>{' '}
-                                    {planDetails.maxProducts === Infinity
-                                      ? t.settings.unlimited
-                                      : planDetails.maxProducts.toLocaleString()}
-                                  </Text>
-                                  <Text as="p" variant="bodyMd">
-                                    <strong>{t.settings?.usageLocales || "Sprachen"}:</strong>{' '}
-                                    {planDetails.maxLocales}
-                                  </Text>
-                                  <Text as="p" variant="bodyMd">
-                                    <strong>{t.settings?.usageCollections || "Kollektionen"}:</strong>{' '}
-                                    {planDetails.maxCollections.toLocaleString()}
-                                  </Text>
-                                  <Text as="p" variant="bodyMd">
-                                    <strong>{t.settings?.usageArticles || "Artikel"}:</strong>{' '}
-                                    {planDetails.maxArticles === 0 ? "—" : planDetails.maxArticles.toLocaleString()}
-                                  </Text>
-                                  <Text as="p" variant="bodyMd">
-                                    <strong>{t.settings?.usagePages || "Seiten"}:</strong>{' '}
-                                    {planDetails.maxPages === 0 ? "—" : planDetails.maxPages.toLocaleString()}
-                                  </Text>
-                                  <Text as="p" variant="bodyMd">
-                                    <strong>{t.settings?.usageThemeTranslations || "Theme-Übersetzungen"}:</strong>{' '}
-                                    {planDetails.maxThemeTranslations === 0 ? "—" : planDetails.maxThemeTranslations.toLocaleString()}
+                                    <strong>{t.settings?.usageLocales || "Sprachen"}:</strong> {planDetails.maxLocales}
                                   </Text>
                                   <Text as="p" variant="bodyMd">
                                     <strong>{t.settings.images}:</strong>{' '}
                                     {planDetails.productImages === 'all' ? t.settings.allImages : t.settings.featuredImageOnly}
                                   </Text>
+                                  <Text as="p" variant="bodyMd">
+                                    <strong>{t.settings.contentTypes}:</strong>
+                                  </Text>
+                                  <BlockStack gap="100">
+                                    {planDetails.contentTypes.map((type) => {
+                                      // Get limit for this content type
+                                      const getLimitText = () => {
+                                        switch (type) {
+                                          case 'products':
+                                            return planDetails.maxProducts === Infinity
+                                              ? t.settings.unlimited
+                                              : planDetails.maxProducts.toLocaleString();
+                                          case 'collections':
+                                            return planDetails.maxCollections.toLocaleString();
+                                          case 'articles':
+                                            return planDetails.maxArticles.toLocaleString();
+                                          case 'pages':
+                                            return planDetails.maxPages.toLocaleString();
+                                          case 'templates':
+                                            return planDetails.maxThemeTranslations === 0
+                                              ? "—"
+                                              : planDetails.maxThemeTranslations.toLocaleString();
+                                          default:
+                                            return null;
+                                        }
+                                      };
+
+                                      const limit = getLimitText();
+                                      let note = limit ? ` (${limit})` : "";
+
+                                      if (type === "menus") {
+                                        note = ` (${t.settings.readOnly || "read-only"})`;
+                                      } else if (type === "metaobjects" || type === "metadata") {
+                                        note = ` (${t.settings.comingSoon || "coming soon"})`;
+                                      }
+
+                                      return (
+                                        <Text key={type} as="p" variant="bodySm" tone="success">
+                                          ✓ {type}{note}
+                                        </Text>
+                                      );
+                                    })}
+                                  </BlockStack>
                                 </BlockStack>
                               </BlockStack>
 
