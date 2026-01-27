@@ -48,7 +48,7 @@ export function AISuggestionBanner({
           {titleLabel}
         </Text>
         {isHtml ? (
-          <div dangerouslySetInnerHTML={{ __html: suggestionText }} />
+          <div className="ai-suggestion-html-content" dangerouslySetInnerHTML={{ __html: suggestionText }} />
         ) : (
           <Text as="p" variant="bodyMd">
             {suggestionText}

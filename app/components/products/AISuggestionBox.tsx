@@ -38,7 +38,7 @@ export function AISuggestionBox({
           {t.products.aiSuggestion}
         </Text>
         {isHtml ? (
-          <div dangerouslySetInnerHTML={{ __html: suggestion }} />
+          <div className="ai-suggestion-html-content" dangerouslySetInnerHTML={{ __html: suggestion }} />
         ) : (
           <Text as="p" variant="bodyMd">
             {suggestion}
