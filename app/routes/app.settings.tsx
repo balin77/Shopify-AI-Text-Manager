@@ -372,6 +372,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       },
     });
   } catch (error: unknown) {
+    // Re-throw Response objects (e.g., auth redirects) to let the framework handle them
+    if (error instanceof Response) {
+      throw error;
+    }
+
     console.error('[SETTINGS LOADER] Fatal error:', error);
     // Use safe error handler
     const safeError = toSafeErrorResponse(error, {
