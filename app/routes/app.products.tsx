@@ -12,7 +12,7 @@
  */
 
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useFetcher } from "@remix-run/react";
+import { useLoaderData, useFetcher, useRevalidator } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
 import { ContentTypeNavigation } from "../components/ContentTypeNavigation";
@@ -24,7 +24,7 @@ import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { usePlan } from "../contexts/PlanContext";
 import { useNavigationHeight } from "../contexts/NavigationHeightContext";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import type { ContentItem } from "../types/content-editor.types";
 
 // ============================================================================
@@ -222,11 +222,17 @@ export default function ProductsPage() {
   const { products, shopLocales, primaryLocale, error, aiSettings, plan, maxProducts } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const syncFetcher = useFetcher<{ success: boolean; synced: number; total: number }>();
+  const translationSyncFetcher = useFetcher<{ success: boolean }>();
+  const revalidator = useRevalidator();
   const { t } = useI18n();
   const { showInfoBox, setGlobalLoading } = useInfoBox();
   const { getNextPlanUpgrade } = usePlan();
   const { setContentNavHeight } = useNavigationHeight();
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isLoadingTranslations, setIsLoadingTranslations] = useState(false);
+
+  // Track which products we've already synced translations for (to avoid duplicate syncs)
+  const syncedProductsRef = useRef<Set<string>>(new Set());
 
   // Initialize unified content editor
   const editor = useUnifiedContentEditor({
@@ -238,6 +244,60 @@ export default function ProductsPage() {
     showInfoBox,
     t,
   });
+
+  // ============================================================================
+  // ON-DEMAND TRANSLATION LOADING
+  // When a product is selected, check if it has translations. If not, load them.
+  // ============================================================================
+
+  const selectedProductId = editor.state.selectedItemId;
+  const selectedProduct = editor.selectedItem;
+
+  useEffect(() => {
+    // Skip if no product selected or already loading
+    if (!selectedProductId || !selectedProduct || isLoadingTranslations) return;
+
+    // Skip if we've already synced this product
+    if (syncedProductsRef.current.has(selectedProductId)) return;
+
+    // Check if product has any translations
+    const hasTranslations = selectedProduct.translations && selectedProduct.translations.length > 0;
+
+    // If product has no translations, trigger sync
+    if (!hasTranslations) {
+      console.log(`🔄 [ON-DEMAND] Product "${selectedProduct.title}" has no translations, loading...`);
+      setIsLoadingTranslations(true);
+
+      // Mark as synced to prevent duplicate syncs
+      syncedProductsRef.current.add(selectedProductId);
+
+      // Trigger the sync API for this product
+      translationSyncFetcher.submit(
+        {
+          resourceId: selectedProductId,
+          resourceType: "product",
+          locale: primaryLocale,
+        },
+        { method: "POST", action: "/api/sync-single-resource" }
+      );
+    }
+  }, [selectedProductId, selectedProduct, isLoadingTranslations, primaryLocale]);
+
+  // Handle translation sync completion
+  useEffect(() => {
+    if (isLoadingTranslations && translationSyncFetcher.state === "idle" && translationSyncFetcher.data) {
+      console.log("✅ [ON-DEMAND] Translation sync complete:", translationSyncFetcher.data);
+      setIsLoadingTranslations(false);
+
+      if (translationSyncFetcher.data.success) {
+        // Revalidate to fetch fresh data with translations
+        if (revalidator.state === "idle") {
+          console.log("🔄 [ON-DEMAND] Revalidating to load translations...");
+          revalidator.revalidate();
+        }
+      }
+    }
+  }, [isLoadingTranslations, translationSyncFetcher.state, translationSyncFetcher.data, revalidator]);
 
   // Reset ContentNavigation height to 0 (since we don't have ContentTypeNavigation on Products page)
   useEffect(() => {

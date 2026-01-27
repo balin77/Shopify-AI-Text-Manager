@@ -61,7 +61,9 @@ export class ProductSyncService {
 
   /**
    * Fetch alt-text translations for all product images (API 2025-10+)
-   * Uses TranslatableResourceType.MEDIA_IMAGE
+   * Uses translatableResourcesByIds for BULK loading - 1 API call per locale instead of per image
+   *
+   * Performance: 5 images × 3 locales = 3 API calls (instead of 15)
    */
   private async fetchImageAltTextTranslations(
     productData: any,
@@ -79,45 +81,66 @@ export class ProductSyncService {
       return altTranslations;
     }
 
-    console.log(`[ProductSync] Fetching alt-text translations for ${mediaImages.length} images`);
+    // Collect all MediaImage IDs for bulk query
+    const mediaIds = mediaImages.map((m: any) => m.id);
 
-    // For each locale, fetch translations for all images
+    console.log(`[ProductSync] Fetching alt-text translations for ${mediaIds.length} images using BULK query`);
+
+    // 1 API call per locale (instead of per image × locale)
     for (const locale of locales) {
-      for (const media of mediaImages) {
-        try {
-          const response = await this.admin.graphql(
-            `#graphql
-              query getMediaImageTranslations($resourceId: ID!, $locale: String!) {
-                translatableResource(resourceId: $resourceId) {
-                  translations(locale: $locale) {
-                    key
-                    value
-                    locale
+      try {
+        const response = await this.admin.graphql(
+          `#graphql
+            query getMediaImageTranslationsBulk($resourceIds: [ID!]!, $locale: String!) {
+              translatableResourcesByIds(first: 250, resourceIds: $resourceIds) {
+                edges {
+                  node {
+                    resourceId
+                    translations(locale: $locale) {
+                      key
+                      value
+                    }
                   }
                 }
-              }`,
-            { variables: { resourceId: media.id, locale: locale.locale } }
-          );
+              }
+            }`,
+          { variables: { resourceIds: mediaIds, locale: locale.locale } }
+        );
 
-          const data = await response.json();
-          const translations = data.data?.translatableResource?.translations || [];
+        const data = await response.json();
 
-          // Find the alt translation
+        if (data.errors) {
+          console.warn(`[ProductSync] GraphQL error for locale ${locale.locale}:`, data.errors[0]?.message);
+          continue;
+        }
+
+        const resources = data.data?.translatableResourcesByIds?.edges || [];
+
+        let foundCount = 0;
+        for (const edge of resources) {
+          const resourceId = edge.node.resourceId;
+          const translations = edge.node.translations || [];
+
           const altTranslation = translations.find((t: any) => t.key === "alt");
-          if (altTranslation && altTranslation.value) {
+          if (altTranslation?.value) {
             altTranslations.push({
-              mediaId: media.id,
+              mediaId: resourceId,
               locale: locale.locale,
               altText: altTranslation.value,
             });
-            console.log(`[ProductSync] Found alt-text translation for ${media.id} in ${locale.locale}`);
+            foundCount++;
           }
-        } catch (error) {
-          console.warn(`[ProductSync] Failed to fetch alt-text for ${media.id} in ${locale.locale}:`, error);
         }
+
+        if (foundCount > 0) {
+          console.log(`[ProductSync] Found ${foundCount} alt-text translations for locale ${locale.locale}`);
+        }
+      } catch (error) {
+        console.warn(`[ProductSync] Failed to fetch bulk alt-text for locale ${locale.locale}:`, error);
       }
     }
 
+    console.log(`[ProductSync] Total alt-text translations fetched: ${altTranslations.length}`);
     return altTranslations;
   }
 
