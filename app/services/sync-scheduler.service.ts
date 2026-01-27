@@ -235,13 +235,31 @@ class SyncSchedulerService {
         }
       });
 
-      // 3. Delete excess product images (keep only first image per product)
-      // Images beyond position 0 are loaded on-demand from Shopify API
-      const excessImages = await db.productImage.deleteMany({
+      // 3. Delete excess product images ONLY for free-plan shops
+      // Free plan: productImages = "featured-only", so only keep first image
+      // Basic/Pro/Max plans: productImages = "all", keep all images cached
+      const freeShops = await db.aISettings.findMany({
         where: {
-          position: { gt: 0 } // Delete all images except the first one (position 0)
-        }
+          OR: [
+            { subscriptionPlan: "free" },
+            { subscriptionPlan: null } // Treat null as free plan
+          ]
+        },
+        select: { shop: true }
       });
+      const freeShopNames = freeShops.map(s => s.shop);
+
+      let excessImages = { count: 0 };
+      if (freeShopNames.length > 0) {
+        excessImages = await db.productImage.deleteMany({
+          where: {
+            position: { gt: 0 },
+            product: {
+              shop: { in: freeShopNames }
+            }
+          }
+        });
+      }
 
       // 4. Delete orphaned image alt-text translations (images that no longer exist)
       // Note: Cascading delete should handle orphaned translations automatically
@@ -254,7 +272,7 @@ class SyncSchedulerService {
         }
       });
 
-      logger.debug(`[SyncScheduler] Cleanup complete: ${expiredTasks.count} tasks, ${webhookLogs.count} logs, ${excessImages.count} excess images`);
+      logger.debug(`[SyncScheduler] Cleanup complete: ${expiredTasks.count} tasks, ${webhookLogs.count} logs, ${excessImages.count} excess images (free-plan only)`);
       logger.debug(`[SyncScheduler] Note: Theme data cleanup is now handled by aggressive sync (every 40s)`);
     } catch (error) {
       logger.error(`[SyncScheduler] Cleanup error:`, error);
