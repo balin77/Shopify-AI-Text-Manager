@@ -31,20 +31,20 @@ export class ContentSyncService {
    * Sync a single collection with all its translations
    */
   async syncCollection(collectionId: string): Promise<void> {
-    logger.debug('[ContentSync] Starting sync for collection: ${collectionId}`);
+    logger.debug(`[ContentSync] Starting sync for collection: ${collectionId}`);
 
     try {
       // 1. Fetch collection data
       const collectionData = await this.fetchCollectionData(collectionId);
 
       if (!collectionData) {
-        logger.warn('[ContentSync] Collection not found: ${collectionId}`);
+        logger.warn(`[ContentSync] Collection not found: ${collectionId}`);
         return;
       }
 
       // 2. Fetch all available locales
       const locales = await this.fetchShopLocales();
-      logger.debug('[ContentSync] Found ${locales.length} locales`);
+      logger.debug(`[ContentSync] Found ${locales.length} locales`);
 
       // 3. Fetch translations for all non-primary locales
       const allTranslations = await this.fetchAllTranslations(
@@ -52,14 +52,14 @@ export class ContentSyncService {
         locales.filter((l: any) => !l.primary),
         "Collection"
       );
-      logger.debug('[ContentSync] Fetched ${allTranslations.length} translations`);
+      logger.debug(`[ContentSync] Fetched ${allTranslations.length} translations`);
 
       // 4. Save to database
       await this.saveCollectionToDatabase(collectionData, allTranslations);
 
-      logger.debug('[ContentSync] Successfully synced collection: ${collectionId}`);
+      logger.debug(`[ContentSync] Successfully synced collection: ${collectionId}`);
     } catch (error) {
-      logger.error('[ContentSync] Error syncing collection ${collectionId}:`, error);
+      logger.error(`[ContentSync] Error syncing collection ${collectionId}:`, error);
       throw error;
     }
   }
@@ -68,7 +68,7 @@ export class ContentSyncService {
    * Delete a collection from the database
    */
   async deleteCollection(collectionId: string): Promise<void> {
-    logger.debug('[ContentSync] Deleting collection: ${collectionId}`);
+    logger.debug(`[ContentSync] Deleting collection: ${collectionId}`);
 
     const { db } = await import("../db.server");
 
@@ -81,7 +81,7 @@ export class ContentSyncService {
       },
     });
 
-    logger.debug('[ContentSync] Successfully deleted collection: ${collectionId}`);
+    logger.debug(`[ContentSync] Successfully deleted collection: ${collectionId}`);
   }
 
   // ============================================
@@ -92,14 +92,14 @@ export class ContentSyncService {
    * Sync a single article with all its translations
    */
   async syncArticle(articleId: string): Promise<void> {
-    logger.debug('[ContentSync] Starting sync for article: ${articleId}`);
+    logger.debug(`[ContentSync] Starting sync for article: ${articleId}`);
 
     try {
       // 1. Fetch article data
       const articleData = await this.fetchArticleData(articleId);
 
       if (!articleData) {
-        logger.warn('[ContentSync] Article not found: ${articleId}`);
+        logger.warn(`[ContentSync] Article not found: ${articleId}`);
         return;
       }
 
@@ -116,9 +116,9 @@ export class ContentSyncService {
       // 4. Save to database
       await this.saveArticleToDatabase(articleData, allTranslations);
 
-      logger.debug('[ContentSync] Successfully synced article: ${articleId}`);
+      logger.debug(`[ContentSync] Successfully synced article: ${articleId}`);
     } catch (error) {
-      logger.error('[ContentSync] Error syncing article ${articleId}:`, error);
+      logger.error(`[ContentSync] Error syncing article ${articleId}:`, error);
       throw error;
     }
   }
@@ -127,7 +127,7 @@ export class ContentSyncService {
    * Delete an article from the database
    */
   async deleteArticle(articleId: string): Promise<void> {
-    logger.debug('[ContentSync] Deleting article: ${articleId}`);
+    logger.debug(`[ContentSync] Deleting article: ${articleId}`);
 
     const { db } = await import("../db.server");
 
@@ -140,7 +140,7 @@ export class ContentSyncService {
       },
     });
 
-    logger.debug('[ContentSync] Successfully deleted article: ${articleId}`);
+    logger.debug(`[ContentSync] Successfully deleted article: ${articleId}`);
   }
 
   // ============================================
@@ -151,23 +151,23 @@ export class ContentSyncService {
    * Sync a single menu with its items structure
    */
   async syncMenu(menuId: string): Promise<void> {
-    logger.debug('[ContentSync] Starting sync for menu: ${menuId}`);
+    logger.debug(`[ContentSync] Starting sync for menu: ${menuId}`);
 
     try {
       // 1. Fetch menu data
       const menuData = await this.fetchMenuData(menuId);
 
       if (!menuData) {
-        logger.warn('[ContentSync] Menu not found: ${menuId}`);
+        logger.warn(`[ContentSync] Menu not found: ${menuId}`);
         return;
       }
 
       // 2. Save to database (menus don't have translations via API)
       await this.saveMenuToDatabase(menuData);
 
-      logger.debug('[ContentSync] Successfully synced menu: ${menuId}`);
+      logger.debug(`[ContentSync] Successfully synced menu: ${menuId}`);
     } catch (error) {
-      logger.error('[ContentSync] Error syncing menu ${menuId}:`, error);
+      logger.error(`[ContentSync] Error syncing menu ${menuId}:`, error);
       throw error;
     }
   }
@@ -176,7 +176,7 @@ export class ContentSyncService {
    * Delete a menu from the database
    */
   async deleteMenu(menuId: string): Promise<void> {
-    logger.debug('[ContentSync] Deleting menu: ${menuId}`);
+    logger.debug(`[ContentSync] Deleting menu: ${menuId}`);
 
     const { db } = await import("../db.server");
 
@@ -189,7 +189,7 @@ export class ContentSyncService {
       },
     });
 
-    logger.debug('[ContentSync] Successfully deleted menu: ${menuId}`);
+    logger.debug(`[ContentSync] Successfully deleted menu: ${menuId}`);
   }
 
 
@@ -318,11 +318,11 @@ export class ContentSyncService {
 
     for (const locale of locales) {
       if (!locale.published) {
-        logger.debug('[ContentSync] Skipping unpublished locale: ${locale.locale}`);
+        logger.debug(`[ContentSync] Skipping unpublished locale: ${locale.locale}`);
         continue;
       }
 
-      logger.debug('[ContentSync] Fetching translations for locale: ${locale.locale}`);
+      logger.debug(`[ContentSync] Fetching translations for locale: ${locale.locale}`);
 
       const response = await this.admin.graphql(
         `#graphql
@@ -362,7 +362,7 @@ export class ContentSyncService {
       // ONLY save actual translations from Shopify
       // DO NOT save translatableContent values - those are the source language text
       if (resource.translations && resource.translations.length > 0) {
-        logger.debug('[ContentSync] Actual translations for ${locale.locale}:`,
+        logger.debug(`[ContentSync] Actual translations for ${locale.locale}:`,
           resource.translations.map((t: any) => t.key).join(', '));
 
         for (const translation of resource.translations) {
@@ -378,9 +378,9 @@ export class ContentSyncService {
           }
         }
 
-        logger.debug('[ContentSync] Saved ${resource.translations.length} actual translations for ${locale.locale}`);
+        logger.debug(`[ContentSync] Saved ${resource.translations.length} actual translations for ${locale.locale}`);
       } else {
-        logger.debug('[ContentSync] No translations found for ${locale.locale} - nothing to save`);
+        logger.debug(`[ContentSync] No translations found for ${locale.locale} - nothing to save`);
       }
     }
 
@@ -394,13 +394,13 @@ export class ContentSyncService {
   private async saveCollectionToDatabase(collectionData: any, translations: any[]) {
     const { db } = await import("../db.server");
 
-    logger.debug('[ContentSync] Saving collection to database: ${collectionData.id}`);
+    logger.debug(`[ContentSync] Saving collection to database: ${collectionData.id}`);
 
     // Prepare valid translations outside transaction
     const validTranslations = translations.filter(t => t.value != null && t.value !== undefined);
     const skippedCount = translations.length - validTranslations.length;
     if (skippedCount > 0) {
-      logger.debug('[ContentSync] Skipping ${skippedCount} translations with null/undefined values`);
+      logger.debug(`[ContentSync] Skipping ${skippedCount} translations with null/undefined values`);
     }
 
     // Use transaction to ensure all-or-nothing data consistency
@@ -455,23 +455,23 @@ export class ContentSyncService {
             digest: t.digest || null,
           })),
         });
-        logger.debug('[ContentSync] ✓ Saved ${validTranslations.length} translations`);
+        logger.debug(`[ContentSync] ✓ Saved ${validTranslations.length} translations`);
       }
     });
 
-    logger.debug('[ContentSync] ✓ Transaction completed successfully for collection ${collectionData.id}`);
+    logger.debug(`[ContentSync] ✓ Transaction completed successfully for collection ${collectionData.id}`);
   }
 
   private async saveArticleToDatabase(articleData: any, translations: any[]) {
     const { db } = await import("../db.server");
 
-    logger.debug('[ContentSync] Saving article to database: ${articleData.id}`);
+    logger.debug(`[ContentSync] Saving article to database: ${articleData.id}`);
 
     // Prepare valid translations outside transaction
     const validTranslations = translations.filter(t => t.value != null && t.value !== undefined);
     const skippedCount = translations.length - validTranslations.length;
     if (skippedCount > 0) {
-      logger.debug('[ContentSync] Skipping ${skippedCount} translations with null/undefined values`);
+      logger.debug(`[ContentSync] Skipping ${skippedCount} translations with null/undefined values`);
     }
 
     // Use transaction to ensure all-or-nothing data consistency
@@ -530,17 +530,17 @@ export class ContentSyncService {
             digest: t.digest || null,
           })),
         });
-        logger.debug('[ContentSync] ✓ Saved ${validTranslations.length} translations`);
+        logger.debug(`[ContentSync] ✓ Saved ${validTranslations.length} translations`);
       }
     });
 
-    logger.debug('[ContentSync] ✓ Transaction completed successfully for article ${articleData.id}`);
+    logger.debug(`[ContentSync] ✓ Transaction completed successfully for article ${articleData.id}`);
   }
 
   private async saveMenuToDatabase(menuData: any) {
     const { db } = await import("../db.server");
 
-    logger.debug('[ContentSync] Saving menu to database: ${menuData.id}`);
+    logger.debug(`[ContentSync] Saving menu to database: ${menuData.id}`);
 
     // Upsert menu
     await db.menu.upsert({
@@ -566,7 +566,7 @@ export class ContentSyncService {
       },
     });
 
-    logger.debug('[ContentSync] ✓ Menu saved successfully`);
+    logger.debug(`[ContentSync] ✓ Menu saved successfully`);
   }
 
 
@@ -578,9 +578,9 @@ export class ContentSyncService {
    * Sync all collections (respects plan limit if provided)
    */
   async syncAllCollections(maxCount?: number, onProgress?: ProgressCallback): Promise<number> {
-    logger.debug('[ContentSync] Syncing all collections...`);
+    logger.debug(`[ContentSync] Syncing all collections...`);
     if (maxCount !== undefined) {
-      logger.debug('[ContentSync] Plan limit: ${maxCount} collections`);
+      logger.debug(`[ContentSync] Plan limit: ${maxCount} collections`);
     }
 
     const response = await this.admin.graphql(
@@ -601,11 +601,11 @@ export class ContentSyncService {
 
     // Apply plan limit if specified
     if (maxCount !== undefined && maxCount > 0 && collections.length > maxCount) {
-      logger.debug('[ContentSync] Limiting to ${maxCount} collections (found ${collections.length})`);
+      logger.debug(`[ContentSync] Limiting to ${maxCount} collections (found ${collections.length})`);
       collections = collections.slice(0, maxCount);
     }
 
-    logger.debug('[ContentSync] Syncing ${collections.length} collections`);
+    logger.debug(`[ContentSync] Syncing ${collections.length} collections`);
 
     let index = 0;
     for (const collection of collections) {
@@ -623,14 +623,14 @@ export class ContentSyncService {
    * Sync all articles (respects plan limit if provided)
    */
   async syncAllArticles(maxCount?: number, onProgress?: ProgressCallback): Promise<number> {
-    logger.debug('[ContentSync] Syncing all articles...`);
+    logger.debug(`[ContentSync] Syncing all articles...`);
     if (maxCount !== undefined) {
-      logger.debug('[ContentSync] Plan limit: ${maxCount} articles`);
+      logger.debug(`[ContentSync] Plan limit: ${maxCount} articles`);
     }
 
     // If limit is 0, skip articles entirely
     if (maxCount === 0) {
-      logger.debug('[ContentSync] Articles disabled for this plan, skipping`);
+      logger.debug(`[ContentSync] Articles disabled for this plan, skipping`);
       return 0;
     }
 
@@ -667,11 +667,11 @@ export class ContentSyncService {
 
     // Apply plan limit if specified
     if (maxCount !== undefined && maxCount > 0 && allArticles.length > maxCount) {
-      logger.debug('[ContentSync] Limiting to ${maxCount} articles (found ${allArticles.length})`);
+      logger.debug(`[ContentSync] Limiting to ${maxCount} articles (found ${allArticles.length})`);
       allArticles = allArticles.slice(0, maxCount);
     }
 
-    logger.debug('[ContentSync] Syncing ${allArticles.length} articles`);
+    logger.debug(`[ContentSync] Syncing ${allArticles.length} articles`);
 
     let index = 0;
     for (const article of allArticles) {
@@ -689,7 +689,7 @@ export class ContentSyncService {
    * Sync all menus
    */
   async syncAllMenus(): Promise<number> {
-    logger.debug('[ContentSync] Syncing all menus...`);
+    logger.debug(`[ContentSync] Syncing all menus...`);
 
     const response = await this.admin.graphql(
       `#graphql
@@ -707,7 +707,7 @@ export class ContentSyncService {
     const data = await response.json();
     const menus = data.data?.menus?.edges?.map((e: any) => e.node) || [];
 
-    logger.debug('[ContentSync] Found ${menus.length} menus to sync`);
+    logger.debug(`[ContentSync] Found ${menus.length} menus to sync`);
 
     for (const menu of menus) {
       await this.syncMenu(menu.id);

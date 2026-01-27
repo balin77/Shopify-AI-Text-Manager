@@ -85,7 +85,7 @@ export class ShopifyApiGateway {
       // If we've hit the rate limit, wait
       if (this.requestCount >= this.MAX_REQUESTS_PER_SECOND) {
         const waitTime = this.REQUEST_WINDOW - timeElapsed;
-        logger.debug('[ShopifyGateway] Rate limit reached (${this.requestCount}/${this.MAX_REQUESTS_PER_SECOND}). Waiting ${waitTime}ms...`);
+        logger.debug(`[ShopifyGateway] Rate limit reached (${this.requestCount}/${this.MAX_REQUESTS_PER_SECOND}). Waiting ${waitTime}ms...`);
         await this.sleep(waitTime);
         this.requestCount = 0;
         this.windowStart = Date.now();
@@ -108,7 +108,7 @@ export class ShopifyApiGateway {
 
         // Check for rate limit errors in the response
         if (this.isRateLimitError(data)) {
-          logger.debug('[ShopifyGateway] Rate limit error detected in response`);
+          logger.debug(`[ShopifyGateway] Rate limit error detected in response`);
           await this.handleRateLimitError(request);
           continue;
         }
@@ -119,13 +119,13 @@ export class ShopifyApiGateway {
 
           // If it's a throttle error, retry
           if (error.extensions?.code === 'THROTTLED') {
-            logger.debug('[ShopifyGateway] Throttled request detected`);
+            logger.debug(`[ShopifyGateway] Throttled request detected`);
             await this.handleRateLimitError(request);
             continue;
           }
 
           // Other errors - log and continue
-          logger.warn('[ShopifyGateway] GraphQL error:`, error.message);
+          logger.warn(`[ShopifyGateway] GraphQL error:`, error.message);
         }
 
         // Success - resolve the promise with the original response
@@ -134,17 +134,17 @@ export class ShopifyApiGateway {
       } catch (error: any) {
         // Check if it's a rate limit error from HTTP status
         if (error.status === 429 || error.message?.includes('rate limit')) {
-          logger.debug('[ShopifyGateway] HTTP 429 rate limit error`);
+          logger.debug(`[ShopifyGateway] HTTP 429 rate limit error`);
           await this.handleRateLimitError(request);
         } else {
           // Other errors - reject after retries
           if (request.retryCount < this.MAX_RETRIES) {
-            logger.warn('[ShopifyGateway] Request failed, retrying (${request.retryCount + 1}/${this.MAX_RETRIES}):`, error.message);
+            logger.warn(`[ShopifyGateway] Request failed, retrying (${request.retryCount + 1}/${this.MAX_RETRIES}):`, error.message);
             request.retryCount++;
             this.requestQueue.unshift(request); // Add back to front of queue
             await this.sleep(this.RETRY_DELAY_MS);
           } else {
-            logger.error('[ShopifyGateway] Request failed after ${this.MAX_RETRIES} retries:`, error.message);
+            logger.error(`[ShopifyGateway] Request failed after ${this.MAX_RETRIES} retries:`, error.message);
             request.reject(error);
           }
         }
@@ -163,7 +163,7 @@ export class ShopifyApiGateway {
   private async handleRateLimitError(request: QueuedRequest): Promise<void> {
     if (request.retryCount < this.MAX_RETRIES) {
       const backoffTime = this.RETRY_DELAY_MS * (request.retryCount + 1); // Exponential backoff
-      logger.debug('[ShopifyGateway] Retrying after ${backoffTime}ms (attempt ${request.retryCount + 1}/${this.MAX_RETRIES})`);
+      logger.debug(`[ShopifyGateway] Retrying after ${backoffTime}ms (attempt ${request.retryCount + 1}/${this.MAX_RETRIES})`);
 
       request.retryCount++;
 
@@ -177,7 +177,7 @@ export class ShopifyApiGateway {
       this.requestCount = 0;
       this.windowStart = Date.now();
     } else {
-      logger.error('[ShopifyGateway] Request failed after ${this.MAX_RETRIES} rate limit retries`);
+      logger.error(`[ShopifyGateway] Request failed after ${this.MAX_RETRIES} rate limit retries`);
       request.reject(new Error('Rate limit exceeded after maximum retries'));
     }
   }
@@ -222,6 +222,6 @@ export class ShopifyApiGateway {
       req.reject(new Error('Queue cleared'))
     );
     this.requestQueue = [];
-    logger.debug('[ShopifyGateway] Cleared ${clearedCount} queued requests`);
+    logger.debug(`[ShopifyGateway] Cleared ${clearedCount} queued requests`);
   }
 }

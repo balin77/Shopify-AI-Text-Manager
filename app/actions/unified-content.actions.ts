@@ -706,7 +706,7 @@ Allowed formatting changes:
       for (const [locale, fields] of Object.entries(allTranslations)) {
         const value = (fields as any)[fieldType] || "";
         flattenedTranslations[locale] = value;
-        logger.debug('[UnifiedContent] [translateFieldToAllLocales] Extracted ${locale}.${fieldType} = "${value.substring(0, 50)}..."`);
+        logger.debug(`[UnifiedContent] [translateFieldToAllLocales] Extracted ${locale}.${fieldType} = "${value.substring(0, 50)}..."`);
       }
 
       logger.debug('[UnifiedContent] [translateFieldToAllLocales] RETURNING locales:', Object.keys(flattenedTranslations));

@@ -21,20 +21,20 @@ export class ProductSyncService {
    * Sync a single product with all its translations
    */
   async syncProduct(productId: string): Promise<void> {
-    logger.debug('[ProductSync] Starting sync for product: ${productId}`);
+    logger.debug(`[ProductSync] Starting sync for product: ${productId}`);
 
     try {
       // 1. Fetch product data
       const productData = await this.fetchProductData(productId);
 
       if (!productData) {
-        logger.warn('[ProductSync] Product not found: ${productId}`);
+        logger.warn(`[ProductSync] Product not found: ${productId}`);
         return;
       }
 
       // 2. Fetch all available locales
       const locales = await this.fetchShopLocales();
-      logger.debug('[ProductSync] Found ${locales.length} locales`);
+      logger.debug(`[ProductSync] Found ${locales.length} locales`);
 
       // 3. Fetch translations for all non-primary locales
       const allTranslations = await this.fetchAllTranslations(
@@ -42,21 +42,21 @@ export class ProductSyncService {
         locales.filter((l: any) => !l.primary),
         productData // Pass product data for fallback values
       );
-      logger.debug('[ProductSync] Fetched ${allTranslations.length} translations`);
+      logger.debug(`[ProductSync] Fetched ${allTranslations.length} translations`);
 
       // 4. Fetch image alt-text translations (API 2025-10+)
       const imageAltTranslations = await this.fetchImageAltTextTranslations(
         productData,
         locales.filter((l: any) => !l.primary && l.published)
       );
-      logger.debug('[ProductSync] Fetched ${imageAltTranslations.length} image alt-text translations`);
+      logger.debug(`[ProductSync] Fetched ${imageAltTranslations.length} image alt-text translations`);
 
       // 5. Save to database
       await this.saveToDatabase(productData, allTranslations, imageAltTranslations);
 
-      logger.debug('[ProductSync] Successfully synced product: ${productId}`);
+      logger.debug(`[ProductSync] Successfully synced product: ${productId}`);
     } catch (error) {
-      logger.error('[ProductSync] Error syncing product ${productId}:`, error);
+      logger.error(`[ProductSync] Error syncing product ${productId}:`, error);
       throw error;
     }
   }
@@ -79,14 +79,14 @@ export class ProductSyncService {
       .map((edge: any) => edge.node) || [];
 
     if (mediaImages.length === 0) {
-      logger.debug('[ProductSync] No media images found for alt-text translations`);
+      logger.debug(`[ProductSync] No media images found for alt-text translations`);
       return altTranslations;
     }
 
     // Collect all MediaImage IDs for bulk query
     const mediaIds = mediaImages.map((m: any) => m.id);
 
-    logger.debug('[ProductSync] Fetching alt-text translations for ${mediaIds.length} images using BULK query`);
+    logger.debug(`[ProductSync] Fetching alt-text translations for ${mediaIds.length} images using BULK query`);
 
     // 1 API call per locale (instead of per image × locale)
     for (const locale of locales) {
@@ -112,7 +112,7 @@ export class ProductSyncService {
         const data = await response.json();
 
         if (data.errors) {
-          logger.warn('[ProductSync] GraphQL error for locale ${locale.locale}:`, data.errors[0]?.message);
+          logger.warn(`[ProductSync] GraphQL error for locale ${locale.locale}:`, data.errors[0]?.message);
           continue;
         }
 
@@ -135,14 +135,14 @@ export class ProductSyncService {
         }
 
         if (foundCount > 0) {
-          logger.debug('[ProductSync] Found ${foundCount} alt-text translations for locale ${locale.locale}`);
+          logger.debug(`[ProductSync] Found ${foundCount} alt-text translations for locale ${locale.locale}`);
         }
       } catch (error) {
-        logger.warn('[ProductSync] Failed to fetch bulk alt-text for locale ${locale.locale}:`, error);
+        logger.warn(`[ProductSync] Failed to fetch bulk alt-text for locale ${locale.locale}:`, error);
       }
     }
 
-    logger.debug('[ProductSync] Total alt-text translations fetched: ${altTranslations.length}`);
+    logger.debug(`[ProductSync] Total alt-text translations fetched: ${altTranslations.length}`);
     return altTranslations;
   }
 
@@ -241,11 +241,11 @@ export class ProductSyncService {
 
     for (const locale of locales) {
       if (!locale.published) {
-        logger.debug('[ProductSync] Skipping unpublished locale: ${locale.locale}`);
+        logger.debug(`[ProductSync] Skipping unpublished locale: ${locale.locale}`);
         continue;
       }
 
-      logger.debug('[ProductSync] Fetching translations for locale: ${locale.locale}`);
+      logger.debug(`[ProductSync] Fetching translations for locale: ${locale.locale}`);
 
       const response = await this.admin.graphql(
         `#graphql
@@ -271,13 +271,13 @@ export class ProductSyncService {
       const resource = data.data?.translatableResource;
 
       if (!resource) {
-        logger.warn('[ProductSync] No translatable resource found for ${locale.locale}`);
+        logger.warn(`[ProductSync] No translatable resource found for ${locale.locale}`);
         continue;
       }
 
       // Build digest map from translatableContent (for reference only)
       if (resource.translatableContent) {
-        logger.debug('[ProductSync] Available translatable keys for ${locale.locale}:`,
+        logger.debug(`[ProductSync] Available translatable keys for ${locale.locale}:`,
           resource.translatableContent.map((c: any) => c.key).join(', '));
 
         for (const content of resource.translatableContent) {
@@ -289,7 +289,7 @@ export class ProductSyncService {
       // ONLY save actual translations from Shopify
       // DO NOT save translatableContent values - those are the source language text
       if (resource.translations && resource.translations.length > 0) {
-        logger.debug('[ProductSync] Actual translations for ${locale.locale}:`,
+        logger.debug(`[ProductSync] Actual translations for ${locale.locale}:`,
           resource.translations.map((t: any) => t.key).join(', '));
 
         for (const translation of resource.translations) {
@@ -301,9 +301,9 @@ export class ProductSyncService {
           });
         }
 
-        logger.debug('[ProductSync] Saved ${resource.translations.length} actual translations for ${locale.locale}`);
+        logger.debug(`[ProductSync] Saved ${resource.translations.length} actual translations for ${locale.locale}`);
       } else {
-        logger.debug('[ProductSync] No translations found for ${locale.locale} - nothing to save`);
+        logger.debug(`[ProductSync] No translations found for ${locale.locale} - nothing to save`);
       }
     }
 
@@ -322,7 +322,7 @@ export class ProductSyncService {
   ) {
     const { db } = await import("../db.server");
 
-    logger.debug('[ProductSync] Saving product to database: ${productData.id}`);
+    logger.debug(`[ProductSync] Saving product to database: ${productData.id}`);
 
     // Before starting transaction, preserve alt-texts that were recently modified by user
     // This prevents webhook-triggered syncs from overwriting user changes
@@ -335,12 +335,12 @@ export class ProductSyncService {
     });
 
     // Debug: Log what we found
-    logger.debug('[ProductSync] [SYNC] Checking ${existingImages.length} existing images for recent modifications 🟤🟤🟤`);
-    logger.debug('[ProductSync] [SYNC] Cutoff time: ${cutoffTime.toISOString()}`);
+    logger.debug(`[ProductSync] [SYNC] Checking ${existingImages.length} existing images for recent modifications 🟤🟤🟤`);
+    logger.debug(`[ProductSync] [SYNC] Cutoff time: ${cutoffTime.toISOString()}`);
     existingImages.forEach((img, i) => {
       const modifiedAt = img.altTextModifiedAt ? new Date(img.altTextModifiedAt).toISOString() : 'null';
       const isRecent = img.altTextModifiedAt && new Date(img.altTextModifiedAt) > cutoffTime;
-      logger.debug('[ProductSync] [SYNC] Image ${i}: mediaId=${img.mediaId}, altText="${img.altText}", modifiedAt=${modifiedAt}, isRecent=${isRecent}`);
+      logger.debug(`[ProductSync] [SYNC] Image ${i}: mediaId=${img.mediaId}, altText="${img.altText}", modifiedAt=${modifiedAt}, isRecent=${isRecent}`);
     });
 
     // Map of mediaId -> preserved altText for recently modified images
@@ -348,16 +348,16 @@ export class ProductSyncService {
     for (const img of existingImages) {
       if (img.mediaId && img.altTextModifiedAt && img.altTextModifiedAt > cutoffTime) {
         preservedAltTexts.set(img.mediaId, img.altText);
-        logger.debug('[ProductSync] [SYNC] ✅ PRESERVING user-modified alt-text for mediaId ${img.mediaId}: "${img.altText}"`);
+        logger.debug(`[ProductSync] [SYNC] ✅ PRESERVING user-modified alt-text for mediaId ${img.mediaId}: "${img.altText}"`);
       }
     }
-    logger.debug('[ProductSync] [SYNC] Total preserved: ${preservedAltTexts.size} images`);
+    logger.debug(`[ProductSync] [SYNC] Total preserved: ${preservedAltTexts.size} images`);
 
     // Prepare data outside transaction
     const validTranslations = translations.filter(t => t.value != null && t.value !== undefined);
     const skippedCount = translations.length - validTranslations.length;
     if (skippedCount > 0) {
-      logger.debug('[ProductSync] Skipping ${skippedCount} translations with null/undefined values`);
+      logger.debug(`[ProductSync] Skipping ${skippedCount} translations with null/undefined values`);
     }
 
     const mediaImages = productData.media?.edges
@@ -417,9 +417,9 @@ export class ProductSyncService {
           return acc;
         }, {});
 
-        logger.debug('[ProductSync] Saving ${validTranslations.length} translations to database:`);
+        logger.debug(`[ProductSync] Saving ${validTranslations.length} translations to database:`);
         for (const [locale, keys] of Object.entries(translationsByLocale)) {
-          logger.debug('[ProductSync]   ${locale}: ${(keys as string[]).join(', ')}`);
+          logger.debug(`[ProductSync]   ${locale}: ${(keys as string[]).join(', ')}`);
         }
 
         await tx.contentTranslation.createMany({
@@ -432,17 +432,17 @@ export class ProductSyncService {
             digest: t.digest || null,
           })),
         });
-        logger.debug('[ProductSync] ✓ Successfully saved ${validTranslations.length} translations to database`);
+        logger.debug(`[ProductSync] ✓ Successfully saved ${validTranslations.length} translations to database`);
       } else {
-        logger.debug('[ProductSync] No translations to save`);
+        logger.debug(`[ProductSync] No translations to save`);
       }
 
       // Insert ALL images to database (with mediaId for translation support)
       if (mediaImages.length > 0) {
         // Log what Shopify returned for alt-texts
-        logger.debug('[ProductSync] [SYNC] Syncing ${mediaImages.length} images from Shopify 🔵🔵🔵`);
+        logger.debug(`[ProductSync] [SYNC] Syncing ${mediaImages.length} images from Shopify 🔵🔵🔵`);
         mediaImages.forEach((media: any, index: number) => {
-          logger.debug('[ProductSync] [SYNC] Image ${index}: mediaId=${media.id}, alt="${media.alt}" (isNull: ${media.alt === null}, isEmpty: ${media.alt === ""})`);
+          logger.debug(`[ProductSync] [SYNC] Image ${index}: mediaId=${media.id}, alt="${media.alt}" (isNull: ${media.alt === null}, isEmpty: ${media.alt === ""})`);
         });
 
         // Create images with mediaId for translation support
@@ -455,9 +455,9 @@ export class ProductSyncService {
               : (media.alt || null); // Use Shopify value
 
             if (wasRecentlyModified) {
-              logger.debug('[ProductSync] [SYNC] Using preserved alt-text for image ${index}: "${altTextToSave}" (ignoring Shopify: "${media.alt}")`);
+              logger.debug(`[ProductSync] [SYNC] Using preserved alt-text for image ${index}: "${altTextToSave}" (ignoring Shopify: "${media.alt}")`);
             } else {
-              logger.debug('[ProductSync] [SYNC] Saving image ${index}: altText="${altTextToSave}"`);
+              logger.debug(`[ProductSync] [SYNC] Saving image ${index}: altText="${altTextToSave}"`);
             }
 
             return tx.productImage.create({
@@ -474,7 +474,7 @@ export class ProductSyncService {
           })
         );
 
-        logger.debug('[ProductSync] Saved ${createdImages.length} images with mediaIds`);
+        logger.debug(`[ProductSync] Saved ${createdImages.length} images with mediaIds`);
 
         // Insert image alt-text translations from Shopify
         if (imageAltTranslations.length > 0) {
@@ -502,7 +502,7 @@ export class ProductSyncService {
           }
 
           if (savedAltTranslations > 0) {
-            logger.debug('[ProductSync] ✓ Saved ${savedAltTranslations} image alt-text translations`);
+            logger.debug(`[ProductSync] ✓ Saved ${savedAltTranslations} image alt-text translations`);
           }
         }
       }
@@ -518,7 +518,7 @@ export class ProductSyncService {
             values: JSON.stringify(opt.values),
           })),
         });
-        logger.debug('[ProductSync] Saved ${productData.options.length} options`);
+        logger.debug(`[ProductSync] Saved ${productData.options.length} options`);
       }
 
       // Insert metafields
@@ -534,18 +534,18 @@ export class ProductSyncService {
             type: mf.type,
           })),
         });
-        logger.debug('[ProductSync] Saved ${metafields.length} metafields`);
+        logger.debug(`[ProductSync] Saved ${metafields.length} metafields`);
       }
     });
 
-    logger.debug('[ProductSync] ✓ Transaction completed successfully for product ${productData.id}`);
+    logger.debug(`[ProductSync] ✓ Transaction completed successfully for product ${productData.id}`);
   }
 
   /**
    * Delete a product from the database
    */
   async deleteProduct(productId: string): Promise<void> {
-    logger.debug('[ProductSync] Deleting product: ${productId}`);
+    logger.debug(`[ProductSync] Deleting product: ${productId}`);
 
     const { db } = await import("../db.server");
 
@@ -558,7 +558,7 @@ export class ProductSyncService {
       },
     });
 
-    logger.debug('[ProductSync] Successfully deleted product: ${productId}`);
+    logger.debug(`[ProductSync] Successfully deleted product: ${productId}`);
   }
 
   /**
@@ -567,7 +567,7 @@ export class ProductSyncService {
    * @param includeAllImages - If true, sync all images. If false, only featured image
    */
   async syncSingleProduct(productId: string, includeAllImages: boolean = true): Promise<any> {
-    logger.debug('[ProductSync] Manual sync for product: ${productId} (images: ${includeAllImages ? "all" : "featured only"})`);
+    logger.debug(`[ProductSync] Manual sync for product: ${productId} (images: ${includeAllImages ? "all" : "featured only"})`);
 
     // Convert to GID format if numeric
     const gid = productId.startsWith("gid://")
@@ -600,7 +600,7 @@ export class ProductSyncService {
 
       return product;
     } catch (error) {
-      logger.error('[ProductSync] Error in syncSingleProduct:`, error);
+      logger.error(`[ProductSync] Error in syncSingleProduct:`, error);
       throw error;
     }
   }

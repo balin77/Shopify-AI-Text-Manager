@@ -43,7 +43,7 @@ export async function cleanupCacheForPlan(shop: string, newPlan: Plan): Promise<
     deletedContentTranslations: 0,
   };
 
-  logger.info('[PlanCleanup] Starting cleanup for shop ${shop} → ${newPlan}`);
+  logger.info(`[PlanCleanup] Starting cleanup for shop ${shop} → ${newPlan}`);
 
   // 1. Delete products over limit
   if (limits.maxProducts !== Infinity) {
