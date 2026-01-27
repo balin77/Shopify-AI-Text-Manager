@@ -682,10 +682,10 @@ function FieldRenderer(props: FieldRendererProps & { state?: any; handlers?: any
           const imageIndex = formData.get("imageIndex");
           return (
             fetcherState === "submitting" &&
-            (action === "generateAltText" && imageIndex === String(index)) ||
-            (action === "translateAltText" && imageIndex === String(index)) ||
-            (action === "translateAltTextToAllLocales" && imageIndex === String(index)) ||
-            (action === "generateAllAltTexts" && index === -1)
+            ((action === "generateAltText" && imageIndex === String(index)) ||
+             (action === "translateAltText" && imageIndex === String(index)) ||
+             (action === "translateAltTextToAllLocales" && imageIndex === String(index)) ||
+             (action === "generateAllAltTexts" && index === -1))
           );
         }}
         t={{
@@ -796,7 +796,7 @@ function getSourceText(item: any, fieldKey: string, primaryLocale: string): stri
 
   // For dynamic fields (e.g., templates), check translatableContent
   if (item.translatableContent && Array.isArray(item.translatableContent)) {
-    const contentItem = item.translatableContent.find((c: any) => c.key === fieldKey);
+    const contentItem = item.translatableContent.find((c: any) => c != null && c.key === fieldKey);
     if (contentItem?.value) {
       return contentItem.value;
     }

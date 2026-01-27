@@ -21,7 +21,8 @@ export function createTemplateFieldDefinitions(
     return [];
   }
 
-  return translatableContent.map((item) => ({
+  // Filter out null/undefined items to prevent "Cannot read properties of null" errors
+  return translatableContent.filter((item) => item != null).map((item) => ({
     key: item.key,
     type: detectFieldType(item.value),
     label: extractReadableName(item.key),

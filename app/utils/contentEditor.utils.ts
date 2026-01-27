@@ -504,7 +504,8 @@ export function hasPrimaryContentMissing(
       return false; // No content to check
     }
     // Check if any translatableContent entry has empty value
-    return translatableContent.some((item: { key: string; value: string }) =>
+    // Filter out null/undefined items to prevent "Cannot read properties of null" errors
+    return translatableContent.filter((item) => item != null).some((item: { key: string; value: string }) =>
       isFieldEmpty(item.value)
     );
   }
@@ -536,7 +537,8 @@ export function hasLocaleMissingTranslations(
     const translations = selectedItem.translations || [];
 
     // Check if any translatableContent entry with a value is missing a translation
-    return translatableContent.some((item: { key: string; value: string }) => {
+    // Filter out null/undefined items to prevent "Cannot read properties of null" errors
+    return translatableContent.filter((item) => item != null).some((item: { key: string; value: string }) => {
       // Only check if primary has content for this field
       if (isFieldEmpty(item.value)) {
         return false;

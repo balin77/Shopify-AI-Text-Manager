@@ -924,7 +924,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           // If we're on the primary locale, restore the accepted value from Accept & Translate flow
           // This is needed because the translation response only contains foreign languages,
           // and the editableValues for primary locale might have been lost during re-renders
-          debugLog.acceptAndTranslate(' Restoring accepted primary value for', fieldType, ':', acceptedPrimaryValueRef.current.value.substring(0, 50) + '...');
+          debugLog.acceptAndTranslate(' Restoring accepted primary value for', fieldType, ':', acceptedPrimaryValueRef.current!.value.substring(0, 50) + '...');
           setEditableValues(prev => ({
             ...prev,
             [fieldType]: acceptedPrimaryValueRef.current!.value
