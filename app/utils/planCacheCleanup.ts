@@ -106,7 +106,7 @@ export async function cleanupCacheForPlan(shop: string, newPlan: Plan): Promise<
     stats.deletedThemeTranslations = await deleteThemeTranslationsOverLimit(shop, limits.maxThemeTranslations);
   }
 
-  logger.info('[PlanCleanup] Cleanup complete:`, stats);
+  logger.info(`[PlanCleanup] Cleanup complete:`, stats);
 
   return stats;
 }
