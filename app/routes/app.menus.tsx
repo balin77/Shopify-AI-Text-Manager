@@ -25,6 +25,7 @@ import { useI18n } from "../contexts/I18nContext";
 import { useNavigationHeight } from "../contexts/NavigationHeightContext";
 import { ContentService } from "../services/content.service";
 import { CONTENT_MAX_HEIGHT } from "../constants/layout";
+import { logger } from "~/utils/logger.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
@@ -48,7 +49,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "de";
 
     // Try to load menus from database first
-    console.log(`[MENUS-LOADER] Attempting to load menus from database for shop: ${session.shop}`);
+    logger.debug("[MENUS-LOADER] Attempting to load menus from database", { context: "Menus", shop: session.shop });
     const { db } = await import("../db.server");
 
     let menus = [];
@@ -57,10 +58,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         where: { shop: session.shop },
         orderBy: { title: "asc" }
       });
-      console.log(`[MENUS-LOADER] ✅ Successfully loaded ${menus.length} menus from database`);
+      logger.debug("[MENUS-LOADER] Successfully loaded menus from database", { context: "Menus", count: menus.length });
 
       if (menus.length > 0) {
-        console.log(`[MENUS-LOADER] Sample menu:`, {
+        logger.debug("[MENUS-LOADER] Sample menu", {
+          context: "Menus",
           id: menus[0].id,
           title: menus[0].title,
           hasItems: !!menus[0].items,
@@ -68,48 +70,47 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         });
       }
     } catch (dbError: any) {
-      console.error(`[MENUS-LOADER] ❌ Database error:`, dbError.message);
-      console.error(`[MENUS-LOADER] Error code:`, dbError.code);
+      logger.error("[MENUS-LOADER] Database error", { context: "Menus", error: dbError.message, code: dbError.code });
       // If table doesn't exist, continue to API fallback
       if (dbError.code === 'P2021') {
-        console.log(`[MENUS-LOADER] Menu table does not exist yet, falling back to API`);
+        logger.debug("[MENUS-LOADER] Menu table does not exist yet, falling back to API", { context: "Menus" });
       }
     }
 
     // If no menus in database, fetch from API and cache them
     if (menus.length === 0) {
-      console.log("[MENUS-LOADER] No cached menus found, fetching from Shopify API...");
+      logger.debug("[MENUS-LOADER] No cached menus found, fetching from Shopify API", { context: "Menus" });
       const contentService = new ContentService(admin);
       const apiMenus = await contentService.getMenus();
-      console.log(`[MENUS-LOADER] API returned ${apiMenus.length} menus`);
+      logger.debug("[MENUS-LOADER] API returned menus", { context: "Menus", count: apiMenus.length });
 
       // Cache them in database
       if (apiMenus.length > 0) {
-        console.log("[MENUS-LOADER] Starting sync to database...");
+        logger.debug("[MENUS-LOADER] Starting sync to database", { context: "Menus" });
         const { ContentSyncService } = await import("../services/content-sync.service");
         const syncService = new ContentSyncService(admin, session.shop);
 
         try {
           await syncService.syncAllMenus();
-          console.log("[MENUS-LOADER] ✅ Sync completed successfully");
+          logger.debug("[MENUS-LOADER] Sync completed successfully", { context: "Menus" });
 
           // Re-fetch from database
           menus = await db.menu.findMany({
             where: { shop: session.shop },
             orderBy: { title: "asc" }
           });
-          console.log(`[MENUS-LOADER] ✅ Successfully cached and re-fetched ${menus.length} menus from database`);
+          logger.debug("[MENUS-LOADER] Successfully cached and re-fetched menus from database", { context: "Menus", count: menus.length });
         } catch (syncError: any) {
-          console.error(`[MENUS-LOADER] ❌ Sync failed:`, syncError.message);
-          console.log(`[MENUS-LOADER] Falling back to API data`);
+          logger.error("[MENUS-LOADER] Sync failed", { context: "Menus", error: syncError.message });
+          logger.debug("[MENUS-LOADER] Falling back to API data", { context: "Menus" });
           // Use API data as fallback
           menus = apiMenus;
         }
       } else {
-        console.log("[MENUS-LOADER] No menus found in API either");
+        logger.debug("[MENUS-LOADER] No menus found in API either", { context: "Menus" });
       }
     } else {
-      console.log(`[MENUS-LOADER] 🚀 Using cached menus (${menus.length}) - FAST PATH!`);
+      logger.debug("[MENUS-LOADER] Using cached menus - FAST PATH", { context: "Menus", count: menus.length });
     }
 
     return json({
@@ -120,7 +121,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       error: null
     });
   } catch (error: any) {
-    console.error("[MENUS-LOADER] Error:", error);
+    logger.error("[MENUS-LOADER] Error", { context: "Menus", error: error.message, stack: error.stack });
     return json({
       menus: [],
       shop: session.shop,

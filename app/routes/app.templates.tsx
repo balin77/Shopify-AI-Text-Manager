@@ -21,6 +21,7 @@ import { AIService } from "../../src/services/ai.service";
 import { TranslationService } from "../../src/services/translation.service";
 import { decryptApiKey } from "../utils/encryption.server";
 import { getTaskExpirationDate } from "../../src/utils/task.utils";
+import { logger } from "~/utils/logger.server";
 
 // ============================================================================
 // LOADER - Load navigation metadata (groups list)
@@ -83,7 +84,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       error: null
     });
   } catch (error: any) {
-    console.error("[TEMPLATES-LOADER] Error:", error);
+    logger.error("[TEMPLATES-LOADER] Error", { context: "Templates", error: error.message, stack: error.stack });
     return json({
       themes: [],
       shop: session.shop,
@@ -460,8 +461,8 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
                 where: { id: task.id },
                 data: { progress },
               });
-            } catch (error) {
-              console.error(`Error translating field ${fieldType} to ${locale}:`, error);
+            } catch (error: any) {
+              logger.error("Error translating field to locale", { context: "Templates", fieldType, locale, error: error?.message });
               translations[locale] = sourceText; // Fallback to original
             }
           }
@@ -603,8 +604,8 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
                   where: { id: task.id },
                   data: { progress },
                 });
-              } catch (error) {
-                console.error(`Error translating field ${key}:`, error);
+              } catch (error: any) {
+                logger.error("Error translating field", { context: "Templates", key, locale, error: error?.message });
                 translations[locale][key] = item.value;
               }
             }
@@ -655,21 +656,20 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
         const changedFieldsStr = formData.get("changedFields") as string;
         const changedFields: string[] = changedFieldsStr ? JSON.parse(changedFieldsStr) : [];
 
-        // Debug: Log all form data keys with clear visual markers
+        // Debug: Log all form data keys
         const allFormDataKeys: string[] = [];
         formData.forEach((value, key) => {
           allFormDataKeys.push(key);
         });
-        console.log(`\n${'*'.repeat(80)}`);
-        console.log(`******** 🔴🔴🔴 TEMPLATES UPDATE CONTENT - START 🔴🔴🔴 ********`);
-        console.log(`${'*'.repeat(80)}`);
-        console.log(`All FormData keys:`, allFormDataKeys);
-        console.log(`locale: ${locale}`);
-        console.log(`primaryLocale: ${primaryLocale}`);
-        console.log(`isPrimaryLocale: ${locale === primaryLocale}`);
-        console.log(`changedFieldsStr: ${changedFieldsStr}`);
-        console.log(`changedFields:`, changedFields);
-        console.log(`${'*'.repeat(80)}\n`);
+        logger.debug("[TEMPLATES] Update content - start", {
+          context: "Templates",
+          formDataKeys: allFormDataKeys,
+          locale,
+          primaryLocale,
+          isPrimaryLocale: locale === primaryLocale,
+          changedFieldsStr,
+          changedFields
+        });
 
         // Collect all field values from form data
         const updatedFields: Record<string, string> = {};
@@ -721,11 +721,11 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
 
           // Delete translations for changed fields (they are now outdated)
           if (changedFields.length > 0) {
-            console.log(`\n${'#'.repeat(80)}`);
-            console.log(`######## 🗑️🗑️🗑️ DELETING TRANSLATIONS 🗑️🗑️🗑️ ########`);
-            console.log(`${'#'.repeat(80)}`);
-            console.log(`Keys to delete:`, changedFields);
-            console.log(`GroupId: ${groupId}`);
+            logger.debug("[TEMPLATES] Deleting translations for changed fields", {
+              context: "Templates",
+              keysToDelete: changedFields,
+              groupId
+            });
 
             const deleteResult = await db.themeTranslation.deleteMany({
               where: {
@@ -735,10 +735,9 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
               }
             });
 
-            console.log(`Deleted ${deleteResult.count} translation entries`);
-            console.log(`${'#'.repeat(80)}\n`);
+            logger.debug("[TEMPLATES] Deleted translation entries", { context: "Templates", count: deleteResult.count });
           } else {
-            console.log(`\n⚠️ No changedFields to delete translations for\n`);
+            logger.debug("[TEMPLATES] No changedFields to delete translations for", { context: "Templates" });
           }
         } else {
           // Update translation: Use ThemeTranslation table
@@ -776,7 +775,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
         return json({ success: false, error: "Unknown action" }, { status: 400 });
     }
   } catch (error: any) {
-    console.error(`[TEMPLATES-ACTION] Error:`, error);
+    logger.error("[TEMPLATES-ACTION] Error", { context: "Templates", error: error.message, stack: error.stack });
     return json({ success: false, error: error.message }, { status: 500 });
   }
 };

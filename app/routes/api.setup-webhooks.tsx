@@ -2,6 +2,7 @@ import { json } from "@remix-run/node";
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import { WebhookRegistrationService } from "../services/webhook-registration.service";
+import { logger } from "~/utils/logger.server";
 
 /**
  * API Route: Setup Webhooks
@@ -12,12 +13,12 @@ import { WebhookRegistrationService } from "../services/webhook-registration.ser
  * Usage: POST /api/setup-webhooks
  */
 export const action = async ({ request }: ActionFunctionArgs) => {
-  console.log("🔧 [SETUP-WEBHOOKS] Starting webhook setup...");
+  logger.debug("[SETUP-WEBHOOKS] Starting webhook setup...", { context: "SetupWebhooks" });
 
   try {
     const { admin, session } = await authenticate.admin(request);
 
-    console.log(`[SETUP-WEBHOOKS] Setting up webhooks for shop: ${session.shop}`);
+    logger.debug("[SETUP-WEBHOOKS] Setting up webhooks for shop", { context: "SetupWebhooks", shop: session.shop });
 
     const webhookService = new WebhookRegistrationService(admin);
 
@@ -27,7 +28,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     // List registered webhooks
     const webhooks = await webhookService.listWebhooks();
 
-    console.log(`[SETUP-WEBHOOKS] ✓ Setup complete! Registered ${webhooks.length} webhooks`);
+    logger.debug("[SETUP-WEBHOOKS] Setup complete!", { context: "SetupWebhooks", webhookCount: webhooks.length });
 
     return json({
       success: true,
@@ -38,7 +39,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       })),
     });
   } catch (error: any) {
-    console.error("[SETUP-WEBHOOKS] Error:", error);
+    logger.error("[SETUP-WEBHOOKS] Error", { context: "SetupWebhooks", error: error.message, stack: error.stack });
     return json(
       {
         success: false,

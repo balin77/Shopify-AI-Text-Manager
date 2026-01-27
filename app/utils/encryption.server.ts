@@ -27,6 +27,7 @@
  */
 
 import crypto from 'crypto';
+import { logger } from './logger.server';
 
 /**
  * Encryption algorithm (AES-256-GCM)
@@ -133,7 +134,7 @@ export function encrypt(plaintext: string): string {
     return `${iv.toString('base64')}:${encrypted.toString('base64')}:${authTag.toString('base64')}`;
   } catch (error) {
     // Don't expose the actual plaintext in error messages
-    console.error('Encryption failed:', error instanceof Error ? error.message : 'Unknown error');
+    logger.error('[Encryption] Encryption failed:', error instanceof Error ? error.message : 'Unknown error');
     throw new Error('Failed to encrypt data. Check ENCRYPTION_KEY configuration.');
   }
 }
@@ -195,7 +196,7 @@ export function decrypt(encryptedData: string): string {
     return decrypted.toString('utf8');
   } catch (error) {
     // Don't expose encrypted data in error messages
-    console.error('Decryption failed:', error instanceof Error ? error.message : 'Unknown error');
+    logger.error('[Encryption] Decryption failed:', error instanceof Error ? error.message : 'Unknown error');
 
     // Check for common errors
     if (error instanceof Error) {
@@ -279,7 +280,7 @@ export function decryptApiKey(encryptedApiKey: string | null | undefined): strin
 
   // If it's not encrypted, return as-is (for backwards compatibility during migration)
   if (!isEncrypted(trimmed)) {
-    console.warn('Warning: API key is not encrypted. Consider running migration.');
+    logger.warn('[Encryption] Warning: API key is not encrypted. Consider running migration.');
     return trimmed;
   }
 
@@ -330,7 +331,7 @@ export function decryptPII(encryptedPII: string | null | undefined): string | nu
 
   // If it's not encrypted, return as-is (for backwards compatibility during migration)
   if (!isEncrypted(trimmed)) {
-    console.warn('Warning: PII data is not encrypted. Consider running migration.');
+    logger.warn('[Encryption] Warning: PII data is not encrypted. Consider running migration.');
     return trimmed;
   }
 
@@ -365,7 +366,7 @@ export function decryptToken(encryptedToken: string | null | undefined): string 
 
   // If it's not encrypted, return as-is (for backwards compatibility during migration)
   if (!isEncrypted(trimmed)) {
-    console.warn('Warning: OAuth token is not encrypted. Consider running migration.');
+    logger.warn('[Encryption] Warning: OAuth token is not encrypted. Consider running migration.');
     return trimmed;
   }
 
@@ -417,7 +418,7 @@ export function decryptPayload(encryptedPayload: string | null | undefined): str
 
   // If it's not encrypted, return as-is (for backwards compatibility during migration)
   if (!isEncrypted(trimmed)) {
-    console.warn('Warning: Webhook payload is not encrypted. Consider running migration.');
+    logger.warn('[Encryption] Warning: Webhook payload is not encrypted. Consider running migration.');
     return trimmed;
   }
 

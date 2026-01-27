@@ -641,9 +641,9 @@ Allowed formatting changes:
     const targetLocalesStr = formData.get("targetLocales") as string;
     const contextTitle = formData.get("contextTitle") as string;
 
-    console.log('🟠🟠🟠 [translateFieldToAllLocales] Starting...');
-    console.log('🟠 fieldType:', fieldType);
-    console.log('🟠 targetLocales:', targetLocalesStr);
+    logger.debug('[UnifiedContent] [translateFieldToAllLocales] Starting...');
+    logger.debug('[UnifiedContent] fieldType:', fieldType);
+    logger.debug('[UnifiedContent] targetLocales:', targetLocalesStr);
 
     // Create task entry
     const task = await db.task.create({
@@ -699,17 +699,17 @@ Allowed formatting changes:
       // Extract just the field value for each locale (frontend expects Record<locale, string>)
       // allTranslations is Record<locale, Record<fieldType, string>>
       // We need to flatten it to Record<locale, string>
-      console.log('🟠 [translateFieldToAllLocales] allTranslations from service:', Object.keys(allTranslations));
-      console.log('🟠 [translateFieldToAllLocales] allTranslations detail:', JSON.stringify(allTranslations, null, 2));
+      logger.debug('[UnifiedContent] [translateFieldToAllLocales] allTranslations from service:', Object.keys(allTranslations));
+      logger.debug('[UnifiedContent] [translateFieldToAllLocales] allTranslations detail:', JSON.stringify(allTranslations, null, 2));
 
       const flattenedTranslations: Record<string, string> = {};
       for (const [locale, fields] of Object.entries(allTranslations)) {
         const value = (fields as any)[fieldType] || "";
         flattenedTranslations[locale] = value;
-        console.log(`🟠 [translateFieldToAllLocales] Extracted ${locale}.${fieldType} = "${value.substring(0, 50)}..."`);
+        logger.debug('[UnifiedContent] [translateFieldToAllLocales] Extracted ${locale}.${fieldType} = "${value.substring(0, 50)}..."`);
       }
 
-      console.log('🟠🟠🟠 [translateFieldToAllLocales] RETURNING locales:', Object.keys(flattenedTranslations));
+      logger.debug('[UnifiedContent] [translateFieldToAllLocales] RETURNING locales:', Object.keys(flattenedTranslations));
 
       await db.task.update({
         where: { id: task.id },
@@ -744,14 +744,14 @@ Allowed formatting changes:
     const primaryLocale = formData.get("primaryLocale") as string;
     const changedFieldsDebug = formData.get("changedFields") as string;
 
-    console.log('🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣');
-    console.log('🟣 [UNIFIED-ACTION] updateContent received');
-    console.log('🟣 ResourceType:', contentConfig.resourceType);
-    console.log('🟣 ItemId:', itemId);
-    console.log('🟣 Locale:', locale);
-    console.log('🟣 PrimaryLocale:', primaryLocale);
-    console.log('🟣 ChangedFields:', changedFieldsDebug);
-    console.log('🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣🟣');
+    logger.debug('[UnifiedContent] ==================== updateContent received ====================');
+    logger.debug('[UnifiedContent] [UNIFIED-ACTION] updateContent received');
+    logger.debug('[UnifiedContent] ResourceType:', contentConfig.resourceType);
+    logger.debug('[UnifiedContent] ItemId:', itemId);
+    logger.debug('[UnifiedContent] Locale:', locale);
+    logger.debug('[UnifiedContent] PrimaryLocale:', primaryLocale);
+    logger.debug('[UnifiedContent] ChangedFields:', changedFieldsDebug);
+    logger.debug('[UnifiedContent] ==================== updateContent received ====================');
 
     try {
       // Special handling for Products - use dedicated product update handler
@@ -788,29 +788,29 @@ Allowed formatting changes:
 
         // Pass changedFields for translation deletion when primary locale changes
         const changedFieldsStr = formData.get("changedFields") as string;
-        console.log('🟣 [UNIFIED-ACTION] Passing changedFields to product handler:', changedFieldsStr);
+        logger.debug('[UnifiedContent] [UNIFIED-ACTION] Passing changedFields to product handler:', changedFieldsStr);
         if (changedFieldsStr && locale === primaryLocale) {
           productFormData.set("changedFields", changedFieldsStr);
-          console.log('🟣 [UNIFIED-ACTION] changedFields SET in productFormData');
+          logger.debug('[UnifiedContent] [UNIFIED-ACTION] changedFields SET in productFormData');
         } else {
-          console.log('🟣 [UNIFIED-ACTION] changedFields NOT set (locale !== primaryLocale or empty)');
+          logger.debug('[UnifiedContent] [UNIFIED-ACTION] changedFields NOT set (locale !== primaryLocale or empty)');
         }
 
         // Pass imageAltTexts if present
         const imageAltTextsStr = formData.get("imageAltTexts") as string;
         if (imageAltTextsStr) {
           productFormData.set("imageAltTexts", imageAltTextsStr);
-          console.log('🟣 [UNIFIED-ACTION] imageAltTexts SET in productFormData:', imageAltTextsStr);
+          logger.debug('[UnifiedContent] [UNIFIED-ACTION] imageAltTexts SET in productFormData:', imageAltTextsStr);
         }
 
         // Pass changedAltTextIndices for alt-text translation deletion when primary locale changes
         const changedAltTextIndicesStr = formData.get("changedAltTextIndices") as string;
         if (changedAltTextIndicesStr && locale === primaryLocale) {
           productFormData.set("changedAltTextIndices", changedAltTextIndicesStr);
-          console.log('🟣 [UNIFIED-ACTION] changedAltTextIndices SET in productFormData:', changedAltTextIndicesStr);
+          logger.debug('[UnifiedContent] [UNIFIED-ACTION] changedAltTextIndices SET in productFormData:', changedAltTextIndicesStr);
         }
 
-        console.log('🟣 [UNIFIED-ACTION] Calling handleUpdateProduct...');
+        logger.debug('[UnifiedContent] [UNIFIED-ACTION] Calling handleUpdateProduct...');
         return handleUpdateProduct(context, productFormData, itemId);
       }
 

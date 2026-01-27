@@ -38,6 +38,7 @@ import { useNavigationHeight } from "../contexts/NavigationHeightContext";
 import { ContentService } from "../services/content.service";
 import { contentEditorStyles } from "../utils/contentEditor.utils";
 import { CONTENT_MAX_HEIGHT } from "../constants/layout";
+import { logger } from "~/utils/logger.server";
 
 type ContentType = "collections" | "blogs" | "pages" | "policies" | "menus" | "templates" | "metaobjects" | "shopMetadata";
 
@@ -105,7 +106,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       error: null
     });
   } catch (error: any) {
-    console.error("[CONTENT-LOADER] Error:", error);
+    logger.error("[CONTENT-LOADER] Error", { context: "Content", error: error.message, stack: error.stack });
     return json({
       metadata: {},
       menus: [],

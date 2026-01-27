@@ -6,6 +6,7 @@
  */
 
 import { ShopifyApiGateway } from './shopify-api-gateway.service';
+import { logger } from '~/utils/logger.server';
 
 interface ShopifyGraphQLClient {
   graphql: (query: string, options?: { variables?: any }) => Promise<any>;
@@ -47,14 +48,14 @@ export class BackgroundSyncService {
    * Sync all pages with their translations (respects plan limit if provided)
    */
   async syncAllPages(maxCount?: number, onProgress?: ProgressCallback): Promise<number> {
-    console.log(`[BackgroundSync] Syncing all pages for shop: ${this.shop}`);
+    logger.debug('[BackgroundSync] Syncing all pages for shop: ${this.shop}`);
     if (maxCount !== undefined) {
-      console.log(`[BackgroundSync] Plan limit: ${maxCount} pages`);
+      logger.debug('[BackgroundSync] Plan limit: ${maxCount} pages`);
     }
 
     // If limit is 0, skip pages entirely
     if (maxCount === 0) {
-      console.log(`[BackgroundSync] Pages disabled for this plan, skipping`);
+      logger.debug('[BackgroundSync] Pages disabled for this plan, skipping`);
       return 0;
     }
 
@@ -82,11 +83,11 @@ export class BackgroundSyncService {
       const pagesData = await pagesResponse.json();
       let pages = pagesData.data?.pages?.edges?.map((e: any) => e.node) || [];
 
-      console.log(`[BackgroundSync] Found ${pages.length} pages from Shopify`);
+      logger.debug('[BackgroundSync] Found ${pages.length} pages from Shopify`);
 
       // Apply plan limit if specified
       if (maxCount !== undefined && maxCount > 0 && pages.length > maxCount) {
-        console.log(`[BackgroundSync] Limiting to ${maxCount} pages (found ${pages.length})`);
+        logger.debug('[BackgroundSync] Limiting to ${maxCount} pages (found ${pages.length})`);
         pages = pages.slice(0, maxCount);
       }
 
@@ -117,10 +118,10 @@ export class BackgroundSyncService {
         });
 
         if (deletedPagesCount > 0) {
-          console.log(`[BackgroundSync] 🗑️ Deleted ${deletedPagesCount} pages that no longer exist in Shopify`);
+          logger.debug('[BackgroundSync] 🗑️ Deleted ${deletedPagesCount} pages that no longer exist in Shopify`);
         }
         if (deletedTranslationsCount > 0) {
-          console.log(`[BackgroundSync] 🗑️ Deleted ${deletedTranslationsCount} orphaned page translations`);
+          logger.debug('[BackgroundSync] 🗑️ Deleted ${deletedTranslationsCount} orphaned page translations`);
         }
       } else {
         // No pages in Shopify - delete all local pages for this shop (using transaction)
@@ -136,7 +137,7 @@ export class BackgroundSyncService {
             deletedTranslationsCount: deletedTranslations.count
           };
         });
-        console.log(`[BackgroundSync] 🗑️ Deleted all pages (${deletedPagesCount}) and translations (${deletedTranslationsCount}) - no pages in Shopify`);
+        logger.debug('[BackgroundSync] 🗑️ Deleted all pages (${deletedPagesCount}) and translations (${deletedTranslationsCount}) - no pages in Shopify`);
         return 0;
       }
 
@@ -154,10 +155,10 @@ export class BackgroundSyncService {
         await this.syncSinglePageInternal(page, nonPrimaryLocales);
       }
 
-      console.log(`[BackgroundSync] ✓ Successfully synced ${pages.length} pages`);
+      logger.debug('[BackgroundSync] ✓ Successfully synced ${pages.length} pages`);
       return pages.length;
     } catch (error: any) {
-      console.error('[BackgroundSync] Error syncing pages:', error);
+      logger.error('[BackgroundSync] Error syncing pages:', error);
       throw error;
     }
   }
@@ -170,7 +171,7 @@ export class BackgroundSyncService {
       ? pageId
       : `gid://shopify/OnlineStorePage/${pageId}`;
 
-    console.log(`[BackgroundSync] Manual sync for page: ${gid}`);
+    logger.debug('[BackgroundSync] Manual sync for page: ${gid}`);
 
     const { db } = await import("../db.server");
 
@@ -328,7 +329,7 @@ export class BackgroundSyncService {
    * Sync all shop policies with their translations
    */
   async syncAllPolicies(onProgress?: ProgressCallback): Promise<number> {
-    console.log(`[BackgroundSync] Syncing all policies for shop: ${this.shop}`);
+    logger.debug('[BackgroundSync] Syncing all policies for shop: ${this.shop}`);
 
     try {
       const { db } = await import("../db.server");
@@ -352,7 +353,7 @@ export class BackgroundSyncService {
       const policiesData = await policiesResponse.json();
       const policies = policiesData.data?.shop?.shopPolicies || [];
 
-      console.log(`[BackgroundSync] Found ${policies.length} policies from Shopify`);
+      logger.debug('[BackgroundSync] Found ${policies.length} policies from Shopify`);
 
       // 2. AGGRESSIVE CLEANUP: Delete policies that no longer exist in Shopify (using transaction)
       const shopifyPolicyIds = policies.map((p: any) => p.id);
@@ -381,10 +382,10 @@ export class BackgroundSyncService {
         });
 
         if (deletedPoliciesCount > 0) {
-          console.log(`[BackgroundSync] 🗑️ Deleted ${deletedPoliciesCount} policies that no longer exist in Shopify`);
+          logger.debug('[BackgroundSync] 🗑️ Deleted ${deletedPoliciesCount} policies that no longer exist in Shopify`);
         }
         if (deletedTranslationsCount > 0) {
-          console.log(`[BackgroundSync] 🗑️ Deleted ${deletedTranslationsCount} orphaned policy translations`);
+          logger.debug('[BackgroundSync] 🗑️ Deleted ${deletedTranslationsCount} orphaned policy translations`);
         }
       } else {
         // No policies in Shopify - delete all local policies for this shop (using transaction)
@@ -400,7 +401,7 @@ export class BackgroundSyncService {
             deletedTranslationsCount: deletedTranslations.count
           };
         });
-        console.log(`[BackgroundSync] 🗑️ Deleted all policies (${deletedPoliciesCount}) and translations (${deletedTranslationsCount}) - no policies in Shopify`);
+        logger.debug('[BackgroundSync] 🗑️ Deleted all policies (${deletedPoliciesCount}) and translations (${deletedTranslationsCount}) - no policies in Shopify`);
         return 0;
       }
 
@@ -418,10 +419,10 @@ export class BackgroundSyncService {
         await this.syncSinglePolicyInternal(policy, nonPrimaryLocales);
       }
 
-      console.log(`[BackgroundSync] ✓ Successfully synced ${policies.length} policies`);
+      logger.debug('[BackgroundSync] ✓ Successfully synced ${policies.length} policies`);
       return policies.length;
     } catch (error: any) {
-      console.error('[BackgroundSync] Error syncing policies:', error);
+      logger.error('[BackgroundSync] Error syncing policies:', error);
       throw error;
     }
   }
@@ -433,7 +434,7 @@ export class BackgroundSyncService {
     // Policy can be identified by GID or by type (e.g., "PRIVACY_POLICY")
     const isType = !policyIdOrType.startsWith("gid://");
 
-    console.log(`[BackgroundSync] Manual sync for policy: ${policyIdOrType}`);
+    logger.debug('[BackgroundSync] Manual sync for policy: ${policyIdOrType}`);
 
     const { db } = await import("../db.server");
 
@@ -597,7 +598,7 @@ export class BackgroundSyncService {
    * Sync a single theme group by groupId (public method for manual reload)
    */
   async syncSingleThemeGroup(groupId: string): Promise<any> {
-    console.log(`[BackgroundSync] Syncing single theme group: ${groupId}`);
+    logger.debug('[BackgroundSync] Syncing single theme group: ${groupId}`);
 
     const { db } = await import("../db.server");
 
@@ -656,7 +657,7 @@ export class BackgroundSyncService {
       return existingKeys.includes(item.key);
     });
 
-    console.log(`[BackgroundSync] Found ${groupContent.length} translatable fields for group ${groupId}`);
+    logger.debug('[BackgroundSync] Found ${groupContent.length} translatable fields for group ${groupId}`);
 
     // Fetch translations for all non-primary locales
     const allTranslations: any[] = [];
@@ -693,7 +694,7 @@ export class BackgroundSyncService {
       }
     }
 
-    console.log(`[BackgroundSync] Fetched ${allTranslations.length} translations for group ${groupId}`);
+    logger.debug('[BackgroundSync] Fetched ${allTranslations.length} translations for group ${groupId}`);
 
     // Update ThemeContent
     await db.themeContent.update({
@@ -757,7 +758,7 @@ export class BackgroundSyncService {
       },
     });
 
-    console.log(`[BackgroundSync] Successfully synced theme group ${groupId}`);
+    logger.debug('[BackgroundSync] Successfully synced theme group ${groupId}`);
 
     return {
       ...updatedThemeContent,
@@ -774,7 +775,7 @@ export class BackgroundSyncService {
    * This is complex as it groups theme resources by patterns
    */
   async syncAllThemes(onProgress?: ProgressCallback): Promise<number> {
-    console.log(`[BackgroundSync] Syncing all themes for shop: ${this.shop}`);
+    logger.debug('[BackgroundSync] Syncing all themes for shop: ${this.shop}`);
 
     try {
       const { db } = await import("../db.server");
@@ -884,7 +885,7 @@ export class BackgroundSyncService {
             cursor = pageInfo?.endCursor || null;
 
             if (hasNextPage) {
-              console.log(`[BackgroundSync-Themes] 📄 Fetching next page for ${resourceTypeConfig.type} (cursor: ${cursor})`);
+              logger.debug('[BackgroundSync-Themes] 📄 Fetching next page for ${resourceTypeConfig.type} (cursor: ${cursor})`);
             }
           }
 
@@ -892,11 +893,11 @@ export class BackgroundSyncService {
 
           // Skip if no resources found
           if (resources.length === 0) {
-            console.log(`[BackgroundSync-Themes] ⚠️  No resources found for ${resourceTypeConfig.type}, skipping...`);
+            logger.debug('[BackgroundSync-Themes] ⚠️  No resources found for ${resourceTypeConfig.type}, skipping...`);
             continue;
           }
 
-          console.log(`[BackgroundSync-Themes] ✅ Found ${resources.length} resources for ${resourceTypeConfig.type}`);
+          logger.debug('[BackgroundSync-Themes] ✅ Found ${resources.length} resources for ${resourceTypeConfig.type}`);
 
           // Process each resource
           let resourceIndex = 0;
@@ -911,7 +912,7 @@ export class BackgroundSyncService {
             }
             // Skip resources with no translatable content
             if (!resource.translatableContent || resource.translatableContent.length === 0) {
-              console.log(`[BackgroundSync-Themes] ⚠️  Resource ${resource.resourceId} has no translatable content, skipping...`);
+              logger.debug('[BackgroundSync-Themes] ⚠️  Resource ${resource.resourceId} has no translatable content, skipping...`);
               continue;
             }
             // Group translatable content by key patterns
@@ -1019,7 +1020,7 @@ export class BackgroundSyncService {
               let resourceTranslations = translationCache.get(cacheKey);
 
               if (!resourceTranslations) {
-                console.log(`[BackgroundSync-Themes] 🔍 Fetching translations for resource ${resource.resourceId} (${items.length} fields, ${nonPrimaryLocales.length} locales)`);
+                logger.debug('[BackgroundSync-Themes] 🔍 Fetching translations for resource ${resource.resourceId} (${items.length} fields, ${nonPrimaryLocales.length} locales)`);
 
                 // Process locales sequentially with delay to avoid rate limiting
                 resourceTranslations = [];
@@ -1028,7 +1029,7 @@ export class BackgroundSyncService {
                 for (const locale of nonPrimaryLocales) {
                   localeIndex++;
                   try {
-                    console.log(`[BackgroundSync-Themes]   🌐 Fetching locale ${locale.locale}...`);
+                    logger.debug('[BackgroundSync-Themes]   🌐 Fetching locale ${locale.locale}...`);
 
                     // Report locale fetching progress
                     if (onProgress) {
@@ -1061,29 +1062,29 @@ export class BackgroundSyncService {
 
                     // Check for GraphQL errors
                     if (translationsData.errors) {
-                      console.error(`[BackgroundSync-Themes]   ❌ GraphQL error for locale ${locale.locale}:`, translationsData.errors[0].message);
+                      logger.error('[BackgroundSync-Themes]   ❌ GraphQL error for locale ${locale.locale}:`, translationsData.errors[0].message);
                       continue;
                     }
 
                     const translations = translationsData.data?.translatableResource?.translations || [];
 
                     if (translations.length > 0) {
-                      console.log(`[BackgroundSync-Themes]   ✅ Locale ${locale.locale}: ${translations.length} translations fetched`);
+                      logger.debug('[BackgroundSync-Themes]   ✅ Locale ${locale.locale}: ${translations.length} translations fetched`);
                       resourceTranslations.push(...translations);
                     } else {
-                      console.log(`[BackgroundSync-Themes]   ⚠️  Locale ${locale.locale}: NO translations found (might be empty in Shopify)`);
+                      logger.debug('[BackgroundSync-Themes]   ⚠️  Locale ${locale.locale}: NO translations found (might be empty in Shopify)`);
                     }
 
                   } catch (error: any) {
-                    console.error(`[BackgroundSync-Themes]   ❌ Exception fetching locale ${locale.locale}:`, error.message || error);
+                    logger.error('[BackgroundSync-Themes]   ❌ Exception fetching locale ${locale.locale}:`, error.message || error);
                   }
                 }
 
                 // Cache the fetched translations
                 translationCache.set(cacheKey, resourceTranslations);
-                console.log(`[BackgroundSync-Themes] 💾 Cached ${resourceTranslations.length} translations for resource ${resource.resourceId}`);
+                logger.debug('[BackgroundSync-Themes] 💾 Cached ${resourceTranslations.length} translations for resource ${resource.resourceId}`);
               } else {
-                console.log(`[BackgroundSync-Themes] ⚡ Using cached translations for resource ${resource.resourceId} (${resourceTranslations.length} translations)`);
+                logger.debug('[BackgroundSync-Themes] ⚡ Using cached translations for resource ${resource.resourceId} (${resourceTranslations.length} translations)`);
               }
 
               // Filter translations relevant to this group
@@ -1097,9 +1098,9 @@ export class BackgroundSyncService {
                 }
               }
 
-              console.log(`[BackgroundSync-Themes] 💾 Saving ${allTranslations.length} translations for group "${groupName}" to database`);
+              logger.debug('[BackgroundSync-Themes] 💾 Saving ${allTranslations.length} translations for group "${groupName}" to database`);
               if (allTranslations.length === 0 && nonPrimaryLocales.length > 0) {
-                console.log(`[BackgroundSync-Themes] ⚠️  NO TRANSLATIONS found! Either they don't exist in Shopify or the API call failed`);
+                logger.debug('[BackgroundSync-Themes] ⚠️  NO TRANSLATIONS found! Either they don't exist in Shopify or the API call failed`);
               }
 
               // Track this combination for cleanup
@@ -1226,7 +1227,7 @@ export class BackgroundSyncService {
         });
 
         if (toDelete.length > 0) {
-          console.log(`[BackgroundSync] 🗑️ Deleting ${toDelete.length} obsolete theme content groups`);
+          logger.debug('[BackgroundSync] 🗑️ Deleting ${toDelete.length} obsolete theme content groups`);
 
           // Delete in batches
           for (const item of toDelete) {
@@ -1247,7 +1248,7 @@ export class BackgroundSyncService {
             });
           }
 
-          console.log(`[BackgroundSync] 🗑️ Deleted ${toDelete.length} obsolete theme groups and their translations`);
+          logger.debug('[BackgroundSync] 🗑️ Deleted ${toDelete.length} obsolete theme groups and their translations`);
         }
       }
 
@@ -1259,12 +1260,12 @@ export class BackgroundSyncService {
         where: { shop: this.shop }
       });
 
-      console.log(`[BackgroundSync] ✓ Successfully synced ${totalGroups} theme groups`);
-      console.log(`[BackgroundSync] Database stats: ${finalStats} ThemeContent, ${finalTranslationStats} ThemeTranslations`);
+      logger.debug('[BackgroundSync] ✓ Successfully synced ${totalGroups} theme groups`);
+      logger.debug('[BackgroundSync] Database stats: ${finalStats} ThemeContent, ${finalTranslationStats} ThemeTranslations`);
 
       return totalGroups;
     } catch (error: any) {
-      console.error('[BackgroundSync] Error syncing themes:', error);
+      logger.error('[BackgroundSync] Error syncing themes:', error);
       throw error;
     }
   }
@@ -1372,21 +1373,21 @@ export class BackgroundSyncService {
   async syncAll(): Promise<SyncStats> {
     const startTime = Date.now();
 
-    console.log(`[BackgroundSync] Starting full sync for shop: ${this.shop}`);
+    logger.debug('[BackgroundSync] Starting full sync for shop: ${this.shop}`);
 
     try {
       // Run all syncs in parallel with aggressive cleanup
       const [pages, policies, themes] = await Promise.all([
         this.syncAllPages().catch(err => {
-          console.error('[BackgroundSync] Pages sync failed:', err);
+          logger.error('[BackgroundSync] Pages sync failed:', err);
           return 0;
         }),
         this.syncAllPolicies().catch(err => {
-          console.error('[BackgroundSync] Policies sync failed:', err);
+          logger.error('[BackgroundSync] Policies sync failed:', err);
           return 0;
         }),
         this.syncAllThemes().catch(err => {
-          console.error('[BackgroundSync] Themes sync failed:', err);
+          logger.error('[BackgroundSync] Themes sync failed:', err);
           return 0;
         }),
       ]);
@@ -1400,12 +1401,12 @@ export class BackgroundSyncService {
         duration,
       };
 
-      console.log(`[BackgroundSync] ✓ Full sync complete in ${duration}ms`);
-      console.log(`[BackgroundSync]   Pages: ${pages}, Policies: ${policies}, Themes: ${themes}`);
+      logger.debug('[BackgroundSync] ✓ Full sync complete in ${duration}ms`);
+      logger.debug('[BackgroundSync]   Pages: ${pages}, Policies: ${policies}, Themes: ${themes}`);
 
       return stats;
     } catch (error: any) {
-      console.error('[BackgroundSync] Full sync failed:', error);
+      logger.error('[BackgroundSync] Full sync failed:', error);
       throw error;
     }
   }

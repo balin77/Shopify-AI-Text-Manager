@@ -13,6 +13,7 @@
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
+import { logger } from "~/utils/logger.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
@@ -53,7 +54,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const data = await response.json() as { data?: any; errors?: Array<{ message: string }> };
 
     if (data.errors) {
-      console.error("[API:ProductImages] GraphQL error:", data.errors);
+      logger.error("[API:ProductImages] GraphQL error", { context: "ProductImages", errors: data.errors });
       return json({ error: data.errors[0]?.message || "GraphQL error" }, { status: 500 });
     }
 
@@ -68,7 +69,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         height: edge.node.image.height,
       })) || [];
 
-    console.log(`[API:ProductImages] Loaded ${mediaImages.length} images from Shopify for product ${productId}`);
+    logger.debug("[API:ProductImages] Loaded images from Shopify", { context: "ProductImages", count: mediaImages.length, productId });
 
     // Save images to database for future instant loading (non-blocking)
     if (mediaImages.length > 0) {
@@ -102,11 +103,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
             });
           });
 
-          console.log(`[API:ProductImages] ✓ Cached ${mediaImages.length} images to DB for ${productId}`);
+          logger.debug("[API:ProductImages] Cached images to DB", { context: "ProductImages", count: mediaImages.length, productId });
         }
       } catch (dbError) {
         // Don't fail the request if DB save fails - images are still returned
-        console.error("[API:ProductImages] Failed to cache images to DB:", dbError);
+        logger.error("[API:ProductImages] Failed to cache images to DB", { context: "ProductImages", error: dbError instanceof Error ? dbError.message : String(dbError) });
       }
     }
 
@@ -116,7 +117,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       count: mediaImages.length,
     });
   } catch (error: any) {
-    console.error("[API:ProductImages] Error:", error);
+    logger.error("[API:ProductImages] Error", { context: "ProductImages", error: error.message, stack: error.stack });
     return json({ error: error.message }, { status: 500 });
   }
 };

@@ -3,6 +3,7 @@ import type { ActionFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
 import { getPlanLimits } from "../utils/planUtils";
+import { logger } from "~/utils/logger.server";
 
 /**
  * API Route: Fast Product Sync (Bulk)
@@ -17,7 +18,7 @@ import { getPlanLimits } from "../utils/planUtils";
  * - force=true: Delete all existing products and re-sync from scratch
  */
 export const action = async ({ request }: ActionFunctionArgs) => {
-  console.log("🚀 [SYNC-PRODUCTS] Starting FAST bulk product sync...");
+  logger.debug("[SYNC-PRODUCTS] Starting FAST bulk product sync...", { context: "SyncProducts" });
 
   try {
     const { admin, session } = await authenticate.admin(request);
@@ -26,8 +27,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const url = new URL(request.url);
     const force = url.searchParams.get("force") === "true";
 
-    console.log(`[SYNC-PRODUCTS] Shop: ${shop}`);
-    console.log(`[SYNC-PRODUCTS] Force re-sync: ${force}`);
+    logger.debug("[SYNC-PRODUCTS] Shop", { context: "SyncProducts", shop });
+    logger.debug("[SYNC-PRODUCTS] Force re-sync", { context: "SyncProducts", force });
 
     // Get settings for plan limits
     const settings = await db.aISettings.findUnique({
@@ -37,7 +38,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const plan = (settings?.subscriptionPlan || "basic") as "free" | "basic" | "pro" | "max";
     const planLimits = getPlanLimits(plan);
 
-    console.log(`[SYNC-PRODUCTS] Plan: ${plan}, Max products: ${planLimits.maxProducts}`);
+    logger.debug("[SYNC-PRODUCTS] Plan and limits", { context: "SyncProducts", plan, maxProducts: planLimits.maxProducts });
 
     // Check if products already exist (skip if not force)
     if (!force) {
@@ -46,7 +47,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
 
       if (existingCount > 0) {
-        console.log(`[SYNC-PRODUCTS] Found ${existingCount} existing products, skipping sync`);
+        logger.debug("[SYNC-PRODUCTS] Found existing products, skipping sync", { context: "SyncProducts", existingCount });
         return json({
           success: true,
           message: `Already synced ${existingCount} products. Use ?force=true to re-sync.`,
@@ -58,7 +59,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     // If force, delete all existing products first
     if (force) {
-      console.log("[SYNC-PRODUCTS] Force mode: Deleting all existing products...");
+      logger.debug("[SYNC-PRODUCTS] Force mode: Deleting all existing products...", { context: "SyncProducts" });
 
       // Get product IDs first for cascade deletes
       const existingProducts = await db.product.findMany({
@@ -88,7 +89,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           }),
         ]);
 
-        console.log(`[SYNC-PRODUCTS] Deleted ${productIds.length} existing products`);
+        logger.debug("[SYNC-PRODUCTS] Deleted existing products", { context: "SyncProducts", count: productIds.length });
       }
     }
 
@@ -98,7 +99,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     let hasNextPage = true;
     let cursor: string | null = null;
 
-    console.log(`[SYNC-PRODUCTS] Fetching up to ${maxToFetch} products from Shopify...`);
+    logger.debug("[SYNC-PRODUCTS] Fetching products from Shopify", { context: "SyncProducts", maxToFetch });
 
     while (hasNextPage && allProducts.length < maxToFetch) {
       const batchSize = Math.min(250, maxToFetch - allProducts.length);
@@ -167,7 +168,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const data: any = await response.json();
 
       if (data.errors) {
-        console.error("[SYNC-PRODUCTS] GraphQL error:", data.errors);
+        logger.error("[SYNC-PRODUCTS] GraphQL error", { context: "SyncProducts", errors: data.errors });
         throw new Error(data.errors[0]?.message || "GraphQL error");
       }
 
@@ -178,14 +179,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       hasNextPage = pageInfo?.hasNextPage || false;
       cursor = pageInfo?.endCursor || null;
 
-      console.log(`[SYNC-PRODUCTS] Fetched batch: ${products.length} products (total: ${allProducts.length})`);
+      logger.debug("[SYNC-PRODUCTS] Fetched batch", { context: "SyncProducts", batchSize: products.length, total: allProducts.length });
 
       if (hasNextPage && allProducts.length < maxToFetch) {
-        console.log(`[SYNC-PRODUCTS] Fetching next page...`);
+        logger.debug("[SYNC-PRODUCTS] Fetching next page...", { context: "SyncProducts" });
       }
     }
 
-    console.log(`[SYNC-PRODUCTS] Total products fetched: ${allProducts.length}`);
+    logger.debug("[SYNC-PRODUCTS] Total products fetched", { context: "SyncProducts", total: allProducts.length });
 
     if (allProducts.length === 0) {
       return json({
@@ -200,7 +201,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     let failed = 0;
     const errors: string[] = [];
 
-    console.log(`[SYNC-PRODUCTS] Saving ${allProducts.length} products to database...`);
+    logger.debug("[SYNC-PRODUCTS] Saving products to database", { context: "SyncProducts", count: allProducts.length });
 
     for (const product of allProducts) {
       try {
@@ -297,16 +298,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
         // Log progress every 50 products
         if (synced % 50 === 0) {
-          console.log(`[SYNC-PRODUCTS] Progress: ${synced}/${allProducts.length} products saved`);
+          logger.debug("[SYNC-PRODUCTS] Progress", { context: "SyncProducts", synced, total: allProducts.length });
         }
       } catch (err: any) {
-        console.error(`[SYNC-PRODUCTS] Failed to save product ${product.id}:`, err.message);
+        logger.error("[SYNC-PRODUCTS] Failed to save product", { context: "SyncProducts", productId: product.id, error: err.message });
         failed++;
         errors.push(`${product.id}: ${err.message}`);
       }
     }
 
-    console.log(`✅ [SYNC-PRODUCTS] Sync complete! Synced: ${synced}, Failed: ${failed}`);
+    logger.debug("[SYNC-PRODUCTS] Sync complete!", { context: "SyncProducts", synced, failed });
 
     return json({
       success: true,
@@ -316,7 +317,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       errors: errors.slice(0, 10), // Only return first 10 errors
     });
   } catch (error: any) {
-    console.error("❌ [SYNC-PRODUCTS] Error:", error);
+    logger.error("[SYNC-PRODUCTS] Error", { context: "SyncProducts", error: error.message, stack: error.stack });
     return json(
       {
         success: false,

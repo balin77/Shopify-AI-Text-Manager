@@ -5,6 +5,7 @@ import { ProductSyncService } from "../services/product-sync.service";
 import { ContentSyncService } from "../services/content-sync.service";
 import { BackgroundSyncService } from "../services/background-sync.service";
 import { getPlanLimits } from "../utils/planUtils";
+import { logger } from "~/utils/logger.server";
 
 export async function action({ request }: ActionFunctionArgs) {
   const { admin, session } = await authenticate.admin(request);
@@ -22,9 +23,7 @@ export async function action({ request }: ActionFunctionArgs) {
       );
     }
 
-    console.log(
-      `[Manual Sync] Starting sync for ${resourceType} ${resourceId} (locale: ${locale})`
-    );
+    logger.debug("[Manual Sync] Starting sync", { context: "ManualSync", resourceType, resourceId, locale });
 
     // Get subscription plan for image limits
     const settings = await db.aISettings.findUnique({
@@ -39,7 +38,7 @@ export async function action({ request }: ActionFunctionArgs) {
     switch (resourceType) {
       case "product":
       case "products": {
-        console.log(`🔴🔴🔴 [RELOAD-BUTTON] Product reload triggered for ${resourceId} 🔴🔴🔴`);
+        logger.debug("[RELOAD-BUTTON] Product reload triggered", { context: "ManualSync", resourceId });
         const productSyncService = new ProductSyncService(
           admin,
           session.shop
@@ -51,15 +50,13 @@ export async function action({ request }: ActionFunctionArgs) {
           : resourceId;
 
         // Sync single product with plan-aware image loading
-        console.log(`🔴 [RELOAD-BUTTON] Calling syncSingleProduct for ${shopifyId}...`);
+        logger.debug("[RELOAD-BUTTON] Calling syncSingleProduct", { context: "ManualSync", shopifyId });
         result = await productSyncService.syncSingleProduct(
           shopifyId,
           planLimits.cacheEnabled.productImages // true for all images, false for featured only
         );
 
-        console.log(
-          `🔴 [RELOAD-BUTTON] Product ${shopifyId} synced successfully (images: ${planLimits.cacheEnabled.productImages ? "all" : "featured only"})`
-        );
+        logger.debug("[RELOAD-BUTTON] Product synced successfully", { context: "ManualSync", shopifyId, imageMode: planLimits.cacheEnabled.productImages ? "all" : "featured only" });
         break;
       }
 
@@ -75,7 +72,7 @@ export async function action({ request }: ActionFunctionArgs) {
           : resourceId;
 
         result = await contentSyncService.syncSingleCollection(collectionId);
-        console.log(`[Manual Sync] Collection ${collectionId} synced successfully`);
+        logger.debug("[Manual Sync] Collection synced successfully", { context: "ManualSync", collectionId });
         break;
       }
 
@@ -90,7 +87,7 @@ export async function action({ request }: ActionFunctionArgs) {
           : resourceId;
 
         result = await contentSyncService.syncSingleArticle(articleId);
-        console.log(`[Manual Sync] Article ${articleId} synced successfully`);
+        logger.debug("[Manual Sync] Article synced successfully", { context: "ManualSync", articleId });
         break;
       }
 
@@ -102,7 +99,7 @@ export async function action({ request }: ActionFunctionArgs) {
 
         // Pass the full resourceId - syncSinglePage will handle GID conversion
         result = await backgroundSyncService.syncSinglePage(resourceId);
-        console.log(`[Manual Sync] Page ${resourceId} synced successfully`);
+        logger.debug("[Manual Sync] Page synced successfully", { context: "ManualSync", resourceId });
         break;
       }
 
@@ -114,7 +111,7 @@ export async function action({ request }: ActionFunctionArgs) {
 
         // Policies use type as identifier (e.g., "PRIVACY_POLICY")
         result = await backgroundSyncService.syncSinglePolicy(resourceId);
-        console.log(`[Manual Sync] Policy ${resourceId} synced successfully`);
+        logger.debug("[Manual Sync] Policy synced successfully", { context: "ManualSync", resourceId });
         break;
       }
 
@@ -130,7 +127,7 @@ export async function action({ request }: ActionFunctionArgs) {
           : resourceId;
 
         result = await backgroundSyncService.syncSingleThemeGroup(groupId);
-        console.log(`[Manual Sync] Theme group ${groupId} synced successfully`);
+        logger.debug("[Manual Sync] Theme group synced successfully", { context: "ManualSync", groupId });
         break;
       }
 
@@ -151,7 +148,7 @@ export async function action({ request }: ActionFunctionArgs) {
       imageMode: planLimits.cacheEnabled.productImages ? "all" : "featured-only",
     });
   } catch (error: any) {
-    console.error("[Manual Sync] Error:", error);
+    logger.error("[Manual Sync] Error", { context: "ManualSync", error: error.message, stack: error.stack });
     return json(
       {
         success: false,

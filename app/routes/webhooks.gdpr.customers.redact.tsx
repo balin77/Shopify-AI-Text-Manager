@@ -11,9 +11,10 @@ import type { ActionFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { redactCustomerData, logGDPRRequest, type GDPRCustomerRedactRequest } from "../services/gdpr.service";
 import { verifyAndParseWebhook } from "../utils/webhook-verification";
+import { logger } from "~/utils/logger.server";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  console.log('📨 [GDPR] Received customers/redact webhook');
+  logger.debug("[GDPR] Received customers/redact webhook", { context: "GDPR" });
 
   try {
     // Verify HMAC signature and parse payload
@@ -21,8 +22,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     // Reject requests with invalid signature
     if (!isValid) {
-      console.error('🚫 [GDPR] Webhook verification failed - Invalid HMAC signature');
-      console.error('🚫 [GDPR] This could be an unauthorized request attempt');
+      logger.error("[GDPR] Webhook verification failed - Invalid HMAC signature. This could be an unauthorized request attempt", { context: "GDPR" });
 
       await logGDPRRequest(
         metadata.shop || 'unknown',
@@ -40,22 +40,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
 
     if (!payload) {
-      console.error('❌ [GDPR] Failed to parse webhook payload');
+      logger.error("[GDPR] Failed to parse webhook payload", { context: "GDPR" });
       return json({
         success: false,
         error: 'Invalid payload',
       }, { status: 400 });
     }
 
-    console.log('✅ [GDPR] Webhook signature verified');
+    logger.debug("[GDPR] Webhook signature verified", { context: "GDPR" });
 
     // Parse Shopify's GDPR request
-
-    console.log('📋 [GDPR] Redaction request details:', {
-      shop: payload.shop_domain,
-      customerId: payload.customer.id,
-      customerEmail: payload.customer.email,
-    });
+    logger.debug("[GDPR] Redaction request details", { context: "GDPR", shop: payload.shop_domain, customerId: payload.customer.id, customerEmail: payload.customer.email });
 
     // Delete all customer data
     await redactCustomerData(payload);
@@ -68,7 +63,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       payload.customer.email
     );
 
-    console.log('✅ [GDPR] Customer data redaction completed successfully');
+    logger.debug("[GDPR] Customer data redaction completed successfully", { context: "GDPR" });
 
     return json({
       success: true,
@@ -76,7 +71,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }, { status: 200 });
 
   } catch (error) {
-    console.error('❌ [GDPR] Error processing customer redaction:', error);
+    logger.error("[GDPR] Error processing customer redaction", { context: "GDPR", error: error instanceof Error ? error.message : String(error) });
 
     // Log the error for compliance
     await logGDPRRequest(

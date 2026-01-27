@@ -1,4 +1,5 @@
 import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
+import { logger } from "~/utils/logger.server";
 import {
   GET_SHOP_LOCALES,
   GET_BLOGS,
@@ -73,18 +74,17 @@ export class ContentService {
       const response = await this.admin.graphql(GET_SHOP_POLICIES);
       const data = await response.json();
 
-      console.log('=== SHOP POLICIES API RESPONSE ===');
-      console.log('Raw policies data:', JSON.stringify(data, null, 2));
+      logger.debug('Shop policies API response', { context: 'ContentService', data });
 
       const policies = data.data?.shop?.shopPolicies?.map((policy: any) => ({
         ...policy,
         translations: []
       })) || [];
 
-      console.log(`Processed policies: ${policies.length}`);
+      logger.debug('Processed policies', { context: 'ContentService', count: policies.length });
       return policies;
     } catch (error) {
-      console.error('Error fetching shop policies:', error);
+      logger.error('Error fetching shop policies', { context: 'ContentService', error });
       return [];
     }
   }
@@ -103,14 +103,14 @@ export class ContentService {
 
       return shop;
     } catch (error) {
-      console.error('Error fetching shop metadata:', error);
+      logger.error('Error fetching shop metadata', { context: 'ContentService', error });
       return { metafields: [], translations: [] };
     }
   }
 
   async getMenus(first: number = 50) {
     try {
-      console.log('\n=== 🍔 MENUS: Fetching (simplified - no translations) ===');
+      logger.debug('Fetching menus (simplified - no translations)', { context: 'ContentService' });
 
       const response = await this.admin.graphql(GET_MENUS, {
         variables: { first }
@@ -122,9 +122,8 @@ export class ContentService {
         translations: [] // Menus cannot be translated via API
       })) || [];
 
-      console.log(`[MENUS] Found ${menus.length} menus`);
-      console.log('[MENUS] ⚠️  Translation API calls disabled due to Shopify API limitation');
-      console.log('[MENUS] MenuItems cannot be translated via GraphQL API');
+      logger.debug('Menus fetched', { context: 'ContentService', count: menus.length });
+      logger.debug('Translation API calls disabled due to Shopify API limitation', { context: 'ContentService' });
 
       return menus;
 
@@ -301,7 +300,7 @@ export class ContentService {
 
        * ======================================================================== */
     } catch (error) {
-      console.error('❌ [MENUS] Error fetching menus:', error);
+      logger.error('Error fetching menus', { context: 'ContentService', error });
       return [];
     }
   }
@@ -317,12 +316,12 @@ export class ContentService {
       'ONLINE_STORE_THEME_SETTINGS_DATA_SECTIONS',
     ];
 
-    console.log('\n\n=== 🧪 TESTING ALL THEME RESOURCE TYPES ===\n');
+    logger.debug('Testing all theme resource types', { context: 'ContentService' });
 
     const results: Record<string, any> = {};
 
     for (const resourceType of THEME_RESOURCE_TYPES) {
-      console.log(`\n--- Testing: ${resourceType} ---`);
+      logger.debug('Testing resource type', { context: 'ContentService', resourceType });
 
       try {
         const query = `#graphql
@@ -350,7 +349,7 @@ export class ContentService {
         const data: any = await response.json();
 
         if (data.errors) {
-          console.log(`❌ ERROR:`, data.errors[0].message);
+          logger.warn('Theme resource type error', { context: 'ContentService', resourceType, error: data.errors[0].message });
           results[resourceType] = { status: 'ERROR', error: data.errors[0].message };
           continue;
         }
@@ -358,13 +357,13 @@ export class ContentService {
         const resources = data.data?.translatableResources?.edges || [];
         const totalContent = resources.reduce((sum: number, r: any) => sum + (r.node.translatableContent?.length || 0), 0);
 
-        console.log(`✅ SUCCESS`);
-        console.log(`   Resources found: ${resources.length}`);
-        console.log(`   Total translatable content: ${totalContent}`);
-
-        if (resources.length > 0 && totalContent > 0) {
-          console.log(`   Sample keys:`, resources[0].node.translatableContent.slice(0, 3).map((c: any) => c.key));
-        }
+        logger.debug('Theme resource type success', {
+          context: 'ContentService',
+          resourceType,
+          resourceCount: resources.length,
+          contentCount: totalContent,
+          sampleKeys: resources.length > 0 && totalContent > 0 ? resources[0].node.translatableContent.slice(0, 3).map((c: any) => c.key) : []
+        });
 
         results[resourceType] = {
           status: 'SUCCESS',
@@ -374,42 +373,28 @@ export class ContentService {
         };
 
       } catch (error: any) {
-        console.log(`❌ EXCEPTION:`, error.message);
+        logger.error('Theme resource type exception', { context: 'ContentService', resourceType, error: error.message });
         results[resourceType] = { status: 'EXCEPTION', error: error.message };
       }
     }
 
-    console.log('\n\n=== 📊 SUMMARY ===\n');
-    console.log('Resource Types with actual content:');
+    const withContent = Object.entries(results).filter(([, r]) => r.status === 'SUCCESS' && r.hasContent);
+    const withoutContent = Object.entries(results).filter(([, r]) => r.status === 'SUCCESS' && !r.hasContent);
+    const withErrors = Object.entries(results).filter(([, r]) => r.status !== 'SUCCESS');
 
-    for (const [type, result] of Object.entries(results)) {
-      if (result.status === 'SUCCESS' && result.hasContent) {
-        console.log(`✅ ${type}: ${result.resourceCount} resources, ${result.contentCount} translatable fields`);
-      }
-    }
-
-    console.log('\nResource Types with no content:');
-    for (const [type, result] of Object.entries(results)) {
-      if (result.status === 'SUCCESS' && !result.hasContent) {
-        console.log(`⚠️  ${type}: ${result.resourceCount} resources, but 0 translatable fields`);
-      }
-    }
-
-    console.log('\nResource Types with errors:');
-    for (const [type, result] of Object.entries(results)) {
-      if (result.status !== 'SUCCESS') {
-        console.log(`❌ ${type}: ${result.error}`);
-      }
-    }
-
-    console.log('\n=== 🧪 TEST COMPLETE ===\n\n');
+    logger.debug('Theme resource types test summary', {
+      context: 'ContentService',
+      withContent: withContent.map(([type, r]) => ({ type, resources: r.resourceCount, fields: r.contentCount })),
+      withoutContent: withoutContent.map(([type, r]) => ({ type, resources: r.resourceCount })),
+      withErrors: withErrors.map(([type, r]) => ({ type, error: r.error }))
+    });
 
     return results;
   }
 
   async getThemes(first: number = 250) {
     try {
-      console.log('\n=== 🎨 THEMES: Fetching theme translatable resources ===');
+      logger.debug('Fetching theme translatable resources', { context: 'ContentService' });
 
       // Define the working resource types (based on test results)
       const WORKING_RESOURCE_TYPES = [
@@ -458,19 +443,19 @@ export class ContentService {
         { pattern: /^Settings Categories:/, name: 'Settings', groupId: 'settings', icon: '⚙️' },
       ];
 
-      console.log(`[THEMES] Loading ${WORKING_RESOURCE_TYPES.length} resource types with translatable content`);
+      logger.debug('Loading theme resource types', { context: 'ContentService', count: WORKING_RESOURCE_TYPES.length });
 
       // Get shop locales to know which languages to fetch translations for
       const shopLocales = await this.getShopLocales();
       const nonPrimaryLocales = shopLocales.filter((l: any) => !l.primary).map((l: any) => l.locale);
-      console.log(`[THEMES] Non-primary locales:`, nonPrimaryLocales);
+      logger.debug('Non-primary locales for themes', { context: 'ContentService', locales: nonPrimaryLocales });
 
       // Collect all theme resources
       const allThemeResources = [];
 
       // Fetch resources for each working resource type
       for (const resourceTypeConfig of WORKING_RESOURCE_TYPES) {
-        console.log(`\n--- Loading: ${resourceTypeConfig.label} (${resourceTypeConfig.type}) ---`);
+        logger.debug('Loading theme resource', { context: 'ContentService', label: resourceTypeConfig.label, type: resourceTypeConfig.type });
 
         try {
           const translatableResponse = await this.admin.graphql(GET_THEME_TRANSLATABLE_RESOURCES, {
@@ -479,14 +464,14 @@ export class ContentService {
           const translatableData: any = await translatableResponse.json();
 
           if (translatableData.errors) {
-            console.error(`❌ Error loading ${resourceTypeConfig.type}:`, translatableData.errors[0].message);
+            logger.error('Error loading theme resource type', { context: 'ContentService', type: resourceTypeConfig.type, error: translatableData.errors[0].message });
             continue;
           }
 
           const resources = translatableData.data?.translatableResources?.edges?.map((edge: any) => edge.node) || [];
           const totalContent = resources.reduce((sum: number, r: any) => sum + (r.translatableContent?.length || 0), 0);
 
-          console.log(`✅ ${resourceTypeConfig.label}: ${resources.length} resources, ${totalContent} translatable fields`);
+          logger.debug('Theme resource loaded', { context: 'ContentService', label: resourceTypeConfig.label, resources: resources.length, fields: totalContent });
 
           // Process each resource
           for (const resource of resources) {
@@ -503,14 +488,15 @@ export class ContentService {
                 resourceTitle = `${resourceTypeConfig.label}: ${firstKey}`;
               }
 
-              // 🔍 DEBUG: Log sample translatable content structure
+              // Log sample translatable content structure
               if (resource.translatableContent.length > 0) {
-                console.log(`  [DEBUG] Sample translatable content (first 3):`,
-                  resource.translatableContent.slice(0, 3).map((c: any) => ({
+                logger.debug('Sample translatable content', {
+                  context: 'ContentService',
+                  samples: resource.translatableContent.slice(0, 3).map((c: any) => ({
                     key: c.key,
                     value: c.value?.substring(0, 50)
                   }))
-                );
+                });
               }
             }
 
@@ -555,8 +541,7 @@ export class ContentService {
             // Instead of lumping all unmatched content into one group,
             // create intelligent sub-groups based on key prefixes
             if (unmatchedContent.length > 0) {
-              console.log(`  [DEBUG] Found ${unmatchedContent.length} unmatched items`);
-              console.log(`  [DEBUG] Sample unmatched keys:`, unmatchedContent.slice(0, 10).map(c => c.key));
+              logger.debug('Found unmatched items', { context: 'ContentService', count: unmatchedContent.length, sampleKeys: unmatchedContent.slice(0, 10).map(c => c.key) });
 
               // Group unmatched content by their top-level prefix
               const unmatchedByPrefix: Record<string, any[]> = {};
@@ -622,7 +607,7 @@ export class ContentService {
                   _groupIcon: icon
                 }));
 
-                console.log(`  → Created group "${groupName}" (${items.length} items)`);
+                logger.debug('Created theme group', { context: 'ContentService', groupName, itemCount: items.length });
               }
             }
 
@@ -642,11 +627,11 @@ export class ContentService {
               });
 
               const totalMatched = Object.values(contentByGroup).reduce((sum, arr) => sum + arr.length, 0);
-              console.log(`  → Grouped into ${Object.keys(contentByGroup).length} categories (${totalMatched} items)`);
+              logger.debug('Content grouped', { context: 'ContentService', categories: Object.keys(contentByGroup).length, items: totalMatched });
             }
           }
         } catch (error) {
-          console.error(`❌ Exception loading ${resourceTypeConfig.type}:`, error);
+          logger.error('Exception loading theme resource type', { context: 'ContentService', type: resourceTypeConfig.type, error });
         }
       }
 
@@ -678,18 +663,16 @@ export class ContentService {
 
       const groupedThemes = Object.values(consolidatedGroups);
 
-      console.log(`\n=== 🎨 THEMES: Fetch complete ===`);
-      console.log(`Total theme groups: ${groupedThemes.length}`);
-      console.log(`Total translatable fields: ${groupedThemes.reduce((sum, g) => sum + g.contentCount, 0)}`);
-
-      // Log group summary
-      groupedThemes.forEach(group => {
-        console.log(`  ${group.icon} ${group.title}: ${group.contentCount} fields`);
+      logger.info('Themes fetch complete', {
+        context: 'ContentService',
+        totalGroups: groupedThemes.length,
+        totalFields: groupedThemes.reduce((sum, g) => sum + g.contentCount, 0),
+        groups: groupedThemes.map(g => ({ title: g.title, fields: g.contentCount }))
       });
 
       return groupedThemes;
     } catch (error) {
-      console.error('❌ [THEMES] Error fetching themes:', error);
+      logger.error('Error fetching themes', { context: 'ContentService', error });
       return [];
     }
   }
@@ -709,7 +692,7 @@ export class ContentService {
         );
 
         if (accessDeniedError) {
-          console.warn('⚠️ Metaobjects access denied - feature requires additional Shopify permissions');
+          logger.warn('Metaobjects access denied - feature requires additional Shopify permissions', { context: 'ContentService' });
           return [];
         }
 
@@ -721,10 +704,10 @@ export class ContentService {
     } catch (error: any) {
       // Gracefully handle permission errors
       if (error.message?.includes('Access denied') || error.message?.includes('metaobjectDefinitions')) {
-        console.warn('⚠️ Metaobjects access denied - feature requires additional Shopify permissions');
+        logger.warn('Metaobjects access denied - feature requires additional Shopify permissions', { context: 'ContentService' });
         return [];
       }
-      console.error('Error fetching metaobject definitions:', error);
+      logger.error('Error fetching metaobject definitions', { context: 'ContentService', error });
       return [];
     }
   }
@@ -756,13 +739,13 @@ export class ContentService {
 
           allMetaobjects.push(...metaobjects);
         } catch (error) {
-          console.error(`Error fetching metaobjects for type ${definition.type}:`, error);
+          logger.error('Error fetching metaobjects for type', { context: 'ContentService', type: definition.type, error });
         }
       }
 
       return allMetaobjects;
     } catch (error) {
-      console.error('Error fetching metaobjects:', error);
+      logger.error('Error fetching metaobjects', { context: 'ContentService', error });
       return [];
     }
   }

@@ -13,9 +13,10 @@ import type { ActionFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
 import { getPlanLimits } from "../utils/planUtils";
+import { logger } from "~/utils/logger.server";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  console.log("🚀 [SYNC-MISSING] Starting FAST sync of missing products...");
+  logger.debug("[SYNC-MISSING] Starting FAST sync of missing products...", { context: "SyncMissing" });
 
   try {
     const { admin, session } = await authenticate.admin(request);
@@ -27,7 +28,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const plan = (settings?.subscriptionPlan || "basic") as "free" | "basic" | "pro" | "max";
     const planLimits = getPlanLimits(plan);
 
-    console.log(`[SYNC-MISSING] Shop: ${session.shop}, Plan: ${plan}, Max products: ${planLimits.maxProducts}`);
+    logger.debug("[SYNC-MISSING] Shop and plan details", { context: "SyncMissing", shop: session.shop, plan, maxProducts: planLimits.maxProducts });
 
     // Get existing products from database
     const existingProducts = await db.product.findMany({
@@ -36,11 +37,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     });
     const existingIds = new Set(existingProducts.map(p => p.id));
 
-    console.log(`[SYNC-MISSING] Found ${existingProducts.length} existing products in database`);
+    logger.debug("[SYNC-MISSING] Found existing products in database", { context: "SyncMissing", count: existingProducts.length });
 
     // Check if we need to sync more products
     if (existingProducts.length >= planLimits.maxProducts) {
-      console.log(`[SYNC-MISSING] Already at plan limit, no sync needed`);
+      logger.debug("[SYNC-MISSING] Already at plan limit, no sync needed", { context: "SyncMissing" });
       return json({
         success: true,
         synced: 0,
@@ -52,7 +53,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     // FAST: Fetch ALL products with their data in ONE bulk request
     const maxToFetch = planLimits.maxProducts === Infinity ? 250 : planLimits.maxProducts;
 
-    console.log(`[SYNC-MISSING] Fetching up to ${maxToFetch} products from Shopify (bulk)...`);
+    logger.debug("[SYNC-MISSING] Fetching products from Shopify (bulk)", { context: "SyncMissing", maxToFetch });
 
     const response = await admin.graphql(
       `#graphql
@@ -97,13 +98,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const data = await response.json();
     const shopifyProducts = data.data?.products?.edges?.map((e: any) => e.node) || [];
 
-    console.log(`[SYNC-MISSING] Fetched ${shopifyProducts.length} products from Shopify`);
+    logger.debug("[SYNC-MISSING] Fetched products from Shopify", { context: "SyncMissing", count: shopifyProducts.length });
 
     // Filter to only products we don't have
     const missingProducts = shopifyProducts.filter((p: any) => !existingIds.has(p.id));
 
     if (missingProducts.length === 0) {
-      console.log(`[SYNC-MISSING] No missing products to sync`);
+      logger.debug("[SYNC-MISSING] No missing products to sync", { context: "SyncMissing" });
       return json({
         success: true,
         synced: 0,
@@ -112,7 +113,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
     }
 
-    console.log(`[SYNC-MISSING] Saving ${missingProducts.length} new products to database...`);
+    logger.debug("[SYNC-MISSING] Saving new products to database", { context: "SyncMissing", count: missingProducts.length });
 
     // Save all products to database
     let synced = 0;
@@ -183,15 +184,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
         // Log progress every 10 products
         if (synced % 10 === 0) {
-          console.log(`[SYNC-MISSING] Progress: ${synced}/${missingProducts.length}`);
+          logger.debug("[SYNC-MISSING] Progress", { context: "SyncMissing", synced, total: missingProducts.length });
         }
       } catch (error: any) {
-        console.error(`[SYNC-MISSING] Failed to save ${product.id}:`, error.message);
+        logger.error("[SYNC-MISSING] Failed to save product", { context: "SyncMissing", productId: product.id, error: error.message });
         failed++;
       }
     }
 
-    console.log(`✅ [SYNC-MISSING] FAST sync complete: ${synced} synced, ${failed} failed`);
+    logger.debug("[SYNC-MISSING] FAST sync complete", { context: "SyncMissing", synced, failed });
 
     return json({
       success: true,
@@ -201,7 +202,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       message: `Synced ${synced} products`,
     });
   } catch (error: any) {
-    console.error("❌ [SYNC-MISSING] Error:", error);
+    logger.error("[SYNC-MISSING] Error", { context: "SyncMissing", error: error.message, stack: error.stack });
     return json(
       {
         success: false,

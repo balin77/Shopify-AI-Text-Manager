@@ -8,6 +8,7 @@ import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
 import { isValidPlan, type Plan, getPlanLimits } from "../utils/planUtils";
 import { cleanupCacheForPlan, getCacheStats, type CleanupStats } from "../utils/planCacheCleanup";
+import { logger } from "~/utils/logger.server";
 
 interface UpdatePlanRequest {
   plan: string;
@@ -25,22 +26,22 @@ interface UpdatePlanResponse {
 }
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  console.log("🔄 [API/UpdatePlan] Request received");
+  logger.debug("[API/UpdatePlan] Request received", { context: "UpdatePlan" });
 
   try {
     // Authenticate
     const { session, admin } = await authenticate.admin(request);
-    console.log("✅ [API/UpdatePlan] Authenticated:", session.shop);
+    logger.debug("[API/UpdatePlan] Authenticated", { context: "UpdatePlan", shop: session.shop });
 
     // Parse request body
     const body = (await request.json()) as UpdatePlanRequest;
     const { plan: newPlan } = body;
 
-    console.log("🔄 [API/UpdatePlan] Requested plan:", newPlan);
+    logger.debug("[API/UpdatePlan] Requested plan", { context: "UpdatePlan", plan: newPlan });
 
     // Validate plan
     if (!isValidPlan(newPlan)) {
-      console.error("❌ [API/UpdatePlan] Invalid plan:", newPlan);
+      logger.error("[API/UpdatePlan] Invalid plan", { context: "UpdatePlan", plan: newPlan });
       return json(
         {
           success: false,
@@ -59,11 +60,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       where: { shop: session.shop },
     });
 
-    console.log(`📊 [API/UpdatePlan] Current plan: ${currentPlan}, Products: ${currentProductCount}`);
+    logger.debug("[API/UpdatePlan] Current plan and products", { context: "UpdatePlan", currentPlan, productCount: currentProductCount });
 
     // Get current cache stats before cleanup
     const cacheStatsBefore = await getCacheStats(session.shop);
-    console.log("📊 [API/UpdatePlan] Cache stats before:", cacheStatsBefore);
+    logger.debug("[API/UpdatePlan] Cache stats before", { context: "UpdatePlan", cacheStatsBefore });
 
     // Update plan in database
     await db.aISettings.upsert({
@@ -77,7 +78,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       },
     });
 
-    console.log("✅ [API/UpdatePlan] Plan updated in database");
+    logger.debug("[API/UpdatePlan] Plan updated in database", { context: "UpdatePlan" });
 
     // Determine if we need to sync more products (upgrade scenario)
     const currentPlanLimits = getPlanLimits(currentPlan);
@@ -87,18 +88,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     // Note: Background sync doesn't work in serverless environments.
     // The actual sync is triggered by the frontend via /api/sync-missing-products
     if (isUpgrade) {
-      console.log(`📦 [API/UpdatePlan] Plan upgrade: ${currentPlan} → ${newPlan} (products will sync via frontend)`);
+      logger.debug("[API/UpdatePlan] Plan upgrade (products will sync via frontend)", { context: "UpdatePlan", from: currentPlan, to: newPlan });
     }
 
     // Cleanup cache based on new plan (for downgrades)
     // This is a "best effort" operation - if cleanup fails, the plan update is still valid
-    console.log("🧹 [API/UpdatePlan] Starting cache cleanup...");
+    logger.debug("[API/UpdatePlan] Starting cache cleanup...", { context: "UpdatePlan" });
     let cleanupStats: Awaited<ReturnType<typeof cleanupCacheForPlan>>;
     try {
       cleanupStats = await cleanupCacheForPlan(session.shop, newPlan);
-      console.log("✅ [API/UpdatePlan] Cleanup complete:", cleanupStats);
+      logger.debug("[API/UpdatePlan] Cleanup complete", { context: "UpdatePlan", cleanupStats });
     } catch (cleanupError) {
-      console.error("⚠️ [API/UpdatePlan] Cache cleanup failed (plan update still successful):", cleanupError);
+      logger.warn("[API/UpdatePlan] Cache cleanup failed (plan update still successful)", { context: "UpdatePlan", error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError) });
       // Return default stats if cleanup failed - the plan update was still successful
       cleanupStats = {
         deletedProducts: 0,
@@ -118,7 +119,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     // Get cache stats after cleanup
     const cacheStatsAfter = await getCacheStats(session.shop);
-    console.log("📊 [API/UpdatePlan] Cache stats after:", cacheStatsAfter);
+    logger.debug("[API/UpdatePlan] Cache stats after", { context: "UpdatePlan", cacheStatsAfter });
 
     const response: UpdatePlanResponse = {
       success: true,
@@ -133,7 +134,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     return json(response);
   } catch (error) {
-    console.error("❌ [API/UpdatePlan] Error:", error);
+    logger.error("[API/UpdatePlan] Error", { context: "UpdatePlan", error: error instanceof Error ? error.message : String(error) });
     return json(
       {
         success: false,

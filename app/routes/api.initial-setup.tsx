@@ -15,15 +15,16 @@ import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
 import { WebhookRegistrationService } from "../services/webhook-registration.service";
 import { getPlanLimits } from "../utils/planUtils";
+import { logger } from "~/utils/logger.server";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  console.log("🚀 [INITIAL-SETUP] Starting automatic initial setup...");
+  logger.debug("[INITIAL-SETUP] Starting automatic initial setup...", { context: "InitialSetup" });
 
   try {
     const { admin, session } = await authenticate.admin(request);
     const shop = session.shop;
 
-    console.log(`[INITIAL-SETUP] Shop: ${shop}`);
+    logger.debug("[INITIAL-SETUP] Shop", { context: "InitialSetup", shop });
 
     // Check if products already exist (= setup was already done)
     const existingProductCount = await db.product.count({
@@ -31,7 +32,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     });
 
     if (existingProductCount > 0) {
-      console.log(`[INITIAL-SETUP] ${existingProductCount} products already exist, skipping setup...`);
+      logger.debug("[INITIAL-SETUP] Products already exist, skipping setup", { context: "InitialSetup", existingProductCount });
       return json({
         success: true,
         skipped: true,
@@ -47,34 +48,34 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     // ========================================
     // STEP 1: Register Webhooks
     // ========================================
-    console.log("[INITIAL-SETUP] Step 1: Registering webhooks...");
+    logger.debug("[INITIAL-SETUP] Step 1: Registering webhooks...", { context: "InitialSetup" });
 
     const webhookService = new WebhookRegistrationService(admin);
 
     try {
       await webhookService.registerAllWebhooks();
-      console.log("[INITIAL-SETUP] ✓ Webhooks registered successfully");
+      logger.debug("[INITIAL-SETUP] Webhooks registered successfully", { context: "InitialSetup" });
     } catch (webhookError: any) {
-      console.error("[INITIAL-SETUP] Webhook registration error:", webhookError.message);
+      logger.error("[INITIAL-SETUP] Webhook registration error", { context: "InitialSetup", error: webhookError.message });
       // Continue even if webhook registration fails - products can still be synced
     }
 
     // ========================================
     // STEP 2: Fast Product Sync
     // ========================================
-    console.log("[INITIAL-SETUP] Step 2: Running FAST product sync...");
+    logger.debug("[INITIAL-SETUP] Step 2: Running FAST product sync...", { context: "InitialSetup" });
 
     const plan = (settings?.subscriptionPlan || "basic") as "free" | "basic" | "pro" | "max";
     const planLimits = getPlanLimits(plan);
 
-    console.log(`[INITIAL-SETUP] Plan: ${plan}, Max products: ${planLimits.maxProducts}`);
+    logger.debug("[INITIAL-SETUP] Plan and limits", { context: "InitialSetup", plan, maxProducts: planLimits.maxProducts });
 
     let productsSynced = 0;
 
     // FAST: Fetch ALL products in ONE bulk request
     const maxToFetch = planLimits.maxProducts === Infinity ? 250 : planLimits.maxProducts;
 
-    console.log(`[INITIAL-SETUP] Fetching up to ${maxToFetch} products from Shopify...`);
+    logger.debug("[INITIAL-SETUP] Fetching products from Shopify", { context: "InitialSetup", maxToFetch });
 
     const response = await admin.graphql(
       `#graphql
@@ -119,10 +120,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const data = await response.json();
     const shopifyProducts = data.data?.products?.edges?.map((e: any) => e.node) || [];
 
-    console.log(`[INITIAL-SETUP] Fetched ${shopifyProducts.length} products from Shopify`);
+    logger.debug("[INITIAL-SETUP] Fetched products from Shopify", { context: "InitialSetup", count: shopifyProducts.length });
 
     if (shopifyProducts.length > 0) {
-      console.log(`[INITIAL-SETUP] Saving ${shopifyProducts.length} products...`);
+      logger.debug("[INITIAL-SETUP] Saving products...", { context: "InitialSetup", count: shopifyProducts.length });
 
       for (const product of shopifyProducts) {
         try {
@@ -180,16 +181,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
           productsSynced++;
         } catch (err: any) {
-          console.error(`[INITIAL-SETUP] Failed to save product ${product.id}:`, err.message);
+          logger.error("[INITIAL-SETUP] Failed to save product", { context: "InitialSetup", productId: product.id, error: err.message });
         }
       }
 
-      console.log(`[INITIAL-SETUP] ✓ Synced ${productsSynced} products`);
+      logger.debug("[INITIAL-SETUP] Synced products", { context: "InitialSetup", productsSynced });
     } else {
-      console.log("[INITIAL-SETUP] No products found in Shopify");
+      logger.debug("[INITIAL-SETUP] No products found in Shopify", { context: "InitialSetup" });
     }
 
-    console.log("✅ [INITIAL-SETUP] Setup complete!");
+    logger.debug("[INITIAL-SETUP] Setup complete!", { context: "InitialSetup" });
 
     return json({
       success: true,
@@ -199,7 +200,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       message: `Initial setup complete. Synced ${productsSynced} products.`,
     });
   } catch (error: any) {
-    console.error("❌ [INITIAL-SETUP] Error:", error);
+    logger.error("[INITIAL-SETUP] Error", { context: "InitialSetup", error: error.message, stack: error.stack });
     return json(
       {
         success: false,

@@ -14,20 +14,19 @@ import { useInfoBox } from "../contexts/InfoBoxContext";
 import { getProviderDisplayName, type AIProvider } from "../utils/api-key-validation";
 import type { Locale } from "../i18n";
 import type { Plan } from "../config/plans";
+import { logger } from "~/utils/logger.server";
 
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  console.log("🔍 [APP.TSX LOADER] Start - URL:", request.url);
-  console.log("🔍 [APP.TSX LOADER] Method:", request.method);
+  logger.debug("[APP.TSX LOADER] Start", { context: "App", url: request.url, method: request.method });
 
   const headers = Object.fromEntries(request.headers.entries());
-  console.log("🔍 [APP.TSX LOADER] Headers:", headers);
 
   // Check if this is a prefetch request - these don't have session tokens
   const isPrefetch = headers['sec-purpose'] === 'prefetch' || headers['purpose'] === 'prefetch';
 
   if (isPrefetch) {
-    console.log("⚡ [APP.TSX LOADER] Prefetch request detected - returning default language");
+    logger.debug("[APP.TSX LOADER] Prefetch request detected - returning default language", { context: "App" });
     // Return default data for prefetch - no auth needed
     return json({
       appLanguage: "de" as Locale,
@@ -37,25 +36,22 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   }
 
   try {
-    console.log("🔍 [APP.TSX LOADER] Authenticating...");
+    logger.debug("[APP.TSX LOADER] Authenticating...", { context: "App" });
     const { session } = await authenticate.admin(request);
-    console.log("✅ [APP.TSX LOADER] Authentication successful");
-    console.log("✅ [APP.TSX LOADER] Shop:", session.shop);
-    console.log("✅ [APP.TSX LOADER] Session ID:", session.id);
+    logger.debug("[APP.TSX LOADER] Authentication successful", { context: "App", shop: session.shop, sessionId: session.id });
 
     // Load app language preference from database
     const { db } = await import("../db.server");
     const { loadAISettingsForValidation } = await import("../utils/loader-helpers");
-    console.log("🔍 [APP.TSX LOADER] Loading settings from DB...");
+    logger.debug("[APP.TSX LOADER] Loading settings from DB...", { context: "App" });
     const settings = await db.aISettings.findUnique({
       where: { shop: session.shop },
     });
-    console.log("✅ [APP.TSX LOADER] Settings loaded:", settings ? "Found" : "Not found");
+    logger.debug("[APP.TSX LOADER] Settings loaded", { context: "App", found: !!settings });
 
     const appLanguage = (settings?.appLanguage || "de") as Locale;
     const subscriptionPlan = (settings?.subscriptionPlan || "basic") as Plan;
-    console.log("✅ [APP.TSX LOADER] App language:", appLanguage);
-    console.log("✅ [APP.TSX LOADER] Subscription plan:", subscriptionPlan);
+    logger.debug("[APP.TSX LOADER] App settings", { context: "App", appLanguage, subscriptionPlan });
 
     // Load AI settings for global API key validation
     const aiSettings = await loadAISettingsForValidation(db, session.shop);
@@ -74,13 +70,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
       // Log redirect for debugging, but don't treat as error
       if (status >= 300 && status < 400) {
-        console.log(`🔄 [APP.TSX LOADER] Redirect detected: ${status} -> ${location}`);
+        logger.debug("[APP.TSX LOADER] Redirect detected", { context: "App", status, location });
         throw error; // Re-throw the redirect to let Remix handle it
       }
     }
 
-    console.error("❌ [APP.TSX LOADER] Error:", error);
-    console.error("❌ [APP.TSX LOADER] Error stack:", error instanceof Error ? error.stack : "No stack");
+    logger.error("[APP.TSX LOADER] Error", { context: "App", error: error instanceof Error ? error.message : String(error), stack: error instanceof Error ? error.stack : undefined });
 
     // Return default values instead of throwing to prevent blank page
     // This can happen during plan changes when auth session is temporarily invalid
@@ -161,8 +156,7 @@ export default function App() {
 export function ErrorBoundary() {
   const error = useRouteError();
 
-  // Log the error for debugging
-  console.error("❌ [APP.TSX ERROR BOUNDARY] Error caught:", error);
+  // Log the error for debugging - note: can't use server logger in client component
 
   // Try Shopify's boundary first, but provide fallback UI if it fails
   try {

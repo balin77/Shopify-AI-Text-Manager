@@ -3,6 +3,7 @@ import type { ActionFunctionArgs } from "@remix-run/node";
 import crypto from "crypto";
 import { ContentSyncService } from "../services/content-sync.service";
 import { encryptPayload } from "../utils/encryption.server";
+import { logger } from "~/utils/logger.server";
 
 /**
  * Webhook Handler for Shopify Collection Events
@@ -13,7 +14,7 @@ import { encryptPayload } from "../utils/encryption.server";
  * It syncs the collection data to our local database for fast access.
  */
 export const action = async ({ request }: ActionFunctionArgs) => {
-  console.log("🎣 [WEBHOOK] === COLLECTION WEBHOOK RECEIVED ===");
+  logger.debug("[WEBHOOK] COLLECTION WEBHOOK RECEIVED", { context: "Webhook" });
 
   try {
     // 1. Extract webhook headers
@@ -21,10 +22,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const shop = request.headers.get("X-Shopify-Shop-Domain");
     const topic = request.headers.get("X-Shopify-Topic");
 
-    console.log(`[WEBHOOK] Shop: ${shop}, Topic: ${topic}`);
+    logger.debug("[WEBHOOK] Collection webhook details", { context: "Webhook", shop, topic });
 
     if (!shop || !topic) {
-      console.error("[WEBHOOK] Missing required headers");
+      logger.error("[WEBHOOK] Missing required headers", { context: "Webhook" });
       return json({ error: "Missing headers" }, { status: 400 });
     }
 
@@ -32,17 +33,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const rawBody = await request.text();
 
     if (!verifyWebhook(rawBody, hmac)) {
-      console.error("[WEBHOOK] Invalid signature");
+      logger.error("[WEBHOOK] Invalid signature", { context: "Webhook" });
       return json({ error: "Invalid signature" }, { status: 401 });
     }
 
-    console.log("[WEBHOOK] Signature verified ✓");
+    logger.debug("[WEBHOOK] Signature verified", { context: "Webhook" });
 
     // 3. Parse payload
     const payload = JSON.parse(rawBody);
     const collectionId = `gid://shopify/Collection/${payload.id}`;
 
-    console.log(`[WEBHOOK] Collection ID: ${collectionId}`);
+    logger.debug("[WEBHOOK] Collection ID", { context: "Webhook", collectionId });
 
     // 4. Log webhook to database (with encrypted payload)
     const { db } = await import("../db.server");
@@ -56,18 +57,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       },
     });
 
-    console.log(`[WEBHOOK] Logged to database: ${webhookLog.id}`);
+    logger.debug("[WEBHOOK] Logged to database", { context: "Webhook", logId: webhookLog.id });
 
     // 5. Process webhook asynchronously (don't block Shopify's response)
     processWebhookAsync(webhookLog.id, shop, collectionId, topic).catch((err) => {
-      console.error("[WEBHOOK] Background processing error:", err);
+      logger.error("[WEBHOOK] Background processing error", { context: "Webhook", error: err.message });
     });
 
     // 6. Respond to Shopify immediately
-    console.log("[WEBHOOK] Responding to Shopify with 200 OK");
+    logger.debug("[WEBHOOK] Responding to Shopify with 200 OK", { context: "Webhook" });
     return json({ received: true }, { status: 200 });
   } catch (error: any) {
-    console.error("[WEBHOOK] Error:", error);
+    logger.error("[WEBHOOK] Error", { context: "Webhook", error: error.message, stack: error.stack });
     return json({ error: error.message }, { status: 500 });
   }
 };
@@ -81,7 +82,7 @@ async function processWebhookAsync(
   collectionId: string,
   topic: string
 ) {
-  console.log(`[WEBHOOK-ASYNC] Processing webhook ${logId} for ${topic}`);
+  logger.debug("[WEBHOOK-ASYNC] Processing webhook", { context: "Webhook", logId, topic });
 
   const { db } = await import("../db.server");
 
@@ -90,16 +91,16 @@ async function processWebhookAsync(
     const { createAdminClientFromShop } = await import("../utils/admin-client.server");
     const admin = await createAdminClientFromShop(shop);
 
-    console.log(`[WEBHOOK-ASYNC] Created admin client for shop: ${shop}`);
+    logger.debug("[WEBHOOK-ASYNC] Created admin client for shop", { context: "Webhook", shop });
 
     // 2. Process based on topic
     const syncService = new ContentSyncService(admin, shop);
 
     if (topic === "collections/create" || topic === "collections/update") {
-      console.log(`[WEBHOOK-ASYNC] Syncing collection: ${collectionId}`);
+      logger.debug("[WEBHOOK-ASYNC] Syncing collection", { context: "Webhook", collectionId });
       await syncService.syncCollection(collectionId);
     } else if (topic === "collections/delete") {
-      console.log(`[WEBHOOK-ASYNC] Deleting collection: ${collectionId}`);
+      logger.debug("[WEBHOOK-ASYNC] Deleting collection", { context: "Webhook", collectionId });
       await syncService.deleteCollection(collectionId);
     }
 
@@ -109,9 +110,9 @@ async function processWebhookAsync(
       data: { processed: true },
     });
 
-    console.log(`[WEBHOOK-ASYNC] Successfully processed webhook ${logId}`);
+    logger.debug("[WEBHOOK-ASYNC] Successfully processed webhook", { context: "Webhook", logId });
   } catch (error: any) {
-    console.error(`[WEBHOOK-ASYNC] Error processing webhook ${logId}:`, error);
+    logger.error("[WEBHOOK-ASYNC] Error processing webhook", { context: "Webhook", logId, error: error.message });
 
     // Log error to database
     await db.webhookLog.update({
@@ -131,13 +132,13 @@ async function processWebhookAsync(
  */
 function verifyWebhook(rawBody: string, hmac: string | null): boolean {
   if (!hmac) {
-    console.warn("[WEBHOOK] No HMAC provided");
+    logger.warn("[WEBHOOK] No HMAC provided", { context: "Webhook" });
     return false;
   }
 
   const secret = process.env.SHOPIFY_API_SECRET;
   if (!secret) {
-    console.error("[WEBHOOK] SHOPIFY_API_SECRET not configured");
+    logger.error("[WEBHOOK] SHOPIFY_API_SECRET not configured", { context: "Webhook" });
     return false;
   }
 
@@ -149,9 +150,7 @@ function verifyWebhook(rawBody: string, hmac: string | null): boolean {
   const verified = hash === hmac;
 
   if (!verified) {
-    console.warn("[WEBHOOK] Signature mismatch");
-    console.warn(`[WEBHOOK] Expected: ${hash}`);
-    console.warn(`[WEBHOOK] Received: ${hmac}`);
+    logger.warn("[WEBHOOK] Signature mismatch", { context: "Webhook", expected: hash, received: hmac });
   }
 
   return verified;

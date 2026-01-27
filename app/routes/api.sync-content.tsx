@@ -5,6 +5,7 @@ import { ContentSyncService } from "../services/content-sync.service";
 import { BackgroundSyncService } from "../services/background-sync.service";
 import { db } from "../db.server";
 import { getPlanLimits, type Plan } from "../utils/planUtils";
+import { logger } from "~/utils/logger.server";
 
 /**
  * API Route: Sync Content
@@ -19,7 +20,7 @@ import { getPlanLimits, type Plan } from "../utils/planUtils";
  * Available types: collections, articles, pages, policies, themes
  */
 export const action = async ({ request }: ActionFunctionArgs) => {
-  console.log("🔄 [SYNC-CONTENT] Starting content sync...");
+  logger.debug("[SYNC-CONTENT] Starting content sync...", { context: "SyncContent" });
 
   try {
     const { admin, session } = await authenticate.admin(request);
@@ -29,8 +30,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const typesParam = url.searchParams.get('types');
     const types = typesParam ? typesParam.split(',').map(t => t.trim()) : ['collections', 'articles', 'pages', 'policies', 'themes'];
 
-    console.log(`[SYNC-CONTENT] Syncing content for shop: ${session.shop}`);
-    console.log(`[SYNC-CONTENT] Types to sync: ${types.join(', ')}`);
+    logger.debug("[SYNC-CONTENT] Syncing content for shop", { context: "SyncContent", shop: session.shop });
+    logger.debug("[SYNC-CONTENT] Types to sync", { context: "SyncContent", types: types.join(', ') });
 
     // Load plan limits
     const settings = await db.aISettings.findUnique({
@@ -39,8 +40,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const plan = (settings?.subscriptionPlan || "basic") as Plan;
     const planLimits = getPlanLimits(plan);
 
-    console.log(`[SYNC-CONTENT] Plan: ${plan}`);
-    console.log(`[SYNC-CONTENT] Limits - Collections: ${planLimits.maxCollections}, Articles: ${planLimits.maxArticles}, Pages: ${planLimits.maxPages}`);
+    logger.debug("[SYNC-CONTENT] Plan", { context: "SyncContent", plan });
+    logger.debug("[SYNC-CONTENT] Limits", { context: "SyncContent", maxCollections: planLimits.maxCollections, maxArticles: planLimits.maxArticles, maxPages: planLimits.maxPages });
 
     const syncService = new ContentSyncService(admin, session.shop);
     const bgSyncService = new BackgroundSyncService(admin, session.shop);
@@ -55,7 +56,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         syncService.syncAllCollections(planLimits.maxCollections)
           .then(count => { results.collections = count; })
           .catch(err => {
-            console.error('[SYNC-CONTENT] Collections sync failed:', err);
+            logger.error('[SYNC-CONTENT] Collections sync failed', { context: "SyncContent", error: err.message });
             results.collections = 0;
           })
       );
@@ -66,7 +67,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         syncService.syncAllArticles(planLimits.maxArticles)
           .then(count => { results.articles = count; })
           .catch(err => {
-            console.error('[SYNC-CONTENT] Articles sync failed:', err);
+            logger.error('[SYNC-CONTENT] Articles sync failed', { context: "SyncContent", error: err.message });
             results.articles = 0;
           })
       );
@@ -77,7 +78,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         bgSyncService.syncAllPages(planLimits.maxPages)
           .then(count => { results.pages = count; })
           .catch(err => {
-            console.error('[SYNC-CONTENT] Pages sync failed:', err);
+            logger.error('[SYNC-CONTENT] Pages sync failed', { context: "SyncContent", error: err.message });
             results.pages = 0;
           })
       );
@@ -88,7 +89,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         bgSyncService.syncAllPolicies()
           .then(count => { results.policies = count; })
           .catch(err => {
-            console.error('[SYNC-CONTENT] Policies sync failed:', err);
+            logger.error('[SYNC-CONTENT] Policies sync failed', { context: "SyncContent", error: err.message });
             results.policies = 0;
           })
       );
@@ -99,7 +100,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         bgSyncService.syncAllThemes()
           .then(count => { results.themes = count; })
           .catch(err => {
-            console.error('[SYNC-CONTENT] Themes sync failed:', err);
+            logger.error('[SYNC-CONTENT] Themes sync failed', { context: "SyncContent", error: err.message });
             results.themes = 0;
           })
       );
@@ -110,10 +111,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     const total = Object.values(results).reduce((sum, count) => sum + count, 0);
 
-    console.log(`[SYNC-CONTENT] ✓ Sync complete!`);
-    Object.entries(results).forEach(([type, count]) => {
-      console.log(`[SYNC-CONTENT]   ${type}: ${count}`);
-    });
+    logger.debug("[SYNC-CONTENT] Sync complete!", { context: "SyncContent", results, total });
 
     return json({
       success: true,
@@ -124,7 +122,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       },
     });
   } catch (error: any) {
-    console.error("[SYNC-CONTENT] Error:", error);
+    logger.error("[SYNC-CONTENT] Error", { context: "SyncContent", error: error.message, stack: error.stack });
     return json(
       {
         success: false,

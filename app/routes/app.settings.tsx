@@ -37,9 +37,10 @@ import {
   DEFAULT_PAGE_INSTRUCTIONS,
   DEFAULT_POLICY_INSTRUCTIONS
 } from "../constants/aiInstructionsDefaults";
+import { logger } from "~/utils/logger.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  console.log('[SETTINGS] Loading settings page for shop');
+  logger.debug("[SETTINGS] Loading settings page for shop", { context: "Settings" });
 
   try {
     const { admin, session } = await authenticate.admin(request);
@@ -140,10 +141,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         policyDescriptionInstructions: DEFAULT_POLICY_INSTRUCTIONS.descriptionInstructions,
       },
     });
-    console.log('[SETTINGS] Created AI Instructions with defaults for shop:', session.shop);
+    logger.debug("[SETTINGS] Created AI Instructions with defaults for shop", { context: "Settings", shop: session.shop });
   } else if (!instructions.productSeoTitleInstructions || !instructions.productTitleInstructions || !instructions.formatPreserveInstructions || !instructions.translateInstructions) {
     // Entry exists but some fields are empty - populate with defaults (only once)
-    console.log('[SETTINGS] Detected empty AI Instructions, populating defaults...');
+    logger.debug("[SETTINGS] Detected empty AI Instructions, populating defaults", { context: "Settings" });
     instructions = await db.aIInstructions.update({
       where: { shop: session.shop },
       data: {
@@ -202,7 +203,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         policyDescriptionInstructions: instructions.policyDescriptionInstructions || DEFAULT_POLICY_INSTRUCTIONS.descriptionInstructions,
       },
     });
-    console.log('[SETTINGS] Updated AI Instructions with defaults for shop:', session.shop);
+    logger.debug("[SETTINGS] Updated AI Instructions with defaults for shop", { context: "Settings", shop: session.shop });
   }
 
     // Get counts for App Setup section
@@ -281,8 +282,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         grokApiKey: decryptApiKey(settings.grokApiKey) || "",
         deepseekApiKey: decryptApiKey(settings.deepseekApiKey) || "",
       };
-    } catch (error) {
-      console.error('[SETTINGS LOADER] Decryption error:', error);
+    } catch (error: any) {
+      logger.error("[SETTINGS LOADER] Decryption error", { context: "Settings", error: error?.message });
       // If decryption fails, return empty keys
       decryptedKeys = {
         huggingfaceApiKey: "",
@@ -391,7 +392,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       throw error;
     }
 
-    console.error('[SETTINGS LOADER] Fatal error:', error);
+    logger.error("[SETTINGS LOADER] Fatal error", { context: "Settings", error: error instanceof Error ? error.message : String(error), stack: error instanceof Error ? error.stack : undefined });
     // Use safe error handler
     const safeError = toSafeErrorResponse(error, {
       route: 'app.settings',

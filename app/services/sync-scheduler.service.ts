@@ -10,6 +10,7 @@
 import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
 import { BackgroundSyncService } from "./background-sync.service";
 import { isShopActive } from "../middleware/activity-tracker.middleware";
+import { logger } from "~/utils/logger.server";
 
 interface SyncTimer {
   timer: NodeJS.Timeout;
@@ -33,10 +34,10 @@ class SyncSchedulerService {
   startSyncForShop(shop: string, admin: AdminApiContext): void {
     // Stop existing timer if running
     if (this.activeTimers.has(shop)) {
-      console.log(`[SyncScheduler] Restarting sync for shop: ${shop}`);
+      logger.debug('[SyncScheduler] Restarting sync for shop: ${shop}`);
       this.stopSyncForShop(shop);
     } else {
-      console.log(`[SyncScheduler] Starting sync for shop: ${shop}`);
+      logger.debug('[SyncScheduler] Starting sync for shop: ${shop}`);
     }
 
     // Create new timer
@@ -54,7 +55,7 @@ class SyncSchedulerService {
 
     // Run first sync immediately
     this.runSyncCycle(shop, admin).catch(err => {
-      console.error(`[SyncScheduler] Initial sync failed for ${shop}:`, err);
+      logger.error('[SyncScheduler] Initial sync failed for ${shop}:`, err);
     });
 
     // Start periodic cleanup if not already running
@@ -70,7 +71,7 @@ class SyncSchedulerService {
 
     // Skip if already running (concurrent protection)
     if (syncTimer?.isRunning) {
-      console.log(`[SyncScheduler] Skipping sync for ${shop} - previous sync still running`);
+      logger.debug('[SyncScheduler] Skipping sync for ${shop} - previous sync still running`);
       return;
     }
 
@@ -84,20 +85,20 @@ class SyncSchedulerService {
       const active = await isShopActive(shop, this.INACTIVITY_THRESHOLD_MINUTES);
 
       if (!active) {
-        console.log(`[SyncScheduler] Shop ${shop} inactive for ${this.INACTIVITY_THRESHOLD_MINUTES}+ minutes - stopping sync`);
+        logger.debug('[SyncScheduler] Shop ${shop} inactive for ${this.INACTIVITY_THRESHOLD_MINUTES}+ minutes - stopping sync`);
         this.stopSyncForShop(shop);
         return;
       }
 
       // Shop is active - run sync
-      console.log(`[SyncScheduler] Running sync cycle for ${shop}`);
+      logger.debug('[SyncScheduler] Running sync cycle for ${shop}`);
 
       const syncService = new BackgroundSyncService(admin, shop);
       const stats = await syncService.syncAll();
 
-      console.log(`[SyncScheduler] Sync complete for ${shop}: ${stats.total} items in ${stats.duration}ms`);
+      logger.debug('[SyncScheduler] Sync complete for ${shop}: ${stats.total} items in ${stats.duration}ms`);
     } catch (error) {
-      console.error(`[SyncScheduler] Sync cycle failed for ${shop}:`, error);
+      logger.error('[SyncScheduler] Sync cycle failed for ${shop}:`, error);
       // Don't stop timer on error - retry next cycle
     } finally {
       // Mark as not running
@@ -117,7 +118,7 @@ class SyncSchedulerService {
     if (syncTimer) {
       clearInterval(syncTimer.timer);
       this.activeTimers.delete(shop);
-      console.log(`[SyncScheduler] Stopped sync for shop: ${shop}`);
+      logger.debug('[SyncScheduler] Stopped sync for shop: ${shop}`);
     }
   }
 
@@ -162,11 +163,11 @@ class SyncSchedulerService {
    * Stops all sync timers (for graceful shutdown)
    */
   stopAll(): void {
-    console.log(`[SyncScheduler] Stopping all sync timers (${this.activeTimers.size} active)`);
+    logger.debug('[SyncScheduler] Stopping all sync timers (${this.activeTimers.size} active)`);
 
     for (const [shop, syncTimer] of this.activeTimers.entries()) {
       clearInterval(syncTimer.timer);
-      console.log(`[SyncScheduler] Stopped sync for: ${shop}`);
+      logger.debug('[SyncScheduler] Stopped sync for: ${shop}`);
     }
 
     this.activeTimers.clear();
@@ -175,10 +176,10 @@ class SyncSchedulerService {
     if (this.cleanupTimer) {
       clearInterval(this.cleanupTimer);
       this.cleanupTimer = null;
-      console.log('[SyncScheduler] Stopped cleanup timer');
+      logger.debug('[SyncScheduler] Stopped cleanup timer');
     }
 
-    console.log('[SyncScheduler] All sync timers stopped');
+    logger.debug('[SyncScheduler] All sync timers stopped');
   }
 
   /**
@@ -186,16 +187,16 @@ class SyncSchedulerService {
    */
   private ensureCleanupTimerRunning(): void {
     if (!this.cleanupTimer) {
-      console.log('[SyncScheduler] Starting periodic database cleanup timer');
+      logger.debug('[SyncScheduler] Starting periodic database cleanup timer');
       this.cleanupTimer = setInterval(() => {
         this.runDatabaseCleanup().catch(err => {
-          console.error('[SyncScheduler] Database cleanup failed:', err);
+          logger.error('[SyncScheduler] Database cleanup failed:', err);
         });
       }, this.CLEANUP_INTERVAL_MS);
 
       // Run cleanup immediately on first start
       this.runDatabaseCleanup().catch(err => {
-        console.error('[SyncScheduler] Initial database cleanup failed:', err);
+        logger.error('[SyncScheduler] Initial database cleanup failed:', err);
       });
     }
   }
@@ -204,7 +205,7 @@ class SyncSchedulerService {
    * Runs periodic database cleanup to prevent data accumulation
    */
   private async runDatabaseCleanup(): Promise<void> {
-    console.log('[SyncScheduler] Running periodic database cleanup...');
+    logger.debug('[SyncScheduler] Running periodic database cleanup...');
     this.lastCleanup = new Date();
 
     try {
@@ -253,10 +254,10 @@ class SyncSchedulerService {
         }
       });
 
-      console.log(`[SyncScheduler] Cleanup complete: ${expiredTasks.count} tasks, ${webhookLogs.count} logs, ${excessImages.count} excess images`);
-      console.log(`[SyncScheduler] Note: Theme data cleanup is now handled by aggressive sync (every 40s)`);
+      logger.debug('[SyncScheduler] Cleanup complete: ${expiredTasks.count} tasks, ${webhookLogs.count} logs, ${excessImages.count} excess images`);
+      logger.debug('[SyncScheduler] Note: Theme data cleanup is now handled by aggressive sync (every 40s)`);
     } catch (error) {
-      console.error('[SyncScheduler] Cleanup error:', error);
+      logger.error('[SyncScheduler] Cleanup error:', error);
       throw error;
     }
   }

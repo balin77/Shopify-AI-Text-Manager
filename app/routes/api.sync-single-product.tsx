@@ -2,6 +2,7 @@ import { json } from "@remix-run/node";
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import { ProductSyncService } from "../services/product-sync.service";
+import { logger } from "~/utils/logger.server";
 
 /**
  * API Route: Sync Single Product
@@ -13,7 +14,7 @@ import { ProductSyncService } from "../services/product-sync.service";
  * Body: { productId: "gid://shopify/Product/123" }
  */
 export const action = async ({ request }: ActionFunctionArgs) => {
-  console.log("🔄 [SYNC-SINGLE-PRODUCT] Starting single product sync...");
+  logger.debug("[SYNC-SINGLE-PRODUCT] Starting single product sync...", { context: "SyncSingleProduct" });
 
   try {
     const { admin, session } = await authenticate.admin(request);
@@ -24,12 +25,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return json({ error: "Missing productId parameter" }, { status: 400 });
     }
 
-    console.log(`[SYNC-SINGLE-PRODUCT] Syncing product: ${productId}`);
+    logger.debug("[SYNC-SINGLE-PRODUCT] Syncing product", { context: "SyncSingleProduct", productId });
 
     const syncService = new ProductSyncService(admin, session.shop);
     await syncService.syncProduct(productId);
 
-    console.log(`[SYNC-SINGLE-PRODUCT] ✓ Sync complete!`);
+    logger.debug("[SYNC-SINGLE-PRODUCT] Sync complete!", { context: "SyncSingleProduct" });
 
     // Fetch updated product and translations from database
     const { db } = await import("../db.server");
@@ -64,7 +65,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       translationsByLocale,
     });
   } catch (error: any) {
-    console.error("[SYNC-SINGLE-PRODUCT] Error:", error);
+    logger.error("[SYNC-SINGLE-PRODUCT] Error", { context: "SyncSingleProduct", error: error.message, stack: error.stack });
     return json(
       {
         success: false,

@@ -26,6 +26,7 @@ import { usePlan } from "../contexts/PlanContext";
 import { useNavigationHeight } from "../contexts/NavigationHeightContext";
 import { useEffect, useState, useRef } from "react";
 import type { ContentItem } from "../types/content-editor.types";
+import { logger } from "~/utils/logger.server";
 
 // ============================================================================
 // LOADER - Load data from database
@@ -34,7 +35,7 @@ import type { ContentItem } from "../types/content-editor.types";
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
 
-  console.log("[PRODUCTS-LOADER] Loading products from DATABASE for shop:", session.shop);
+  logger.debug("[PRODUCTS-LOADER] Loading products from DATABASE for shop", { context: "Products", shop: session.shop });
 
   try {
     const { db } = await import("../db.server");
@@ -48,8 +49,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const plan = (settings?.subscriptionPlan || "basic") as "free" | "basic" | "pro" | "max";
     const planLimits = getPlanLimits(plan);
 
-    console.log("[PRODUCTS-LOADER] Current plan:", plan);
-    console.log("[PRODUCTS-LOADER] Max products:", planLimits.maxProducts);
+    logger.debug("[PRODUCTS-LOADER] Current plan and limits", { context: "Products", plan, maxProducts: planLimits.maxProducts });
 
     // 1. Fetch shop locales
     const localesResponse = await admin.graphql(
@@ -68,8 +68,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const shopLocales = localesData.data?.shopLocales || [];
     const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "de";
 
-    console.log("[PRODUCTS-LOADER] Primary locale:", primaryLocale);
-    console.log("[PRODUCTS-LOADER] Available locales:", shopLocales.length);
+    logger.debug("[PRODUCTS-LOADER] Locales loaded", { context: "Products", primaryLocale, availableLocales: shopLocales.length });
 
     // 2. Fetch products from DATABASE and translations
     const [initialDbProducts, allTranslations, aiSettings] = await Promise.all([
@@ -98,7 +97,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       loadAISettingsForValidation(db, session.shop),
     ]);
 
-    console.log("[PRODUCTS-LOADER] Loaded", initialDbProducts.length, "products from database");
+    logger.debug("[PRODUCTS-LOADER] Loaded products from database", { context: "Products", count: initialDbProducts.length });
 
     // Use initialDbProducts directly - sync is now done via separate API call
     const dbProducts = initialDbProducts;
@@ -139,22 +138,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       translations: translationsByResource[p.id] || [],
     }));
 
-    console.log("[PRODUCTS-LOADER] Total translations loaded:", products.reduce((sum, p) => sum + p.translations.length, 0));
+    logger.debug("[PRODUCTS-LOADER] Total translations loaded", { context: "Products", count: products.reduce((sum, p) => sum + p.translations.length, 0) });
 
     // Log products with null alt-texts to debug clearing issue
     const productsWithNullAlt = products.filter((p: any) =>
       p.images?.some((img: any) => img.altText === null)
     );
     if (productsWithNullAlt.length > 0) {
-      console.log(`🟠🟠🟠 [LOADER] Products with null alt-texts: ${productsWithNullAlt.length} 🟠🟠🟠`);
-      productsWithNullAlt.slice(0, 3).forEach((p: any) => {
-        console.log(`🟠 [LOADER] Product "${p.title}" (${p.id}):`);
-        p.images?.forEach((img: any, i: number) => {
-          console.log(`🟠   Image ${i}: altText="${img.altText}" (isNull: ${img.altText === null})`);
-        });
-      });
+      logger.debug("[LOADER] Products with null alt-texts found", { context: "Products", count: productsWithNullAlt.length });
     } else {
-      console.log(`🟠 [LOADER] No products with null alt-texts found`);
+      logger.debug("[LOADER] No products with null alt-texts found", { context: "Products" });
     }
 
     return json({
@@ -169,7 +162,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       aiSettings,
     });
   } catch (error: any) {
-    console.error("[PRODUCTS-LOADER] Error:", error);
+    logger.error("[PRODUCTS-LOADER] Error", { context: "Products", error: error.message, stack: error.stack });
     return json(
       {
         products: [],

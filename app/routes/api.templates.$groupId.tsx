@@ -10,6 +10,7 @@ import { AIService } from "../../src/services/ai.service";
 import { TranslationService } from "../../src/services/translation.service";
 import { TRANSLATE_CONTENT } from "../graphql/content.mutations";
 import { decryptApiKey } from "../utils/encryption.server";
+import { logger } from "~/utils/logger.server";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -68,7 +69,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     const startIndex = (page - 1) * limit;
     const paginatedContent = deduplicatedContent.slice(startIndex, startIndex + limit);
 
-    console.log(`[API-TEMPLATES-LOADER] Group ${groupId}: ${totalCount} unique keys, page ${page}/${totalPages}, showing ${paginatedContent.length} items`);
+    logger.debug("[API-TEMPLATES-LOADER] Group content loaded", { context: "Templates", groupId, totalCount, page, totalPages, itemsShown: paginatedContent.length });
 
     // Get group metadata from first item
     const firstGroup = themeGroups[0];
@@ -93,11 +94,11 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       }
     };
 
-    console.log(`[API-TEMPLATES-LOADER] Loaded ${themeGroups.length} resources with ${allContent.length} translatable fields for group ${groupId}`);
+    logger.debug("[API-TEMPLATES-LOADER] Loaded resources with translatable fields", { context: "Templates", resourceCount: themeGroups.length, fieldsCount: allContent.length, groupId });
 
     return json({ theme: themeData });
   } catch (error: any) {
-    console.error(`[API-TEMPLATES] Error loading group ${groupId}:`, error);
+    logger.error("[API-TEMPLATES] Error loading group", { context: "Templates", groupId, error: error.message, stack: error.stack });
     return json({ error: error.message }, { status: 500 });
   }
 };
@@ -135,11 +136,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       case "loadTranslations": {
         const locale = formData.get("locale") as string;
 
-        console.log(`[API-TEMPLATES-ACTION] 🔍 Loading translations for:`, {
-          shop: session.shop,
-          groupId,
-          locale
-        });
+        logger.debug("[API-TEMPLATES-ACTION] Loading translations", { context: "Templates", shop: session.shop, groupId, locale });
 
         // OPTIMIZATION: Load translations from database (lazy loading)
         // This is much faster than fetching from Shopify API
@@ -151,15 +148,12 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
           }
         });
 
-        console.log(`[API-TEMPLATES-ACTION] ✅ Loaded ${translations.length} translations for locale ${locale} from database`);
+        logger.debug("[API-TEMPLATES-ACTION] Loaded translations from database", { context: "Templates", count: translations.length, locale });
 
         if (translations.length > 0) {
-          console.log(`[API-TEMPLATES-ACTION] Sample translation keys:`, translations.slice(0, 3).map(t => t.key));
+          logger.debug("[API-TEMPLATES-ACTION] Sample translation keys", { context: "Templates", sampleKeys: translations.slice(0, 3).map(t => t.key) });
         } else {
-          console.log(`[API-TEMPLATES-ACTION] ⚠️  NO TRANSLATIONS FOUND! This means:`);
-          console.log(`  - Either no sync has been run for this locale`);
-          console.log(`  - Or translations don't exist in Shopify for this group`);
-          console.log(`  - Run a content sync to populate translations`);
+          logger.warn("[API-TEMPLATES-ACTION] NO TRANSLATIONS FOUND - Either no sync has been run for this locale, or translations don't exist in Shopify for this group", { context: "Templates", groupId, locale });
         }
 
         return json({
@@ -304,7 +298,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
             );
             translatedFields[key] = translated;
           } catch (error) {
-            console.error(`Error translating field ${key}:`, error);
+            logger.error("Error translating field", { context: "Templates", key, error: error instanceof Error ? error.message : String(error) });
             translatedFields[key] = text; // Fallback to original
           }
         }
@@ -346,7 +340,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
           // Check for errors from Shopify
           if (data.data?.translationsRegister?.userErrors?.length > 0) {
             const errors = data.data.translationsRegister.userErrors;
-            console.error("Shopify translation errors:", errors);
+            logger.error("Shopify translation errors", { context: "Templates", errors });
             return json({
               success: false,
               error: `Shopify error: ${errors[0].message}`
@@ -387,7 +381,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
 
           // STEP 3: Delete translations for changed fields (they are now outdated)
           if (changedFields.length > 0) {
-            console.log(`[API-TEMPLATES-ACTION] 🗑️ Deleting translations for changed fields:`, changedFields);
+            logger.debug("[API-TEMPLATES-ACTION] Deleting translations for changed fields", { context: "Templates", changedFields });
 
             await db.themeTranslation.deleteMany({
               where: {
@@ -397,7 +391,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
               }
             });
 
-            console.log(`[API-TEMPLATES-ACTION] ✅ Translations deleted for keys:`, changedFields);
+            logger.debug("[API-TEMPLATES-ACTION] Translations deleted for keys", { context: "Templates", keys: changedFields });
           }
 
           return json({ success: true });
@@ -437,7 +431,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
         return json({ success: false, error: "Unknown action" }, { status: 400 });
     }
   } catch (error: any) {
-    console.error(`[API-TEMPLATES-ACTION] Error:`, error);
+    logger.error("[API-TEMPLATES-ACTION] Error", { context: "Templates", error: error.message, stack: error.stack });
     return json({ success: false, error: error.message }, { status: 500 });
   }
 };

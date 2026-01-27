@@ -7,6 +7,7 @@ import {
 import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prisma";
 import { restResources } from "@shopify/shopify-api/rest/admin/2025-10";
 import prisma from "./db.server";
+import { logger } from "./utils/logger.server";
 
 /**
  * Map string API version (e.g., "2025-10") to ApiVersion enum
@@ -40,7 +41,7 @@ function getApiVersion(versionString?: string): ApiVersion {
 
   const version = versionMap[versionString.toLowerCase()];
   if (!version) {
-    console.warn(`[SHOPIFY.SERVER] Unknown API version "${versionString}", falling back to 2025-10`);
+    logger.warn('[SHOPIFY.SERVER] Unknown API version "${versionString}", falling back to 2025-10`);
     return defaultVersion;
   }
 
@@ -51,18 +52,18 @@ function getApiVersion(versionString?: string): ApiVersion {
 const selectedApiVersion = getApiVersion(process.env.SHOPIFY_API_VERSION);
 
 // Log Shopify configuration on startup
-console.log("🚀 [SHOPIFY.SERVER] Initializing Shopify App...");
-console.log("🔍 [SHOPIFY.SERVER] Environment Variables:");
-console.log("  - SHOPIFY_API_KEY:", process.env.SHOPIFY_API_KEY ? `${process.env.SHOPIFY_API_KEY.substring(0, 8)}...` : "❌ MISSING");
-console.log("  - SHOPIFY_API_SECRET:", process.env.SHOPIFY_API_SECRET ? "✅ SET" : "❌ MISSING");
-console.log("  - SHOPIFY_APP_URL:", process.env.SHOPIFY_APP_URL || "❌ MISSING (using default)");
-console.log("  - SHOPIFY_SCOPES:", process.env.SHOPIFY_SCOPES || "❌ MISSING");
-console.log("  - SHOPIFY_API_VERSION:", process.env.SHOPIFY_API_VERSION || "❌ MISSING (using default: 2025-10)");
-console.log("  - NODE_ENV:", process.env.NODE_ENV || "development");
+logger.info('[SHOPIFY.SERVER] [SHOPIFY.SERVER] Initializing Shopify App...");
+logger.debug('[SHOPIFY.SERVER] [SHOPIFY.SERVER] Environment Variables:");
+logger.debug('[SHOPIFY.SERVER]  - SHOPIFY_API_KEY:", process.env.SHOPIFY_API_KEY ? `${process.env.SHOPIFY_API_KEY.substring(0, 8)}...` : "❌ MISSING");
+logger.debug('[SHOPIFY.SERVER]  - SHOPIFY_API_SECRET:", process.env.SHOPIFY_API_SECRET ? "✅ SET" : "❌ MISSING");
+logger.debug('[SHOPIFY.SERVER]  - SHOPIFY_APP_URL:", process.env.SHOPIFY_APP_URL || "❌ MISSING (using default)");
+logger.debug('[SHOPIFY.SERVER]  - SHOPIFY_SCOPES:", process.env.SHOPIFY_SCOPES || "❌ MISSING");
+logger.debug('[SHOPIFY.SERVER]  - SHOPIFY_API_VERSION:", process.env.SHOPIFY_API_VERSION || "❌ MISSING (using default: 2025-10)");
+logger.debug('[SHOPIFY.SERVER]  - NODE_ENV:", process.env.NODE_ENV || "development");
 
 const scopes = process.env.SHOPIFY_SCOPES?.split(",") || [];
-console.log("🔍 [SHOPIFY.SERVER] Parsed scopes (" + scopes.length + "):", scopes);
-console.log("🔍 [SHOPIFY.SERVER] Using API version:", selectedApiVersion);
+logger.debug('[SHOPIFY.SERVER] [SHOPIFY.SERVER] Parsed scopes (" + scopes.length + "):", scopes);
+logger.debug('[SHOPIFY.SERVER] [SHOPIFY.SERVER] Using API version:", selectedApiVersion);
 
 const shopify = shopifyApp({
   apiKey: process.env.SHOPIFY_API_KEY!,
@@ -76,17 +77,17 @@ const shopify = shopifyApp({
   restResources: restResources as any,
   hooks: {
     afterAuth: async ({ session }) => {
-      console.log("🔐 [SHOPIFY.SERVER] afterAuth hook triggered");
-      console.log("  - Shop:", session.shop);
-      console.log("  - Session ID:", session.id);
-      console.log("  - Has Access Token:", session.accessToken ? true : false);
-      console.log("  - Scopes:", session.scope);
+      logger.info('[SHOPIFY.SERVER] [SHOPIFY.SERVER] afterAuth hook triggered");
+      logger.debug('[SHOPIFY.SERVER]  - Shop:", session.shop);
+      logger.debug('[SHOPIFY.SERVER]  - Session ID:", session.id);
+      logger.debug('[SHOPIFY.SERVER]  - Has Access Token:", session.accessToken ? true : false);
+      logger.debug('[SHOPIFY.SERVER]  - Scopes:", session.scope);
 
       try {
         await shopify.registerWebhooks({ session });
-        console.log("✅ [SHOPIFY.SERVER] Webhooks registered successfully");
+        logger.info('[SHOPIFY.SERVER] [SHOPIFY.SERVER] Webhooks registered successfully");
       } catch (error) {
-        console.error("❌ [SHOPIFY.SERVER] Webhook registration failed:", error);
+        logger.error('[SHOPIFY.SERVER] [SHOPIFY.SERVER] Webhook registration failed:", error);
       }
     },
   },
@@ -94,7 +95,7 @@ const shopify = shopifyApp({
   // Each shop's custom domain is handled automatically by Shopify's OAuth flow
 });
 
-console.log("✅ [SHOPIFY.SERVER] Shopify App initialized");
+logger.info('[SHOPIFY.SERVER] [SHOPIFY.SERVER] Shopify App initialized");
 
 // Import activity tracking and sync scheduler
 import { trackActivity } from "./middleware/activity-tracker.middleware";
@@ -114,7 +115,7 @@ const enhancedAuthenticate = {
 
     // Start sync scheduler if not already active
     if (!syncScheduler.isShopActive(session.shop)) {
-      console.log(`[SHOPIFY.SERVER] Starting background sync for shop: ${session.shop}`);
+      logger.info('[SHOPIFY.SERVER] Starting background sync for shop: ' + session.shop);
       syncScheduler.startSyncForShop(session.shop, admin);
     }
 

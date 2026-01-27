@@ -262,7 +262,7 @@ async function updateImageAltTexts(
       const updateMediaData = await updateMediaResponse.json();
       // Log what Shopify returned
       const returnedAlt = updateMediaData.data?.productUpdateMedia?.media?.[0]?.alt;
-      console.log(`🟡 [SHOPIFY-RESPONSE] mediaId: ${mediaImageId}, sent alt: "${altText}", returned alt: "${returnedAlt}"`);
+      logger.debug('[ProductUpdate] [SHOPIFY-RESPONSE] mediaId: ${mediaImageId}, sent alt: "${altText}", returned alt: "${returnedAlt}"`);
       if (updateMediaData.data?.productUpdateMedia?.mediaUserErrors?.length > 0) {
         loggers.product("error", "productUpdateMedia errors", {
           index,
@@ -353,9 +353,9 @@ async function updateImageAltTexts(
         // Primary locale: Update ProductImage table
         // When altText is empty string, save as null for consistency
         const altTextToSave = altText === "" ? null : altText;
-        console.log('🟢🟢🟢 SAVING ALT-TEXT TO DATABASE (PRIMARY) 🟢🟢🟢');
-        console.log(`🟢 dbImage.id: ${dbImage.id}`);
-        console.log(`🟢 altText to save: "${altTextToSave}" (original: "${altText}", isEmpty: ${altText === ""})`);
+        logger.debug('[ProductUpdate] SAVING ALT-TEXT TO DATABASE (PRIMARY) 🟢🟢🟢');
+        logger.debug('[ProductUpdate] dbImage.id: ${dbImage.id}`);
+        logger.debug('[ProductUpdate] altText to save: "${altTextToSave}" (original: "${altText}", isEmpty: ${altText === ""})`);
         await db.productImage.update({
           where: { id: dbImage.id },
           data: {
@@ -368,7 +368,7 @@ async function updateImageAltTexts(
           where: { id: dbImage.id },
           select: { altText: true },
         });
-        console.log(`🟢 ✅ Verified saved altText: "${savedImage?.altText}" (isNull: ${savedImage?.altText === null})`);
+        logger.debug('[ProductUpdate] ✅ Verified saved altText: "${savedImage?.altText}" (isNull: ${savedImage?.altText === null})`);
         loggers.product("debug", "Updated primary alt-text in DB", { index, altTextSaved: altTextToSave });
       } else {
         // Translation: Update ProductImageAltTranslation table

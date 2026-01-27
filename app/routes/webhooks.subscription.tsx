@@ -8,6 +8,7 @@
 import type { ActionFunctionArgs } from '@remix-run/node';
 import { authenticate } from '~/shopify.server';
 import { checkAndSyncSubscription } from '~/services/billing.server';
+import { logger } from '~/utils/logger.server';
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { topic, shop, session, admin } = await authenticate.webhook(request);
@@ -18,21 +19,21 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return new Response('Webhook processed', { status: 200 });
   }
 
-  console.log(`Received ${topic} webhook for ${shop}`);
+  logger.debug("Received subscription webhook", { context: "Webhook", topic, shop });
 
   try {
     switch (topic) {
       case 'APP_SUBSCRIPTIONS_UPDATE':
         // Sync subscription status to database
         await checkAndSyncSubscription(admin, shop);
-        console.log(`Subscription updated for ${shop}`);
+        logger.debug("Subscription updated", { context: "Webhook", shop });
         break;
 
       default:
-        console.log(`Unhandled webhook topic: ${topic}`);
+        logger.warn("Unhandled webhook topic", { context: "Webhook", topic });
     }
   } catch (error) {
-    console.error(`Error processing ${topic} webhook:`, error);
+    logger.error("Error processing subscription webhook", { context: "Webhook", topic, error: error instanceof Error ? error.message : String(error) });
     // Still return 200 to prevent Shopify from retrying
   }
 

@@ -4,6 +4,8 @@
  * Registers webhooks with Shopify for product events
  */
 
+import { logger } from '~/utils/logger.server';
+
 interface ShopifyGraphQLClient {
   graphql: (query: string, options?: { variables?: any }) => Promise<any>;
 }
@@ -36,19 +38,19 @@ export class WebhookRegistrationService {
       },
     ];
 
-    console.log("[WebhookRegistration] Registering product webhooks...");
+    logger.info('[WebhookRegistration] Registering product webhooks...");
 
     for (const webhook of webhooks) {
       try {
         await this.registerWebhook(webhook.topic, webhook.address);
-        console.log(`[WebhookRegistration] ✓ Registered ${webhook.topic}`);
+        logger.info('[WebhookRegistration] ✓ Registered ${webhook.topic}`);
       } catch (error: any) {
-        console.error(`[WebhookRegistration] ✗ Failed to register ${webhook.topic}:`, error.message);
+        logger.error('[WebhookRegistration] ✗ Failed to register ${webhook.topic}:`, error.message);
         // Continue with other webhooks even if one fails
       }
     }
 
-    console.log("[WebhookRegistration] Webhook registration complete");
+    logger.info('[WebhookRegistration] Webhook registration complete");
   }
 
   /**
@@ -90,19 +92,19 @@ export class WebhookRegistrationService {
       },
     ];
 
-    console.log("[WebhookRegistration] Registering content webhooks...");
+    logger.info('[WebhookRegistration] Registering content webhooks...");
 
     for (const webhook of webhooks) {
       try {
         await this.registerWebhook(webhook.topic, webhook.address);
-        console.log(`[WebhookRegistration] ✓ Registered ${webhook.topic}`);
+        logger.info('[WebhookRegistration] ✓ Registered ${webhook.topic}`);
       } catch (error: any) {
-        console.error(`[WebhookRegistration] ✗ Failed to register ${webhook.topic}:`, error.message);
+        logger.error('[WebhookRegistration] ✗ Failed to register ${webhook.topic}:`, error.message);
         // Continue with other webhooks even if one fails
       }
     }
 
-    console.log("[WebhookRegistration] Content webhook registration complete");
+    logger.info('[WebhookRegistration] Content webhook registration complete");
   }
 
   /**
@@ -122,19 +124,19 @@ export class WebhookRegistrationService {
       },
     ];
 
-    console.log("[WebhookRegistration] Registering subscription webhooks...");
+    logger.info('[WebhookRegistration] Registering subscription webhooks...");
 
     for (const webhook of webhooks) {
       try {
         await this.registerWebhook(webhook.topic, webhook.address);
-        console.log(`[WebhookRegistration] ✓ Registered ${webhook.topic}`);
+        logger.info('[WebhookRegistration] ✓ Registered ${webhook.topic}`);
       } catch (error: any) {
-        console.error(`[WebhookRegistration] ✗ Failed to register ${webhook.topic}:`, error.message);
+        logger.error('[WebhookRegistration] ✗ Failed to register ${webhook.topic}:`, error.message);
         // Continue with other webhooks even if one fails
       }
     }
 
-    console.log("[WebhookRegistration] Subscription webhook registration complete");
+    logger.info('[WebhookRegistration] Subscription webhook registration complete");
   }
 
   /**
@@ -154,7 +156,7 @@ export class WebhookRegistrationService {
     const existing = await this.getExistingWebhook(topic);
 
     if (existing) {
-      console.log(`[WebhookRegistration] Webhook ${topic} already exists, updating...`);
+      logger.info('[WebhookRegistration] Webhook ${topic} already exists, updating...`);
       await this.updateWebhook(existing.id, address);
       return;
     }
@@ -198,7 +200,7 @@ export class WebhookRegistrationService {
       throw new Error(`Webhook creation failed: ${errors.map((e: any) => e.message).join(", ")}`);
     }
 
-    console.log(`[WebhookRegistration] Created webhook ${topic}`);
+    logger.info('[WebhookRegistration] Created webhook ${topic}`);
   }
 
   /**

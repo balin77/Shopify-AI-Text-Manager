@@ -13,9 +13,10 @@ import type { ActionFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { redactShopData, logGDPRRequest, type GDPRShopRedactRequest } from "../services/gdpr.service";
 import { verifyAndParseWebhook } from "../utils/webhook-verification";
+import { logger } from "~/utils/logger.server";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  console.log('📨 [GDPR] Received shop/redact webhook');
+  logger.debug("[GDPR] Received shop/redact webhook", { context: "GDPR" });
 
   try {
     // Verify HMAC signature and parse payload
@@ -23,9 +24,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     // Reject requests with invalid signature
     if (!isValid) {
-      console.error('🚫 [GDPR] Webhook verification failed - Invalid HMAC signature');
-      console.error('🚫 [GDPR] This could be an unauthorized request attempt');
-      console.error('🚫 [GDPR] CRITICAL: Shop deletion prevented by security check');
+      logger.error("[GDPR] Webhook verification failed - Invalid HMAC signature. CRITICAL: Shop deletion prevented by security check", { context: "GDPR" });
 
       await logGDPRRequest(
         metadata.shop || 'unknown',
@@ -43,19 +42,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
 
     if (!payload) {
-      console.error('❌ [GDPR] Failed to parse webhook payload');
+      logger.error("[GDPR] Failed to parse webhook payload", { context: "GDPR" });
       return json({
         success: false,
         error: 'Invalid payload',
       }, { status: 400 });
     }
 
-    console.log('✅ [GDPR] Webhook signature verified');
+    logger.debug("[GDPR] Webhook signature verified", { context: "GDPR" });
 
     // Parse Shopify's GDPR request
-
-    console.log('📋 [GDPR] Shop redaction request for:', payload.shop_domain);
-    console.log('⚠️  [GDPR] WARNING: This will DELETE ALL DATA for this shop!');
+    logger.warn("[GDPR] Shop redaction request - WARNING: This will DELETE ALL DATA for this shop!", { context: "GDPR", shopDomain: payload.shop_domain });
 
     // Delete ALL shop data
     await redactShopData(payload);
@@ -66,7 +63,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       'shop_redact'
     );
 
-    console.log('✅ [GDPR] Shop data redaction completed successfully');
+    logger.debug("[GDPR] Shop data redaction completed successfully", { context: "GDPR" });
 
     return json({
       success: true,
@@ -74,7 +71,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }, { status: 200 });
 
   } catch (error) {
-    console.error('❌ [GDPR] Error processing shop redaction:', error);
+    logger.error("[GDPR] Error processing shop redaction", { context: "GDPR", error: error instanceof Error ? error.message : String(error) });
 
     // Log the error for compliance
     await logGDPRRequest(

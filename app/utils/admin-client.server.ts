@@ -8,6 +8,7 @@
 
 import type { Session } from "@shopify/shopify-api";
 import { apiVersion } from "../shopify.server";
+import { logger } from "./logger.server";
 
 interface ShopifyGraphQLClient {
   graphql: (query: string, options?: { variables?: any }) => Promise<Response>;
@@ -76,7 +77,7 @@ function createAdminClient(
 
   return {
     graphql: async (query: string, options?: { variables?: any }) => {
-      console.log(`[AdminClient] Making GraphQL request to ${shop}`);
+      logger.debug('[AdminClient] Making GraphQL request to ' + shop);
 
       const response = await fetch(graphqlEndpoint, {
         method: "POST",
@@ -92,7 +93,7 @@ function createAdminClient(
 
       if (!response.ok) {
         const errorText = await response.text();
-        console.error(`[AdminClient] GraphQL request failed:`, {
+        logger.error('[AdminClient] GraphQL request failed', {
           status: response.status,
           statusText: response.statusText,
           body: errorText,

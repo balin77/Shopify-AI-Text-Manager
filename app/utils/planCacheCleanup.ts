@@ -6,6 +6,7 @@
 import { db } from "../db.server";
 import { type Plan } from "../config/plans";
 import { getPlanLimits } from "./planUtils";
+import { logger } from "./logger.server";
 
 export interface CleanupStats {
   deletedProducts: number;
@@ -42,7 +43,7 @@ export async function cleanupCacheForPlan(shop: string, newPlan: Plan): Promise<
     deletedContentTranslations: 0,
   };
 
-  console.log(`[PlanCleanup] Starting cleanup for shop ${shop} → ${newPlan}`);
+  logger.info('[PlanCleanup] Starting cleanup for shop ${shop} → ${newPlan}`);
 
   // 1. Delete products over limit
   if (limits.maxProducts !== Infinity) {
@@ -105,7 +106,7 @@ export async function cleanupCacheForPlan(shop: string, newPlan: Plan): Promise<
     stats.deletedThemeTranslations = await deleteThemeTranslationsOverLimit(shop, limits.maxThemeTranslations);
   }
 
-  console.log(`[PlanCleanup] Cleanup complete:`, stats);
+  logger.info('[PlanCleanup] Cleanup complete:`, stats);
 
   return stats;
 }
