@@ -154,9 +154,36 @@ export default function App() {
 
 // Shopify app boundary error handler
 export function ErrorBoundary() {
-  const error = useRouteError();
+  let error: unknown;
+
+  // Try to get the route error - this can fail if we're outside router context
+  try {
+    error = useRouteError();
+  } catch {
+    // useRouteError failed - we're outside router context
+    // This can happen during error recovery when the router isn't fully set up
+    console.error('[APP.TSX ErrorBoundary] useRouteError failed - likely outside router context');
+    return (
+      <AppProvider i18n={{}}>
+        <Page>
+          <Card>
+            <BlockStack gap="400" align="center">
+              <Text as="h1" variant="headingLg">Session-Fehler</Text>
+              <Text as="p" tone="subdued">
+                Die App muss neu geladen werden. Dies passiert manchmal beim Neustart der App.
+              </Text>
+              <Button onClick={() => window.location.reload()}>
+                Seite neu laden
+              </Button>
+            </BlockStack>
+          </Card>
+        </Page>
+      </AppProvider>
+    );
+  }
 
   // Log the error for debugging - note: can't use server logger in client component
+  console.error('[APP.TSX ErrorBoundary] Caught error:', error);
 
   // Try Shopify's boundary first, but provide fallback UI if it fails
   try {

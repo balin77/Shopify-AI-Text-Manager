@@ -3,9 +3,12 @@
  *
  * Provides conditional logging that only outputs in development mode.
  * All logs are stripped in production builds.
+ *
+ * APP_ENV can be used to enable debug logging even when NODE_ENV=production
+ * (useful for Railway development environment running in production mode)
  */
 
-const DEBUG_ENABLED = process.env.NODE_ENV === 'development';
+const DEBUG_ENABLED = process.env.NODE_ENV === 'development' || process.env.APP_ENV === 'development';
 
 type LogArgs = unknown[];
 

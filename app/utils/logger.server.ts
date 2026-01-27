@@ -31,9 +31,19 @@ import winston from 'winston';
 import path from 'path';
 
 // Determine log level based on environment
+// APP_ENV can be used to enable debug logging even in NODE_ENV=production
 const getLogLevel = () => {
+  // Allow explicit LOG_LEVEL override
+  if (process.env.LOG_LEVEL) {
+    return process.env.LOG_LEVEL;
+  }
+  // Use debug level if APP_ENV is development (even if NODE_ENV is production)
+  if (process.env.APP_ENV === 'development') {
+    return 'debug';
+  }
+  // Default: info in production, debug otherwise
   if (process.env.NODE_ENV === 'production') {
-    return process.env.LOG_LEVEL || 'info';
+    return 'info';
   }
   return 'debug';
 };
@@ -167,5 +177,6 @@ export const logApiCall = (
 logger.info('Logger initialized', {
   context: 'System',
   level: getLogLevel(),
-  environment: process.env.NODE_ENV || 'development',
+  NODE_ENV: process.env.NODE_ENV || 'development',
+  APP_ENV: process.env.APP_ENV || 'not set',
 });

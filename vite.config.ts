@@ -26,6 +26,8 @@ export default defineConfig({
       "react-dom",
       "react/jsx-runtime",
       "@remix-run/react",
+      "react-router",
+      "react-router-dom",
     ],
   },
   server: {

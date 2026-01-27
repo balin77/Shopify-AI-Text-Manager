@@ -50,7 +50,9 @@ export async function createSubscription(
       variables: {
         name: planConfig.name,
         returnUrl,
-        test: process.env.NODE_ENV === 'development',
+        // Use test billing if NODE_ENV is development OR APP_ENV is development
+        // This allows running NODE_ENV=production with APP_ENV=development for testing
+        test: process.env.NODE_ENV === 'development' || process.env.APP_ENV === 'development',
         trialDays: planConfig.trialDays || 0,
         lineItems: [
           {
