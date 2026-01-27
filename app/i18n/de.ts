@@ -379,6 +379,13 @@ export const de = {
     usageArticles: "Artikel",
     usagePages: "Seiten",
     usageThemeTranslations: "Theme-Übersetzungen",
+    usagePolicies: "Richtlinien",
+    usageThemeContent: "Theme-Inhalte",
+    usageTranslations: "Übersetzungen",
+    // Storage Chart
+    storageUsage: "Speichernutzung",
+    totalStorage: "Gesamt",
+    noStorageData: "Keine Speicherdaten verfügbar",
     usagePercentage: "{percentage}% genutzt",
     usageNearLimit: "Limit fast erreicht",
     usageAtLimit: "Limit erreicht",

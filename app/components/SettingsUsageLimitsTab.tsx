@@ -1,7 +1,9 @@
+import { useEffect } from "react";
 import { Card, Text, BlockStack, Banner, ProgressBar, InlineStack, Button } from "@shopify/polaris";
 import { usePlan } from "../contexts/PlanContext";
 import type { ResourceType } from "../utils/planUtils";
-import { useNavigate } from "@remix-run/react";
+import { useNavigate, useFetcher } from "@remix-run/react";
+import { StoragePieChart, type StorageData } from "./StoragePieChart";
 
 interface SettingsUsageLimitsTabProps {
   productCount: number;
@@ -117,6 +119,68 @@ export function SettingsUsageLimitsTab({
   } = usePlan();
   const navigate = useNavigate();
 
+  // Fetch storage stats
+  const storageFetcher = useFetcher<{
+    success?: boolean;
+    stats?: {
+      products: number;
+      collections: number;
+      articles: number;
+      pages: number;
+      policies: number;
+      themeContent: number;
+      translations: number;
+      total: number;
+    };
+  }>();
+
+  useEffect(() => {
+    if (storageFetcher.state === "idle" && !storageFetcher.data) {
+      storageFetcher.load("/api/storage-stats");
+    }
+  }, [storageFetcher]);
+
+  // Prepare storage data for pie chart
+  const storageChartData: StorageData[] = storageFetcher.data?.stats
+    ? [
+        {
+          label: t.settings?.usageProducts || "Produkte",
+          value: storageFetcher.data.stats.products,
+          color: "#008060", // Shopify green
+        },
+        {
+          label: t.settings?.usageCollections || "Kollektionen",
+          value: storageFetcher.data.stats.collections,
+          color: "#5c6ac4", // Indigo
+        },
+        {
+          label: t.settings?.usageArticles || "Artikel",
+          value: storageFetcher.data.stats.articles,
+          color: "#006fbb", // Blue
+        },
+        {
+          label: t.settings?.usagePages || "Seiten",
+          value: storageFetcher.data.stats.pages,
+          color: "#9c6ade", // Purple
+        },
+        {
+          label: t.settings?.usagePolicies || "Richtlinien",
+          value: storageFetcher.data.stats.policies,
+          color: "#47c1bf", // Teal
+        },
+        {
+          label: t.settings?.usageThemeContent || "Theme-Inhalte",
+          value: storageFetcher.data.stats.themeContent,
+          color: "#f49342", // Orange
+        },
+        {
+          label: t.settings?.usageTranslations || "Ubersetzungen",
+          value: storageFetcher.data.stats.translations,
+          color: "#de3618", // Red
+        },
+      ]
+    : [];
+
   const limits = getPlanLimits();
 
   const counts: Record<ResourceType, number> = {
@@ -207,6 +271,14 @@ export function SettingsUsageLimitsTab({
           </BlockStack>
         </BlockStack>
       </Card>
+
+      {/* Storage Pie Chart */}
+      <StoragePieChart
+        data={storageChartData}
+        title={t.settings?.storageUsage || "Speichernutzung"}
+        loading={storageFetcher.state === "loading"}
+        t={t}
+      />
 
       {!hideUpgradeCard && nextPlan && (
         <Card>

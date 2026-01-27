@@ -381,6 +381,13 @@ export const en: Translation = {
     usageArticles: "Articles",
     usagePages: "Pages",
     usageThemeTranslations: "Theme Translations",
+    usagePolicies: "Policies",
+    usageThemeContent: "Theme Content",
+    usageTranslations: "Translations",
+    // Storage Chart
+    storageUsage: "Storage Usage",
+    totalStorage: "Total",
+    noStorageData: "No storage data available",
     usagePercentage: "{percentage}% used",
     usageNearLimit: "Approaching limit",
     usageAtLimit: "Limit reached",
