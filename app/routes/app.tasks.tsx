@@ -230,6 +230,31 @@ export default function TasksPage() {
     });
   };
 
+  // Generate Shopify admin URL from resourceId and resourceType
+  const getShopifyAdminUrl = (resourceId: string | null, resourceType: string | null): string | null => {
+    if (!resourceId || !resourceType) return null;
+
+    // Extract numeric ID from Shopify GID (e.g., "gid://shopify/Product/123456789" -> "123456789")
+    const match = resourceId.match(/\/(\d+)$/);
+    if (!match) return null;
+
+    const numericId = match[1];
+
+    // Map resourceType to Shopify admin path
+    const pathMap: Record<string, string> = {
+      product: "products",
+      collection: "collections",
+      page: "pages",
+      blog: "articles", // Blog articles use /articles path
+    };
+
+    const path = pathMap[resourceType];
+    if (!path) return null;
+
+    // Return relative Shopify admin URL
+    return `/admin/${path}/${numericId}`;
+  };
+
   return (
     <Page fullWidth>
       <MainNavigation />
@@ -343,9 +368,27 @@ export default function TasksPage() {
                             {(t.tasks.resourceType as any)[task.resourceType] || task.resourceType}
                           </Badge>
                         )}
-                        <Text as="p" variant="bodyMd">
-                          {task.resourceTitle}
-                        </Text>
+                        {(() => {
+                          const adminUrl = getShopifyAdminUrl(task.resourceId, task.resourceType);
+                          if (adminUrl) {
+                            return (
+                              <a
+                                href={adminUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                style={{ color: "#008060", textDecoration: "none" }}
+                                onClick={(e: React.MouseEvent) => e.stopPropagation()}
+                              >
+                                {task.resourceTitle}
+                              </a>
+                            );
+                          }
+                          return (
+                            <Text as="p" variant="bodyMd">
+                              {task.resourceTitle}
+                            </Text>
+                          );
+                        })()}
                       </InlineStack>
                     )}
 
