@@ -257,8 +257,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // LOAD ITEM DATA (when item or language changes)
   // ============================================================================
 
-  // Track previous selectedItemId to detect actual item changes vs revalidation
-  const prevSelectedItemIdRef = useRef<string | null>(null);
+  // Track previous language to detect language changes
   const prevCurrentLanguageRef = useRef<string>(currentLanguage);
 
   // Ref to access selectedItem without adding it to effect dependencies
