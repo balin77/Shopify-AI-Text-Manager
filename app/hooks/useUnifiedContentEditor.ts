@@ -40,6 +40,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   );
   // Track if we're in the middle of an accept-and-translate flow to prevent immediate deletion
   const [isAcceptAndTranslateFlow, setIsAcceptAndTranslateFlow] = useState(false);
+  // Ref to access isAcceptAndTranslateFlow in memoized callbacks without adding as dependency
+  const isAcceptAndTranslateFlowRef = useRef(false);
+  isAcceptAndTranslateFlowRef.current = isAcceptAndTranslateFlow;
   // Track if we're currently loading data to prevent false change detection
   // Initialize to true if an item is selected to prevent race condition
   const [isLoadingData, setIsLoadingData] = useState(!!selectedItemId);
@@ -94,91 +97,25 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     [items, selectedItemId]
   );
 
-  // Merge on-demand images with selected item (for products)
-  // On-demand images take precedence over DB-cached images
-  const selectedItem = useMemo(() => {
-    if (!baseSelectedItem) return undefined;
-
-    // If we have on-demand images for this product, use them
-    if (onDemandImages.length > 0 && loadedImagesForProductRef.current === selectedItemId) {
-      return {
-        ...baseSelectedItem,
-        images: onDemandImages,
-      };
-    }
-
-    return baseSelectedItem;
-  }, [baseSelectedItem, onDemandImages, selectedItemId]);
+  // Use baseSelectedItem directly - all images are now stored in DB
+  // No need for on-demand loading anymore
+  const selectedItem = baseSelectedItem;
 
   // ============================================================================
-  // ON-DEMAND IMAGE LOADING (for products)
-  // Load all images from Shopify when a product is selected
+  // ON-DEMAND IMAGE LOADING - DISABLED
+  // All images are now stored in DB, no need for on-demand loading
   // ============================================================================
 
-  // Track previous product ID to detect changes
+  // Track previous product ID (kept for potential future use)
   const prevSelectedItemIdRef = useRef<string | null>(null);
 
-  // Trigger image loading when product is selected
+  // Update ref when product changes (for debugging)
   useEffect(() => {
-    // Only load for products content type
     if (config.contentType !== 'products') return;
-
-    // Detect product change - immediately clear on-demand images
-    // This ensures the first image from DB is shown instantly
     if (prevSelectedItemIdRef.current !== selectedItemId) {
-      console.log(`🖼️ [OnDemandImages] Product changed: ${prevSelectedItemIdRef.current} -> ${selectedItemId}`);
-      setOnDemandImages([]); // Clear immediately so DB image shows
-      loadedImagesForProductRef.current = null;
       prevSelectedItemIdRef.current = selectedItemId;
     }
-
-    // Skip if no product selected
-    if (!selectedItemId || !baseSelectedItem) {
-      return;
-    }
-
-    // Skip if already loaded for this product
-    if (loadedImagesForProductRef.current === selectedItemId) {
-      return;
-    }
-
-    // Load images from Shopify (DB first image is already showing)
-    console.log(`🖼️ [OnDemandImages] Loading all images for product ${selectedItemId}`);
-    setIsLoadingImages(true);
-    imageFetcher.load(`/api/product-images?productId=${encodeURIComponent(selectedItemId)}`);
-  }, [selectedItemId, baseSelectedItem, config.contentType]);
-
-  // Handle image fetcher response
-  useEffect(() => {
-    if (imageFetcher.state === "idle" && imageFetcher.data && selectedItemId) {
-      setIsLoadingImages(false);
-
-      // Only apply if still on the same product (user might have switched)
-      if (prevSelectedItemIdRef.current !== selectedItemId) {
-        console.log(`🖼️ [OnDemandImages] Ignoring response - product changed`);
-        return;
-      }
-
-      if (imageFetcher.data.success && imageFetcher.data.images) {
-        console.log(`🖼️ [OnDemandImages] Loaded ${imageFetcher.data.images.length} images for product ${selectedItemId}`);
-
-        // Transform images to ContentImage format
-        const images: ContentImage[] = imageFetcher.data.images.map((img: any) => ({
-          url: img.url,
-          altText: img.altText,
-          // Preserve alt-text translations from DB if available
-          altTextTranslations: baseSelectedItem?.images?.[0]?.altTextTranslations || [],
-        }));
-
-        setOnDemandImages(images);
-        loadedImagesForProductRef.current = selectedItemId;
-      } else if (imageFetcher.data.error) {
-        console.error(`🖼️ [OnDemandImages] Error loading images:`, imageFetcher.data.error);
-        // Fall back to DB-cached images (if any)
-        loadedImagesForProductRef.current = selectedItemId;
-      }
-    }
-  }, [imageFetcher.state, imageFetcher.data, selectedItemId, baseSelectedItem]);
+  }, [selectedItemId, config.contentType]);
 
   // Compute effective field definitions (supports dynamic fields for templates)
   const effectiveFieldDefinitions = useMemo(() => {
@@ -582,8 +519,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     }
 
     // If saving primary locale, include changed fields for translation deletion
+    // BUT: Skip this if we're in an accept-and-translate flow - new translations will be created immediately
     const item = selectedItemRef.current;
-    if (locale === primaryLocale && item) {
+    if (locale === primaryLocale && item && !isAcceptAndTranslateFlowRef.current) {
       const changedFields = getChangedFields(valuesToSave);
       if (changedFields.length > 0) {
         formDataObj.changedFields = JSON.stringify(changedFields);
@@ -2132,7 +2070,8 @@ function getItemFieldValue(item: TranslatableContentItem, fieldKey: string, prim
 
   // Templates: Check translatableContent array
   if (item?.translatableContent && Array.isArray(item.translatableContent)) {
-    const content = item.translatableContent.find((c: { key: string; value: string }) => c.key === fieldKey);
+    // Filter out null/undefined items to prevent "Cannot read properties of null" errors
+    const content = item.translatableContent.find((c: { key: string; value: string }) => c != null && c.key === fieldKey);
     return content?.value || "";
   }
 
