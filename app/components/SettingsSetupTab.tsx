@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Card, Text, BlockStack, Button, Banner } from "@shopify/polaris";
+import { Card, Text, BlockStack, Button, Banner, ProgressBar, InlineStack, Box } from "@shopify/polaris";
 
 interface SettingsSetupTabProps {
   shop: string;
@@ -26,6 +26,12 @@ export function SettingsSetupTab({
   const [syncLoading, setSyncLoading] = useState(false);
   const [webhookData, setWebhookData] = useState<any>(null);
   const [syncErrors, setSyncErrors] = useState<string[]>([]);
+  const [syncProgress, setSyncProgress] = useState<{
+    phase: string;
+    message: string;
+    current: number;
+    total: number;
+  } | null>(null);
 
   const handleSetupWebhooks = async () => {
     setWebhookStatus("Setting up webhooks...");
@@ -55,56 +61,88 @@ export function SettingsSetupTab({
     }
   };
 
+  const phaseLabels: Record<string, string> = {
+    products: "Products",
+    collections: "Collections",
+    articles: "Articles",
+    pages: "Pages",
+    policies: "Policies",
+    themes: "Themes",
+  };
+
   const handleSyncProducts = async (force: boolean = false) => {
-    setSyncStatus("Syncing products and content...");
+    setSyncStatus("");
     setSyncLoading(true);
     setSyncErrors([]);
+    setSyncProgress({ phase: "starting", message: "Starting sync...", current: 0, total: 100 });
 
     try {
-      // Sync products first
-      const productsUrl = force ? "/api/sync-products?force=true" : "/api/sync-products";
-      const productsResponse = await fetch(productsUrl, {
+      const streamUrl = force ? "/api/sync-all-stream?force=true" : "/api/sync-all-stream";
+      const response = await fetch(streamUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
       });
 
-      const productsData = await productsResponse.json();
+      if (!response.ok) {
+        throw new Error(`HTTP error: ${response.status}`);
+      }
 
-      // Sync content (collections, articles, pages)
-      const contentResponse = await fetch("/api/sync-content", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-      });
+      const reader = response.body?.getReader();
+      if (!reader) {
+        throw new Error("No response body");
+      }
 
-      const contentData = await contentResponse.json();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let finalStats: any = null;
 
-      // Combine results
-      const productsSynced = productsData.success ? productsData.synced || 0 : 0;
-      const contentSynced = contentData.success ? contentData.stats?.total || 0 : 0;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
 
-      if (productsData.success && contentData.success) {
-        setSyncStatus(
-          `✓ Synced ${productsSynced} products, ${contentData.stats?.collections || 0} collections, ${contentData.stats?.articles || 0} articles`
-        );
-        if (productsData.errors) {
-          setSyncErrors(productsData.errors);
+        buffer += decoder.decode(value, { stream: true });
+
+        // Process complete SSE messages
+        const lines = buffer.split("\n\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            try {
+              const data = JSON.parse(line.slice(6));
+
+              if (data.type === "progress") {
+                setSyncProgress({
+                  phase: data.phase,
+                  message: data.message,
+                  current: data.current || 0,
+                  total: data.total || 100,
+                });
+              } else if (data.type === "complete") {
+                finalStats = data.stats;
+                setSyncProgress(null);
+                setSyncStatus(
+                  `✓ Synced ${finalStats.products} products, ${finalStats.collections} collections, ${finalStats.articles} articles, ${finalStats.pages} pages`
+                );
+              } else if (data.type === "error") {
+                setSyncProgress(null);
+                setSyncStatus(`✗ Error: ${data.message}`);
+              }
+            } catch (e) {
+              console.error("Failed to parse SSE message:", e);
+            }
+          }
         }
-        // Refresh counts
-        if (productsSynced > 0 || contentSynced > 0) {
-          // Reload page to get fresh counts
-          window.location.reload();
-        }
-      } else {
-        const errors = [];
-        if (!productsData.success) errors.push(`Products: ${productsData.error}`);
-        if (!contentData.success) errors.push(`Content: ${contentData.error}`);
-        setSyncStatus(`✗ Error: ${errors.join(", ")}`);
+      }
+
+      // Reload page to refresh counts if anything was synced
+      if (finalStats && (finalStats.products > 0 || finalStats.collections > 0 || finalStats.articles > 0)) {
+        setTimeout(() => window.location.reload(), 1500);
       }
     } catch (error: any) {
+      setSyncProgress(null);
       setSyncStatus(`✗ Error: ${error.message}`);
     } finally {
       setSyncLoading(false);
@@ -229,7 +267,25 @@ export function SettingsSetupTab({
               </Button>
             )}
           </BlockStack>
-          {syncStatus && (
+          {syncProgress && (
+            <Box padding="400" background="bg-surface-secondary" borderRadius="200">
+              <BlockStack gap="300">
+                <InlineStack align="space-between">
+                  <Text as="p" variant="bodyMd" fontWeight="semibold">
+                    {phaseLabels[syncProgress.phase] || syncProgress.phase}
+                  </Text>
+                  <Text as="p" variant="bodyMd" tone="subdued">
+                    {syncProgress.current}%
+                  </Text>
+                </InlineStack>
+                <ProgressBar progress={syncProgress.current} size="small" />
+                <Text as="p" variant="bodySm" tone="subdued">
+                  {syncProgress.message}
+                </Text>
+              </BlockStack>
+            </Box>
+          )}
+          {syncStatus && !syncProgress && (
             <Banner
               tone={syncStatus.startsWith("✓") ? "success" : "critical"}
             >
