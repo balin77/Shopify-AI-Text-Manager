@@ -879,36 +879,35 @@ export default function SettingsPage() {
 
                                 <BlockStack gap="200">
                                   <Text as="p" variant="bodyMd">
-                                    <strong>{t.settings.products}:</strong>{' '}
+                                    <strong>{t.settings?.usageProducts || "Produkte"}:</strong>{' '}
                                     {planDetails.maxProducts === Infinity
                                       ? t.settings.unlimited
-                                      : planDetails.maxProducts}
+                                      : planDetails.maxProducts.toLocaleString()}
+                                  </Text>
+                                  <Text as="p" variant="bodyMd">
+                                    <strong>{t.settings?.usageLocales || "Sprachen"}:</strong>{' '}
+                                    {planDetails.maxLocales}
+                                  </Text>
+                                  <Text as="p" variant="bodyMd">
+                                    <strong>{t.settings?.usageCollections || "Kollektionen"}:</strong>{' '}
+                                    {planDetails.maxCollections.toLocaleString()}
+                                  </Text>
+                                  <Text as="p" variant="bodyMd">
+                                    <strong>{t.settings?.usageArticles || "Artikel"}:</strong>{' '}
+                                    {planDetails.maxArticles === 0 ? "—" : planDetails.maxArticles.toLocaleString()}
+                                  </Text>
+                                  <Text as="p" variant="bodyMd">
+                                    <strong>{t.settings?.usagePages || "Seiten"}:</strong>{' '}
+                                    {planDetails.maxPages === 0 ? "—" : planDetails.maxPages.toLocaleString()}
+                                  </Text>
+                                  <Text as="p" variant="bodyMd">
+                                    <strong>{t.settings?.usageThemeTranslations || "Theme-Übersetzungen"}:</strong>{' '}
+                                    {planDetails.maxThemeTranslations === 0 ? "—" : planDetails.maxThemeTranslations.toLocaleString()}
                                   </Text>
                                   <Text as="p" variant="bodyMd">
                                     <strong>{t.settings.images}:</strong>{' '}
                                     {planDetails.productImages === 'all' ? t.settings.allImages : t.settings.featuredImageOnly}
                                   </Text>
-                                  <Text as="p" variant="bodyMd">
-                                    <strong>{t.settings.contentTypes}:</strong>
-                                  </Text>
-                                  <BlockStack gap="100">
-                                    {planDetails.contentTypes.map((type) => {
-                                      let displayName = type;
-                                      let note = "";
-
-                                      if (type === "menus") {
-                                        note = ` (${t.settings.readOnly || "read-only"})`;
-                                      } else if (type === "metaobjects" || type === "metadata") {
-                                        note = ` (${t.settings.comingSoon || "coming soon"})`;
-                                      }
-
-                                      return (
-                                        <Text key={type} as="p" variant="bodySm" tone="success">
-                                          ✓ {displayName}{note}
-                                        </Text>
-                                      );
-                                    })}
-                                  </BlockStack>
                                 </BlockStack>
                               </BlockStack>
 
