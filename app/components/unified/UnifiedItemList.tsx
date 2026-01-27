@@ -300,21 +300,23 @@ export function UnifiedItemList({
                 const isHovered = hoveredItemId === item.id;
 
                 return (
-                  <div
-                    onMouseEnter={() => setHoveredItemId(item.id)}
-                    onMouseLeave={() => setHoveredItemId(null)}
-                    style={{
-                      backgroundColor: isSelected ? "rgba(0, 128, 96, 0.08)" : "transparent",
-                      borderLeft: isSelected ? "3px solid #008060" : "3px solid transparent",
-                    }}
+                  <ResourceItem
+                    id={item.id}
+                    onClick={() => onItemSelect(item.id)}
                   >
-                    <ResourceItem
-                      id={item.id}
-                      onClick={() => onItemSelect(item.id)}
+                    <div
+                      onMouseEnter={() => setHoveredItemId(item.id)}
+                      onMouseLeave={() => setHoveredItemId(null)}
+                      style={{
+                        backgroundColor: isSelected ? "rgba(0, 128, 96, 0.08)" : "transparent",
+                        borderLeft: isSelected ? "3px solid #008060" : "3px solid transparent",
+                        margin: "-12px -20px",
+                        padding: "12px 20px",
+                      }}
                     >
                       {itemRenderer(item, isSelected, isHovered)}
-                    </ResourceItem>
-                  </div>
+                    </div>
+                  </ResourceItem>
                 );
               }}
             />
