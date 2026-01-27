@@ -8,7 +8,6 @@ import { I18nProvider } from "../contexts/I18nContext";
 import { InfoBoxProvider } from "../contexts/InfoBoxContext";
 import { PlanProvider } from "../contexts/PlanContext";
 import { NavigationHeightProvider } from "../contexts/NavigationHeightContext";
-import { LimitWarningBanner } from "../components/LimitWarningBanner";
 import { useEffect } from "react";
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
@@ -34,7 +33,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       appLanguage: "de" as Locale,
       subscriptionPlan: "basic" as Plan,
       aiSettings: null,
-      usageCounts: null,
     });
   }
 
@@ -62,27 +60,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // Load AI settings for global API key validation
     const aiSettings = await loadAISettingsForValidation(db, session.shop);
 
-    // Load usage counts for limit warning banner
-    const [productCount, collectionCount, articleCount, pageCount, themeTranslationCount] = await Promise.all([
-      db.product.count({ where: { shop: session.shop } }),
-      db.collection.count({ where: { shop: session.shop } }),
-      db.article.count({ where: { shop: session.shop } }),
-      db.page.count({ where: { shop: session.shop } }),
-      db.themeTranslation.count({ where: { shop: session.shop } }),
-    ]);
-
     return json({
       appLanguage,
       subscriptionPlan,
       aiSettings,
-      usageCounts: {
-        products: productCount,
-        locales: 1, // Will be loaded from settings in component
-        collections: collectionCount,
-        articles: articleCount,
-        pages: pageCount,
-        themeTranslations: themeTranslationCount,
-      },
     });
   } catch (error) {
     console.error("❌ [APP.TSX LOADER] Error:", error);
@@ -94,14 +75,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       appLanguage: "de" as Locale,
       subscriptionPlan: "basic" as Plan,
       aiSettings: null,
-      usageCounts: null,
       loaderError: true,
     });
   }
 };
 
 function AppContent() {
-  const { aiSettings, usageCounts } = useLoaderData<typeof loader>();
+  const { aiSettings } = useLoaderData<typeof loader>();
   const { t } = useI18n();
   const { showInfoBox } = useInfoBox();
 
@@ -143,22 +123,7 @@ function AppContent() {
     }
   }, [aiSettings, t, showInfoBox]);
 
-  return (
-    <>
-      {usageCounts && (
-        <LimitWarningBanner
-          productCount={usageCounts.products}
-          localeCount={usageCounts.locales}
-          collectionCount={usageCounts.collections}
-          articleCount={usageCounts.articles}
-          pageCount={usageCounts.pages}
-          themeTranslationCount={usageCounts.themeTranslations}
-          t={t}
-        />
-      )}
-      <Outlet />
-    </>
-  );
+  return <Outlet />;
 }
 
 export default function App() {

@@ -13,6 +13,7 @@ import {
   Divider,
 } from "@shopify/polaris";
 import { PLAN_CONFIG, PLAN_DISPLAY_NAMES, type Plan } from "../config/plans";
+import { getPlanLimits, isApproachingLimit, type ResourceType } from "../utils/planUtils";
 import { BILLING_PLANS, getAvailablePlans, type BillingPlan } from "../config/billing";
 import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
@@ -921,6 +922,45 @@ export default function SettingsPage() {
                       );
                     })}
                   </div>
+
+                  {/* Limit Warning */}
+                  {(() => {
+                    const limits = getPlanLimits(subscriptionPlan as Plan);
+                    const resourceLabels: Record<ResourceType, string> = {
+                      products: t.settings?.usageProducts || "Produkte",
+                      locales: t.settings?.usageLocales || "Sprachen",
+                      collections: t.settings?.usageCollections || "Kollektionen",
+                      articles: t.settings?.usageArticles || "Artikel",
+                      pages: t.settings?.usagePages || "Seiten",
+                      themeTranslations: t.settings?.usageThemeTranslations || "Theme-Übersetzungen",
+                    };
+                    const counts: Record<ResourceType, number> = {
+                      products: productCount,
+                      locales: localeCount,
+                      collections: collectionCount,
+                      articles: articleCount,
+                      pages: pageCount,
+                      themeTranslations: themeTranslationCount,
+                    };
+                    const approaching = (Object.keys(counts) as ResourceType[]).filter(
+                      (r) => limits[`max${r.charAt(0).toUpperCase() + r.slice(1)}` as keyof typeof limits] !== 0 &&
+                             isApproachingLimit(subscriptionPlan as Plan, r, counts[r])
+                    );
+                    if (approaching.length === 0) return null;
+                    const resourceNames = approaching.map(r => resourceLabels[r]).join(", ");
+                    return (
+                      <Banner tone="warning" title={t.settings?.limitWarningTitle || "Plan-Limits werden erreicht"}>
+                        <p>
+                          {(t.settings?.limitWarningDescription || "Sie nähern sich Ihren Plan-Limits für: {resources}").replace("{resources}", resourceNames)}
+                        </p>
+                        <div style={{ marginTop: "8px" }}>
+                          <Button url="#" onClick={() => handleSectionChange("usage")}>
+                            {t.settings?.usageLimits || "Nutzung & Limits"}
+                          </Button>
+                        </div>
+                      </Banner>
+                    );
+                  })()}
 
                   <Card>
                     <BlockStack gap="200">
