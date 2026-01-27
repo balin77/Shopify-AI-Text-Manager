@@ -214,6 +214,7 @@ export const en: Translation = {
     active: "Active",
     currentPlanButton: "Current Plan",
     downgrade: "Downgrade",
+    upgrade: "Upgrade",
     select: "Select",
     more: "more",
     readOnly: "read-only",

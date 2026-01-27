@@ -212,6 +212,7 @@ export const de = {
     active: "Aktiv",
     currentPlanButton: "Aktueller Plan",
     downgrade: "Downgrade",
+    upgrade: "Upgrade",
     select: "Auswählen",
     more: "mehr",
     readOnly: "nur lesen",

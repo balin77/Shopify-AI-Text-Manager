@@ -919,7 +919,17 @@ export default function SettingsPage() {
                                   onClick={() => handleSelectPlan(id)}
                                   fullWidth
                                 >
-                                  {isCurrentPlan ? t.settings.currentPlanButton : id === 'free' ? t.settings.downgrade : t.settings.select}
+                                  {isCurrentPlan
+                                    ? t.settings.currentPlanButton
+                                    : (() => {
+                                        const planHierarchy: BillingPlan[] = ['free', 'basic', 'pro', 'max'];
+                                        const currentIndex = planHierarchy.indexOf(subscriptionPlan as BillingPlan);
+                                        const targetIndex = planHierarchy.indexOf(id);
+                                        return targetIndex < currentIndex
+                                          ? t.settings.downgrade
+                                          : t.settings.upgrade || "Upgrade";
+                                      })()
+                                  }
                                 </Button>
                               </div>
                             </div>
