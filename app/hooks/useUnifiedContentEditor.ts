@@ -97,25 +97,101 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     [items, selectedItemId]
   );
 
-  // Use baseSelectedItem directly - all images are now stored in DB
-  // No need for on-demand loading anymore
-  const selectedItem = baseSelectedItem;
+  // Hybrid image loading:
+  // - If images exist in DB -> use them directly (instant)
+  // - If no images in DB -> load on-demand from Shopify API (fallback)
+  const selectedItem = useMemo(() => {
+    if (!baseSelectedItem) return undefined;
+
+    // Check if DB has images for this product
+    const hasDbImages = baseSelectedItem.images && baseSelectedItem.images.length > 0;
+
+    // If DB has images, use them directly (instant loading)
+    if (hasDbImages) {
+      return baseSelectedItem;
+    }
+
+    // If no DB images but we have on-demand images loaded, use those
+    if (onDemandImages.length > 0 && loadedImagesForProductRef.current === selectedItemId) {
+      return {
+        ...baseSelectedItem,
+        images: onDemandImages,
+      };
+    }
+
+    // No images available yet - return base item (on-demand loading will trigger)
+    return baseSelectedItem;
+  }, [baseSelectedItem, onDemandImages, selectedItemId]);
 
   // ============================================================================
-  // ON-DEMAND IMAGE LOADING - DISABLED
-  // All images are now stored in DB, no need for on-demand loading
+  // ON-DEMAND IMAGE LOADING (hybrid fallback)
+  // Only loads from Shopify API if no images in DB
   // ============================================================================
 
-  // Track previous product ID (kept for potential future use)
+  // Track previous product ID to detect changes
   const prevSelectedItemIdRef = useRef<string | null>(null);
 
-  // Update ref when product changes (for debugging)
+  // Trigger on-demand image loading only if DB has no images
   useEffect(() => {
+    // Only for products content type
     if (config.contentType !== 'products') return;
+
+    // Detect product change - clear on-demand state
     if (prevSelectedItemIdRef.current !== selectedItemId) {
+      setOnDemandImages([]);
+      loadedImagesForProductRef.current = null;
       prevSelectedItemIdRef.current = selectedItemId;
     }
-  }, [selectedItemId, config.contentType]);
+
+    // Skip if no product selected
+    if (!selectedItemId || !baseSelectedItem) {
+      return;
+    }
+
+    // Skip if DB already has images (no need for on-demand loading)
+    const hasDbImages = baseSelectedItem.images && baseSelectedItem.images.length > 0;
+    if (hasDbImages) {
+      return;
+    }
+
+    // Skip if already loaded for this product
+    if (loadedImagesForProductRef.current === selectedItemId) {
+      return;
+    }
+
+    // No DB images - load from Shopify API as fallback
+    console.log(`🖼️ [OnDemandImages] No DB images, loading from Shopify for ${selectedItemId}`);
+    setIsLoadingImages(true);
+    imageFetcher.load(`/api/product-images?productId=${encodeURIComponent(selectedItemId)}`);
+  }, [selectedItemId, baseSelectedItem, config.contentType]);
+
+  // Handle on-demand image fetcher response
+  useEffect(() => {
+    if (imageFetcher.state === "idle" && imageFetcher.data && selectedItemId) {
+      setIsLoadingImages(false);
+
+      // Only apply if still on the same product
+      if (prevSelectedItemIdRef.current !== selectedItemId) {
+        return;
+      }
+
+      if (imageFetcher.data.success && imageFetcher.data.images) {
+        console.log(`🖼️ [OnDemandImages] Loaded ${imageFetcher.data.images.length} images from Shopify`);
+
+        const images: ContentImage[] = imageFetcher.data.images.map((img: any) => ({
+          url: img.url,
+          altText: img.altText,
+          altTextTranslations: [],
+        }));
+
+        setOnDemandImages(images);
+        loadedImagesForProductRef.current = selectedItemId;
+      } else if (imageFetcher.data.error) {
+        console.error(`🖼️ [OnDemandImages] Error:`, imageFetcher.data.error);
+        loadedImagesForProductRef.current = selectedItemId;
+      }
+    }
+  }, [imageFetcher.state, imageFetcher.data, selectedItemId]);
 
   // Compute effective field definitions (supports dynamic fields for templates)
   const effectiveFieldDefinitions = useMemo(() => {
