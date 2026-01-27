@@ -50,6 +50,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         total?: number;
         message: string;
         stats?: any;
+        detailCurrent?: number;
+        detailTotal?: number;
+        detailMessage?: string;
       }) => {
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
       };
@@ -149,7 +152,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
         try {
           const syncService = new ContentSyncService(admin, shop);
-          stats.collections = await syncService.syncAllCollections(planLimits.maxCollections);
+          stats.collections = await syncService.syncAllCollections(planLimits.maxCollections, (current, total, message) => {
+            sendEvent({
+              type: 'progress',
+              phase: 'collections',
+              message: 'Syncing collections...',
+              current: Math.round((current / total) * 100),
+              total: 100,
+              detailCurrent: current,
+              detailTotal: total,
+              detailMessage: message
+            });
+          });
           sendEvent({
             type: 'progress',
             phase: 'collections',
@@ -180,7 +194,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
         try {
           const syncService = new ContentSyncService(admin, shop);
-          stats.articles = await syncService.syncAllArticles(planLimits.maxArticles);
+          stats.articles = await syncService.syncAllArticles(planLimits.maxArticles, (current, total, message) => {
+            sendEvent({
+              type: 'progress',
+              phase: 'articles',
+              message: 'Syncing articles...',
+              current: Math.round((current / total) * 100),
+              total: 100,
+              detailCurrent: current,
+              detailTotal: total,
+              detailMessage: message
+            });
+          });
           sendEvent({
             type: 'progress',
             phase: 'articles',
@@ -211,7 +236,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
         try {
           const bgSyncService = new BackgroundSyncService(admin, shop);
-          stats.pages = await bgSyncService.syncAllPages(planLimits.maxPages);
+          stats.pages = await bgSyncService.syncAllPages(planLimits.maxPages, (current, total, message) => {
+            sendEvent({
+              type: 'progress',
+              phase: 'pages',
+              message: 'Syncing pages...',
+              current: Math.round((current / total) * 100),
+              total: 100,
+              detailCurrent: current,
+              detailTotal: total,
+              detailMessage: message
+            });
+          });
           sendEvent({
             type: 'progress',
             phase: 'pages',
@@ -242,7 +278,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
         try {
           const bgSyncService = new BackgroundSyncService(admin, shop);
-          stats.policies = await bgSyncService.syncAllPolicies();
+          stats.policies = await bgSyncService.syncAllPolicies((current, total, message) => {
+            sendEvent({
+              type: 'progress',
+              phase: 'policies',
+              message: 'Syncing policies...',
+              current: Math.round((current / total) * 100),
+              total: 100,
+              detailCurrent: current,
+              detailTotal: total,
+              detailMessage: message
+            });
+          });
           sendEvent({
             type: 'progress',
             phase: 'policies',
@@ -273,7 +320,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
         try {
           const bgSyncService = new BackgroundSyncService(admin, shop);
-          stats.themes = await bgSyncService.syncAllThemes();
+          stats.themes = await bgSyncService.syncAllThemes((current, total, message) => {
+            sendEvent({
+              type: 'progress',
+              phase: 'themes',
+              message: 'Syncing themes...',
+              current,
+              total: 100,
+              detailCurrent: current,
+              detailTotal: total,
+              detailMessage: message
+            });
+          });
           sendEvent({
             type: 'progress',
             phase: 'themes',

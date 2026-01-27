@@ -19,6 +19,10 @@ export interface SyncStats {
   duration: number;
 }
 
+export interface ProgressCallback {
+  (current: number, total: number, message: string): void;
+}
+
 export class BackgroundSyncService {
   private gateway: ShopifyApiGateway;
 
@@ -42,7 +46,7 @@ export class BackgroundSyncService {
   /**
    * Sync all pages with their translations (respects plan limit if provided)
    */
-  async syncAllPages(maxCount?: number): Promise<number> {
+  async syncAllPages(maxCount?: number, onProgress?: ProgressCallback): Promise<number> {
     console.log(`[BackgroundSync] Syncing all pages for shop: ${this.shop}`);
     if (maxCount !== undefined) {
       console.log(`[BackgroundSync] Plan limit: ${maxCount} pages`);
@@ -141,7 +145,12 @@ export class BackgroundSyncService {
       const nonPrimaryLocales = locales.filter((l: any) => !l.primary);
 
       // 4. Sync each page
+      let pageIndex = 0;
       for (const page of pages) {
+        pageIndex++;
+        if (onProgress) {
+          onProgress(pageIndex, pages.length, `Syncing page ${pageIndex}/${pages.length}`);
+        }
         await this.syncSinglePageInternal(page, nonPrimaryLocales);
       }
 
@@ -318,7 +327,7 @@ export class BackgroundSyncService {
   /**
    * Sync all shop policies with their translations
    */
-  async syncAllPolicies(): Promise<number> {
+  async syncAllPolicies(onProgress?: ProgressCallback): Promise<number> {
     console.log(`[BackgroundSync] Syncing all policies for shop: ${this.shop}`);
 
     try {
@@ -400,7 +409,12 @@ export class BackgroundSyncService {
       const nonPrimaryLocales = locales.filter((l: any) => !l.primary);
 
       // 4. Sync each policy
+      let policyIndex = 0;
       for (const policy of policies) {
+        policyIndex++;
+        if (onProgress) {
+          onProgress(policyIndex, policies.length, `Syncing policy ${policyIndex}/${policies.length}`);
+        }
         await this.syncSinglePolicyInternal(policy, nonPrimaryLocales);
       }
 
@@ -759,7 +773,7 @@ export class BackgroundSyncService {
    * Sync all theme content with translations
    * This is complex as it groups theme resources by patterns
    */
-  async syncAllThemes(): Promise<number> {
+  async syncAllThemes(onProgress?: ProgressCallback): Promise<number> {
     console.log(`[BackgroundSync] Syncing all themes for shop: ${this.shop}`);
 
     try {
@@ -801,7 +815,18 @@ export class BackgroundSyncService {
       const translationCache = new Map<string, any[]>();
 
       // Fetch resources for each working resource type
+      let resourceTypeIndex = 0;
+      const totalResourceTypes = WORKING_RESOURCE_TYPES.length;
+
       for (const resourceTypeConfig of WORKING_RESOURCE_TYPES) {
+        resourceTypeIndex++;
+
+        // Report progress at the start of each resource type
+        if (onProgress) {
+          const progress = Math.round((resourceTypeIndex - 1) / totalResourceTypes * 100);
+          onProgress(progress, 100, `Syncing ${resourceTypeConfig.label}...`);
+        }
+
         try {
           // Implement pagination to handle large datasets
           let hasNextPage = true;
@@ -865,7 +890,16 @@ export class BackgroundSyncService {
           console.log(`[BackgroundSync-Themes] ✅ Found ${resources.length} resources for ${resourceTypeConfig.type}`);
 
           // Process each resource
+          let resourceIndex = 0;
           for (const resource of resources) {
+            resourceIndex++;
+
+            // Report detailed progress
+            if (onProgress) {
+              const baseProgress = Math.round((resourceTypeIndex - 1) / totalResourceTypes * 100);
+              const resourceProgress = Math.round((resourceIndex / resources.length) * (100 / totalResourceTypes));
+              onProgress(baseProgress + resourceProgress, 100, `${resourceTypeConfig.label}: ${resourceIndex}/${resources.length}`);
+            }
             // Skip resources with no translatable content
             if (!resource.translatableContent || resource.translatableContent.length === 0) {
               console.log(`[BackgroundSync-Themes] ⚠️  Resource ${resource.resourceId} has no translatable content, skipping...`);

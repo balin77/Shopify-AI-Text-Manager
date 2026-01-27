@@ -11,6 +11,10 @@ interface ShopifyGraphQLClient {
   graphql: (query: string, options?: { variables?: any }) => Promise<any>;
 }
 
+export interface ProgressCallback {
+  (current: number, total: number, message: string): void;
+}
+
 export class ContentSyncService {
   constructor(
     private admin: ShopifyGraphQLClient,
@@ -571,7 +575,7 @@ export class ContentSyncService {
   /**
    * Sync all collections (respects plan limit if provided)
    */
-  async syncAllCollections(maxCount?: number): Promise<number> {
+  async syncAllCollections(maxCount?: number, onProgress?: ProgressCallback): Promise<number> {
     console.log(`[ContentSync] Syncing all collections...`);
     if (maxCount !== undefined) {
       console.log(`[ContentSync] Plan limit: ${maxCount} collections`);
@@ -601,7 +605,12 @@ export class ContentSyncService {
 
     console.log(`[ContentSync] Syncing ${collections.length} collections`);
 
+    let index = 0;
     for (const collection of collections) {
+      index++;
+      if (onProgress) {
+        onProgress(index, collections.length, `Syncing collection ${index}/${collections.length}`);
+      }
       await this.syncCollection(collection.id);
     }
 
@@ -611,7 +620,7 @@ export class ContentSyncService {
   /**
    * Sync all articles (respects plan limit if provided)
    */
-  async syncAllArticles(maxCount?: number): Promise<number> {
+  async syncAllArticles(maxCount?: number, onProgress?: ProgressCallback): Promise<number> {
     console.log(`[ContentSync] Syncing all articles...`);
     if (maxCount !== undefined) {
       console.log(`[ContentSync] Plan limit: ${maxCount} articles`);
@@ -662,7 +671,12 @@ export class ContentSyncService {
 
     console.log(`[ContentSync] Syncing ${allArticles.length} articles`);
 
+    let index = 0;
     for (const article of allArticles) {
+      index++;
+      if (onProgress) {
+        onProgress(index, allArticles.length, `Syncing article ${index}/${allArticles.length}`);
+      }
       await this.syncArticle(article.id);
     }
 

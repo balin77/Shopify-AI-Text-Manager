@@ -32,6 +32,9 @@ export function SettingsSetupTab({
     current: number;
     total: number;
     completedPhases: string[];
+    detailCurrent?: number;
+    detailTotal?: number;
+    detailMessage?: string;
   } | null>(null);
 
   const handleSetupWebhooks = async () => {
@@ -137,6 +140,9 @@ export function SettingsSetupTab({
                   current: overallProgress,
                   total: 100,
                   completedPhases: [...completedPhases],
+                  detailCurrent: data.detailCurrent,
+                  detailTotal: data.detailTotal,
+                  detailMessage: data.detailMessage,
                 });
               } else if (data.type === "complete") {
                 finalStats = data.stats;
@@ -315,6 +321,25 @@ export function SettingsSetupTab({
                     );
                   })}
                 </InlineStack>
+                {syncProgress.detailTotal && syncProgress.detailTotal > 1 && (
+                  <Box paddingBlockStart="200">
+                    <BlockStack gap="100">
+                      <InlineStack align="space-between">
+                        <Text as="p" variant="bodySm" tone="subdued">
+                          {syncProgress.detailMessage || `${syncProgress.detailCurrent}/${syncProgress.detailTotal}`}
+                        </Text>
+                        <Text as="p" variant="bodySm" tone="subdued">
+                          {syncProgress.detailCurrent}/{syncProgress.detailTotal}
+                        </Text>
+                      </InlineStack>
+                      <ProgressBar
+                        progress={Math.round(((syncProgress.detailCurrent || 0) / syncProgress.detailTotal) * 100)}
+                        size="small"
+                        tone="highlight"
+                      />
+                    </BlockStack>
+                  </Box>
+                )}
                 <Text as="p" variant="bodySm" tone="subdued">
                   {syncProgress.message}
                 </Text>
