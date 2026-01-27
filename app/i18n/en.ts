@@ -814,5 +814,17 @@ export const en: Translation = {
       summary: "Number of translatable theme text elements.",
       details: "Theme texts are buttons, labels, and messages in your Shopify theme. Pro+ plans allow translation of these elements.",
     },
+
+    // Language Bar
+    ctrlClickLanguage: {
+      title: "Enable/Disable Languages",
+      summary: "Use Ctrl+Click to enable or disable languages for translation.",
+      details: "Hold Ctrl (Mac: Cmd) and click on a language button to enable or disable that language. Disabled languages will be skipped during \"Translate All\" operations. The primary language cannot be disabled.",
+      tips: [
+        "Ctrl+Click to enable/disable",
+        "Disabled languages appear in red",
+        "Primary language cannot be disabled",
+      ],
+    },
   },
 };

@@ -415,6 +415,7 @@ export function ImageGalleryField({
           onChange={(value) => onAltTextChange(selectedImageIndex, value)}
           fieldType={`altText_${selectedImageIndex}`}
           fieldKey={`altText_${selectedImageIndex}`}
+          helpKey="altText"
           suggestion={altTextSuggestions[selectedImageIndex]}
           isPrimaryLocale={isPrimaryLocale}
           isTranslated={true}

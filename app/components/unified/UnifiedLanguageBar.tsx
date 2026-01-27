@@ -15,6 +15,7 @@
 import { Button, InlineStack, ButtonGroup } from "@shopify/polaris";
 import { useLocaleButtonStyle } from "../../utils/contentEditor.utils";
 import { ReloadButton } from "../ReloadButton";
+import { HelpTooltip } from "../HelpTooltip";
 import type { ShopLocale, TranslatableItem, ContentType } from "../../types/contentEditor.types";
 
 interface UnifiedLanguageBarProps {
@@ -94,7 +95,8 @@ export function UnifiedLanguageBar({
   const resourceType = resourceTypeMap[contentType] || contentType;
 
   return (
-    <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", flex: 1, minWidth: 0 }}>
+    <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", flex: 1, minWidth: 0, alignItems: "center" }}>
+      <HelpTooltip helpKey="ctrlClickLanguage" position="below" />
       {shopLocales.map((locale) => {
         const buttonStyle = useLocaleButtonStyle(
           locale,

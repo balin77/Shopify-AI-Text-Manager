@@ -812,6 +812,18 @@ export const de = {
       summary: "Anzahl der übersetzbaren Theme-Textbausteine.",
       details: "Theme-Texte sind Buttons, Labels und Meldungen in Ihrem Shopify-Theme. Pro+ Pläne ermöglichen die Übersetzung dieser Elemente.",
     },
+
+    // Language Bar
+    ctrlClickLanguage: {
+      title: "Sprachen aktivieren/deaktivieren",
+      summary: "Mit Strg+Klick können Sie Sprachen für die Übersetzung aktivieren oder deaktivieren.",
+      details: "Klicken Sie bei gedrückter Strg-Taste (Mac: Cmd) auf einen Sprach-Button, um diese Sprache zu aktivieren oder zu deaktivieren. Deaktivierte Sprachen werden bei \"Alle übersetzen\" übersprungen. Die Hauptsprache kann nicht deaktiviert werden.",
+      tips: [
+        "Strg+Klick zum Aktivieren/Deaktivieren",
+        "Deaktivierte Sprachen werden rot angezeigt",
+        "Hauptsprache kann nicht deaktiviert werden",
+      ],
+    },
   },
 };
 

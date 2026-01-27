@@ -229,7 +229,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
           label={
             <InlineStack gap="100" blockAlign="center">
               <span>{t.settings.preferredProvider}</span>
-              <HelpTooltip helpKey="preferredProvider" />
+              <HelpTooltip helpKey="preferredProvider" position="below" />
             </InlineStack>
           }
           options={AI_PROVIDERS}
@@ -240,17 +240,17 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
 
         <div style={{ paddingTop: "1rem", borderTop: "1px solid #e1e3e5" }}>
           <BlockStack gap="400">
-            <Text as="h3" variant="headingMd">
-              {t.settings.apiKeys}
-            </Text>
+            <InlineStack gap="100" blockAlign="center">
+              <Text as="h3" variant="headingMd">
+                {t.settings.apiKeys}
+              </Text>
+              <HelpTooltip helpKey="apiKey" position="below" />
+            </InlineStack>
 
             {/* OpenAI */}
             <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
               <BlockStack gap="400">
-                <InlineStack gap="100" blockAlign="center">
-                  <Text as="h3" variant="headingMd">OpenAI</Text>
-                  <HelpTooltip helpKey="apiKey" />
-                </InlineStack>
+                <Text as="h3" variant="headingMd">OpenAI</Text>
                 <TextField
                   label="API Key"
                   value={openaiKey}

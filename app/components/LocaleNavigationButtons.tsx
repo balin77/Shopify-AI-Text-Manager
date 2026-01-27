@@ -2,6 +2,7 @@ import { Button } from "@shopify/polaris";
 import { useLocaleButtonStyle } from "../utils/contentEditor.utils";
 import type { ShopLocale, TranslatableItem, ContentType } from "../types/contentEditor.types";
 import { ReloadButton } from "./ReloadButton";
+import { HelpTooltip } from "./HelpTooltip";
 
 interface LocaleNavigationButtonsProps {
   shopLocales: ShopLocale[];
@@ -33,7 +34,8 @@ export function LocaleNavigationButtons({
 
   return (
     <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", justifyContent: "space-between", alignItems: "center" }}>
-      <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", alignItems: "center" }}>
+        <HelpTooltip helpKey="ctrlClickLanguage" position="below" />
         {shopLocales.map((locale) => {
           const LocaleButton = () => {
             const buttonStyle = useLocaleButtonStyle(
