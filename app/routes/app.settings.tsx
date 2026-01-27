@@ -13,6 +13,7 @@ import {
   Divider,
 } from "@shopify/polaris";
 import { PLAN_CONFIG, PLAN_DISPLAY_NAMES, type Plan } from "../config/plans";
+import { getNextPlanUpgrade, isApproachingLimit, type ResourceType } from "../utils/planUtils";
 import { BILLING_PLANS, getAvailablePlans, type BillingPlan } from "../config/billing";
 import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
@@ -804,6 +805,23 @@ export default function SettingsPage() {
               {/* Plan Settings */}
               {selectedSection === "plan" && (
                 <BlockStack gap="400">
+                  {/* Pulse animation styles */}
+                  <style>{`
+                    @keyframes pulseYellow {
+                      0%, 100% {
+                        box-shadow: 0 0 0 0 rgba(234, 179, 8, 0.7);
+                      }
+                      50% {
+                        box-shadow: 0 0 20px 8px rgba(234, 179, 8, 0.4);
+                      }
+                    }
+                    .plan-card-pulse {
+                      animation: pulseYellow 2s ease-in-out infinite;
+                      border: 2px solid #eab308 !important;
+                      border-radius: 12px;
+                    }
+                  `}</style>
+
                   {planError && (
                     <Banner tone="critical" title={t.common.error} onDismiss={() => setPlanError(null)}>
                       <p>{planError}</p>
@@ -814,15 +832,36 @@ export default function SettingsPage() {
                     {t.settings.availablePlans}
                   </Text>
 
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px', alignItems: 'stretch' }}>
-                    {availablePlans.map(({ id, config }) => {
-                      const planDetails = PLAN_CONFIG[id];
-                      const isCurrentPlan = id === subscriptionPlan;
-                      const price = config ? `€${config.price.toFixed(2)}${t.settings.perMonth}` : t.settings.free;
+                  {(() => {
+                    // Check if any limit is approaching
+                    const counts: Record<ResourceType, number> = {
+                      products: productCount,
+                      locales: localeCount,
+                      collections: collectionCount,
+                      articles: articleCount,
+                      pages: pageCount,
+                      themeTranslations: themeTranslationCount,
+                    };
+                    const hasApproachingLimit = (Object.keys(counts) as ResourceType[]).some(
+                      (r) => isApproachingLimit(subscriptionPlan as Plan, r, counts[r])
+                    );
+                    const nextPlan = getNextPlanUpgrade(subscriptionPlan as Plan);
 
-                      return (
-                        <div key={id} style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-                          <Card>
+                    return (
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px', alignItems: 'stretch' }}>
+                        {availablePlans.map(({ id, config }) => {
+                          const planDetails = PLAN_CONFIG[id];
+                          const isCurrentPlan = id === subscriptionPlan;
+                          const price = config ? `€${config.price.toFixed(2)}${t.settings.perMonth}` : t.settings.free;
+                          const shouldPulse = hasApproachingLimit && nextPlan === id;
+
+                          return (
+                            <div
+                              key={id}
+                              className={shouldPulse ? "plan-card-pulse" : ""}
+                              style={{ display: 'flex', flexDirection: 'column', height: '100%' }}
+                            >
+                              <Card>
                             <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: '400px' }}>
                               <BlockStack gap="300">
                                 <InlineStack align="space-between" blockAlign="start">
@@ -890,6 +929,8 @@ export default function SettingsPage() {
                       );
                     })}
                   </div>
+                    );
+                  })()}
 
                   {/* Usage & Limits */}
                   <SettingsUsageLimitsTab
