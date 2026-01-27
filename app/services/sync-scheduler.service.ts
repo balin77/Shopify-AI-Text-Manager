@@ -176,10 +176,10 @@ class SyncSchedulerService {
     if (this.cleanupTimer) {
       clearInterval(this.cleanupTimer);
       this.cleanupTimer = null;
-      logger.debug(`[SyncScheduler] Stopped cleanup timer');
+      logger.debug(`[SyncScheduler] Stopped cleanup timer`);
     }
 
-    logger.debug(`[SyncScheduler] All sync timers stopped');
+    logger.debug(`[SyncScheduler] All sync timers stopped`);
   }
 
   /**
@@ -187,16 +187,16 @@ class SyncSchedulerService {
    */
   private ensureCleanupTimerRunning(): void {
     if (!this.cleanupTimer) {
-      logger.debug(`[SyncScheduler] Starting periodic database cleanup timer');
+      logger.debug(`[SyncScheduler] Starting periodic database cleanup timer`);
       this.cleanupTimer = setInterval(() => {
         this.runDatabaseCleanup().catch(err => {
-          logger.error(`[SyncScheduler] Database cleanup failed:', err);
+          logger.error(`[SyncScheduler] Database cleanup failed:`, err);
         });
       }, this.CLEANUP_INTERVAL_MS);
 
       // Run cleanup immediately on first start
       this.runDatabaseCleanup().catch(err => {
-        logger.error(`[SyncScheduler] Initial database cleanup failed:', err);
+        logger.error(`[SyncScheduler] Initial database cleanup failed:`, err);
       });
     }
   }
@@ -205,7 +205,7 @@ class SyncSchedulerService {
    * Runs periodic database cleanup to prevent data accumulation
    */
   private async runDatabaseCleanup(): Promise<void> {
-    logger.debug(`[SyncScheduler] Running periodic database cleanup...');
+    logger.debug(`[SyncScheduler] Running periodic database cleanup...`);
     this.lastCleanup = new Date();
 
     try {
@@ -257,7 +257,7 @@ class SyncSchedulerService {
       logger.debug(`[SyncScheduler] Cleanup complete: ${expiredTasks.count} tasks, ${webhookLogs.count} logs, ${excessImages.count} excess images`);
       logger.debug(`[SyncScheduler] Note: Theme data cleanup is now handled by aggressive sync (every 40s)`);
     } catch (error) {
-      logger.error(`[SyncScheduler] Cleanup error:', error);
+      logger.error(`[SyncScheduler] Cleanup error:`, error);
       throw error;
     }
   }
