@@ -178,24 +178,13 @@ export function SettingsSetupTab({
           <Text as="p" tone="subdued">
             This will sync all products, collections, and articles from Shopify to the database. Auto-updates via webhooks.
           </Text>
-          <BlockStack gap="200">
-            <Button
-              onClick={() => handleSyncProducts(false)}
-              loading={syncLoading}
-              variant="primary"
-            >
-              Sync All Content
-            </Button>
-            {productCount > 0 && (
-              <Button
-                onClick={() => handleSyncProducts(true)}
-                loading={syncLoading}
-                variant="secondary"
-              >
-                Force Full Re-Sync
-              </Button>
-            )}
-          </BlockStack>
+          <Button
+            onClick={() => handleSyncProducts(true)}
+            loading={syncLoading}
+            variant="primary"
+          >
+            Sync All Content
+          </Button>
           {syncProgress && (
             <Box padding="400" background="bg-surface-secondary" borderRadius="200">
               <BlockStack gap="400">
