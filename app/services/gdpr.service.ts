@@ -64,7 +64,7 @@ export async function exportCustomerData(
 ): Promise<any> {
   const { shop_domain, customer } = request;
 
-  logger.info('[GDPR] [GDPR] Exporting data for customer ${customer.id} from shop ${shop_domain}`);
+  logger.info(`[GDPR] Exporting data for customer ${customer.id} from shop ${shop_domain}`);
 
   // Find all sessions for this customer (by email or userId)
   const sessions = await db.session.findMany({
@@ -128,7 +128,7 @@ export async function exportCustomerData(
     note: "This app only stores session data for authentication purposes. No order data, payment information, or other sensitive data is stored. PII data is encrypted at rest for security.",
   };
 
-  logger.info('[GDPR] [GDPR] Exported data for customer ${customer.id}: ${sessions.length} sessions found`);
+  logger.info(`[GDPR] Exported data for customer ${customer.id}: ${sessions.length} sessions found`);
 
   return exportData;
 }
@@ -141,7 +141,7 @@ export async function redactCustomerData(
 ): Promise<void> {
   const { shop_domain, customer } = request;
 
-  logger.info('[GDPR]  [GDPR] Redacting data for customer ${customer.id} from shop ${shop_domain}`);
+  logger.info(`[GDPR] Redacting data for customer ${customer.id} from shop ${shop_domain}`);
 
   // Delete all sessions for this customer
   const deleted = await db.session.deleteMany({
@@ -154,7 +154,7 @@ export async function redactCustomerData(
     },
   });
 
-  logger.info('[GDPR] [GDPR] Redacted ${deleted.count} sessions for customer ${customer.id}`);
+  logger.info(`[GDPR] Redacted ${deleted.count} sessions for customer ${customer.id}`);
 }
 
 /**
@@ -165,7 +165,7 @@ export async function redactShopData(
 ): Promise<void> {
   const { shop_domain } = request;
 
-  logger.info('[GDPR]  [GDPR] Redacting ALL data for shop ${shop_domain}`);
+  logger.info(`[GDPR] Redacting ALL data for shop ${shop_domain}`);
 
   // Use a transaction to delete all data atomically
   await db.$transaction(async (tx) => {
@@ -173,61 +173,61 @@ export async function redactShopData(
     const sessionsDeleted = await tx.session.deleteMany({
       where: { shop: shop_domain },
     });
-    logger.debug('[GDPR] Deleted ${sessionsDeleted.count} sessions`);
+    logger.debug(`[GDPR] Deleted ${sessionsDeleted.count} sessions`);
 
     // 2. Delete AI settings
     const aiSettingsDeleted = await tx.aISettings.deleteMany({
       where: { shop: shop_domain },
     });
-    logger.debug('[GDPR] Deleted ${aiSettingsDeleted.count} AI settings`);
+    logger.debug(`[GDPR] Deleted ${aiSettingsDeleted.count} AI settings`);
 
     // 3. Delete AI instructions
     const aiInstructionsDeleted = await tx.aIInstructions.deleteMany({
       where: { shop: shop_domain },
     });
-    logger.debug('[GDPR] Deleted ${aiInstructionsDeleted.count} AI instructions`);
+    logger.debug(`[GDPR] Deleted ${aiInstructionsDeleted.count} AI instructions`);
 
     // 4. Delete tasks
     const tasksDeleted = await tx.task.deleteMany({
       where: { shop: shop_domain },
     });
-    logger.debug('[GDPR] Deleted ${tasksDeleted.count} tasks`);
+    logger.debug(`[GDPR] Deleted ${tasksDeleted.count} tasks`);
 
     // 5. Delete products (cascade will delete translations, images, etc.)
     const productsDeleted = await tx.product.deleteMany({
       where: { shop: shop_domain },
     });
-    logger.debug('[GDPR] Deleted ${productsDeleted.count} products (with cascading relations)`);
+    logger.debug(`[GDPR] Deleted ${productsDeleted.count} products (with cascading relations)`);
 
     // 6. Delete collections
     const collectionsDeleted = await tx.collection.deleteMany({
       where: { shop: shop_domain },
     });
-    logger.debug('[GDPR] Deleted ${collectionsDeleted.count} collections`);
+    logger.debug(`[GDPR] Deleted ${collectionsDeleted.count} collections`);
 
     // 7. Delete articles
     const articlesDeleted = await tx.article.deleteMany({
       where: { shop: shop_domain },
     });
-    logger.debug('[GDPR] Deleted ${articlesDeleted.count} articles`);
+    logger.debug(`[GDPR] Deleted ${articlesDeleted.count} articles`);
 
     // 8. Delete pages
     const pagesDeleted = await tx.page.deleteMany({
       where: { shop: shop_domain },
     });
-    logger.debug('[GDPR] Deleted ${pagesDeleted.count} pages`);
+    logger.debug(`[GDPR] Deleted ${pagesDeleted.count} pages`);
 
     // 9. Delete shop policies
     const policiesDeleted = await tx.shopPolicy.deleteMany({
       where: { shop: shop_domain },
     });
-    logger.debug('[GDPR] Deleted ${policiesDeleted.count} shop policies`);
+    logger.debug(`[GDPR] Deleted ${policiesDeleted.count} shop policies`);
 
     // 10. Delete menus
     const menusDeleted = await tx.menu.deleteMany({
       where: { shop: shop_domain },
     });
-    logger.debug('[GDPR] Deleted ${menusDeleted.count} menus`);
+    logger.debug(`[GDPR] Deleted ${menusDeleted.count} menus`);
 
     // 11. Delete content translations
     const contentTranslationsDeleted = await tx.contentTranslation.deleteMany({
@@ -237,28 +237,28 @@ export async function redactShopData(
         },
       },
     });
-    logger.debug('[GDPR] Deleted ${contentTranslationsDeleted.count} content translations`);
+    logger.debug(`[GDPR] Deleted ${contentTranslationsDeleted.count} content translations`);
 
     // 12. Delete theme content
     const themeContentDeleted = await tx.themeContent.deleteMany({
       where: { shop: shop_domain },
     });
-    logger.debug('[GDPR] Deleted ${themeContentDeleted.count} theme content entries`);
+    logger.debug(`[GDPR] Deleted ${themeContentDeleted.count} theme content entries`);
 
     // 13. Delete theme translations
     const themeTranslationsDeleted = await tx.themeTranslation.deleteMany({
       where: { shop: shop_domain },
     });
-    logger.debug('[GDPR] Deleted ${themeTranslationsDeleted.count} theme translations`);
+    logger.debug(`[GDPR] Deleted ${themeTranslationsDeleted.count} theme translations`);
 
     // 14. Delete webhook logs
     const webhookLogsDeleted = await tx.webhookLog.deleteMany({
       where: { shop: shop_domain },
     });
-    logger.debug('[GDPR] Deleted ${webhookLogsDeleted.count} webhook logs`);
+    logger.debug(`[GDPR] Deleted ${webhookLogsDeleted.count} webhook logs`);
   });
 
-  logger.info('[GDPR] [GDPR] Successfully redacted ALL data for shop ${shop_domain}`);
+  logger.info(`[GDPR] Successfully redacted ALL data for shop ${shop_domain}`);
 }
 
 /**
@@ -285,7 +285,7 @@ export async function logGDPRRequest(
     status: error ? 'failed' : 'completed',
   };
 
-  logger.info('[GDPR LOG] [GDPR LOG]', JSON.stringify(logEntry, null, 2));
+  logger.info(`[GDPR LOG]`, JSON.stringify(logEntry, null, 2));
 
   // TODO: Store in dedicated GDPR audit log table for compliance
   // This log must be kept for at least 3 years for GDPR compliance
