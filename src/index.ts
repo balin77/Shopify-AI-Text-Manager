@@ -7,7 +7,10 @@ export { ShopifyConnector };
 async function main() {
   try {
     // Initialize connector (uses .env file)
-    const connector = new ShopifyConnector();
+    const connector = new ShopifyConnector({
+      shopName: process.env.SHOPIFY_SHOP_NAME || '',
+      accessToken: process.env.SHOPIFY_ACCESS_TOKEN || '',
+    });
 
     console.log('Shopify Connector initialized successfully!');
     console.log('');

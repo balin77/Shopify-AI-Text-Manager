@@ -230,7 +230,10 @@ export class AIShopifyAgent {
 async function runAIAgentExample() {
   try {
     // Initialize connector
-    const connector = new ShopifyConnector();
+    const connector = new ShopifyConnector({
+      shopName: process.env.SHOPIFY_SHOP_NAME || '',
+      accessToken: process.env.SHOPIFY_ACCESS_TOKEN || '',
+    });
     const agent = new AIShopifyAgent(connector);
 
     console.log('AI Agent initialized!');
