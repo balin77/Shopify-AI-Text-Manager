@@ -30,34 +30,49 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const { db } = await import("../db.server");
     const { loadAISettingsForValidation } = await import("../utils/loader-helpers");
 
-    // Load shopLocales
-    const localesResponse = await admin.graphql(
-      `#graphql
-        query getShopLocales {
-          shopLocales {
-            locale
-            name
-            primary
-            published
-          }
-        }`
-    );
-
-    const localesData = await localesResponse.json();
-    const shopLocales = localesData.data?.shopLocales || [];
-    const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "de";
-
-    // Load pages from database
-    const [pages, allTranslations, aiSettings] = await Promise.all([
-      db.page.findMany({
-        where: { shop: session.shop },
-        orderBy: { title: 'asc' },
-      }),
+    // Load shopLocales and pages from Shopify in parallel
+    const [localesResponse, pagesResponse, allTranslations, aiSettings] = await Promise.all([
+      admin.graphql(
+        `#graphql
+          query getShopLocales {
+            shopLocales {
+              locale
+              name
+              primary
+              published
+            }
+          }`
+      ),
+      // Load pages directly from Shopify (not from DB)
+      // This reduces database storage for multi-tenant SaaS
+      admin.graphql(
+        `#graphql
+          query getPages {
+            pages(first: 250) {
+              edges {
+                node {
+                  id
+                  title
+                  handle
+                  body
+                }
+              }
+            }
+          }`
+      ),
+      // Still load translations from DB (needed for performance)
       db.contentTranslation.findMany({
         where: { resourceType: 'Page' }
       }),
       loadAISettingsForValidation(db, session.shop),
     ]);
+
+    const localesData = await localesResponse.json();
+    const shopLocales = localesData.data?.shopLocales || [];
+    const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "de";
+
+    const pagesData = await pagesResponse.json();
+    const pages = pagesData.data?.pages?.edges?.map((e: any) => e.node) || [];
 
     // Group translations by resourceId
     const translationsByResource = allTranslations.reduce((acc: Record<string, any[]>, trans) => {
@@ -68,8 +83,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       return acc;
     }, {});
 
-    // Transform pages
-    const transformedPages = pages.map(p => ({
+    // Transform pages (data from Shopify, translations from DB)
+    const transformedPages = pages.map((p: any) => ({
       id: p.id,
       title: p.title,
       handle: p.handle,

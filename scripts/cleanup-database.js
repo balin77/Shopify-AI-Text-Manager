@@ -6,7 +6,7 @@
  * This script removes accumulated data that is no longer needed:
  * 1. Old theme content and translations (since theme sync is disabled)
  * 2. Expired tasks (older than 3 days)
- * 3. Old webhook logs (older than 7 days)
+ * 3. Old webhook logs (older than 24 hours)
  * 4. Orphaned translations (translations without parent resources)
  *
  * Run this manually or schedule it as a cron job on Railway.
@@ -44,12 +44,12 @@ async function cleanupDatabase() {
     });
     console.log(`   ✓ Deleted ${expiredTasksDeleted.count} expired tasks`);
 
-    // 3. Delete old webhook logs (older than 7 days)
+    // 3. Delete old webhook logs (older than 24 hours)
     console.log('\n3️⃣ Cleaning up old webhook logs...');
-    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const webhookLogsDeleted = await db.webhookLog.deleteMany({
       where: {
-        createdAt: { lt: sevenDaysAgo },
+        createdAt: { lt: oneDayAgo },
         processed: true
       }
     });

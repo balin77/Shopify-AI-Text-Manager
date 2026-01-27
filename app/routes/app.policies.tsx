@@ -34,34 +34,48 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const { db } = await import("../db.server");
     const { loadAISettingsForValidation } = await import("../utils/loader-helpers");
 
-    // Load shopLocales
-    const localesResponse = await admin.graphql(
-      `#graphql
-        query getShopLocales {
-          shopLocales {
-            locale
-            name
-            primary
-            published
-          }
-        }`
-    );
-
-    const localesData = await localesResponse.json();
-    const shopLocales = localesData.data?.shopLocales || [];
-    const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "de";
-
-    // Load policies from database (synced by background sync)
-    const [policies, allTranslations, aiSettings] = await Promise.all([
-      db.shopPolicy.findMany({
-        where: { shop: session.shop },
-        orderBy: { type: 'asc' },
-      }),
+    // Load shopLocales and policies from Shopify in parallel
+    const [localesResponse, policiesResponse, allTranslations, aiSettings] = await Promise.all([
+      admin.graphql(
+        `#graphql
+          query getShopLocales {
+            shopLocales {
+              locale
+              name
+              primary
+              published
+            }
+          }`
+      ),
+      // Load policies directly from Shopify (not from DB)
+      // This reduces database storage for multi-tenant SaaS
+      admin.graphql(
+        `#graphql
+          query getShopPolicies {
+            shop {
+              shopPolicies {
+                id
+                type
+                title
+                body
+                url
+              }
+            }
+          }`
+      ),
+      // Still load translations from DB (needed for performance)
       db.contentTranslation.findMany({
         where: { resourceType: 'ShopPolicy' }
       }),
       loadAISettingsForValidation(db, session.shop),
     ]);
+
+    const localesData = await localesResponse.json();
+    const shopLocales = localesData.data?.shopLocales || [];
+    const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "de";
+
+    const policiesData = await policiesResponse.json();
+    const policies = policiesData.data?.shop?.shopPolicies || [];
 
     // Group translations by resourceId
     const translationsByResource = allTranslations.reduce((acc: Record<string, any[]>, trans) => {
@@ -72,8 +86,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       return acc;
     }, {});
 
-    // Transform policies with translations
-    const transformedPolicies = policies.map(p => ({
+    // Transform policies (data from Shopify, translations from DB)
+    const transformedPolicies = policies.map((p: any) => ({
       id: p.id,
       title: p.title,
       body: p.body,

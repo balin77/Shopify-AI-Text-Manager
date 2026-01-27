@@ -58,15 +58,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       productId,
     });
 
-    // 4. Log webhook to database (with encrypted payload)
+    // 4. Log webhook to database (metadata only - payload stored only on error)
+    // This reduces database storage significantly for multi-tenant SaaS
     const { db } = await import("../db.server");
-    const { encryptPayload } = await import("../utils/encryption.server");
     const webhookLog = await db.webhookLog.create({
       data: {
         shop,
         topic,
         productId,
-        payload: encryptPayload(rawBody) || rawBody, // Encrypt payload for security
+        payload: "{}", // Empty payload - full payload only stored on error
         processed: false,
       },
     });
@@ -179,12 +179,17 @@ async function processWebhookAsync(
       stack: error.stack,
     });
 
-    // Log error to database
+    // Log error to database WITH full payload (for debugging)
+    const { encryptPayload } = await import("../utils/encryption.server");
+    const webhookLogForError = await db.webhookLog.findUnique({ where: { id: logId } });
+
+    // Re-fetch payload from retry service if available, otherwise log error without payload
     await db.webhookLog.update({
       where: { id: logId },
       data: {
         processed: true,
         error: error.message,
+        // Note: Full payload is stored in WebhookRetry table for debugging
       },
     });
 

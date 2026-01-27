@@ -435,72 +435,61 @@ export class ProductSyncService {
         console.log(`[ProductSync] No translations to save`);
       }
 
-      // Insert images with mediaId (from media query instead of images query)
+      // Insert ONLY FIRST image to database (other images loaded on-demand from Shopify)
+      // This significantly reduces database storage for multi-tenant SaaS
       if (mediaImages.length > 0) {
-        // Log what Shopify returned for alt-texts
-        console.log(`🔵🔵🔵 [SYNC] Syncing ${mediaImages.length} images from Shopify 🔵🔵🔵`);
-        mediaImages.forEach((media: any, index: number) => {
-          console.log(`🔵 [SYNC] Image ${index}: mediaId=${media.id}, alt="${media.alt}" (isNull: ${media.alt === null}, isEmpty: ${media.alt === ""})`);
-        });
+        // Only save the first image (position 0) to database
+        const firstImage = mediaImages[0];
+        console.log(`🔵🔵🔵 [SYNC] Saving only FIRST image to DB (${mediaImages.length} total from Shopify) 🔵🔵🔵`);
+        console.log(`🔵 [SYNC] First image: mediaId=${firstImage.id}, alt="${firstImage.alt}"`);
 
-        // Create images with mediaId for translation support
-        const createdImages = await Promise.all(
-          mediaImages.map(async (media: any, index: number) => {
-            // Check if this image's alt-text was recently modified by user
-            const wasRecentlyModified = preservedAltTexts.has(media.id);
-            const altTextToSave = wasRecentlyModified
-              ? preservedAltTexts.get(media.id) // Use preserved user value
-              : (media.alt || null); // Use Shopify value
+        // Check if first image's alt-text was recently modified by user
+        const wasRecentlyModified = preservedAltTexts.has(firstImage.id);
+        const altTextToSave = wasRecentlyModified
+          ? preservedAltTexts.get(firstImage.id)
+          : (firstImage.alt || null);
 
-            if (wasRecentlyModified) {
-              console.log(`🟤 [SYNC] Using preserved alt-text for image ${index}: "${altTextToSave}" (ignoring Shopify: "${media.alt}")`);
-            } else {
-              console.log(`🔵 [SYNC] Saving image ${index}: altText="${altTextToSave}"`);
-            }
+        if (wasRecentlyModified) {
+          console.log(`🟤 [SYNC] Using preserved alt-text for first image: "${altTextToSave}"`);
+        }
 
-            return tx.productImage.create({
-              data: {
-                productId: productData.id,
-                url: media.image.url,
-                altText: altTextToSave,
-                mediaId: media.id, // Store Shopify Media ID for translations
-                position: index,
-                // Preserve the modification timestamp if we're keeping user's alt-text
-                altTextModifiedAt: wasRecentlyModified ? new Date() : null,
-              },
-            });
-          })
-        );
+        const createdImages = [await tx.productImage.create({
+          data: {
+            productId: productData.id,
+            url: firstImage.image.url,
+            altText: altTextToSave,
+            mediaId: firstImage.id,
+            position: 0,
+            altTextModifiedAt: wasRecentlyModified ? new Date() : null,
+          },
+        })];
 
-        console.log(`[ProductSync] Saved ${createdImages.length} images with mediaIds`);
+        console.log(`[ProductSync] Saved 1 image (first only) - ${mediaImages.length - 1} images available on-demand`);
 
-        // Insert image alt-text translations from Shopify
-        if (imageAltTranslations.length > 0) {
-          // Create a map of mediaId -> dbImageId for quick lookup
-          const mediaIdToDbId = new Map<string, string>();
-          createdImages.forEach((img) => {
-            if (img.mediaId) {
-              mediaIdToDbId.set(img.mediaId, img.id);
-            }
-          });
+        // Insert image alt-text translations ONLY for first image
+        if (imageAltTranslations.length > 0 && createdImages.length > 0) {
+          const firstImageDbId = createdImages[0].id;
+          const firstImageMediaId = createdImages[0].mediaId;
+
+          // Only save translations for the first image
+          const firstImageTranslations = imageAltTranslations.filter(
+            (t) => t.mediaId === firstImageMediaId
+          );
 
           let savedAltTranslations = 0;
-          for (const altTrans of imageAltTranslations) {
-            const dbImageId = mediaIdToDbId.get(altTrans.mediaId);
-            if (dbImageId) {
-              await tx.productImageAltTranslation.create({
-                data: {
-                  imageId: dbImageId,
-                  locale: altTrans.locale,
-                  altText: altTrans.altText,
-                },
-              });
-              savedAltTranslations++;
-            }
+          for (const altTrans of firstImageTranslations) {
+            await tx.productImageAltTranslation.create({
+              data: {
+                imageId: firstImageDbId,
+                locale: altTrans.locale,
+                altText: altTrans.altText,
+              },
+            });
+            savedAltTranslations++;
           }
 
           if (savedAltTranslations > 0) {
-            console.log(`[ProductSync] ✓ Saved ${savedAltTranslations} image alt-text translations`);
+            console.log(`[ProductSync] ✓ Saved ${savedAltTranslations} alt-text translations for first image`);
           }
         }
       }

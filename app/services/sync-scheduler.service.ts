@@ -224,11 +224,12 @@ class SyncSchedulerService {
         }
       });
 
-      // 2. Delete old webhook logs (older than 7 days)
-      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+      // 2. Delete old webhook logs (older than 24 hours)
+      // Reduced from 7 days to 24h to minimize database storage for multi-tenant SaaS
+      const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
       const webhookLogs = await db.webhookLog.deleteMany({
         where: {
-          createdAt: { lt: sevenDaysAgo },
+          createdAt: { lt: oneDayAgo },
           processed: true
         }
       });
