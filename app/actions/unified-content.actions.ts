@@ -408,7 +408,12 @@ Allowed formatting changes:
         data: { status: "queued", progress: 10 },
       });
 
-      const translations = await translationServiceWithTask.translateProduct(changedFields, [targetLocale], contentConfig.contentType);
+      const translations = await translationServiceWithTask.translateProduct(
+        changedFields,
+        [targetLocale],
+        contentConfig.contentType,
+        aiInstructions?.translateInstructions
+      );
       const translatedValue = translations[targetLocale]?.[fieldType] || "";
 
       await db.task.update({
@@ -497,6 +502,7 @@ Allowed formatting changes:
         targetLocales: targetLocalesStr ? JSON.parse(targetLocalesStr) : undefined,
         contentType: contentConfig.contentType,
         taskId: task.id,
+        customInstructions: aiInstructions?.translateInstructions,
       });
 
       await db.task.update({
@@ -591,6 +597,7 @@ Allowed formatting changes:
         targetLocales: [targetLocale],
         contentType: contentConfig.contentType,
         taskId: task.id,
+        customInstructions: aiInstructions?.translateInstructions,
       });
 
       // Extract translations for the target locale
@@ -686,6 +693,7 @@ Allowed formatting changes:
         targetLocales: targetLocalesStr ? JSON.parse(targetLocalesStr) : undefined,
         contentType: contentConfig.contentType,
         taskId: task.id,
+        customInstructions: aiInstructions?.translateInstructions,
       });
 
       // Extract just the field value for each locale (frontend expects Record<locale, string>)

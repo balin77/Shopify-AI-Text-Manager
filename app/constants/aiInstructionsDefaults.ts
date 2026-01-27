@@ -8,6 +8,7 @@
 // General formatting instructions used by the "Format" action
 export interface GeneralInstructions {
   formatPreserveInstructions: string;
+  translateInstructions: string;
 }
 
 export const DEFAULT_GENERAL_INSTRUCTIONS: GeneralInstructions = {
@@ -20,6 +21,16 @@ Only apply formatting changes such as:
 - Removing redundant characters
 
 The meaning, words, and information must stay the same. Only the presentation/formatting changes.`,
+
+  translateInstructions: `Translate the text accurately while maintaining the original meaning, tone, and style.
+
+Guidelines:
+- Keep all HTML tags and formatting intact
+- Preserve brand names, product names, and technical terms (unless they have official translations)
+- Adapt cultural references and idioms appropriately for the target language
+- Maintain the same level of formality as the original
+- Keep measurements and units appropriate for the target market
+- Return ONLY the translated text without explanations`,
 };
 
 export interface EntityInstructions {

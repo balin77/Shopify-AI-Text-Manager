@@ -10,9 +10,10 @@ export class TranslationService {
   async translateProduct(
     fields: Record<string, string>,
     targetLocales?: string[],
-    contentType: string = 'product'
+    contentType: string = 'product',
+    customInstructions?: string
   ): Promise<Record<string, Record<string, string>>> {
     const locales = targetLocales || ['en', 'fr', 'es', 'it'];
-    return await this.aiService.translateFields(fields, locales, contentType);
+    return await this.aiService.translateFields(fields, locales, contentType, customInstructions);
   }
 }

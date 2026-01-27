@@ -481,8 +481,9 @@ export class ShopifyContentService {
     targetLocales?: string[];
     contentType?: string;
     taskId?: string;
+    customInstructions?: string;
   }) {
-    const { resourceId, resourceType, fields, translationService, db, targetLocales: customTargetLocales, contentType } = params;
+    const { resourceId, resourceType, fields, translationService, db, targetLocales: customTargetLocales, contentType, customInstructions } = params;
 
     // Fetch digest map once for all translations
     const digestMap = await this.loadTranslatableContent(resourceId);
@@ -505,7 +506,7 @@ export class ShopifyContentService {
     for (const locale of targetLocales) {
       try {
         console.log(`🔶 [translateAllContent] Translating to ${locale}, source fields:`, Object.keys(fields).map(k => `${k}: "${(fields[k] || '').substring(0, 30)}..."`));
-        const localeTranslations = await translationService.translateProduct(fields, [locale], contentType);
+        const localeTranslations = await translationService.translateProduct(fields, [locale], contentType, customInstructions);
         const translatedFields = localeTranslations[locale];
         console.log(`🔶 [translateAllContent] AI returned for ${locale}:`, translatedFields ? Object.keys(translatedFields).map(k => `${k}: "${(translatedFields[k] || '').substring(0, 30)}..."`) : 'NONE');
 

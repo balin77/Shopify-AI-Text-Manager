@@ -87,6 +87,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         shop: session.shop,
         // General (Format Instructions)
         formatPreserveInstructions: DEFAULT_GENERAL_INSTRUCTIONS.formatPreserveInstructions,
+        // General (Translate Instructions)
+        translateInstructions: DEFAULT_GENERAL_INSTRUCTIONS.translateInstructions,
         // Products
         productTitleFormat: DEFAULT_PRODUCT_INSTRUCTIONS.titleFormat,
         productTitleInstructions: DEFAULT_PRODUCT_INSTRUCTIONS.titleInstructions,
@@ -139,12 +141,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       },
     });
     console.log('[SETTINGS] Created AI Instructions with defaults for shop:', session.shop);
-  } else if (!instructions.productSeoTitleInstructions || !instructions.productTitleInstructions) {
+  } else if (!instructions.productSeoTitleInstructions || !instructions.productTitleInstructions || !instructions.formatPreserveInstructions || !instructions.translateInstructions) {
     // Entry exists but some fields are empty - populate with defaults (only once)
     console.log('[SETTINGS] Detected empty AI Instructions, populating defaults...');
     instructions = await db.aIInstructions.update({
       where: { shop: session.shop },
       data: {
+        // General (Format Instructions)
+        formatPreserveInstructions: instructions.formatPreserveInstructions || DEFAULT_GENERAL_INSTRUCTIONS.formatPreserveInstructions,
+        // General (Translate Instructions)
+        translateInstructions: instructions.translateInstructions || DEFAULT_GENERAL_INSTRUCTIONS.translateInstructions,
         // Products - only update NULL fields
         productTitleFormat: instructions.productTitleFormat || DEFAULT_PRODUCT_INSTRUCTIONS.titleFormat,
         productTitleInstructions: instructions.productTitleInstructions || DEFAULT_PRODUCT_INSTRUCTIONS.titleInstructions,
@@ -319,6 +325,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         deepseekMaxRequestsPerMinute: settings.deepseekMaxRequestsPerMinute || 60,
       },
       instructions: {
+        // General (Format Instructions)
+        formatPreserveInstructions: instructions.formatPreserveInstructions || DEFAULT_GENERAL_INSTRUCTIONS.formatPreserveInstructions,
+        // General (Translate Instructions)
+        translateInstructions: instructions.translateInstructions || DEFAULT_GENERAL_INSTRUCTIONS.translateInstructions,
+
         // Products
         productTitleFormat: instructions.productTitleFormat || DEFAULT_PRODUCT_INSTRUCTIONS.titleFormat,
         productTitleInstructions: instructions.productTitleInstructions || DEFAULT_PRODUCT_INSTRUCTIONS.titleInstructions,
@@ -410,6 +421,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const sanitizedData = {
         // General (Format Instructions)
         formatPreserveInstructions: data.formatPreserveInstructions || null,
+        // General (Translate Instructions)
+        translateInstructions: data.translateInstructions || null,
 
         // Products
         productTitleFormat: data.productTitleFormat || null,

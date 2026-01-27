@@ -237,10 +237,13 @@ export const en: Translation = {
     tabPages: "Pages",
     tabPolicies: "Policies",
     // General Tab
-    generalTabDescription: "These instructions control how the \"Format\" function behaves. The Format function preserves your original text and only applies formatting changes.",
+    generalTabDescription: "These general instructions control how the \"Format\" and \"Translate\" functions work.",
     formatPreserveInstructionsLabel: "Format Instructions",
     formatPreserveInstructionsPlaceholder: "Instructions for the Format function...",
     formatPreserveInstructionsHelp: "These instructions tell the AI how to format text without changing its content.",
+    translateInstructionsLabel: "Translate Instructions",
+    translateInstructionsPlaceholder: "Instructions for the Translate function...",
+    translateInstructionsHelp: "These instructions tell the AI how to translate text.",
     // AI Instructions Field Names
     fieldAltText: "Alt Text (Images)",
     fieldTitle: "Title",

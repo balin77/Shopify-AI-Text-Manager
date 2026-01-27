@@ -235,10 +235,13 @@ export const de = {
     tabPages: "Seiten",
     tabPolicies: "Richtlinien",
     // General Tab
-    generalTabDescription: "Diese Anweisungen steuern, wie die \"Formatieren\"-Funktion funktioniert. Die Formatieren-Funktion behält Ihren Originaltext bei und wendet nur Formatierungsänderungen an.",
+    generalTabDescription: "Diese allgemeinen Anweisungen steuern, wie die \"Formatieren\"- und \"Übersetzen\"-Funktionen arbeiten.",
     formatPreserveInstructionsLabel: "Format-Anweisungen",
     formatPreserveInstructionsPlaceholder: "Anweisungen für die Formatieren-Funktion...",
     formatPreserveInstructionsHelp: "Diese Anweisungen sagen der KI, wie sie Text formatieren soll, ohne dessen Inhalt zu ändern.",
+    translateInstructionsLabel: "Übersetzungs-Anweisungen",
+    translateInstructionsPlaceholder: "Anweisungen für die Übersetzen-Funktion...",
+    translateInstructionsHelp: "Diese Anweisungen sagen der KI, wie sie Text übersetzen soll.",
     // AI Instructions Field Names
     fieldAltText: "Alt-Text (Bilder)",
     fieldTitle: "Titel",

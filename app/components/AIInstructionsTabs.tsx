@@ -14,6 +14,8 @@ import { useI18n } from "../contexts/I18nContext";
 interface Instructions {
   // General (Format Instructions)
   formatPreserveInstructions: string;
+  // General (Translate Instructions)
+  translateInstructions: string;
 
   // Products
   productTitleFormat: string;
@@ -265,30 +267,71 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, on
                   {t.settings.generalTabDescription || 'These instructions control how the "Format" function behaves. The Format function preserves your original text and only applies formatting changes.'}
                 </Text>
 
-                <BlockStack gap="400">
-                  <Text as="h3" variant="headingMd">
-                    {t.settings.formatPreserveInstructionsLabel || 'Format Instructions'}
-                  </Text>
-                  <TextField
-                    label={t.settings.formatPreserveInstructionsLabel || 'Format Instructions'}
-                    labelHidden
-                    value={localInstructions.formatPreserveInstructions || ''}
-                    onChange={(v) => handleFieldChange('formatPreserveInstructions', v)}
-                    multiline={10}
-                    placeholder={t.settings.formatPreserveInstructionsPlaceholder || 'Instructions for the Format function...'}
-                    helpText={t.settings.formatPreserveInstructionsHelp || 'These instructions tell the AI how to format text without changing its content.'}
-                    autoComplete="off"
-                  />
-                  <InlineStack align="start">
-                    <Button
-                      onClick={() => handleFieldChange('formatPreserveInstructions', DEFAULT_GENERAL_INSTRUCTIONS.formatPreserveInstructions)}
-                      tone="critical"
-                      size="slim"
-                    >
-                      {t.settings?.resetField || "Reset"}
-                    </Button>
-                  </InlineStack>
-                </BlockStack>
+                {/* Format Instructions */}
+                <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
+                  <BlockStack gap="400">
+                    <Text as="h3" variant="headingMd">
+                      {t.settings.formatPreserveInstructionsLabel || 'Format Instructions'}
+                    </Text>
+                    <div>
+                      <InlineStack align="space-between" blockAlign="center">
+                        <Text as="p" variant="bodyMd" fontWeight="medium">
+                          {t.settings.instructionsLabel || 'Instructions'}
+                        </Text>
+                        <Button
+                          size="slim"
+                          onClick={() => handleFieldChange('formatPreserveInstructions', DEFAULT_GENERAL_INSTRUCTIONS.formatPreserveInstructions)}
+                          tone="critical"
+                          variant="plain"
+                        >
+                          {t.settings?.resetField || "Reset"}
+                        </Button>
+                      </InlineStack>
+                      <TextField
+                        label=""
+                        value={localInstructions.formatPreserveInstructions || ''}
+                        onChange={(v) => handleFieldChange('formatPreserveInstructions', v)}
+                        multiline={8}
+                        placeholder={t.settings.formatPreserveInstructionsPlaceholder || 'Instructions for the Format function...'}
+                        helpText={`${(localInstructions.formatPreserveInstructions || '').length} ${t.products.characters}`}
+                        autoComplete="off"
+                      />
+                    </div>
+                  </BlockStack>
+                </div>
+
+                {/* Translate Instructions */}
+                <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
+                  <BlockStack gap="400">
+                    <Text as="h3" variant="headingMd">
+                      {t.settings.translateInstructionsLabel || 'Translate Instructions'}
+                    </Text>
+                    <div>
+                      <InlineStack align="space-between" blockAlign="center">
+                        <Text as="p" variant="bodyMd" fontWeight="medium">
+                          {t.settings.instructionsLabel || 'Instructions'}
+                        </Text>
+                        <Button
+                          size="slim"
+                          onClick={() => handleFieldChange('translateInstructions', DEFAULT_GENERAL_INSTRUCTIONS.translateInstructions)}
+                          tone="critical"
+                          variant="plain"
+                        >
+                          {t.settings?.resetField || "Reset"}
+                        </Button>
+                      </InlineStack>
+                      <TextField
+                        label=""
+                        value={localInstructions.translateInstructions || ''}
+                        onChange={(v) => handleFieldChange('translateInstructions', v)}
+                        multiline={8}
+                        placeholder={t.settings.translateInstructionsPlaceholder || 'Instructions for the Translate function...'}
+                        helpText={`${(localInstructions.translateInstructions || '').length} ${t.products.characters}`}
+                        autoComplete="off"
+                      />
+                    </div>
+                  </BlockStack>
+                </div>
               </>
             )}
 

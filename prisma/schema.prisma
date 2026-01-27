@@ -75,6 +75,8 @@ model AIInstructions {
 
   // GENERAL - Format Instructions (used by the "Format" function)
   formatPreserveInstructions String? @db.Text
+  // GENERAL - Translate Instructions (used by the "Translate" function)
+  translateInstructions String? @db.Text
 
   // PRODUCTS - All fields available
   productTitleFormat             String? @db.Text

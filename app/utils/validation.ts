@@ -85,6 +85,8 @@ export const AISettingsSchema = z.object({
 export const AIInstructionsSchema = z.object({
   // GENERAL (Format Instructions)
   formatPreserveInstructions: z.string().max(3000).optional().or(z.literal('')),
+  // GENERAL (Translate Instructions)
+  translateInstructions: z.string().max(3000).optional().or(z.literal('')),
 
   // PRODUCTS
   productTitleFormat: z.string().max(500).optional().or(z.literal('')),

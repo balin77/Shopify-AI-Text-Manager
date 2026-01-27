@@ -289,7 +289,8 @@ Output the result in ${language}.`;
   async translateFields(
     fields: Record<string, string>,
     targetLocales: string[],
-    contentType: string = 'product'
+    contentType: string = 'product',
+    customInstructions?: string
   ): Promise<Record<string, Record<string, string>>> {
     // Sanitize all field values
     const sanitizedFields: Record<string, string> = {};
@@ -333,15 +334,21 @@ Output the result in ${language}.`;
       }
     }
 
+    // Default translation instructions
+    const defaultInstructions = `Make sure that:
+- HTML tags are preserved
+- Character lengths remain similar
+- Translations sound natural
+- URL slugs (handle) contain no special characters`;
+
+    // Use custom instructions if provided
+    const instructions = customInstructions || defaultInstructions;
+
     const prompt = `Translate these ${contentType === 'product' ? 'product' : contentType === 'collection' ? 'collection' : contentType === 'blog' ? 'blog' : contentType === 'page' ? 'page' : contentType === 'policy' ? 'policy' : 'product'} fields from the source language to ${targetLanguages}.
 
 ${fieldsText}
 
-Make sure that:
-- HTML tags are preserved
-- Character lengths remain similar
-- Translations sound natural
-- URL slugs (handle) contain no special characters
+${instructions}
 
 Respond in JSON format:
 ${JSON.stringify(jsonStructure, null, 2)}`;
