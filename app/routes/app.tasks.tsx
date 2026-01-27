@@ -232,7 +232,7 @@ export default function TasksPage() {
 
   // Generate Shopify admin URL from resourceId and resourceType
   const getShopifyAdminUrl = (resourceId: string | null, resourceType: string | null): string | null => {
-    if (!resourceId || !resourceType) return null;
+    if (!resourceId || !resourceType || !shop) return null;
 
     // Extract numeric ID from Shopify GID (e.g., "gid://shopify/Product/123456789" -> "123456789")
     const match = resourceId.match(/\/(\d+)$/);
@@ -251,8 +251,8 @@ export default function TasksPage() {
     const path = pathMap[resourceType];
     if (!path) return null;
 
-    // Return relative Shopify admin URL
-    return `/admin/${path}/${numericId}`;
+    // Return full Shopify admin URL
+    return `https://${shop}/admin/${path}/${numericId}`;
   };
 
   return (
