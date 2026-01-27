@@ -38,19 +38,19 @@ export class WebhookRegistrationService {
       },
     ];
 
-    logger.info(`[WebhookRegistration] Registering product webhooks...");
+    logger.info(`[WebhookRegistration] Registering product webhooks...`);
 
     for (const webhook of webhooks) {
       try {
         await this.registerWebhook(webhook.topic, webhook.address);
-        logger.info(`[WebhookRegistration] ✓ Registered ${webhook.topic}`);
+        logger.info(`[WebhookRegistration] Registered ${webhook.topic}`);
       } catch (error: any) {
-        logger.error(`[WebhookRegistration] ✗ Failed to register ${webhook.topic}:`, error.message);
+        logger.error(`[WebhookRegistration] Failed to register ${webhook.topic}:`, error.message);
         // Continue with other webhooks even if one fails
       }
     }
 
-    logger.info(`[WebhookRegistration] Webhook registration complete");
+    logger.info(`[WebhookRegistration] Webhook registration complete`);
   }
 
   /**
@@ -92,19 +92,19 @@ export class WebhookRegistrationService {
       },
     ];
 
-    logger.info(`[WebhookRegistration] Registering content webhooks...");
+    logger.info(`[WebhookRegistration] Registering content webhooks...`);
 
     for (const webhook of webhooks) {
       try {
         await this.registerWebhook(webhook.topic, webhook.address);
-        logger.info(`[WebhookRegistration] ✓ Registered ${webhook.topic}`);
+        logger.info(`[WebhookRegistration] Registered ${webhook.topic}`);
       } catch (error: any) {
-        logger.error(`[WebhookRegistration] ✗ Failed to register ${webhook.topic}:`, error.message);
+        logger.error(`[WebhookRegistration] Failed to register ${webhook.topic}:`, error.message);
         // Continue with other webhooks even if one fails
       }
     }
 
-    logger.info(`[WebhookRegistration] Content webhook registration complete");
+    logger.info(`[WebhookRegistration] Content webhook registration complete`);
   }
 
   /**
@@ -124,19 +124,19 @@ export class WebhookRegistrationService {
       },
     ];
 
-    logger.info(`[WebhookRegistration] Registering subscription webhooks...");
+    logger.info(`[WebhookRegistration] Registering subscription webhooks...`);
 
     for (const webhook of webhooks) {
       try {
         await this.registerWebhook(webhook.topic, webhook.address);
-        logger.info(`[WebhookRegistration] ✓ Registered ${webhook.topic}`);
+        logger.info(`[WebhookRegistration] Registered ${webhook.topic}`);
       } catch (error: any) {
-        logger.error(`[WebhookRegistration] ✗ Failed to register ${webhook.topic}:`, error.message);
+        logger.error(`[WebhookRegistration] Failed to register ${webhook.topic}:`, error.message);
         // Continue with other webhooks even if one fails
       }
     }
 
-    logger.info(`[WebhookRegistration] Subscription webhook registration complete");
+    logger.info(`[WebhookRegistration] Subscription webhook registration complete`);
   }
 
   /**
