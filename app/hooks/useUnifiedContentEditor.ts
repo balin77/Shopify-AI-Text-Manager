@@ -308,6 +308,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       processedSaveResponseRef.current = null;
       processedResponseRef.current = null;
       processedTranslateFieldRef.current = null;
+      acceptedPrimaryValueRef.current = null;
       setIsInitialDataReady(false); // Reset data ready flag for new item
       debugLog.dataLoad(' Cleared refs for new item');
     }
@@ -621,6 +622,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     itemId: string;
   } | null>(null);
 
+  // Ref to store the accepted primary locale value during Accept & Translate flow
+  // This is needed because pendingTranslationAfterSaveRef is cleared after the save response,
+  // but we need the value when the translation response arrives to restore editableValues
+  const acceptedPrimaryValueRef = useRef<{
+    fieldKey: string;
+    value: string;
+  } | null>(null);
+
   // Ref to track which fetcher responses have been processed (prevents duplicate processing)
   const processedResponseRef = useRef<string | null>(null);
 
@@ -873,7 +882,19 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             ...prev,
             [fieldType]: translations[currentLanguage]
           }));
+        } else if (currentLanguage === primaryLocale && acceptedPrimaryValueRef.current?.fieldKey === fieldType) {
+          // If we're on the primary locale, restore the accepted value from Accept & Translate flow
+          // This is needed because the translation response only contains foreign languages,
+          // and the editableValues for primary locale might have been lost during re-renders
+          debugLog.acceptAndTranslate(' Restoring accepted primary value for', fieldType, ':', acceptedPrimaryValueRef.current.value.substring(0, 50) + '...');
+          setEditableValues(prev => ({
+            ...prev,
+            [fieldType]: acceptedPrimaryValueRef.current!.value
+          }));
         }
+
+        // Clear the accepted primary value ref after processing
+        acceptedPrimaryValueRef.current = null;
 
         showInfoBox(
           t.common?.fieldTranslatedToLanguages
@@ -1540,6 +1561,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       targetLocales,
       contextTitle,
       itemId: selectedItemId
+    };
+
+    // Store the accepted value so we can restore it after translation completes
+    // (pendingTranslationAfterSaveRef is cleared after save, but we need the value for the translation response)
+    acceptedPrimaryValueRef.current = {
+      fieldKey,
+      value: suggestion
     };
 
     // Skip next data load to prevent revalidation from overwriting user changes
