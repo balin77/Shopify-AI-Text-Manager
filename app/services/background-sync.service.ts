@@ -832,8 +832,17 @@ export class BackgroundSyncService {
           let hasNextPage = true;
           let cursor: string | null = null;
           const allResourcesForType: any[] = [];
+          let pageNumber = 0;
 
           while (hasNextPage) {
+            pageNumber++;
+
+            // Report pagination progress
+            if (onProgress) {
+              const progress = Math.round((resourceTypeIndex - 1) / totalResourceTypes * 100);
+              onProgress(progress, 100, `Loading ${resourceTypeConfig.label}... (page ${pageNumber})`);
+            }
+
             const translatableResponse = await this.gateway.graphql(
               `#graphql
                 query getThemeTranslatableResources($first: Int!, $resourceType: TranslatableResourceType!, $after: String) {
@@ -1015,9 +1024,22 @@ export class BackgroundSyncService {
                 // Process locales sequentially with delay to avoid rate limiting
                 resourceTranslations = [];
 
+                let localeIndex = 0;
                 for (const locale of nonPrimaryLocales) {
+                  localeIndex++;
                   try {
                     console.log(`[BackgroundSync-Themes]   🌐 Fetching locale ${locale.locale}...`);
+
+                    // Report locale fetching progress
+                    if (onProgress) {
+                      const baseProgress = Math.round((resourceTypeIndex - 1) / totalResourceTypes * 100);
+                      const resourceProgress = Math.round((resourceIndex / resources.length) * (100 / totalResourceTypes));
+                      onProgress(
+                        baseProgress + resourceProgress,
+                        100,
+                        `Fetching translations: ${locale.name || locale.locale} (${localeIndex}/${nonPrimaryLocales.length})`
+                      );
+                    }
 
                     // Gateway handles rate limiting and retry automatically
                     const translationsResponse = await this.gateway.graphql(
