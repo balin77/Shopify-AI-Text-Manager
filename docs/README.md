@@ -4,6 +4,13 @@
 
 ## 📖 Verfügbare Dokumente
 
+### 📍 Roadmap & Planning
+
+| Dokument | Beschreibung |
+|----------|--------------|
+| [ROADMAP.md](ROADMAP.md) | **⭐ Product Roadmap** - Zukunftsvision, geplante Features, Timeline |
+| [APP-STORE-READINESS.md](APP-STORE-READINESS.md) | App Store Launch Checklist - Status & nächste Schritte |
+
 ### 🚀 Deployment & Setup
 
 | Dokument | Beschreibung |
