@@ -1,17 +1,21 @@
 /**
  * API: On-Demand Product Images Loading
  *
- * Fetches all product images directly from Shopify API.
- * Used for loading images beyond the first one (which is cached in DB).
+ * Fetches all product images directly from Shopify API and caches them in DB.
+ * Used as a fallback when images are not yet in the database.
  *
- * This reduces database storage significantly for multi-tenant SaaS.
+ * Flow:
+ * 1. Fetch images from Shopify API
+ * 2. Save them to database (for future instant loading)
+ * 3. Return images to frontend
  */
 
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
+import { db } from "../db.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { admin } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
 
   const url = new URL(request.url);
   const productId = url.searchParams.get("productId");
@@ -64,7 +68,47 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         height: edge.node.image.height,
       })) || [];
 
-    console.log(`[API:ProductImages] Loaded ${mediaImages.length} images for product ${productId}`);
+    console.log(`[API:ProductImages] Loaded ${mediaImages.length} images from Shopify for product ${productId}`);
+
+    // Save images to database for future instant loading (non-blocking)
+    if (mediaImages.length > 0) {
+      try {
+        // Check if product exists in our DB
+        const product = await db.product.findUnique({
+          where: {
+            shop_id: {
+              shop: session.shop,
+              id: productId,
+            },
+          },
+          select: { id: true },
+        });
+
+        if (product) {
+          // Delete existing images and insert new ones
+          await db.$transaction(async (tx) => {
+            await tx.productImage.deleteMany({
+              where: { productId: productId },
+            });
+
+            await tx.productImage.createMany({
+              data: mediaImages.map((img: any) => ({
+                productId: productId,
+                url: img.url,
+                altText: img.altText,
+                mediaId: img.mediaId,
+                position: img.position,
+              })),
+            });
+          });
+
+          console.log(`[API:ProductImages] ✓ Cached ${mediaImages.length} images to DB for ${productId}`);
+        }
+      } catch (dbError) {
+        // Don't fail the request if DB save fails - images are still returned
+        console.error("[API:ProductImages] Failed to cache images to DB:", dbError);
+      }
+    }
 
     return json({
       success: true,
