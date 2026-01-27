@@ -175,7 +175,7 @@ export default function ContentHub() {
       // Always redirect to collections when accessing /app/content without type
       navigate("/app/collections", { replace: true });
     }
-  }, []);
+  }, [searchParams, navigate]);
 
   // Update URL and localStorage when type changes
   useEffect(() => {

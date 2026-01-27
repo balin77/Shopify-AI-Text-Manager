@@ -20,6 +20,14 @@ export default defineConfig({
       "~": path.resolve(__dirname, "./app"),
     },
   },
+  optimizeDeps: {
+    include: [
+      "react",
+      "react-dom",
+      "react/jsx-runtime",
+      "@remix-run/react",
+    ],
+  },
   server: {
     port: 3000,
     allowedHosts: [
