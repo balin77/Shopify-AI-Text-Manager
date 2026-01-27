@@ -109,15 +109,25 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // Load all images from Shopify when a product is selected
   // ============================================================================
 
+  // Track previous product ID to detect changes
+  const prevSelectedItemIdRef = useRef<string | null>(null);
+
   // Trigger image loading when product is selected
   useEffect(() => {
     // Only load for products content type
     if (config.contentType !== 'products') return;
 
+    // Detect product change - immediately clear on-demand images
+    // This ensures the first image from DB is shown instantly
+    if (prevSelectedItemIdRef.current !== selectedItemId) {
+      console.log(`🖼️ [OnDemandImages] Product changed: ${prevSelectedItemIdRef.current} -> ${selectedItemId}`);
+      setOnDemandImages([]); // Clear immediately so DB image shows
+      loadedImagesForProductRef.current = null;
+      prevSelectedItemIdRef.current = selectedItemId;
+    }
+
     // Skip if no product selected
     if (!selectedItemId || !baseSelectedItem) {
-      setOnDemandImages([]);
-      loadedImagesForProductRef.current = null;
       return;
     }
 
@@ -126,8 +136,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       return;
     }
 
-    // Load images from Shopify
-    console.log(`🖼️ [OnDemandImages] Loading images for product ${selectedItemId}`);
+    // Load images from Shopify (DB first image is already showing)
+    console.log(`🖼️ [OnDemandImages] Loading all images for product ${selectedItemId}`);
     setIsLoadingImages(true);
     imageFetcher.load(`/api/product-images?productId=${encodeURIComponent(selectedItemId)}`);
   }, [selectedItemId, baseSelectedItem, config.contentType]);
@@ -136,6 +146,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   useEffect(() => {
     if (imageFetcher.state === "idle" && imageFetcher.data && selectedItemId) {
       setIsLoadingImages(false);
+
+      // Only apply if still on the same product (user might have switched)
+      if (prevSelectedItemIdRef.current !== selectedItemId) {
+        console.log(`🖼️ [OnDemandImages] Ignoring response - product changed`);
+        return;
+      }
 
       if (imageFetcher.data.success && imageFetcher.data.images) {
         console.log(`🖼️ [OnDemandImages] Loaded ${imageFetcher.data.images.length} images for product ${selectedItemId}`);
@@ -153,18 +169,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       } else if (imageFetcher.data.error) {
         console.error(`🖼️ [OnDemandImages] Error loading images:`, imageFetcher.data.error);
         // Fall back to DB-cached images (if any)
-        setOnDemandImages([]);
         loadedImagesForProductRef.current = selectedItemId;
       }
     }
   }, [imageFetcher.state, imageFetcher.data, selectedItemId, baseSelectedItem]);
-
-  // Reset on-demand images when product changes
-  useEffect(() => {
-    if (selectedItemId !== loadedImagesForProductRef.current) {
-      setOnDemandImages([]);
-    }
-  }, [selectedItemId]);
 
   // Compute effective field definitions (supports dynamic fields for templates)
   const effectiveFieldDefinitions = useMemo(() => {
