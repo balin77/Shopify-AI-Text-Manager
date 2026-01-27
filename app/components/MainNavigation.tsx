@@ -266,7 +266,7 @@ export function MainNavigation() {
 
   const tabs = [
     { id: "products", label: t.nav.products, path: "/app/products" },
-    { id: "content", label: t.nav.otherContent, path: "/app/content" },
+    { id: "content", label: t.nav.otherContent, path: "/app/collections" },
     { id: "tasks", label: t.nav.tasks, path: "/app/tasks" },
     { id: "settings", label: t.nav.settings, path: "/app/settings" },
   ];

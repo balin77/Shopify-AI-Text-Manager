@@ -113,7 +113,11 @@ export function UnifiedLanguageBar({
           <div key={locale.locale} style={buttonStyle}>
             <Button
               variant={isCurrentLanguage ? "primary" : undefined}
-              onClick={() => {
+              onClick={(event: any) => {
+                // Don't navigate if Ctrl is pressed - that's for toggling language mode
+                if (event.ctrlKey) {
+                  return;
+                }
                 onLanguageChange(locale.locale);
               }}
               onPointerDown={(event: any) => {

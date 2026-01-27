@@ -54,7 +54,7 @@ export function ContentTypeNavigation() {
     if (location.pathname === "/app/templates") return "templates";
     if (location.pathname === "/app/content") {
       const params = new URLSearchParams(location.search);
-      return params.get("type") || "menus";
+      return params.get("type") || null;
     }
     return null;
   };
