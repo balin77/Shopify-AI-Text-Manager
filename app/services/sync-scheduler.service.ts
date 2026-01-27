@@ -240,10 +240,7 @@ class SyncSchedulerService {
       // Basic/Pro/Max plans: productImages = "all", keep all images cached
       const freeShops = await db.aISettings.findMany({
         where: {
-          OR: [
-            { subscriptionPlan: "free" },
-            { subscriptionPlan: null } // Treat null as free plan
-          ]
+          subscriptionPlan: "free"
         },
         select: { shop: true }
       });

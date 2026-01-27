@@ -11,15 +11,10 @@ import {
 } from "@shopify/polaris";
 import { QuestionCircleIcon } from "@shopify/polaris-icons";
 import { useI18n } from "../contexts/I18nContext";
+import type { HelpContent } from "../types/content-editor.types";
 import "../styles/HelpTooltip.css";
 
-export interface HelpContent {
-  title: string;
-  summary: string;
-  details?: string;
-  tips?: string[];
-  examples?: string[];
-}
+export type { HelpContent };
 
 interface HelpTooltipProps {
   helpKey: string;
@@ -40,7 +35,8 @@ export function HelpTooltip({ helpKey, position = "above" }: HelpTooltipProps) {
   const closeModal = useCallback(() => setModalActive(false), []);
 
   // Get help content from translations
-  const helpContent = t.help?.[helpKey] as HelpContent | undefined;
+  const helpDict = t.help as Record<string, HelpContent> | undefined;
+  const helpContent = helpDict?.[helpKey];
   if (!helpContent) return null;
 
   const activator = (

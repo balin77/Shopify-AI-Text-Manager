@@ -123,6 +123,14 @@ export type FetcherData =
 
 export type TranslationValue = string | Record<string, string> | undefined;
 
+export interface HelpContent {
+  title: string;
+  summary: string;
+  details?: string;
+  tips?: string[];
+  examples?: string[];
+}
+
 export interface TranslationStrings {
   common?: {
     success?: string;
@@ -142,7 +150,8 @@ export interface TranslationStrings {
     policyTypes?: Record<string, string>;
     [key: string]: TranslationValue;
   };
-  [key: string]: Record<string, TranslationValue> | undefined;
+  help?: Record<string, HelpContent>;
+  [key: string]: Record<string, TranslationValue> | Record<string, HelpContent> | undefined;
 }
 
 export type ContentType = 'products' | 'collections' | 'blogs' | 'pages' | 'policies' | 'templates';

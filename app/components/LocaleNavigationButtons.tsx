@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import { Button } from "@shopify/polaris";
 import { useLocaleButtonStyle } from "../utils/contentEditor.utils";
 import type { ShopLocale, TranslatableItem, ContentType } from "../types/contentEditor.types";
@@ -38,6 +39,7 @@ export function LocaleNavigationButtons({
         <HelpTooltip helpKey="ctrlClickLanguage" position="below" />
         {shopLocales.map((locale) => {
           const LocaleButton = () => {
+            const ctrlPressedRef = useRef(false);
             const buttonStyle = useLocaleButtonStyle(
               locale,
               selectedItem,
@@ -53,16 +55,18 @@ export function LocaleNavigationButtons({
               <div key={locale.locale} style={buttonStyle}>
                 <Button
                   variant={isCurrentLanguage ? "primary" : undefined}
-                  onClick={(event: any) => {
-                    // Don't navigate if Ctrl is pressed - that's for toggling language mode
-                    if (event.ctrlKey) {
+                  onClick={() => {
+                    // Don't navigate if Ctrl was pressed - that's for toggling language mode
+                    if (ctrlPressedRef.current) {
+                      ctrlPressedRef.current = false;
                       return;
                     }
                     onLanguageChange(locale.locale);
                   }}
-                  onPointerDown={(event: any) => {
+                  onPointerDown={(event: React.PointerEvent) => {
                     // Ctrl+Click toggles language activation (except for primary locale)
                     if (event.ctrlKey && onToggleLanguage && !isPrimary) {
+                      ctrlPressedRef.current = true;
                       event.preventDefault();
                       onToggleLanguage(locale.locale);
                     }

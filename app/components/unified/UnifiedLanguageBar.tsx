@@ -12,6 +12,7 @@
  * Used by: Products, Collections, Pages, Blogs, Articles, Policies, etc.
  */
 
+import { useRef } from "react";
 import { Button, InlineStack, ButtonGroup } from "@shopify/polaris";
 import { useLocaleButtonStyle } from "../../utils/contentEditor.utils";
 import { ReloadButton } from "../ReloadButton";
@@ -83,6 +84,7 @@ export function UnifiedLanguageBar({
   t = {},
 }: UnifiedLanguageBarProps) {
   const isPrimaryLocale = currentLanguage === primaryLocale;
+  const ctrlPressedRef = useRef<Record<string, boolean>>({});
 
   // Map content type to resource type for the API
   const resourceTypeMap: Record<string, string> = {
@@ -113,16 +115,18 @@ export function UnifiedLanguageBar({
           <div key={locale.locale} style={buttonStyle}>
             <Button
               variant={isCurrentLanguage ? "primary" : undefined}
-              onClick={(event: any) => {
-                // Don't navigate if Ctrl is pressed - that's for toggling language mode
-                if (event.ctrlKey) {
+              onClick={() => {
+                // Don't navigate if Ctrl was pressed - that's for toggling language mode
+                if (ctrlPressedRef.current[locale.locale]) {
+                  ctrlPressedRef.current[locale.locale] = false;
                   return;
                 }
                 onLanguageChange(locale.locale);
               }}
-              onPointerDown={(event: any) => {
+              onPointerDown={(event: React.PointerEvent) => {
                 // Ctrl+Click toggles language activation (except for primary locale)
                 if (event.ctrlKey && onToggleLanguage && !isPrimary) {
+                  ctrlPressedRef.current[locale.locale] = true;
                   event.preventDefault();
                   onToggleLanguage(locale.locale);
                 }
