@@ -31,6 +31,7 @@ export function SettingsSetupTab({
     message: string;
     current: number;
     total: number;
+    completedPhases: string[];
   } | null>(null);
 
   const handleSetupWebhooks = async () => {
@@ -70,11 +71,13 @@ export function SettingsSetupTab({
     themes: "Themes",
   };
 
+  const phaseOrder = ["products", "collections", "articles", "pages", "policies", "themes"];
+
   const handleSyncProducts = async (force: boolean = false) => {
     setSyncStatus("");
     setSyncLoading(true);
     setSyncErrors([]);
-    setSyncProgress({ phase: "starting", message: "Starting sync...", current: 0, total: 100 });
+    setSyncProgress({ phase: "starting", message: "Starting sync...", current: 0, total: 100, completedPhases: [] });
 
     try {
       const streamUrl = force ? "/api/sync-all-stream?force=true" : "/api/sync-all-stream";
@@ -97,6 +100,8 @@ export function SettingsSetupTab({
       const decoder = new TextDecoder();
       let buffer = "";
       let finalStats: any = null;
+      let completedPhases: string[] = [];
+      let lastPhase = "";
 
       while (true) {
         const { done, value } = await reader.read();
@@ -114,11 +119,24 @@ export function SettingsSetupTab({
               const data = JSON.parse(line.slice(6));
 
               if (data.type === "progress") {
+                // Track completed phases
+                if (lastPhase && lastPhase !== data.phase && !completedPhases.includes(lastPhase)) {
+                  completedPhases = [...completedPhases, lastPhase];
+                }
+                lastPhase = data.phase;
+
+                // Calculate overall progress based on phase
+                const phaseIndex = phaseOrder.indexOf(data.phase);
+                const phaseProgress = phaseIndex >= 0 ? phaseIndex : 0;
+                const phasePercent = data.current || 0;
+                const overallProgress = Math.round((phaseProgress / phaseOrder.length) * 100 + (phasePercent / phaseOrder.length));
+
                 setSyncProgress({
                   phase: data.phase,
                   message: data.message,
-                  current: data.current || 0,
-                  total: data.total || 100,
+                  current: overallProgress,
+                  total: 100,
+                  completedPhases: [...completedPhases],
                 });
               } else if (data.type === "complete") {
                 finalStats = data.stats;
@@ -269,16 +287,34 @@ export function SettingsSetupTab({
           </BlockStack>
           {syncProgress && (
             <Box padding="400" background="bg-surface-secondary" borderRadius="200">
-              <BlockStack gap="300">
+              <BlockStack gap="400">
                 <InlineStack align="space-between">
                   <Text as="p" variant="bodyMd" fontWeight="semibold">
-                    {phaseLabels[syncProgress.phase] || syncProgress.phase}
+                    Syncing Content
                   </Text>
                   <Text as="p" variant="bodyMd" tone="subdued">
                     {syncProgress.current}%
                   </Text>
                 </InlineStack>
                 <ProgressBar progress={syncProgress.current} size="small" />
+                <InlineStack gap="300" wrap={true}>
+                  {phaseOrder.map((phase) => {
+                    const isCompleted = syncProgress.completedPhases.includes(phase);
+                    const isCurrent = syncProgress.phase === phase;
+                    return (
+                      <Text
+                        key={phase}
+                        as="span"
+                        variant="bodySm"
+                        tone={isCompleted ? "success" : isCurrent ? "base" : "subdued"}
+                        fontWeight={isCurrent ? "semibold" : "regular"}
+                      >
+                        {isCompleted ? "✓ " : isCurrent ? "● " : "○ "}
+                        {phaseLabels[phase]}
+                      </Text>
+                    );
+                  })}
+                </InlineStack>
                 <Text as="p" variant="bodySm" tone="subdued">
                   {syncProgress.message}
                 </Text>
