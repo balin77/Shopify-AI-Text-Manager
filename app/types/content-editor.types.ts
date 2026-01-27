@@ -251,6 +251,7 @@ export interface EditorState {
   altTextSuggestions: Record<number, string>;
   isClearAllModalOpen: boolean;
   isInitialDataReady: boolean;
+  isLoadingImages?: boolean; // True when loading images on-demand from Shopify
 }
 
 export interface EditorHandlers {

@@ -6,7 +6,7 @@
  */
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { useRevalidator } from "@remix-run/react";
+import { useRevalidator, useFetcher } from "@remix-run/react";
 import { useNavigationGuard, useChangeTracking, getTranslatedValue } from "../utils/contentEditor.utils";
 import type {
   UseContentEditorProps,
@@ -47,6 +47,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // Track if clear all confirmation modal is open
   const [isClearAllModalOpen, setIsClearAllModalOpen] = useState(false);
 
+  // On-demand images loading (for products - images are loaded from Shopify API)
+  const [onDemandImages, setOnDemandImages] = useState<ContentImage[]>([]);
+  const [isLoadingImages, setIsLoadingImages] = useState(false);
+  const imageFetcher = useFetcher<{ success: boolean; images: any[]; error?: string }>();
+  const loadedImagesForProductRef = useRef<string | null>(null);
+
   // Alt-text state for images (indexed by image position)
   const [imageAltTexts, setImageAltTexts] = useState<Record<number, string>>({});
   const [altTextSuggestions, setAltTextSuggestions] = useState<Record<number, string>>({});
@@ -77,10 +83,88 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // IMPORTANT: Memoize selectedItem to prevent infinite re-renders
   // Without this, items.find() returns a new object reference on every revalidation,
   // which triggers useChangeTracking and other effects, causing an infinite loop
-  const selectedItem = useMemo(
+  const baseSelectedItem = useMemo(
     () => items.find((item) => item.id === selectedItemId),
     [items, selectedItemId]
   );
+
+  // Merge on-demand images with selected item (for products)
+  // On-demand images take precedence over DB-cached images
+  const selectedItem = useMemo(() => {
+    if (!baseSelectedItem) return undefined;
+
+    // If we have on-demand images for this product, use them
+    if (onDemandImages.length > 0 && loadedImagesForProductRef.current === selectedItemId) {
+      return {
+        ...baseSelectedItem,
+        images: onDemandImages,
+      };
+    }
+
+    return baseSelectedItem;
+  }, [baseSelectedItem, onDemandImages, selectedItemId]);
+
+  // ============================================================================
+  // ON-DEMAND IMAGE LOADING (for products)
+  // Load all images from Shopify when a product is selected
+  // ============================================================================
+
+  // Trigger image loading when product is selected
+  useEffect(() => {
+    // Only load for products content type
+    if (config.contentType !== 'products') return;
+
+    // Skip if no product selected
+    if (!selectedItemId || !baseSelectedItem) {
+      setOnDemandImages([]);
+      loadedImagesForProductRef.current = null;
+      return;
+    }
+
+    // Skip if already loaded for this product
+    if (loadedImagesForProductRef.current === selectedItemId) {
+      return;
+    }
+
+    // Load images from Shopify
+    console.log(`🖼️ [OnDemandImages] Loading images for product ${selectedItemId}`);
+    setIsLoadingImages(true);
+    imageFetcher.load(`/api/product-images?productId=${encodeURIComponent(selectedItemId)}`);
+  }, [selectedItemId, baseSelectedItem, config.contentType]);
+
+  // Handle image fetcher response
+  useEffect(() => {
+    if (imageFetcher.state === "idle" && imageFetcher.data && selectedItemId) {
+      setIsLoadingImages(false);
+
+      if (imageFetcher.data.success && imageFetcher.data.images) {
+        console.log(`🖼️ [OnDemandImages] Loaded ${imageFetcher.data.images.length} images for product ${selectedItemId}`);
+
+        // Transform images to ContentImage format
+        const images: ContentImage[] = imageFetcher.data.images.map((img: any) => ({
+          url: img.url,
+          altText: img.altText,
+          // Preserve alt-text translations from DB if available
+          altTextTranslations: baseSelectedItem?.images?.[0]?.altTextTranslations || [],
+        }));
+
+        setOnDemandImages(images);
+        loadedImagesForProductRef.current = selectedItemId;
+      } else if (imageFetcher.data.error) {
+        console.error(`🖼️ [OnDemandImages] Error loading images:`, imageFetcher.data.error);
+        // Fall back to DB-cached images (if any)
+        setOnDemandImages([]);
+        loadedImagesForProductRef.current = selectedItemId;
+      }
+    }
+  }, [imageFetcher.state, imageFetcher.data, selectedItemId, baseSelectedItem]);
+
+  // Reset on-demand images when product changes
+  useEffect(() => {
+    if (selectedItemId !== loadedImagesForProductRef.current) {
+      setOnDemandImages([]);
+    }
+  }, [selectedItemId]);
 
   // Compute effective field definitions (supports dynamic fields for templates)
   const effectiveFieldDefinitions = useMemo(() => {
@@ -1909,6 +1993,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     altTextSuggestions,
     isClearAllModalOpen,
     isInitialDataReady,
+    isLoadingImages,
   };
 
   const handlers: EditorHandlers = {
