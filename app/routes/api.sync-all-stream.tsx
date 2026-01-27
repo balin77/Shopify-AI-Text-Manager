@@ -14,8 +14,26 @@ import { BackgroundSyncService } from "../services/background-sync.service";
  * Usage: POST /api/sync-all-stream?force=true
  */
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { admin, session } = await authenticate.admin(request);
-  const shop = session.shop;
+  // Authenticate first - let redirects pass through
+  let admin: any;
+  let shop: string;
+
+  try {
+    const auth = await authenticate.admin(request);
+    admin = auth.admin;
+    shop = auth.session.shop;
+  } catch (error) {
+    // If this is a redirect (e.g., to /auth/login), re-throw it
+    if (error instanceof Response) {
+      throw error;
+    }
+    // For other errors, return an error response
+    console.error("[SYNC-STREAM] Authentication failed:", error);
+    return new Response(JSON.stringify({ error: "Authentication failed" }), {
+      status: 401,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
 
   const url = new URL(request.url);
   const force = url.searchParams.get("force") === "true";

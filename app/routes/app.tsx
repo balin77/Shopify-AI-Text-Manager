@@ -66,6 +66,19 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       aiSettings,
     });
   } catch (error) {
+    // Check if this is a redirect response (e.g., to /auth/login)
+    // Redirects should be re-thrown, not caught as errors
+    if (error instanceof Response) {
+      const status = error.status;
+      const location = error.headers.get('location');
+
+      // Log redirect for debugging, but don't treat as error
+      if (status >= 300 && status < 400) {
+        console.log(`🔄 [APP.TSX LOADER] Redirect detected: ${status} -> ${location}`);
+        throw error; // Re-throw the redirect to let Remix handle it
+      }
+    }
+
     console.error("❌ [APP.TSX LOADER] Error:", error);
     console.error("❌ [APP.TSX LOADER] Error stack:", error instanceof Error ? error.stack : "No stack");
 

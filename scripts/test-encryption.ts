@@ -299,16 +299,14 @@ async function runTests() {
   return failed === 0;
 }
 
-// Run tests if this file is executed directly
-if (require.main === module) {
-  runTests()
-    .then((success) => {
-      process.exit(success ? 0 : 1);
-    })
-    .catch((error) => {
-      console.error('Test execution failed:', error);
-      process.exit(1);
-    });
-}
+// Run tests (ES Module - always runs when imported/executed)
+runTests()
+  .then((success) => {
+    process.exit(success ? 0 : 1);
+  })
+  .catch((error) => {
+    console.error('Test execution failed:', error);
+    process.exit(1);
+  });
 
 export { runTests };

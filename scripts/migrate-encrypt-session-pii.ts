@@ -300,10 +300,12 @@ async function main() {
   }
 }
 
-// Run if executed directly
-if (require.main === module) {
-  main();
-}
+// Run migration (ES Module - always runs when imported/executed)
+main()
+  .catch((error) => {
+    console.error('Migration failed:', error);
+    process.exit(1);
+  });
 
 export type { MigrationStats };
 export { migrate };
