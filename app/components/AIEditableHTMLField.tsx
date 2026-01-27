@@ -60,16 +60,18 @@ export function AIEditableHTMLField({
   const editorRef = useRef<HTMLDivElement>(null);
   const { executeCommand } = useHtmlFormatting({ editorRef, onChange });
   const isUserTypingRef = useRef(false);
-  const initializedRef = useRef(false);
+  const lastEditorElementRef = useRef<HTMLDivElement | null>(null);
 
-  // Initialize content on first render and update only when value changes externally
+  // Initialize content when editor element changes (mode switch) or value changes externally
   useEffect(() => {
-    if (!editorRef.current) return;
+    if (!editorRef.current || mode !== "rendered") return;
 
-    // On first render, set the initial content
-    if (!initializedRef.current) {
+    const isNewElement = editorRef.current !== lastEditorElementRef.current;
+
+    // If it's a new element (after mode switch), always set content
+    if (isNewElement) {
       editorRef.current.innerHTML = value;
-      initializedRef.current = true;
+      lastEditorElementRef.current = editorRef.current;
       return;
     }
 
@@ -100,7 +102,7 @@ export function AIEditableHTMLField({
         }
       }
     }
-  }, [value]);
+  }, [value, mode]);
 
   const handleInput = (e: React.FormEvent<HTMLDivElement>) => {
     isUserTypingRef.current = true;
