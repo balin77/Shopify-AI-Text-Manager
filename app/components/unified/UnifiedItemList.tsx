@@ -152,8 +152,8 @@ export function UnifiedItemList({
       let availableHeight: number;
 
       if (wrapperHeight && wrapperHeight > 200) {
-        // Use wrapper height minus header and pagination
-        availableHeight = wrapperHeight - headerHeight - paginationHeight;
+        // Use wrapper height minus header, pagination, and a small buffer for borders/padding
+        availableHeight = wrapperHeight - headerHeight - paginationHeight - 4;
       } else {
         // Fallback: calculate from window
         const navHeight = getTotalNavHeight();
@@ -162,14 +162,16 @@ export function UnifiedItemList({
       }
 
       // Calculate item dimensions
-      const minItemHeight = showThumbnails ? 56 : 48;
-      const maxItemHeight = 64;
+      const minItemHeight = showThumbnails ? 52 : 44;
+      const maxItemHeight = 72;
 
-      // Calculate how many items fit
+      // Calculate how many items fit based on minimum height
       const itemsThatFit = Math.max(5, Math.floor(availableHeight / minItemHeight));
 
-      // Calculate actual item height to fill the space exactly
-      const calculatedItemHeight = Math.min(maxItemHeight, Math.max(minItemHeight, Math.floor(availableHeight / itemsThatFit)));
+      // Calculate exact item height to fill the space perfectly
+      // This ensures no pixels are wasted and the list fills exactly
+      const exactItemHeight = availableHeight / itemsThatFit;
+      const calculatedItemHeight = Math.min(maxItemHeight, Math.max(minItemHeight, exactItemHeight));
 
       setDynamicItemsPerPage(itemsThatFit);
       setItemHeight(calculatedItemHeight);
@@ -282,7 +284,7 @@ export function UnifiedItemList({
   const itemRenderer = renderItem || defaultRenderItem;
 
   return (
-    <div ref={wrapperRef} style={{ width: "310px", flexShrink: 0, height: "100%", overflow: "hidden" }}>
+    <div ref={wrapperRef} style={{ width: "330px", flexShrink: 0, height: "100%", overflow: "hidden" }}>
       <style>{`
         /* UnifiedItemList - Full height card with scrollable list */
         .unified-item-list-wrapper {
