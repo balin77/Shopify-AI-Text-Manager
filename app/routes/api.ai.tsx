@@ -359,7 +359,196 @@ Return only the formatted text, without explanations.`;
             textLength: sourceText.length
           });
 
-          const formattedValue = await aiService.generateContent(prompt);
+          const formattedValue = await aiService['askAI'](prompt);
+
+          // Update task to completed with full AI response
+          await db.task.update({
+            where: { id: task.id },
+            data: {
+              status: "completed",
+              progress: 100,
+              completedAt: new Date(),
+              result: formattedValue, // Store full AI response
+            },
+          });
+
+          return json({
+            success: true,
+            formattedValue,
+            fieldType
+          });
+        } catch (error: any) {
+          // Update task to failed
+          await db.task.update({
+            where: { id: task.id },
+            data: {
+              status: "failed",
+              completedAt: new Date(),
+              error: (error.message || String(error)).substring(0, 1000),
+            },
+          });
+          throw error;
+        }
+      }
+
+      case "generateAIText": {
+        const fieldType = formData.get("fieldType") as string;
+        const currentValue = formData.get("currentValue") as string;
+        const contextTitle = formData.get("contextTitle") as string || "";
+        const contextDescription = formData.get("contextDescription") as string || "";
+        const mainLanguage = formData.get("mainLanguage") as string || "German";
+
+        // Build the prompt
+        const prompt = `Improve the following content field.
+
+Field: ${fieldType}
+Current value: ${currentValue || "(empty)"}
+Context title: ${contextTitle}
+Context description: ${contextDescription}
+Language: ${mainLanguage}
+
+IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no options, no formatting, no labels. Just output the single best improved version of the content in ${mainLanguage}.`;
+
+        // Create task entry with prompt
+        const task = await db.task.create({
+          data: {
+            shop: session.shop,
+            type: "aiGeneration",
+            status: "pending",
+            resourceType: contentType,
+            resourceId: itemId,
+            resourceTitle: fieldType,
+            fieldType,
+            progress: 0,
+            prompt, // Store the prompt
+            expiresAt: getTaskExpirationDate(),
+          },
+        });
+
+        try {
+          // Update task to running
+          await db.task.update({
+            where: { id: task.id },
+            data: { status: "running", progress: 20 },
+          });
+
+          const aiService = new AIService(
+            settings?.preferredProvider as any || 'huggingface',
+            {
+              huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
+              geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
+              claudeApiKey: decryptApiKey(settings?.claudeApiKey) || undefined,
+              openaiApiKey: decryptApiKey(settings?.openaiApiKey) || undefined,
+              grokApiKey: decryptApiKey(settings?.grokApiKey) || undefined,
+              deepseekApiKey: decryptApiKey(settings?.deepseekApiKey) || undefined,
+            },
+            session.shop,
+            task.id
+          );
+
+          logger.debug("[API-AI] Generating AI text", {
+            context: "AI",
+            fieldType,
+            textLength: currentValue?.length || 0
+          });
+
+          const generatedContent = await aiService['askAI'](prompt);
+
+          // Update task to completed with full AI response
+          await db.task.update({
+            where: { id: task.id },
+            data: {
+              status: "completed",
+              progress: 100,
+              completedAt: new Date(),
+              result: generatedContent, // Store full AI response
+            },
+          });
+
+          return json({
+            success: true,
+            generatedContent,
+            fieldType
+          });
+        } catch (error: any) {
+          // Update task to failed
+          await db.task.update({
+            where: { id: task.id },
+            data: {
+              status: "failed",
+              completedAt: new Date(),
+              error: (error.message || String(error)).substring(0, 1000),
+            },
+          });
+          throw error;
+        }
+      }
+
+      case "formatAIText": {
+        const fieldType = formData.get("fieldType") as string;
+        const currentValue = formData.get("currentValue") as string;
+        const contextTitle = formData.get("contextTitle") as string || "";
+        const contextDescription = formData.get("contextDescription") as string || "";
+        const mainLanguage = formData.get("mainLanguage") as string || "German";
+
+        if (!currentValue) {
+          return json({ success: false, error: "No content available to format" }, { status: 400 });
+        }
+
+        // Build the prompt
+        const prompt = `Improve and format the following content while keeping the same language (${mainLanguage}).
+
+Field: ${fieldType}
+Current value: ${currentValue}
+Context title: ${contextTitle}
+Context description: ${contextDescription}
+
+IMPORTANT: Return ONLY the improved and formatted text, nothing else. No explanations, no options, no labels. Keep the same language (${mainLanguage}). Just output the single best improved version.`;
+
+        // Create task entry with prompt
+        const task = await db.task.create({
+          data: {
+            shop: session.shop,
+            type: "formatting",
+            status: "pending",
+            resourceType: contentType,
+            resourceId: itemId,
+            resourceTitle: fieldType,
+            fieldType,
+            progress: 0,
+            prompt, // Store the prompt
+            expiresAt: getTaskExpirationDate(),
+          },
+        });
+
+        try {
+          // Update task to running
+          await db.task.update({
+            where: { id: task.id },
+            data: { status: "running", progress: 20 },
+          });
+
+          const aiService = new AIService(
+            settings?.preferredProvider as any || 'huggingface',
+            {
+              huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
+              geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
+              claudeApiKey: decryptApiKey(settings?.claudeApiKey) || undefined,
+              openaiApiKey: decryptApiKey(settings?.openaiApiKey) || undefined,
+              grokApiKey: decryptApiKey(settings?.grokApiKey) || undefined,
+              deepseekApiKey: decryptApiKey(settings?.deepseekApiKey) || undefined,
+            },
+            session.shop,
+            task.id
+          );
+
+          logger.debug("[API-AI] Formatting AI text", {
+            context: "AI",
+            fieldType,
+            textLength: currentValue.length
+          });
+
+          const formattedValue = await aiService['askAI'](prompt);
 
           // Update task to completed with full AI response
           await db.task.update({
