@@ -252,7 +252,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         const task = await db.task.create({
           data: {
             shop: session.shop,
-            type: "aiGeneration",
+            type: "formatting",
             status: "pending",
             resourceType: contentType,
             resourceId: itemId,
