@@ -446,6 +446,7 @@ Allowed formatting changes:
   if (action === "translateAll") {
     const targetLocalesStr = formData.get("targetLocales") as string;
     const contextTitle = formData.get("title") as string;
+    const sourceLocale = (formData.get("sourceLocale") as string) || "de";
 
     // Create task entry
     const task = await db.task.create({
@@ -503,6 +504,7 @@ Allowed formatting changes:
         contentType: contentConfig.contentType,
         taskId: task.id,
         customInstructions: aiInstructions?.translateInstructions,
+        sourceLocale,
       });
 
       await db.task.update({
@@ -539,6 +541,7 @@ Allowed formatting changes:
   if (action === "translateAllForLocale") {
     const targetLocale = formData.get("targetLocale") as string;
     const contextTitle = formData.get("title") as string;
+    const sourceLocale = (formData.get("sourceLocale") as string) || "de";
 
     // Create task entry
     const task = await db.task.create({
@@ -598,6 +601,7 @@ Allowed formatting changes:
         contentType: contentConfig.contentType,
         taskId: task.id,
         customInstructions: aiInstructions?.translateInstructions,
+        sourceLocale,
       });
 
       // Extract translations for the target locale
@@ -640,6 +644,7 @@ Allowed formatting changes:
     const sourceText = formData.get("sourceText") as string;
     const targetLocalesStr = formData.get("targetLocales") as string;
     const contextTitle = formData.get("contextTitle") as string;
+    const sourceLocale = (formData.get("sourceLocale") as string) || "de";
 
     logger.debug('[UnifiedContent] [translateFieldToAllLocales] Starting...');
     logger.debug('[UnifiedContent] fieldType:', fieldType);
@@ -694,6 +699,7 @@ Allowed formatting changes:
         contentType: contentConfig.contentType,
         taskId: task.id,
         customInstructions: aiInstructions?.translateInstructions,
+        sourceLocale,
       });
 
       // Extract just the field value for each locale (frontend expects Record<locale, string>)

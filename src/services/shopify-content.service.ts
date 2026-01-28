@@ -471,6 +471,9 @@ export class ShopifyContentService {
 
   /**
    * Batch translate all fields for all target locales
+   * Uses hybrid approach:
+   * - Short fields (title, seoTitle, handle): 1 batch AI request for all locales
+   * - Long fields (description, body, metaDescription): 1 AI request per locale
    */
   async translateAllContent(params: {
     resourceId: string;
@@ -482,8 +485,9 @@ export class ShopifyContentService {
     contentType?: string;
     taskId?: string;
     customInstructions?: string;
+    sourceLocale?: string;
   }) {
-    const { resourceId, resourceType, fields, translationService, db, targetLocales: customTargetLocales, contentType, customInstructions } = params;
+    const { resourceId, resourceType, fields, translationService, db, targetLocales: customTargetLocales, contentType, customInstructions, sourceLocale = 'de' } = params;
 
     // Fetch digest map once for all translations
     const digestMap = await this.loadTranslatableContent(resourceId);
@@ -502,123 +506,179 @@ export class ShopifyContentService {
 
     const allTranslations: Record<string, any> = {};
 
-    // Translate to all target locales
+    // Initialize translations structure
     for (const locale of targetLocales) {
-      try {
-        console.log(`🔶 [translateAllContent] Translating to ${locale}, source fields:`, Object.keys(fields).map(k => `${k}: "${(fields[k] || '').substring(0, 30)}..."`));
-        const localeTranslations = await translationService.translateProduct(fields, [locale], contentType, customInstructions);
-        const translatedFields = localeTranslations[locale];
-        console.log(`🔶 [translateAllContent] AI returned for ${locale}:`, translatedFields ? Object.keys(translatedFields).map(k => `${k}: "${(translatedFields[k] || '').substring(0, 30)}..."`) : 'NONE');
+      allTranslations[locale] = {};
+    }
 
-        if (translatedFields) {
-          allTranslations[locale] = translatedFields;
+    // Separate short and long fields
+    const SHORT_FIELD_KEYS = ['title', 'seoTitle', 'handle'];
+    const shortFields: Record<string, string> = {};
+    const longFields: Record<string, string> = {};
 
-          // Map to Shopify translation keys
-          const translationsInput: Array<{ key: string; value: string; locale: string; translatableContentDigest?: string }> = [];
-
-          const keyMapping: Record<string, string> = {
-            title: 'title',
-            description: 'body_html',  // Always body_html for all resource types (Product, Collection, Page)
-            body: 'body_html',         // Always body_html for all resource types
-            handle: 'handle',
-            seoTitle: 'meta_title',
-            metaDescription: 'meta_description',
-          };
-
-          Object.entries(translatedFields).forEach(([field, value]) => {
-            if (value && keyMapping[field]) {
-              // Ensure value is a string, not an object
-              let stringValue: string;
-              if (typeof value === 'string') {
-                stringValue = value;
-              } else if (typeof value === 'object' && value !== null) {
-                // If value is an object, try to extract the actual string value
-                console.error(`[translateAllContent] Warning: Field '${field}' has object value:`, value);
-                stringValue = (value as any).value || JSON.stringify(value);
-              } else {
-                stringValue = String(value);
-              }
-
-              // IMPORTANT: Skip if the "translation" is the same as the source text
-              // This prevents storing the source text as a translation when AI fails
-              const sourceValue = fields[field];
-              if (sourceValue && stringValue.trim() === sourceValue.trim()) {
-                console.warn(`[translateAllContent] Skipping field '${field}' for locale '${locale}' - translation is same as source text`);
-                return;
-              }
-
-              const translationKey = keyMapping[field];
-              const digest = digestMap[translationKey];
-
-              // Skip if no digest exists - Shopify doesn't support translation for this field
-              if (!digest) {
-                console.warn(`[translateAllContent] ⚠️ No digest for key '${translationKey}' (field '${field}') - Shopify may not support translation for this field`);
-                return;
-              }
-
-              translationsInput.push({
-                key: translationKey,
-                value: stringValue,
-                locale,
-                translatableContentDigest: digest
-              });
-            }
-          });
-
-          // Save to Shopify - send translations directly with digests
-          if (translationsInput.length > 0) {
-            const response = await this.admin.graphql(TRANSLATE_CONTENT, {
-              variables: {
-                resourceId,
-                translations: translationsInput
-              }
-            });
-
-            const data = await response.json();
-
-            if (data.data?.translationsRegister?.userErrors?.length > 0) {
-              console.error(`[translateAllContent] Error saving translations for ${locale}:`,
-                data.data.translationsRegister.userErrors);
-            }
-          }
-
-          // Update database - use upsert to preserve existing translations
-          if (translationsInput.length > 0) {
-            console.log(`🔷 [translateAllContent] Saving ${translationsInput.length} translations to DB for ${locale}:`, translationsInput.map(t => `${t.key}="${t.value.substring(0, 30)}..."`));
-            for (const translation of translationsInput) {
-              await db.contentTranslation.upsert({
-                where: {
-                  // Unique constraint is: @@unique([resourceId, key, locale])
-                  resourceId_key_locale: {
-                    resourceId,
-                    key: translation.key,
-                    locale: translation.locale,
-                  },
-                },
-                update: {
-                  value: translation.value,
-                  digest: translation.translatableContentDigest || null,
-                  resourceType, // Update resourceType in case it changed
-                },
-                create: {
-                  resourceId,
-                  resourceType,
-                  key: translation.key,
-                  value: translation.value,
-                  locale: translation.locale,
-                  digest: translation.translatableContentDigest || null,
-                },
-              });
-            }
-            console.log(`🔷 [translateAllContent] ✓ DB save completed for ${locale}`);
-          } else {
-            console.warn(`🔷 [translateAllContent] ⚠️ No translations to save for ${locale} - translationsInput is empty`);
-          }
+    for (const [key, value] of Object.entries(fields)) {
+      if (value) {
+        if (SHORT_FIELD_KEYS.includes(key)) {
+          shortFields[key] = value;
         } else {
-          console.warn(`🔷 [translateAllContent] ⚠️ No translatedFields for ${locale} - AI returned nothing for this locale`);
+          longFields[key] = value;
         }
-      } catch (localeError: any) {
-        console.error(`🔷 [translateAllContent] ❌ Failed to translate to ${locale}:`, localeError);
+      }
+    }
+
+    const hasShortFields = Object.keys(shortFields).length > 0;
+    const hasLongFields = Object.keys(longFields).length > 0;
+
+    console.log(`🔶 [translateAllContent] Using hybrid approach - shortFields: ${Object.keys(shortFields)}, longFields: ${Object.keys(longFields)}`);
+
+    const keyMapping: Record<string, string> = {
+      title: 'title',
+      description: 'body_html',
+      body: 'body_html',
+      handle: 'handle',
+      seoTitle: 'meta_title',
+      metaDescription: 'meta_description',
+    };
+
+    // Helper function to save translations to Shopify and DB
+    const saveTranslation = async (locale: string, field: string, value: string) => {
+      const translationKey = keyMapping[field];
+      if (!translationKey) return;
+
+      const digest = digestMap[translationKey];
+      if (!digest) {
+        console.warn(`[translateAllContent] ⚠️ No digest for key '${translationKey}' (field '${field}')`);
+        return;
+      }
+
+      // Skip if translation is same as source
+      const sourceValue = fields[field];
+      if (sourceValue && value.trim() === sourceValue.trim()) {
+        console.warn(`[translateAllContent] Skipping field '${field}' for locale '${locale}' - same as source`);
+        return;
+      }
+
+      // Save to Shopify
+      const response = await this.admin.graphql(TRANSLATE_CONTENT, {
+        variables: {
+          resourceId,
+          translations: [{
+            key: translationKey,
+            value,
+            locale,
+            translatableContentDigest: digest
+          }]
+        }
+      });
+
+      const data = await response.json();
+      if (data.data?.translationsRegister?.userErrors?.length > 0) {
+        console.error(`[translateAllContent] Error saving ${field} for ${locale}:`, data.data.translationsRegister.userErrors);
+      }
+
+      // Save to database
+      await db.contentTranslation.upsert({
+        where: {
+          resourceId_key_locale: {
+            resourceId,
+            key: translationKey,
+            locale,
+          },
+        },
+        update: {
+          value,
+          digest: digest || null,
+          resourceType,
+        },
+        create: {
+          resourceId,
+          resourceType,
+          key: translationKey,
+          value,
+          locale,
+          digest: digest || null,
+        },
+      });
+    };
+
+    // === STEP 1: Batch translate short fields (1 AI request for all locales) ===
+    if (hasShortFields) {
+      try {
+        console.log(`🔶 [translateAllContent] Batch translating short fields: ${Object.keys(shortFields)} to ${targetLocales.length} locales`);
+
+        const batchResult = await translationService.translateShortFieldsBatch(
+          shortFields,
+          sourceLocale,
+          targetLocales,
+          contentType || 'product'
+        );
+
+        // Save all short field translations
+        for (const locale of targetLocales) {
+          const localeTranslations = batchResult[locale];
+          if (!localeTranslations) continue;
+
+          for (const [field, value] of Object.entries(localeTranslations)) {
+            if (value) {
+              allTranslations[locale][field] = value;
+              await saveTranslation(locale, field, value as string);
+            }
+          }
+        }
+
+        console.log(`🔶 [translateAllContent] ✓ Batch short fields completed`);
+      } catch (batchError: any) {
+        console.error(`🔶 [translateAllContent] ❌ Batch short fields failed:`, batchError);
+        // Fallback: translate short fields sequentially
+        console.log(`🔶 [translateAllContent] Falling back to sequential for short fields...`);
+        for (const locale of targetLocales) {
+          try {
+            const localeTranslations = await translationService.translateProduct(shortFields, [locale], contentType, customInstructions);
+            const translatedFields = localeTranslations[locale];
+            if (translatedFields) {
+              for (const [field, value] of Object.entries(translatedFields)) {
+                if (value) {
+                  allTranslations[locale][field] = value;
+                  await saveTranslation(locale, field, value as string);
+                }
+              }
+            }
+          } catch (localeError: any) {
+            console.error(`[translateAllContent] ❌ Fallback failed for ${locale}:`, localeError);
+          }
+        }
+      }
+    }
+
+    // === STEP 2: Sequential translate long fields (1 AI request per locale) ===
+    if (hasLongFields) {
+      for (const locale of targetLocales) {
+        try {
+          console.log(`🔶 [translateAllContent] Translating long fields to ${locale}: ${Object.keys(longFields)}`);
+          const localeTranslations = await translationService.translateProduct(longFields, [locale], contentType, customInstructions);
+          const translatedFields = localeTranslations[locale];
+
+          if (translatedFields) {
+            for (const [field, value] of Object.entries(translatedFields)) {
+              if (value) {
+                // Ensure value is a string
+                let stringValue: string;
+                if (typeof value === 'string') {
+                  stringValue = value;
+                } else if (typeof value === 'object' && value !== null) {
+                  stringValue = (value as any).value || JSON.stringify(value);
+                } else {
+                  stringValue = String(value);
+                }
+
+                allTranslations[locale][field] = stringValue;
+                await saveTranslation(locale, field, stringValue);
+              }
+            }
+          }
+        } catch (localeError: any) {
+          console.error(`🔷 [translateAllContent] ❌ Failed to translate long fields to ${locale}:`, localeError);
+        }
       }
     }
 
