@@ -1752,8 +1752,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             t.common?.success || "Success"
           );
 
-          // Mark as loading to reset change detection
-          setIsLoadingData(true);
+          // Revalidate to fetch fresh data with the new translations
+          if (revalidator.state === 'idle') {
+            revalidator.revalidate();
+          }
         }
       }
     );
