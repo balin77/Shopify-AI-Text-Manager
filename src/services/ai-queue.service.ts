@@ -32,26 +32,27 @@ interface UsageWindow {
  * Manages all AI requests with rate limiting and retry logic
  *
  * MULTI-TENANT NOTE:
- * Rate limits are tracked GLOBALLY per AI provider, not per shop.
- * This is intentional for SaaS deployments where:
- * - The SaaS operator provides shared AI API keys
- * - Rate limits are applied at the application level, not per tenant
+ * - Queues are SHOP-SPECIFIC: Each shop has its own queue
+ * - Processing uses ROUND-ROBIN: Fair distribution across all shops
+ * - Rate limits are GLOBAL per AI provider (shared API keys)
  *
- * If you need per-shop rate limiting (e.g., shops bring their own API keys),
- * modify usageWindows and rateLimits to be Map<string, Map<AIProvider, ...>>
- * keyed by shop domain.
+ * This ensures no single shop can block others while still respecting
+ * global rate limits from AI providers.
  */
 export class AIQueueService {
   private static instance: AIQueueService;
-  private queue: QueuedRequest[] = [];
+
+  // Shop-specific queues: Map<shopDomain, QueuedRequest[]>
+  private queues: Map<string, QueuedRequest[]> = new Map();
   private processing = false;
 
-  // Track usage per provider using sliding window
-  // NOTE: Global rate limiting - shared across all shops
+  // Round-robin tracking: which shop to process next
+  private lastProcessedShopIndex = 0;
+
+  // Track usage per provider using sliding window (global - shared API keys)
   private usageWindows: Map<AIProvider, UsageWindow[]> = new Map();
 
-  // Rate limit configurations per provider
-  // NOTE: Global limits - to implement per-shop limits, key by shop domain
+  // Rate limit configurations per provider (global)
   private rateLimits: Map<AIProvider, RateLimitConfig> = new Map();
 
   private constructor() {
@@ -139,7 +140,30 @@ export class AIQueueService {
   }
 
   /**
-   * Add a request to the queue
+   * Get or create a shop-specific queue
+   */
+  private getShopQueue(shop: string): QueuedRequest[] {
+    let queue = this.queues.get(shop);
+    if (!queue) {
+      queue = [];
+      this.queues.set(shop, queue);
+    }
+    return queue;
+  }
+
+  /**
+   * Get total queue length across all shops
+   */
+  private getTotalQueueLength(): number {
+    let total = 0;
+    for (const queue of this.queues.values()) {
+      total += queue.length;
+    }
+    return total;
+  }
+
+  /**
+   * Add a request to the shop-specific queue
    */
   async enqueue<T>(
     shop: string,
@@ -162,10 +186,11 @@ export class AIQueueService {
         createdAt: new Date(),
       };
 
-      this.queue.push(request);
-      console.log(`[AIQueue] Enqueued request ${request.id} for task ${taskId}. Queue size: ${this.queue.length}`);
+      const shopQueue = this.getShopQueue(shop);
+      shopQueue.push(request);
+      console.log(`[AIQueue] Enqueued request ${request.id} for shop ${shop}, task ${taskId}. Shop queue size: ${shopQueue.length}, Total: ${this.getTotalQueueLength()}`);
 
-      // Update task queue position in database
+      // Update task queue position in database (shop-specific)
       this.updateQueuePositions(shop);
     });
   }
@@ -245,46 +270,72 @@ export class AIQueueService {
   }
 
   /**
-   * Process the queue
+   * Get the next shop to process using round-robin
+   * Returns null if no shop has executable requests
+   */
+  private getNextExecutableRequest(): { shop: string; request: QueuedRequest; index: number } | null {
+    const shops = Array.from(this.queues.keys());
+    if (shops.length === 0) return null;
+
+    // Start from the next shop after the last processed one (round-robin)
+    const startIndex = (this.lastProcessedShopIndex + 1) % shops.length;
+
+    // Try each shop in round-robin order
+    for (let i = 0; i < shops.length; i++) {
+      const shopIndex = (startIndex + i) % shops.length;
+      const shop = shops[shopIndex];
+      const queue = this.queues.get(shop) || [];
+
+      // Find first executable request in this shop's queue
+      const requestIndex = queue.findIndex(req =>
+        this.canExecute(req.provider, req.estimatedTokens)
+      );
+
+      if (requestIndex !== -1) {
+        this.lastProcessedShopIndex = shopIndex;
+        return { shop, request: queue[requestIndex], index: requestIndex };
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Process queues with fair round-robin across shops
    */
   private async startProcessing() {
     setInterval(async () => {
-      if (this.processing || this.queue.length === 0) return;
+      if (this.processing || this.getTotalQueueLength() === 0) return;
 
       this.processing = true;
 
       try {
-        // Find the first request that can be executed
-        const index = this.queue.findIndex(req =>
-          this.canExecute(req.provider, req.estimatedTokens)
-        );
+        // Find next executable request using round-robin
+        const next = this.getNextExecutableRequest();
 
-        if (index === -1) {
-          // No request can be executed right now
-          const firstRequest = this.queue[0];
-          if (firstRequest) {
-            const waitTime = this.calculateWaitTime(
-              firstRequest.provider,
-              firstRequest.estimatedTokens
-            );
-            console.log(
-              `[AIQueue] Waiting ${waitTime}ms before next execution. ` +
-              `Queue size: ${this.queue.length}`
-            );
-          }
+        if (!next) {
+          // No request can be executed right now (rate limited)
           return;
         }
 
+        const { shop, request, index } = next;
+        const shopQueue = this.queues.get(shop)!;
+
         // Remove request from queue
-        const [request] = this.queue.splice(index, 1);
+        shopQueue.splice(index, 1);
+
+        // Clean up empty queues
+        if (shopQueue.length === 0) {
+          this.queues.delete(shop);
+        }
 
         console.log(
-          `[AIQueue] Executing request ${request.id} for task ${request.taskId}. ` +
-          `Remaining in queue: ${this.queue.length}`
+          `[AIQueue] Executing request ${request.id} for shop ${shop}, task ${request.taskId}. ` +
+          `Shop queue remaining: ${shopQueue.length}, Total: ${this.getTotalQueueLength()}`
         );
 
         // Update task status to running
-        await this.updateTaskStatus(request.shop, request.taskId, 'running');
+        await this.updateTaskStatus(shop, request.taskId, 'running');
 
         try {
           // Execute the request
@@ -318,11 +369,12 @@ export class AIQueueService {
             );
 
             // Update retry count in database
-            await this.updateTaskRetryCount(request.shop, request.taskId, request.retryCount);
+            await this.updateTaskRetryCount(shop, request.taskId, request.retryCount);
 
-            // Re-queue the request
+            // Re-queue the request to the front of the shop's queue
             setTimeout(() => {
-              this.queue.unshift(request);
+              const queue = this.getShopQueue(shop);
+              queue.unshift(request);
             }, backoffTime);
           } else {
             // Reject the promise
@@ -330,8 +382,8 @@ export class AIQueueService {
           }
         }
 
-        // Update queue positions for remaining tasks
-        await this.updateQueuePositions(request.shop);
+        // Update queue positions for the affected shop
+        await this.updateQueuePositions(shop);
       } finally {
         this.processing = false;
       }
@@ -339,14 +391,16 @@ export class AIQueueService {
   }
 
   /**
-   * Update queue positions in database
+   * Update queue positions in database for a specific shop
    */
   private async updateQueuePositions(shop: string) {
     try {
       const { db } = await import('../../app/db.server');
 
-      // Update positions for tasks in queue
-      const updates = this.queue.map((req, index) =>
+      const shopQueue = this.queues.get(shop) || [];
+
+      // Update positions only for tasks in this shop's queue
+      const updates = shopQueue.map((req, index) =>
         db.task.update({
           where: { id: req.taskId },
           data: {
@@ -358,7 +412,7 @@ export class AIQueueService {
 
       await Promise.all(updates);
     } catch (error) {
-      console.error('[AIQueue] Error updating queue positions:', error);
+      console.error(`[AIQueue] Error updating queue positions for shop ${shop}:`, error);
     }
   }
 
@@ -451,8 +505,9 @@ export class AIQueueService {
         createdAt: new Date(),
       };
 
-      this.queue.push(request);
-      console.log(`[AIQueue] Re-enqueued recovered task ${task.id}. Queue size: ${this.queue.length}`);
+      const shopQueue = this.getShopQueue(task.shop);
+      shopQueue.push(request);
+      console.log(`[AIQueue] Re-enqueued recovered task ${task.id} for shop ${task.shop}. Shop queue size: ${shopQueue.length}, Total: ${this.getTotalQueueLength()}`);
 
       // Update task queue position in database
       this.updateQueuePositions(task.shop);
@@ -505,6 +560,7 @@ export class AIQueueService {
 
   /**
    * Get queue statistics
+   * @param shop - If provided, returns stats for that specific shop only
    */
   getQueueStats(shop?: string): {
     queueLength: number;
@@ -512,17 +568,32 @@ export class AIQueueService {
     byShop: Record<string, number>;
   } {
     const stats = {
-      queueLength: this.queue.length,
+      queueLength: 0,
       byProvider: {} as Record<AIProvider, number>,
       byShop: {} as Record<string, number>,
     };
 
-    for (const request of this.queue) {
-      // Count by provider
-      stats.byProvider[request.provider] = (stats.byProvider[request.provider] || 0) + 1;
+    // If specific shop requested, only return that shop's stats
+    if (shop) {
+      const shopQueue = this.queues.get(shop) || [];
+      stats.queueLength = shopQueue.length;
+      stats.byShop[shop] = shopQueue.length;
 
-      // Count by shop
-      stats.byShop[request.shop] = (stats.byShop[request.shop] || 0) + 1;
+      for (const request of shopQueue) {
+        stats.byProvider[request.provider] = (stats.byProvider[request.provider] || 0) + 1;
+      }
+
+      return stats;
+    }
+
+    // Otherwise, aggregate across all shops
+    for (const [shopDomain, queue] of this.queues.entries()) {
+      stats.queueLength += queue.length;
+      stats.byShop[shopDomain] = queue.length;
+
+      for (const request of queue) {
+        stats.byProvider[request.provider] = (stats.byProvider[request.provider] || 0) + 1;
+      }
     }
 
     return stats;
