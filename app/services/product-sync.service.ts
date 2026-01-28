@@ -160,6 +160,7 @@ export class ProductSyncService {
             descriptionHtml
             handle
             status
+            productType
             updatedAt
             seo {
               title
@@ -381,6 +382,7 @@ export class ProductSyncService {
           descriptionHtml: productData.descriptionHtml || "",
           handle: productData.handle,
           status: productData.status,
+          productType: productData.productType || null,
           seoTitle: productData.seo?.title || null,
           seoDescription: productData.seo?.description || null,
           featuredImageUrl: productData.featuredImage?.url || null,
@@ -393,6 +395,7 @@ export class ProductSyncService {
           descriptionHtml: productData.descriptionHtml || "",
           handle: productData.handle,
           status: productData.status,
+          productType: productData.productType || null,
           seoTitle: productData.seo?.title || null,
           seoDescription: productData.seo?.description || null,
           featuredImageUrl: productData.featuredImage?.url || null,

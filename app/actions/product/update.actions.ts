@@ -22,6 +22,7 @@ interface UpdateProductParams {
   handle?: string;
   seoTitle?: string;
   metaDescription?: string;
+  productType?: string;
   imageAltTexts?: Record<number, string>;
   productId: string;
 }
@@ -52,6 +53,7 @@ export async function handleUpdateProduct(
     handle: formData.get("handle") as string,
     seoTitle: formData.get("seoTitle") as string,
     metaDescription: formData.get("metaDescription") as string,
+    productType: formData.get("productType") as string,
     imageAltTexts: formData.get("imageAltTexts")
       ? JSON.parse(formData.get("imageAltTexts") as string)
       : {},
@@ -524,6 +526,21 @@ async function updateTranslatedProduct(
     translationsToDelete.push("meta_description");
   }
 
+  if (params.productType && params.productType.trim()) {
+    if (digestMap["product_type"]) {
+      translationsInput.push({
+        key: "product_type",
+        value: params.productType,
+        locale: params.locale,
+        translatableContentDigest: digestMap["product_type"],
+      });
+    } else {
+      skippedFields.push("product_type");
+    }
+  } else if (params.productType === "") {
+    translationsToDelete.push("product_type");
+  }
+
   if (skippedFields.length > 0) {
     loggers.product("warn", "Skipped translations - no primary content exists", {
       productId,
@@ -739,6 +756,7 @@ async function updatePrimaryProduct(
           title: params.title,
           handle: params.handle,
           descriptionHtml: params.descriptionHtml,
+          productType: params.productType,
           seo: {
             title: params.seoTitle,
             description: params.metaDescription,
@@ -772,6 +790,7 @@ async function updatePrimaryProduct(
     if (params.handle !== undefined) updateData.handle = params.handle || null;
     if (params.seoTitle !== undefined) updateData.seoTitle = params.seoTitle || null;
     if (params.metaDescription !== undefined) updateData.seoDescription = params.metaDescription || null;
+    if (params.productType !== undefined) updateData.productType = params.productType || null;
 
     // Always update lastSyncedAt
     updateData.lastSyncedAt = new Date();
@@ -804,6 +823,7 @@ async function updatePrimaryProduct(
         handle: "handle",
         seoTitle: "meta_title",
         metaDescription: "meta_description",
+        productType: "product_type",
       };
 
       const translationKeysToDelete = changedFields

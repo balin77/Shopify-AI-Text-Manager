@@ -259,6 +259,7 @@ export class ShopifyContentService {
         handle: 'handle',
         seoTitle: 'meta_title',
         metaDescription: 'meta_description',
+        productType: 'product_type',
       };
 
       Object.entries(updates).forEach(([field, value]) => {
@@ -425,6 +426,7 @@ export class ShopifyContentService {
           handle: 'handle',
           seoTitle: 'meta_title',
           metaDescription: 'meta_description',
+          productType: 'product_type',
         };
 
         const translationKeysToDelete = changedFields
@@ -512,7 +514,7 @@ export class ShopifyContentService {
     }
 
     // Separate short and long fields
-    const SHORT_FIELD_KEYS = ['title', 'seoTitle', 'handle'];
+    const SHORT_FIELD_KEYS = ['title', 'seoTitle', 'handle', 'productType'];
     const shortFields: Record<string, string> = {};
     const longFields: Record<string, string> = {};
 
@@ -538,6 +540,7 @@ export class ShopifyContentService {
       handle: 'handle',
       seoTitle: 'meta_title',
       metaDescription: 'meta_description',
+      productType: 'product_type',
     };
 
     // Helper function to save translations to Shopify and DB

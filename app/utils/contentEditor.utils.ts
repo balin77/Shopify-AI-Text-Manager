@@ -101,6 +101,7 @@ function primaryHasFieldContent(
     handle: 'handle',
     meta_title: 'seo.title',
     meta_description: 'seo.description',
+    product_type: 'productType',
   };
 
   const fieldPath = fieldPathMap[field] || field;

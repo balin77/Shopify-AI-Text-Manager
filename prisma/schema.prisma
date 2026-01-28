@@ -178,6 +178,7 @@ model Product {
   descriptionHtml  String? @db.Text
   handle           String
   status           String // "ACTIVE", "DRAFT", "ARCHIVED"
+  productType      String? // Product type for categorization (e.g., "T-Shirt", "Shoes")
   seoTitle         String?
   seoDescription   String? @db.Text
   featuredImageUrl String?

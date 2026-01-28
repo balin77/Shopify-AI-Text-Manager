@@ -782,6 +782,7 @@ Allowed formatting changes:
           handle: "handle",
           seoTitle: "seoTitle",
           metaDescription: "metaDescription",
+          productType: "productType",
         };
 
         contentConfig.fieldDefinitions.forEach((field) => {
