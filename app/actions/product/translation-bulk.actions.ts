@@ -119,6 +119,13 @@ export async function handleTranslateFieldToAllLocales(
       digestMap[content.key] = content.digest;
     }
 
+    // DEBUG: Log full translatableContent and digestMap
+    loggers.translation("info", "🔍 DEBUG: Translatable content from Shopify (single field)", {
+      productId,
+      translatableContent: JSON.stringify(translatableContent, null, 2),
+      digestMap: JSON.stringify(digestMap, null, 2),
+    });
+
     // Map fieldType to Shopify key
     const fieldKeyMap: Record<string, string> = {
       title: "title",
@@ -158,6 +165,12 @@ export async function handleTranslateFieldToAllLocales(
 
         // Save to Shopify
         if (digestMap[shopifyKey]) {
+          loggers.translation("info", "🔍 DEBUG: Saving translation to Shopify", {
+            locale,
+            shopifyKey,
+            digest: digestMap[shopifyKey],
+            valueLength: translatedValue.length,
+          });
           const response = await gateway.graphql(
             `#graphql
               mutation translateProduct($resourceId: ID!, $translations: [TranslationInput!]!) {
@@ -231,6 +244,14 @@ export async function handleTranslateFieldToAllLocales(
               });
             }
           }
+        } else {
+          // DEBUG: Log when digest is missing
+          loggers.translation("warn", "🚨 DEBUG: SKIPPING translation - no digest found!", {
+            locale,
+            shopifyKey,
+            productId,
+            availableDigests: Object.keys(digestMap),
+          });
         }
 
         processedLocales++;
@@ -365,6 +386,13 @@ export async function handleTranslateAll(
       digestMap[content.key] = content.digest;
     }
 
+    // DEBUG: Log full translatableContent and digestMap
+    loggers.translation("info", "🔍 DEBUG: Translatable content from Shopify (all fields)", {
+      productId,
+      translatableContent: JSON.stringify(translatableContent, null, 2),
+      digestMap: JSON.stringify(digestMap, null, 2),
+    });
+
     // Translate each locale
     for (const locale of params.targetLocales) {
       try {
@@ -424,6 +452,29 @@ export async function handleTranslateAll(
             value: fields.metaDescription,
             locale,
             translatableContentDigest: digestMap["meta_description"],
+          });
+        }
+
+        // DEBUG: Log which fields are being saved and which are skipped
+        const skippedFields: string[] = [];
+        if (fields.title && !digestMap["title"]) skippedFields.push("title");
+        if (fields.description && !digestMap["body_html"]) skippedFields.push("body_html");
+        if (fields.handle && !digestMap["handle"]) skippedFields.push("handle");
+        if (fields.seoTitle && !digestMap["meta_title"]) skippedFields.push("meta_title");
+        if (fields.metaDescription && !digestMap["meta_description"]) skippedFields.push("meta_description");
+
+        loggers.translation("info", "🔍 DEBUG: Translation input prepared", {
+          locale,
+          fieldsToSave: translationsInput.map(t => t.key),
+          skippedFields,
+          availableDigests: Object.keys(digestMap).filter(k => digestMap[k]),
+        });
+
+        if (skippedFields.length > 0) {
+          loggers.translation("warn", "🚨 DEBUG: SKIPPING fields - no digest found!", {
+            locale,
+            productId,
+            skippedFields,
           });
         }
 
