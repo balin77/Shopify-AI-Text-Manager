@@ -555,6 +555,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
     try {
       const formData = new FormData();
+      // Add contentType for task tracking
+      formData.append('contentType', config.contentType);
       Object.entries(data).forEach(([key, value]) => {
         formData.append(key, String(value));
       });
