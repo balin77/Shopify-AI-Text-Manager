@@ -287,6 +287,7 @@ export interface EditorState {
   isClearAllModalOpen: boolean;
   isInitialDataReady: boolean;
   isLoadingImages?: boolean; // True when loading images on-demand from Shopify
+  fallbackFields: Set<string>; // Fields showing fallback values (e.g., handle with primary locale value)
 }
 
 export interface EditorHandlers {

@@ -43,6 +43,16 @@
   border-radius: 8px !important;
 }
 
+/* Gray background for fallback values (using primary locale value when no translation exists) */
+.ai-editable-field-wrapper.bg-fallback input,
+.ai-editable-field-wrapper.bg-fallback textarea {
+  background-color: #f3f4f6 !important;
+  border: 1px solid #d1d5db !important;
+  border-radius: 8px !important;
+  color: #6b7280 !important;
+  font-style: italic !important;
+}
+
 /* Character counter and helpText positioning - right aligned */
 .ai-editable-field-wrapper .Polaris-TextField__CharacterCount,
 .ai-editable-field-wrapper .Polaris-Text--subdued {
@@ -100,6 +110,14 @@
 .ai-editable-html-field.bg-missing-translation [contenteditable] {
   background-color: #e0f2fe !important;
   border-color: #c9cccf !important;
+}
+
+.ai-editable-html-field.bg-fallback textarea,
+.ai-editable-html-field.bg-fallback [contenteditable] {
+  background-color: #f3f4f6 !important;
+  border-color: #d1d5db !important;
+  color: #6b7280 !important;
+  font-style: italic !important;
 }
 
 /* HTML content styling for AI suggestion boxes */

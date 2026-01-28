@@ -85,6 +85,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // Track original template values for change detection (templates use dynamic fields)
   const originalTemplateValuesRef = useRef<Record<string, string>>({});
 
+  // Track which fields are showing fallback values (e.g., handle field showing primary locale value)
+  // This happens when Shopify doesn't return a translation because it's identical to the primary value
+  const [fallbackFields, setFallbackFields] = useState<Set<string>>(new Set());
+
   // Track if initial data load was successful - disables retry mechanism after successful load
   // Reset when item or language changes, allowing retry during new load cycles
   const initialLoadSuccessfulRef = useRef(false);
@@ -340,6 +344,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       fieldDefs.forEach((field) => {
         newValues[field.key] = getItemFieldValue(item, field.key, primaryLocale, config);
       });
+      // Clear fallback fields when viewing primary locale
+      setFallbackFields(new Set());
     } else if (config.contentType === 'templates') {
       // TEMPLATES: Don't load translations here - they are managed by app.templates.tsx
       // via loadedTranslations cache. Just initialize with empty strings.
@@ -355,6 +361,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       return;
     } else {
       // Load translated values for non-template content types
+      const newFallbackFields = new Set<string>();
+
       fieldDefs.forEach((field) => {
         // Check if this translation key was deleted - if so, show empty field
         if (deletedTranslationKeysRef.current.has(field.translationKey)) {
@@ -379,8 +387,19 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           "",
           primaryLocale
         );
-        newValues[field.key] = translatedValue;
+
+        // Special handling for handle field: fallback to primary locale value if no translation
+        // Shopify doesn't return a translation if it's identical to the primary value
+        if (field.key === 'handle' && !translatedValue && item.handle) {
+          debugLog.dataLoad(' Handle field: using fallback to primary locale value:', item.handle);
+          newValues[field.key] = item.handle;
+          newFallbackFields.add(field.key);
+        } else {
+          newValues[field.key] = translatedValue;
+        }
       });
+
+      setFallbackFields(newFallbackFields);
     }
 
     setEditableValues(newValues);
@@ -1660,6 +1679,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // Force isLoadingData to false to ensure change detection works for manual changes
     setIsLoadingData(false);
 
+    // If this field was a fallback, remove it from fallback fields since user is editing
+    if (fallbackFields.has(fieldKey)) {
+      setFallbackFields((prev) => {
+        const newSet = new Set(prev);
+        newSet.delete(fieldKey);
+        return newSet;
+      });
+    }
+
     // Update the state immediately without any side effects
     // This ensures the input field responds instantly to user typing
     setEditableValues((prev) => ({
@@ -1678,6 +1706,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const handleClearField = (fieldKey: string) => {
     // Force isLoadingData to false to ensure change detection works
     setIsLoadingData(false);
+
+    // If this field was a fallback, remove it from fallback fields
+    if (fallbackFields.has(fieldKey)) {
+      setFallbackFields((prev) => {
+        const newSet = new Set(prev);
+        newSet.delete(fieldKey);
+        return newSet;
+      });
+    }
 
     // Clear the field value
     setEditableValues((prev) => ({
@@ -2080,6 +2117,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     isClearAllModalOpen,
     isInitialDataReady,
     isLoadingImages,
+    fallbackFields,
   };
 
   const handlers: EditorHandlers = {

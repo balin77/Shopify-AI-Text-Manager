@@ -444,6 +444,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         isDataLoading={!state.isInitialDataReady}
                         sourceTextAvailable={!!getSourceText(selectedItem, field.key, primaryLocale)}
                         disableGeneration={config.contentType === 'templates'}
+                        isFallbackValue={state.fallbackFields?.has(field.key) || false}
                         onGenerateAI={field.supportsAI !== false ? () => handlers.handleGenerateAI(field.key) : undefined}
                         onFormatAI={field.supportsFormatting !== false ? () => handlers.handleFormatAI(field.key) : undefined}
                         onTranslate={field.supportsTranslation !== false ? () => handlers.handleTranslateField(field.key) : undefined}
@@ -574,6 +575,8 @@ interface FieldRendererProps {
   sourceTextAvailable: boolean;
   /** If true, only "Improve with AI" is shown (disabled when empty). Used for templates. */
   disableGeneration?: boolean;
+  /** If true, the value is a fallback from primary locale (shown in gray) */
+  isFallbackValue?: boolean;
   onGenerateAI?: () => void;
   onFormatAI?: () => void;
   onTranslate?: () => void;
@@ -603,6 +606,7 @@ function FieldRenderer(props: FieldRendererProps & { state?: any; handlers?: any
     isDataLoading,
     sourceTextAvailable,
     disableGeneration,
+    isFallbackValue,
     onGenerateAI,
     onFormatAI,
     onTranslate,
@@ -802,6 +806,7 @@ function FieldRenderer(props: FieldRendererProps & { state?: any; handlers?: any
       isDataLoading={isDataLoading}
       sourceTextAvailable={sourceTextAvailable}
       disableGeneration={disableGeneration}
+      isFallbackValue={isFallbackValue}
       onGenerateAI={field.supportsAI !== false && isPrimaryLocale ? onGenerateAI : undefined}
       onFormatAI={field.supportsFormatting !== false && isPrimaryLocale ? onFormatAI : undefined}
       onTranslate={field.supportsTranslation !== false ? onTranslate : undefined}
