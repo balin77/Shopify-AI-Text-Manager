@@ -10,6 +10,7 @@ export const de = {
   // Products Page
   products: {
     title: "Produkte",
+    loading: "Lade Produkte...",
     count: "Produkte",
     search: "Produkte suchen...",
     selectProduct: "Wähle ein Produkt aus der Liste",

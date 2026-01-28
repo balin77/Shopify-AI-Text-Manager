@@ -192,8 +192,9 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           height: `calc(100vh - ${getTotalNavHeight()}px)`,
           display: "flex",
           gap: "1rem",
-          padding: "1rem",
+          padding: "0 1rem 1rem 1rem",
           overflow: "hidden",
+          boxSizing: "border-box",
         }}
       >
         {/* Left Sidebar - Unified Item List */}

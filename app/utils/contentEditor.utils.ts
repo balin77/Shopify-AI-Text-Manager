@@ -693,6 +693,24 @@ export function useLocaleButtonStyle(
  * Common CSS styles for content editor pages
  */
 export const contentEditorStyles = `
+  /* Global layout fixes to prevent scrollbars */
+  html, body {
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    height: 100%;
+  }
+
+  /* Polaris Page component overrides for full-height layout */
+  .Polaris-Page {
+    padding: 0 !important;
+    max-width: 100% !important;
+  }
+
+  .Polaris-Page__Content {
+    padding: 0 !important;
+  }
+
   .description-editor h1 {
     font-size: 2em;
     font-weight: bold;

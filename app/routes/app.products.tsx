@@ -12,7 +12,7 @@
  */
 
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useFetcher, useRevalidator } from "@remix-run/react";
+import { useLoaderData, useFetcher, useRevalidator, useNavigation } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
 import { ContentTypeNavigation } from "../components/ContentTypeNavigation";
@@ -25,6 +25,7 @@ import { useInfoBox } from "../contexts/InfoBoxContext";
 import { usePlan } from "../contexts/PlanContext";
 import { useNavigationHeight } from "../contexts/NavigationHeightContext";
 import { useEffect, useState, useRef } from "react";
+import { Spinner, Text } from "@shopify/polaris";
 import type { ContentItem } from "../types/content-editor.types";
 import { logger } from "~/utils/logger.server";
 
@@ -213,6 +214,7 @@ export const action = async (args: ActionFunctionArgs) => {
 
 export default function ProductsPage() {
   const { products, shopLocales, primaryLocale, error, aiSettings, plan, maxProducts } = useLoaderData<typeof loader>();
+  const navigation = useNavigation();
   const fetcher = useFetcher<typeof action>();
   const syncFetcher = useFetcher<{ success: boolean; synced: number; total: number }>();
   const translationSyncFetcher = useFetcher<{ success: boolean }>();
@@ -223,6 +225,39 @@ export default function ProductsPage() {
   const { setContentNavHeight } = useNavigationHeight();
   const [isSyncing, setIsSyncing] = useState(false);
   const [isLoadingTranslations, setIsLoadingTranslations] = useState(false);
+  const [isInitialLoad, setIsInitialLoad] = useState(true);
+
+  // Mark initial load as complete after first render
+  useEffect(() => {
+    if (isInitialLoad && products.length >= 0) {
+      // Small delay to ensure smooth transition
+      const timer = setTimeout(() => setIsInitialLoad(false), 100);
+      return () => clearTimeout(timer);
+    }
+  }, [products, isInitialLoad]);
+
+  // Show loading spinner during initial page load or navigation
+  const isPageLoading = navigation.state === "loading" && navigation.location?.pathname === "/app/products";
+
+  if (isInitialLoad || isPageLoading) {
+    return (
+      <div
+        style={{
+          height: "100vh",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          flexDirection: "column",
+          gap: "16px",
+        }}
+      >
+        <Spinner accessibilityLabel="Loading products" size="large" />
+        <Text as="p" variant="bodyMd" tone="subdued">
+          {t.products?.loading || "Loading Products"}
+        </Text>
+      </div>
+    );
+  }
 
   // Track which products we've already synced translations for (to avoid duplicate syncs)
   const syncedProductsRef = useRef<Set<string>>(new Set());

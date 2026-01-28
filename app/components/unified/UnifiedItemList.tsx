@@ -243,12 +243,37 @@ export function UnifiedItemList({
   return (
     <div style={{ width: "350px", flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0, height: "100%" }}>
       <style>{`
-        ul.Polaris-ResourceList {
-          max-height: ${listMaxHeight}px !important;
+        /* UnifiedItemList - Full height card with scrollable list */
+        .unified-item-list-wrapper {
+          height: 100% !important;
+          display: flex !important;
+          flex-direction: column !important;
+        }
+        .unified-item-list-wrapper > .Polaris-Card {
+          height: 100% !important;
+          display: flex !important;
+          flex-direction: column !important;
+          overflow: hidden !important;
+        }
+        .unified-item-list-wrapper .Polaris-Card > div {
+          display: flex !important;
+          flex-direction: column !important;
+          height: 100% !important;
+          overflow: hidden !important;
+        }
+        .unified-item-list-scroll {
+          flex: 1 !important;
+          min-height: 0 !important;
           overflow-y: auto !important;
         }
+        .unified-item-list-scroll .Polaris-ResourceList__ResourceListWrapper {
+          height: auto !important;
+        }
+        .unified-item-list-scroll ul.Polaris-ResourceList {
+          max-height: none !important;
+        }
       `}</style>
-      <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
+      <div className="unified-item-list-wrapper" style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
       <Card padding="0">
         {/* Header */}
         <div ref={headerRef} style={{ padding: "1rem", borderBottom: "1px solid #e1e3e5", flexShrink: 0 }}>
@@ -290,7 +315,7 @@ export function UnifiedItemList({
         </div>
 
         {/* Item List - Scrollable */}
-        <div style={{ flex: 1, overflowY: "auto", minHeight: 0, maxHeight: "100%" }}>
+        <div className="unified-item-list-scroll" style={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
           {paginatedItems.length > 0 ? (
             <ResourceList
               resourceName={resourceName}

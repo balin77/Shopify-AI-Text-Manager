@@ -12,6 +12,7 @@ export const en: Translation = {
   // Products Page
   products: {
     title: "Products",
+    loading: "Loading Products...",
     count: "Products",
     search: "Search products...",
     selectProduct: "Select a product from the list",
