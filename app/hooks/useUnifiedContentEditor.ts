@@ -559,9 +559,20 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         formData.append(key, String(value));
       });
 
-      const response = await fetch(window.location.pathname, {
+      // For templates, use the dedicated API route with groupId
+      // This avoids the page route returning HTML instead of JSON
+      let apiUrl = window.location.pathname;
+      if (config.contentType === 'templates' && data.itemId) {
+        const groupId = String(data.itemId).replace('group_', '');
+        apiUrl = `/api/templates/${groupId}`;
+      }
+
+      const response = await fetch(apiUrl, {
         method: 'POST',
         body: formData,
+        headers: {
+          'Accept': 'application/json',
+        },
       });
 
       // Check if response is JSON before parsing
