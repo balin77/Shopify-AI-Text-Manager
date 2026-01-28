@@ -117,6 +117,7 @@ export function UnifiedItemList({
   const [itemHeight, setItemHeight] = useState(56); // Will be calculated dynamically
 
   const { getTotalNavHeight } = useNavigationHeight();
+  const wrapperRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLDivElement>(null);
   const paginationRef = useRef<HTMLDivElement>(null);
   const listContainerRef = useRef<HTMLDivElement>(null);
@@ -142,46 +143,55 @@ export function UnifiedItemList({
   // Calculate items per page and item height based on available space
   useEffect(() => {
     const calculateDynamicPagination = () => {
-      // Use the actual list container height if available
-      const containerHeight = listContainerRef.current?.clientHeight;
-      if (!containerHeight || containerHeight < 100) {
+      // Get the wrapper height (from flexbox layout)
+      const wrapperHeight = wrapperRef.current?.clientHeight;
+      const headerHeight = headerRef.current?.offsetHeight || 100;
+      const paginationHeight = showPagination ? 56 : 0;
+
+      // Calculate available height for the list
+      let availableHeight: number;
+
+      if (wrapperHeight && wrapperHeight > 200) {
+        // Use wrapper height minus header and pagination
+        availableHeight = wrapperHeight - headerHeight - paginationHeight;
+      } else {
         // Fallback: calculate from window
         const navHeight = getTotalNavHeight();
-        const headerHeight = headerRef.current?.offsetHeight || 120;
-        const paginationHeight = 56;
         const padding = 32;
-        const availableHeight = window.innerHeight - navHeight - headerHeight - paginationHeight - padding;
-
-        const minItemHeight = showThumbnails ? 56 : 48;
-        const itemsThatFit = Math.max(5, Math.floor(availableHeight / minItemHeight));
-        setDynamicItemsPerPage(itemsThatFit);
-        setItemHeight(minItemHeight);
-        return;
+        availableHeight = window.innerHeight - navHeight - headerHeight - paginationHeight - padding;
       }
 
-      // Use container height for calculation
+      // Calculate item dimensions
       const minItemHeight = showThumbnails ? 56 : 48;
-      const maxItemHeight = 72;
+      const maxItemHeight = 64;
 
       // Calculate how many items fit
-      const itemsThatFit = Math.max(5, Math.floor(containerHeight / minItemHeight));
+      const itemsThatFit = Math.max(5, Math.floor(availableHeight / minItemHeight));
 
       // Calculate actual item height to fill the space exactly
-      const calculatedItemHeight = Math.min(maxItemHeight, Math.max(minItemHeight, containerHeight / itemsThatFit));
+      const calculatedItemHeight = Math.min(maxItemHeight, Math.max(minItemHeight, Math.floor(availableHeight / itemsThatFit)));
 
       setDynamicItemsPerPage(itemsThatFit);
       setItemHeight(calculatedItemHeight);
     };
 
     // Delay initial calculation to allow DOM to render
-    const timer = setTimeout(calculateDynamicPagination, 100);
+    const timer = setTimeout(calculateDynamicPagination, 150);
     window.addEventListener('resize', calculateDynamicPagination);
+
+    // Use ResizeObserver for more reliable height detection
+    let resizeObserver: ResizeObserver | null = null;
+    if (wrapperRef.current && typeof ResizeObserver !== 'undefined') {
+      resizeObserver = new ResizeObserver(calculateDynamicPagination);
+      resizeObserver.observe(wrapperRef.current);
+    }
 
     return () => {
       clearTimeout(timer);
       window.removeEventListener('resize', calculateDynamicPagination);
+      resizeObserver?.disconnect();
     };
-  }, [getTotalNavHeight, showThumbnails]);
+  }, [getTotalNavHeight, showThumbnails, showPagination]);
 
   // Reset to page 1 when search changes
   const handleSearchChange = (value: string) => {
@@ -272,7 +282,7 @@ export function UnifiedItemList({
   const itemRenderer = renderItem || defaultRenderItem;
 
   return (
-    <div style={{ width: "280px", flexShrink: 0, height: "100%", overflow: "hidden" }}>
+    <div ref={wrapperRef} style={{ width: "310px", flexShrink: 0, height: "100%", overflow: "hidden" }}>
       <style>{`
         /* UnifiedItemList - Full height card with scrollable list */
         .unified-item-list-wrapper {
