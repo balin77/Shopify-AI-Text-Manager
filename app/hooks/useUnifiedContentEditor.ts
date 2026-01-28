@@ -97,6 +97,18 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // Reset when item or language changes, allowing retry during new load cycles
   const initialLoadSuccessfulRef = useRef(false);
 
+  // ============================================================================
+  // AUTO-SELECT FIRST ITEM ON MOUNT
+  // Automatically select the first item when the page loads
+  // ============================================================================
+
+  useEffect(() => {
+    const firstItem = items[0];
+    if (items.length > 0 && !selectedItemId && firstItem) {
+      setSelectedItemId(firstItem.id);
+    }
+  }, [items, selectedItemId]);
+
   // IMPORTANT: Memoize selectedItem to prevent infinite re-renders
   // Without this, items.find() returns a new object reference on every revalidation,
   // which triggers useChangeTracking and other effects, causing an infinite loop
