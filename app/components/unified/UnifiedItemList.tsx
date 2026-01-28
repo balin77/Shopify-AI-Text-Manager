@@ -307,6 +307,15 @@ export function UnifiedItemList({
           display: flex !important;
           align-items: center !important;
         }
+        .unified-item-list-scroll .Polaris-ResourceItem__Content {
+          display: flex !important;
+          align-items: center !important;
+          height: 100% !important;
+        }
+        .unified-item-list-scroll .Polaris-ResourceItem__ListItem {
+          display: flex !important;
+          align-items: center !important;
+        }
       `}</style>
       <div className="unified-item-list-wrapper" style={{ display: "flex", flexDirection: "column", flex: 1, overflow: "hidden", minHeight: 0 }}>
       <Card padding="0">
@@ -371,7 +380,10 @@ export function UnifiedItemList({
                         backgroundColor: isSelected ? "rgba(0, 128, 96, 0.08)" : "transparent",
                         borderLeft: isSelected ? "3px solid #008060" : "3px solid transparent",
                         margin: "-12px -20px",
-                        padding: "12px 20px",
+                        padding: "0 20px",
+                        height: `${itemHeight}px`,
+                        display: "flex",
+                        alignItems: "center",
                       }}
                     >
                       {itemRenderer(item, isSelected, isHovered)}
