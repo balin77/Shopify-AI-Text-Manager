@@ -564,6 +564,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         body: formData,
       });
 
+      // Check if response is JSON before parsing
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        const text = await response.text();
+        console.error('Non-JSON response received:', text.substring(0, 500));
+        throw new Error(`Server returned ${response.status}: Expected JSON but got ${contentType || 'unknown content type'}`);
+      }
+
       const result = await response.json();
 
       if (result.success) {
