@@ -119,6 +119,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       descriptionHtml: p.descriptionHtml || "",
       handle: p.handle,
       status: p.status,
+      productType: p.productType || "",
       featuredImage: {
         url: p.featuredImageUrl || "",
         altText: p.featuredImageAlt || undefined,
