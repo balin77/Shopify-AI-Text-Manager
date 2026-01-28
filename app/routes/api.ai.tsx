@@ -305,6 +305,83 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                   });
                 }
               }
+              // For products and other content types: Send to Shopify
+              else if (itemId && (contentType === 'products' || contentType === 'collections' || contentType === 'pages' || contentType === 'blogs' || contentType === 'policies')) {
+                // Map fieldType to Shopify key
+                const fieldKeyMap: Record<string, string> = {
+                  title: "title",
+                  description: "body_html",
+                  body: "body_html",
+                  handle: "handle",
+                  seoTitle: "meta_title",
+                  metaDescription: "meta_description",
+                };
+                const shopifyKey = fieldKeyMap[fieldType] || fieldType;
+
+                try {
+                  // First, get the digest for this field from Shopify
+                  const digestResponse = await admin.graphql(`
+                    query getTranslatableContent($resourceId: ID!) {
+                      translatableResource(resourceId: $resourceId) {
+                        resourceId
+                        translatableContent {
+                          key
+                          digest
+                        }
+                      }
+                    }
+                  `, {
+                    variables: { resourceId: itemId }
+                  });
+
+                  const digestData = await digestResponse.json();
+                  const translatableContent = digestData.data?.translatableResource?.translatableContent || [];
+                  const fieldContent = translatableContent.find((c: any) => c.key === shopifyKey);
+                  const digest = fieldContent?.digest || "";
+
+                  // Now save the translation to Shopify
+                  const translationInput = [{
+                    key: shopifyKey,
+                    value: translatedValue,
+                    locale: locale,
+                    translatableContentDigest: digest
+                  }];
+
+                  const response = await admin.graphql(TRANSLATE_CONTENT, {
+                    variables: {
+                      resourceId: itemId,
+                      translations: translationInput
+                    }
+                  });
+
+                  const data = await response.json();
+
+                  if (data.data?.translationsRegister?.userErrors?.length > 0) {
+                    logger.error("[API-AI] Shopify translation error for " + contentType, {
+                      context: "AI",
+                      errors: data.data.translationsRegister.userErrors,
+                      locale,
+                      fieldType,
+                      shopifyKey
+                    });
+                  } else {
+                    logger.debug("[API-AI] Saved translation to Shopify for " + contentType, {
+                      context: "AI",
+                      resourceId: itemId,
+                      fieldType,
+                      shopifyKey,
+                      locale
+                    });
+                  }
+                } catch (shopifyError: any) {
+                  logger.error("[API-AI] Error sending to Shopify for " + contentType, {
+                    context: "AI",
+                    error: shopifyError?.message,
+                    locale,
+                    fieldType
+                  });
+                }
+              }
 
               // Update progress
               const progress = Math.round(10 + ((i + 1) / totalLocales) * 80);

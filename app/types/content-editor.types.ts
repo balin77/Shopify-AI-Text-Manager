@@ -345,6 +345,9 @@ export interface UseContentEditorProps {
 
   /** Translation strings object */
   t: TranslationStrings;
+
+  /** Optional callback when translateFieldToAllLocales completes successfully */
+  onTranslateToAllLocalesComplete?: (fieldKey: string, translations: Record<string, string>) => void;
 }
 
 export interface UseContentEditorReturn {

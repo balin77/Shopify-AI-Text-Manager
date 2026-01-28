@@ -23,7 +23,7 @@ import type {
 import { debugLog } from "../utils/debug";
 
 export function useUnifiedContentEditor(props: UseContentEditorProps): UseContentEditorReturn {
-  const { config, items, shopLocales, primaryLocale, fetcher, showInfoBox, t } = props;
+  const { config, items, shopLocales, primaryLocale, fetcher, showInfoBox, t, onTranslateToAllLocalesComplete } = props;
   const revalidator = useRevalidator();
 
   // ============================================================================
@@ -1752,6 +1752,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             t.common?.success || "Success"
           );
 
+          // Call callback to update cache if provided
+          if (onTranslateToAllLocalesComplete) {
+            onTranslateToAllLocalesComplete(fieldKey, translations as Record<string, string>);
+          }
+
           // Revalidate to fetch fresh data with the new translations
           if (revalidator.state === 'idle') {
             revalidator.revalidate();
@@ -2324,6 +2329,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     if (!selectedItem) return false;
     const field = effectiveFieldDefinitions.find((f) => f.key === fieldKey);
     if (!field) return false;
+
+    // First check localTranslationsRef (from translateFieldToAllLocales)
+    // This ensures immediate UI feedback before revalidation completes
+    const localValue = localTranslationsRef.current[field.translationKey]?.[currentLanguage];
+    if (localValue) {
+      return true;
+    }
 
     return selectedItem.translations?.some(
       (t: Translation) => t.key === field.translationKey && t.locale === currentLanguage

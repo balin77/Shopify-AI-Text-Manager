@@ -1010,6 +1010,37 @@ export default function TemplatesPage() {
     }
   }, [themes, selectedGroupId, loadThemeData]);
 
+  // Callback to update translations cache when translateFieldToAllLocales completes
+  const handleTranslateToAllLocalesComplete = useCallback((fieldKey: string, translations: Record<string, string>) => {
+    if (!selectedGroupId) return;
+
+    console.log(`[CACHE] Callback: Updating translation cache for field: ${fieldKey}`);
+
+    setLoadedTranslations(prev => {
+      const newCache = { ...prev };
+      const groupCache = { ...(newCache[selectedGroupId] || {}) };
+
+      // Update each locale's cache with the new translation
+      for (const [locale, translatedValue] of Object.entries(translations)) {
+        const localeCache = [...(groupCache[locale] || [])];
+
+        // Find and update or add the translation
+        const existingIndex = localeCache.findIndex((t: any) => t.key === fieldKey);
+        if (existingIndex >= 0) {
+          localeCache[existingIndex] = { ...localeCache[existingIndex], value: translatedValue };
+        } else {
+          localeCache.push({ key: fieldKey, value: translatedValue, locale });
+        }
+
+        groupCache[locale] = localeCache;
+      }
+
+      newCache[selectedGroupId] = groupCache;
+      console.log(`[CACHE] Callback: Updated translations for ${Object.keys(translations).length} locales`);
+      return newCache;
+    });
+  }, [selectedGroupId]);
+
   // Create editor with dynamic config
   const editor = useUnifiedContentEditor({
     config: TEMPLATES_CONFIG,
@@ -1019,6 +1050,7 @@ export default function TemplatesPage() {
     fetcher,
     showInfoBox,
     t,
+    onTranslateToAllLocalesComplete: handleTranslateToAllLocalesComplete,
   });
 
   // Ref to store editor helpers to avoid triggering effects on every render
