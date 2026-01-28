@@ -104,7 +104,7 @@ export function UnifiedItemList({
   searchPlaceholder,
   showSearch = true,
   showPagination = true,
-  itemsPerPage = 10,
+  itemsPerPage: fixedItemsPerPage,
   showStatusStripe = false,
   showThumbnails = false,
   planLimit,
@@ -113,11 +113,16 @@ export function UnifiedItemList({
   const [searchQuery, setSearchQuery] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const [hoveredItemId, setHoveredItemId] = useState<string | null>(null);
-  const [listMaxHeight, setListMaxHeight] = useState(600);
+  const [dynamicItemsPerPage, setDynamicItemsPerPage] = useState(10);
+  const [itemHeight, setItemHeight] = useState(56); // Will be calculated dynamically
 
   const { getTotalNavHeight } = useNavigationHeight();
   const headerRef = useRef<HTMLDivElement>(null);
   const paginationRef = useRef<HTMLDivElement>(null);
+  const listContainerRef = useRef<HTMLDivElement>(null);
+
+  // Use dynamic items per page (calculated from window height)
+  const itemsPerPage = fixedItemsPerPage || dynamicItemsPerPage;
 
   // Filter items based on search
   const filteredItems = showSearch
@@ -134,23 +139,37 @@ export function UnifiedItemList({
     ? filteredItems.slice(startIndex, startIndex + itemsPerPage)
     : filteredItems;
 
-  // Calculate available height dynamically
+  // Calculate items per page and item height based on available space
   useEffect(() => {
-    const calculateHeight = () => {
+    const calculateDynamicPagination = () => {
       const navHeight = getTotalNavHeight();
-      const headerHeight = headerRef.current?.offsetHeight || 150;
-      const paginationHeight = paginationRef.current?.offsetHeight || 60;
-      const padding = 32; // 1rem top + 1rem bottom
+      const headerHeight = headerRef.current?.offsetHeight || 120;
+      const paginationHeight = 56; // Fixed pagination height
+      const containerPadding = 32; // 1rem top + 1rem bottom of main container
 
-      const availableHeight = window.innerHeight - navHeight - headerHeight - paginationHeight - padding;
-      setListMaxHeight(Math.max(300, availableHeight)); // Min 300px
+      // Available height for the list area
+      const availableListHeight = window.innerHeight - navHeight - headerHeight - paginationHeight - containerPadding;
+
+      // Base item height (without thumbnail: ~48px content + padding, with thumbnail: ~56px)
+      const baseItemHeight = showThumbnails ? 56 : 48;
+      const minItemHeight = baseItemHeight;
+      const maxItemHeight = 80; // Don't make items too tall
+
+      // Calculate how many items fit
+      const itemsThatFit = Math.max(5, Math.floor(availableListHeight / minItemHeight));
+
+      // Calculate actual item height to fill the space exactly
+      const calculatedItemHeight = Math.min(maxItemHeight, Math.max(minItemHeight, availableListHeight / itemsThatFit));
+
+      setDynamicItemsPerPage(itemsThatFit);
+      setItemHeight(calculatedItemHeight);
     };
 
-    calculateHeight();
-    window.addEventListener('resize', calculateHeight);
+    calculateDynamicPagination();
+    window.addEventListener('resize', calculateDynamicPagination);
 
-    return () => window.removeEventListener('resize', calculateHeight);
-  }, [getTotalNavHeight]);
+    return () => window.removeEventListener('resize', calculateDynamicPagination);
+  }, [getTotalNavHeight, showThumbnails]);
 
   // Reset to page 1 when search changes
   const handleSearchChange = (value: string) => {
@@ -267,13 +286,25 @@ export function UnifiedItemList({
         .unified-item-list-scroll {
           flex: 1 !important;
           min-height: 0 !important;
-          overflow-y: auto !important;
+          overflow-y: hidden !important;
         }
         .unified-item-list-scroll .Polaris-ResourceList__ResourceListWrapper {
-          height: auto !important;
+          height: 100% !important;
         }
         .unified-item-list-scroll ul.Polaris-ResourceList {
           max-height: none !important;
+          height: 100% !important;
+        }
+        /* Dynamic item height */
+        .unified-item-list-scroll .Polaris-ResourceItem {
+          height: ${itemHeight}px !important;
+          min-height: ${itemHeight}px !important;
+          max-height: ${itemHeight}px !important;
+        }
+        .unified-item-list-scroll .Polaris-ResourceItem__Container {
+          height: 100% !important;
+          display: flex !important;
+          align-items: center !important;
         }
       `}</style>
       <div className="unified-item-list-wrapper" style={{ display: "flex", flexDirection: "column", flex: 1, overflow: "hidden", minHeight: 0 }}>
@@ -317,8 +348,8 @@ export function UnifiedItemList({
           </BlockStack>
         </div>
 
-        {/* Item List - Scrollable */}
-        <div className="unified-item-list-scroll" style={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
+        {/* Item List - Dynamic height based on window */}
+        <div ref={listContainerRef} className="unified-item-list-scroll" style={{ flex: 1, overflow: "hidden", minHeight: 0 }}>
           {paginatedItems.length > 0 ? (
             <ResourceList
               resourceName={resourceName}
