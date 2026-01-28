@@ -227,39 +227,8 @@ export default function ProductsPage() {
   const [isLoadingTranslations, setIsLoadingTranslations] = useState(false);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
 
-  // Mark initial load as complete after first render
-  useEffect(() => {
-    if (isInitialLoad && products.length >= 0) {
-      // Small delay to ensure smooth transition
-      const timer = setTimeout(() => setIsInitialLoad(false), 100);
-      return () => clearTimeout(timer);
-    }
-  }, [products, isInitialLoad]);
-
-  // Show loading spinner during initial page load or navigation
-  const isPageLoading = navigation.state === "loading" && navigation.location?.pathname === "/app/products";
-
-  if (isInitialLoad || isPageLoading) {
-    return (
-      <div
-        style={{
-          height: "100vh",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          flexDirection: "column",
-          gap: "16px",
-        }}
-      >
-        <Spinner accessibilityLabel="Loading products" size="large" />
-        <Text as="p" variant="bodyMd" tone="subdued">
-          {t.products?.loading || "Loading Products"}
-        </Text>
-      </div>
-    );
-  }
-
   // Track which products we've already synced translations for (to avoid duplicate syncs)
+  // IMPORTANT: All hooks must be called before any conditional returns
   const syncedProductsRef = useRef<Set<string>>(new Set());
 
   // Initialize unified content editor
@@ -280,6 +249,15 @@ export default function ProductsPage() {
 
   const selectedProductId = editor.state.selectedItemId;
   const selectedProduct = editor.selectedItem;
+
+  // Mark initial load as complete after first render
+  useEffect(() => {
+    if (isInitialLoad && products.length >= 0) {
+      // Small delay to ensure smooth transition
+      const timer = setTimeout(() => setIsInitialLoad(false), 100);
+      return () => clearTimeout(timer);
+    }
+  }, [products, isInitialLoad]);
 
   useEffect(() => {
     // Skip if no product selected or already loading
@@ -380,6 +358,29 @@ export default function ProductsPage() {
       showInfoBox(error, "critical", t.common?.error || "Error");
     }
   }, [error, showInfoBox, t]);
+
+  // Show loading spinner during initial page load or navigation
+  const isPageLoading = navigation.state === "loading" && navigation.location?.pathname === "/app/products";
+
+  if (isInitialLoad || isPageLoading) {
+    return (
+      <div
+        style={{
+          height: "100vh",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          flexDirection: "column",
+          gap: "16px",
+        }}
+      >
+        <Spinner accessibilityLabel="Loading products" size="large" />
+        <Text as="p" variant="bodyMd" tone="subdued">
+          {t.products?.loading || "Loading Products"}
+        </Text>
+      </div>
+    );
+  }
 
   return (
     <>
