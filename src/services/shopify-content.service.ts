@@ -254,8 +254,8 @@ export class ShopifyContentService {
       // Map field names to Shopify translation keys
       const keyMapping: Record<string, string> = {
         title: 'title',
-        description: (resourceType === 'Page' || resourceType === 'Collection') ? 'body_html' : 'body',
-        body: resourceType === 'Page' ? 'body_html' : 'body',
+        description: 'body_html',  // Always body_html for all resource types
+        body: 'body_html',         // Always body_html for all resource types
         handle: 'handle',
         seoTitle: 'meta_title',
         metaDescription: 'meta_description',
@@ -420,8 +420,8 @@ export class ShopifyContentService {
         // Map UI field names to Shopify translation keys
         const keyMapping: Record<string, string> = {
           title: 'title',
-          description: (resourceType === 'Page' || resourceType === 'Collection') ? 'body_html' : 'body',
-          body: resourceType === 'Page' ? 'body_html' : 'body',
+          description: 'body_html',  // Always body_html for all resource types
+          body: 'body_html',         // Always body_html for all resource types
           handle: 'handle',
           seoTitle: 'meta_title',
           metaDescription: 'meta_description',
@@ -518,8 +518,8 @@ export class ShopifyContentService {
 
           const keyMapping: Record<string, string> = {
             title: 'title',
-            description: (resourceType === 'Page' || resourceType === 'Collection') ? 'body_html' : 'body',
-            body: resourceType === 'Page' ? 'body_html' : 'body',
+            description: 'body_html',  // Always body_html for all resource types (Product, Collection, Page)
+            body: 'body_html',         // Always body_html for all resource types
             handle: 'handle',
             seoTitle: 'meta_title',
             metaDescription: 'meta_description',
