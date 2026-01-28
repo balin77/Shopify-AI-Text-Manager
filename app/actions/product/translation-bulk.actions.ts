@@ -47,6 +47,9 @@ export async function handleTranslateFieldToAllLocales(
 ): Promise<Response> {
   const action = "translateFieldToAllLocales";
 
+  // DEBUG: This should ALWAYS appear in logs
+  console.log("🚨🚨🚨 handleTranslateFieldToAllLocales CALLED 🚨🚨🚨", { productId });
+
   const { db } = await import("~/db.server");
 
   const params: TranslateFieldToAllLocalesParams = {
@@ -299,6 +302,9 @@ export async function handleTranslateAll(
   productId: string
 ): Promise<Response> {
   const action = "translateAll";
+
+  // DEBUG: This should ALWAYS appear in logs
+  console.log("🚨🚨🚨 handleTranslateAll CALLED 🚨🚨🚨", { productId });
 
   const { db } = await import("~/db.server");
 
