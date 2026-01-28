@@ -214,6 +214,43 @@ export const action = async ({ request }: ActionFunctionArgs) => {
               translations[locale] = translatedValue;
               aiResponses.push({ locale, response: translatedValue });
 
+              // For templates: Auto-save each translation to the database
+              if (contentType === 'templates' && itemId) {
+                const groupId = itemId.replace("group_", "");
+                const resourceId = `group_${groupId}`;
+
+                await db.themeTranslation.upsert({
+                  where: {
+                    shop_resourceId_groupId_key_locale: {
+                      shop: session.shop,
+                      resourceId: resourceId,
+                      groupId: groupId,
+                      key: fieldType,
+                      locale: locale
+                    }
+                  },
+                  update: {
+                    value: translatedValue,
+                    updatedAt: new Date()
+                  },
+                  create: {
+                    shop: session.shop,
+                    groupId: groupId,
+                    resourceId: resourceId,
+                    locale: locale,
+                    key: fieldType,
+                    value: translatedValue
+                  }
+                });
+
+                logger.debug("[API-AI] Saved template translation to DB", {
+                  context: "AI",
+                  groupId,
+                  fieldType,
+                  locale
+                });
+              }
+
               // Update progress
               const progress = Math.round(10 + ((i + 1) / totalLocales) * 80);
               await db.task.update({
