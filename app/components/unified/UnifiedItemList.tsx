@@ -153,7 +153,7 @@ export function UnifiedItemList({
 
       if (wrapperHeight && wrapperHeight > 200) {
         // Use wrapper height minus header, pagination, and a small buffer for borders/padding
-        availableHeight = wrapperHeight - headerHeight - paginationHeight - 4;
+        availableHeight = wrapperHeight - headerHeight - paginationHeight - 20;
       } else {
         // Fallback: calculate from window
         const navHeight = getTotalNavHeight();
