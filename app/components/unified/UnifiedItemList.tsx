@@ -146,9 +146,10 @@ export function UnifiedItemList({
       const headerHeight = headerRef.current?.offsetHeight || 120;
       const paginationHeight = 56; // Fixed pagination height
       const containerPadding = 32; // 1rem top + 1rem bottom of main container
+      const shopifyAppBridgeFooter = 56; // Shopify embedded app footer bar
 
       // Available height for the list area
-      const availableListHeight = window.innerHeight - navHeight - headerHeight - paginationHeight - containerPadding;
+      const availableListHeight = window.innerHeight - navHeight - headerHeight - paginationHeight - containerPadding - shopifyAppBridgeFooter;
 
       // Base item height (without thumbnail: ~48px content + padding, with thumbnail: ~56px)
       const baseItemHeight = showThumbnails ? 56 : 48;
@@ -260,7 +261,7 @@ export function UnifiedItemList({
   const itemRenderer = renderItem || defaultRenderItem;
 
   return (
-    <div style={{ width: "350px", flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0, flex: 1 }}>
+    <div style={{ width: "300px", flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0, flex: 1 }}>
       <style>{`
         /* UnifiedItemList - Full height card with scrollable list */
         .unified-item-list-wrapper {
