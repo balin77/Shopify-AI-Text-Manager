@@ -1308,15 +1308,59 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
         debugLog.acceptAndTranslate(' Save completed, now starting translation');
 
-        // Start the translation (don't show "saved" message yet - will show after translation)
-        safeSubmit({
-          action: "translateFieldToAllLocales",
-          itemId: itemId,
-          fieldType: fieldKey,
-          sourceText: sourceText,
-          targetLocales: JSON.stringify(targetLocales),
-          contextTitle: contextTitle
-        }, { method: "POST" });
+        // Start the translation using submitAIAction for parallel requests
+        submitAIAction(
+          {
+            action: "translateFieldToAllLocales",
+            itemId: itemId,
+            fieldType: fieldKey,
+            sourceText: sourceText,
+            targetLocales: JSON.stringify(targetLocales),
+            contextTitle: contextTitle,
+            primaryLocale,
+          },
+          fieldKey,
+          (result) => {
+            // Handle success - update translations
+            const translations = result.translations;
+            const field = effectiveFieldDefinitions.find((f) => f.key === fieldKey);
+            const shopifyKey = field?.translationKey;
+            const item = selectedItemRef.current;
+
+            if (item && shopifyKey) {
+              // Update item translations for all locales
+              for (const [locale, translatedValue] of Object.entries(translations as Record<string, string>)) {
+                item.translations = item.translations.filter(
+                  (t: Translation) => !(t.locale === locale && t.key === shopifyKey)
+                );
+                item.translations.push({
+                  key: shopifyKey,
+                  value: translatedValue,
+                  locale
+                });
+              }
+
+              // If the current language is one of the translated languages, update editableValues
+              if (translations[currentLanguage]) {
+                setEditableValues(prev => ({
+                  ...prev,
+                  [fieldKey]: translations[currentLanguage]
+                }));
+              }
+            }
+
+            showInfoBox(
+              t.common?.fieldTranslatedToLanguages
+                ?.replace("{fieldType}", fieldKey)
+                .replace("{count}", String(Object.keys(translations).length))
+                || `${fieldKey} translated to ${Object.keys(translations).length} language(s)`,
+              "success",
+              t.common?.success || "Success"
+            );
+
+            setIsLoadingData(true);
+          }
+        );
 
         // Don't revalidate yet - wait for translation to complete
         return;
@@ -1352,7 +1396,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       processedSaveResponseRef.current = fetcher.data;
       showInfoBox(fetcher.data.error as string, "critical", t.common?.error || "Error");
     }
-  }, [fetcher.data, showInfoBox, t, revalidator, safeSubmit]);
+  }, [fetcher.data, showInfoBox, t, revalidator, safeSubmit, submitAIAction, effectiveFieldDefinitions, currentLanguage, primaryLocale]);
 
   // ============================================================================
   // EVENT HANDLERS
