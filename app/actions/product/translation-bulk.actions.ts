@@ -37,8 +37,16 @@ interface TranslateAllParams {
   targetLocales: string[];
 }
 
+// Fields that can be batched in a single AI request (short fields)
+const BATCH_FIELD_TYPES = ["handle", "title", "seoTitle"];
+
+// Fields that should be translated one locale at a time (long fields)
+const SEQUENTIAL_FIELD_TYPES = ["description", "metaDescription"];
+
 /**
  * Translates a single field to all enabled locales
+ * Uses batch translation for short fields (handle, title, seoTitle) - 1 AI request for all locales
+ * Uses sequential translation for long fields (description, metaDescription) - 1 AI request per locale
  */
 export async function handleTranslateFieldToAllLocales(
   context: ActionContext,
@@ -57,8 +65,13 @@ export async function handleTranslateFieldToAllLocales(
     contextTitle: formData.get("contextTitle") as string,
   };
 
+  // Detect source language from form data or default to "de"
+  const sourceLocale = (formData.get("sourceLocale") as string) || "de";
+
   loggers.translation("info", "Starting field translation to all locales", {
     ...params,
+    sourceLocale,
+    useBatch: BATCH_FIELD_TYPES.includes(params.fieldType),
     shop: context.session.shop,
   });
 
@@ -80,9 +93,6 @@ export async function handleTranslateFieldToAllLocales(
       task.id
     );
     const gateway = new ShopifyApiGateway(context.admin, context.session.shop);
-
-    const changedFields: any = {};
-    changedFields[params.fieldType] = params.sourceText;
 
     const totalLocales = params.targetLocales.length;
     let processedLocales = 0;
@@ -133,114 +143,255 @@ export async function handleTranslateFieldToAllLocales(
       throw new Error(`Unknown field type: ${params.fieldType}`);
     }
 
-    // Translate to each locale
-    for (const locale of params.targetLocales) {
+    // Check if we can use batch translation for this field type
+    const useBatchTranslation = BATCH_FIELD_TYPES.includes(params.fieldType);
+
+    if (useBatchTranslation) {
+      // === BATCH TRANSLATION: Single AI request for all locales ===
+      loggers.translation("info", "Using batch translation for short field", {
+        fieldType: params.fieldType,
+        locales: params.targetLocales,
+        taskId: task.id,
+      });
+
       try {
-        loggers.translation("info", "Translating field to locale", {
-          fieldType: params.fieldType,
-          locale,
-          taskId: task.id,
-        });
+        let batchTranslations: Record<string, string>;
 
-        const localeTranslations = await translationService.translateProduct(
-          changedFields,
-          [locale],
-          "product"
-        );
-        const translatedValue = localeTranslations[locale]?.[params.fieldType] || "";
-
-        if (!translatedValue) {
-          loggers.translation("warn", "No translation returned", { locale });
-          continue;
-        }
-
-        allTranslations[locale] = translatedValue;
-
-        // Save to Shopify
-        if (digestMap[shopifyKey]) {
-          const response = await gateway.graphql(
-            `#graphql
-              mutation translateProduct($resourceId: ID!, $translations: [TranslationInput!]!) {
-                translationsRegister(resourceId: $resourceId, translations: $translations) {
-                  userErrors {
-                    field
-                    message
-                  }
-                  translations {
-                    locale
-                    key
-                    value
-                  }
-                }
-              }`,
-            {
-              variables: {
-                resourceId: productId,
-                translations: [
-                  {
-                    key: shopifyKey,
-                    value: translatedValue,
-                    locale,
-                    translatableContentDigest: digestMap[shopifyKey],
-                  },
-                ],
-              },
-            }
+        if (params.fieldType === "handle") {
+          // Use specialized slug batch translation
+          batchTranslations = await translationService.translateSlugBatch(
+            params.sourceText,
+            sourceLocale,
+            params.targetLocales
           );
-
-          const responseData = await response.json();
-          if (responseData.data?.translationsRegister?.userErrors?.length > 0) {
-            loggers.translation("error", "Shopify API error", {
-              locale,
-              errors: responseData.data.translationsRegister.userErrors,
-            });
-          } else {
-            loggers.translation("info", "Successfully saved translation", {
-              locale,
-              key: shopifyKey,
-            });
-
-            // Update local database - only update this specific field
-            const product = await db.product.findFirst({
-              where: { id: productId },
-              select: { shop: true },
-            });
-
-            if (product) {
-              // Use upsert to update or create only this specific field
-              await db.contentTranslation.upsert({
-                where: {
-                  resourceId_key_locale: {
-                    resourceId: productId,
-                    key: shopifyKey,
-                    locale: locale,
-                  },
-                },
-                update: {
-                  value: translatedValue,
-                  digest: digestMap[shopifyKey] || null,
-                },
-                create: {
-                  resourceId: productId,
-                  resourceType: "Product",
-                  key: shopifyKey,
-                  value: translatedValue,
-                  locale: locale,
-                  digest: digestMap[shopifyKey] || null,
-                },
-              });
+        } else {
+          // Use short fields batch translation for title/seoTitle
+          const fields = { [params.fieldType]: params.sourceText };
+          const batchResult = await translationService.translateShortFieldsBatch(
+            fields,
+            sourceLocale,
+            params.targetLocales,
+            "product"
+          );
+          // Extract the specific field from the batch result
+          batchTranslations = {};
+          for (const locale of params.targetLocales) {
+            if (batchResult[locale]?.[params.fieldType]) {
+              batchTranslations[locale] = batchResult[locale][params.fieldType];
             }
           }
         }
 
-        processedLocales++;
-        const progressPercent = Math.round(10 + (processedLocales / totalLocales) * 90);
-        await updateTaskProgress(task.id, progressPercent, { processed: processedLocales });
-      } catch (localeError: any) {
-        loggers.translation("error", "Failed to translate locale", {
-          locale,
-          error: localeError.message,
+        // Save all translations to Shopify and DB
+        for (const locale of params.targetLocales) {
+          const translatedValue = batchTranslations[locale];
+
+          if (!translatedValue) {
+            loggers.translation("warn", "No translation in batch result", { locale });
+            continue;
+          }
+
+          allTranslations[locale] = translatedValue;
+
+          // Save to Shopify
+          if (digestMap[shopifyKey]) {
+            const response = await gateway.graphql(
+              `#graphql
+                mutation translateProduct($resourceId: ID!, $translations: [TranslationInput!]!) {
+                  translationsRegister(resourceId: $resourceId, translations: $translations) {
+                    userErrors {
+                      field
+                      message
+                    }
+                    translations {
+                      locale
+                      key
+                      value
+                    }
+                  }
+                }`,
+              {
+                variables: {
+                  resourceId: productId,
+                  translations: [
+                    {
+                      key: shopifyKey,
+                      value: translatedValue,
+                      locale,
+                      translatableContentDigest: digestMap[shopifyKey],
+                    },
+                  ],
+                },
+              }
+            );
+
+            const responseData = await response.json();
+            if (responseData.data?.translationsRegister?.userErrors?.length > 0) {
+              loggers.translation("error", "Shopify API error", {
+                locale,
+                errors: responseData.data.translationsRegister.userErrors,
+              });
+            } else {
+              loggers.translation("info", "Successfully saved translation", {
+                locale,
+                key: shopifyKey,
+              });
+
+              // Update local database
+              const product = await db.product.findFirst({
+                where: { id: productId },
+                select: { shop: true },
+              });
+
+              if (product) {
+                await db.contentTranslation.upsert({
+                  where: {
+                    resourceId_key_locale: {
+                      resourceId: productId,
+                      key: shopifyKey,
+                      locale: locale,
+                    },
+                  },
+                  update: {
+                    value: translatedValue,
+                    digest: digestMap[shopifyKey] || null,
+                  },
+                  create: {
+                    resourceId: productId,
+                    resourceType: "Product",
+                    key: shopifyKey,
+                    value: translatedValue,
+                    locale: locale,
+                    digest: digestMap[shopifyKey] || null,
+                  },
+                });
+              }
+            }
+          }
+
+          processedLocales++;
+          const progressPercent = Math.round(10 + (processedLocales / totalLocales) * 90);
+          await updateTaskProgress(task.id, progressPercent, { processed: processedLocales });
+        }
+      } catch (batchError: any) {
+        loggers.translation("error", "Batch translation failed", {
+          error: batchError.message,
+          taskId: task.id,
         });
+        throw batchError;
+      }
+    } else {
+      // === SEQUENTIAL TRANSLATION: One AI request per locale (for long fields) ===
+      const changedFields: any = {};
+      changedFields[params.fieldType] = params.sourceText;
+
+      for (const locale of params.targetLocales) {
+        try {
+          loggers.translation("info", "Translating field to locale (sequential)", {
+            fieldType: params.fieldType,
+            locale,
+            taskId: task.id,
+          });
+
+          const localeTranslations = await translationService.translateProduct(
+            changedFields,
+            [locale],
+            "product"
+          );
+          const translatedValue = localeTranslations[locale]?.[params.fieldType] || "";
+
+          if (!translatedValue) {
+            loggers.translation("warn", "No translation returned", { locale });
+            continue;
+          }
+
+          allTranslations[locale] = translatedValue;
+
+          // Save to Shopify
+          if (digestMap[shopifyKey]) {
+            const response = await gateway.graphql(
+              `#graphql
+                mutation translateProduct($resourceId: ID!, $translations: [TranslationInput!]!) {
+                  translationsRegister(resourceId: $resourceId, translations: $translations) {
+                    userErrors {
+                      field
+                      message
+                    }
+                    translations {
+                      locale
+                      key
+                      value
+                    }
+                  }
+                }`,
+              {
+                variables: {
+                  resourceId: productId,
+                  translations: [
+                    {
+                      key: shopifyKey,
+                      value: translatedValue,
+                      locale,
+                      translatableContentDigest: digestMap[shopifyKey],
+                    },
+                  ],
+                },
+              }
+            );
+
+            const responseData = await response.json();
+            if (responseData.data?.translationsRegister?.userErrors?.length > 0) {
+              loggers.translation("error", "Shopify API error", {
+                locale,
+                errors: responseData.data.translationsRegister.userErrors,
+              });
+            } else {
+              loggers.translation("info", "Successfully saved translation", {
+                locale,
+                key: shopifyKey,
+              });
+
+              // Update local database
+              const product = await db.product.findFirst({
+                where: { id: productId },
+                select: { shop: true },
+              });
+
+              if (product) {
+                await db.contentTranslation.upsert({
+                  where: {
+                    resourceId_key_locale: {
+                      resourceId: productId,
+                      key: shopifyKey,
+                      locale: locale,
+                    },
+                  },
+                  update: {
+                    value: translatedValue,
+                    digest: digestMap[shopifyKey] || null,
+                  },
+                  create: {
+                    resourceId: productId,
+                    resourceType: "Product",
+                    key: shopifyKey,
+                    value: translatedValue,
+                    locale: locale,
+                    digest: digestMap[shopifyKey] || null,
+                  },
+                });
+              }
+            }
+          }
+
+          processedLocales++;
+          const progressPercent = Math.round(10 + (processedLocales / totalLocales) * 90);
+          await updateTaskProgress(task.id, progressPercent, { processed: processedLocales });
+        } catch (localeError: any) {
+          loggers.translation("error", "Failed to translate locale", {
+            locale,
+            error: localeError.message,
+          });
+        }
       }
     }
 
@@ -249,6 +400,7 @@ export async function handleTranslateFieldToAllLocales(
       fieldType: params.fieldType,
       processedLocales,
       totalLocales,
+      usedBatch: useBatchTranslation,
     });
 
     return json({
@@ -271,6 +423,9 @@ export async function handleTranslateFieldToAllLocales(
 
 /**
  * Translates all product fields to all enabled locales
+ * Uses hybrid approach:
+ * - Short fields (title, seoTitle, handle): 1 batch AI request for all locales
+ * - Long fields (description, metaDescription): 1 AI request per locale
  */
 export async function handleTranslateAll(
   context: ActionContext,
@@ -291,9 +446,28 @@ export async function handleTranslateAll(
     targetLocales: JSON.parse((formData.get("targetLocales") as string) || '["en","fr","es","it"]'),
   };
 
-  loggers.translation("info", "Starting translate all", {
+  // Detect source language from form data or default to "de"
+  const sourceLocale = (formData.get("sourceLocale") as string) || "de";
+
+  // Separate short and long fields
+  const shortFields: Record<string, string> = {};
+  const longFields: Record<string, string> = {};
+
+  if (params.title) shortFields.title = params.title;
+  if (params.seoTitle) shortFields.seoTitle = params.seoTitle;
+  if (params.handle) shortFields.handle = params.handle;
+  if (params.description) longFields.description = params.description;
+  if (params.metaDescription) longFields.metaDescription = params.metaDescription;
+
+  const hasShortFields = Object.keys(shortFields).length > 0;
+  const hasLongFields = Object.keys(longFields).length > 0;
+
+  loggers.translation("info", "Starting translate all with hybrid approach", {
     productId,
     localesCount: params.targetLocales.length,
+    shortFields: Object.keys(shortFields),
+    longFields: Object.keys(longFields),
+    sourceLocale,
     shop: context.session.shop,
   });
 
@@ -316,28 +490,30 @@ export async function handleTranslateAll(
   const gateway = new ShopifyApiGateway(context.admin, context.session.shop);
 
   try {
-    const changedFields: any = {};
-    if (params.title) changedFields.title = params.title;
-    if (params.description) changedFields.description = params.description;
-    if (params.handle) changedFields.handle = params.handle;
-    if (params.seoTitle) changedFields.seoTitle = params.seoTitle;
-    if (params.metaDescription) changedFields.metaDescription = params.metaDescription;
-
-    if (Object.keys(changedFields).length === 0) {
+    if (!hasShortFields && !hasLongFields) {
       await failTask(task.id, "No fields to translate");
       return json({ success: false, error: "No fields to translate" }, { status: 400 });
     }
 
     const totalLocales = params.targetLocales.length;
-    let processedLocales = 0;
+    // Calculate total steps: 1 for batch short fields + 1 per locale for long fields
+    const totalSteps = (hasShortFields ? 1 : 0) + (hasLongFields ? totalLocales : 0);
+    let completedSteps = 0;
     const allTranslations: Record<string, any> = {};
 
-    loggers.translation("info", "Translation fields", {
-      fields: Object.keys(changedFields),
+    // Initialize translations structure
+    for (const locale of params.targetLocales) {
+      allTranslations[locale] = {};
+    }
+
+    loggers.translation("info", "Translation plan", {
+      shortFields: Object.keys(shortFields),
+      longFields: Object.keys(longFields),
+      totalSteps,
       locales: params.targetLocales,
     });
 
-    await updateTaskProgress(task.id, 10, { total: totalLocales, processed: 0 });
+    await updateTaskProgress(task.id, 10, { total: totalSteps, processed: 0 });
 
     // Get translatable content
     const translatableResponse = await gateway.graphql(
@@ -365,155 +541,188 @@ export async function handleTranslateAll(
       digestMap[content.key] = content.digest;
     }
 
-    // Translate each locale
-    for (const locale of params.targetLocales) {
-      try {
-        loggers.translation("info", "Translating locale", { locale });
+    // Field key mapping
+    const fieldKeyMap: Record<string, string> = {
+      title: "title",
+      description: "body_html",
+      handle: "handle",
+      seoTitle: "meta_title",
+      metaDescription: "meta_description",
+    };
 
-        const localeTranslations = await translationService.translateProduct(
-          changedFields,
-          [locale],
-          "product"
-        );
-        const fields = localeTranslations[locale];
+    // Helper function to save translations to Shopify and DB
+    const saveTranslation = async (
+      locale: string,
+      fieldType: string,
+      value: string
+    ) => {
+      const shopifyKey = fieldKeyMap[fieldType];
+      if (!shopifyKey || !digestMap[shopifyKey]) return;
 
-        if (!fields) {
-          loggers.translation("warn", "No translations returned", { locale });
-          continue;
-        }
-
-        allTranslations[locale] = fields;
-
-        // Prepare translations input
-        const translationsInput = [];
-        if (fields.title && digestMap["title"]) {
-          translationsInput.push({
-            key: "title",
-            value: fields.title,
-            locale,
-            translatableContentDigest: digestMap["title"],
-          });
-        }
-        if (fields.description && digestMap["body_html"]) {
-          translationsInput.push({
-            key: "body_html",
-            value: fields.description,
-            locale,
-            translatableContentDigest: digestMap["body_html"],
-          });
-        }
-        if (fields.handle && digestMap["handle"]) {
-          translationsInput.push({
-            key: "handle",
-            value: fields.handle,
-            locale,
-            translatableContentDigest: digestMap["handle"],
-          });
-        }
-        if (fields.seoTitle && digestMap["meta_title"]) {
-          translationsInput.push({
-            key: "meta_title",
-            value: fields.seoTitle,
-            locale,
-            translatableContentDigest: digestMap["meta_title"],
-          });
-        }
-        if (fields.metaDescription && digestMap["meta_description"]) {
-          translationsInput.push({
-            key: "meta_description",
-            value: fields.metaDescription,
-            locale,
-            translatableContentDigest: digestMap["meta_description"],
-          });
-        }
-
-        // Save each translation to Shopify
-        for (const translation of translationsInput) {
-          const response = await gateway.graphql(
-            `#graphql
-              mutation translateProduct($resourceId: ID!, $translations: [TranslationInput!]!) {
-                translationsRegister(resourceId: $resourceId, translations: $translations) {
-                  userErrors {
-                    field
-                    message
-                  }
-                  translations {
-                    locale
-                    key
-                    value
-                  }
-                }
-              }`,
-            {
-              variables: {
-                resourceId: productId,
-                translations: [translation],
-              },
+      const response = await gateway.graphql(
+        `#graphql
+          mutation translateProduct($resourceId: ID!, $translations: [TranslationInput!]!) {
+            translationsRegister(resourceId: $resourceId, translations: $translations) {
+              userErrors {
+                field
+                message
+              }
+              translations {
+                locale
+                key
+                value
+              }
             }
-          );
-
-          const responseData = await response.json();
-          if (responseData.data?.translationsRegister?.userErrors?.length > 0) {
-            loggers.translation("error", "Shopify API error", {
-              locale,
-              errors: responseData.data.translationsRegister.userErrors,
-            });
-          }
+          }`,
+        {
+          variables: {
+            resourceId: productId,
+            translations: [
+              {
+                key: shopifyKey,
+                value,
+                locale,
+                translatableContentDigest: digestMap[shopifyKey],
+              },
+            ],
+          },
         }
+      );
 
-        // Update local database - use upsert to preserve existing translations
+      const responseData = await response.json();
+      if (responseData.data?.translationsRegister?.userErrors?.length > 0) {
+        loggers.translation("error", "Shopify API error", {
+          locale,
+          fieldType,
+          errors: responseData.data.translationsRegister.userErrors,
+        });
+      } else {
+        // Save to local database
         const product = await db.product.findFirst({
           where: { id: productId },
           select: { shop: true },
         });
 
-        if (product && translationsInput.length > 0) {
-          // Use upsert for each field to only update what we translated
-          for (const translation of translationsInput) {
-            await db.contentTranslation.upsert({
-              where: {
-                resourceId_key_locale: {
-                  resourceId: productId,
-                  key: translation.key,
-                  locale: locale,
-                },
-              },
-              update: {
-                value: translation.value,
-                digest: translation.translatableContentDigest || null,
-              },
-              create: {
+        if (product) {
+          await db.contentTranslation.upsert({
+            where: {
+              resourceId_key_locale: {
                 resourceId: productId,
-                resourceType: "Product",
-                key: translation.key,
-                value: translation.value,
-                locale: locale,
-                digest: translation.translatableContentDigest || null,
+                key: shopifyKey,
+                locale,
               },
-            });
+            },
+            update: {
+              value,
+              digest: digestMap[shopifyKey] || null,
+            },
+            create: {
+              resourceId: productId,
+              resourceType: "Product",
+              key: shopifyKey,
+              value,
+              locale,
+              digest: digestMap[shopifyKey] || null,
+            },
+          });
+        }
+      }
+    };
+
+    // === STEP 1: Batch translate short fields (1 AI request for all locales) ===
+    if (hasShortFields) {
+      try {
+        loggers.translation("info", "Batch translating short fields", {
+          fields: Object.keys(shortFields),
+          locales: params.targetLocales,
+        });
+
+        const batchResult = await translationService.translateShortFieldsBatch(
+          shortFields,
+          sourceLocale,
+          params.targetLocales,
+          "product"
+        );
+
+        // Save all short field translations
+        for (const locale of params.targetLocales) {
+          const localeTranslations = batchResult[locale];
+          if (!localeTranslations) continue;
+
+          for (const [fieldType, value] of Object.entries(localeTranslations)) {
+            if (value) {
+              allTranslations[locale][fieldType] = value;
+              await saveTranslation(locale, fieldType, value);
+            }
           }
         }
 
-        processedLocales++;
-        const progressPercent = Math.round(10 + (processedLocales / totalLocales) * 90);
-        await updateTaskProgress(task.id, progressPercent, { processed: processedLocales });
-      } catch (localeError: any) {
-        loggers.translation("error", "Failed to translate locale", {
-          locale,
-          error: localeError.message,
-        });
+        completedSteps++;
+        const progressPercent = Math.round(10 + (completedSteps / totalSteps) * 90);
+        await updateTaskProgress(task.id, progressPercent, { processed: completedSteps });
 
-        // Check for quota errors
-        const errorMessage = localeError.message || String(localeError);
-        if (
-          errorMessage.includes("usage limit") ||
-          errorMessage.includes("quota") ||
-          errorMessage.includes("rate limit")
-        ) {
-          loggers.translation("error", "AI provider quota exceeded", { locale });
+        loggers.translation("info", "Batch short fields completed", {
+          localesProcessed: params.targetLocales.length,
+        });
+      } catch (batchError: any) {
+        loggers.translation("error", "Batch short fields translation failed", {
+          error: batchError.message,
+        });
+        // Continue with long fields even if batch fails
+      }
+    }
+
+    // === STEP 2: Sequential translate long fields (1 AI request per locale) ===
+    if (hasLongFields) {
+      for (const locale of params.targetLocales) {
+        try {
+          loggers.translation("info", "Translating long fields for locale", {
+            locale,
+            fields: Object.keys(longFields),
+          });
+
+          const localeTranslations = await translationService.translateProduct(
+            longFields,
+            [locale],
+            "product"
+          );
+
+          const fields = localeTranslations[locale];
+          if (fields) {
+            for (const [fieldType, value] of Object.entries(fields)) {
+              if (value) {
+                allTranslations[locale][fieldType] = value;
+                await saveTranslation(locale, fieldType, value as string);
+              }
+            }
+          }
+
+          completedSteps++;
+          const progressPercent = Math.round(10 + (completedSteps / totalSteps) * 90);
+          await updateTaskProgress(task.id, progressPercent, { processed: completedSteps });
+        } catch (localeError: any) {
+          loggers.translation("error", "Failed to translate long fields for locale", {
+            locale,
+            error: localeError.message,
+          });
+
+          // Check for quota errors
+          const errorMessage = localeError.message || String(localeError);
+          if (
+            errorMessage.includes("usage limit") ||
+            errorMessage.includes("quota") ||
+            errorMessage.includes("rate limit")
+          ) {
+            loggers.translation("error", "AI provider quota exceeded", { locale });
+          }
         }
       }
     }
+
+    // Count successfully processed locales (at least one field translated)
+    const processedLocales = params.targetLocales.filter(
+      (locale) => Object.keys(allTranslations[locale] || {}).length > 0
+    ).length;
 
     const finalError =
       processedLocales === 0
@@ -524,8 +733,11 @@ export async function handleTranslateAll(
       await completeTask(task.id, {
         success: true,
         localesProcessed: processedLocales,
-        locales: Object.keys(allTranslations),
+        locales: Object.keys(allTranslations).filter(
+          (l) => Object.keys(allTranslations[l]).length > 0
+        ),
         attempted: totalLocales,
+        usedBatchForShortFields: hasShortFields,
       });
     } else {
       await failTask(task.id, finalError || "Translation failed");

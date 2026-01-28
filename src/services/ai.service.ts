@@ -157,6 +157,136 @@ Return only the translated URL slug, nothing else.`;
     return await this.askAI(prompt);
   }
 
+  /**
+   * Translate a URL slug to multiple locales in a single AI request
+   * More efficient than calling translateSlug multiple times
+   */
+  async translateSlugBatch(
+    slug: string,
+    fromLang: string,
+    targetLocales: string[]
+  ): Promise<Record<string, string>> {
+    const sanitizedSlug = sanitizePromptInput(slug, {
+      maxLength: 200,
+      allowNewlines: false
+    });
+
+    const localeNames: Record<string, string> = {
+      de: 'German',
+      en: 'English',
+      fr: 'French',
+      es: 'Spanish',
+      it: 'Italian',
+    };
+
+    const targetLanguages = targetLocales
+      .map((loc) => `${localeNames[loc] || loc} (${loc})`)
+      .join(', ');
+
+    // Build expected JSON structure
+    const jsonStructure: Record<string, string> = {};
+    for (const locale of targetLocales) {
+      jsonStructure[locale] = 'translated-slug';
+    }
+
+    const prompt = `Translate the following URL slug/handle from ${localeNames[fromLang] || fromLang} to: ${targetLanguages}.
+
+IMPORTANT: Each result MUST be a valid URL slug:
+- Use only lowercase letters (a-z), numbers (0-9), and hyphens (-)
+- Replace spaces with hyphens
+- No special characters, no umlauts, no accents
+- No spaces, no underscores
+- Examples: "storage-boxes", "wooden-chair", "blue-t-shirt"
+
+Source slug: ${sanitizedSlug}
+
+Respond in JSON format:
+${JSON.stringify(jsonStructure, null, 2)}`;
+
+    const responseText = await this.askAI(prompt);
+    return this.parseJSONResponse(responseText);
+  }
+
+  /**
+   * Translate short fields (title, seoTitle) to multiple locales in a single AI request
+   * More efficient for fields that don't require extensive context
+   */
+  async translateShortFieldsBatch(
+    fields: Record<string, string>,
+    fromLang: string,
+    targetLocales: string[],
+    contentType: string = 'product'
+  ): Promise<Record<string, Record<string, string>>> {
+    // Only allow short fields
+    const shortFieldKeys = ['title', 'seoTitle', 'handle'];
+    const filteredFields: Record<string, string> = {};
+
+    for (const [key, value] of Object.entries(fields)) {
+      if (shortFieldKeys.includes(key) && value) {
+        filteredFields[key] = sanitizePromptInput(value, {
+          fieldType: key as any,
+          maxLength: key === 'handle' ? 200 : 500,
+          allowNewlines: false
+        });
+      }
+    }
+
+    if (Object.keys(filteredFields).length === 0) {
+      return {};
+    }
+
+    const localeNames: Record<string, string> = {
+      de: 'German',
+      en: 'English',
+      fr: 'French',
+      es: 'Spanish',
+      it: 'Italian',
+    };
+
+    const fieldNames: Record<string, string> = {
+      title: 'Title',
+      seoTitle: 'SEO Title',
+      handle: 'URL Slug',
+    };
+
+    const targetLanguages = targetLocales
+      .map((loc) => `${localeNames[loc] || loc} (${loc})`)
+      .join(', ');
+
+    // Build the fields section for the prompt
+    const fieldsText = Object.entries(filteredFields)
+      .map(([key, value]) => `${fieldNames[key] || key}: ${value}`)
+      .join('\n');
+
+    // Build expected JSON structure
+    const jsonStructure: Record<string, Record<string, string>> = {};
+    for (const locale of targetLocales) {
+      jsonStructure[locale] = {};
+      for (const key of Object.keys(filteredFields)) {
+        jsonStructure[locale][key] = '...';
+      }
+    }
+
+    const hasHandle = 'handle' in filteredFields;
+    const handleInstructions = hasHandle
+      ? `\n- URL slugs (handle) must be valid: only lowercase a-z, 0-9, hyphens. No special characters, umlauts, or accents.`
+      : '';
+
+    const prompt = `Translate these ${contentType} fields from ${localeNames[fromLang] || fromLang} to: ${targetLanguages}.
+
+${fieldsText}
+
+Requirements:
+- Keep translations concise and natural
+- Maintain similar character length${handleInstructions}
+
+Respond in JSON format:
+${JSON.stringify(jsonStructure, null, 2)}`;
+
+    const responseText = await this.askAI(prompt);
+    return this.parseJSONResponse(responseText);
+  }
+
   async translateSEO(
     seoTitle: string,
     metaDescription: string,
