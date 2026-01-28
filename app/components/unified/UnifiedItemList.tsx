@@ -162,8 +162,8 @@ export function UnifiedItemList({
       }
 
       // Calculate item dimensions
-      const minItemHeight = showThumbnails ? 52 : 44;
-      const maxItemHeight = 72;
+      const minItemHeight = showThumbnails ? 62 : 54;
+      const maxItemHeight = 82;
 
       // Calculate how many items fit based on minimum height
       const itemsThatFit = Math.max(5, Math.floor(availableHeight / minItemHeight));

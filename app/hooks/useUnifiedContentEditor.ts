@@ -1173,6 +1173,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
               value,
               locale: savedLocale,
             });
+
+            // Also store in localTranslationsRef to persist after revalidation
+            // This is especially important for handle field where Shopify may not
+            // return the translation if it's identical to the primary locale
+            if (!localTranslationsRef.current[fieldDef.translationKey]) {
+              localTranslationsRef.current[fieldDef.translationKey] = {};
+            }
+            localTranslationsRef.current[fieldDef.translationKey][savedLocale] = value;
           }
         });
 
