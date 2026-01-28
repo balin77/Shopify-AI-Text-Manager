@@ -661,6 +661,7 @@ function FieldRenderer(props: FieldRendererProps & { state?: any; handlers?: any
     seoTitle: "seoTitle",
     metaDescription: "metaDescription",
     altText: "altText",
+    productType: "productType",
   };
   const helpKey = helpKeyMap[field.key];
 

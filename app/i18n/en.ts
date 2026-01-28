@@ -723,6 +723,21 @@ export const en: Translation = {
         "Dark brown leather wallet open showing card slots",
       ],
     },
+    productType: {
+      title: "Product Type",
+      summary: "Category for filtering and organizing products in your shop.",
+      details: "The product type helps customers find products and enables automatic collection creation. It appears in filters and can be used for navigation.",
+      tips: [
+        "Keep it short and concise (e.g. T-Shirt, Shoes)",
+        "Use consistent naming across all products",
+        "Can be used for automatic collections",
+      ],
+      examples: [
+        "T-Shirt",
+        "Sneaker",
+        "Handbag",
+      ],
+    },
 
     // AI Actions
     generateAI: {

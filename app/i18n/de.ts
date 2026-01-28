@@ -721,6 +721,21 @@ export const de = {
         "Dunkelbraune Leder Geldbörse aufgeklappt mit Kartenfächern",
       ],
     },
+    productType: {
+      title: "Produkttyp",
+      summary: "Kategorie zur Filterung und Organisation von Produkten im Shop.",
+      details: "Der Produkttyp hilft Kunden, Produkte zu finden und ermöglicht die Erstellung automatischer Kollektionen. Er erscheint in Filtern und kann für die Navigation verwendet werden.",
+      tips: [
+        "Kurz und prägnant halten (z.B. T-Shirt, Schuhe)",
+        "Einheitliche Benennung über alle Produkte",
+        "Für automatische Kollektionen nutzbar",
+      ],
+      examples: [
+        "T-Shirt",
+        "Sneaker",
+        "Handtasche",
+      ],
+    },
 
     // AI Actions
     generateAI: {

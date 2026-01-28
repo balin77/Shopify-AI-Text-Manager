@@ -43,17 +43,6 @@ export const PRODUCTS_CONFIG: ContentEditorConfig = {
       aiInstructionsKey: "productTitle",
       helpText: (value) => `${(value || '').length} characters`,
     },
-    // Product Type
-    {
-      key: "productType",
-      type: "text",
-      label: "Product Type",
-      translationKey: "product_type",
-      supportsAI: false,
-      supportsFormatting: false,
-      supportsTranslation: true,
-      helpText: () => "Category for filtering (e.g. T-Shirt, Shoes)",
-    },
     // Description
     {
       key: "description",
@@ -75,6 +64,16 @@ export const PRODUCTS_CONFIG: ContentEditorConfig = {
       supportsFormatting: true,
       supportsTranslation: true,
       aiInstructionsKey: "productHandle",
+    },
+    // Product Type
+    {
+      key: "productType",
+      type: "text",
+      label: "Product Type",
+      translationKey: "product_type",
+      supportsAI: false,
+      supportsFormatting: false,
+      supportsTranslation: true,
     },
     // SEO Title
     {

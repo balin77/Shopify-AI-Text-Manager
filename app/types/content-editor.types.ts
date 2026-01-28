@@ -59,6 +59,7 @@ export interface TranslatableContentItem {
   groupName?: string; // For templates
   contentCount?: number; // For templates
   featuredImage?: ContentImage; // For products
+  productType?: string; // For products
 }
 
 // ============================================================================
