@@ -1333,25 +1333,27 @@ export default function TemplatesPage() {
   }, [error, showInfoBox, t]);
 
   return (
-    <>
+    <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" }}>
       <MainNavigation />
       <ContentTypeNavigation />
-      <UnifiedContentEditor
-        config={TEMPLATES_CONFIG}
-        items={items}
-        shopLocales={loaderShopLocales}
-        primaryLocale={primaryLocale}
-        editor={editor}
-        fetcherState={fetcher.state}
-        fetcherFormData={fetcher.formData}
-        t={t}
-        hideItemListImages={true}
-        hideItemListStatusBars={true}
-        fieldPagination={currentFieldPagination}
-        onFieldPageChange={handleFieldPageChange}
-        onFieldSearch={handleFieldSearch}
-        isFieldsLoading={isLoading}
-      />
-    </>
+      <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+        <UnifiedContentEditor
+          config={TEMPLATES_CONFIG}
+          items={items}
+          shopLocales={loaderShopLocales}
+          primaryLocale={primaryLocale}
+          editor={editor}
+          fetcherState={fetcher.state}
+          fetcherFormData={fetcher.formData}
+          t={t}
+          hideItemListImages={true}
+          hideItemListStatusBars={true}
+          fieldPagination={currentFieldPagination}
+          onFieldPageChange={handleFieldPageChange}
+          onFieldSearch={handleFieldSearch}
+          isFieldsLoading={isLoading}
+        />
+      </div>
+    </div>
   );
 }

@@ -202,20 +202,22 @@ export default function PoliciesPage() {
   };
 
   return (
-    <>
+    <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" }}>
       <MainNavigation />
       <ContentTypeNavigation />
-      <UnifiedContentEditor
-        config={POLICIES_CONFIG}
-        items={policies}
-        shopLocales={shopLocales}
-        primaryLocale={primaryLocale}
-        editor={editor}
-        fetcherState={fetcher.state}
-        fetcherFormData={fetcher.formData}
-        t={t}
-        renderListItem={renderListItem}
-      />
-    </>
+      <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+        <UnifiedContentEditor
+          config={POLICIES_CONFIG}
+          items={policies}
+          shopLocales={shopLocales}
+          primaryLocale={primaryLocale}
+          editor={editor}
+          fetcherState={fetcher.state}
+          fetcherFormData={fetcher.formData}
+          t={t}
+          renderListItem={renderListItem}
+        />
+      </div>
+    </div>
   );
 }

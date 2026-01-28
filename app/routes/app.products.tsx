@@ -383,24 +383,26 @@ export default function ProductsPage() {
   }
 
   return (
-    <>
+    <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" }}>
       <MainNavigation />
-      <UnifiedContentEditor
-        config={PRODUCTS_CONFIG}
-        items={products as ContentItem[]}
-        shopLocales={shopLocales}
-        primaryLocale={primaryLocale}
-        editor={editor}
-        fetcherState={fetcher.state}
-        fetcherFormData={fetcher.formData}
-        t={t}
-        planLimit={{
-          isAtLimit: products.length >= maxProducts && maxProducts !== Infinity,
-          maxItems: maxProducts,
-          currentPlan: plan,
-          nextPlan: getNextPlanUpgrade() || undefined,
-        }}
-      />
-    </>
+      <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+        <UnifiedContentEditor
+          config={PRODUCTS_CONFIG}
+          items={products as ContentItem[]}
+          shopLocales={shopLocales}
+          primaryLocale={primaryLocale}
+          editor={editor}
+          fetcherState={fetcher.state}
+          fetcherFormData={fetcher.formData}
+          t={t}
+          planLimit={{
+            isAtLimit: products.length >= maxProducts && maxProducts !== Infinity,
+            maxItems: maxProducts,
+            currentPlan: plan,
+            nextPlan: getNextPlanUpgrade() || undefined,
+          }}
+        />
+      </div>
+    </div>
   );
 }

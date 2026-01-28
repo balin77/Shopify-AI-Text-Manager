@@ -158,21 +158,23 @@ export default function CollectionsPage() {
   }, [error, showInfoBox, t]);
 
   return (
-    <>
+    <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" }}>
       <MainNavigation />
       <ContentTypeNavigation />
-      <UnifiedContentEditor
-        config={COLLECTIONS_CONFIG}
-        items={collections as ContentItem[]}
-        shopLocales={shopLocales}
-        primaryLocale={primaryLocale}
-        editor={editor}
-        fetcherState={fetcher.state}
-        fetcherFormData={fetcher.formData}
-        t={t}
-        hideItemListImages={true}
-        hideItemListStatusBars={true}
-      />
-    </>
+      <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+        <UnifiedContentEditor
+          config={COLLECTIONS_CONFIG}
+          items={collections as ContentItem[]}
+          shopLocales={shopLocales}
+          primaryLocale={primaryLocale}
+          editor={editor}
+          fetcherState={fetcher.state}
+          fetcherFormData={fetcher.formData}
+          t={t}
+          hideItemListImages={true}
+          hideItemListStatusBars={true}
+        />
+      </div>
+    </div>
   );
 }

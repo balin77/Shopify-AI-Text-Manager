@@ -698,6 +698,7 @@ export const contentEditorStyles = `
     margin: 0;
     padding: 0;
     overflow: hidden;
+    height: 100%;
   }
 
   /* Polaris Page component overrides for full-height layout */
@@ -709,6 +710,11 @@ export const contentEditorStyles = `
 
   .Polaris-Page__Content {
     padding: 0 !important;
+    height: 100% !important;
+  }
+
+  /* Ensure full height propagates through Polaris wrappers */
+  .Polaris-Frame {
     height: 100% !important;
   }
 

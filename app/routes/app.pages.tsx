@@ -169,21 +169,23 @@ export default function PagesPage() {
   }, [error, showInfoBox, t]);
 
   return (
-    <>
+    <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" }}>
       <MainNavigation />
       <ContentTypeNavigation />
-      <UnifiedContentEditor
-        config={PAGES_CONFIG}
-        items={pages}
-        shopLocales={shopLocales}
-        primaryLocale={primaryLocale}
-        editor={editor}
-        fetcherState={fetcher.state}
-        fetcherFormData={fetcher.formData}
-        t={t}
-        hideItemListImages={true}
-        hideItemListStatusBars={true}
-      />
-    </>
+      <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+        <UnifiedContentEditor
+          config={PAGES_CONFIG}
+          items={pages}
+          shopLocales={shopLocales}
+          primaryLocale={primaryLocale}
+          editor={editor}
+          fetcherState={fetcher.state}
+          fetcherFormData={fetcher.formData}
+          t={t}
+          hideItemListImages={true}
+          hideItemListStatusBars={true}
+        />
+      </div>
+    </div>
   );
 }
