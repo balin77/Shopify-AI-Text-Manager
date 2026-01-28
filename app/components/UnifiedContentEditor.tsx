@@ -189,10 +189,11 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
 
       <div
         style={{
-          height: `calc(100vh - ${getTotalNavHeight()}px - 2rem - 56px)`,
+          height: "100%",
+          minHeight: 0,
           display: "flex",
-          gap: "1rem",
-          padding: "1rem",
+          gap: "16px",
+          padding: "16px",
           overflow: "hidden",
           boxSizing: "border-box",
         }}

@@ -142,34 +142,45 @@ export function UnifiedItemList({
   // Calculate items per page and item height based on available space
   useEffect(() => {
     const calculateDynamicPagination = () => {
-      const navHeight = getTotalNavHeight();
-      const headerHeight = headerRef.current?.offsetHeight || 120;
-      const paginationHeight = 56; // Fixed pagination height
-      const containerPadding = 32; // 1rem top + 1rem bottom of main container
-      const shopifyAppBridgeFooter = 56; // Shopify embedded app footer bar
+      // Use the actual list container height if available
+      const containerHeight = listContainerRef.current?.clientHeight;
+      if (!containerHeight || containerHeight < 100) {
+        // Fallback: calculate from window
+        const navHeight = getTotalNavHeight();
+        const headerHeight = headerRef.current?.offsetHeight || 120;
+        const paginationHeight = 56;
+        const padding = 32;
+        const availableHeight = window.innerHeight - navHeight - headerHeight - paginationHeight - padding;
 
-      // Available height for the list area
-      const availableListHeight = window.innerHeight - navHeight - headerHeight - paginationHeight - containerPadding - shopifyAppBridgeFooter;
+        const minItemHeight = showThumbnails ? 56 : 48;
+        const itemsThatFit = Math.max(5, Math.floor(availableHeight / minItemHeight));
+        setDynamicItemsPerPage(itemsThatFit);
+        setItemHeight(minItemHeight);
+        return;
+      }
 
-      // Base item height (without thumbnail: ~48px content + padding, with thumbnail: ~56px)
-      const baseItemHeight = showThumbnails ? 56 : 48;
-      const minItemHeight = baseItemHeight;
-      const maxItemHeight = 80; // Don't make items too tall
+      // Use container height for calculation
+      const minItemHeight = showThumbnails ? 56 : 48;
+      const maxItemHeight = 72;
 
       // Calculate how many items fit
-      const itemsThatFit = Math.max(5, Math.floor(availableListHeight / minItemHeight));
+      const itemsThatFit = Math.max(5, Math.floor(containerHeight / minItemHeight));
 
       // Calculate actual item height to fill the space exactly
-      const calculatedItemHeight = Math.min(maxItemHeight, Math.max(minItemHeight, availableListHeight / itemsThatFit));
+      const calculatedItemHeight = Math.min(maxItemHeight, Math.max(minItemHeight, containerHeight / itemsThatFit));
 
       setDynamicItemsPerPage(itemsThatFit);
       setItemHeight(calculatedItemHeight);
     };
 
-    calculateDynamicPagination();
+    // Delay initial calculation to allow DOM to render
+    const timer = setTimeout(calculateDynamicPagination, 100);
     window.addEventListener('resize', calculateDynamicPagination);
 
-    return () => window.removeEventListener('resize', calculateDynamicPagination);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('resize', calculateDynamicPagination);
+    };
   }, [getTotalNavHeight, showThumbnails]);
 
   // Reset to page 1 when search changes
@@ -261,63 +272,43 @@ export function UnifiedItemList({
   const itemRenderer = renderItem || defaultRenderItem;
 
   return (
-    <div style={{ width: "300px", flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0, flex: 1 }}>
+    <div style={{ width: "280px", flexShrink: 0, height: "100%", overflow: "hidden" }}>
       <style>{`
         /* UnifiedItemList - Full height card with scrollable list */
         .unified-item-list-wrapper {
-          flex: 1 !important;
+          height: 100% !important;
           display: flex !important;
           flex-direction: column !important;
-          min-height: 0 !important;
         }
         .unified-item-list-wrapper > .Polaris-Card {
-          flex: 1 !important;
+          height: 100% !important;
           display: flex !important;
           flex-direction: column !important;
           overflow: hidden !important;
-          min-height: 0 !important;
         }
         .unified-item-list-wrapper .Polaris-Card > div {
           display: flex !important;
           flex-direction: column !important;
-          flex: 1 !important;
+          height: 100% !important;
           overflow: hidden !important;
-          min-height: 0 !important;
         }
         .unified-item-list-scroll {
           flex: 1 !important;
           min-height: 0 !important;
-          overflow-y: hidden !important;
-        }
-        .unified-item-list-scroll .Polaris-ResourceList__ResourceListWrapper {
-          height: 100% !important;
-        }
-        .unified-item-list-scroll ul.Polaris-ResourceList {
-          max-height: none !important;
-          height: 100% !important;
+          overflow-y: auto !important;
         }
         /* Dynamic item height */
         .unified-item-list-scroll .Polaris-ResourceItem {
           height: ${itemHeight}px !important;
           min-height: ${itemHeight}px !important;
-          max-height: ${itemHeight}px !important;
         }
         .unified-item-list-scroll .Polaris-ResourceItem__Container {
           height: 100% !important;
           display: flex !important;
           align-items: center !important;
         }
-        .unified-item-list-scroll .Polaris-ResourceItem__Content {
-          display: flex !important;
-          align-items: center !important;
-          height: 100% !important;
-        }
-        .unified-item-list-scroll .Polaris-ResourceItem__ListItem {
-          display: flex !important;
-          align-items: center !important;
-        }
       `}</style>
-      <div className="unified-item-list-wrapper" style={{ display: "flex", flexDirection: "column", flex: 1, overflow: "hidden", minHeight: 0 }}>
+      <div className="unified-item-list-wrapper" style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden" }}>
       <Card padding="0">
         {/* Header */}
         <div ref={headerRef} style={{ padding: "1rem", borderBottom: "1px solid #e1e3e5", flexShrink: 0 }}>
