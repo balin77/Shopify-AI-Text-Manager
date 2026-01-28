@@ -554,6 +554,12 @@ export function hasLocaleMissingTranslations(
   const requiredFields = getRequiredFieldsForContentType(contentType);
 
   return requiredFields.some(field => {
+    // Skip handle field - Shopify often doesn't return translations for handles
+    // that are identical to the primary locale, so we ignore it in validation
+    if (field === 'handle') {
+      return false;
+    }
+
     // Only check if primary has content
     if (!primaryHasFieldContent(selectedItem, field, contentType)) {
       return false;
@@ -596,6 +602,12 @@ export function hasFieldMissingTranslations(
   contentType: ContentType
 ): boolean {
   if (!selectedItem) return false;
+
+  // Skip handle field - Shopify often doesn't return translations for handles
+  // that are identical to the primary locale, so we ignore it in validation
+  if (fieldKey === 'handle') {
+    return false;
+  }
 
   // Map UI field names to translation keys
   const translationKey = UI_FIELD_TO_TRANSLATION_KEY[fieldKey] || fieldKey;
