@@ -244,13 +244,41 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
               // For templates: Send to Shopify AND save to database
               if (contentType === 'templates' && templateResourceId && templateGroupId) {
-                // STEP 1: Send to Shopify first
+                // STEP 1: Fetch the digest from Shopify first
                 try {
+                  const digestResponse = await admin.graphql(`
+                    query getTranslatableContent($resourceId: ID!) {
+                      translatableResource(resourceId: $resourceId) {
+                        resourceId
+                        translatableContent {
+                          key
+                          digest
+                        }
+                      }
+                    }
+                  `, {
+                    variables: { resourceId: templateResourceId }
+                  });
+
+                  const digestData = await digestResponse.json() as any;
+                  const translatableContent = digestData.data?.translatableResource?.translatableContent || [];
+                  const fieldContent = translatableContent.find((c: any) => c.key === fieldType);
+                  const digest = fieldContent?.digest || "";
+
+                  logger.info("[API-AI] Fetched digest for field", {
+                    context: "AI",
+                    resourceId: templateResourceId,
+                    fieldType,
+                    digest: digest ? `${digest.substring(0, 20)}...` : "(empty)",
+                    totalFields: translatableContent.length
+                  });
+
+                  // STEP 2: Send to Shopify with the digest
                   const translationInput = [{
                     key: fieldType,
                     value: translatedValue,
                     locale: locale,
-                    translatableContentDigest: ""
+                    translatableContentDigest: digest
                   }];
 
                   logger.info("[API-AI] Calling Shopify translationsRegister", {
@@ -258,7 +286,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                     resourceId: templateResourceId,
                     fieldType,
                     locale,
-                    translationInput: JSON.stringify(translationInput)
+                    hasDigest: !!digest
                   });
 
                   const response = await admin.graphql(TRANSLATE_CONTENT, {
