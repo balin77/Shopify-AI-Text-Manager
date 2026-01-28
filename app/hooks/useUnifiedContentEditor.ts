@@ -1005,6 +1005,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             setEditableValues(updatedValues);
           }
         }
+
+        // Mark as loading to reset change detection after bulk translation
+        // This ensures hasChanges becomes false after we've updated the translations
+        setIsLoadingData(true);
       }
     }
   }, [fetcher.data, currentLanguage, effectiveFieldDefinitions]); // Use selectedItemRef instead of selectedItem
@@ -1057,6 +1061,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           });
           setEditableValues(updatedValues);
         }
+
+        // Mark as loading to reset change detection after bulk translation
+        // This ensures hasChanges becomes false after we've updated the translations
+        setIsLoadingData(true);
 
         showInfoBox(
           t.common?.translatedSuccessfully || `Successfully translated to ${targetLocale}`,
