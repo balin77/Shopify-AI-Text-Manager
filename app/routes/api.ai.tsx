@@ -10,6 +10,7 @@ import { AIService } from "../../src/services/ai.service";
 import { decryptApiKey } from "../utils/encryption.server";
 import { getTaskExpirationDate } from "../../src/utils/task.utils";
 import { logger } from "~/utils/logger.server";
+import { TRANSLATE_CONTENT } from "../graphql/content.mutations";
 
 // Helper to build translation prompt (same as in AIService)
 function buildTranslationPrompt(sourceText: string, fromLang: string, toLang: string): string {
@@ -21,7 +22,7 @@ Return only the translation, without additional explanations.`;
 }
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
 
   try {
     const formData = await request.formData();
@@ -214,41 +215,95 @@ export const action = async ({ request }: ActionFunctionArgs) => {
               translations[locale] = translatedValue;
               aiResponses.push({ locale, response: translatedValue });
 
-              // For templates: Auto-save each translation to the database
+              // For templates: Send to Shopify AND save to database
               if (contentType === 'templates' && itemId) {
                 const groupId = itemId.replace("group_", "");
-                const resourceId = `group_${groupId}`;
 
-                await db.themeTranslation.upsert({
+                // Load themeContent to get the real Shopify resourceId
+                const themeContent = await db.themeContent.findFirst({
                   where: {
-                    shop_resourceId_groupId_key_locale: {
-                      shop: session.shop,
-                      resourceId: resourceId,
-                      groupId: groupId,
-                      key: fieldType,
-                      locale: locale
-                    }
-                  },
-                  update: {
-                    value: translatedValue,
-                    updatedAt: new Date()
-                  },
-                  create: {
                     shop: session.shop,
-                    groupId: groupId,
-                    resourceId: resourceId,
-                    locale: locale,
-                    key: fieldType,
-                    value: translatedValue
+                    groupId: groupId
                   }
                 });
 
-                logger.debug("[API-AI] Saved template translation to DB", {
-                  context: "AI",
-                  groupId,
-                  fieldType,
-                  locale
-                });
+                if (themeContent) {
+                  const shopifyResourceId = themeContent.resourceId;
+
+                  // STEP 1: Send to Shopify first
+                  try {
+                    const translationInput = [{
+                      key: fieldType,
+                      value: translatedValue,
+                      locale: locale,
+                      translatableContentDigest: ""
+                    }];
+
+                    const response = await admin.graphql(TRANSLATE_CONTENT, {
+                      variables: {
+                        resourceId: shopifyResourceId,
+                        translations: translationInput
+                      }
+                    });
+
+                    const data = await response.json();
+
+                    if (data.data?.translationsRegister?.userErrors?.length > 0) {
+                      logger.error("[API-AI] Shopify translation error", {
+                        context: "AI",
+                        errors: data.data.translationsRegister.userErrors,
+                        locale,
+                        fieldType
+                      });
+                    } else {
+                      logger.debug("[API-AI] Saved translation to Shopify", {
+                        context: "AI",
+                        resourceId: shopifyResourceId,
+                        fieldType,
+                        locale
+                      });
+                    }
+                  } catch (shopifyError: any) {
+                    logger.error("[API-AI] Error sending to Shopify", {
+                      context: "AI",
+                      error: shopifyError?.message,
+                      locale,
+                      fieldType
+                    });
+                  }
+
+                  // STEP 2: Save to local database
+                  await db.themeTranslation.upsert({
+                    where: {
+                      shop_resourceId_groupId_key_locale: {
+                        shop: session.shop,
+                        resourceId: shopifyResourceId,
+                        groupId: groupId,
+                        key: fieldType,
+                        locale: locale
+                      }
+                    },
+                    update: {
+                      value: translatedValue,
+                      updatedAt: new Date()
+                    },
+                    create: {
+                      shop: session.shop,
+                      groupId: groupId,
+                      resourceId: shopifyResourceId,
+                      locale: locale,
+                      key: fieldType,
+                      value: translatedValue
+                    }
+                  });
+
+                  logger.debug("[API-AI] Saved template translation to DB", {
+                    context: "AI",
+                    groupId,
+                    fieldType,
+                    locale
+                  });
+                }
               }
 
               // Update progress
