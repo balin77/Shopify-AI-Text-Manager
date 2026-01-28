@@ -288,6 +288,7 @@ export interface EditorState {
   isInitialDataReady: boolean;
   isLoadingImages?: boolean; // True when loading images on-demand from Shopify
   fallbackFields: Set<string>; // Fields showing fallback values (e.g., handle with primary locale value)
+  loadingFieldKeys: Set<string>; // Fields with AI actions currently running (for per-field loading states)
 }
 
 export interface EditorHandlers {

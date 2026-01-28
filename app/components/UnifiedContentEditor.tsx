@@ -117,23 +117,19 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   // Use effective field definitions (dynamic for templates, static for other content types)
   const fieldDefinitions = effectiveFieldDefinitions || config.fieldDefinitions;
 
-  // AI actions that should block all other AI buttons while running
-  const AI_ACTIONS = [
-    "generateAIText",
-    "formatAI",
-    "translateField",
-    "translateFieldToAllLocales",
+  // AI actions that should block all other AI buttons while running (for global actions like translateAll)
+  const GLOBAL_AI_ACTIONS = [
     "translateAll",
     "translateAllForLocale",
-    "generateAltText",
-    "translateAltText",
-    "translateAltTextToAllLocales",
     "generateAllAltTexts",
   ];
 
-  // Check if any AI action is currently running
+  // Check if a global AI action is currently running (affects all fields)
   const currentAction = fetcherFormData?.get("action");
-  const isAnyAIActionRunning = fetcherState !== "idle" && AI_ACTIONS.includes(currentAction as string);
+  const isGlobalAIActionRunning = fetcherState !== "idle" && GLOBAL_AI_ACTIONS.includes(currentAction as string);
+
+  // Get the set of fields with loading AI actions (for per-field loading states)
+  const loadingFieldKeys = state.loadingFieldKeys;
 
   // Transform items to UnifiedItem format
   const unifiedItems: UnifiedItem[] = items.map((item) => ({
@@ -440,7 +436,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         suggestion={state.aiSuggestions[field.key]}
                         isPrimaryLocale={state.currentLanguage === primaryLocale}
                         isTranslated={helpers.isFieldTranslated(field.key)}
-                        isLoading={isAnyAIActionRunning}
+                        isLoading={isGlobalAIActionRunning || loadingFieldKeys.has(field.key)}
                         isDataLoading={!state.isInitialDataReady}
                         sourceTextAvailable={!!getSourceText(selectedItem, field.key, primaryLocale)}
                         disableGeneration={config.contentType === 'templates'}
@@ -628,23 +624,17 @@ function FieldRenderer(props: FieldRendererProps & { state?: any; handlers?: any
     fetcherFormData,
   } = props;
 
-  // AI actions that should block all other AI buttons while running
-  const AI_ACTIONS = [
-    "generateAIText",
-    "formatAI",
-    "translateField",
-    "translateFieldToAllLocales",
-    "translateAll",
-    "translateAllForLocale",
+  // AI actions that should block all image AI buttons while running (for ImageGalleryField)
+  const IMAGE_AI_ACTIONS = [
     "generateAltText",
     "translateAltText",
     "translateAltTextToAllLocales",
     "generateAllAltTexts",
   ];
 
-  // Check if any AI action is currently running (used for ImageGalleryField)
+  // Check if an image-related AI action is currently running (used for ImageGalleryField)
   const currentAction = fetcherFormData?.get("action");
-  const isAnyAIActionRunning = fetcherState !== "idle" && AI_ACTIONS.includes(currentAction as string);
+  const isImageAIActionRunning = fetcherState !== "idle" && IMAGE_AI_ACTIONS.includes(currentAction as string);
 
   // Get locale name for label
   const localeName = shopLocales.find((l: any) => l.locale === currentLanguage)?.name || currentLanguage;
@@ -728,7 +718,7 @@ function FieldRenderer(props: FieldRendererProps & { state?: any; handlers?: any
         onAcceptAndTranslateSuggestion={handlers.handleAcceptAndTranslateAltText}
         onRejectSuggestion={handlers.handleRejectAltTextSuggestion}
         onClearAltText={(imageIndex) => handlers.handleAltTextChange(imageIndex, "")}
-        isFieldLoading={() => isAnyAIActionRunning}
+        isFieldLoading={() => isImageAIActionRunning}
         t={{
           image: t.products?.image || "Image",
           featuredImage: t.products?.featuredImage || "Featured Image",

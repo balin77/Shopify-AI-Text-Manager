@@ -89,6 +89,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // This happens when Shopify doesn't return a translation because it's identical to the primary value
   const [fallbackFields, setFallbackFields] = useState<Set<string>>(new Set());
 
+  // Track which fields have AI actions currently running (for per-field loading states)
+  // This allows multiple AI actions to run in parallel on different fields
+  const [loadingFieldKeys, setLoadingFieldKeys] = useState<Set<string>>(new Set());
+
   // Track if initial data load was successful - disables retry mechanism after successful load
   // Reset when item or language changes, allowing retry during new load cycles
   const initialLoadSuccessfulRef = useRef(false);
@@ -537,6 +541,50 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       }
     }
   }, []); // Empty deps - stable reference using fetcherRef
+
+  // Submit AI action using fetch API directly to allow parallel requests
+  // This enables multiple AI actions to run simultaneously on different fields
+  const submitAIAction = useCallback(async (
+    data: Record<string, any>,
+    fieldKey: string,
+    onSuccess?: (result: any) => void,
+    onError?: (error: string) => void
+  ) => {
+    // Add field to loading state
+    setLoadingFieldKeys(prev => new Set(prev).add(fieldKey));
+
+    try {
+      const formData = new FormData();
+      Object.entries(data).forEach(([key, value]) => {
+        formData.append(key, String(value));
+      });
+
+      const response = await fetch(window.location.pathname, {
+        method: 'POST',
+        body: formData,
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        onSuccess?.(result);
+      } else if (result.error) {
+        onError?.(result.error);
+        showInfoBox(result.error, "critical", t.common?.error || "Error");
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      onError?.(errorMessage);
+      showInfoBox(errorMessage, "critical", t.common?.error || "Error");
+    } finally {
+      // Remove field from loading state
+      setLoadingFieldKeys(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(fieldKey);
+        return newSet;
+      });
+    }
+  }, [showInfoBox, t]);
 
   // Helper function to get which fields have changed compared to the original item
   const getChangedFields = useCallback((valuesToCheck: Record<string, string>): string[] => {
@@ -1409,7 +1457,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     const contextDescription = editableValues.description || editableValues.body || "";
     const mainLanguage = shopLocales.find((l: ShopLocale) => l.locale === primaryLocale)?.name || primaryLocale;
 
-    safeSubmit(
+    submitAIAction(
       {
         action: "generateAIText",
         itemId: selectedItemId,
@@ -1419,7 +1467,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         contextDescription,
         mainLanguage,
       },
-      { method: "POST" }
+      fieldKey,
+      (result) => {
+        // Handle success - set AI suggestion for this field
+        setAiSuggestions((prev) => ({
+          ...prev,
+          [fieldKey]: result.generatedContent,
+        }));
+      }
     );
   };
 
@@ -1440,7 +1495,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     const contextDescription = editableValues.description || editableValues.body || "";
     const mainLanguage = shopLocales.find((l: ShopLocale) => l.locale === primaryLocale)?.name || primaryLocale;
 
-    safeSubmit(
+    submitAIAction(
       {
         action: "formatAIText",
         itemId: selectedItemId,
@@ -1450,7 +1505,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         contextDescription,
         mainLanguage,
       },
-      { method: "POST" }
+      fieldKey,
+      (result) => {
+        // Handle success - set AI suggestion for this field
+        setAiSuggestions((prev) => ({
+          ...prev,
+          [fieldKey]: result.generatedContent,
+        }));
+      }
     );
   };
 
@@ -1470,15 +1532,71 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       return;
     }
 
-    safeSubmit(
+    const targetLocale = currentLanguage;
+
+    submitAIAction(
       {
         action: "translateField",
         itemId: selectedItemId,
         fieldType: fieldKey,
         sourceText,
-        targetLocale: currentLanguage,
+        targetLocale,
       },
-      { method: "POST" }
+      fieldKey,
+      (result) => {
+        // Handle success - update the field with translated value
+        const translatedValue = result.translatedValue;
+
+        // Clear deleted key for this field since we now have a new translation
+        if (field.translationKey && deletedTranslationKeysRef.current.has(field.translationKey)) {
+          deletedTranslationKeysRef.current.delete(field.translationKey);
+        }
+
+        // Update UI
+        setEditableValues(prev => ({
+          ...prev,
+          [fieldKey]: translatedValue,
+        }));
+
+        // Update item.translations directly so hasChanges becomes false after save
+        const item = selectedItemRef.current;
+        if (item && field.translationKey) {
+          // Remove existing translation for this key and locale
+          item.translations = item.translations.filter(
+            (t: Translation) => !(t.locale === targetLocale && t.key === field.translationKey)
+          );
+          // Add new translation
+          item.translations.push({
+            key: field.translationKey,
+            value: translatedValue,
+            locale: targetLocale,
+          });
+        }
+
+        // Auto-save the translation immediately
+        if (selectedItemId) {
+          const newValues = {
+            ...editableValuesRef.current,
+            [fieldKey]: translatedValue,
+          };
+
+          const formDataObj: Record<string, string> = {
+            action: "updateContent",
+            itemId: selectedItemId,
+            locale: targetLocale,
+            primaryLocale,
+          };
+          effectiveFieldDefinitions.forEach((f) => {
+            formDataObj[f.key] = newValues[f.key] || "";
+          });
+
+          savedLocaleRef.current = targetLocale;
+          safeSubmit(formDataObj, { method: "POST" });
+        }
+
+        // Mark as loading to reset change detection after the save completes
+        setIsLoadingData(true);
+      }
     );
   };
 
@@ -1511,7 +1629,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
     const contextTitle = getItemFieldValue(selectedItem, 'title', primaryLocale, config) || selectedItem.id || "";
 
-    safeSubmit(
+    submitAIAction(
       {
         action: "translateFieldToAllLocales",
         itemId: selectedItemId,
@@ -1520,7 +1638,63 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         targetLocales: JSON.stringify(targetLocales),
         contextTitle,
       },
-      { method: "POST" }
+      fieldKey,
+      (result) => {
+        // Handle success - translations is Record<locale, translatedText>
+        const translations = result.translations;
+        const shopifyKey = field.translationKey;
+        const item = selectedItemRef.current;
+
+        if (item && shopifyKey) {
+          // Clear this translation key from deleted set since we now have new translations
+          if (deletedTranslationKeysRef.current.has(shopifyKey)) {
+            deletedTranslationKeysRef.current.delete(shopifyKey);
+          }
+
+          // Update item translations for all locales
+          for (const [locale, translatedValue] of Object.entries(translations as Record<string, string>)) {
+            // Remove existing translation for this key and locale
+            item.translations = item.translations.filter(
+              (t: Translation) => !(t.locale === locale && t.key === shopifyKey)
+            );
+
+            // Add new translation
+            item.translations.push({
+              key: shopifyKey,
+              value: translatedValue,
+              locale
+            });
+          }
+
+          // Store translations locally as backup
+          if (!localTranslationsRef.current[shopifyKey]) {
+            localTranslationsRef.current[shopifyKey] = {};
+          }
+          for (const [locale, translatedValue] of Object.entries(translations as Record<string, string>)) {
+            localTranslationsRef.current[shopifyKey][locale] = translatedValue;
+          }
+
+          // If the current language is one of the translated languages, update editableValues immediately
+          if (translations[currentLanguage]) {
+            setEditableValues(prev => ({
+              ...prev,
+              [fieldKey]: translations[currentLanguage]
+            }));
+          }
+
+          showInfoBox(
+            t.common?.fieldTranslatedToLanguages
+              ?.replace("{fieldType}", fieldKey)
+              .replace("{count}", String(Object.keys(translations).length))
+              || `${fieldKey} translated to ${Object.keys(translations).length} language(s)`,
+            "success",
+            t.common?.success || "Success"
+          );
+
+          // Mark as loading to reset change detection
+          setIsLoadingData(true);
+        }
+      }
     );
   };
 
@@ -2126,6 +2300,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     isInitialDataReady,
     isLoadingImages,
     fallbackFields,
+    loadingFieldKeys,
   };
 
   const handlers: EditorHandlers = {
