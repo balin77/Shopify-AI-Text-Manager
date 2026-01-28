@@ -130,6 +130,33 @@ Return only the translation, without additional explanations.`;
     return await this.askAI(prompt);
   }
 
+  async translateSlug(
+    slug: string,
+    fromLang: string,
+    toLang: string
+  ): Promise<string> {
+    // Sanitize slug before translation
+    const sanitizedSlug = sanitizePromptInput(slug, {
+      maxLength: 200,
+      allowNewlines: false
+    });
+
+    const prompt = `Translate the following URL slug/handle from ${fromLang} to ${toLang}.
+
+IMPORTANT: The result MUST be a valid URL slug:
+- Use only lowercase letters (a-z), numbers (0-9), and hyphens (-)
+- Replace spaces with hyphens
+- No special characters, no umlauts, no accents
+- No spaces, no underscores
+- Examples: "storage-boxes", "wooden-chair", "blue-t-shirt"
+
+Source slug: ${sanitizedSlug}
+
+Return only the translated URL slug, nothing else.`;
+
+    return await this.askAI(prompt);
+  }
+
   async translateSEO(
     seoTitle: string,
     metaDescription: string,

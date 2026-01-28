@@ -11,6 +11,7 @@ import { decryptApiKey } from "../utils/encryption.server";
 import { getTaskExpirationDate } from "../../src/utils/task.utils";
 import { logger } from "~/utils/logger.server";
 import { TRANSLATE_CONTENT } from "../graphql/content.mutations";
+import { sanitizeSlug } from "../utils/slug.utils";
 
 // Helper to build translation prompt (same as in AIService)
 function buildTranslationPrompt(sourceText: string, fromLang: string, toLang: string): string {
@@ -19,6 +20,22 @@ function buildTranslationPrompt(sourceText: string, fromLang: string, toLang: st
 Text: ${sourceText}
 
 Return only the translation, without additional explanations.`;
+}
+
+// Helper to build URL slug translation prompt
+function buildSlugTranslationPrompt(sourceText: string, fromLang: string, toLang: string): string {
+  return `Translate the following URL slug/handle from ${fromLang} to ${toLang}.
+
+IMPORTANT: The result MUST be a valid URL slug:
+- Use only lowercase letters (a-z), numbers (0-9), and hyphens (-)
+- Replace spaces with hyphens
+- No special characters, no umlauts, no accents
+- No spaces, no underscores
+- Examples: "storage-boxes", "wooden-chair", "blue-t-shirt"
+
+Source slug: ${sourceText}
+
+Return only the translated URL slug, nothing else.`;
 }
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -48,8 +65,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           return json({ success: false, error: "No source text available" }, { status: 400 });
         }
 
-        // Build the prompt
-        const prompt = buildTranslationPrompt(sourceText, primaryLocale, targetLocale);
+        // Check if this is a URL slug/handle field
+        const isSlugField = fieldType === 'handle' || fieldType === 'slug';
+
+        // Build the prompt (use special prompt for URL slugs)
+        const prompt = isSlugField
+          ? buildSlugTranslationPrompt(sourceText, primaryLocale, targetLocale)
+          : buildTranslationPrompt(sourceText, primaryLocale, targetLocale);
 
         // Create task entry with prompt
         const task = await db.task.create({
@@ -97,11 +119,21 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             textLength: sourceText.length
           });
 
-          const translatedValue = await aiService.translateContent(
-            sourceText,
-            primaryLocale,
-            targetLocale
-          );
+          // Use special method for URL slugs
+          let translatedValue = isSlugField
+            ? await aiService.translateSlug(sourceText, primaryLocale, targetLocale)
+            : await aiService.translateContent(sourceText, primaryLocale, targetLocale);
+
+          // For URL slugs: ensure the result is a valid slug (post-process as safety net)
+          if (isSlugField) {
+            const originalValue = translatedValue;
+            translatedValue = sanitizeSlug(translatedValue);
+            logger.debug("[API-AI] Sanitized slug translation", {
+              context: "AI",
+              original: originalValue,
+              sanitized: translatedValue
+            });
+          }
 
           // Update task to completed with full AI response
           await db.task.update({
@@ -149,10 +181,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           return json({ success: false, error: "No target locales specified" }, { status: 400 });
         }
 
+        // Check if this is a URL slug/handle field
+        const isSlugField = fieldType === 'handle' || fieldType === 'slug';
+
         // Build prompts for all locales (for logging)
         const allPrompts = targetLocales.map((locale: string) => ({
           locale,
-          prompt: buildTranslationPrompt(sourceText, primaryLocale, locale)
+          prompt: isSlugField
+            ? buildSlugTranslationPrompt(sourceText, primaryLocale, locale)
+            : buildTranslationPrompt(sourceText, primaryLocale, locale)
         }));
 
         // Create task entry with all prompts
@@ -234,11 +271,23 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           for (let i = 0; i < targetLocales.length; i++) {
             const locale = targetLocales[i];
             try {
-              const translatedValue = await aiService.translateContent(
-                sourceText,
-                primaryLocale,
-                locale
-              );
+              // Use special method for URL slugs
+              let translatedValue = isSlugField
+                ? await aiService.translateSlug(sourceText, primaryLocale, locale)
+                : await aiService.translateContent(sourceText, primaryLocale, locale);
+
+              // For URL slugs: ensure the result is a valid slug (post-process as safety net)
+              if (isSlugField) {
+                const originalValue = translatedValue;
+                translatedValue = sanitizeSlug(translatedValue);
+                logger.debug("[API-AI] Sanitized slug translation", {
+                  context: "AI",
+                  locale,
+                  original: originalValue,
+                  sanitized: translatedValue
+                });
+              }
+
               translations[locale] = translatedValue;
               aiResponses.push({ locale, response: translatedValue });
 
