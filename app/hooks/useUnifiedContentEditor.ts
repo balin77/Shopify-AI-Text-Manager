@@ -1541,6 +1541,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         fieldType: fieldKey,
         sourceText,
         targetLocale,
+        primaryLocale,
       },
       fieldKey,
       (result) => {
@@ -1637,6 +1638,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         sourceText,
         targetLocales: JSON.stringify(targetLocales),
         contextTitle,
+        primaryLocale,
       },
       fieldKey,
       (result) => {
