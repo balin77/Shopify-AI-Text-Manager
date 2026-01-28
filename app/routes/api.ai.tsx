@@ -184,15 +184,23 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         // Check if this is a URL slug/handle field
         const isSlugField = fieldType === 'handle' || fieldType === 'slug';
 
-        // Build prompts for all locales (for logging)
-        const allPrompts = targetLocales.map((locale: string) => ({
-          locale,
-          prompt: isSlugField
-            ? buildSlugTranslationPrompt(sourceText, primaryLocale, locale)
-            : buildTranslationPrompt(sourceText, primaryLocale, locale)
-        }));
+        // Check if this is a short field that can use batch translation
+        const SHORT_FIELDS = ['handle', 'slug', 'title', 'seoTitle'];
+        const isShortField = SHORT_FIELDS.includes(fieldType);
 
-        // Create task entry with all prompts
+        // Build batch prompt for short fields, individual prompts for long fields
+        const batchPrompt = isShortField
+          ? `Batch translation from ${primaryLocale} to [${targetLocales.join(', ')}] for field: ${fieldType}`
+          : null;
+
+        const allPrompts = isShortField
+          ? [{ type: 'batch', locales: targetLocales, prompt: batchPrompt }]
+          : targetLocales.map((locale: string) => ({
+              locale,
+              prompt: buildTranslationPrompt(sourceText, primaryLocale, locale)
+            }));
+
+        // Create task entry with prompts
         const task = await db.task.create({
           data: {
             shop: session.shop,
@@ -203,7 +211,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             resourceTitle: fieldType,
             fieldType,
             progress: 0,
-            prompt: JSON.stringify(allPrompts, null, 2), // Store all prompts
+            prompt: JSON.stringify(allPrompts, null, 2),
             expiresAt: getTaskExpirationDate(),
           },
         });
@@ -234,7 +242,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             fieldType,
             from: primaryLocale,
             to: targetLocales,
-            textLength: sourceText.length
+            textLength: sourceText.length,
+            useBatch: isShortField
           });
 
           const translations: Record<string, string> = {};
@@ -268,13 +277,221 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             }
           }
 
-          for (let i = 0; i < targetLocales.length; i++) {
-            const locale = targetLocales[i];
+          // Use batch translation for short fields (1 AI request for all locales)
+          if (isShortField) {
+            logger.info("[API-AI] Using BATCH translation for short field", {
+              context: "AI",
+              fieldType,
+              targetLocales,
+              isSlugField
+            });
+
             try {
-              // Use special method for URL slugs
-              let translatedValue = isSlugField
-                ? await aiService.translateSlug(sourceText, primaryLocale, locale)
-                : await aiService.translateContent(sourceText, primaryLocale, locale);
+              let batchResults: Record<string, string>;
+
+              if (isSlugField) {
+                // Use batch slug translation
+                batchResults = await aiService.translateSlugBatch(sourceText, primaryLocale, targetLocales);
+              } else {
+                // Use batch short field translation (title, seoTitle)
+                const fieldsToTranslate = { [fieldType]: sourceText };
+                const batchFieldResults = await aiService.translateShortFieldsBatch(fieldsToTranslate, primaryLocale, targetLocales, contentType);
+                // Extract just the single field from each locale
+                batchResults = {};
+                for (const locale of targetLocales) {
+                  if (batchFieldResults[locale] && batchFieldResults[locale][fieldType]) {
+                    batchResults[locale] = batchFieldResults[locale][fieldType];
+                  }
+                }
+              }
+
+              // Process batch results and save to Shopify
+              for (let i = 0; i < targetLocales.length; i++) {
+                const locale = targetLocales[i];
+                let translatedValue = batchResults[locale] || sourceText;
+
+                // For URL slugs: ensure the result is a valid slug (post-process as safety net)
+                if (isSlugField) {
+                  const originalValue = translatedValue;
+                  translatedValue = sanitizeSlug(translatedValue);
+                  logger.debug("[API-AI] Sanitized batch slug translation", {
+                    context: "AI",
+                    locale,
+                    original: originalValue,
+                    sanitized: translatedValue
+                  });
+                }
+
+                translations[locale] = translatedValue;
+                aiResponses.push({ locale, response: translatedValue });
+
+                // Save to Shopify for templates
+                if (contentType === 'templates' && templateResourceId && templateGroupId) {
+                  try {
+                    const digestResponse = await admin.graphql(`
+                      query getTranslatableContent($resourceId: ID!) {
+                        translatableResource(resourceId: $resourceId) {
+                          resourceId
+                          translatableContent {
+                            key
+                            digest
+                          }
+                        }
+                      }
+                    `, {
+                      variables: { resourceId: templateResourceId }
+                    });
+
+                    const digestData = await digestResponse.json() as any;
+                    const translatableContent = digestData.data?.translatableResource?.translatableContent || [];
+                    const fieldContent = translatableContent.find((c: any) => c.key === fieldType);
+                    const digest = fieldContent?.digest || "";
+
+                    const translationInput = [{
+                      key: fieldType,
+                      value: translatedValue,
+                      locale: locale,
+                      translatableContentDigest: digest
+                    }];
+
+                    await admin.graphql(TRANSLATE_CONTENT, {
+                      variables: {
+                        resourceId: templateResourceId,
+                        translations: translationInput
+                      }
+                    });
+
+                    // Save to local database
+                    await db.themeTranslation.upsert({
+                      where: {
+                        shop_resourceId_groupId_key_locale: {
+                          shop: session.shop,
+                          resourceId: templateResourceId,
+                          groupId: templateGroupId,
+                          key: fieldType,
+                          locale: locale
+                        }
+                      },
+                      update: {
+                        value: translatedValue,
+                        updatedAt: new Date()
+                      },
+                      create: {
+                        shop: session.shop,
+                        groupId: templateGroupId,
+                        resourceId: templateResourceId,
+                        locale: locale,
+                        key: fieldType,
+                        value: translatedValue
+                      }
+                    });
+
+                    logger.debug("[API-AI] Batch: Saved template translation", {
+                      context: "AI",
+                      locale,
+                      fieldType
+                    });
+                  } catch (shopifyError: any) {
+                    logger.error("[API-AI] Batch: Error saving template to Shopify", {
+                      context: "AI",
+                      error: shopifyError?.message,
+                      locale,
+                      fieldType
+                    });
+                  }
+                }
+                // Save to Shopify for products, collections, pages, etc.
+                else if (itemId && (contentType === 'products' || contentType === 'collections' || contentType === 'pages' || contentType === 'blogs' || contentType === 'policies')) {
+                  const fieldKeyMap: Record<string, string> = {
+                    title: "title",
+                    description: "body_html",
+                    body: "body_html",
+                    handle: "handle",
+                    seoTitle: "meta_title",
+                    metaDescription: "meta_description",
+                  };
+                  const shopifyKey = fieldKeyMap[fieldType] || fieldType;
+
+                  try {
+                    const digestResponse = await admin.graphql(`
+                      query getTranslatableContent($resourceId: ID!) {
+                        translatableResource(resourceId: $resourceId) {
+                          resourceId
+                          translatableContent {
+                            key
+                            digest
+                          }
+                        }
+                      }
+                    `, {
+                      variables: { resourceId: itemId }
+                    });
+
+                    const digestData = await digestResponse.json();
+                    const translatableContent = digestData.data?.translatableResource?.translatableContent || [];
+                    const fieldContent = translatableContent.find((c: any) => c.key === shopifyKey);
+                    const digest = fieldContent?.digest || "";
+
+                    const translationInput = [{
+                      key: shopifyKey,
+                      value: translatedValue,
+                      locale: locale,
+                      translatableContentDigest: digest
+                    }];
+
+                    await admin.graphql(TRANSLATE_CONTENT, {
+                      variables: {
+                        resourceId: itemId,
+                        translations: translationInput
+                      }
+                    });
+
+                    logger.debug("[API-AI] Batch: Saved translation to Shopify", {
+                      context: "AI",
+                      resourceId: itemId,
+                      fieldType,
+                      shopifyKey,
+                      locale
+                    });
+                  } catch (shopifyError: any) {
+                    logger.error("[API-AI] Batch: Error sending to Shopify", {
+                      context: "AI",
+                      error: shopifyError?.message,
+                      locale,
+                      fieldType
+                    });
+                  }
+                }
+
+                // Update progress
+                const progress = Math.round(10 + ((i + 1) / targetLocales.length) * 80);
+                await db.task.update({
+                  where: { id: task.id },
+                  data: { progress },
+                });
+              }
+
+              // Progress already updated in loop above
+
+            } catch (batchError: any) {
+              logger.error("[API-AI] Batch translation failed, falling back to sequential", {
+                context: "AI",
+                error: batchError?.message,
+                fieldType
+              });
+              // Fall through to sequential processing below
+            }
+          }
+
+          // Sequential translation for long fields OR if batch failed
+          if (!isShortField || Object.keys(translations).length === 0) {
+            for (let i = 0; i < targetLocales.length; i++) {
+              const locale = targetLocales[i];
+              try {
+                // Use special method for URL slugs
+                let translatedValue = isSlugField
+                  ? await aiService.translateSlug(sourceText, primaryLocale, locale)
+                  : await aiService.translateContent(sourceText, primaryLocale, locale);
 
               // For URL slugs: ensure the result is a valid slug (post-process as safety net)
               if (isSlugField) {
@@ -453,6 +670,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                   handle: "handle",
                   seoTitle: "meta_title",
                   metaDescription: "meta_description",
+                  productType: "product_type",
                 };
                 const shopifyKey = fieldKeyMap[fieldType] || fieldType;
 
@@ -538,6 +756,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
               aiResponses.push({ locale, response: `ERROR: ${error?.message}` });
             }
           }
+          } // End of sequential translation if block
 
           // Update task to completed with all AI responses
           await db.task.update({
