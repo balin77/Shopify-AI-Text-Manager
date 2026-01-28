@@ -241,25 +241,28 @@ export function UnifiedItemList({
   const itemRenderer = renderItem || defaultRenderItem;
 
   return (
-    <div style={{ width: "350px", flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0, height: "100%" }}>
+    <div style={{ width: "350px", flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0, flex: 1 }}>
       <style>{`
         /* UnifiedItemList - Full height card with scrollable list */
         .unified-item-list-wrapper {
-          height: 100% !important;
+          flex: 1 !important;
           display: flex !important;
           flex-direction: column !important;
+          min-height: 0 !important;
         }
         .unified-item-list-wrapper > .Polaris-Card {
-          height: 100% !important;
+          flex: 1 !important;
           display: flex !important;
           flex-direction: column !important;
           overflow: hidden !important;
+          min-height: 0 !important;
         }
         .unified-item-list-wrapper .Polaris-Card > div {
           display: flex !important;
           flex-direction: column !important;
-          height: 100% !important;
+          flex: 1 !important;
           overflow: hidden !important;
+          min-height: 0 !important;
         }
         .unified-item-list-scroll {
           flex: 1 !important;
@@ -273,7 +276,7 @@ export function UnifiedItemList({
           max-height: none !important;
         }
       `}</style>
-      <div className="unified-item-list-wrapper" style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
+      <div className="unified-item-list-wrapper" style={{ display: "flex", flexDirection: "column", flex: 1, overflow: "hidden", minHeight: 0 }}>
       <Card padding="0">
         {/* Header */}
         <div ref={headerRef} style={{ padding: "1rem", borderBottom: "1px solid #e1e3e5", flexShrink: 0 }}>
