@@ -11,6 +11,15 @@ import { decryptApiKey } from "../utils/encryption.server";
 import { getTaskExpirationDate } from "../../src/utils/task.utils";
 import { logger } from "~/utils/logger.server";
 
+// Helper to build translation prompt (same as in AIService)
+function buildTranslationPrompt(sourceText: string, fromLang: string, toLang: string): string {
+  return `Translate the following text from ${fromLang} to ${toLang}. Keep HTML tags.
+
+Text: ${sourceText}
+
+Return only the translation, without additional explanations.`;
+}
+
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session } = await authenticate.admin(request);
 
@@ -38,7 +47,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           return json({ success: false, error: "No source text available" }, { status: 400 });
         }
 
-        // Create task entry
+        // Build the prompt
+        const prompt = buildTranslationPrompt(sourceText, primaryLocale, targetLocale);
+
+        // Create task entry with prompt
         const task = await db.task.create({
           data: {
             shop: session.shop,
@@ -50,6 +62,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             fieldType,
             targetLocale,
             progress: 0,
+            prompt, // Store the prompt
             expiresAt: getTaskExpirationDate(),
           },
         });
@@ -89,14 +102,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             targetLocale
           );
 
-          // Update task to completed
+          // Update task to completed with full AI response
           await db.task.update({
             where: { id: task.id },
             data: {
               status: "completed",
               progress: 100,
               completedAt: new Date(),
-              result: translatedValue.substring(0, 1000),
+              result: translatedValue, // Store full AI response
             },
           });
 
@@ -135,7 +148,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           return json({ success: false, error: "No target locales specified" }, { status: 400 });
         }
 
-        // Create task entry
+        // Build prompts for all locales (for logging)
+        const allPrompts = targetLocales.map((locale: string) => ({
+          locale,
+          prompt: buildTranslationPrompt(sourceText, primaryLocale, locale)
+        }));
+
+        // Create task entry with all prompts
         const task = await db.task.create({
           data: {
             shop: session.shop,
@@ -146,6 +165,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             resourceTitle: fieldType,
             fieldType,
             progress: 0,
+            prompt: JSON.stringify(allPrompts, null, 2), // Store all prompts
             expiresAt: getTaskExpirationDate(),
           },
         });
@@ -180,6 +200,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           });
 
           const translations: Record<string, string> = {};
+          const aiResponses: Array<{ locale: string; response: string }> = [];
           const totalLocales = targetLocales.length;
 
           for (let i = 0; i < targetLocales.length; i++) {
@@ -191,6 +212,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                 locale
               );
               translations[locale] = translatedValue;
+              aiResponses.push({ locale, response: translatedValue });
 
               // Update progress
               const progress = Math.round(10 + ((i + 1) / totalLocales) * 80);
@@ -206,17 +228,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                 error: error?.message
               });
               translations[locale] = sourceText; // Fallback to original
+              aiResponses.push({ locale, response: `ERROR: ${error?.message}` });
             }
           }
 
-          // Update task to completed
+          // Update task to completed with all AI responses
           await db.task.update({
             where: { id: task.id },
             data: {
               status: "completed",
               progress: 100,
               completedAt: new Date(),
-              result: `Translated to ${Object.keys(translations).length} locales`,
+              result: JSON.stringify(aiResponses, null, 2), // Store all AI responses
             },
           });
 
@@ -248,7 +271,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           return json({ success: false, error: "No source text available" }, { status: 400 });
         }
 
-        // Create task entry
+        // Build the prompt
+        const prompt = `${formatInstruction}
+
+Text to format:
+${sourceText}
+
+Return only the formatted text, without explanations.`;
+
+        // Create task entry with prompt
         const task = await db.task.create({
           data: {
             shop: session.shop,
@@ -259,6 +290,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             resourceTitle: fieldType,
             fieldType,
             progress: 0,
+            prompt, // Store the prompt
             expiresAt: getTaskExpirationDate(),
           },
         });
@@ -290,24 +322,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             textLength: sourceText.length
           });
 
-          // Use generateContent with a formatting prompt
-          const prompt = `${formatInstruction}
-
-Text to format:
-${sourceText}
-
-Return only the formatted text, without explanations.`;
-
           const formattedValue = await aiService.generateContent(prompt);
 
-          // Update task to completed
+          // Update task to completed with full AI response
           await db.task.update({
             where: { id: task.id },
             data: {
               status: "completed",
               progress: 100,
               completedAt: new Date(),
-              result: formattedValue.substring(0, 1000),
+              result: formattedValue, // Store full AI response
             },
           });
 
