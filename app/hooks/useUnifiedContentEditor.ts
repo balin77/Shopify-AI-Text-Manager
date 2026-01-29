@@ -2518,6 +2518,7 @@ function getItemFieldValue(item: TranslatableContentItem, fieldKey: string, prim
     seoTitle: item.seo?.title || "",
     metaDescription: item.seo?.description || "",
     body: item.body || "",
+    summary: item.summary || "",
     productType: item.productType || "",
   };
 

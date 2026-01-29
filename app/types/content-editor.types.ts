@@ -48,6 +48,7 @@ export interface TranslatableContentItem {
   title?: string;
   descriptionHtml?: string;
   body?: string;
+  summary?: string; // For articles (excerpt)
   handle?: string;
   seo?: { title?: string | null; description?: string | null } | null;
   translations: Translation[];
