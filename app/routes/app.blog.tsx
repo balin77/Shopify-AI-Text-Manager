@@ -76,6 +76,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       title: a.title,
       handle: a.handle,
       body: a.body,
+      summary: a.summary,
       seo: {
         title: a.seoTitle,
         description: a.seoDescription,

@@ -221,6 +221,7 @@ export class ContentSyncService {
   }
 
   private async fetchArticleData(articleId: string) {
+    // Fetch article basic data
     const response = await this.admin.graphql(
       `#graphql
         query getArticle($id: ID!) {
@@ -229,6 +230,7 @@ export class ContentSyncService {
             title
             handle
             body
+            summary
             updatedAt
             blog {
               id
@@ -242,10 +244,34 @@ export class ContentSyncService {
     const data = await response.json();
     const article = data.data?.article || null;
 
-    // Articles don't have SEO fields directly - they use metafields or are part of translatableContent
-    if (article) {
-      article.seo = { title: null, description: null };
-    }
+    if (!article) return null;
+
+    // Fetch SEO fields from translatableContent (they're not on the Article object directly)
+    const translatableResponse = await this.admin.graphql(
+      `#graphql
+        query getArticleTranslatableContent($resourceId: ID!) {
+          translatableResource(resourceId: $resourceId) {
+            translatableContent {
+              key
+              value
+            }
+          }
+        }`,
+      { variables: { resourceId: articleId } }
+    );
+
+    const translatableData = await translatableResponse.json();
+    const translatableContent = translatableData.data?.translatableResource?.translatableContent || [];
+
+    // Extract SEO fields from translatableContent
+    // Article translatableContent keys: title, body_html, summary_html, meta_title, meta_description
+    const seoTitle = translatableContent.find((c: any) => c.key === 'meta_title')?.value || null;
+    const seoDescription = translatableContent.find((c: any) => c.key === 'meta_description')?.value || null;
+
+    article.seo = {
+      title: seoTitle,
+      description: seoDescription,
+    };
 
     return article;
   }
@@ -494,6 +520,7 @@ export class ContentSyncService {
           blogTitle: articleData.blog?.title || "",
           title: articleData.title,
           body: articleData.body || "",
+          summary: articleData.summary || null,
           handle: articleData.handle,
           seoTitle: articleData.seo?.title || null,
           seoDescription: articleData.seo?.description || null,
@@ -505,6 +532,7 @@ export class ContentSyncService {
           blogTitle: articleData.blog?.title || "",
           title: articleData.title,
           body: articleData.body || "",
+          summary: articleData.summary || null,
           handle: articleData.handle,
           seoTitle: articleData.seo?.title || null,
           seoDescription: articleData.seo?.description || null,

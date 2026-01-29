@@ -211,6 +211,18 @@ export const BLOGS_CONFIG: ContentEditorConfig = {
       aiInstructionsKey: "blogDescription",
     },
     {
+      key: "summary",
+      type: "textarea",
+      label: "Summary / Excerpt",
+      translationKey: "summary",
+      multiline: 3,
+      supportsAI: true,
+      supportsFormatting: true,
+      supportsTranslation: true,
+      aiInstructionsKey: "blogSummary",
+      helpText: (value) => `${(value || '').length} characters`,
+    },
+    {
       key: "handle",
       type: "slug",
       label: "URL Slug",
