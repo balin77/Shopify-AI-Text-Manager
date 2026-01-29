@@ -260,6 +260,7 @@ export class ShopifyContentService {
         seoTitle: 'meta_title',
         metaDescription: 'meta_description',
         productType: 'product_type',
+        summary: 'summary_html',   // Article excerpt/summary
       };
 
       Object.entries(updates).forEach(([field, value]) => {
@@ -427,6 +428,7 @@ export class ShopifyContentService {
           seoTitle: 'meta_title',
           metaDescription: 'meta_description',
           productType: 'product_type',
+          summary: 'summary_html',   // Article excerpt/summary
         };
 
         const translationKeysToDelete = changedFields
@@ -541,6 +543,7 @@ export class ShopifyContentService {
       seoTitle: 'meta_title',
       metaDescription: 'meta_description',
       productType: 'product_type',
+      summary: 'summary_html',   // Article excerpt/summary
     };
 
     // Helper function to save translations to Shopify and DB
