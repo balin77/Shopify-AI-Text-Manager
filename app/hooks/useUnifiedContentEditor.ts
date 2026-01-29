@@ -1054,13 +1054,22 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         // Reset the accept-and-translate flow flag after translations are complete
         setIsAcceptAndTranslateFlow(false);
 
+        // For templates: Update original value for this field so hasChanges becomes false after translation
+        // This prevents the save button from showing false changes after translateFieldToAllLocales
+        if (config.contentType === 'templates' && translations[currentLanguage]) {
+          originalTemplateValuesRef.current = {
+            ...originalTemplateValuesRef.current,
+            [fieldType]: translations[currentLanguage]
+          };
+        }
+
         // Mark as loading to reset change detection
         // DON'T revalidate here - it would overwrite our local changes to selectedItem.translations
         // The translations are already saved server-side by the action
         setIsLoadingData(true);
       }
     }
-  }, [fetcher.data, effectiveFieldDefinitions, showInfoBox, t, currentLanguage]); // Include currentLanguage to access current value
+  }, [fetcher.data, effectiveFieldDefinitions, showInfoBox, t, currentLanguage, config.contentType]); // Include currentLanguage to access current value
 
   // Handle "translateAll" response (translates to ALL enabled locales)
   useEffect(() => {
@@ -1111,6 +1120,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
               }
             });
             setEditableValues(updatedValues);
+
+            // For templates: Update original values so hasChanges becomes false after translation
+            // This prevents the save button from showing false changes after translateAll
+            if (config.contentType === 'templates') {
+              originalTemplateValuesRef.current = { ...updatedValues };
+            }
           }
         }
 
@@ -1119,7 +1134,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         setIsLoadingData(true);
       }
     }
-  }, [fetcher.data, currentLanguage, effectiveFieldDefinitions]); // Use selectedItemRef instead of selectedItem
+  }, [fetcher.data, currentLanguage, effectiveFieldDefinitions, config.contentType]); // Use selectedItemRef instead of selectedItem
 
   // Handle "translateAllForLocale" response (translates to ONE specific locale)
   useEffect(() => {
@@ -1168,6 +1183,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             }
           });
           setEditableValues(updatedValues);
+
+          // For templates: Update original values so hasChanges becomes false after translation
+          // This prevents the save button from showing false changes after translateAllForLocale
+          if (config.contentType === 'templates') {
+            originalTemplateValuesRef.current = { ...updatedValues };
+          }
         }
 
         // Mark as loading to reset change detection after bulk translation
@@ -1181,7 +1202,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         );
       }
     }
-  }, [fetcher.data, currentLanguage, effectiveFieldDefinitions, showInfoBox, t]); // Use selectedItemRef instead of selectedItem
+  }, [fetcher.data, currentLanguage, effectiveFieldDefinitions, showInfoBox, t, config.contentType]); // Use selectedItemRef instead of selectedItem
 
   // Update item object after saving (both primary locale and translations)
   // IMPORTANT: We track which fetcher.data we've processed to prevent re-running on language change
