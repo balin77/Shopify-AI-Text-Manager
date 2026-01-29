@@ -97,6 +97,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // Reset when item or language changes, allowing retry during new load cycles
   const initialLoadSuccessfulRef = useRef(false);
 
+  // Trigger for forcing data refresh (used by ReloadButton after revalidation)
+  // When this counter increments, the data loading effect will re-run
+  const [dataRefreshTrigger, setDataRefreshTrigger] = useState(0);
+
   // ============================================================================
   // AUTO-SELECT FIRST ITEM ON MOUNT
   // Automatically select the first item when the page loads
@@ -302,6 +306,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // Track previous item ID for data loading (separate from image loading ref to avoid race condition)
   const prevItemIdForDataLoadRef = useRef<string | null>(null);
 
+  // Track previous dataRefreshTrigger to detect manual refreshes
+  const prevDataRefreshTriggerRef = useRef<number>(0);
+
   // Ref to access selectedItem without adding it to effect dependencies
   // This prevents the effect from re-running when selectedItem reference changes
   const selectedItemRef = useRef(selectedItem);
@@ -317,11 +324,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // Only reload data if:
     // 1. The item ID actually changed (user selected a different item)
     // 2. The language changed (user switched languages)
+    // 3. Data refresh was triggered (e.g., by ReloadButton after revalidation)
     // NOTE: Use separate ref from image loading to avoid race condition
     const itemIdChanged = prevItemIdForDataLoadRef.current !== selectedItemId;
     const languageChanged = prevCurrentLanguageRef.current !== currentLanguage;
+    const refreshTriggered = prevDataRefreshTriggerRef.current !== dataRefreshTrigger;
 
-    if (!itemIdChanged && !languageChanged) {
+    if (!itemIdChanged && !languageChanged && !refreshTriggered) {
       // Don't log on skip to reduce console spam
       return;
     }
@@ -329,6 +338,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // Update refs
     prevItemIdForDataLoadRef.current = selectedItemId;
     prevCurrentLanguageRef.current = currentLanguage;
+    prevDataRefreshTriggerRef.current = dataRefreshTrigger;
+
+    if (refreshTriggered) {
+      debugLog.dataLoad(' Data refresh triggered by ReloadButton');
+    }
 
     // Mark as loading immediately
     setIsLoadingData(true);
@@ -425,8 +439,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       debugLog.dataLoad(' Setting originalTemplateValuesRef:', newValues);
       originalTemplateValuesRef.current = { ...newValues };
     }
-    // IMPORTANT: Only depend on selectedItemId and currentLanguage to prevent unnecessary re-runs
-  }, [selectedItemId, currentLanguage, primaryLocale, config]);
+    // IMPORTANT: Only depend on selectedItemId, currentLanguage and dataRefreshTrigger to prevent unnecessary re-runs
+  }, [selectedItemId, currentLanguage, primaryLocale, config, dataRefreshTrigger]);
 
   // Mark loading as complete after editableValues have been updated
   // This is in a separate useEffect to ensure the state update has completed
@@ -2369,6 +2383,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     }
   };
 
+  // Trigger data refresh (called by ReloadButton after revalidation to reload editableValues)
+  const triggerDataRefresh = useCallback(() => {
+    debugLog.dataLoad(' triggerDataRefresh called - will reload editableValues from fresh data');
+    setDataRefreshTrigger(prev => prev + 1);
+  }, []);
+
   // ============================================================================
   // RETURN
   // ============================================================================
@@ -2440,6 +2460,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       getEditableValue,
       setEditableValue,
       setOriginalTemplateValues,
+      triggerDataRefresh,
     },
     // Dynamic field definitions (for templates and other dynamic content types)
     effectiveFieldDefinitions,

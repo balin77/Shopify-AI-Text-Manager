@@ -377,6 +377,8 @@ export interface UseContentEditorReturn {
     getEditableValue: (fieldKey: string) => string;
     setEditableValue: (fieldKey: string, value: string) => void;
     setOriginalTemplateValues: (values: Record<string, string>) => void;
+    /** Trigger a data refresh to reload editableValues from fresh data (used by ReloadButton) */
+    triggerDataRefresh: () => void;
   };
 
   /** Effective field definitions (dynamic for templates, static for other content types) */

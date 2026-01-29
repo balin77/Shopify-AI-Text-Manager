@@ -330,6 +330,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         resourceId={selectedItem.id}
                         resourceType={getResourceType(config.contentType)}
                         locale={state.currentLanguage}
+                        onReloadComplete={editor.helpers.triggerDataRefresh}
                       />
                     </InlineStack>
                   </InlineStack>
