@@ -212,15 +212,13 @@ export const BLOGS_CONFIG: ContentEditorConfig = {
     },
     {
       key: "summary",
-      type: "textarea",
-      label: "Summary / Excerpt",
-      translationKey: "summary",
-      multiline: 3,
+      type: "html",
+      label: "Auszug",
+      translationKey: "summary_html",
       supportsAI: true,
       supportsFormatting: true,
       supportsTranslation: true,
       aiInstructionsKey: "blogSummary",
-      helpText: (value) => `${(value || '').length} characters`,
     },
     {
       key: "handle",
