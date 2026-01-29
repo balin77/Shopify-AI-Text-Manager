@@ -65,6 +65,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
               title
               handle
               body
+              summary
               updatedAt
               blog {
                 id
@@ -108,7 +109,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       articleTest,
       syncResult,
       localArticlesCount: localArticles.length,
-      localArticles: localArticles.map(a => ({ id: a.id, title: a.title })),
+      localArticles: localArticles.map(a => ({ id: a.id, title: a.title, summary: a.summary, seoTitle: a.seoTitle, seoDescription: a.seoDescription })),
       hint: shouldSync ? null : "Add ?sync=true to URL to attempt sync",
     });
   } catch (error: any) {
