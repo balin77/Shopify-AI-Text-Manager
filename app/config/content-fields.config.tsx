@@ -204,7 +204,7 @@ export const BLOGS_CONFIG: ContentEditorConfig = {
       key: "body",
       type: "html",
       label: "Body",
-      translationKey: "body",
+      translationKey: "body_html",
       supportsAI: true,
       supportsFormatting: true,
       supportsTranslation: true,
