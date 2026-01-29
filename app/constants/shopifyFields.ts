@@ -45,7 +45,7 @@ export const FIELD_CONFIGS = {
   products: ['title', 'descriptionHtml', 'handle', 'productType', 'seo.title', 'seo.description'],
   collections: ['title', 'descriptionHtml', 'handle', 'seo.title', 'seo.description'],
   pages: ['title', 'body', 'handle'],
-  blogs: ['title', 'body', 'handle'],
+  blogs: ['title', 'body', 'summary', 'handle', 'seo.title', 'seo.description'],
   policies: ['body'],
   templates: ['title', 'body']
 } as const;

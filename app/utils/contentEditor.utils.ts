@@ -102,6 +102,7 @@ function primaryHasFieldContent(
     meta_title: 'seo.title',
     meta_description: 'seo.description',
     product_type: 'productType',
+    summary_html: 'summary', // Article excerpt/summary
   };
 
   const fieldPath = fieldPathMap[field] || field;
@@ -138,9 +139,13 @@ function getRequiredFieldsForContentType(contentType: ContentType): string[] {
     return ["title", "body_html", "handle", "meta_title", "meta_description"];
   } else if (contentType === 'products') {
     return ["title", "body_html", "handle", "product_type", "meta_title", "meta_description"];
+  } else if (contentType === 'blogs') {
+    // Articles have body_html, summary_html, and SEO fields
+    return ["title", "body_html", "summary_html", "handle", "meta_title", "meta_description"];
   } else if (contentType === 'policies') {
     return ["body"];
   } else {
+    // pages and other content types
     return ["title", "body_html", "handle"];
   }
 }

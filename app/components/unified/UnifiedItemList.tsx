@@ -245,8 +245,8 @@ export function UnifiedItemList({
           />
         )}
 
-        {/* Category Badge */}
-        {showCategoryBadge && item.category && (
+        {/* Category Badge (standalone - only when no thumbnails) */}
+        {showCategoryBadge && !showThumbnails && item.category && (
           <div
             style={{
               backgroundColor: "#e4e5e7",
@@ -267,7 +267,7 @@ export function UnifiedItemList({
           </div>
         )}
 
-        {/* Thumbnail */}
+        {/* Thumbnail with optional Category Badge overlay */}
         {showThumbnails && (
           <div style={{ position: "relative", flexShrink: 0 }}>
             <Thumbnail
@@ -275,8 +275,32 @@ export function UnifiedItemList({
               alt={item.image?.altText || item.title || ""}
               size="small"
             />
+            {/* Category Badge overlay on thumbnail */}
+            {showCategoryBadge && item.category && (
+              <div
+                style={{
+                  position: "absolute",
+                  bottom: 0,
+                  left: 0,
+                  right: 0,
+                  backgroundColor: "rgba(0, 0, 0, 0.75)",
+                  color: "#fff",
+                  padding: "2px 4px",
+                  fontSize: "9px",
+                  fontWeight: 500,
+                  textAlign: "center",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                  borderRadius: "0 0 8px 8px",
+                }}
+                title={item.category}
+              >
+                {item.category}
+              </div>
+            )}
             {/* Status Badge on hover */}
-            {isHovered && item.status && (
+            {isHovered && item.status && !showCategoryBadge && (
               <div
                 style={{
                   position: "absolute",

@@ -319,6 +319,8 @@ model Article {
   body           String? @db.Text
   summary        String? @db.Text // Article excerpt/summary
   handle         String
+  imageUrl       String? // Featured image URL
+  imageAltText   String? // Featured image alt text
   seoTitle       String?
   seoDescription String? @db.Text
 

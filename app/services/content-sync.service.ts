@@ -232,6 +232,10 @@ export class ContentSyncService {
             body
             summary
             updatedAt
+            image {
+              url
+              altText
+            }
             blog {
               id
               title
@@ -522,6 +526,8 @@ export class ContentSyncService {
           body: articleData.body || "",
           summary: articleData.summary || null,
           handle: articleData.handle,
+          imageUrl: articleData.image?.url || null,
+          imageAltText: articleData.image?.altText || null,
           seoTitle: articleData.seo?.title || null,
           seoDescription: articleData.seo?.description || null,
           shopifyUpdatedAt: new Date(articleData.updatedAt),
@@ -534,6 +540,8 @@ export class ContentSyncService {
           body: articleData.body || "",
           summary: articleData.summary || null,
           handle: articleData.handle,
+          imageUrl: articleData.image?.url || null,
+          imageAltText: articleData.image?.altText || null,
           seoTitle: articleData.seo?.title || null,
           seoDescription: articleData.seo?.description || null,
           shopifyUpdatedAt: new Date(articleData.updatedAt),

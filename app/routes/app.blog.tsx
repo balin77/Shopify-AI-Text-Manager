@@ -77,6 +77,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       handle: a.handle,
       body: a.body,
       summary: a.summary,
+      image: a.imageUrl ? {
+        url: a.imageUrl,
+        altText: a.imageAltText || '',
+      } : undefined,
       seo: {
         title: a.seoTitle,
         description: a.seoDescription,
@@ -174,7 +178,7 @@ export default function BlogPage() {
           fetcherState={fetcher.state}
           fetcherFormData={fetcher.formData}
           t={t}
-          hideItemListImages={true}
+          hideItemListImages={false}
           hideItemListStatusBars={true}
           showItemListCategoryBadge={true}
         />

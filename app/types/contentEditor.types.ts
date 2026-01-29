@@ -18,6 +18,7 @@ export interface TranslatableItem {
   id: string;
   title?: string | null;
   body?: string | null;
+  summary?: string | null;
   descriptionHtml?: string | null;
   handle?: string | null;
   seo?: SEO | null;
@@ -35,6 +36,8 @@ export interface ShopifyPage extends TranslatableItem {
 
 export interface ShopifyBlog extends TranslatableItem {
   body: string;
+  summary?: string | null;
+  seo?: SEO | null;
 }
 
 export interface ShopifyPolicy extends TranslatableItem {
