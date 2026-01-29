@@ -19,6 +19,10 @@ redirect_urls = [
 [webhooks]
 api_version = "2025-10"
 
+[[webhooks.subscriptions]]
+topics = [ "articles/create", "articles/update", "articles/delete" ]
+uri = "/webhooks/articles"
+
 [pos]
 embedded = false
 
