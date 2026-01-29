@@ -100,7 +100,7 @@ export async function handleTranslateFieldToAllLocales(
 
     await db.task.update({
       where: { id: task.id },
-      data: { status: "queued", progress: 10, total: totalLocales, processed: 0 },
+      data: { status: "running", progress: 10, total: totalLocales, processed: 0 },
     });
 
     // Get translatable content and digest map
@@ -519,7 +519,10 @@ export async function handleTranslateAll(
       locales: params.targetLocales,
     });
 
-    await updateTaskProgress(task.id, 10, { total: totalOperations, processed: 0 });
+    await db.task.update({
+      where: { id: task.id },
+      data: { status: "running", progress: 10, total: totalOperations, processed: 0 },
+    });
 
     // Get translatable content
     const translatableResponse = await gateway.graphql(

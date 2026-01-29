@@ -403,7 +403,7 @@ export default function TasksPage() {
                     )}
 
                     {/* Progress Bar - Always Visible */}
-                    {(task.status === "running" || task.status === "pending") && (
+                    {(task.status === "running" || task.status === "pending" || task.status === "queued") && (
                       <div>
                         <ProgressBar progress={task.progress} size="small" />
                         <Text as="p" variant="bodySm" tone="subdued">
