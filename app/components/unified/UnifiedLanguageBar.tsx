@@ -59,6 +59,9 @@ interface UnifiedLanguageBarProps {
   /** Optional: Show Reload button (default: true) */
   showReloadButton?: boolean;
 
+  /** Optional: Whether data is currently loading (suppresses blinking) */
+  isLoadingData?: boolean;
+
   /** Translation strings */
   t?: {
     primaryLocaleSuffix?: string;
@@ -81,6 +84,7 @@ export function UnifiedLanguageBar({
   isTranslating = false,
   showTranslateAll = true,
   showReloadButton = true,
+  isLoadingData = false,
   t = {},
 }: UnifiedLanguageBarProps) {
   const isPrimaryLocale = currentLanguage === primaryLocale;
@@ -104,7 +108,8 @@ export function UnifiedLanguageBar({
           locale,
           selectedItem,
           primaryLocale,
-          contentType
+          contentType,
+          isLoadingData
         );
 
         const isEnabled = !enabledLanguages || enabledLanguages.includes(locale.locale);

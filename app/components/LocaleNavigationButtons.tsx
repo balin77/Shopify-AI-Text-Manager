@@ -16,6 +16,7 @@ interface LocaleNavigationButtonsProps {
   onLanguageChange: (locale: string) => void;
   enabledLanguages?: string[];
   onToggleLanguage?: (locale: string) => void;
+  isLoadingData?: boolean;
 }
 
 export function LocaleNavigationButtons({
@@ -29,6 +30,7 @@ export function LocaleNavigationButtons({
   onLanguageChange,
   enabledLanguages,
   onToggleLanguage,
+  isLoadingData = false,
 }: LocaleNavigationButtonsProps) {
   // Map content type to resource type for the API
   const resourceType = contentType === 'blogs' ? 'article' : contentType === 'pages' ? 'page' : contentType === 'policies' ? 'policy' : contentType;
@@ -44,7 +46,8 @@ export function LocaleNavigationButtons({
               locale,
               selectedItem,
               primaryLocale,
-              contentType
+              contentType,
+              isLoadingData
             );
 
             const isEnabled = !enabledLanguages || enabledLanguages.includes(locale.locale);

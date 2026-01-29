@@ -674,9 +674,15 @@ export function useLocaleButtonStyle(
   locale: ShopLocale,
   selectedItem: TranslatableItem | null,
   primaryLocale: string,
-  contentType: ContentType
+  contentType: ContentType,
+  isLoadingData: boolean = false
 ): React.CSSProperties {
   return useMemo(() => {
+    // Don't show blinking animations while data is still loading
+    if (isLoadingData) {
+      return {};
+    }
+
     const primaryContentMissing = locale.primary && hasPrimaryContentMissing(selectedItem, contentType);
     const foreignTranslationMissing = !locale.primary && hasLocaleMissingTranslations(selectedItem, locale.locale, primaryLocale, contentType);
 
@@ -701,7 +707,7 @@ export function useLocaleButtonStyle(
     }
 
     return {};
-  }, [locale, selectedItem, primaryLocale, contentType]);
+  }, [locale, selectedItem, primaryLocale, contentType, isLoadingData]);
 }
 
 /**

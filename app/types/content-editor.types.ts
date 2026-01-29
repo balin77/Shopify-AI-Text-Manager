@@ -287,6 +287,7 @@ export interface EditorState {
   altTextSuggestions: Record<number, string>;
   isClearAllModalOpen: boolean;
   isInitialDataReady: boolean;
+  isLoadingData: boolean; // True when loading translations/data for a selected item
   isLoadingImages?: boolean; // True when loading images on-demand from Shopify
   fallbackFields: Set<string>; // Fields showing fallback values (e.g., handle with primary locale value)
   loadingFieldKeys: Set<string>; // Fields with AI actions currently running (for per-field loading states)

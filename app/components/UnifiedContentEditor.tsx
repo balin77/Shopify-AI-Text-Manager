@@ -257,6 +257,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                     isTranslating={fetcherState !== "idle" && fetcherFormData?.get("action") === "translateAll"}
                     showTranslateAll={true}
                     showReloadButton={true}
+                    isLoadingData={state.isLoadingData}
                     t={{
                       primaryLocaleSuffix: t.content?.primaryLanguageSuffix || "Primary",
                       translateAll: t.content?.translateAll || "🌍 Translate All",

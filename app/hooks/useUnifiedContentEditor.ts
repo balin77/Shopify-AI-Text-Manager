@@ -2405,6 +2405,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     altTextSuggestions,
     isClearAllModalOpen,
     isInitialDataReady,
+    isLoadingData,
     isLoadingImages,
     fallbackFields,
     loadingFieldKeys,
