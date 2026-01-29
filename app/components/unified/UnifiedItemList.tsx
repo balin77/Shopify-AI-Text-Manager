@@ -283,16 +283,16 @@ export function UnifiedItemList({
                   bottom: 0,
                   left: 0,
                   right: 0,
-                  backgroundColor: "rgba(0, 0, 0, 0.75)",
+                  backgroundColor: "rgba(0, 0, 0, 0.7)",
                   color: "#fff",
-                  padding: "2px 4px",
-                  fontSize: "9px",
+                  padding: "1px 2px",
+                  fontSize: "8px",
                   fontWeight: 500,
                   textAlign: "center",
                   overflow: "hidden",
                   textOverflow: "ellipsis",
                   whiteSpace: "nowrap",
-                  borderRadius: "0 0 8px 8px",
+                  borderRadius: "0 0 6px 6px",
                 }}
                 title={item.category}
               >

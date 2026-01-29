@@ -298,6 +298,8 @@ model Collection {
   title           String
   descriptionHtml String? @db.Text
   handle          String
+  imageUrl        String? // Collection image URL
+  imageAltText    String? // Collection image alt text
   seoTitle        String?
   seoDescription  String? @db.Text
 

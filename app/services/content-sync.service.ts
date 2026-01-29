@@ -207,6 +207,10 @@ export class ContentSyncService {
             handle
             descriptionHtml
             updatedAt
+            image {
+              url
+              altText
+            }
             seo {
               title
               description
@@ -452,6 +456,8 @@ export class ContentSyncService {
           title: collectionData.title,
           descriptionHtml: collectionData.descriptionHtml || "",
           handle: collectionData.handle,
+          imageUrl: collectionData.image?.url || null,
+          imageAltText: collectionData.image?.altText || null,
           seoTitle: collectionData.seo?.title || null,
           seoDescription: collectionData.seo?.description || null,
           shopifyUpdatedAt: new Date(collectionData.updatedAt),
@@ -461,6 +467,8 @@ export class ContentSyncService {
           title: collectionData.title,
           descriptionHtml: collectionData.descriptionHtml || "",
           handle: collectionData.handle,
+          imageUrl: collectionData.image?.url || null,
+          imageAltText: collectionData.image?.altText || null,
           seoTitle: collectionData.seo?.title || null,
           seoDescription: collectionData.seo?.description || null,
           shopifyUpdatedAt: new Date(collectionData.updatedAt),

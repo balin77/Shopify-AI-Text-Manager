@@ -74,6 +74,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       title: c.title,
       handle: c.handle,
       descriptionHtml: c.descriptionHtml,
+      image: c.imageUrl ? {
+        url: c.imageUrl,
+        altText: c.imageAltText || '',
+      } : undefined,
       seo: {
         title: c.seoTitle,
         description: c.seoDescription,
@@ -171,7 +175,7 @@ export default function CollectionsPage() {
           fetcherState={fetcher.state}
           fetcherFormData={fetcher.formData}
           t={t}
-          hideItemListImages={true}
+          hideItemListImages={false}
           hideItemListStatusBars={true}
         />
       </div>
