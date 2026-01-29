@@ -163,18 +163,30 @@ function isManifestMismatchError(error: unknown): boolean {
 // Helper to safely reload with loop prevention
 function safeReload() {
   const RELOAD_KEY = 'manifest_reload_timestamp';
+  const RELOAD_COUNT_KEY = 'manifest_reload_count';
   const lastReload = sessionStorage.getItem(RELOAD_KEY);
+  const reloadCount = parseInt(sessionStorage.getItem(RELOAD_COUNT_KEY) || '0', 10);
   const now = Date.now();
 
-  // Prevent reload loop: only allow one reload per 10 seconds
-  if (lastReload && now - parseInt(lastReload, 10) < 10000) {
-    console.warn('[APP.TSX] Reload loop detected, showing error UI instead');
+  // Reset count if last reload was more than 30 seconds ago
+  if (lastReload && now - parseInt(lastReload, 10) > 30000) {
+    sessionStorage.setItem(RELOAD_COUNT_KEY, '0');
+  }
+
+  // Prevent reload loop: max 2 reloads within 30 seconds
+  if (reloadCount >= 2) {
+    console.warn('[APP.TSX] Reload loop detected (max attempts reached), showing error UI instead');
     return false;
   }
 
   sessionStorage.setItem(RELOAD_KEY, now.toString());
-  console.log('[APP.TSX] Performing automatic reload due to manifest mismatch');
-  window.location.reload();
+  sessionStorage.setItem(RELOAD_COUNT_KEY, (reloadCount + 1).toString());
+  console.log('[APP.TSX] Performing cache-busted reload due to manifest mismatch (attempt ' + (reloadCount + 1) + ')');
+
+  // Force a cache-busted reload by navigating to current URL with cache-busting param
+  const url = new URL(window.location.href);
+  url.searchParams.set('_reload', now.toString());
+  window.location.href = url.toString();
   return true;
 }
 
