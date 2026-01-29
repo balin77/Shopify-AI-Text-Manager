@@ -152,6 +152,32 @@ export default function App() {
   );
 }
 
+// Helper to check if error is a manifest mismatch (happens after deployments)
+function isManifestMismatchError(error: unknown): boolean {
+  if (error instanceof Error) {
+    return error.message.includes('manifest') && error.message.includes('mismatch');
+  }
+  return false;
+}
+
+// Helper to safely reload with loop prevention
+function safeReload() {
+  const RELOAD_KEY = 'manifest_reload_timestamp';
+  const lastReload = sessionStorage.getItem(RELOAD_KEY);
+  const now = Date.now();
+
+  // Prevent reload loop: only allow one reload per 10 seconds
+  if (lastReload && now - parseInt(lastReload, 10) < 10000) {
+    console.warn('[APP.TSX] Reload loop detected, showing error UI instead');
+    return false;
+  }
+
+  sessionStorage.setItem(RELOAD_KEY, now.toString());
+  console.log('[APP.TSX] Performing automatic reload due to manifest mismatch');
+  window.location.reload();
+  return true;
+}
+
 // Shopify app boundary error handler
 export function ErrorBoundary() {
   let error: unknown;
@@ -184,6 +210,49 @@ export function ErrorBoundary() {
 
   // Log the error for debugging - note: can't use server logger in client component
   console.error('[APP.TSX ErrorBoundary] Caught error:', error);
+
+  // Handle manifest version mismatch: automatic reload after deployment
+  if (isManifestMismatchError(error)) {
+    console.log('[APP.TSX ErrorBoundary] Manifest mismatch detected - attempting automatic reload');
+
+    // Try automatic reload (with loop prevention)
+    if (typeof window !== 'undefined' && safeReload()) {
+      // Show brief loading state while reload happens
+      return (
+        <AppProvider i18n={{}}>
+          <Page>
+            <Card>
+              <BlockStack gap="400" align="center">
+                <Text as="h1" variant="headingLg">Update erkannt</Text>
+                <Text as="p" tone="subdued">
+                  Eine neue Version ist verfügbar. Die Seite wird automatisch neu geladen...
+                </Text>
+              </BlockStack>
+            </Card>
+          </Page>
+        </AppProvider>
+      );
+    }
+
+    // If reload failed or was blocked due to loop prevention, show manual reload button
+    return (
+      <AppProvider i18n={{}}>
+        <Page>
+          <Card>
+            <BlockStack gap="400" align="center">
+              <Text as="h1" variant="headingLg">Update erkannt</Text>
+              <Text as="p" tone="subdued">
+                Eine neue Version der App ist verfügbar. Bitte laden Sie die Seite neu.
+              </Text>
+              <Button variant="primary" onClick={() => window.location.reload()}>
+                Seite neu laden
+              </Button>
+            </BlockStack>
+          </Card>
+        </Page>
+      </AppProvider>
+    );
+  }
 
   // Try Shopify's boundary first, but provide fallback UI if it fails
   try {
