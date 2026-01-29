@@ -70,10 +70,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
                 id
                 title
               }
-              seo {
-                title
-                description
-              }
             }
           }`,
         { variables: { id: firstArticleId } }

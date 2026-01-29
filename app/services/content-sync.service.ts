@@ -234,17 +234,20 @@ export class ContentSyncService {
               id
               title
             }
-            seo {
-              title
-              description
-            }
           }
         }`,
       { variables: { id: articleId } }
     );
 
     const data = await response.json();
-    return data.data?.article || null;
+    const article = data.data?.article || null;
+
+    // Articles don't have SEO fields directly - they use metafields or are part of translatableContent
+    if (article) {
+      article.seo = { title: null, description: null };
+    }
+
+    return article;
   }
 
   private async fetchMenuData(menuId: string) {
