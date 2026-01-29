@@ -495,7 +495,11 @@ export class ShopifyContentService {
 
     // Fetch digest map once for all translations
     const digestMap = await this.loadTranslatableContent(resourceId);
-    console.log(`🔶 [translateAllContent] digestMap for ${resourceId}:`, Object.keys(digestMap));
+    console.log(`🔶 [translateAllContent] resourceType: ${resourceType}`);
+    console.log(`🔶 [translateAllContent] fields received:`, Object.keys(fields));
+    console.log(`🔶 [translateAllContent] fields values:`, Object.entries(fields).map(([k, v]) => `${k}=${v ? (v as string).substring(0, 50) + '...' : 'EMPTY'}`));
+    console.log(`🔶 [translateAllContent] digestMap keys for ${resourceId}:`, Object.keys(digestMap));
+    console.log(`🔶 [translateAllContent] has summary_html digest:`, !!digestMap['summary_html']);
 
     // Get target locales (use custom list if provided, otherwise all published locales)
     let targetLocales: string[];
@@ -549,13 +553,18 @@ export class ShopifyContentService {
     // Helper function to save translations to Shopify and DB
     const saveTranslation = async (locale: string, field: string, value: string) => {
       const translationKey = keyMapping[field];
-      if (!translationKey) return;
+      if (!translationKey) {
+        console.warn(`[translateAllContent] ⚠️ No keyMapping for field '${field}'`);
+        return;
+      }
 
       const digest = digestMap[translationKey];
       if (!digest) {
-        console.warn(`[translateAllContent] ⚠️ No digest for key '${translationKey}' (field '${field}')`);
+        console.warn(`[translateAllContent] ⚠️ No digest for key '${translationKey}' (field '${field}'). Available digests: ${Object.keys(digestMap).join(', ')}`);
         return;
       }
+
+      console.log(`[translateAllContent] ✓ Saving ${field} → ${translationKey} for locale ${locale}`);
 
       // Skip if translation is same as source
       const sourceValue = fields[field];
