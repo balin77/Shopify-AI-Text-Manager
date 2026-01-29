@@ -790,7 +790,7 @@ export class ContentSyncService {
   async syncSingleArticle(articleId: string): Promise<any> {
     const gid = articleId.startsWith("gid://")
       ? articleId
-      : `gid://shopify/OnlineStoreArticle/${articleId}`;
+      : `gid://shopify/Article/${articleId}`;
 
     await this.syncArticle(gid);
 
