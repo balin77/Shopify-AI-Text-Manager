@@ -217,6 +217,12 @@ export function UnifiedItemList({
     }
   };
 
+  // Truncate text to max characters
+  const truncateText = (text: string, maxLength: number = 50) => {
+    if (text.length <= maxLength) return text;
+    return text.slice(0, maxLength).trim() + "…";
+  };
+
   // Default item renderer
   const defaultRenderItem = (item: UnifiedItem, isSelected: boolean, isHovered: boolean) => {
     return (
@@ -269,7 +275,7 @@ export function UnifiedItemList({
         {/* Title and Subtitle */}
         <BlockStack gap="100">
           <Text as="p" variant="bodyMd" fontWeight={isSelected ? "bold" : "regular"}>
-            {item.title || item.id}
+            {truncateText(item.title || item.id)}
           </Text>
           {item.subtitle && (
             <Text as="p" variant="bodySm" tone="subdued">
