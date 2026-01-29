@@ -548,10 +548,40 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
   private async savePromptToTask(prompt: string): Promise<void> {
     try {
       const { db } = await import('../../app/db.server');
+
+      // Get existing task to append to prompt history
+      const existingTask = await db.task.findUnique({
+        where: { id: this.taskId },
+        select: { prompt: true },
+      });
+
+      // Parse existing prompts or start with empty array
+      let promptHistory: { timestamp: string; prompt: string }[] = [];
+      if (existingTask?.prompt) {
+        try {
+          const parsed = JSON.parse(existingTask.prompt);
+          if (Array.isArray(parsed)) {
+            promptHistory = parsed;
+          } else {
+            // Legacy: single prompt string, convert to array
+            promptHistory = [{ timestamp: new Date().toISOString(), prompt: existingTask.prompt }];
+          }
+        } catch {
+          // Legacy: not JSON, convert old prompt to array
+          promptHistory = [{ timestamp: new Date().toISOString(), prompt: existingTask.prompt }];
+        }
+      }
+
+      // Add new prompt with timestamp
+      promptHistory.push({
+        timestamp: new Date().toISOString(),
+        prompt: prompt.length > 2000 ? prompt.substring(0, 2000) + '...[truncated]' : prompt,
+      });
+
       await db.task.update({
         where: { id: this.taskId },
         data: {
-          prompt,
+          prompt: JSON.stringify(promptHistory),
           provider: this.provider, // Save provider for recovery after server restart
         },
       });

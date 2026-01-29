@@ -137,6 +137,7 @@ export async function completeTask(
       status: "completed",
       progress: TASK_CONFIG.PROGRESS.COMPLETED,
       result: truncateTaskResult(resultString),
+      completedAt: new Date(),
     },
   });
 
@@ -162,6 +163,7 @@ export async function failTask(
     data: {
       status: "failed",
       error: truncateTaskError(errorMessage),
+      completedAt: new Date(),
     },
   });
 

@@ -37,8 +37,12 @@ interface AISettings {
 // Timeout for stuck tasks (10 minutes)
 const STUCK_TASK_TIMEOUT_MS = 10 * 60 * 1000;
 
+// Check for stuck tasks every 2 minutes
+const STUCK_CHECK_INTERVAL_MS = 2 * 60 * 1000;
+
 export class TaskRecoveryService {
   private static instance: TaskRecoveryService;
+  private stuckCheckInterval: NodeJS.Timeout | null = null;
 
   private constructor() {}
 
@@ -47,6 +51,41 @@ export class TaskRecoveryService {
       TaskRecoveryService.instance = new TaskRecoveryService();
     }
     return TaskRecoveryService.instance;
+  }
+
+  /**
+   * Start periodic check for stuck tasks
+   * This should be called once at server startup after initial recovery
+   */
+  startStuckTaskMonitoring(): void {
+    if (this.stuckCheckInterval) {
+      console.log('[TaskRecovery] Stuck task monitoring already running');
+      return;
+    }
+
+    console.log('[TaskRecovery] Starting stuck task monitoring (every 2 minutes)');
+
+    this.stuckCheckInterval = setInterval(async () => {
+      try {
+        const stuckCount = await this.markStuckTasksAsFailed();
+        if (stuckCount > 0) {
+          console.log(`[TaskRecovery] Periodic check: marked ${stuckCount} stuck task(s) as failed`);
+        }
+      } catch (error) {
+        console.error('[TaskRecovery] Error during stuck task check:', error);
+      }
+    }, STUCK_CHECK_INTERVAL_MS);
+  }
+
+  /**
+   * Stop the stuck task monitoring
+   */
+  stopStuckTaskMonitoring(): void {
+    if (this.stuckCheckInterval) {
+      clearInterval(this.stuckCheckInterval);
+      this.stuckCheckInterval = null;
+      console.log('[TaskRecovery] Stopped stuck task monitoring');
+    }
   }
 
   /**
@@ -97,6 +136,7 @@ export class TaskRecoveryService {
           data: {
             status: 'failed',
             error: `Recovery failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+            completedAt: new Date(),
           },
         });
       }
@@ -108,22 +148,23 @@ export class TaskRecoveryService {
   }
 
   /**
-   * Mark tasks stuck in "running" status as failed
-   * A task is considered stuck if it's been running for more than 10 minutes
+   * Mark tasks stuck in "running" or "pending" status as failed
+   * A task is considered stuck if it's been running/pending for more than 10 minutes without update
    */
-  private async markStuckTasksAsFailed(): Promise<number> {
+  async markStuckTasksAsFailed(): Promise<number> {
     const { db } = await import('../../app/db.server');
 
     const stuckThreshold = new Date(Date.now() - STUCK_TASK_TIMEOUT_MS);
 
     const result = await db.task.updateMany({
       where: {
-        status: 'running',
+        status: { in: ['running', 'pending', 'queued'] },
         updatedAt: { lt: stuckThreshold },
       },
       data: {
         status: 'failed',
-        error: 'Task was stuck in running state after server restart',
+        error: 'Task timed out - no progress for more than 10 minutes',
+        completedAt: new Date(),
       },
     });
 

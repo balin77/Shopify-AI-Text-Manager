@@ -159,12 +159,16 @@ const server = app.listen(port, host, async () => {
     console.error("❌ Failed to start task cleanup service:", error);
   }
 
-  // Recover pending tasks after server restart
+  // Recover pending tasks after server restart and start stuck task monitoring
   try {
     const { TaskRecoveryService } = await import("./task-recovery.service.js");
     const recoveryService = TaskRecoveryService.getInstance();
     const result = await recoveryService.recoverPendingTasks();
     console.log(`✅ Task recovery: ${result.recovered} recovered, ${result.failed} marked as failed`);
+
+    // Start periodic monitoring for stuck tasks
+    recoveryService.startStuckTaskMonitoring();
+    console.log('✅ Stuck task monitoring started');
   } catch (error) {
     console.error("❌ Failed to recover tasks:", error);
   }
@@ -186,6 +190,16 @@ async function gracefulShutdown(signal) {
       console.log('✅ Task cleanup service stopped');
     } catch (error) {
       console.error('Error stopping task cleanup service:', error);
+    }
+
+    try {
+      // Stop stuck task monitoring
+      const { TaskRecoveryService } = await import("./task-recovery.service.js");
+      const recoveryService = TaskRecoveryService.getInstance();
+      recoveryService.stopStuckTaskMonitoring();
+      console.log('✅ Stuck task monitoring stopped');
+    } catch (error) {
+      console.error('Error stopping stuck task monitoring:', error);
     }
 
     try {

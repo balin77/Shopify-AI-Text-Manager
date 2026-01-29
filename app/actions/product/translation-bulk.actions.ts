@@ -496,9 +496,15 @@ export async function handleTranslateAll(
     }
 
     const totalLocales = params.targetLocales.length;
-    // Calculate total steps: 1 for batch short fields + 1 per locale for long fields
-    const totalSteps = (hasShortFields ? 1 : 0) + (hasLongFields ? totalLocales : 0);
-    let completedSteps = 0;
+    // Calculate total operations for more granular progress:
+    // - Short fields: 1 AI call + (numShortFields * numLocales) save operations
+    // - Long fields: numLocales AI calls + (numLongFields * numLocales) save operations
+    const numShortFields = Object.keys(shortFields).length;
+    const numLongFields = Object.keys(longFields).length;
+    const totalOperations =
+      (hasShortFields ? 1 + numShortFields * totalLocales : 0) + // AI call + saves for short fields
+      (hasLongFields ? totalLocales + numLongFields * totalLocales : 0); // AI calls + saves for long fields
+    let completedOperations = 0;
     const allTranslations: Record<string, any> = {};
 
     // Initialize translations structure
@@ -509,11 +515,11 @@ export async function handleTranslateAll(
     loggers.translation("info", "Translation plan", {
       shortFields: Object.keys(shortFields),
       longFields: Object.keys(longFields),
-      totalSteps,
+      totalOperations,
       locales: params.targetLocales,
     });
 
-    await updateTaskProgress(task.id, 10, { total: totalSteps, processed: 0 });
+    await updateTaskProgress(task.id, 10, { total: totalOperations, processed: 0 });
 
     // Get translatable content
     const translatableResponse = await gateway.graphql(
@@ -644,7 +650,12 @@ export async function handleTranslateAll(
           "product"
         );
 
-        // Save all short field translations
+        // Count AI call completion
+        completedOperations++;
+        let progressPercent = Math.round(10 + (completedOperations / totalOperations) * 90);
+        await updateTaskProgress(task.id, progressPercent, { processed: completedOperations });
+
+        // Save all short field translations with individual progress updates
         for (const locale of params.targetLocales) {
           const localeTranslations = batchResult[locale];
           if (!localeTranslations) continue;
@@ -653,13 +664,12 @@ export async function handleTranslateAll(
             if (value) {
               allTranslations[locale][fieldType] = value;
               await saveTranslation(locale, fieldType, value);
+              completedOperations++;
+              progressPercent = Math.round(10 + (completedOperations / totalOperations) * 90);
+              await updateTaskProgress(task.id, progressPercent, { processed: completedOperations });
             }
           }
         }
-
-        completedSteps++;
-        const progressPercent = Math.round(10 + (completedSteps / totalSteps) * 90);
-        await updateTaskProgress(task.id, progressPercent, { processed: completedSteps });
 
         loggers.translation("info", "Batch short fields completed", {
           localesProcessed: params.targetLocales.length,
@@ -687,19 +697,23 @@ export async function handleTranslateAll(
             "product"
           );
 
+          // Count AI call completion
+          completedOperations++;
+          let progressPercent = Math.round(10 + (completedOperations / totalOperations) * 90);
+          await updateTaskProgress(task.id, progressPercent, { processed: completedOperations });
+
           const fields = localeTranslations[locale];
           if (fields) {
             for (const [fieldType, value] of Object.entries(fields)) {
               if (value) {
                 allTranslations[locale][fieldType] = value;
                 await saveTranslation(locale, fieldType, value as string);
+                completedOperations++;
+                progressPercent = Math.round(10 + (completedOperations / totalOperations) * 90);
+                await updateTaskProgress(task.id, progressPercent, { processed: completedOperations });
               }
             }
           }
-
-          completedSteps++;
-          const progressPercent = Math.round(10 + (completedSteps / totalSteps) * 90);
-          await updateTaskProgress(task.id, progressPercent, { processed: completedSteps });
         } catch (localeError: any) {
           loggers.translation("error", "Failed to translate long fields for locale", {
             locale,

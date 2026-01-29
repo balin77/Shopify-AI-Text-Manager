@@ -448,10 +448,48 @@ export default function TasksPage() {
                           <div style={{ padding: "1rem", background: "#f0f7ff", borderRadius: "8px", border: "1px solid #b3d9ff" }}>
                             <BlockStack gap="200">
                               <Text as="h3" variant="headingSm" fontWeight="semibold">
-                                {t.tasks.aiPrompt || "AI Prompt"}
+                                {t.tasks.aiPrompt || "AI Prompt"} {(() => {
+                                  try {
+                                    const parsed = JSON.parse(task.prompt);
+                                    if (Array.isArray(parsed)) {
+                                      return `(${parsed.length} ${t.tasks.requests || "requests"})`;
+                                    }
+                                  } catch {
+                                    // Not JSON, single prompt
+                                  }
+                                  return "";
+                                })()}
                               </Text>
-                              <div style={{ padding: "0.75rem", background: "white", borderRadius: "4px", fontFamily: "monospace", fontSize: "12px", whiteSpace: "pre-wrap", maxHeight: "300px", overflowY: "auto" }}>
-                                {task.prompt}
+                              <div style={{ maxHeight: "400px", overflowY: "auto" }}>
+                                {(() => {
+                                  try {
+                                    const parsed = JSON.parse(task.prompt);
+                                    if (Array.isArray(parsed)) {
+                                      // New format: array of { timestamp, prompt }
+                                      return (
+                                        <BlockStack gap="200">
+                                          {parsed.map((entry: { timestamp: string; prompt: string }, index: number) => (
+                                            <div key={index} style={{ padding: "0.75rem", background: "white", borderRadius: "4px", border: "1px solid #e5e5e5" }}>
+                                              <Text as="p" variant="bodySm" tone="subdued">
+                                                #{index + 1} - {new Date(entry.timestamp).toLocaleTimeString()}
+                                              </Text>
+                                              <div style={{ fontFamily: "monospace", fontSize: "11px", whiteSpace: "pre-wrap", marginTop: "0.5rem", maxHeight: "150px", overflowY: "auto" }}>
+                                                {entry.prompt}
+                                              </div>
+                                            </div>
+                                          ))}
+                                        </BlockStack>
+                                      );
+                                    }
+                                  } catch {
+                                    // Not JSON, display as single prompt
+                                  }
+                                  return (
+                                    <div style={{ padding: "0.75rem", background: "white", borderRadius: "4px", fontFamily: "monospace", fontSize: "12px", whiteSpace: "pre-wrap" }}>
+                                      {task.prompt}
+                                    </div>
+                                  );
+                                })()}
                               </div>
                             </BlockStack>
                           </div>
