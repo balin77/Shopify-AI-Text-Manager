@@ -42,7 +42,7 @@ export const UI_FIELD_TO_TRANSLATION_KEY: Record<string, string> = {
  * Required fields configuration for each content type
  */
 export const FIELD_CONFIGS = {
-  products: ['title', 'descriptionHtml', 'handle', 'seo.title', 'seo.description'],
+  products: ['title', 'descriptionHtml', 'handle', 'productType', 'seo.title', 'seo.description'],
   collections: ['title', 'descriptionHtml', 'handle', 'seo.title', 'seo.description'],
   pages: ['title', 'body', 'handle'],
   blogs: ['title', 'body', 'handle'],
@@ -58,6 +58,7 @@ export const TRANSLATION_KEY_MAP = {
   descriptionHtml: SHOPIFY_TRANSLATION_KEYS.BODY_HTML,
   body: SHOPIFY_TRANSLATION_KEYS.BODY_HTML,
   handle: SHOPIFY_TRANSLATION_KEYS.HANDLE,
+  productType: 'product_type',
   'seo.title': SHOPIFY_TRANSLATION_KEYS.META_TITLE,
   'seo.description': SHOPIFY_TRANSLATION_KEYS.META_DESCRIPTION,
 } as const;

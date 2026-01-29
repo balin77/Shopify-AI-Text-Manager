@@ -134,8 +134,10 @@ function getRequiredFieldsForContentType(contentType: ContentType): string[] {
     // Templates have dynamic fields in translatableContent
     // The validation is handled separately in the calling functions
     return [];
-  } else if (contentType === 'collections' || contentType === 'products') {
+  } else if (contentType === 'collections') {
     return ["title", "body_html", "handle", "meta_title", "meta_description"];
+  } else if (contentType === 'products') {
+    return ["title", "body_html", "handle", "product_type", "meta_title", "meta_description"];
   } else if (contentType === 'policies') {
     return ["body"];
   } else {
