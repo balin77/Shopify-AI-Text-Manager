@@ -176,6 +176,7 @@ export default function BlogPage() {
           t={t}
           hideItemListImages={true}
           hideItemListStatusBars={true}
+          showItemListCategoryBadge={true}
         />
       </div>
     </div>

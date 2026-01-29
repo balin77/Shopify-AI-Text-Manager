@@ -34,6 +34,7 @@ export interface UnifiedItem {
   id: string;
   title?: string;
   subtitle?: string;
+  category?: string;
   status?: string;
   image?: {
     url: string;
@@ -76,6 +77,9 @@ interface UnifiedItemListProps {
   /** Optional: Show image thumbnails (default: false) */
   showThumbnails?: boolean;
 
+  /** Optional: Show category badge before title (default: false) */
+  showCategoryBadge?: boolean;
+
   /** Optional: Plan limit configuration */
   planLimit?: {
     isAtLimit: boolean;
@@ -107,6 +111,7 @@ export function UnifiedItemList({
   itemsPerPage: fixedItemsPerPage,
   showStatusStripe = false,
   showThumbnails = false,
+  showCategoryBadge = false,
   planLimit,
   t = {},
 }: UnifiedItemListProps) {
@@ -238,6 +243,28 @@ export function UnifiedItemList({
               flexShrink: 0,
             }}
           />
+        )}
+
+        {/* Category Badge */}
+        {showCategoryBadge && item.category && (
+          <div
+            style={{
+              backgroundColor: "#e4e5e7",
+              color: "#202223",
+              padding: "4px 8px",
+              borderRadius: "4px",
+              fontSize: "11px",
+              fontWeight: 500,
+              flexShrink: 0,
+              maxWidth: "80px",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+            title={item.category}
+          >
+            {item.category}
+          </div>
         )}
 
         {/* Thumbnail */}

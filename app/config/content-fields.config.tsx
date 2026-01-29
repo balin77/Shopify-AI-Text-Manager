@@ -185,7 +185,6 @@ export const BLOGS_CONFIG: ContentEditorConfig = {
   displayNameSingular: "Article",
   showSeoSidebar: true,
   idPrefix: "ID:",
-  getSubtitle: (item) => item.blogTitle,
 
   fieldDefinitions: [
     {

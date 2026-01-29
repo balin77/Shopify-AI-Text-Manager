@@ -60,6 +60,9 @@ interface UnifiedContentEditorProps {
   /** Optional: Hide status bars in item list */
   hideItemListStatusBars?: boolean;
 
+  /** Optional: Show category badges in item list (e.g., for blogs) */
+  showItemListCategoryBadge?: boolean;
+
   /** Optional: Plan limit configuration */
   planLimit?: {
     isAtLimit: boolean;
@@ -101,6 +104,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     renderListItem,
     hideItemListImages = false,
     hideItemListStatusBars = false,
+    showItemListCategoryBadge = false,
     planLimit,
     fieldPagination,
     onFieldPageChange,
@@ -136,6 +140,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     id: item.id,
     title: config.getPrimaryField ? config.getPrimaryField(item) : item.title,
     subtitle: config.getSubtitle ? config.getSubtitle(item) : undefined,
+    category: item.blogTitle || item.category,
     status: item.status,
     image: item.featuredImage || item.image,
     ...item,
@@ -226,6 +231,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           showPagination={true}
           showStatusStripe={!hideItemListStatusBars}
           showThumbnails={!hideItemListImages}
+          showCategoryBadge={showItemListCategoryBadge}
           planLimit={finalPlanLimit}
           t={{
             searchPlaceholder: t.content?.searchPlaceholder,
