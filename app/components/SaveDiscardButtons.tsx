@@ -1,5 +1,5 @@
 import { useRef } from "react";
-import { Button, InlineStack } from "@shopify/polaris";
+import { Button, InlineStack, BlockStack } from "@shopify/polaris";
 
 interface SaveDiscardButtonsProps {
   hasChanges: boolean;
@@ -12,6 +12,8 @@ interface SaveDiscardButtonsProps {
   action?: string;
   fetcherState?: string;
   fetcherFormData?: FormData | null;
+  /** Optional: Use vertical layout (default: false) */
+  vertical?: boolean;
 }
 
 /**
@@ -36,6 +38,7 @@ export function SaveDiscardButtons({
   action = "updateContent",
   fetcherState = "idle",
   fetcherFormData = null,
+  vertical = false,
 }: SaveDiscardButtonsProps) {
   const saveButtonRef = useRef<HTMLDivElement>(null);
 
@@ -43,31 +46,43 @@ export function SaveDiscardButtons({
   const isSubmitting = fetcherState !== "idle" &&
     fetcherFormData?.get("action") === action;
 
+  const buttons = (
+    <>
+      <Button
+        onClick={onDiscard}
+        disabled={!hasChanges || fetcherState !== "idle"}
+      >
+        {discardText}
+      </Button>
+      <div
+        style={{
+          animation: highlightSaveButton ? "pulse 1.5s ease-in-out infinite" : "none",
+          borderRadius: "8px",
+        }}
+      >
+        <Button
+          variant={hasChanges ? "primary" : undefined}
+          onClick={onSave}
+          disabled={!hasChanges}
+          loading={isSubmitting}
+        >
+          {saveText}
+        </Button>
+      </div>
+    </>
+  );
+
   return (
     <div ref={saveButtonRef}>
-      <InlineStack gap="200">
-        <Button
-          onClick={onDiscard}
-          disabled={!hasChanges || fetcherState !== "idle"}
-        >
-          {discardText}
-        </Button>
-        <div
-          style={{
-            animation: highlightSaveButton ? "pulse 1.5s ease-in-out infinite" : "none",
-            borderRadius: "8px",
-          }}
-        >
-          <Button
-            variant={hasChanges ? "primary" : undefined}
-            onClick={onSave}
-            disabled={!hasChanges}
-            loading={isSubmitting}
-          >
-            {saveText}
-          </Button>
-        </div>
-      </InlineStack>
+      {vertical ? (
+        <BlockStack gap="200">
+          {buttons}
+        </BlockStack>
+      ) : (
+        <InlineStack gap="200">
+          {buttons}
+        </InlineStack>
+      )}
     </div>
   );
 }

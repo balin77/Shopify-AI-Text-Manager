@@ -222,47 +222,46 @@ export function ProductEditor({
 
   return (
     <>
-      {/* Fixed Header with Unified Language Bar and Action Buttons */}
+      {/* Language Selection Card */}
       <Card padding="400">
-        <BlockStack gap="300">
-          {/* Unified Language Bar with Translate All and Reload */}
-          <UnifiedLanguageBar
-            shopLocales={shopLocales}
-            currentLanguage={currentLanguage}
-            primaryLocale={primaryLocale}
-            selectedItem={product}
-            contentType="products"
-            hasChanges={hasChanges}
-            onLanguageChange={onLanguageChange}
-            enabledLanguages={enabledLanguages}
-            onToggleLanguage={onToggleLanguage}
-            onTranslateAll={onTranslateAll}
-            isTranslating={isTranslatingAll}
-            showTranslateAll={true}
-            showReloadButton={true}
-            t={{
-              primaryLocaleSuffix: t.products.primaryLanguageSuffix,
-              translateAll: t.products.translateAll,
-              translating: t.products.translating || "Translating...",
-            }}
-          />
-
-          {/* Save/Discard Buttons */}
-          <InlineStack align="end" blockAlign="center">
-            <SaveDiscardButtons
-              hasChanges={hasChanges}
-              onSave={onSave}
-              onDiscard={onDiscardChanges || (() => {})}
-              highlightSaveButton={false}
-              saveText={t.products.saveChanges}
-              discardText={t.products.discardChanges || "Verwerfen"}
-              action="updateProduct"
-              fetcherState={fetcherState}
-              fetcherFormData={fetcherFormData}
-            />
-          </InlineStack>
-        </BlockStack>
+        <UnifiedLanguageBar
+          shopLocales={shopLocales}
+          currentLanguage={currentLanguage}
+          primaryLocale={primaryLocale}
+          selectedItem={product}
+          contentType="products"
+          hasChanges={hasChanges}
+          onLanguageChange={onLanguageChange}
+          enabledLanguages={enabledLanguages}
+          onToggleLanguage={onToggleLanguage}
+          onTranslateAll={onTranslateAll}
+          isTranslating={isTranslatingAll}
+          showTranslateAll={true}
+          showReloadButton={true}
+          t={{
+            primaryLocaleSuffix: t.products.primaryLanguageSuffix,
+            translateAll: t.products.translateAll,
+            translating: t.products.translating || "Translating...",
+          }}
+        />
       </Card>
+
+      {/* Action Buttons Card */}
+      <div style={{ marginTop: "0.5rem" }}>
+        <Card padding="400">
+          <SaveDiscardButtons
+            hasChanges={hasChanges}
+            onSave={onSave}
+            onDiscard={onDiscardChanges || (() => {})}
+            highlightSaveButton={false}
+            saveText={t.products.saveChanges}
+            discardText={t.products.discardChanges || "Verwerfen"}
+            action="updateProduct"
+            fetcherState={fetcherState}
+            fetcherFormData={fetcherFormData}
+          />
+        </Card>
+      </div>
 
       {/* Scrollable Content Area */}
       <div style={{ flex: 1, overflowY: "auto", marginTop: "1rem" }}>
