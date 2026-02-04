@@ -159,7 +159,6 @@ export function UnifiedItemSelectorCompact({
                 autoComplete="off"
                 clearButton
                 onClearButtonClick={() => handleSearchChange("")}
-                autoFocus
               />
             </div>
 
@@ -251,15 +250,20 @@ export function UnifiedItemSelectorCompact({
       )}
 
       <style>{`
-        /* Remove blue focus border from search field in compact selector dropdown */
-        .compact-selector-dropdown .Polaris-TextField__Input:focus {
+        /* Remove ALL focus styles from search field in compact selector dropdown */
+        .compact-selector-dropdown .Polaris-TextField__Input,
+        .compact-selector-dropdown .Polaris-TextField__Input:focus,
+        .compact-selector-dropdown .Polaris-TextField__Input:focus-visible,
+        .compact-selector-dropdown .Polaris-TextField__Input:active,
+        .compact-selector-dropdown .Polaris-Connected,
+        .compact-selector-dropdown .Polaris-Connected:focus-within,
+        .compact-selector-dropdown input,
+        .compact-selector-dropdown input:focus,
+        .compact-selector-dropdown input:focus-visible,
+        .compact-selector-dropdown input:active {
           border-color: #c9cccf !important;
           box-shadow: none !important;
-        }
-
-        .compact-selector-dropdown .Polaris-TextField__Input:focus-visible {
-          outline: 2px solid #0066CC;
-          outline-offset: 2px;
+          outline: none !important;
         }
       `}</style>
     </div>
