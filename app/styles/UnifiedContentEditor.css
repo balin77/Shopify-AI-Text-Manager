@@ -54,14 +54,20 @@
 
   .unified-item-list-container {
     /* Original: flex-shrink: 0, fixed width */
+    flex-shrink: 0;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
   }
 
   .unified-editor-container {
     /* Original: flex: 1 */
+    flex: 1;
   }
 
   .seo-sidebar-container {
     /* Original: flex-shrink: 0, fixed width, shown on desktop */
+    flex-shrink: 0;
   }
 }
 

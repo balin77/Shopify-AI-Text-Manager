@@ -159,19 +159,19 @@ export function UnifiedItemList({
 
       // Use requestAnimationFrame to debounce and prevent flickering
       rafId = requestAnimationFrame(() => {
+        // Get actual heights from DOM elements
+        const wrapperHeight = wrapperRef.current?.clientHeight || 0;
         const headerHeight = headerRef.current?.offsetHeight || 0;
         const paginationHeight = showPagination && paginationRef.current?.offsetHeight
           ? paginationRef.current.offsetHeight
           : (showPagination ? 56 : 0);
 
         // Calculate available height for the list
-        // Always use window-based calculation for more reliable results
-        const navHeight = getTotalNavHeight();
-        const layoutPadding = 32; // Padding from parent layout (16px gap on each side)
+        // Use wrapper height (from parent container unified-item-list-container)
         const cardPaddingAndBorders = 4; // Card borders
         const bottomSpacing = 20; // Bottom spacing for visual breathing room
 
-        const availableHeight = window.innerHeight - navHeight - headerHeight - paginationHeight - layoutPadding - cardPaddingAndBorders - bottomSpacing;
+        const availableHeight = wrapperHeight - headerHeight - paginationHeight - cardPaddingAndBorders - bottomSpacing;
 
         // Only update if height changed significantly (more than 10px difference)
         // This prevents flickering from minor layout shifts
