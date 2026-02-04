@@ -569,6 +569,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         primaryLocale={primaryLocale}
                         selectedItem={selectedItem}
                         t={t}
+                        plan={plan}
                         state={state}
                         handlers={handlers}
                         fetcherState={fetcherState}
@@ -703,7 +704,7 @@ interface FieldRendererProps {
   t: any;
 }
 
-function FieldRenderer(props: FieldRendererProps & { state?: any; handlers?: any; fetcherState?: string; fetcherFormData?: FormData }) {
+function FieldRenderer(props: FieldRendererProps & { plan?: string; state?: any; handlers?: any; fetcherState?: string; fetcherFormData?: FormData }) {
   const {
     field,
     value,
@@ -731,6 +732,7 @@ function FieldRenderer(props: FieldRendererProps & { state?: any; handlers?: any
     primaryLocale,
     selectedItem,
     t,
+    plan,
     state,
     handlers,
     fetcherState,
