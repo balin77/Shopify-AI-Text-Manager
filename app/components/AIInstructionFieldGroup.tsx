@@ -54,14 +54,18 @@ export function AIInstructionFieldGroup({
           {isHtmlField && onToggleHtmlMode && (
             <InlineStack align="space-between" blockAlign="center">
               <Text as="p" variant="bodyMd" fontWeight="medium">{formatLabel}</Text>
-              <InlineStack gap="200" blockAlign="center">
-                <Button size="slim" onClick={onToggleHtmlMode}>
-                  {htmlMode === "html" ? t.products.preview : t.products.html}
-                </Button>
-                <Button size="slim" onClick={onResetFormat} tone="critical" variant="plain">
-                  {resetFormatText}
-                </Button>
-              </InlineStack>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem" }}>
+                <div style={{ flex: "0 0 auto", width: "auto" }}>
+                  <Button size="slim" onClick={onToggleHtmlMode}>
+                    {htmlMode === "html" ? t.products.preview : t.products.html}
+                  </Button>
+                </div>
+                <div style={{ flex: "0 0 auto", width: "auto" }}>
+                  <Button size="slim" onClick={onResetFormat} tone="critical" variant="plain">
+                    {resetFormatText}
+                  </Button>
+                </div>
+              </div>
             </InlineStack>
           )}
 
