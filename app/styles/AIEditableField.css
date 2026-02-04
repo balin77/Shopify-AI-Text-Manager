@@ -100,6 +100,21 @@
     margin-left: 0;
     justify-content: flex-start;
   }
+
+  /* Force horizontal layout for header buttons on mobile */
+  .ai-editable-html-field > .Polaris-InlineStack {
+    flex-wrap: wrap !important;
+  }
+
+  .ai-editable-html-field > .Polaris-InlineStack > .Polaris-InlineStack {
+    flex-wrap: wrap !important;
+  }
+
+  /* Ensure buttons don't break into vertical stack */
+  .ai-editable-html-field .Polaris-InlineStack {
+    flex-direction: row !important;
+    flex-wrap: wrap !important;
+  }
 }
 
 /* HTML Editor styling */
