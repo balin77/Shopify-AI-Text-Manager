@@ -371,11 +371,19 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
     if (currentLanguage === primaryLocale) {
       // Load primary locale values
+      const newFallbackFields = new Set<string>();
+
       fieldDefs.forEach((field) => {
         newValues[field.key] = getItemFieldValue(item, field.key, primaryLocale, config);
+
+        // Mark seoTitle as fallback if it's using the title as fallback
+        if (field.key === 'seoTitle' && !item.seo?.title && item.title) {
+          debugLog.dataLoad(' SEO Title field: using fallback to main title:', item.title);
+          newFallbackFields.add(field.key);
+        }
       });
-      // Clear fallback fields when viewing primary locale
-      setFallbackFields(new Set());
+
+      setFallbackFields(newFallbackFields);
     } else if (config.contentType === 'templates') {
       // TEMPLATES: Don't load translations here - they are managed by app.templates.tsx
       // via loadedTranslations cache. Just initialize with empty strings.
@@ -423,6 +431,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         if (field.key === 'handle' && !translatedValue && item.handle) {
           debugLog.dataLoad(' Handle field: using fallback to primary locale value:', item.handle);
           newValues[field.key] = item.handle;
+          newFallbackFields.add(field.key);
+        } else if (field.key === 'seoTitle' && !translatedValue && item.title) {
+          // Special handling for seoTitle field: fallback to main title if no translation
+          debugLog.dataLoad(' SEO Title field: using fallback to main title:', item.title);
+          newValues[field.key] = item.title;
           newFallbackFields.add(field.key);
         } else {
           newValues[field.key] = translatedValue;
@@ -2515,7 +2528,7 @@ function getItemFieldValue(item: TranslatableContentItem, fieldKey: string, prim
     title: item.title || "",
     description: item.descriptionHtml || item.body || "",
     handle: item.handle || "",
-    seoTitle: item.seo?.title || "",
+    seoTitle: item.seo?.title || item.title || "", // Fallback to main title if seoTitle is empty
     metaDescription: item.seo?.description || "",
     body: item.body || "",
     summary: item.summary || "",
