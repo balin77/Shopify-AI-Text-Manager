@@ -44,17 +44,20 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const { db } = await import("../db.server");
     const { loadAISettingsForValidation } = await import("../utils/loader-helpers");
     logger.debug("[APP.TSX LOADER] Loading settings from DB...", { context: "App" });
-    const settings = await db.aISettings.findUnique({
-      where: { shop: session.shop },
-    });
+
+    // Run DB queries in parallel for better TTFB performance
+    const [settings, aiSettings] = await Promise.all([
+      db.aISettings.findUnique({
+        where: { shop: session.shop },
+      }),
+      loadAISettingsForValidation(db, session.shop),
+    ]);
+
     logger.debug("[APP.TSX LOADER] Settings loaded", { context: "App", found: !!settings });
 
     const appLanguage = (settings?.appLanguage || "de") as Locale;
     const subscriptionPlan = (settings?.subscriptionPlan || "basic") as Plan;
     logger.debug("[APP.TSX LOADER] App settings", { context: "App", appLanguage, subscriptionPlan });
-
-    // Load AI settings for global API key validation
-    const aiSettings = await loadAISettingsForValidation(db, session.shop);
 
     return json({
       appLanguage,
