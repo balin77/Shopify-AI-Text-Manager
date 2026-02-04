@@ -68,6 +68,35 @@
     min-height: 48px;
   }
 
+  /* Make navbar more compact on mobile - reduce padding significantly */
+  .main-navigation {
+    padding: 0.5rem 0.75rem !important;
+    gap: 0.5rem !important;
+    flex-wrap: nowrap !important;
+  }
+
+  /* Compact item selector in navbar on mobile */
+  .mobile-navbar-item-selector {
+    flex: 1;
+    min-width: 0;
+    max-width: calc(100vw - 100px);
+  }
+
+  .mobile-navbar-item-selector .Polaris-Card {
+    margin: 0 !important;
+  }
+
+  .mobile-navbar-item-selector button {
+    min-height: 44px !important;
+    padding: 6px 10px !important;
+    font-size: 14px;
+  }
+
+  /* Hide the regular mobile item list on content editor pages when in mobile */
+  .unified-item-list-container .mobile-only {
+    display: none !important;
+  }
+
   /* Reduce padding on mobile for more screen space */
   .Polaris-Page {
     padding: var(--spacing-mobile) !important;
@@ -151,6 +180,22 @@
   /* SEO Sidebar - hide on mobile, show as expandable section */
   .seo-sidebar-container {
     display: none;
+  }
+
+  /* Mobile Item Dropdown - sticky below navbar */
+  .unified-item-list-mobile {
+    position: sticky;
+    top: var(--navbar-height, 73px);
+    z-index: 999;
+    background: white;
+    margin: 0 -8px;
+    padding: 8px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  }
+
+  /* Hide item list container on mobile (dropdown shown above) */
+  .unified-item-list-container {
+    display: none !important;
   }
 }
 

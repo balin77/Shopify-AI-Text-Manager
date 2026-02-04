@@ -9,6 +9,7 @@ import { I18nProvider } from "../contexts/I18nContext";
 import { InfoBoxProvider } from "../contexts/InfoBoxContext";
 import { PlanProvider } from "../contexts/PlanContext";
 import { NavigationHeightProvider } from "../contexts/NavigationHeightContext";
+import { ItemSelectorProvider } from "../contexts/ItemSelectorContext";
 import { useEffect, useMemo } from "react";
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
@@ -159,7 +160,9 @@ export default function App() {
         <PlanProvider plan={subscriptionPlan}>
           <InfoBoxProvider>
             <NavigationHeightProvider>
-              <AppContent />
+              <ItemSelectorProvider>
+                <AppContent />
+              </ItemSelectorProvider>
             </NavigationHeightProvider>
           </InfoBoxProvider>
         </PlanProvider>

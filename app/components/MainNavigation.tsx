@@ -4,7 +4,9 @@ import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { usePlan } from "../contexts/PlanContext";
 import { useNavigationHeight } from "../contexts/NavigationHeightContext";
+import { useItemSelector } from "../contexts/ItemSelectorContext";
 import { MobileMenu } from "./MobileMenu";
+import { UnifiedItemSelectorCompact } from "./unified/UnifiedItemSelectorCompact";
 import { type Plan } from "../config/plans";
 import { useState, useEffect, useRef } from "react";
 
@@ -17,6 +19,7 @@ export function MainNavigation() {
   const { infoBox, hideInfoBox, showInfoBox, isGlobalLoading } = useInfoBox();
   const { plan, getPlanDisplayName, getMaxProducts } = usePlan();
   const { setMainNavHeight } = useNavigationHeight();
+  const { items, selectedItemId, onItemSelect, resourceName, t: itemSelectorT } = useItemSelector();
   const tasksFetcher = useFetcher<{ count: number }>();
   const completedTasksFetcher = useFetcher<{ tasks: any[] }>();
   const [showLoadingIndicator, setShowLoadingIndicator] = useState(false);
@@ -342,6 +345,19 @@ export function MainNavigation() {
               showContentTypes={isOnContentPage}
             />
           </div>
+
+          {/* Compact Item Selector - nur auf Mobile sichtbar und nur wenn Items vorhanden */}
+          {items.length > 0 && onItemSelect && (
+            <div className="mobile-only" style={{ flex: 1, minWidth: 0 }}>
+              <UnifiedItemSelectorCompact
+                items={items}
+                selectedItemId={selectedItemId}
+                onItemSelect={onItemSelect}
+                resourceName={resourceName}
+                t={itemSelectorT}
+              />
+            </div>
+          )}
 
           {/* Navigation Tabs - versteckt auf Mobile (nur sichtbar ab 900px) */}
           <div className="desktop-only">
