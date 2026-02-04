@@ -150,28 +150,34 @@ export function UnifiedItemList({
     const calculateDynamicPagination = () => {
       // Get the wrapper height (from flexbox layout)
       const wrapperHeight = wrapperRef.current?.clientHeight;
-      const headerHeight = headerRef.current?.offsetHeight || 100;
-      const paginationHeight = showPagination ? 56 : 0;
+      const headerHeight = headerRef.current?.offsetHeight || 0;
+      const paginationHeight = showPagination && paginationRef.current?.offsetHeight
+        ? paginationRef.current.offsetHeight
+        : (showPagination ? 56 : 0);
 
       // Calculate available height for the list
       let availableHeight: number;
 
       if (wrapperHeight && wrapperHeight > 200) {
-        // Use wrapper height minus header, pagination, and a small buffer for borders/padding
-        availableHeight = wrapperHeight - headerHeight - paginationHeight - 20;
+        // Use wrapper height minus header, pagination, and borders
+        // Account for: header, pagination, Card padding, borders (typically 2-4px total)
+        const cardPaddingAndBorders = 4; // Border pixels
+        availableHeight = wrapperHeight - headerHeight - paginationHeight - cardPaddingAndBorders;
       } else {
         // Fallback: calculate from window
         const navHeight = getTotalNavHeight();
-        const padding = 32;
-        availableHeight = window.innerHeight - navHeight - headerHeight - paginationHeight - padding;
+        const layoutPadding = 32; // Padding from parent layout
+        const cardPaddingAndBorders = 4;
+        availableHeight = window.innerHeight - navHeight - headerHeight - paginationHeight - layoutPadding - cardPaddingAndBorders;
       }
 
       // Calculate item dimensions
       const minItemHeight = showThumbnails ? 62 : 54;
       const maxItemHeight = 82;
 
-      // Calculate how many items fit based on minimum height
-      const itemsThatFit = Math.max(5, Math.floor(availableHeight / minItemHeight));
+      // Calculate how many items fit - use ceiling to be more generous
+      // Add a small buffer (0.9) to account for sub-pixel rendering
+      const itemsThatFit = Math.max(5, Math.ceil((availableHeight * 0.98) / minItemHeight));
 
       // Calculate exact item height to fill the space perfectly
       // This ensures no pixels are wasted and the list fills exactly
