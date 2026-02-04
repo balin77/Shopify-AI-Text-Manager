@@ -118,7 +118,7 @@ export function UnifiedItemList({
   const [searchQuery, setSearchQuery] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const [hoveredItemId, setHoveredItemId] = useState<string | null>(null);
-  const [dynamicItemsPerPage, setDynamicItemsPerPage] = useState(15); // Start higher, will be calculated
+  const [dynamicItemsPerPage, setDynamicItemsPerPage] = useState(10);
   const [itemHeight, setItemHeight] = useState(56); // Will be calculated dynamically
 
   const { getTotalNavHeight } = useNavigationHeight();
@@ -147,100 +147,58 @@ export function UnifiedItemList({
 
   // Calculate items per page and item height based on available space
   useEffect(() => {
-    let rafId: number | null = null;
-    let lastCalculatedHeight: number | null = null;
-    let isResizing = false;
+    const calculateDynamicPagination = () => {
+      // Get the wrapper height (from flexbox layout)
+      const wrapperHeight = wrapperRef.current?.clientHeight;
+      const headerHeight = headerRef.current?.offsetHeight || 100;
+      const paginationHeight = showPagination ? 56 : 0;
 
-    const calculateDynamicPagination = (forceUpdate = false) => {
-      // Cancel any pending animation frame
-      if (rafId !== null) {
-        cancelAnimationFrame(rafId);
+      // Calculate available height for the list
+      let availableHeight: number;
+
+      if (wrapperHeight && wrapperHeight > 200) {
+        // Use wrapper height minus header, pagination, and a small buffer for borders/padding
+        availableHeight = wrapperHeight - headerHeight - paginationHeight - 20;
+      } else {
+        // Fallback: calculate from window
+        const navHeight = getTotalNavHeight();
+        const padding = 32;
+        availableHeight = window.innerHeight - navHeight - headerHeight - paginationHeight - padding;
       }
 
-      // Use requestAnimationFrame to debounce and prevent flickering
-      rafId = requestAnimationFrame(() => {
-        // Get actual heights from DOM elements
-        const wrapperHeight = wrapperRef.current?.clientHeight || 0;
-        const headerHeight = headerRef.current?.offsetHeight || 0;
-        const paginationHeight = showPagination && paginationRef.current?.offsetHeight
-          ? paginationRef.current.offsetHeight
-          : (showPagination ? 56 : 0);
+      // Calculate item dimensions
+      const minItemHeight = showThumbnails ? 62 : 54;
+      const maxItemHeight = 82;
 
-        // Calculate available height for the list
-        // Use wrapper height (from parent container unified-item-list-container)
-        const cardPaddingAndBorders = 4; // Card borders
-        const bottomSpacing = 20; // Bottom spacing for visual breathing room
+      // Calculate how many items fit based on minimum height
+      const itemsThatFit = Math.max(5, Math.floor(availableHeight / minItemHeight));
 
-        const availableHeight = wrapperHeight - headerHeight - paginationHeight - cardPaddingAndBorders - bottomSpacing;
+      // Calculate exact item height to fill the space perfectly
+      // This ensures no pixels are wasted and the list fills exactly
+      const exactItemHeight = availableHeight / itemsThatFit;
+      const calculatedItemHeight = Math.min(maxItemHeight, Math.max(minItemHeight, exactItemHeight));
 
-        // Skip calculation if wrapper height is not yet available (DOM not ready)
-        // This prevents falling back to 5 items before the layout is rendered
-        if (wrapperHeight <= 200 || availableHeight <= 200) {
-          console.log('Skipping calculation - wrapper not ready:', { wrapperHeight, availableHeight });
-          return;
-        }
-
-        console.log('Calculating pagination:', { wrapperHeight, headerHeight, paginationHeight, availableHeight });
-
-        // Only update if height changed significantly (more than 10px difference)
-        // This prevents flickering from minor layout shifts
-        // BUT: Always update during window resize or when forced
-        if (!forceUpdate && !isResizing && lastCalculatedHeight !== null && Math.abs(availableHeight - lastCalculatedHeight) < 10) {
-          return;
-        }
-
-        lastCalculatedHeight = availableHeight;
-
-        // Calculate item dimensions
-        const minItemHeight = showThumbnails ? 62 : 54;
-        const maxItemHeight = 82;
-
-        // Calculate how many items fit
-        const itemsThatFit = Math.max(5, Math.floor(availableHeight / minItemHeight));
-
-        // Calculate exact item height to fill the space perfectly
-        // This ensures no pixels are wasted and the list fills exactly
-        const exactItemHeight = availableHeight / itemsThatFit;
-        const calculatedItemHeight = Math.min(maxItemHeight, Math.max(minItemHeight, exactItemHeight));
-
-        setDynamicItemsPerPage(itemsThatFit);
-        setItemHeight(calculatedItemHeight);
-        isResizing = false;
-      });
-    };
-
-    // Handle window resize - always recalculate
-    const handleResize = () => {
-      isResizing = true;
-      calculateDynamicPagination(true);
+      setDynamicItemsPerPage(itemsThatFit);
+      setItemHeight(calculatedItemHeight);
     };
 
     // Delay initial calculation to allow DOM to render
-    // Try multiple times with increasing delays to ensure wrapper height is available
-    const timer1 = setTimeout(() => calculateDynamicPagination(true), 100);
-    const timer2 = setTimeout(() => calculateDynamicPagination(true), 250);
-    const timer3 = setTimeout(() => calculateDynamicPagination(true), 500);
-
-    window.addEventListener('resize', handleResize);
+    const timer = setTimeout(calculateDynamicPagination, 150);
+    window.addEventListener('resize', calculateDynamicPagination);
 
     // Use ResizeObserver for more reliable height detection
     let resizeObserver: ResizeObserver | null = null;
     if (wrapperRef.current && typeof ResizeObserver !== 'undefined') {
-      resizeObserver = new ResizeObserver(() => calculateDynamicPagination(false));
+      resizeObserver = new ResizeObserver(calculateDynamicPagination);
       resizeObserver.observe(wrapperRef.current);
     }
 
     return () => {
-      clearTimeout(timer1);
-      clearTimeout(timer2);
-      clearTimeout(timer3);
-      window.removeEventListener('resize', handleResize);
+      clearTimeout(timer);
+      window.removeEventListener('resize', calculateDynamicPagination);
       resizeObserver?.disconnect();
-      if (rafId !== null) {
-        cancelAnimationFrame(rafId);
-      }
     };
-  }, [showThumbnails, showPagination]);
+  }, [getTotalNavHeight, showThumbnails, showPagination]);
 
   // Reset to page 1 when search changes
   const handleSearchChange = (value: string) => {
