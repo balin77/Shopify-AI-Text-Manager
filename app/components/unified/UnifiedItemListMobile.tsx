@@ -5,7 +5,7 @@
  * with search functionality and compact item display.
  */
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card, TextField, BlockStack, InlineStack, Text, Icon, Button, Thumbnail } from "@shopify/polaris";
 import { SearchIcon, ChevronDownIcon, ChevronUpIcon, ChevronLeftIcon, ChevronRightIcon } from "@shopify/polaris-icons";
 import type { UnifiedItem } from "./UnifiedItemList";
