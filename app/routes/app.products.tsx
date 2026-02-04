@@ -59,8 +59,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
     logger.debug("[PRODUCTS-LOADER] Locales loaded", { context: "Products", primaryLocale, availableLocales: shopLocales.length });
 
-    // 2. Fetch products from DATABASE and translations
-    const [initialDbProducts, allTranslations, aiSettings] = await Promise.all([
+    // 2. Fetch products from DATABASE first
+    const [initialDbProducts, aiSettings] = await Promise.all([
       db.product.findMany({
         where: {
           shop: session.shop,
@@ -80,13 +80,21 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
           title: "asc",
         },
       }),
-      db.contentTranslation.findMany({
-        where: { resourceType: 'Product' }
-      }),
       loadAISettingsForValidation(db, session.shop),
     ]);
 
     logger.debug("[PRODUCTS-LOADER] Loaded products from database", { context: "Products", count: initialDbProducts.length });
+
+    // 3. Fetch translations only for products that belong to this shop
+    const productIds = initialDbProducts.map(p => p.id);
+    const allTranslations = productIds.length > 0
+      ? await db.contentTranslation.findMany({
+          where: {
+            resourceType: 'Product',
+            resourceId: { in: productIds }
+          }
+        })
+      : [];
 
     // Use initialDbProducts directly - sync is now done via separate API call
     const dbProducts = initialDbProducts;

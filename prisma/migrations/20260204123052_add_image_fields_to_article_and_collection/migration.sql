@@ -1,0 +1,8 @@
+-- AlterTable
+ALTER TABLE "Article" ADD COLUMN IF NOT EXISTS "imageAltText" TEXT,
+ADD COLUMN IF NOT EXISTS "imageUrl" TEXT,
+ADD COLUMN IF NOT EXISTS "summary" TEXT;
+
+-- AlterTable
+ALTER TABLE "Collection" ADD COLUMN IF NOT EXISTS "imageAltText" TEXT,
+ADD COLUMN IF NOT EXISTS "imageUrl" TEXT;

@@ -36,16 +36,24 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "de";
 
     // Load collections from database
-    const [collections, allTranslations, aiSettings] = await Promise.all([
+    const [collections, aiSettings] = await Promise.all([
       db.collection.findMany({
         where: { shop: session.shop },
         orderBy: { title: 'asc' },
       }),
-      db.contentTranslation.findMany({
-        where: { resourceType: 'Collection' }
-      }),
       loadAISettingsForValidation(db, session.shop),
     ]);
+
+    // Load translations only for this shop's collections
+    const collectionIds = collections.map(c => c.id);
+    const allTranslations = collectionIds.length > 0
+      ? await db.contentTranslation.findMany({
+          where: {
+            resourceType: 'Collection',
+            resourceId: { in: collectionIds }
+          }
+        })
+      : [];
 
     // Group translations by resourceId
     const translationsByResource = allTranslations.reduce((acc: Record<string, any[]>, trans) => {
