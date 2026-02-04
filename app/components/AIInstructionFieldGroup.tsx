@@ -74,11 +74,9 @@ export function AIInstructionFieldGroup({
             <>
               <InlineStack align="space-between" blockAlign="center">
                 <Text as="p" variant="bodyMd" fontWeight="medium">{formatLabel}</Text>
-                <div style={{ flex: "0 0 auto", width: "auto" }}>
-                  <Button size="slim" onClick={onResetFormat} tone="critical" variant="plain">
-                    {resetFormatText}
-                  </Button>
-                </div>
+                <Button size="slim" onClick={onResetFormat} tone="critical" variant="plain">
+                  {resetFormatText}
+                </Button>
               </InlineStack>
               <TextField
                 label=""
@@ -149,11 +147,9 @@ export function AIInstructionFieldGroup({
         <div>
           <InlineStack align="space-between" blockAlign="center">
             <Text as="p" variant="bodyMd" fontWeight="medium">{instructionsLabel}</Text>
-            <div style={{ flex: "0 0 auto", width: "auto" }}>
-              <Button size="slim" onClick={onResetInstructions} tone="critical" variant="plain">
-                {resetInstructionsText}
-              </Button>
-            </div>
+            <Button size="slim" onClick={onResetInstructions} tone="critical" variant="plain">
+              {resetInstructionsText}
+            </Button>
           </InlineStack>
           <TextField
             label=""
