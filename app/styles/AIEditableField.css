@@ -80,6 +80,26 @@
   display: flex;
   gap: 0.5rem;
   margin-left: auto;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+/* Mobile: Ensure buttons wrap and take proper space */
+@media (max-width: 768px) {
+  .ai-field-footer {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.5rem;
+  }
+
+  .ai-field-footer-left {
+    text-align: left;
+  }
+
+  .ai-field-footer-right {
+    margin-left: 0;
+    justify-content: flex-start;
+  }
 }
 
 /* HTML Editor styling */
