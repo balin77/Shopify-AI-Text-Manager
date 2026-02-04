@@ -194,10 +194,11 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
   return (
     <Card>
       <BlockStack gap="500">
-        <InlineStack align="space-between" blockAlign="center">
-          <Text as="h2" variant="headingLg">
-            {t.settings.manageAiKeys}
-          </Text>
+        <Text as="h2" variant="headingLg">
+          {t.settings.manageAiKeys}
+        </Text>
+
+        <InlineStack align="end">
           <SaveDiscardButtons
             hasChanges={hasChanges}
             onSave={handleSave}
