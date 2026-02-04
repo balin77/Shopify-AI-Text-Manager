@@ -50,7 +50,7 @@ export function AIInstructionFieldGroup({
         <Text as="h3" variant="headingMd">{fieldName}</Text>
 
         {/* Format Example Field */}
-        <div style={{ overflow: "visible" }}>
+        <div style={{ overflow: "visible" }} className="ai-instruction-html-field">
           {isHtmlField && onToggleHtmlMode && (
             <InlineStack align="space-between" blockAlign="center">
               <Text as="p" variant="bodyMd" fontWeight="medium">{formatLabel}</Text>

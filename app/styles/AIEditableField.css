@@ -85,8 +85,11 @@
 }
 
 /* Override Polaris ButtonGroup that wraps buttons automatically */
+/* Apply to both AIEditableHTMLField and AIInstructionFieldGroup */
 .ai-editable-html-field .Polaris-ButtonGroup,
-.ai-editable-html-field .Polaris-ButtonGroup--variantSegmented {
+.ai-editable-html-field .Polaris-ButtonGroup--variantSegmented,
+.ai-instruction-html-field .Polaris-ButtonGroup,
+.ai-instruction-html-field .Polaris-ButtonGroup--variantSegmented {
   display: flex !important;
   flex-direction: row !important;
   flex-wrap: wrap !important;
@@ -95,7 +98,9 @@
 }
 
 .ai-editable-html-field .Polaris-ButtonGroup .Polaris-Button,
-.ai-editable-html-field .Polaris-ButtonGroup--variantSegmented .Polaris-Button {
+.ai-editable-html-field .Polaris-ButtonGroup--variantSegmented .Polaris-Button,
+.ai-instruction-html-field .Polaris-ButtonGroup .Polaris-Button,
+.ai-instruction-html-field .Polaris-ButtonGroup--variantSegmented .Polaris-Button {
   flex: 0 1 auto !important;
   width: auto !important;
   min-width: 44px !important;
@@ -105,13 +110,17 @@
 
 /* Remove spacing between buttons in ButtonGroup */
 .ai-editable-html-field .Polaris-ButtonGroup > *,
-.ai-editable-html-field .Polaris-ButtonGroup--variantSegmented > * {
+.ai-editable-html-field .Polaris-ButtonGroup--variantSegmented > *,
+.ai-instruction-html-field .Polaris-ButtonGroup > *,
+.ai-instruction-html-field .Polaris-ButtonGroup--variantSegmented > * {
   margin: 0 !important;
   padding: 0 !important;
 }
 
 .ai-editable-html-field .Polaris-ButtonGroup .Polaris-Button-ConnectedDisclosure,
-.ai-editable-html-field .Polaris-ButtonGroup--variantSegmented .Polaris-Button-ConnectedDisclosure {
+.ai-editable-html-field .Polaris-ButtonGroup--variantSegmented .Polaris-Button-ConnectedDisclosure,
+.ai-instruction-html-field .Polaris-ButtonGroup .Polaris-Button-ConnectedDisclosure,
+.ai-instruction-html-field .Polaris-ButtonGroup--variantSegmented .Polaris-Button-ConnectedDisclosure {
   margin: 0 !important;
 }
 
@@ -120,7 +129,9 @@
 @media (max-width: 768px) {
   /* Override ButtonGroup vertical stacking on mobile */
   .ai-editable-html-field .Polaris-ButtonGroup,
-  .ai-editable-html-field .Polaris-ButtonGroup--variantSegmented {
+  .ai-editable-html-field .Polaris-ButtonGroup--variantSegmented,
+  .ai-instruction-html-field .Polaris-ButtonGroup,
+  .ai-instruction-html-field .Polaris-ButtonGroup--variantSegmented {
     flex-direction: row !important;
     flex-wrap: wrap !important;
     width: auto !important;
@@ -192,7 +203,8 @@
 /* Touch Device Optimizations - Override global rules */
 @media (hover: none) and (pointer: coarse) {
   /* Override the margin rule from responsive.css line 307 */
-  .ai-editable-html-field .Polaris-InlineStack > * {
+  .ai-editable-html-field .Polaris-InlineStack > *,
+  .ai-instruction-html-field .Polaris-InlineStack > * {
     margin: 0 !important;
   }
 
