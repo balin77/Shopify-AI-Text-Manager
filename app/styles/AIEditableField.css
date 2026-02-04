@@ -85,9 +85,10 @@
 }
 
 /* Mobile: Ensure buttons wrap horizontally and take proper space */
+/* IMPORTANT: Override responsive.css global button rules */
 @media (max-width: 768px) {
   /* Footer container - keep horizontal layout for character count and buttons */
-  .ai-field-footer {
+  .ai-editable-html-field .ai-field-footer {
     display: flex !important;
     flex-direction: row !important;
     justify-content: space-between !important;
@@ -96,27 +97,30 @@
     flex-wrap: wrap !important;
   }
 
-  .ai-field-footer-left {
+  .ai-editable-html-field .ai-field-footer-left {
     text-align: left;
-    flex: 0 0 auto;
+    flex: 0 0 auto !important;
   }
 
   /* Buttons container - horizontal flow with wrap */
-  .ai-field-footer-right {
+  .ai-editable-html-field .ai-field-footer-right {
     display: flex !important;
     flex-direction: row !important;
     flex-wrap: wrap !important;
     gap: 0.5rem !important;
-    margin-left: 0;
-    justify-content: flex-start;
-    flex: 1 1 auto;
+    margin-left: 0 !important;
+    justify-content: flex-start !important;
+    flex: 1 1 auto !important;
   }
 
-  /* Individual buttons in footer */
-  .ai-field-footer-right .Polaris-Button {
+  /* Individual buttons in footer - CRITICAL: Override width: 100% from responsive.css */
+  .ai-editable-html-field .ai-field-footer-right button,
+  .ai-editable-html-field .ai-field-footer-right .Polaris-Button,
+  .ai-editable-html-field .ai-field-footer-right [role="button"] {
     flex: 0 1 auto !important;
-    min-width: auto !important;
+    min-width: 44px !important;
     width: auto !important;
+    max-width: fit-content !important;
   }
 
   /* Force horizontal layout for header buttons on mobile */
@@ -136,11 +140,26 @@
     flex-wrap: wrap !important;
   }
 
-  /* Buttons inside InlineStack - allow natural width */
-  .ai-editable-html-field .Polaris-InlineStack .Polaris-Button {
+  /* Buttons inside InlineStack - allow natural width, override responsive.css */
+  .ai-editable-html-field .Polaris-InlineStack button,
+  .ai-editable-html-field .Polaris-InlineStack .Polaris-Button,
+  .ai-editable-html-field .Polaris-InlineStack [role="button"] {
     flex: 0 1 auto !important;
-    min-width: auto !important;
+    min-width: 44px !important;
     width: auto !important;
+    max-width: fit-content !important;
+  }
+}
+
+/* Touch Device Optimizations - Override global rules */
+@media (hover: none) and (pointer: coarse) {
+  /* Override the margin rule from responsive.css line 307 */
+  .ai-editable-html-field .Polaris-InlineStack > * {
+    margin: 0 !important;
+  }
+
+  .ai-editable-html-field .ai-field-footer-right > * {
+    margin: 0 !important;
   }
 }
 
