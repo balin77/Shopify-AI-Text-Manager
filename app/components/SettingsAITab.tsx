@@ -16,6 +16,17 @@ import { SaveDiscardButtons } from "./SaveDiscardButtons";
 import { HelpTooltip } from "./HelpTooltip";
 import { hasApiKeyForProvider, getProviderDisplayName, type AIProvider } from "../utils/api-key-validation";
 
+// Responsive label component that shows short version on small screens
+function ResponsiveLabel({ fullText, shortText, helpKey }: { fullText: string; shortText: string; helpKey?: string }) {
+  return (
+    <InlineStack gap="100" blockAlign="center">
+      <span className="hide-on-small">{fullText}</span>
+      <span className="show-on-small" style={{ display: "none" }}>{shortText}</span>
+      {helpKey && <HelpTooltip helpKey={helpKey} />}
+    </InlineStack>
+  );
+}
+
 interface Settings {
   huggingfaceApiKey: string;
   geminiApiKey: string;
@@ -290,32 +301,36 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                   }
                 />
                 <InlineStack gap="400">
-                  <div style={{ flex: 1 }}>
+                  <div style={{ flex: 1, maxWidth: "200px" }}>
                     <TextField
                       label={
-                        <InlineStack gap="100" blockAlign="center">
-                          <span>{t.settings.maxTokensPerMinute}</span>
-                          <HelpTooltip helpKey="maxTokensPerMinute" />
-                        </InlineStack>
+                        <ResponsiveLabel
+                          fullText={t.settings.maxTokensPerMinute}
+                          shortText={t.settings.maxTokensPerMinuteShort}
+                          helpKey="maxTokensPerMinute"
+                        />
                       }
                       value={openaiMaxTokensPerMinute}
                       onChange={setOpenaiMaxTokensPerMinute}
                       type="number"
                       autoComplete="off"
+                      selectTextOnFocus={false}
                     />
                   </div>
-                  <div style={{ flex: 1 }}>
+                  <div style={{ flex: 1, maxWidth: "200px" }}>
                     <TextField
                       label={
-                        <InlineStack gap="100" blockAlign="center">
-                          <span>{t.settings.maxRequestsPerMinute}</span>
-                          <HelpTooltip helpKey="maxRequestsPerMinute" />
-                        </InlineStack>
+                        <ResponsiveLabel
+                          fullText={t.settings.maxRequestsPerMinute}
+                          shortText={t.settings.maxRequestsPerMinuteShort}
+                          helpKey="maxRequestsPerMinute"
+                        />
                       }
                       value={openaiMaxRequestsPerMinute}
                       onChange={setOpenaiMaxRequestsPerMinute}
                       type="number"
                       autoComplete="off"
+                      selectTextOnFocus={false}
                     />
                   </div>
                 </InlineStack>
@@ -363,22 +378,36 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                   }
                 />
                 <InlineStack gap="400">
-                  <div style={{ flex: 1 }}>
+                  <div style={{ flex: 1, maxWidth: "200px" }}>
                     <TextField
-                      label={t.settings.maxTokensPerMinute}
+                      label={
+                        <ResponsiveLabel
+                          fullText={t.settings.maxTokensPerMinute}
+                          shortText={t.settings.maxTokensPerMinuteShort}
+                          helpKey="maxTokensPerMinute"
+                        />
+                      }
                       value={geminiMaxTokensPerMinute}
                       onChange={setGeminiMaxTokensPerMinute}
                       type="number"
                       autoComplete="off"
+                      selectTextOnFocus={false}
                     />
                   </div>
-                  <div style={{ flex: 1 }}>
+                  <div style={{ flex: 1, maxWidth: "200px" }}>
                     <TextField
-                      label={t.settings.maxRequestsPerMinute}
+                      label={
+                        <ResponsiveLabel
+                          fullText={t.settings.maxRequestsPerMinute}
+                          shortText={t.settings.maxRequestsPerMinuteShort}
+                          helpKey="maxRequestsPerMinute"
+                        />
+                      }
                       value={geminiMaxRequestsPerMinute}
                       onChange={setGeminiMaxRequestsPerMinute}
                       type="number"
                       autoComplete="off"
+                      selectTextOnFocus={false}
                     />
                   </div>
                 </InlineStack>
@@ -426,22 +455,36 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                   }
                 />
                 <InlineStack gap="400">
-                  <div style={{ flex: 1 }}>
+                  <div style={{ flex: 1, maxWidth: "200px" }}>
                     <TextField
-                      label={t.settings.maxTokensPerMinute}
+                      label={
+                        <ResponsiveLabel
+                          fullText={t.settings.maxTokensPerMinute}
+                          shortText={t.settings.maxTokensPerMinuteShort}
+                          helpKey="maxTokensPerMinute"
+                        />
+                      }
                       value={claudeMaxTokensPerMinute}
                       onChange={setClaudeMaxTokensPerMinute}
                       type="number"
                       autoComplete="off"
+                      selectTextOnFocus={false}
                     />
                   </div>
-                  <div style={{ flex: 1 }}>
+                  <div style={{ flex: 1, maxWidth: "200px" }}>
                     <TextField
-                      label={t.settings.maxRequestsPerMinute}
+                      label={
+                        <ResponsiveLabel
+                          fullText={t.settings.maxRequestsPerMinute}
+                          shortText={t.settings.maxRequestsPerMinuteShort}
+                          helpKey="maxRequestsPerMinute"
+                        />
+                      }
                       value={claudeMaxRequestsPerMinute}
                       onChange={setClaudeMaxRequestsPerMinute}
                       type="number"
                       autoComplete="off"
+                      selectTextOnFocus={false}
                     />
                   </div>
                 </InlineStack>
@@ -489,22 +532,36 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                   }
                 />
                 <InlineStack gap="400">
-                  <div style={{ flex: 1 }}>
+                  <div style={{ flex: 1, maxWidth: "200px" }}>
                     <TextField
-                      label={t.settings.maxTokensPerMinute}
+                      label={
+                        <ResponsiveLabel
+                          fullText={t.settings.maxTokensPerMinute}
+                          shortText={t.settings.maxTokensPerMinuteShort}
+                          helpKey="maxTokensPerMinute"
+                        />
+                      }
                       value={hfMaxTokensPerMinute}
                       onChange={setHfMaxTokensPerMinute}
                       type="number"
                       autoComplete="off"
+                      selectTextOnFocus={false}
                     />
                   </div>
-                  <div style={{ flex: 1 }}>
+                  <div style={{ flex: 1, maxWidth: "200px" }}>
                     <TextField
-                      label={t.settings.maxRequestsPerMinute}
+                      label={
+                        <ResponsiveLabel
+                          fullText={t.settings.maxRequestsPerMinute}
+                          shortText={t.settings.maxRequestsPerMinuteShort}
+                          helpKey="maxRequestsPerMinute"
+                        />
+                      }
                       value={hfMaxRequestsPerMinute}
                       onChange={setHfMaxRequestsPerMinute}
                       type="number"
                       autoComplete="off"
+                      selectTextOnFocus={false}
                     />
                   </div>
                 </InlineStack>
@@ -552,22 +609,36 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                   }
                 />
                 <InlineStack gap="400">
-                  <div style={{ flex: 1 }}>
+                  <div style={{ flex: 1, maxWidth: "200px" }}>
                     <TextField
-                      label={t.settings.maxTokensPerMinute}
+                      label={
+                        <ResponsiveLabel
+                          fullText={t.settings.maxTokensPerMinute}
+                          shortText={t.settings.maxTokensPerMinuteShort}
+                          helpKey="maxTokensPerMinute"
+                        />
+                      }
                       value={grokMaxTokensPerMinute}
                       onChange={setGrokMaxTokensPerMinute}
                       type="number"
                       autoComplete="off"
+                      selectTextOnFocus={false}
                     />
                   </div>
-                  <div style={{ flex: 1 }}>
+                  <div style={{ flex: 1, maxWidth: "200px" }}>
                     <TextField
-                      label={t.settings.maxRequestsPerMinute}
+                      label={
+                        <ResponsiveLabel
+                          fullText={t.settings.maxRequestsPerMinute}
+                          shortText={t.settings.maxRequestsPerMinuteShort}
+                          helpKey="maxRequestsPerMinute"
+                        />
+                      }
                       value={grokMaxRequestsPerMinute}
                       onChange={setGrokMaxRequestsPerMinute}
                       type="number"
                       autoComplete="off"
+                      selectTextOnFocus={false}
                     />
                   </div>
                 </InlineStack>
@@ -615,22 +686,36 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                   }
                 />
                 <InlineStack gap="400">
-                  <div style={{ flex: 1 }}>
+                  <div style={{ flex: 1, maxWidth: "200px" }}>
                     <TextField
-                      label={t.settings.maxTokensPerMinute}
+                      label={
+                        <ResponsiveLabel
+                          fullText={t.settings.maxTokensPerMinute}
+                          shortText={t.settings.maxTokensPerMinuteShort}
+                          helpKey="maxTokensPerMinute"
+                        />
+                      }
                       value={deepseekMaxTokensPerMinute}
                       onChange={setDeepseekMaxTokensPerMinute}
                       type="number"
                       autoComplete="off"
+                      selectTextOnFocus={false}
                     />
                   </div>
-                  <div style={{ flex: 1 }}>
+                  <div style={{ flex: 1, maxWidth: "200px" }}>
                     <TextField
-                      label={t.settings.maxRequestsPerMinute}
+                      label={
+                        <ResponsiveLabel
+                          fullText={t.settings.maxRequestsPerMinute}
+                          shortText={t.settings.maxRequestsPerMinuteShort}
+                          helpKey="maxRequestsPerMinute"
+                        />
+                      }
                       value={deepseekMaxRequestsPerMinute}
                       onChange={setDeepseekMaxRequestsPerMinute}
                       type="number"
                       autoComplete="off"
+                      selectTextOnFocus={false}
                     />
                   </div>
                 </InlineStack>

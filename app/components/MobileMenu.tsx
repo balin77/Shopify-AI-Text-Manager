@@ -60,7 +60,6 @@ export function MobileMenu({
   showContentTypes = false,
 }: MobileMenuProps) {
   const [isOpen, setIsOpen] = useState(false);
-  const [isPlanExpanded, setIsPlanExpanded] = useState(false);
   const [isContentExpanded, setIsContentExpanded] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
@@ -84,7 +83,7 @@ export function MobileMenu({
     navigateWithAppBridge(path, searchParams);
   };
 
-  const handlePlanNavigation = (planOption?: Plan) => {
+  const handlePlanNavigation = () => {
     const searchParams = new URLSearchParams(location.search);
     searchParams.set("tab", "plan");
     setIsOpen(false);
@@ -296,11 +295,10 @@ export function MobileMenu({
             </div>
 
 
-            {/* Plan Selector (Collapsible) */}
+            {/* Plan Link */}
             <div style={{ padding: "8px 0", borderTop: "1px solid #e1e3e5" }}>
-              {/* Current Plan - Always Visible */}
               <button
-                onClick={() => setIsPlanExpanded(!isPlanExpanded)}
+                onClick={handlePlanNavigation}
                 className="mobile-menu-item"
                 style={{
                   width: "100%",
@@ -309,46 +307,17 @@ export function MobileMenu({
                   justifyContent: "space-between",
                   padding: "12px 16px",
                   border: "none",
-                  background: "#f6f6f7",
-                  borderLeft: "4px solid #0066CC",
+                  background: "transparent",
+                  borderLeft: "4px solid transparent",
                   cursor: "pointer",
                   fontSize: "15px",
-                  fontWeight: "600",
-                  color: "#202223",
+                  fontWeight: "400",
+                  color: "#5c5f62",
                   textAlign: "left",
                 }}
               >
                 <span>{getPlanDisplayName(plan)}</span>
-                <Icon source={isPlanExpanded ? ChevronDownIcon : ChevronRightIcon} />
               </button>
-
-              {/* Other Plans - Expandable */}
-              {isPlanExpanded && (
-                <div style={{ paddingLeft: "12px" }}>
-                  {plans.filter(p => p !== plan).map((planOption) => (
-                    <button
-                      key={planOption}
-                      onClick={() => handlePlanNavigation(planOption)}
-                      className="mobile-menu-item"
-                      style={{
-                        width: "100%",
-                        display: "flex",
-                        alignItems: "center",
-                        padding: "10px 16px",
-                        border: "none",
-                        background: "transparent",
-                        cursor: "pointer",
-                        fontSize: "14px",
-                        fontWeight: "400",
-                        color: "#5c5f62",
-                        textAlign: "left",
-                      }}
-                    >
-                      {planOption.charAt(0).toUpperCase() + planOption.slice(1)}
-                    </button>
-                  ))}
-                </div>
-              )}
             </div>
           </nav>
         </>

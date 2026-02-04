@@ -423,6 +423,21 @@ a:focus:not(:focus-visible) {
   outline: none;
 }
 
+/* Responsive Labels for Rate Limits */
+/* Show shortened labels on small screens to prevent line breaks */
+.show-on-small {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .hide-on-small {
+    display: none !important;
+  }
+  .show-on-small {
+    display: inline !important;
+  }
+}
+
 /* Print Styles (Bonus) */
 @media print {
   /* Hide navigation and non-essential elements when printing */

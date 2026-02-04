@@ -335,7 +335,9 @@ export const de = {
     deepseek: "DeepSeek API-Schlüssel",
     deepseekHelp: "Erhältlich bei",
     maxTokensPerMinute: "Max Tokens / Minute",
+    maxTokensPerMinuteShort: "Max Tokens/Min",
     maxRequestsPerMinute: "Max Requests / Minute",
+    maxRequestsPerMinuteShort: "Max Requests/Min",
     providers: {
       huggingface: "Hugging Face",
       gemini: "Google Gemini",

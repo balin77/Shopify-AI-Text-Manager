@@ -337,7 +337,9 @@ export const es: Translation = {
     deepseek: "Clave API de DeepSeek",
     deepseekHelp: "Disponible en",
     maxTokensPerMinute: "Máx Tokens / Minuto",
+    maxTokensPerMinuteShort: "Máx Tokens/Min",
     maxRequestsPerMinute: "Máx Peticiones / Minuto",
+    maxRequestsPerMinuteShort: "Máx Peticiones/Min",
     providers: {
       huggingface: "Hugging Face",
       gemini: "Google Gemini",
