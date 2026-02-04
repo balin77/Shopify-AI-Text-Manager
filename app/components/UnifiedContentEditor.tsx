@@ -245,103 +245,102 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
         <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: "400px" }}>
           {selectedItem ? (
             <>
-              {/* Fixed Header with Language Bar and Action Buttons */}
+              {/* Language Selection Bar */}
               <Card padding="400">
-                <BlockStack gap="300">
-                  {/* Row 1: Language Buttons */}
-                  <UnifiedLanguageBar
-                    shopLocales={shopLocales}
-                    currentLanguage={state.currentLanguage}
-                    primaryLocale={primaryLocale}
-                    selectedItem={selectedItem}
-                    contentType={config.contentType}
-                    hasChanges={state.hasChanges}
-                    onLanguageChange={handlers.handleLanguageChange}
-                    enabledLanguages={state.enabledLanguages}
-                    onToggleLanguage={handlers.handleToggleLanguage}
-                    onTranslateAll={handlers.handleTranslateAll}
-                    isTranslating={fetcherState !== "idle" && fetcherFormData?.get("action") === "translateAll"}
-                    showTranslateAll={true}
-                    showReloadButton={true}
-                    isLoadingData={state.isLoadingData}
-                    t={{
-                      primaryLocaleSuffix: t.content?.primaryLanguageSuffix || "Primary",
-                      translateAll: t.content?.translateAll || "🌍 Translate All",
-                      translating: t.content?.translating || "Translating...",
-                    }}
-                  />
+                <UnifiedLanguageBar
+                  shopLocales={shopLocales}
+                  currentLanguage={state.currentLanguage}
+                  primaryLocale={primaryLocale}
+                  selectedItem={selectedItem}
+                  contentType={config.contentType}
+                  hasChanges={state.hasChanges}
+                  onLanguageChange={handlers.handleLanguageChange}
+                  enabledLanguages={state.enabledLanguages}
+                  onToggleLanguage={handlers.handleToggleLanguage}
+                  onTranslateAll={handlers.handleTranslateAll}
+                  isTranslating={fetcherState !== "idle" && fetcherFormData?.get("action") === "translateAll"}
+                  showTranslateAll={true}
+                  showReloadButton={true}
+                  isLoadingData={state.isLoadingData}
+                  t={{
+                    primaryLocaleSuffix: t.content?.primaryLanguageSuffix || "Primary",
+                    translateAll: t.content?.translateAll || "🌍 Translate All",
+                    translating: t.content?.translating || "Translating...",
+                  }}
+                />
+              </Card>
 
-                  {/* Row 2: Action Buttons */}
-                  <InlineStack align="space-between" blockAlign="center">
-                    {/* Left: Translate All + Clear All Buttons */}
-                    <InlineStack gap="200">
-                      {state.currentLanguage === primaryLocale ? (
-                        <>
-                          {/* Primary locale: Translate to ALL foreign languages */}
-                          <Button
-                            onClick={handlers.handleTranslateAll}
-                            loading={fetcherState !== "idle" && fetcherFormData?.get("action") === "translateAll"}
-                            disabled={fetcherState !== "idle" && fetcherFormData?.get("action") === "translateAll"}
-                            size="slim"
-                          >
-                            {fetcherState !== "idle" && fetcherFormData?.get("action") === "translateAll"
-                              ? (t.content?.translating || "Translating...")
-                              : (t.content?.translateAll || "🌍 Translate All")}
-                          </Button>
-                          <Button
-                            onClick={handlers.handleClearAllClick}
-                            size="slim"
-                            tone="critical"
-                          >
-                            🗑️ {t.content?.clearAll || "Clear All"}
-                          </Button>
-                        </>
-                      ) : (
-                        <>
-                          {/* Foreign locale: Translate ONLY this locale */}
-                          <Button
-                            onClick={handlers.handleTranslateAllForLocale}
-                            loading={fetcherState !== "idle" && fetcherFormData?.get("action") === "translateAllForLocale"}
-                            disabled={fetcherState !== "idle" && fetcherFormData?.get("action") === "translateAllForLocale"}
-                            size="slim"
-                          >
-                            {fetcherState !== "idle" && fetcherFormData?.get("action") === "translateAllForLocale"
-                              ? (t.content?.translating || "Translating...")
-                              : (t.content?.translateAll || "🌍 Translate All")}
-                          </Button>
-                          <Button
-                            onClick={handlers.handleClearAllForLocaleClick}
-                            size="slim"
-                            tone="critical"
-                          >
-                            🗑️ {t.content?.clearAll || "Clear All"}
-                          </Button>
-                        </>
-                      )}
-                    </InlineStack>
-
-                    {/* Right: Save/Discard + Reload Buttons */}
-                    <InlineStack gap="200" blockAlign="center">
-                      <SaveDiscardButtons
-                        hasChanges={state.hasChanges}
-                        onSave={handlers.handleSave}
-                        onDiscard={handlers.handleDiscard}
-                        highlightSaveButton={navigationGuard.highlightSaveButton}
-                        saveText={t.content?.saveChanges || "Save Changes"}
-                        discardText={t.content?.discardChanges || "Discard"}
-                        action="updateContent"
-                        fetcherState={fetcherState}
-                        fetcherFormData={fetcherFormData}
-                      />
-                      <ReloadButton
-                        resourceId={selectedItem.id}
-                        resourceType={getResourceType(config.contentType)}
-                        locale={state.currentLanguage}
-                        onReloadComplete={editor.helpers.triggerDataRefresh}
-                      />
-                    </InlineStack>
+              {/* Operation Buttons */}
+              <Card padding="400">
+                <InlineStack align="space-between" blockAlign="center">
+                  {/* Left: Translate All + Clear All Buttons */}
+                  <InlineStack gap="200">
+                    {state.currentLanguage === primaryLocale ? (
+                      <>
+                        {/* Primary locale: Translate to ALL foreign languages */}
+                        <Button
+                          onClick={handlers.handleTranslateAll}
+                          loading={fetcherState !== "idle" && fetcherFormData?.get("action") === "translateAll"}
+                          disabled={fetcherState !== "idle" && fetcherFormData?.get("action") === "translateAll"}
+                          size="slim"
+                        >
+                          {fetcherState !== "idle" && fetcherFormData?.get("action") === "translateAll"
+                            ? (t.content?.translating || "Translating...")
+                            : (t.content?.translateAll || "🌍 Translate All")}
+                        </Button>
+                        <Button
+                          onClick={handlers.handleClearAllClick}
+                          size="slim"
+                          tone="critical"
+                        >
+                          🗑️ {t.content?.clearAll || "Clear All"}
+                        </Button>
+                      </>
+                    ) : (
+                      <>
+                        {/* Foreign locale: Translate ONLY this locale */}
+                        <Button
+                          onClick={handlers.handleTranslateAllForLocale}
+                          loading={fetcherState !== "idle" && fetcherFormData?.get("action") === "translateAllForLocale"}
+                          disabled={fetcherState !== "idle" && fetcherFormData?.get("action") === "translateAllForLocale"}
+                          size="slim"
+                        >
+                          {fetcherState !== "idle" && fetcherFormData?.get("action") === "translateAllForLocale"
+                            ? (t.content?.translating || "Translating...")
+                            : (t.content?.translateAll || "🌍 Translate All")}
+                        </Button>
+                        <Button
+                          onClick={handlers.handleClearAllForLocaleClick}
+                          size="slim"
+                          tone="critical"
+                        >
+                          🗑️ {t.content?.clearAll || "Clear All"}
+                        </Button>
+                      </>
+                    )}
                   </InlineStack>
-                </BlockStack>
+
+                  {/* Right: Save/Discard + Reload Buttons */}
+                  <InlineStack gap="200" blockAlign="center">
+                    <SaveDiscardButtons
+                      hasChanges={state.hasChanges}
+                      onSave={handlers.handleSave}
+                      onDiscard={handlers.handleDiscard}
+                      highlightSaveButton={navigationGuard.highlightSaveButton}
+                      saveText={t.content?.saveChanges || "Save Changes"}
+                      discardText={t.content?.discardChanges || "Discard"}
+                      action="updateContent"
+                      fetcherState={fetcherState}
+                      fetcherFormData={fetcherFormData}
+                    />
+                    <ReloadButton
+                      resourceId={selectedItem.id}
+                      resourceType={getResourceType(config.contentType)}
+                      locale={state.currentLanguage}
+                      onReloadComplete={editor.helpers.triggerDataRefresh}
+                    />
+                  </InlineStack>
+                </InlineStack>
               </Card>
 
               {/* Scrollable Content Area */}
