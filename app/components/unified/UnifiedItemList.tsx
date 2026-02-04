@@ -173,6 +173,12 @@ export function UnifiedItemList({
 
         const availableHeight = wrapperHeight - headerHeight - paginationHeight - cardPaddingAndBorders - bottomSpacing;
 
+        // Skip calculation if wrapper height is not yet available (DOM not ready)
+        // This prevents falling back to 5 items before the layout is rendered
+        if (availableHeight <= 100) {
+          return;
+        }
+
         // Only update if height changed significantly (more than 10px difference)
         // This prevents flickering from minor layout shifts
         // BUT: Always update during window resize or when forced
@@ -207,7 +213,11 @@ export function UnifiedItemList({
     };
 
     // Delay initial calculation to allow DOM to render
-    const timer = setTimeout(() => calculateDynamicPagination(true), 150);
+    // Try multiple times with increasing delays to ensure wrapper height is available
+    const timer1 = setTimeout(() => calculateDynamicPagination(true), 100);
+    const timer2 = setTimeout(() => calculateDynamicPagination(true), 250);
+    const timer3 = setTimeout(() => calculateDynamicPagination(true), 500);
+
     window.addEventListener('resize', handleResize);
 
     // Use ResizeObserver for more reliable height detection
@@ -218,14 +228,16 @@ export function UnifiedItemList({
     }
 
     return () => {
-      clearTimeout(timer);
+      clearTimeout(timer1);
+      clearTimeout(timer2);
+      clearTimeout(timer3);
       window.removeEventListener('resize', handleResize);
       resizeObserver?.disconnect();
       if (rafId !== null) {
         cancelAnimationFrame(rafId);
       }
     };
-  }, [getTotalNavHeight, showThumbnails, showPagination]);
+  }, [showThumbnails, showPagination]);
 
   // Reset to page 1 when search changes
   const handleSearchChange = (value: string) => {
