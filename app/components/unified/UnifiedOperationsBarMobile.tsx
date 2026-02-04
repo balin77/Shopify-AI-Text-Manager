@@ -81,7 +81,7 @@ export function UnifiedOperationsBarMobile({
   const isSaving = fetcherState !== "idle" && currentAction === "updateContent";
 
   return (
-    <BlockStack gap="400">
+    <div className="operations-dropdown-mobile">
       {/* Collapsed: Show "Actions" button */}
       <Card padding="0">
         <button
@@ -178,6 +178,6 @@ export function UnifiedOperationsBarMobile({
           </BlockStack>
         </Card>
       )}
-    </BlockStack>
+    </div>
   );
 }
