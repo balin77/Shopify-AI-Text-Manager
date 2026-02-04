@@ -241,31 +241,37 @@ export function AIEditableHTMLField({
         </div>
         <div className="ai-field-footer-right" style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", flex: "1 1 auto", justifyContent: "flex-end" }}>
           {onGenerateAI && (
-            <Button size="slim" onClick={onGenerateAI} loading={isLoading} disabled={disableGeneration && !value}>
-              ✨ {disableGeneration || value
-                ? (t.products.aiImprove || "Improve with AI")
-                : (t.products.aiGenerateShort || "Generate with AI")}
-            </Button>
+            <div style={{ flex: "0 0 auto", width: "auto" }}>
+              <Button size="slim" onClick={onGenerateAI} loading={isLoading} disabled={disableGeneration && !value}>
+                ✨ {disableGeneration || value
+                  ? (t.products.aiImprove || "Improve with AI")
+                  : (t.products.aiGenerateShort || "Generate with AI")}
+              </Button>
+            </div>
           )}
           {onFormatAI && (
-            <Button
-              size="slim"
-              onClick={onFormatAI}
-              loading={isLoading}
-              disabled={!value}
-            >
-              🎨 {t.products.formatWithAI || "Formatieren"}
-            </Button>
+            <div style={{ flex: "0 0 auto", width: "auto" }}>
+              <Button
+                size="slim"
+                onClick={onFormatAI}
+                loading={isLoading}
+                disabled={!value}
+              >
+                🎨 {t.products.formatWithAI || "Formatieren"}
+              </Button>
+            </div>
           )}
           {(onTranslate || onTranslateToAllLocales) && (
-            <Button
-              size="slim"
-              onClick={isPrimaryLocale ? onTranslateToAllLocales : onTranslate}
-              loading={isLoading}
-              disabled={(isPrimaryLocale && !onTranslateToAllLocales) || (!isPrimaryLocale && !sourceTextAvailable)}
-            >
-              🌍 {isPrimaryLocale ? (t.products.translate || "Übersetzen") : t.products.translateFromPrimary}
-            </Button>
+            <div style={{ flex: "0 0 auto", width: "auto" }}>
+              <Button
+                size="slim"
+                onClick={isPrimaryLocale ? onTranslateToAllLocales : onTranslate}
+                loading={isLoading}
+                disabled={(isPrimaryLocale && !onTranslateToAllLocales) || (!isPrimaryLocale && !sourceTextAvailable)}
+              >
+                🌍 {isPrimaryLocale ? (t.products.translate || "Übersetzen") : t.products.translateFromPrimary}
+              </Button>
+            </div>
           )}
         </div>
       </div>
