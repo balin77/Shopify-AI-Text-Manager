@@ -118,6 +118,10 @@
 }
 
 /* HTML Editor styling */
+.ai-editable-html-field {
+  display: block;
+}
+
 .ai-editable-html-field textarea,
 .ai-editable-html-field [contenteditable] {
   background-color: white;
