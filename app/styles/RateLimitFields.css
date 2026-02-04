@@ -4,13 +4,28 @@
 .rate-limit-field input[type="number"] {
   height: 36px !important;
   min-height: 36px !important;
-  padding: 8px 12px !important;
+  padding: 10px 16px !important;
 }
 
 .rate-limit-field .Polaris-TextField__Input {
   height: 36px !important;
   min-height: 36px !important;
-  padding: 8px 12px !important;
+  padding: 10px 16px !important;
+}
+
+/* Override touch target minimum for rate limit fields */
+.rate-limit-field button,
+.rate-limit-field .Polaris-Button,
+.rate-limit-field [role="button"] {
+  min-height: auto !important;
+  height: 36px !important;
+  padding: 10px 16px !important;
+}
+
+/* Fix Polaris Spinner styling */
+.rate-limit-field .Polaris-TextField__Spinner {
+  width: auto !important;
+  height: 36px !important;
 }
 
 /* Remove blue focus border/outline */
