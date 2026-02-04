@@ -118,7 +118,7 @@ export function UnifiedItemList({
   const [searchQuery, setSearchQuery] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const [hoveredItemId, setHoveredItemId] = useState<string | null>(null);
-  const [dynamicItemsPerPage, setDynamicItemsPerPage] = useState(10);
+  const [dynamicItemsPerPage, setDynamicItemsPerPage] = useState(15); // Start higher, will be calculated
   const [itemHeight, setItemHeight] = useState(56); // Will be calculated dynamically
 
   const { getTotalNavHeight } = useNavigationHeight();
@@ -175,9 +175,12 @@ export function UnifiedItemList({
 
         // Skip calculation if wrapper height is not yet available (DOM not ready)
         // This prevents falling back to 5 items before the layout is rendered
-        if (availableHeight <= 100) {
+        if (wrapperHeight <= 200 || availableHeight <= 200) {
+          console.log('Skipping calculation - wrapper not ready:', { wrapperHeight, availableHeight });
           return;
         }
+
+        console.log('Calculating pagination:', { wrapperHeight, headerHeight, paginationHeight, availableHeight });
 
         // Only update if height changed significantly (more than 10px difference)
         // This prevents flickering from minor layout shifts
