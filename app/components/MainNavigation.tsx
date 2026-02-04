@@ -516,25 +516,8 @@ export function MainNavigation() {
             </div>
           )}
 
-          {/* Plan Selector - versteckt auf Mobile, vereinfacht auf Tablet */}
-          <div className="plan-selector-container desktop-only" style={{ marginLeft: "auto" }}>
-            <ButtonGroup variant="segmented" aria-label="Subscription plan selector">
-              {plans.map((planOption) => (
-                <Button
-                  key={planOption}
-                  pressed={plan === planOption}
-                  onClick={handlePlanNavigation}
-                  size="slim"
-                  ariaLabel={`${plan === planOption ? 'Current plan: ' : 'Switch to '}${planOption.charAt(0).toUpperCase() + planOption.slice(1)} plan`}
-                >
-                  {planOption.charAt(0).toUpperCase() + planOption.slice(1)}
-                </Button>
-              ))}
-            </ButtonGroup>
-          </div>
-
-          {/* Plan Badge - nur aktiver Plan, sichtbar auf Tablet */}
-          <div className="tablet-only" style={{ marginLeft: "auto" }}>
+          {/* Plan Badge - nur aktiver Plan, sichtbar auf Mobile und ganz rechts */}
+          <div style={{ marginLeft: "auto" }}>
             <Button
               onClick={handlePlanNavigation}
               size="slim"
