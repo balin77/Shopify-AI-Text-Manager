@@ -524,10 +524,9 @@ export function MainNavigation() {
 
           {/* Plan Badge - nur aktiver Plan, sichtbar auf Mobile und ganz rechts */}
           <div style={{ marginLeft: "auto" }}>
-            <div style={{ height: "44px", display: "flex", alignItems: "center" }}>
+            <div style={{ height: "44px", display: "flex", alignItems: "stretch" }}>
               <Button
                 onClick={handlePlanNavigation}
-                size="slim"
                 pressed
                 ariaLabel={`Current plan: ${getPlanDisplayName(plan)}`}
               >
