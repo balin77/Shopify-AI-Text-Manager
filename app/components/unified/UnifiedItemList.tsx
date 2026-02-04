@@ -147,45 +147,65 @@ export function UnifiedItemList({
 
   // Calculate items per page and item height based on available space
   useEffect(() => {
+    let rafId: number | null = null;
+    let lastCalculatedHeight: number | null = null;
+
     const calculateDynamicPagination = () => {
-      // Get the wrapper height (from flexbox layout)
-      const wrapperHeight = wrapperRef.current?.clientHeight;
-      const headerHeight = headerRef.current?.offsetHeight || 0;
-      const paginationHeight = showPagination && paginationRef.current?.offsetHeight
-        ? paginationRef.current.offsetHeight
-        : (showPagination ? 56 : 0);
-
-      // Calculate available height for the list
-      let availableHeight: number;
-
-      if (wrapperHeight && wrapperHeight > 200) {
-        // Use wrapper height minus header, pagination, and borders
-        // Account for: header, pagination, Card padding, borders (typically 2-4px total)
-        const cardPaddingAndBorders = 4; // Border pixels
-        availableHeight = wrapperHeight - headerHeight - paginationHeight - cardPaddingAndBorders;
-      } else {
-        // Fallback: calculate from window
-        const navHeight = getTotalNavHeight();
-        const layoutPadding = 32; // Padding from parent layout
-        const cardPaddingAndBorders = 4;
-        availableHeight = window.innerHeight - navHeight - headerHeight - paginationHeight - layoutPadding - cardPaddingAndBorders;
+      // Cancel any pending animation frame
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
       }
 
-      // Calculate item dimensions
-      const minItemHeight = showThumbnails ? 62 : 54;
-      const maxItemHeight = 82;
+      // Use requestAnimationFrame to debounce and prevent flickering
+      rafId = requestAnimationFrame(() => {
+        // Get the wrapper height (from flexbox layout)
+        const wrapperHeight = wrapperRef.current?.clientHeight;
+        const headerHeight = headerRef.current?.offsetHeight || 0;
+        const paginationHeight = showPagination && paginationRef.current?.offsetHeight
+          ? paginationRef.current.offsetHeight
+          : (showPagination ? 56 : 0);
 
-      // Calculate how many items fit - use ceiling to be more generous
-      // Add a small buffer (0.9) to account for sub-pixel rendering
-      const itemsThatFit = Math.max(5, Math.ceil((availableHeight * 0.98) / minItemHeight));
+        // Calculate available height for the list
+        let availableHeight: number;
 
-      // Calculate exact item height to fill the space perfectly
-      // This ensures no pixels are wasted and the list fills exactly
-      const exactItemHeight = availableHeight / itemsThatFit;
-      const calculatedItemHeight = Math.min(maxItemHeight, Math.max(minItemHeight, exactItemHeight));
+        if (wrapperHeight && wrapperHeight > 200) {
+          // Use wrapper height minus header, pagination, borders and bottom spacing
+          // Account for: header, pagination, Card padding, borders, and bottom margin
+          const cardPaddingAndBorders = 4; // Border pixels
+          const bottomSpacing = 20; // Bottom spacing for visual breathing room
+          availableHeight = wrapperHeight - headerHeight - paginationHeight - cardPaddingAndBorders - bottomSpacing;
+        } else {
+          // Fallback: calculate from window
+          const navHeight = getTotalNavHeight();
+          const layoutPadding = 32; // Padding from parent layout
+          const cardPaddingAndBorders = 4;
+          const bottomSpacing = 20;
+          availableHeight = window.innerHeight - navHeight - headerHeight - paginationHeight - layoutPadding - cardPaddingAndBorders - bottomSpacing;
+        }
 
-      setDynamicItemsPerPage(itemsThatFit);
-      setItemHeight(calculatedItemHeight);
+        // Only update if height changed significantly (more than 10px difference)
+        // This prevents flickering from minor layout shifts
+        if (lastCalculatedHeight !== null && Math.abs(availableHeight - lastCalculatedHeight) < 10) {
+          return;
+        }
+
+        lastCalculatedHeight = availableHeight;
+
+        // Calculate item dimensions
+        const minItemHeight = showThumbnails ? 62 : 54;
+        const maxItemHeight = 82;
+
+        // Calculate how many items fit
+        const itemsThatFit = Math.max(5, Math.floor(availableHeight / minItemHeight));
+
+        // Calculate exact item height to fill the space perfectly
+        // This ensures no pixels are wasted and the list fills exactly
+        const exactItemHeight = availableHeight / itemsThatFit;
+        const calculatedItemHeight = Math.min(maxItemHeight, Math.max(minItemHeight, exactItemHeight));
+
+        setDynamicItemsPerPage(itemsThatFit);
+        setItemHeight(calculatedItemHeight);
+      });
     };
 
     // Delay initial calculation to allow DOM to render
@@ -203,6 +223,9 @@ export function UnifiedItemList({
       clearTimeout(timer);
       window.removeEventListener('resize', calculateDynamicPagination);
       resizeObserver?.disconnect();
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+      }
     };
   }, [getTotalNavHeight, showThumbnails, showPagination]);
 
