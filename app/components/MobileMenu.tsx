@@ -61,6 +61,7 @@ export function MobileMenu({
 }: MobileMenuProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [isPlanExpanded, setIsPlanExpanded] = useState(false);
+  const [isContentExpanded, setIsContentExpanded] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
   const { t } = useI18n();
@@ -193,115 +194,119 @@ export function MobileMenu({
                 const showProductCount = tab.id === "products" && productCount !== undefined;
                 const isAtLimit = showProductCount && productCount >= (maxProducts || Infinity);
                 const showTaskCount = tab.id === "tasks" && runningTaskCount && runningTaskCount > 0;
+                const isContentTab = tab.id === "content";
+                const hasContentTypes = showContentTypes && contentTypes.length > 0;
 
                 return (
-                  <button
-                    key={tab.id}
-                    onClick={() => handleNavigation(tab.path)}
-                    className={`mobile-menu-item ${isActive ? "active" : ""}`}
-                    aria-current={isActive ? "page" : undefined}
-                    style={{
-                      width: "100%",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      padding: "12px 16px",
-                      border: "none",
-                      background: isActive ? "#f6f6f7" : "transparent",
-                      borderLeft: isActive ? "4px solid #0066CC" : "4px solid transparent",
-                      cursor: "pointer",
-                      fontSize: "15px",
-                      fontWeight: isActive ? "600" : "400",
-                      color: isActive ? "#202223" : "#5c5f62",
-                      textAlign: "left",
-                      transition: "background-color 150ms ease",
-                    }}
-                  >
-                    <span>{tab.label}</span>
-                    {showProductCount && (
-                      <span
-                        style={{
-                          fontSize: "13px",
-                          color: isAtLimit ? "#d72c0d" : "#6d7175",
-                          fontWeight: "500",
-                        }}
-                      >
-                        {productCount}
-                      </span>
-                    )}
-                    {showTaskCount && (
-                      <div
-                        style={{
-                          backgroundColor: "#0066CC",
-                          color: "white",
-                          borderRadius: "10px",
-                          padding: "2px 8px",
-                          fontSize: "12px",
-                          fontWeight: "600",
-                          minWidth: "20px",
-                          textAlign: "center",
-                        }}
-                      >
-                        {runningTaskCount}
-                      </div>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* Content Type Navigation (if provided) */}
-            {showContentTypes && contentTypes.length > 0 && (
-              <div style={{ padding: "8px 0", borderTop: "1px solid #e1e3e5" }}>
-                <div
-                  style={{
-                    fontSize: "12px",
-                    fontWeight: "600",
-                    color: "#6d7175",
-                    padding: "8px 16px",
-                    textTransform: "uppercase",
-                    letterSpacing: "0.5px",
-                  }}
-                >
-                  {t.content?.contentTypes || "Content Types"}
-                </div>
-                {contentTypes.map((type) => {
-                  const isActive = location.pathname === type.path || location.pathname.startsWith(type.path);
-
-                  return (
+                  <div key={tab.id}>
                     <button
-                      key={type.id}
-                      onClick={() => !type.comingSoon && handleNavigation(type.path)}
-                      disabled={type.comingSoon}
+                      onClick={() => {
+                        if (isContentTab && hasContentTypes) {
+                          setIsContentExpanded(!isContentExpanded);
+                        } else {
+                          handleNavigation(tab.path);
+                        }
+                      }}
                       className={`mobile-menu-item ${isActive ? "active" : ""}`}
+                      aria-current={isActive ? "page" : undefined}
+                      aria-expanded={isContentTab && hasContentTypes ? isContentExpanded : undefined}
                       style={{
                         width: "100%",
                         display: "flex",
                         alignItems: "center",
-                        gap: "8px",
+                        justifyContent: "space-between",
                         padding: "12px 16px",
                         border: "none",
                         background: isActive ? "#f6f6f7" : "transparent",
                         borderLeft: isActive ? "4px solid #0066CC" : "4px solid transparent",
-                        cursor: type.comingSoon ? "not-allowed" : "pointer",
+                        cursor: "pointer",
                         fontSize: "15px",
                         fontWeight: isActive ? "600" : "400",
-                        color: type.comingSoon ? "#b5b5b5" : isActive ? "#202223" : "#5c5f62",
+                        color: isActive ? "#202223" : "#5c5f62",
                         textAlign: "left",
-                        opacity: type.comingSoon ? 0.5 : 1,
                         transition: "background-color 150ms ease",
                       }}
                     >
-                      <span>{type.icon}</span>
-                      <span style={{ flex: 1 }}>{type.label}</span>
-                      {type.comingSoon && (
-                        <span style={{ fontSize: "11px", color: "#6d7175" }}>Soon</span>
-                      )}
+                      <span>{tab.label}</span>
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                        {showProductCount && (
+                          <span
+                            style={{
+                              fontSize: "13px",
+                              color: isAtLimit ? "#d72c0d" : "#6d7175",
+                              fontWeight: "500",
+                            }}
+                          >
+                            {productCount}
+                          </span>
+                        )}
+                        {showTaskCount && (
+                          <div
+                            style={{
+                              backgroundColor: "#0066CC",
+                              color: "white",
+                              borderRadius: "10px",
+                              padding: "2px 8px",
+                              fontSize: "12px",
+                              fontWeight: "600",
+                              minWidth: "20px",
+                              textAlign: "center",
+                            }}
+                          >
+                            {runningTaskCount}
+                          </div>
+                        )}
+                        {isContentTab && hasContentTypes && (
+                          <Icon source={isContentExpanded ? ChevronDownIcon : ChevronRightIcon} />
+                        )}
+                      </div>
                     </button>
-                  );
-                })}
-              </div>
-            )}
+
+                    {/* Content Types Submenu */}
+                    {isContentTab && hasContentTypes && isContentExpanded && (
+                      <div style={{ paddingLeft: "12px" }}>
+                        {contentTypes.map((type) => {
+                          const isContentTypeActive = location.pathname === type.path || location.pathname.startsWith(type.path);
+
+                          return (
+                            <button
+                              key={type.id}
+                              onClick={() => !type.comingSoon && handleNavigation(type.path)}
+                              disabled={type.comingSoon}
+                              className={`mobile-menu-item ${isContentTypeActive ? "active" : ""}`}
+                              style={{
+                                width: "100%",
+                                display: "flex",
+                                alignItems: "center",
+                                gap: "8px",
+                                padding: "10px 16px",
+                                border: "none",
+                                background: isContentTypeActive ? "#f6f6f7" : "transparent",
+                                borderLeft: isContentTypeActive ? "4px solid #0066CC" : "4px solid transparent",
+                                cursor: type.comingSoon ? "not-allowed" : "pointer",
+                                fontSize: "14px",
+                                fontWeight: isContentTypeActive ? "600" : "400",
+                                color: type.comingSoon ? "#b5b5b5" : isContentTypeActive ? "#202223" : "#5c5f62",
+                                textAlign: "left",
+                                opacity: type.comingSoon ? 0.5 : 1,
+                                transition: "background-color 150ms ease",
+                              }}
+                            >
+                              <span>{type.icon}</span>
+                              <span style={{ flex: 1 }}>{type.label}</span>
+                              {type.comingSoon && (
+                                <span style={{ fontSize: "11px", color: "#6d7175" }}>Soon</span>
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
 
             {/* Plan Selector (Collapsible) */}
             <div style={{ padding: "8px 0", borderTop: "1px solid #e1e3e5" }}>
