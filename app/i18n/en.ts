@@ -576,6 +576,21 @@ export const en: Translation = {
     errorOccurred: "An Error Occurred",
     errorDescription: "Please reload the page or try again later.",
     reloadLoopDetected: "Reload loop detected (max attempts reached), showing error UI instead",
+
+    // API and Action Errors
+    invalidFieldType: "Invalid field type",
+    noFieldsToTranslate: "No fields to translate",
+    noSourceText: "No source text to translate",
+    unknownAction: "Unknown action",
+    invalidUrlSlug: "Invalid URL slug: Handle must contain at least one alphanumeric character",
+    networkError: "Network error. Please check your internet connection.",
+    quotaExceeded: "API quota exceeded. Please try again later.",
+    rateLimitExceeded: "Too many requests. Please wait a moment.",
+    translationFailed: "Translation failed",
+    generationFailed: "AI generation failed",
+    saveFailed: "Save failed",
+    loadFailed: "Load failed",
+    unknownError: "Unknown error",
   },
 
   // Help Tooltips

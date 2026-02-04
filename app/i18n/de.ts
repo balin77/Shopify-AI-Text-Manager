@@ -574,6 +574,21 @@ export const de = {
     errorOccurred: "Ein Fehler ist aufgetreten",
     errorDescription: "Bitte laden Sie die Seite neu oder versuchen Sie es später erneut.",
     reloadLoopDetected: "Ladeschleife erkannt (maximale Versuche erreicht), zeige Fehler-UI statt neuem Reload",
+
+    // API and Action Errors
+    invalidFieldType: "Ungültiger Feldtyp",
+    noFieldsToTranslate: "Keine Felder zum Übersetzen vorhanden",
+    noSourceText: "Kein Quelltext zum Übersetzen vorhanden",
+    unknownAction: "Unbekannte Aktion",
+    invalidUrlSlug: "Ungültiger URL-Slug: Handle muss mindestens ein alphanumerisches Zeichen enthalten",
+    networkError: "Netzwerkfehler. Bitte überprüfen Sie Ihre Internetverbindung.",
+    quotaExceeded: "API-Limit erreicht. Bitte versuchen Sie es später erneut.",
+    rateLimitExceeded: "Zu viele Anfragen. Bitte warten Sie einen Moment.",
+    translationFailed: "Übersetzung fehlgeschlagen",
+    generationFailed: "KI-Generierung fehlgeschlagen",
+    saveFailed: "Speichern fehlgeschlagen",
+    loadFailed: "Laden fehlgeschlagen",
+    unknownError: "Unbekannter Fehler",
   },
 
   // Help Tooltips

@@ -23,6 +23,58 @@ import type {
 } from "../types/content-editor.types";
 import { debugLog } from "../utils/debug";
 
+/**
+ * Translates server error messages to localized strings
+ * Maps technical error messages from server to i18n translation keys
+ */
+function translateErrorMessage(errorMessage: string, t: any): string {
+  if (!errorMessage) return t.errors?.unknownError || "Unknown error";
+
+  const lowerError = errorMessage.toLowerCase();
+
+  // Map common error patterns to translation keys
+  if (lowerError.includes("invalid field type")) {
+    return t.errors?.invalidFieldType || errorMessage;
+  }
+  if (lowerError.includes("no fields to translate")) {
+    return t.errors?.noFieldsToTranslate || errorMessage;
+  }
+  if (lowerError.includes("no source text")) {
+    return t.errors?.noSourceText || errorMessage;
+  }
+  if (lowerError.includes("unknown action")) {
+    return t.errors?.unknownAction || errorMessage;
+  }
+  if (lowerError.includes("invalid url slug") || lowerError.includes("invalid handle") || lowerError.includes("alphanumeric character")) {
+    return t.errors?.invalidUrlSlug || errorMessage;
+  }
+  if (lowerError.includes("network") || lowerError.includes("fetch")) {
+    return t.errors?.networkError || errorMessage;
+  }
+  if (lowerError.includes("quota") || lowerError.includes("limit exceeded")) {
+    return t.errors?.quotaExceeded || errorMessage;
+  }
+  if (lowerError.includes("rate limit") || lowerError.includes("too many requests")) {
+    return t.errors?.rateLimitExceeded || errorMessage;
+  }
+  if (lowerError.includes("translation") && lowerError.includes("failed")) {
+    return t.errors?.translationFailed || errorMessage;
+  }
+  if (lowerError.includes("generation") && lowerError.includes("failed")) {
+    return t.errors?.generationFailed || errorMessage;
+  }
+  if (lowerError.includes("save") && lowerError.includes("failed")) {
+    return t.errors?.saveFailed || errorMessage;
+  }
+  if (lowerError.includes("load") && lowerError.includes("failed")) {
+    return t.errors?.loadFailed || errorMessage;
+  }
+
+  // If no specific translation found, return the original error message
+  // (it might be a descriptive message that's already helpful)
+  return errorMessage;
+}
+
 export function useUnifiedContentEditor(props: UseContentEditorProps): UseContentEditorReturn {
   const { config, items, shopLocales, primaryLocale, fetcher, showInfoBox, t, onTranslateToAllLocalesComplete } = props;
   const revalidator = useRevalidator();
@@ -642,12 +694,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         onSuccess?.(result);
       } else if (result.error) {
         onError?.(result.error);
-        showInfoBox(result.error, "critical", t.common?.error || "Error");
+        const translatedError = translateErrorMessage(result.error, t);
+        showInfoBox(translatedError, "critical", t.common?.error || "Error");
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
       onError?.(errorMessage);
-      showInfoBox(errorMessage, "critical", t.common?.error || "Error");
+      const translatedError = translateErrorMessage(errorMessage, t);
+      showInfoBox(translatedError, "critical", t.common?.error || "Error");
     } finally {
       // Remove field from loading state
       setLoadingFieldKeys(prev => {
@@ -1474,7 +1528,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     } else if (fetcher.data && !fetcher.data.success && 'error' in fetcher.data) {
       // Also mark error responses as processed
       processedSaveResponseRef.current = fetcher.data;
-      showInfoBox(fetcher.data.error as string, "critical", t.common?.error || "Error");
+      const translatedError = translateErrorMessage(fetcher.data.error as string, t);
+      showInfoBox(translatedError, "critical", t.common?.error || "Error");
     }
   }, [fetcher.data, showInfoBox, t, revalidator, safeSubmit, submitAIAction, effectiveFieldDefinitions, currentLanguage, primaryLocale]);
 

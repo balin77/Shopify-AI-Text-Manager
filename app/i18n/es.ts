@@ -576,6 +576,21 @@ export const es: Translation = {
     errorOccurred: "Ha ocurrido un error",
     errorDescription: "Por favor, recarga la página o inténtalo de nuevo más tarde.",
     reloadLoopDetected: "Bucle de recarga detectado (intentos máximos alcanzados), mostrando UI de error en su lugar",
+
+    // API and Action Errors
+    invalidFieldType: "Tipo de campo inválido",
+    noFieldsToTranslate: "No hay campos para traducir",
+    noSourceText: "No hay texto fuente para traducir",
+    unknownAction: "Acción desconocida",
+    invalidUrlSlug: "Slug de URL inválido: El handle debe contener al menos un carácter alfanumérico",
+    networkError: "Error de red. Por favor, verifica tu conexión a internet.",
+    quotaExceeded: "Cuota de API excedida. Por favor, inténtalo de nuevo más tarde.",
+    rateLimitExceeded: "Demasiadas solicitudes. Por favor, espera un momento.",
+    translationFailed: "Traducción fallida",
+    generationFailed: "Generación de IA fallida",
+    saveFailed: "Guardado fallido",
+    loadFailed: "Carga fallida",
+    unknownError: "Error desconocido",
   },
 
   // Help Tooltips
