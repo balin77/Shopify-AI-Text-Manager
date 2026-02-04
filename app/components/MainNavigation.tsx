@@ -4,6 +4,7 @@ import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { usePlan } from "../contexts/PlanContext";
 import { useNavigationHeight } from "../contexts/NavigationHeightContext";
+import { MobileMenu } from "./MobileMenu";
 import { type Plan } from "../config/plans";
 import { useState, useEffect, useRef } from "react";
 
@@ -292,6 +293,25 @@ export function MainNavigation() {
 
   const plans: Plan[] = ["free", "basic", "pro", "max"];
 
+  // Content types for mobile menu (wenn auf Content-Seiten)
+  const isOnContentPage = location.pathname.startsWith("/app/collections") ||
+    location.pathname.startsWith("/app/blog") ||
+    location.pathname.startsWith("/app/pages") ||
+    location.pathname.startsWith("/app/policies") ||
+    location.pathname.startsWith("/app/templates") ||
+    location.pathname.startsWith("/app/content");
+
+  const contentTypes = [
+    { id: "collections", label: t.content.collections, icon: "📂", path: "/app/collections" },
+    { id: "blogs", label: t.content.blogs, icon: "📝", path: "/app/blog" },
+    { id: "pages", label: t.content.pages, icon: "📄", path: "/app/pages" },
+    { id: "policies", label: t.content.policies, icon: "📋", path: "/app/policies" },
+    { id: "menus", label: t.content.menus, icon: "🍔", path: "/app/content?type=menus", comingSoon: true },
+    { id: "templates", label: t.content.templates, icon: "🧪", path: "/app/templates" },
+    { id: "metaobjects", label: t.content.metaobjects, icon: "🗂️", path: "/app/content?type=metaobjects", comingSoon: true },
+    { id: "shopMetadata", label: t.content.shopMetadata, icon: "🏷️", path: "/app/content?type=shopMetadata", comingSoon: true },
+  ];
+
   return (
     <>
       {/* Fixed Navigation */}
@@ -311,8 +331,20 @@ export function MainNavigation() {
       >
         {/* Einzeilige Leiste mit Navigation, InfoBox und Plan Selector */}
         <div className="main-navigation" style={{ display: "flex", alignItems: "center", padding: "1rem", gap: "2rem", flexWrap: "wrap" }}>
-          {/* Navigation Tabs */}
-          <InlineStack gap="400" blockAlign="center" role="tablist">
+          {/* Mobile Menu (Hamburger) - nur auf Mobile sichtbar */}
+          <div className="mobile-only">
+            <MobileMenu
+              activeTab={tabs.find(tab => location.pathname.startsWith(tab.path))?.id}
+              productCount={productCount}
+              maxProducts={maxProducts}
+              runningTaskCount={runningTaskCount}
+              contentTypes={contentTypes}
+              showContentTypes={isOnContentPage}
+            />
+          </div>
+
+          {/* Navigation Tabs - versteckt auf Mobile */}
+          <InlineStack gap="400" blockAlign="center" role="tablist" className="desktop-only">
             {tabs.map((tab) => {
               const isActive = location.pathname.startsWith(tab.path);
               const showProductCount = tab.id === "products" && productCount !== undefined;
@@ -457,8 +489,8 @@ export function MainNavigation() {
             </div>
           )}
 
-          {/* Plan Selector - click navigates to settings/plan */}
-          <div className="plan-selector-container" style={{ marginLeft: "auto" }}>
+          {/* Plan Selector - versteckt auf Mobile, vereinfacht auf Tablet */}
+          <div className="plan-selector-container desktop-only" style={{ marginLeft: "auto" }}>
             <ButtonGroup variant="segmented" aria-label="Subscription plan selector">
               {plans.map((planOption) => (
                 <Button
@@ -472,6 +504,18 @@ export function MainNavigation() {
                 </Button>
               ))}
             </ButtonGroup>
+          </div>
+
+          {/* Plan Badge - nur aktiver Plan, sichtbar auf Tablet */}
+          <div className="tablet-only" style={{ marginLeft: "auto" }}>
+            <Button
+              onClick={handlePlanNavigation}
+              size="slim"
+              pressed
+              ariaLabel={`Current plan: ${getPlanDisplayName(plan)}`}
+            >
+              {getPlanDisplayName(plan)}
+            </Button>
           </div>
         </div>
       </nav>

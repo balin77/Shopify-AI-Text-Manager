@@ -91,8 +91,8 @@ export function ContentTypeNavigation() {
 
   return (
     <>
-      {/* Fixed Navigation */}
-      <div ref={navRef} style={{ borderBottom: "1px solid #e1e3e5", background: "white", padding: "1rem 1rem 1rem 1rem", paddingTop: "1.5rem", position: "fixed", top: `${mainNavHeight}px`, left: 0, right: 0, zIndex: 999, overflowX: "auto" }}>
+      {/* Fixed Navigation - versteckt auf Mobile (ist im Hamburger-Menü) */}
+      <div ref={navRef} className="desktop-only" style={{ borderBottom: "1px solid #e1e3e5", background: "white", padding: "1rem 1rem 1rem 1rem", paddingTop: "1.5rem", position: "fixed", top: `${mainNavHeight}px`, left: 0, right: 0, zIndex: 999, overflowX: "auto" }}>
         <InlineStack gap="300">
           {contentTypes.map((type) => {
             const hasAccess = canAccessContentType(type.planContentType);

@@ -9,6 +9,47 @@
   --spacing-desktop: 16px;
 }
 
+/* Visibility Utilities for Mobile/Tablet/Desktop */
+.mobile-only {
+  display: block;
+}
+
+.tablet-only {
+  display: none;
+}
+
+.desktop-only {
+  display: none;
+}
+
+@media (min-width: 768px) and (max-width: 1023px) {
+  .mobile-only {
+    display: none;
+  }
+
+  .tablet-only {
+    display: block;
+  }
+
+  .desktop-only {
+    display: none;
+  }
+}
+
+@media (min-width: 1024px) {
+  .mobile-only {
+    display: none;
+  }
+
+  .tablet-only {
+    display: none;
+  }
+
+  .desktop-only {
+    display: block;
+  }
+}
+
 /* Touch Target Optimization for Mobile */
 @media (max-width: 768px) {
   /* Ensure all buttons meet minimum touch target size */
