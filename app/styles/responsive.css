@@ -230,8 +230,8 @@
   /* First Card - the button card with rounded corners */
   .language-dropdown-mobile > .Polaris-Card:first-child,
   .operations-dropdown-mobile > .Polaris-Card:first-child {
-    border-radius: 8px;
-    overflow: hidden;
+    border-radius: 8px !important;
+    overflow: hidden !important;
   }
 
   /* Dropdown expanded content - positioned absolutely to overlay */
@@ -243,8 +243,8 @@
     right: 0;
     z-index: 1000;
     margin-top: 0; /* No gap between button and dropdown */
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-    border-radius: 0 0 8px 8px; /* Rounded bottom corners */
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15) !important;
+    border-radius: 0 0 8px 8px !important; /* Rounded bottom corners */
     border-top: 1px solid #e1e3e5; /* Visual separation */
   }
 
@@ -257,7 +257,7 @@
   /* When dropdown is expanded, round only top corners of button card */
   .language-dropdown-mobile:has(> .Polaris-Card:nth-child(2)) > .Polaris-Card:first-child,
   .operations-dropdown-mobile:has(> .Polaris-Card:nth-child(2)) > .Polaris-Card:first-child {
-    border-radius: 8px 8px 0 0; /* Rounded top corners only */
+    border-radius: 8px 8px 0 0 !important; /* Rounded top corners only */
   }
 }
 
