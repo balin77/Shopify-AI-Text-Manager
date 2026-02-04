@@ -1,15 +1,15 @@
 # Shopify App Store - Readiness Checklist
 
-**Last Updated:** 2026-01-14
+**Last Updated:** 2026-02-04
 **App Name:** ContentPilot AI
 **Status:** 🟡 Ready for Final Preparations
 
 ---
 
-## 📊 Overall Progress: 70% Complete
+## 📊 Overall Progress: 75% Complete
 
 ```
-████████████████████░░░░░░░░ 70%
+██████████████████████░░░░░░ 75%
 ```
 
 ---
@@ -122,49 +122,24 @@
 - [x] Loading States
 - [x] Responsive UI
 
----
+### 6. Contact Information & App Icon ✅
+- [x] Contact Information Updated
+  - Company Name: "Gubler - Multimedia und Print"
+  - Support Email: gublerra@gmail.com
+  - Last Updated: 2026-02-04
+  - Updated in `privacy.tsx` and `terms.tsx`
 
-## 🟡 IN PROGRESS (Must Complete Before Submission)
-
-### 6. Contact Information Update ⚠️ HIGH PRIORITY
-**Status:** Template created, needs personalization
-
-**Action Required:**
-1. Update `app/routes/privacy.tsx`:
-   ```typescript
-   companyName: 'Patis Universe',    // ← Bestätigen oder ändern
-   supportEmail: 'support@patisdesign.ch',  // ← Bestätigen oder ändern
-   ```
-
-2. Update `app/routes/terms.tsx`:
-   ```typescript
-   companyName: 'Patis Universe',    // ← Bestätigen oder ändern
-   supportEmail: 'support@patisdesign.ch',  // ← Bestätigen oder ändern
-   ```
-
-3. Optional: Physische Firmenadresse hinzufügen
-
-**Estimated Time:** 5-10 Minuten
+- [x] App Icon Created
+  - Size: 512x512 PNG ✅
+  - Location: `public/app-icon.png`
+  - Ready for Shopify Partner Dashboard upload
+  - Design files in `psd/` (excluded from git)
 
 ---
 
 ## 📋 TODO (Before App Store Submission)
 
 ### 7. App Store Listing Materials 🎨
-
-#### A. App Icon (REQUIRED)
-- [ ] Design professional app icon
-- [ ] Size: 512x512 PNG
-- [ ] Must represent the app (AI/Content/Translation theme)
-- [ ] No text overlay preferred
-- [ ] High contrast, recognizable at small sizes
-
-**Resources:**
-- Figma/Canva for design
-- Hire designer on Fiverr (~€20-50)
-- Use AI generator (DALL-E, Midjourney)
-
-**Estimated Time:** 2-4 Stunden (DIY) oder 1-2 Tage (outsource)
 
 #### B. Screenshots (REQUIRED)
 - [ ] Create 3-5 screenshots (minimum 3, maximum 5)
@@ -406,8 +381,8 @@ Dedicated support available via [support email]
 
 ### Week 1 (Current)
 - [x] Complete Privacy Policy & Terms ✅
-- [ ] Update contact information
-- [ ] Design app icon (or commission)
+- [x] Update contact information ✅
+- [x] Design app icon (or commission) ✅
 - [ ] Start planning screenshots
 
 ### Week 2
@@ -461,8 +436,8 @@ Dedicated support available via [support email]
 
 **Cannot skip these:**
 1. ✅ Privacy Policy & Terms (DONE)
-2. ⚠️ Update contact information (5 min)
-3. 📸 App Icon (2-4 hours or €20-50)
+2. ✅ Update contact information (DONE)
+3. ✅ App Icon (DONE)
 4. 📸 Screenshots (1 day)
 5. 📝 App Listing (2-3 hours)
 6. 🧪 Beta Testing (1-2 weeks)
@@ -559,19 +534,21 @@ Dedicated support available via [support email]
 - ✅ Infrastructure solid
 - ✅ Two environments running
 - ✅ Professional codebase
+- ✅ Contact information updated
+- ✅ App icon created
 
 **What's Needed:**
-- 📸 Marketing materials (icon, screenshots)
+- 📸 Screenshots (3-5 required)
 - 📝 App store listing copy
-- 🧪 Beta testing
+- 🧪 Beta testing (optional)
 - ⚙️ Final QA
 
-**Estimated Time to Submission:** 3-4 weeks
-**Estimated Time to Live:** 6-8 weeks
+**Estimated Time to Submission:** 2-3 weeks
+**Estimated Time to Live:** 5-7 weeks
 
 ---
 
-**You're 70% there! The hard technical work is done.** 🚀
-**Focus now on presentation and testing.**
+**You're 75% there! The hard technical work is done.** 🚀
+**Focus now on screenshots and listing content.**
 
-Last Updated: 2026-01-14
+Last Updated: 2026-02-04
