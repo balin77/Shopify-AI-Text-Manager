@@ -84,9 +84,35 @@
   align-items: center;
 }
 
+/* Override Polaris ButtonGroup that wraps buttons automatically */
+.ai-editable-html-field .Polaris-ButtonGroup,
+.ai-editable-html-field .Polaris-ButtonGroup--variantSegmented {
+  display: flex !important;
+  flex-direction: row !important;
+  flex-wrap: wrap !important;
+  width: auto !important;
+  gap: 0.5rem !important;
+}
+
+.ai-editable-html-field .Polaris-ButtonGroup .Polaris-Button,
+.ai-editable-html-field .Polaris-ButtonGroup--variantSegmented .Polaris-Button {
+  flex: 0 1 auto !important;
+  width: auto !important;
+  min-width: 44px !important;
+  max-width: fit-content !important;
+  margin: 0 !important;
+}
+
 /* Mobile: Ensure buttons wrap horizontally and take proper space */
 /* IMPORTANT: Override responsive.css global button rules */
 @media (max-width: 768px) {
+  /* Override ButtonGroup vertical stacking on mobile */
+  .ai-editable-html-field .Polaris-ButtonGroup,
+  .ai-editable-html-field .Polaris-ButtonGroup--variantSegmented {
+    flex-direction: row !important;
+    flex-wrap: wrap !important;
+    width: auto !important;
+  }
   /* Footer container - keep horizontal layout for character count and buttons */
   .ai-editable-html-field .ai-field-footer {
     display: flex !important;
