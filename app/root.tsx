@@ -39,20 +39,6 @@ export default function App() {
       <meta name="shopify-debug" content="web-vitals" />
       <link rel="preconnect" href="https://cdn.shopify.com/" crossOrigin="anonymous" />
       <link rel="dns-prefetch" href="https://cdn.shopify.com/" />
-      <link
-        rel="preload"
-        href="https://cdn.shopify.com/shopifycloud/app-bridge.js"
-        as="script"
-      />
-      <link
-        rel="preload"
-        href="https://cdn.shopify.com/static/fonts/inter/v4/styles.css"
-        as="style"
-      />
-      <link
-        rel="stylesheet"
-        href="https://cdn.shopify.com/static/fonts/inter/v4/styles.css"
-      />
       <style>{`
         @font-face {
           font-family: 'Inter Fallback';
@@ -63,10 +49,41 @@ export default function App() {
           line-gap-override: 0%;
         }
         body {
+          font-family: 'Inter Fallback', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }
+        @font-face {
+          font-family: 'Inter';
+          font-style: normal;
+          font-weight: 400;
+          font-display: swap;
+          src: url(https://cdn.shopify.com/static/fonts/inter/v4/Inter-Regular.woff2) format('woff2');
+        }
+        @font-face {
+          font-family: 'Inter';
+          font-style: normal;
+          font-weight: 500;
+          font-display: swap;
+          src: url(https://cdn.shopify.com/static/fonts/inter/v4/Inter-Medium.woff2) format('woff2');
+        }
+        @font-face {
+          font-family: 'Inter';
+          font-style: normal;
+          font-weight: 600;
+          font-display: swap;
+          src: url(https://cdn.shopify.com/static/fonts/inter/v4/Inter-SemiBold.woff2) format('woff2');
+        }
+        @font-face {
+          font-family: 'Inter';
+          font-style: normal;
+          font-weight: 700;
+          font-display: swap;
+          src: url(https://cdn.shopify.com/static/fonts/inter/v4/Inter-Bold.woff2) format('woff2');
+        }
+        body {
           font-family: 'Inter', 'Inter Fallback', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
         }
       `}</style>
-      <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js" />
+      <script async src="https://cdn.shopify.com/shopifycloud/app-bridge.js" />
       <Outlet />
     </Document>
   );
