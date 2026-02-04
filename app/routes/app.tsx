@@ -21,6 +21,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   logger.debug("[APP.TSX LOADER] Start", { context: "App", url: request.url, method: request.method });
 
   const headers = Object.fromEntries(request.headers.entries());
+  const url = new URL(request.url);
 
   // Check if this is a prefetch request - these don't have session tokens
   const isPrefetch = headers['sec-purpose'] === 'prefetch' || headers['purpose'] === 'prefetch';
@@ -33,6 +34,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       subscriptionPlan: "basic" as Plan,
       aiSettings: null,
     });
+  }
+
+  // Check if this is a browser reload (F5) - these lose session tokens in embedded apps
+  const isBrowserReload = !url.searchParams.has('shop') && !url.searchParams.has('host');
+  if (isBrowserReload) {
+    logger.warn("[APP.TSX LOADER] Browser reload detected without shop params - this will cause auth issues in embedded apps", { context: "App" });
   }
 
   try {
