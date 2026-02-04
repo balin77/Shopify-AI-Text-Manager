@@ -248,6 +248,19 @@ export function UnifiedItemSelectorCompact({
           </div>
         </>
       )}
+
+      <style>{`
+        /* Remove blue focus border from search field in compact selector */
+        .mobile-navbar-item-selector .Polaris-TextField__Input:focus {
+          border-color: #c9cccf !important;
+          box-shadow: none !important;
+        }
+
+        .mobile-navbar-item-selector .Polaris-TextField__Input:focus-visible {
+          outline: 2px solid #0066CC;
+          outline-offset: 2px;
+        }
+      `}</style>
     </div>
   );
 }
