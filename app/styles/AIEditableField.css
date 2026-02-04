@@ -91,7 +91,7 @@
   flex-direction: row !important;
   flex-wrap: wrap !important;
   width: auto !important;
-  gap: 0.5rem !important;
+  gap: 0 !important;
 }
 
 .ai-editable-html-field .Polaris-ButtonGroup .Polaris-Button,
@@ -100,6 +100,18 @@
   width: auto !important;
   min-width: 44px !important;
   max-width: fit-content !important;
+  margin: 0 !important;
+}
+
+/* Remove spacing between buttons in ButtonGroup */
+.ai-editable-html-field .Polaris-ButtonGroup > *,
+.ai-editable-html-field .Polaris-ButtonGroup--variantSegmented > * {
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+.ai-editable-html-field .Polaris-ButtonGroup .Polaris-Button-ConnectedDisclosure,
+.ai-editable-html-field .Polaris-ButtonGroup--variantSegmented .Polaris-Button-ConnectedDisclosure {
   margin: 0 !important;
 }
 
