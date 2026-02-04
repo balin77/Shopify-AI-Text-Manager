@@ -263,7 +263,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           boxSizing: "border-box",
         }}
       >
-        {/* Left Sidebar - Unified Item List (Desktop) / Dropdown (Mobile) */}
+        {/* Left Sidebar - Unified Item List (Desktop only) */}
         <div className="unified-item-list-container">
           {/* Desktop: Full List */}
           <div className="desktop-only">
@@ -287,25 +287,6 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                 paginationOf: t.content?.paginationOf || "of",
                 paginationPrevious: t.content?.paginationPrevious || "Previous",
                 paginationNext: t.content?.paginationNext || "Next",
-              }}
-            />
-          </div>
-
-          {/* Mobile: Dropdown */}
-          <div className="mobile-only">
-            <UnifiedItemListMobile
-              items={unifiedItems}
-              selectedItemId={state.selectedItemId}
-              onItemSelect={handlers.handleItemSelect}
-              resourceName={{
-                singular: config.displayNameSingular,
-                plural: config.displayName,
-              }}
-              renderItem={renderListItem}
-              t={{
-                searchPlaceholder: t.content?.searchPlaceholder,
-                noResults: t.content?.noResults || "No items found",
-                selectItem: t.content?.selectItem || `Select ${config.displayNameSingular}`,
               }}
             />
           </div>

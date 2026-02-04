@@ -68,13 +68,6 @@
     min-height: 48px;
   }
 
-  /* Make navbar more compact on mobile - reduce padding significantly */
-  .main-navigation {
-    padding: 0.5rem 0.75rem !important;
-    gap: 0.5rem !important;
-    flex-wrap: nowrap !important;
-  }
-
   /* Compact item selector in navbar on mobile */
   .mobile-navbar-item-selector {
     flex: 1;

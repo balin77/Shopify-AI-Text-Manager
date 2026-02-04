@@ -1111,8 +1111,8 @@ export default function SettingsPage() {
 
       {/* Responsive Styles */}
       <style>{`
-        /* Hide desktop navigation on mobile */
-        @media (max-width: 768px) {
+        /* Hide desktop navigation when dropdown is visible (below 900px) */
+        @media (max-width: 899px) {
           .settings-desktop-nav {
             display: none !important;
           }
