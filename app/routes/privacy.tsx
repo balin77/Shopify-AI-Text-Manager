@@ -15,10 +15,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   return json({
     appUrl,
-    lastUpdated: '2026-01-14',
-    companyName: 'Patis Universe', // Update mit deinem Firmennamen
+    lastUpdated: '2026-02-04',
+    companyName: 'Gubler - Multimedia und Print',
     appName: 'ContentPilot AI',
-    supportEmail: 'support@patisdesign.ch', // Update mit deiner Support Email
+    supportEmail: 'gublerra@gmail.com',
   });
 };
 

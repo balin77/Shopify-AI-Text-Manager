@@ -27,3 +27,6 @@ prisma/*.db-journal
 # Local development files
 .claude/settings.local.json
 check-translations.cjs
+
+# Design files (PSD, AI, etc.)
+psd/
