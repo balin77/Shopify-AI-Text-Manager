@@ -15,6 +15,21 @@ import { useI18n } from "../contexts/I18nContext";
 import { usePlan } from "../contexts/PlanContext";
 import type { Plan } from "../config/plans";
 
+// Helper function to navigate using App Bridge in embedded apps
+function navigateWithAppBridge(path: string, searchParams: URLSearchParams) {
+  const fullPath = `${path}?${searchParams.toString()}`;
+
+  // Check if we're in an embedded app with App Bridge available
+  if (window.shopify && typeof window.shopify.loading === 'function') {
+    console.log("🚀 [MobileMenu] Using App Bridge Redirect for:", fullPath);
+    window.shopify.loading(true);
+    window.location.href = fullPath;
+  } else {
+    console.log("🔄 [MobileMenu] Using window.location for:", fullPath);
+    window.location.href = fullPath;
+  }
+}
+
 interface MobileMenuProps {
   /** Current active tab */
   activeTab?: string;
@@ -62,28 +77,17 @@ export function MobileMenu({
 
   const handleNavigation = (path: string) => {
     console.log("📱 [MobileMenu] Navigation clicked:", path);
-    console.log("📱 [MobileMenu] Current location:", location.pathname);
 
     const searchParams = new URLSearchParams(location.search);
-    const newPath = `${path}?${searchParams.toString()}`;
-
-    console.log("📱 [MobileMenu] Full navigation path:", newPath);
-    console.log("📱 [MobileMenu] Query params:", searchParams.toString());
-
-    try {
-      navigate(newPath);
-      console.log("✅ [MobileMenu] Navigate function called successfully");
-      setIsOpen(false);
-    } catch (error) {
-      console.error("❌ [MobileMenu] Navigation error:", error);
-    }
+    setIsOpen(false);
+    navigateWithAppBridge(path, searchParams);
   };
 
   const handlePlanNavigation = (planOption?: Plan) => {
     const searchParams = new URLSearchParams(location.search);
     searchParams.set("tab", "plan");
-    navigate(`/app/settings?${searchParams.toString()}`);
     setIsOpen(false);
+    navigateWithAppBridge("/app/settings", searchParams);
   };
 
   return (

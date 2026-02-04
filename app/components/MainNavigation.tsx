@@ -10,6 +10,21 @@ import { UnifiedItemSelectorCompact } from "./unified/UnifiedItemSelectorCompact
 import { type Plan } from "../config/plans";
 import { useState, useEffect, useRef } from "react";
 
+// Helper function to navigate using App Bridge in embedded apps
+function navigateWithAppBridge(path: string, searchParams: URLSearchParams) {
+  const fullPath = `${path}?${searchParams.toString()}`;
+
+  // Check if we're in an embedded app with App Bridge available
+  if (window.shopify && typeof window.shopify.loading === 'function') {
+    console.log("🚀 [MainNavigation] Using App Bridge Redirect for:", fullPath);
+    window.shopify.loading(true);
+    window.location.href = fullPath;
+  } else {
+    console.log("🔄 [MainNavigation] Using window.location for:", fullPath);
+    window.location.href = fullPath;
+  }
+}
+
 export function MainNavigation() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -278,28 +293,19 @@ export function MainNavigation() {
   const handleClick = (path: string, tabId: string) => {
     console.log("🖱️ [MainNavigation] Tab clicked:", tabId, "->", path);
     console.log("🎯 [MainNavigation] Current location:", location.pathname);
-    console.log("🎯 [MainNavigation] Using client-side navigation (SPA)");
 
     // Preserve critical URL parameters for Shopify embedded app session
     const searchParams = new URLSearchParams(location.search);
-    const newPath = `${path}?${searchParams.toString()}`;
 
-    console.log("🖱️ [MainNavigation] Full navigation path:", newPath);
-    console.log("🖱️ [MainNavigation] Query params:", searchParams.toString());
-
-    try {
-      navigate(newPath);
-      console.log("✅ [MainNavigation] Navigate function called successfully");
-    } catch (error) {
-      console.error("❌ [MainNavigation] Navigation error:", error);
-    }
+    // Use App Bridge redirect for embedded apps (causes full page reload but works)
+    navigateWithAppBridge(path, searchParams);
   };
 
   // Navigate to settings/plan page when any plan button is clicked
   const handlePlanNavigation = () => {
     const searchParams = new URLSearchParams(location.search);
     searchParams.set("tab", "plan");
-    navigate(`/app/settings?${searchParams.toString()}`);
+    navigateWithAppBridge("/app/settings", searchParams);
   };
 
   const plans: Plan[] = ["free", "basic", "pro", "max"];
