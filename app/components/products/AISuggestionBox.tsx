@@ -1,5 +1,7 @@
 import { Text, BlockStack, InlineStack, Button } from "@shopify/polaris";
 import { useI18n } from "../../contexts/I18nContext";
+import { sanitizeHTML } from "../../utils/sanitizer";
+import { useMemo } from "react";
 
 interface AISuggestionBoxProps {
   suggestion: string;
@@ -18,10 +20,19 @@ export function AISuggestionBox({
 }: AISuggestionBoxProps) {
   const { t } = useI18n();
 
-  // Calculate character count (strip HTML tags for accurate count)
-  const charCount = isHtml
-    ? suggestion.replace(/<[^>]*>/g, '').length
-    : suggestion.length;
+  // Sanitize HTML content to prevent XSS attacks
+  const sanitizedHTML = useMemo(() =>
+    isHtml ? sanitizeHTML(suggestion) : suggestion,
+    [isHtml, suggestion]
+  );
+
+  // Calculate character count (strip HTML tags for accurate count) - memoized for performance
+  const charCount = useMemo(() =>
+    isHtml
+      ? suggestion.replace(/<[^>]*>/g, '').length
+      : suggestion.length,
+    [isHtml, suggestion]
+  );
 
   return (
     <div
@@ -38,7 +49,7 @@ export function AISuggestionBox({
           {t.products.aiSuggestion}
         </Text>
         {isHtml ? (
-          <div className="ai-suggestion-html-content" dangerouslySetInnerHTML={{ __html: suggestion }} />
+          <div className="ai-suggestion-html-content" dangerouslySetInnerHTML={{ __html: sanitizedHTML }} />
         ) : (
           <Text as="p" variant="bodyMd">
             {suggestion}

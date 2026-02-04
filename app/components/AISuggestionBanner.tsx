@@ -1,5 +1,7 @@
 import { BlockStack, InlineStack, Text, Button } from "@shopify/polaris";
 import { useI18n } from "../contexts/I18nContext";
+import { sanitizeHTML } from "../utils/sanitizer";
+import { useMemo } from "react";
 
 interface AISuggestionBannerProps {
   fieldType: string;
@@ -28,10 +30,19 @@ export function AISuggestionBanner({
 }: AISuggestionBannerProps) {
   const { t } = useI18n();
 
-  // Calculate character count (strip HTML tags for accurate count)
-  const charCount = isHtml
-    ? suggestionText.replace(/<[^>]*>/g, '').length
-    : suggestionText.length;
+  // Sanitize HTML content to prevent XSS attacks
+  const sanitizedHTML = useMemo(() =>
+    isHtml ? sanitizeHTML(suggestionText) : suggestionText,
+    [isHtml, suggestionText]
+  );
+
+  // Calculate character count (strip HTML tags for accurate count) - memoized for performance
+  const charCount = useMemo(() =>
+    isHtml
+      ? suggestionText.replace(/<[^>]*>/g, '').length
+      : suggestionText.length,
+    [isHtml, suggestionText]
+  );
 
   return (
     <div
@@ -48,7 +59,7 @@ export function AISuggestionBanner({
           {titleLabel}
         </Text>
         {isHtml ? (
-          <div className="ai-suggestion-html-content" dangerouslySetInnerHTML={{ __html: suggestionText }} />
+          <div className="ai-suggestion-html-content" dangerouslySetInnerHTML={{ __html: sanitizedHTML }} />
         ) : (
           <Text as="p" variant="bodyMd">
             {suggestionText}

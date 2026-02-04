@@ -1,5 +1,5 @@
 import { HfInference } from '@huggingface/inference';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenerativeAI, type GenerativeModel } from '@google/generative-ai';
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import { AIQueueService } from './ai-queue.service';
@@ -18,7 +18,7 @@ export interface AIServiceConfig {
 
 export class AIService {
   private huggingface?: HfInference;
-  private gemini?: any;
+  private gemini?: GenerativeModel;
   private anthropic?: Anthropic;
   private openai?: OpenAI;
   private grok?: OpenAI;

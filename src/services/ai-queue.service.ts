@@ -55,12 +55,21 @@ export class AIQueueService {
   // Rate limit configurations per provider (global)
   private rateLimits: Map<AIProvider, RateLimitConfig> = new Map();
 
+  // Track last activity time per shop for cleanup (memory leak prevention)
+  private lastShopActivity: Map<string, number> = new Map();
+
+  // Cleanup interval ID
+  private cleanupIntervalId?: NodeJS.Timeout;
+
   private constructor() {
     // Default rate limits (will be overridden by database settings)
     this.setDefaultRateLimits();
 
     // Start processing queue
     this.startProcessing();
+
+    // Start cleanup interval (runs every hour to prevent memory leaks)
+    this.startCleanupInterval();
   }
 
   static getInstance(): AIQueueService {
@@ -148,6 +157,8 @@ export class AIQueueService {
       queue = [];
       this.queues.set(shop, queue);
     }
+    // Update last activity timestamp for this shop
+    this.lastShopActivity.set(shop, Date.now());
     return queue;
   }
 
@@ -302,10 +313,28 @@ export class AIQueueService {
 
   /**
    * Process queues with fair round-robin across shops
+   * Uses adaptive polling: 100ms when queue has items, 1000ms when empty
    */
   private async startProcessing() {
-    setInterval(async () => {
-      if (this.processing || this.getTotalQueueLength() === 0) return;
+    let pollingInterval = 1000; // Start with 1 second (empty queue)
+
+    const processNext = async () => {
+      if (this.processing) return;
+
+      const totalLength = this.getTotalQueueLength();
+
+      // Adaptive polling based on queue size
+      if (totalLength === 0) {
+        pollingInterval = 1000; // 1 second when queue is empty (save CPU)
+      } else {
+        pollingInterval = 100; // 100ms when queue has items (responsive)
+      }
+
+      // Skip if queue is empty
+      if (totalLength === 0) {
+        setTimeout(processNext, pollingInterval);
+        return;
+      }
 
       this.processing = true;
 
@@ -386,8 +415,14 @@ export class AIQueueService {
         await this.updateQueuePositions(shop);
       } finally {
         this.processing = false;
+        // Schedule next iteration with adaptive interval
+        setTimeout(processNext, pollingInterval);
       }
-    }, 100); // Check every 100ms
+    };
+
+    // Start processing
+    processNext();
+    console.log('[AIQueue] Started adaptive queue processing (100ms when active, 1s when idle)');
   }
 
   /**
@@ -410,7 +445,17 @@ export class AIQueueService {
         })
       );
 
-      await Promise.all(updates);
+      // Use Promise.allSettled to handle partial failures gracefully
+      const results = await Promise.allSettled(updates);
+
+      // Log any failures but don't throw - queue positions are not critical
+      const failures = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
+      if (failures.length > 0) {
+        console.error(`[AIQueue] ${failures.length}/${updates.length} queue position updates failed for shop ${shop}`);
+        failures.forEach((failure, index) => {
+          console.error(`[AIQueue] Update ${index} failed:`, failure.reason);
+        });
+      }
     } catch (error) {
       console.error(`[AIQueue] Error updating queue positions for shop ${shop}:`, error);
     }
@@ -597,5 +642,65 @@ export class AIQueueService {
     }
 
     return stats;
+  }
+
+  /**
+   * Start cleanup interval to prevent memory leaks from inactive shops
+   * Runs every hour and removes empty queues for shops inactive for > 24 hours
+   */
+  private startCleanupInterval() {
+    // Run cleanup every hour
+    this.cleanupIntervalId = setInterval(() => {
+      this.cleanupInactiveShops();
+    }, 60 * 60 * 1000); // 1 hour
+
+    console.log('[AIQueue] Cleanup interval started (runs every hour)');
+  }
+
+  /**
+   * Clean up queues for shops that have been inactive for more than 24 hours
+   * This prevents memory leaks from accumulating shop entries
+   */
+  private cleanupInactiveShops() {
+    const now = Date.now();
+    const INACTIVE_THRESHOLD = 24 * 60 * 60 * 1000; // 24 hours
+    let cleanedCount = 0;
+
+    for (const [shop, lastActivity] of this.lastShopActivity.entries()) {
+      const inactiveDuration = now - lastActivity;
+      const queue = this.queues.get(shop);
+
+      // Remove if inactive for > 24 hours AND queue is empty (or doesn't exist)
+      if (inactiveDuration > INACTIVE_THRESHOLD && (!queue || queue.length === 0)) {
+        this.queues.delete(shop);
+        this.lastShopActivity.delete(shop);
+        cleanedCount++;
+        console.log(`[AIQueue] Cleaned up inactive shop: ${shop} (inactive for ${Math.round(inactiveDuration / 1000 / 60 / 60)}h)`);
+      }
+    }
+
+    if (cleanedCount > 0) {
+      console.log(`[AIQueue] Cleanup complete: Removed ${cleanedCount} inactive shop(s). Remaining shops: ${this.queues.size}`);
+    } else {
+      console.log(`[AIQueue] Cleanup complete: No inactive shops to remove. Active shops: ${this.queues.size}`);
+    }
+  }
+
+  /**
+   * Manually trigger cleanup (useful for testing or forced cleanup)
+   */
+  public forceCleanup() {
+    this.cleanupInactiveShops();
+  }
+
+  /**
+   * Stop cleanup interval (useful for testing or shutdown)
+   */
+  public stopCleanup() {
+    if (this.cleanupIntervalId) {
+      clearInterval(this.cleanupIntervalId);
+      this.cleanupIntervalId = undefined;
+      console.log('[AIQueue] Cleanup interval stopped');
+    }
   }
 }

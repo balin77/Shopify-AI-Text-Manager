@@ -1,8 +1,9 @@
 import { BlockStack, Text, TextField, Button, InlineStack } from "@shopify/polaris";
-import { useRef } from "react";
+import { useRef, useEffect } from "react";
 import { useHtmlFormatting } from "../hooks/useHtmlFormatting";
 import { useI18n } from "../contexts/I18nContext";
 import { HtmlFormattingToolbar } from "./HtmlFormattingToolbar";
+import { sanitizeHTML } from "../utils/sanitizer";
 import "../styles/AIEditableField.css";
 
 interface AIInstructionFieldGroupProps {
@@ -45,6 +46,17 @@ export function AIInstructionFieldGroup({
   const { t } = useI18n();
   const editorRef = useRef<HTMLDivElement>(null);
   const { executeCommand } = useHtmlFormatting({ editorRef, onChange: onFormatChange });
+
+  // Sanitize and update content when formatValue changes (in rendered mode)
+  useEffect(() => {
+    if (editorRef.current && htmlMode === "rendered" && isHtmlField) {
+      const sanitizedContent = sanitizeHTML(formatValue || `<p>${t.settings.exampleText || 'Example text...'}</p>`);
+      if (editorRef.current.innerHTML !== sanitizedContent) {
+        editorRef.current.innerHTML = sanitizedContent;
+      }
+    }
+  }, [formatValue, htmlMode, isHtmlField, t.settings.exampleText]);
+
   return (
     <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px", overflow: "visible" }}>
       <BlockStack gap="400">
@@ -119,7 +131,7 @@ export function AIInstructionFieldGroup({
                   ref={editorRef}
                   contentEditable
                   onInput={(e) => onFormatChange(e.currentTarget.innerHTML)}
-                  dangerouslySetInnerHTML={{ __html: formatValue || `<p>${t.settings.exampleText || 'Example text...'}</p>` }}
+                  suppressContentEditableWarning
                   style={{
                     width: "100%",
                     minHeight: "200px",

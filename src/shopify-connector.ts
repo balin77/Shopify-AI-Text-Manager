@@ -1,6 +1,7 @@
 import '@shopify/shopify-api/adapters/node';
 import { shopifyApi, Session, ApiVersion } from '@shopify/shopify-api';
 import dotenv from 'dotenv';
+import type { GraphQLResponse } from './types/shopify-graphql.types';
 
 dotenv.config();
 
@@ -64,8 +65,9 @@ export class ShopifyConnector {
 
   /**
    * Make a direct GraphQL request using fetch
+   * @template T - The expected shape of the data returned from the query
    */
-  private async graphqlRequest(query: string, variables?: any): Promise<any> {
+  private async graphqlRequest<T = unknown>(query: string, variables?: Record<string, unknown>): Promise<T> {
     const url = `https://${this.shopName}/admin/api/${this.apiVersion}/graphql.json`;
 
     const response = await fetch(url, {
@@ -84,13 +86,17 @@ export class ShopifyConnector {
       throw new Error(`GraphQL request failed: ${response.status} ${response.statusText}`);
     }
 
-    const data: any = await response.json();
+    const result = await response.json() as GraphQLResponse<T>;
 
-    if (data.errors) {
-      throw new Error(`GraphQL errors: ${JSON.stringify(data.errors)}`);
+    if (result.errors) {
+      throw new Error(`GraphQL errors: ${JSON.stringify(result.errors)}`);
     }
 
-    return data.data;
+    if (!result.data) {
+      throw new Error('GraphQL response contains no data');
+    }
+
+    return result.data;
   }
 
   /**
@@ -110,7 +116,7 @@ export class ShopifyConnector {
   /**
    * Update product title
    */
-  async updateProductTitle(productId: string, newTitle: string): Promise<any> {
+  async updateProductTitle(productId: string, newTitle: string): Promise<import('./types/shopify-graphql.types').ProductUpdateResponse> {
     const mutation = `
       mutation updateProduct($input: ProductInput!) {
         productUpdate(input: $input) {
@@ -126,7 +132,7 @@ export class ShopifyConnector {
       }
     `;
 
-    return await this.graphqlRequest(mutation, {
+    return await this.graphqlRequest<import('./types/shopify-graphql.types').ProductUpdateResponse>(mutation, {
       input: {
         id: `gid://shopify/Product/${productId}`,
         title: newTitle,

@@ -18,6 +18,7 @@ import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
 import { useI18n } from "../contexts/I18nContext";
 import { getTaskDateRange } from "../../src/utils/task.utils";
+import { sanitizeHTML } from "../utils/sanitizer";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -28,7 +29,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // Parse query parameters for filtering and pagination
     const url = new URL(request.url);
     const statusFilter = url.searchParams.get("status") || "all"; // all, completed, failed
-    const hoursFilter = parseInt(url.searchParams.get("hours") || "72"); // 1, 6, 12, 24, 48, 72
+    const hoursFilter = parseInt(url.searchParams.get("hours") || "24"); // 1, 6, 12, 24 (max 1 day)
     const page = parseInt(url.searchParams.get("page") || "1");
     const pageSize = 20;
 
@@ -42,7 +43,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       where.status = "failed";
     }
 
-    // Date range filter (max 72 hours = 3 days)
+    // Date range filter (max 24 hours = 1 day)
     const dateFrom = getTaskDateRange(hoursFilter);
     where.createdAt = { gte: dateFrom };
 
@@ -89,7 +90,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       shop: session.shop,
       error: error.message,
       pagination: { page: 1, pageSize: 20, totalCount: 0, totalPages: 0 },
-      filters: { status: "all", hours: 72 }
+      filters: { status: "all", hours: 24 }
     }, { status: 500 });
   }
 };
@@ -285,8 +286,6 @@ export default function TasksPage() {
                       { label: t.tasks.timeRangeOptions.last6Hours, value: "6" },
                       { label: t.tasks.timeRangeOptions.last12Hours, value: "12" },
                       { label: t.tasks.timeRangeOptions.lastDay, value: "24" },
-                      { label: t.tasks.timeRangeOptions.last2Days, value: "48" },
-                      { label: t.tasks.timeRangeOptions.last3Days, value: "72" },
                     ]}
                     value={filters.hours.toString()}
                     onChange={handleHoursFilterChange}
@@ -560,7 +559,7 @@ export default function TasksPage() {
                                   if (resultData.formattedContent) {
                                     return (
                                       <div style={{ padding: "0.75rem", background: "white", borderRadius: "4px", maxHeight: "300px", overflowY: "auto" }}>
-                                        <div dangerouslySetInnerHTML={{ __html: resultData.formattedContent }} />
+                                        <div dangerouslySetInnerHTML={{ __html: sanitizeHTML(resultData.formattedContent) }} />
                                       </div>
                                     );
                                   }

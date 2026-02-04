@@ -153,12 +153,15 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   }));
 
   // Plan limit configuration
+  const { plan, getPlanDisplayName, getNextPlanUpgrade } = usePlan();
   const maxItems = getMaxProducts(); // This works for all content types
+  const nextPlan = getNextPlanUpgrade();
+
   const defaultPlanLimit = {
     isAtLimit: items.length >= maxItems && maxItems !== Infinity,
     maxItems,
-    currentPlan: "current", // TODO: Get from plan context
-    nextPlan: "Pro", // TODO: Get from plan context
+    currentPlan: getPlanDisplayName(),
+    nextPlan: nextPlan ? getPlanDisplayName.call({ plan: nextPlan }) : undefined,
   };
   const finalPlanLimit = planLimit || defaultPlanLimit;
 
@@ -817,7 +820,7 @@ function FieldRenderer(props: FieldRendererProps & { state?: any; handlers?: any
         currentLanguage={currentLanguage}
         primaryLocale={primaryLocale}
         isPrimaryLocale={isPrimaryLocale}
-        isFreePlan={false} // TODO: Get from plan context
+        isFreePlan={plan === 'free'}
         altTexts={state.imageAltTexts}
         onAltTextChange={handlers.handleAltTextChange}
         onGenerateAltText={handlers.handleGenerateAltText}

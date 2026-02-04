@@ -5,6 +5,7 @@ import { HelpTooltip } from "./HelpTooltip";
 import { HtmlFormattingToolbar } from "./HtmlFormattingToolbar";
 import { useI18n } from "../contexts/I18nContext";
 import { useHtmlFormatting } from "../hooks/useHtmlFormatting";
+import { sanitizeHTML } from "../utils/sanitizer";
 import "../styles/AIEditableField.css";
 
 interface AIEditableHTMLFieldProps {
@@ -78,7 +79,8 @@ export function AIEditableHTMLField({
 
     // If it's a new element (after mode switch), always set content
     if (isNewElement) {
-      editorRef.current.innerHTML = value;
+      // Sanitize HTML content to prevent XSS attacks
+      editorRef.current.innerHTML = sanitizeHTML(value);
       lastEditorElementRef.current = editorRef.current;
       return;
     }
@@ -87,17 +89,20 @@ export function AIEditableHTMLField({
     if (isUserTypingRef.current) return;
 
     // Only update if the content is actually different
-    if (editorRef.current.innerHTML !== value) {
+    const sanitizedValue = sanitizeHTML(value);
+    if (editorRef.current.innerHTML !== sanitizedValue) {
       // Save current cursor position
       const selection = window.getSelection();
       const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
       const startOffset = range?.startOffset;
       const startContainer = range?.startContainer;
 
-      // Update content
-      editorRef.current.innerHTML = value;
+      // Update content with sanitized HTML to prevent XSS attacks
+      editorRef.current.innerHTML = sanitizedValue;
 
       // Restore cursor position if possible
+      // Note: Cursor restoration may fail if DOM structure changes significantly
+      // This is acceptable as security takes priority over UX convenience
       if (startContainer && startOffset !== undefined && editorRef.current.contains(startContainer)) {
         try {
           const newRange = document.createRange();
@@ -106,7 +111,17 @@ export function AIEditableHTMLField({
           selection?.removeAllRanges();
           selection?.addRange(newRange);
         } catch (e) {
-          // Cursor restoration failed, that's okay
+          // Cursor restoration failed - DOM structure may have changed after sanitization
+          // Position cursor at end of content as fallback
+          try {
+            const newRange = document.createRange();
+            newRange.selectNodeContents(editorRef.current);
+            newRange.collapse(false);
+            selection?.removeAllRanges();
+            selection?.addRange(newRange);
+          } catch (e2) {
+            // Complete failure - ignore, user can reposition cursor manually
+          }
         }
       }
     }
