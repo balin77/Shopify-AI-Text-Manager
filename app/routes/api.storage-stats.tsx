@@ -40,6 +40,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const products = await db.product.findMany({
       where: { shop },
       select: {
+        id: true,
         title: true,
         descriptionHtml: true,
         handle: true,
@@ -100,6 +101,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const collections = await db.collection.findMany({
       where: { shop },
       select: {
+        id: true,
         title: true,
         descriptionHtml: true,
         handle: true,
@@ -121,6 +123,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const articles = await db.article.findMany({
       where: { shop },
       select: {
+        id: true,
         title: true,
         body: true,
         handle: true,
@@ -144,6 +147,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const pages = await db.page.findMany({
       where: { shop },
       select: {
+        id: true,
         title: true,
         body: true,
         handle: true,
@@ -161,6 +165,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const policies = await db.shopPolicy.findMany({
       where: { shop },
       select: {
+        id: true,
         title: true,
         body: true,
         type: true,

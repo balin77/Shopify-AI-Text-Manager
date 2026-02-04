@@ -511,6 +511,7 @@ export const es: Translation = {
     translationCompleted: "Traducción completada para \"{title}\"",
     fieldTranslationCompleted: "Traducción para {field} en \"{title}\" completada",
     generationCompleted: "Generación de IA para {field} en \"{title}\" completada",
+    requests: "solicitudes",
   },
 
   // SEO Sidebar

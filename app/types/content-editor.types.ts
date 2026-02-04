@@ -335,7 +335,7 @@ export interface UseContentEditorProps {
   items: TranslatableContentItem[];
 
   /** Shop locales */
-  shopLocales: ShopLocale[];
+  shopLocales: ShopLocale[] | any[];
 
   /** Primary locale */
   primaryLocale: string;

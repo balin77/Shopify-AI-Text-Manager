@@ -509,6 +509,7 @@ export const de = {
     translationCompleted: "Übersetzung abgeschlossen für \"{title}\"",
     fieldTranslationCompleted: "Übersetzung für {field} in \"{title}\" abgeschlossen",
     generationCompleted: "KI-Generierung für {field} in \"{title}\" abgeschlossen",
+    requests: "Anfragen",
   },
 
   // SEO Sidebar
