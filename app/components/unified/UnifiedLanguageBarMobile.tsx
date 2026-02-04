@@ -65,8 +65,20 @@ export function UnifiedLanguageBarMobile({
   isLoadingData = false,
   t = {},
 }: UnifiedLanguageBarMobileProps) {
+  // IMPORTANT: Always call hooks in the same order - no conditional hooks!
   const [isExpanded, setIsExpanded] = useState(false);
   const ctrlPressedRef = useRef<Record<string, boolean>>({});
+
+  // Call useLocaleButtonStyle for all locales to ensure consistent hook calls
+  const buttonStyles = shopLocales.map((locale) =>
+    useLocaleButtonStyle(
+      locale,
+      selectedItem,
+      primaryLocale,
+      contentType,
+      isLoadingData
+    )
+  );
 
   // Find current locale object
   const currentLocale = shopLocales.find((l) => l.locale === currentLanguage);
@@ -102,14 +114,9 @@ export function UnifiedLanguageBarMobile({
       {isExpanded && (
         <Card padding="300">
           <BlockStack gap="200">
-            {shopLocales.map((locale) => {
-              const buttonStyle = useLocaleButtonStyle(
-                locale,
-                selectedItem,
-                primaryLocale,
-                contentType,
-                isLoadingData
-              );
+            {shopLocales.map((locale, index) => {
+              // Use pre-calculated button styles to avoid conditional hook calls
+              const buttonStyle = buttonStyles[index];
 
               const isEnabled = !enabledLanguages || enabledLanguages.includes(locale.locale);
               const isPrimary = locale.primary;
