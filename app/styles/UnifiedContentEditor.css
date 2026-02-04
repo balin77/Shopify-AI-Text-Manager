@@ -10,8 +10,8 @@
   width: 100%;
 }
 
-/* Mobile: Single column with dropdown (default) */
-@media (max-width: 767px) {
+/* Mobile: Single column with dropdown (< 900px) */
+@media (max-width: 899px) {
   .unified-content-editor-layout {
     display: block !important;
   }
@@ -45,8 +45,8 @@
   }
 }
 
-/* Tablet & Desktop: Original layout restored */
-@media (min-width: 768px) {
+/* Desktop: Original layout restored (>= 900px) */
+@media (min-width: 900px) {
   .unified-content-editor-layout {
     /* Layout wird inline im Component gesteuert (flex mit gap) */
     display: flex !important;

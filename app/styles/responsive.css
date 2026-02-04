@@ -10,6 +10,7 @@
 }
 
 /* Visibility Utilities for Mobile/Tablet/Desktop */
+/* Breakpoint bei 900px: Unter 900px = Mobile Dropdown, ab 900px = Desktop Sidebar */
 .mobile-only {
   display: block;
 }
@@ -22,7 +23,7 @@
   display: none;
 }
 
-@media (min-width: 768px) and (max-width: 1023px) {
+@media (min-width: 900px) and (max-width: 1279px) {
   .mobile-only {
     display: none;
   }
@@ -32,11 +33,11 @@
   }
 
   .desktop-only {
-    display: none;
+    display: block; /* Sidebar auch auf Tablet */
   }
 }
 
-@media (min-width: 1024px) {
+@media (min-width: 1280px) {
   .mobile-only {
     display: none;
   }

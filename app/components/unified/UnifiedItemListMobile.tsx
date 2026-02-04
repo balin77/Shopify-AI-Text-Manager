@@ -6,8 +6,8 @@
  */
 
 import { useState } from "react";
-import { Card, TextField, BlockStack, InlineStack, Text, Icon, Button } from "@shopify/polaris";
-import { SearchIcon, ChevronDownIcon, ChevronUpIcon } from "@shopify/polaris-icons";
+import { Card, TextField, BlockStack, InlineStack, Text, Icon, Button, Thumbnail } from "@shopify/polaris";
+import { SearchIcon, ChevronDownIcon, ChevronUpIcon, ChevronLeftIcon, ChevronRightIcon } from "@shopify/polaris-icons";
 import type { UnifiedItem } from "./UnifiedItemList";
 
 interface UnifiedItemListMobileProps {
@@ -42,6 +42,8 @@ export function UnifiedItemListMobile({
 }: UnifiedItemListMobileProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 10;
 
   // Find selected item
   const selectedItem = items.find(item => item.id === selectedItemId);
@@ -57,10 +59,22 @@ export function UnifiedItemListMobile({
     );
   });
 
+  // Pagination
+  const totalPages = Math.ceil(filteredItems.length / itemsPerPage);
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const paginatedItems = filteredItems.slice(startIndex, startIndex + itemsPerPage);
+
   const handleItemSelect = (itemId: string) => {
     onItemSelect(itemId);
     setIsExpanded(false);
     setSearchQuery("");
+    setCurrentPage(1);
+  };
+
+  // Reset page when search changes
+  const handleSearchChange = (value: string) => {
+    setSearchQuery(value);
+    setCurrentPage(1);
   };
 
   return (
@@ -85,27 +99,12 @@ export function UnifiedItemListMobile({
               {selectedItem ? (
                 <InlineStack gap="300" blockAlign="center">
                   {/* Thumbnail */}
-                  {selectedItem.thumbnail && (
-                    <div
-                      style={{
-                        width: "40px",
-                        height: "40px",
-                        borderRadius: "4px",
-                        overflow: "hidden",
-                        flexShrink: 0,
-                        backgroundColor: "#f3f4f6",
-                      }}
-                    >
-                      <img
-                        src={selectedItem.thumbnail}
-                        alt=""
-                        style={{
-                          width: "100%",
-                          height: "100%",
-                          objectFit: "cover",
-                        }}
-                      />
-                    </div>
+                  {selectedItem.image?.url && (
+                    <Thumbnail
+                      source={selectedItem.image.url}
+                      alt={selectedItem.image.altText || selectedItem.title || ""}
+                      size="small"
+                    />
                   )}
 
                   {/* Title */}
@@ -138,17 +137,19 @@ export function UnifiedItemListMobile({
         <Card>
           <BlockStack gap="300">
             {/* Search */}
-            <TextField
-              label=""
-              value={searchQuery}
-              onChange={setSearchQuery}
-              placeholder={t.searchPlaceholder || `Search ${resourceName.plural}...`}
-              prefix={<Icon source={SearchIcon} />}
-              autoComplete="off"
-              clearButton
-              onClearButtonClick={() => setSearchQuery("")}
-              autoFocus
-            />
+            <div style={{ border: "none" }}>
+              <TextField
+                label=""
+                value={searchQuery}
+                onChange={handleSearchChange}
+                placeholder={t.searchPlaceholder || `Search ${resourceName.plural}...`}
+                prefix={<Icon source={SearchIcon} />}
+                autoComplete="off"
+                clearButton
+                onClearButtonClick={() => handleSearchChange("")}
+                autoFocus
+              />
+            </div>
 
             {/* Item Count */}
             <Text as="p" variant="bodySm" tone="subdued">
@@ -158,21 +159,21 @@ export function UnifiedItemListMobile({
             {/* Scrollable Item List */}
             <div
               style={{
-                maxHeight: "300px",
+                maxHeight: "400px",
                 overflowY: "auto",
                 margin: "-8px",
                 padding: "8px",
               }}
             >
               <BlockStack gap="200">
-                {filteredItems.length === 0 ? (
+                {paginatedItems.length === 0 ? (
                   <div style={{ padding: "24px", textAlign: "center" }}>
                     <Text as="p" variant="bodyMd" tone="subdued">
                       {t.noResults || "No items found"}
                     </Text>
                   </div>
                 ) : (
-                  filteredItems.map((item) => {
+                  paginatedItems.map((item) => {
                     const isSelected = item.id === selectedItemId;
 
                     if (renderItem) {
@@ -207,27 +208,12 @@ export function UnifiedItemListMobile({
                       >
                         <InlineStack gap="300" blockAlign="center">
                           {/* Thumbnail */}
-                          {item.thumbnail && (
-                            <div
-                              style={{
-                                width: "40px",
-                                height: "40px",
-                                borderRadius: "4px",
-                                overflow: "hidden",
-                                flexShrink: 0,
-                                backgroundColor: "#f3f4f6",
-                              }}
-                            >
-                              <img
-                                src={item.thumbnail}
-                                alt=""
-                                style={{
-                                  width: "100%",
-                                  height: "100%",
-                                  objectFit: "cover",
-                                }}
-                              />
-                            </div>
+                          {item.image?.url && (
+                            <Thumbnail
+                              source={item.image.url}
+                              alt={item.image.altText || item.title || ""}
+                              size="small"
+                            />
                           )}
 
                           {/* Content */}
@@ -263,6 +249,29 @@ export function UnifiedItemListMobile({
               </BlockStack>
             </div>
 
+            {/* Pagination */}
+            {totalPages > 1 && (
+              <div style={{ paddingTop: "8px", borderTop: "1px solid #e1e3e5" }}>
+                <InlineStack align="center" blockAlign="center" gap="200">
+                  <Button
+                    icon={ChevronLeftIcon}
+                    disabled={currentPage === 1}
+                    onClick={() => setCurrentPage(currentPage - 1)}
+                    accessibilityLabel="Previous page"
+                  />
+                  <Text as="span" variant="bodySm" tone="subdued">
+                    {currentPage} of {totalPages}
+                  </Text>
+                  <Button
+                    icon={ChevronRightIcon}
+                    disabled={currentPage === totalPages}
+                    onClick={() => setCurrentPage(currentPage + 1)}
+                    accessibilityLabel="Next page"
+                  />
+                </InlineStack>
+              </div>
+            )}
+
             {/* Close Button */}
             <Button onClick={() => setIsExpanded(false)} fullWidth>
               Close
@@ -270,6 +279,19 @@ export function UnifiedItemListMobile({
           </BlockStack>
         </Card>
       )}
+
+      <style>{`
+        /* Remove blue focus border from TextField in dropdown */
+        .unified-item-list-mobile .Polaris-TextField__Input:focus {
+          border-color: #c9cccf !important;
+          box-shadow: none !important;
+        }
+
+        .unified-item-list-mobile .Polaris-TextField__Input:focus-visible {
+          outline: 2px solid #0066CC;
+          outline-offset: 2px;
+        }
+      `}</style>
     </div>
   );
 }
