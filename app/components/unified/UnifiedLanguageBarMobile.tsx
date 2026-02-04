@@ -98,15 +98,18 @@ export function UnifiedLanguageBarMobile({
             background: "transparent",
             cursor: "pointer",
             textAlign: "left",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
           }}
         >
-          <InlineStack align="space-between" blockAlign="center">
-            <Text as="span" variant="bodyMd" fontWeight="semibold">
-              {currentLocaleName}
-              {isPrimaryLocale && ` (${t.primaryLocaleSuffix || "Primary"})`}
-            </Text>
+          <Text as="span" variant="bodyMd" fontWeight="semibold">
+            {currentLocaleName}
+            {isPrimaryLocale && ` (${t.primaryLocaleSuffix || "Primary"})`}
+          </Text>
+          <span style={{ marginLeft: "auto", flexShrink: 0, display: "flex", alignItems: "center" }}>
             <Icon source={isExpanded ? ChevronUpIcon : ChevronDownIcon} />
-          </InlineStack>
+          </span>
         </button>
       </Card>
 

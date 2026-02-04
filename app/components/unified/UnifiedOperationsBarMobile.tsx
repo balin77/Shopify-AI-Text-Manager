@@ -93,14 +93,17 @@ export function UnifiedOperationsBarMobile({
             background: "transparent",
             cursor: "pointer",
             textAlign: "left",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
           }}
         >
-          <InlineStack align="space-between" blockAlign="center">
-            <Text as="span" variant="bodyMd" fontWeight="semibold">
-              {t.actions || "Actions"}
-            </Text>
+          <Text as="span" variant="bodyMd" fontWeight="semibold">
+            {t.actions || "Actions"}
+          </Text>
+          <span style={{ marginLeft: "auto", flexShrink: 0, display: "flex", alignItems: "center" }}>
             <Icon source={isExpanded ? ChevronUpIcon : ChevronDownIcon} />
-          </InlineStack>
+          </span>
         </button>
       </Card>
 
