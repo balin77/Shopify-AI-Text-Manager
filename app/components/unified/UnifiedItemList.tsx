@@ -149,8 +149,9 @@ export function UnifiedItemList({
   useEffect(() => {
     let rafId: number | null = null;
     let lastCalculatedHeight: number | null = null;
+    let isResizing = false;
 
-    const calculateDynamicPagination = () => {
+    const calculateDynamicPagination = (forceUpdate = false) => {
       // Cancel any pending animation frame
       if (rafId !== null) {
         cancelAnimationFrame(rafId);
@@ -185,7 +186,8 @@ export function UnifiedItemList({
 
         // Only update if height changed significantly (more than 10px difference)
         // This prevents flickering from minor layout shifts
-        if (lastCalculatedHeight !== null && Math.abs(availableHeight - lastCalculatedHeight) < 10) {
+        // BUT: Always update during window resize or when forced
+        if (!forceUpdate && !isResizing && lastCalculatedHeight !== null && Math.abs(availableHeight - lastCalculatedHeight) < 10) {
           return;
         }
 
@@ -205,23 +207,30 @@ export function UnifiedItemList({
 
         setDynamicItemsPerPage(itemsThatFit);
         setItemHeight(calculatedItemHeight);
+        isResizing = false;
       });
     };
 
+    // Handle window resize - always recalculate
+    const handleResize = () => {
+      isResizing = true;
+      calculateDynamicPagination(true);
+    };
+
     // Delay initial calculation to allow DOM to render
-    const timer = setTimeout(calculateDynamicPagination, 150);
-    window.addEventListener('resize', calculateDynamicPagination);
+    const timer = setTimeout(() => calculateDynamicPagination(true), 150);
+    window.addEventListener('resize', handleResize);
 
     // Use ResizeObserver for more reliable height detection
     let resizeObserver: ResizeObserver | null = null;
     if (wrapperRef.current && typeof ResizeObserver !== 'undefined') {
-      resizeObserver = new ResizeObserver(calculateDynamicPagination);
+      resizeObserver = new ResizeObserver(() => calculateDynamicPagination(false));
       resizeObserver.observe(wrapperRef.current);
     }
 
     return () => {
       clearTimeout(timer);
-      window.removeEventListener('resize', calculateDynamicPagination);
+      window.removeEventListener('resize', handleResize);
       resizeObserver?.disconnect();
       if (rafId !== null) {
         cancelAnimationFrame(rafId);
