@@ -1,4 +1,4 @@
-import { LoaderFunctionArgs, redirect } from "@remix-run/node";
+import { LoaderFunctionArgs, redirect, json } from "@remix-run/node";
 import { login } from "../shopify.server";
 import { logger } from "~/utils/logger.server";
 
@@ -19,7 +19,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   try {
     const result = await login(request);
     logger.debug("[AUTH.LOGIN] Login completed", { context: "Auth" });
-    return result;
+    return json(result);
   } catch (error) {
     logger.error("[AUTH.LOGIN] Error", { context: "Auth", error: error instanceof Error ? error.message : String(error), stack: error instanceof Error ? error.stack : undefined });
     throw error;
