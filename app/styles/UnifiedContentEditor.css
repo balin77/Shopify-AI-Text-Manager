@@ -13,31 +13,27 @@
 /* Mobile: Single column stacked layout (default) */
 @media (max-width: 767px) {
   .unified-content-editor-layout {
-    grid-template-columns: 1fr;
-    grid-template-areas:
-      "list"
-      "editor"
-      "sidebar";
+    grid-template-columns: 1fr !important;
+    display: block !important;
   }
 
   .unified-item-list-container {
-    grid-area: list;
+    width: 100%;
+    margin-bottom: 16px;
   }
 
   .unified-editor-container {
-    grid-area: editor;
+    width: 100%;
   }
 
   .seo-sidebar-container {
-    grid-area: sidebar;
-    /* Show as expandable card on mobile instead of sidebar */
-    display: block;
+    display: none !important;
   }
 
   /* Item list - compact on mobile */
   .unified-item-list-container {
-    max-height: 300px;
-    overflow-y: auto;
+    max-height: none;
+    overflow-y: visible;
   }
 
   /* Language bar - wrap buttons on mobile */
@@ -57,46 +53,46 @@
 }
 
 /* Tablet: Two column layout (list + editor, hide sidebar) */
-@media (min-width: 768px) and (max-width: 1023px) {
+@media (min-width: 768px) and (max-width: 1279px) {
   .unified-content-editor-layout {
-    grid-template-columns: 280px 1fr;
-    grid-template-areas:
-      "list editor";
+    grid-template-columns: 280px 1fr !important;
+    display: grid !important;
   }
 
   .unified-item-list-container {
-    grid-area: list;
+    width: 280px;
   }
 
   .unified-editor-container {
-    grid-area: editor;
+    width: 100%;
+    min-width: 0;
   }
 
-  /* Hide SEO sidebar on tablets */
+  /* Hide SEO sidebar on tablets - Editor nimmt volle Breite */
   .seo-sidebar-container {
-    display: none;
+    display: none !important;
   }
 }
 
 /* Desktop: Three column layout (list + editor + sidebar) */
-@media (min-width: 1024px) {
+@media (min-width: 1280px) {
   .unified-content-editor-layout {
-    grid-template-columns: 320px 1fr 280px;
-    grid-template-areas:
-      "list editor sidebar";
+    grid-template-columns: 320px 1fr 280px !important;
+    display: grid !important;
   }
 
   .unified-item-list-container {
-    grid-area: list;
+    width: 320px;
   }
 
   .unified-editor-container {
-    grid-area: editor;
+    width: 100%;
+    min-width: 0;
   }
 
   .seo-sidebar-container {
-    grid-area: sidebar;
-    display: block;
+    display: block !important;
+    width: 280px;
   }
 }
 

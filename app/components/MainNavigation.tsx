@@ -423,6 +423,7 @@ export function MainNavigation() {
           {/* Loading Indicator - shows for navigation or global loading state */}
           {(showLoadingIndicator || isGlobalLoading) && (
             <div
+              className="desktop-only"
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -436,10 +437,10 @@ export function MainNavigation() {
             </div>
           )}
 
-          {/* InfoBox auf gleicher Ebene - schlanke Variante */}
+          {/* InfoBox auf gleicher Ebene - schlanke Variante - versteckt auf Mobile */}
           {infoBox && (
             <div
-              className="info-box"
+              className="info-box desktop-only"
               role="status"
               aria-live="polite"
               aria-label={`${infoBox.tone === "success" ? "Success" : infoBox.tone === "critical" ? "Error" : infoBox.tone === "warning" ? "Warning" : "Information"} notification`}

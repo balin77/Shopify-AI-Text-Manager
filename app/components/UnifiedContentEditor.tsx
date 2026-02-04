@@ -11,6 +11,7 @@ import { SearchIcon, ChevronLeftIcon, ChevronRightIcon } from "@shopify/polaris-
 import { AIEditableField } from "./AIEditableField";
 import { AIEditableHTMLField } from "./AIEditableHTMLField";
 import { UnifiedItemList } from "./unified/UnifiedItemList";
+import { UnifiedItemListMobile } from "./unified/UnifiedItemListMobile";
 import { UnifiedLanguageBar } from "./unified/UnifiedLanguageBar";
 import { ImageGalleryField } from "./unified/ImageGalleryField";
 import { OptionsField } from "./unified/OptionsField";
@@ -208,30 +209,52 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
       <style>{contentEditorStyles}</style>
 
       <div className="unified-content-editor-layout" style={{ padding: "16px" }}>
-        {/* Left Sidebar - Unified Item List */}
+        {/* Left Sidebar - Unified Item List (Desktop) / Dropdown (Mobile) */}
         <div className="unified-item-list-container">
-          <UnifiedItemList
-          items={unifiedItems}
-          selectedItemId={state.selectedItemId}
-          onItemSelect={handlers.handleItemSelect}
-          resourceName={{
-            singular: config.displayNameSingular,
-            plural: config.displayName,
-          }}
-          renderItem={renderListItem}
-          showSearch={true}
-          showPagination={true}
-          showStatusStripe={!hideItemListStatusBars}
-          showThumbnails={!hideItemListImages}
-          showCategoryBadge={showItemListCategoryBadge}
-          planLimit={finalPlanLimit}
-          t={{
-            searchPlaceholder: t.content?.searchPlaceholder,
-            paginationOf: t.content?.paginationOf || "of",
-            paginationPrevious: t.content?.paginationPrevious || "Previous",
-            paginationNext: t.content?.paginationNext || "Next",
-          }}
-          />
+          {/* Desktop: Full List */}
+          <div className="desktop-only">
+            <UnifiedItemList
+              items={unifiedItems}
+              selectedItemId={state.selectedItemId}
+              onItemSelect={handlers.handleItemSelect}
+              resourceName={{
+                singular: config.displayNameSingular,
+                plural: config.displayName,
+              }}
+              renderItem={renderListItem}
+              showSearch={true}
+              showPagination={true}
+              showStatusStripe={!hideItemListStatusBars}
+              showThumbnails={!hideItemListImages}
+              showCategoryBadge={showItemListCategoryBadge}
+              planLimit={finalPlanLimit}
+              t={{
+                searchPlaceholder: t.content?.searchPlaceholder,
+                paginationOf: t.content?.paginationOf || "of",
+                paginationPrevious: t.content?.paginationPrevious || "Previous",
+                paginationNext: t.content?.paginationNext || "Next",
+              }}
+            />
+          </div>
+
+          {/* Mobile: Dropdown */}
+          <div className="mobile-only">
+            <UnifiedItemListMobile
+              items={unifiedItems}
+              selectedItemId={state.selectedItemId}
+              onItemSelect={handlers.handleItemSelect}
+              resourceName={{
+                singular: config.displayNameSingular,
+                plural: config.displayName,
+              }}
+              renderItem={renderListItem}
+              t={{
+                searchPlaceholder: t.content?.searchPlaceholder,
+                noResults: t.content?.noResults || "No items found",
+                selectItem: t.content?.selectItem || `Select ${config.displayNameSingular}`,
+              }}
+            />
+          </div>
         </div>
 
         {/* Middle: Content Editor */}
