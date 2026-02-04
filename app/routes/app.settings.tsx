@@ -22,6 +22,7 @@ import { SettingsSetupTab } from "../components/SettingsSetupTab";
 import { SettingsAITab } from "../components/SettingsAITab";
 import { SettingsLanguageTab } from "../components/SettingsLanguageTab";
 import { SettingsUsageLimitsTab } from "../components/SettingsUsageLimitsTab";
+import { SettingsNavigationMobile } from "../components/SettingsNavigationMobile";
 import { db } from "../db.server";
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
@@ -710,9 +711,18 @@ export default function SettingsPage() {
     <Page fullWidth>
       <MainNavigation />
       <div style={{ padding: "1rem" }}>
+        {/* Mobile Navigation - Only visible on mobile */}
+        <div className="settings-mobile-nav">
+          <SettingsNavigationMobile
+            selectedSection={selectedSection}
+            onSectionSelect={handleSectionChange}
+            t={t}
+          />
+        </div>
+
         <div style={{ display: "flex", gap: "1rem" }}>
-          {/* Left Sidebar */}
-          <div style={{ width: "250px", flexShrink: 0 }}>
+          {/* Left Sidebar - Hidden on mobile */}
+          <div className="settings-desktop-nav" style={{ width: "250px", flexShrink: 0 }}>
             <Card padding="0">
               <button
                 onClick={() => handleSectionChange("setup")}
@@ -1075,6 +1085,31 @@ export default function SettingsPage() {
           </div>
         </div>
       </div>
+
+      {/* Responsive Styles */}
+      <style>{`
+        /* Hide mobile navigation by default (desktop) */
+        .settings-mobile-nav {
+          display: none;
+          margin-bottom: 1rem;
+        }
+
+        /* Show desktop navigation by default */
+        .settings-desktop-nav {
+          display: block;
+        }
+
+        /* Mobile: max-width 768px */
+        @media (max-width: 768px) {
+          .settings-mobile-nav {
+            display: block;
+          }
+
+          .settings-desktop-nav {
+            display: none !important;
+          }
+        }
+      `}</style>
     </Page>
   );
 }
