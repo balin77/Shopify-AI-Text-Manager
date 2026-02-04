@@ -173,7 +173,6 @@ export function UnifiedOperationsBarMobile({
                 resourceType={resourceType}
                 locale={locale}
                 onReloadComplete={onReloadComplete}
-                fullWidth
               />
             </div>
           </BlockStack>
