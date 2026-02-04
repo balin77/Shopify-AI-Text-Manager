@@ -3,6 +3,7 @@ import { useRef } from "react";
 import { useHtmlFormatting } from "../hooks/useHtmlFormatting";
 import { useI18n } from "../contexts/I18nContext";
 import { HtmlFormattingToolbar } from "./HtmlFormattingToolbar";
+import "../styles/AIEditableField.css";
 
 interface AIInstructionFieldGroupProps {
   fieldName: string;
