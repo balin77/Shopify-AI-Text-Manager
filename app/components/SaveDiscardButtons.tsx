@@ -19,7 +19,7 @@ interface SaveDiscardButtonsProps {
  * Used across all content editing pages (Collections, Blog, Pages, Policies, Templates)
  *
  * Features:
- * - Discard button only visible when hasChanges is true
+ * - Discard button always visible but disabled when no changes
  * - Save button always visible but disabled when no changes
  * - Pulse animation on save button when highlightSaveButton is true
  * - Loading state on save button during submission
@@ -46,14 +46,12 @@ export function SaveDiscardButtons({
   return (
     <div ref={saveButtonRef}>
       <InlineStack gap="200">
-        {hasChanges && (
-          <Button
-            onClick={onDiscard}
-            disabled={fetcherState !== "idle"}
-          >
-            {discardText}
-          </Button>
-        )}
+        <Button
+          onClick={onDiscard}
+          disabled={!hasChanges || fetcherState !== "idle"}
+        >
+          {discardText}
+        </Button>
         <div
           style={{
             animation: highlightSaveButton ? "pulse 1.5s ease-in-out infinite" : "none",
