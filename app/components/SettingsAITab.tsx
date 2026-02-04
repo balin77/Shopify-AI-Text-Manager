@@ -194,21 +194,22 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
   return (
     <Card>
       <BlockStack gap="500">
-        <Text as="h2" variant="headingLg">
-          {t.settings.manageAiKeys}
-        </Text>
-
-        <InlineStack align="end">
-          <SaveDiscardButtons
-            hasChanges={hasChanges}
-            onSave={handleSave}
-            onDiscard={handleDiscard}
-            saveText={t.products.saveChanges}
-            discardText={t.content?.discardChanges || "Verwerfen"}
-            action="saveSettings"
-            fetcherState={fetcher.state}
-            fetcherFormData={fetcher.formData}
-          />
+        <InlineStack align="space-between" blockAlign="center" wrap={false}>
+          <Text as="h2" variant="headingLg">
+            {t.settings.manageAiKeys}
+          </Text>
+          <div style={{ marginLeft: "auto" }}>
+            <SaveDiscardButtons
+              hasChanges={hasChanges}
+              onSave={handleSave}
+              onDiscard={handleDiscard}
+              saveText={t.products.saveChanges}
+              discardText={t.content?.discardChanges || "Verwerfen"}
+              action="saveSettings"
+              fetcherState={fetcher.state}
+              fetcherFormData={fetcher.formData}
+            />
+          </div>
         </InlineStack>
 
         <Text as="p" variant="bodyMd" tone="subdued">

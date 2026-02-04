@@ -194,21 +194,23 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, on
     <Card>
       <BlockStack gap="500">
         {/* Header with Title and Save/Discard Buttons */}
-        <InlineStack align="space-between" blockAlign="center">
+        <InlineStack align="space-between" blockAlign="center" wrap={false}>
           <Text as="h2" variant="headingLg">
             {t.settings.aiInstructions}
           </Text>
           {!readOnly && (
-            <SaveDiscardButtons
-              hasChanges={hasChanges}
-              onSave={handleSave}
-              onDiscard={handleDiscard}
-              saveText={t.products?.saveChanges || "Änderungen speichern"}
-              discardText={t.content?.discardChanges || "Verwerfen"}
-              action="saveInstructions"
-              fetcherState={fetcher.state}
-              fetcherFormData={fetcher.formData}
-            />
+            <div style={{ marginLeft: "auto" }}>
+              <SaveDiscardButtons
+                hasChanges={hasChanges}
+                onSave={handleSave}
+                onDiscard={handleDiscard}
+                saveText={t.products?.saveChanges || "Änderungen speichern"}
+                discardText={t.content?.discardChanges || "Verwerfen"}
+                action="saveInstructions"
+                fetcherState={fetcher.state}
+                fetcherFormData={fetcher.formData}
+              />
+            </div>
           )}
         </InlineStack>
 
