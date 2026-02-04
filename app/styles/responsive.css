@@ -197,6 +197,42 @@
   .unified-item-list-container {
     display: none !important;
   }
+
+  /* Mobile Dropdowns Container - Side by Side Layout */
+  .mobile-dropdowns-container {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+
+  /* Language and Operations Dropdown Mobile */
+  .language-dropdown-mobile,
+  .operations-dropdown-mobile {
+    min-width: 0; /* Allow flex items to shrink below content size */
+  }
+
+  /* Ensure dropdown buttons are compact */
+  .language-dropdown-mobile button,
+  .operations-dropdown-mobile button {
+    width: 100%;
+    min-height: 44px;
+    padding: 8px 12px !important;
+    font-size: 14px;
+  }
+
+  /* Dropdown expanded content - full width */
+  .language-dropdown-mobile .Polaris-Card,
+  .operations-dropdown-mobile .Polaris-Card {
+    position: relative;
+    z-index: 10;
+  }
+
+  /* Make expanded dropdowns overlay and span both columns */
+  .mobile-dropdowns-container .language-dropdown-mobile:has(.Polaris-Card:nth-child(2)),
+  .mobile-dropdowns-container .operations-dropdown-mobile:has(.Polaris-Card:nth-child(2)) {
+    grid-column: 1 / -1; /* Span both columns when expanded */
+  }
 }
 
 /* Tablet Optimization (768px - 1024px) */

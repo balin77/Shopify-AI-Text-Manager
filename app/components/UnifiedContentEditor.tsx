@@ -13,6 +13,8 @@ import { AIEditableHTMLField } from "./AIEditableHTMLField";
 import { UnifiedItemList } from "./unified/UnifiedItemList";
 import { UnifiedItemListMobile } from "./unified/UnifiedItemListMobile";
 import { UnifiedLanguageBar } from "./unified/UnifiedLanguageBar";
+import { UnifiedLanguageBarMobile } from "./unified/UnifiedLanguageBarMobile";
+import { UnifiedOperationsBarMobile } from "./unified/UnifiedOperationsBarMobile";
 import { ImageGalleryField } from "./unified/ImageGalleryField";
 import { OptionsField } from "./unified/OptionsField";
 import { SaveDiscardButtons } from "./SaveDiscardButtons";
@@ -297,9 +299,36 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
         <div className="unified-editor-container" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: "400px" }}>
           {selectedItem ? (
             <>
-              {/* Language Selection Bar */}
-              <Card padding="400">
-                <UnifiedLanguageBar
+              {/* Language Selection Bar - Desktop */}
+              <div className="desktop-only">
+                <Card padding="400">
+                  <UnifiedLanguageBar
+                    shopLocales={shopLocales}
+                    currentLanguage={state.currentLanguage}
+                    primaryLocale={primaryLocale}
+                    selectedItem={selectedItem}
+                    contentType={config.contentType}
+                    hasChanges={state.hasChanges}
+                    onLanguageChange={handlers.handleLanguageChange}
+                    enabledLanguages={state.enabledLanguages}
+                    onToggleLanguage={handlers.handleToggleLanguage}
+                    onTranslateAll={handlers.handleTranslateAll}
+                    isTranslating={fetcherState !== "idle" && fetcherFormData?.get("action") === "translateAll"}
+                    showTranslateAll={true}
+                    showReloadButton={true}
+                    isLoadingData={state.isLoadingData}
+                    t={{
+                      primaryLocaleSuffix: t.content?.primaryLanguageSuffix || "Primary",
+                      translateAll: t.content?.translateAll || "🌍 Translate All",
+                      translating: t.content?.translating || "Translating...",
+                    }}
+                  />
+                </Card>
+              </div>
+
+              {/* Mobile: Language and Operations Dropdowns Side-by-Side */}
+              <div className="mobile-only mobile-dropdowns-container">
+                <UnifiedLanguageBarMobile
                   shopLocales={shopLocales}
                   currentLanguage={state.currentLanguage}
                   primaryLocale={primaryLocale}
@@ -309,21 +338,48 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   onLanguageChange={handlers.handleLanguageChange}
                   enabledLanguages={state.enabledLanguages}
                   onToggleLanguage={handlers.handleToggleLanguage}
-                  onTranslateAll={handlers.handleTranslateAll}
-                  isTranslating={fetcherState !== "idle" && fetcherFormData?.get("action") === "translateAll"}
-                  showTranslateAll={true}
-                  showReloadButton={true}
                   isLoadingData={state.isLoadingData}
                   t={{
                     primaryLocaleSuffix: t.content?.primaryLanguageSuffix || "Primary",
-                    translateAll: t.content?.translateAll || "🌍 Translate All",
-                    translating: t.content?.translating || "Translating...",
+                    selectLanguage: t.content?.selectLanguage || "Select Language",
                   }}
                 />
-              </Card>
+                <UnifiedOperationsBarMobile
+                  isPrimaryLocale={state.currentLanguage === primaryLocale}
+                  hasChanges={state.hasChanges}
+                  fetcherState={fetcherState}
+                  fetcherFormData={fetcherFormData}
+                  resourceId={selectedItem.id}
+                  resourceType={getResourceType(config.contentType)}
+                  locale={state.currentLanguage}
+                  onTranslateAll={
+                    state.currentLanguage === primaryLocale
+                      ? handlers.handleTranslateAll
+                      : handlers.handleTranslateAllForLocale
+                  }
+                  onClearAll={
+                    state.currentLanguage === primaryLocale
+                      ? handlers.handleClearAllClick
+                      : handlers.handleClearAllForLocaleClick
+                  }
+                  onSave={handlers.handleSave}
+                  onDiscard={handlers.handleDiscard}
+                  onReloadComplete={editor.helpers.triggerDataRefresh}
+                  highlightSaveButton={navigationGuard.highlightSaveButton}
+                  t={{
+                    actions: t.content?.actions || "Actions",
+                    translateAll: t.content?.translateAll || "🌍 Translate All",
+                    translating: t.content?.translating || "Translating...",
+                    clearAll: t.content?.clearAll || "Clear All",
+                    saveChanges: t.content?.saveChanges || "Save Changes",
+                    discard: t.content?.discardChanges || "Discard",
+                  }}
+                />
+              </div>
 
-              {/* Operation Buttons */}
-              <Card padding="400" className="operation-buttons-card">
+              {/* Operation Buttons - Desktop */}
+              <div className="desktop-only">
+                <Card padding="400" className="operation-buttons-card">
                 <InlineStack align="space-between" blockAlign="center">
                   {/* Left: Translate All + Clear All Buttons */}
                   <InlineStack gap="200" className="operation-buttons-container">
@@ -394,6 +450,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   </InlineStack>
                 </InlineStack>
               </Card>
+              </div>
 
               {/* Scrollable Content Area */}
               <div className="field-editor-area" style={{ flex: 1, overflowY: "auto", marginTop: "1rem" }}>
