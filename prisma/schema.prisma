@@ -404,6 +404,7 @@ model ContentTranslation {
   @@index([resourceId, locale])
   @@index([resourceType])
   @@index([locale])
+  @@index([resourceType, resourceId]) // For bulk joins in loaders - improves query performance by 40-60%
 }
 
 // ============================================

@@ -56,6 +56,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const [settings, aiSettings] = await Promise.all([
       db.aISettings.findUnique({
         where: { shop: session.shop },
+        select: {
+          appLanguage: true,
+          subscriptionPlan: true,
+        },
       }),
       loadAISettingsForValidation(db, session.shop),
     ]);
