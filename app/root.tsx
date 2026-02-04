@@ -41,7 +41,20 @@ export default function App() {
       <link
         rel="stylesheet"
         href="https://cdn.shopify.com/static/fonts/inter/v4/styles.css"
+        media="print"
+        onLoad="this.media='all'"
       />
+      <noscript>
+        <link
+          rel="stylesheet"
+          href="https://cdn.shopify.com/static/fonts/inter/v4/styles.css"
+        />
+      </noscript>
+      <style>{`
+        body {
+          font-family: -apple-system, BlinkMacSystemFont, 'San Francisco', 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+        }
+      `}</style>
       <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js" />
       <Outlet />
     </Document>
