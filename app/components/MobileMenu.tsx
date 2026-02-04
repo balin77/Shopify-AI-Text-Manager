@@ -177,18 +177,6 @@ export function MobileMenu({
 
             {/* Main Navigation Tabs */}
             <div style={{ padding: "8px 0" }}>
-              <div
-                style={{
-                  fontSize: "12px",
-                  fontWeight: "600",
-                  color: "#6d7175",
-                  padding: "8px 16px",
-                  textTransform: "uppercase",
-                  letterSpacing: "0.5px",
-                }}
-              >
-                {t.nav.mainNavigation || "Navigation"}
-              </div>
               {tabs.map((tab) => {
                 const isActive = location.pathname.startsWith(tab.path);
                 const showProductCount = tab.id === "products" && productCount !== undefined;
@@ -310,19 +298,6 @@ export function MobileMenu({
 
             {/* Plan Selector (Collapsible) */}
             <div style={{ padding: "8px 0", borderTop: "1px solid #e1e3e5" }}>
-              <div
-                style={{
-                  fontSize: "12px",
-                  fontWeight: "600",
-                  color: "#6d7175",
-                  padding: "8px 16px",
-                  textTransform: "uppercase",
-                  letterSpacing: "0.5px",
-                }}
-              >
-                {t.settings?.subscriptionPlan || "Plan"}
-              </div>
-
               {/* Current Plan - Always Visible */}
               <button
                 onClick={() => setIsPlanExpanded(!isPlanExpanded)}
