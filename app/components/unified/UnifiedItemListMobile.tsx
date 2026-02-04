@@ -43,7 +43,7 @@ export function UnifiedItemListMobile({
   const [isExpanded, setIsExpanded] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
-  const itemsPerPage = 10;
+  const [itemsPerPage, setItemsPerPage] = useState(10);
 
   // Find selected item
   const selectedItem = items.find(item => item.id === selectedItemId);
@@ -76,6 +76,30 @@ export function UnifiedItemListMobile({
     setSearchQuery(value);
     setCurrentPage(1);
   };
+
+  // Calculate items per page based on screen height
+  useEffect(() => {
+    const calculateItemsPerPage = () => {
+      const itemHeight = 72; // Height of each item (including padding/margin)
+      const searchHeight = 60; // Search field height
+      const countHeight = 30; // Count label height
+      const paginationHeight = 48; // Pagination controls height
+      const headerHeight = 64; // Mobile header/navbar height
+      const padding = 40; // Extra padding/margins
+
+      const availableHeight = window.innerHeight - headerHeight - searchHeight - countHeight - paginationHeight - padding;
+      const calculatedItems = Math.max(5, Math.floor(availableHeight / itemHeight));
+
+      setItemsPerPage(calculatedItems);
+    };
+
+    calculateItemsPerPage();
+    window.addEventListener('resize', calculateItemsPerPage);
+
+    return () => {
+      window.removeEventListener('resize', calculateItemsPerPage);
+    };
+  }, []);
 
   return (
     <div className="unified-item-list-mobile">
@@ -271,11 +295,6 @@ export function UnifiedItemListMobile({
                 </InlineStack>
               </div>
             )}
-
-            {/* Close Button */}
-            <Button onClick={() => setIsExpanded(false)} fullWidth>
-              Close
-            </Button>
           </BlockStack>
         </Card>
       )}
