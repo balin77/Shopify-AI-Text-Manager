@@ -110,7 +110,9 @@ export function UnifiedItemSelectorCompact({
         <Text as="span" variant="bodySm" fontWeight="medium" truncate>
           {selectedItem ? (selectedItem.title || selectedItem.handle || "Untitled") : (t.selectItem || "Select")}
         </Text>
-        <Icon source={isExpanded ? ChevronUpIcon : ChevronDownIcon} />
+        <span style={{ flexShrink: 0, display: "flex", alignItems: "center", marginLeft: "auto" }}>
+          <Icon source={isExpanded ? ChevronUpIcon : ChevronDownIcon} />
+        </span>
       </button>
 
       {/* Full Dropdown Overlay */}

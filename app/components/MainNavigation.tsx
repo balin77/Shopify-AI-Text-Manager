@@ -524,14 +524,16 @@ export function MainNavigation() {
 
           {/* Plan Badge - nur aktiver Plan, sichtbar auf Mobile und ganz rechts */}
           <div style={{ marginLeft: "auto" }}>
-            <Button
-              onClick={handlePlanNavigation}
-              size="slim"
-              pressed
-              ariaLabel={`Current plan: ${getPlanDisplayName(plan)}`}
-            >
-              {getPlanDisplayName(plan)}
-            </Button>
+            <div style={{ height: "44px", display: "flex", alignItems: "center" }}>
+              <Button
+                onClick={handlePlanNavigation}
+                size="slim"
+                pressed
+                ariaLabel={`Current plan: ${getPlanDisplayName(plan)}`}
+              >
+                {getPlanDisplayName(plan)}
+              </Button>
+            </div>
           </div>
         </div>
       </nav>

@@ -171,10 +171,20 @@
   max-height: calc(100vh - 250px); /* Prevent infinite scroll */
 }
 
-/* Mobile: Smaller max-height for fields */
-@media (max-width: 767px) {
+/* Mobile: Use full available height */
+@media (max-width: 768px) {
   .field-editor-area {
-    max-height: calc(100vh - 350px);
+    max-height: calc(100vh - var(--navbar-height, 73px) - 120px);
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch; /* Smooth scrolling on iOS */
+  }
+
+  /* Ensure main editor container uses full height */
+  .unified-editor-container {
+    display: flex !important;
+    flex-direction: column !important;
+    height: calc(100vh - var(--navbar-height, 73px) - 32px) !important;
+    min-height: calc(100vh - var(--navbar-height, 73px) - 32px) !important;
   }
 }
 
