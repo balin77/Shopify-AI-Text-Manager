@@ -10,10 +10,9 @@
   width: 100%;
 }
 
-/* Mobile: Single column stacked layout (default) */
+/* Mobile: Single column with dropdown (default) */
 @media (max-width: 767px) {
   .unified-content-editor-layout {
-    grid-template-columns: 1fr !important;
     display: block !important;
   }
 
@@ -28,12 +27,6 @@
 
   .seo-sidebar-container {
     display: none !important;
-  }
-
-  /* Item list - compact on mobile */
-  .unified-item-list-container {
-    max-height: none;
-    overflow-y: visible;
   }
 
   /* Language bar - wrap buttons on mobile */
@@ -52,54 +45,23 @@
   }
 }
 
-/* Tablet: Two column layout (list + editor, hide sidebar) */
-@media (min-width: 768px) and (max-width: 1279px) {
+/* Tablet & Desktop: Original layout restored */
+@media (min-width: 768px) {
   .unified-content-editor-layout {
-    grid-template-columns: 280px 1fr !important;
-    display: grid !important;
+    /* Layout wird inline im Component gesteuert (flex mit gap) */
+    display: flex !important;
   }
 
   .unified-item-list-container {
-    width: 280px;
+    /* Original: flex-shrink: 0, fixed width */
   }
 
   .unified-editor-container {
-    width: 100%;
-    min-width: 0;
-  }
-
-  /* Hide SEO sidebar on tablets - Editor nimmt volle Breite */
-  .seo-sidebar-container {
-    display: none !important;
-  }
-}
-
-/* Desktop: Three column layout (list + editor + sidebar) */
-@media (min-width: 1280px) {
-  .unified-content-editor-layout {
-    grid-template-columns: 320px 1fr 280px !important;
-    display: grid !important;
-  }
-
-  .unified-item-list-container {
-    width: 320px;
-  }
-
-  .unified-editor-container {
-    width: 100%;
-    min-width: 0;
+    /* Original: flex: 1 */
   }
 
   .seo-sidebar-container {
-    display: block !important;
-    width: 280px;
-  }
-}
-
-/* Large Desktop: Wider layout for comfortable reading */
-@media (min-width: 1440px) {
-  .unified-content-editor-layout {
-    grid-template-columns: 360px 1fr 320px;
+    /* Original: flex-shrink: 0, fixed width, shown on desktop */
   }
 }
 

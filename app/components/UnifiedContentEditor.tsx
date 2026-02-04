@@ -208,7 +208,18 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     <Page fullWidth>
       <style>{contentEditorStyles}</style>
 
-      <div className="unified-content-editor-layout" style={{ padding: "16px" }}>
+      <div
+        className="unified-content-editor-layout"
+        style={{
+          height: "100%",
+          minHeight: 0,
+          display: "flex",
+          gap: "16px",
+          padding: "16px",
+          overflow: "hidden",
+          boxSizing: "border-box",
+        }}
+      >
         {/* Left Sidebar - Unified Item List (Desktop) / Dropdown (Mobile) */}
         <div className="unified-item-list-container">
           {/* Desktop: Full List */}
@@ -258,7 +269,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
         </div>
 
         {/* Middle: Content Editor */}
-        <div className="unified-editor-container"  style={{ display: "flex", flexDirection: "column" }}>
+        <div className="unified-editor-container" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: "400px" }}>
           {selectedItem ? (
             <>
               {/* Language Selection Bar */}
