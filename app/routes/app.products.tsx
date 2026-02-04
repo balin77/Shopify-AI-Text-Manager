@@ -52,21 +52,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
     logger.debug("[PRODUCTS-LOADER] Current plan and limits", { context: "Products", plan, maxProducts: planLimits.maxProducts });
 
-    // 1. Fetch shop locales
-    const localesResponse = await admin.graphql(
-      `#graphql
-        query getShopLocales {
-          shopLocales {
-            locale
-            name
-            primary
-            published
-          }
-        }`
-    );
-
-    const localesData = await localesResponse.json();
-    const shopLocales = localesData.data?.shopLocales || [];
+    // 1. Fetch shop locales (with caching)
+    const { getCachedShopLocales } = await import("../utils/shop-locales-cache.server");
+    const shopLocales = await getCachedShopLocales(admin, session.shop);
     const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "de";
 
     logger.debug("[PRODUCTS-LOADER] Locales loaded", { context: "Products", primaryLocale, availableLocales: shopLocales.length });

@@ -29,20 +29,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   try {
     const { db } = await import("../db.server");
     const { loadAISettingsForValidation } = await import("../utils/loader-helpers");
+    const { getCachedShopLocales } = await import("../utils/shop-locales-cache.server");
 
-    // Load shopLocales and pages from Shopify in parallel
-    const [localesResponse, pagesResponse, allTranslations, aiSettings] = await Promise.all([
-      admin.graphql(
-        `#graphql
-          query getShopLocales {
-            shopLocales {
-              locale
-              name
-              primary
-              published
-            }
-          }`
-      ),
+    // Load shopLocales (cached) and pages from Shopify in parallel
+    const [shopLocales, pagesResponse, allTranslations, aiSettings] = await Promise.all([
+      getCachedShopLocales(admin, session.shop),
       // Load pages directly from Shopify (not from DB)
       // This reduces database storage for multi-tenant SaaS
       admin.graphql(
@@ -67,8 +58,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       loadAISettingsForValidation(db, session.shop),
     ]);
 
-    const localesData = await localesResponse.json();
-    const shopLocales = localesData.data?.shopLocales || [];
     const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "de";
 
     const pagesData = await pagesResponse.json();

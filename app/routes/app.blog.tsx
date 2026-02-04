@@ -29,22 +29,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   try {
     const { db } = await import("../db.server");
     const { loadAISettingsForValidation } = await import("../utils/loader-helpers");
+    const { getCachedShopLocales } = await import("../utils/shop-locales-cache.server");
 
-    // Load shopLocales
-    const localesResponse = await admin.graphql(
-      `#graphql
-        query getShopLocales {
-          shopLocales {
-            locale
-            name
-            primary
-            published
-          }
-        }`
-    );
-
-    const localesData = await localesResponse.json();
-    const shopLocales = localesData.data?.shopLocales || [];
+    // Load shopLocales (with caching)
+    const shopLocales = await getCachedShopLocales(admin, session.shop);
     const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "de";
 
     // Load articles from database
