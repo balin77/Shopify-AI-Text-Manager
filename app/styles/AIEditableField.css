@@ -84,36 +84,63 @@
   align-items: center;
 }
 
-/* Mobile: Ensure buttons wrap and take proper space */
+/* Mobile: Ensure buttons wrap horizontally and take proper space */
 @media (max-width: 768px) {
+  /* Footer container - keep horizontal layout for character count and buttons */
   .ai-field-footer {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 0.5rem;
+    display: flex !important;
+    flex-direction: row !important;
+    justify-content: space-between !important;
+    align-items: flex-start !important;
+    gap: 0.5rem !important;
+    flex-wrap: wrap !important;
   }
 
   .ai-field-footer-left {
     text-align: left;
+    flex: 0 0 auto;
   }
 
+  /* Buttons container - horizontal flow with wrap */
   .ai-field-footer-right {
+    display: flex !important;
+    flex-direction: row !important;
+    flex-wrap: wrap !important;
+    gap: 0.5rem !important;
     margin-left: 0;
     justify-content: flex-start;
+    flex: 1 1 auto;
+  }
+
+  /* Individual buttons in footer */
+  .ai-field-footer-right .Polaris-Button {
+    flex: 0 1 auto !important;
+    min-width: auto !important;
+    width: auto !important;
   }
 
   /* Force horizontal layout for header buttons on mobile */
   .ai-editable-html-field > .Polaris-InlineStack {
+    flex-direction: row !important;
     flex-wrap: wrap !important;
   }
 
   .ai-editable-html-field > .Polaris-InlineStack > .Polaris-InlineStack {
+    flex-direction: row !important;
     flex-wrap: wrap !important;
   }
 
-  /* Ensure buttons don't break into vertical stack */
+  /* Ensure ALL InlineStack components stay horizontal */
   .ai-editable-html-field .Polaris-InlineStack {
     flex-direction: row !important;
     flex-wrap: wrap !important;
+  }
+
+  /* Buttons inside InlineStack - allow natural width */
+  .ai-editable-html-field .Polaris-InlineStack .Polaris-Button {
+    flex: 0 1 auto !important;
+    min-width: auto !important;
+    width: auto !important;
   }
 }
 
