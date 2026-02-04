@@ -15,6 +15,7 @@ import { ViewIcon, HideIcon } from "@shopify/polaris-icons";
 import { SaveDiscardButtons } from "./SaveDiscardButtons";
 import { HelpTooltip } from "./HelpTooltip";
 import { hasApiKeyForProvider, getProviderDisplayName, type AIProvider } from "../utils/api-key-validation";
+import "../styles/RateLimitFields.css";
 
 // Responsive label component that shows short version on small screens
 function ResponsiveLabel({ fullText, shortText, helpKey }: { fullText: string; shortText: string; helpKey?: string }) {
@@ -301,7 +302,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                   }
                 />
                 <InlineStack gap="400">
-                  <div style={{ flex: 1, maxWidth: "200px" }}>
+                  <div style={{ flex: 1 }} className="rate-limit-field">
                     <TextField
                       label={
                         <ResponsiveLabel
@@ -314,10 +315,9 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                       onChange={setOpenaiMaxTokensPerMinute}
                       type="number"
                       autoComplete="off"
-                      selectTextOnFocus={false}
                     />
                   </div>
-                  <div style={{ flex: 1, maxWidth: "200px" }}>
+                  <div style={{ flex: 1 }} className="rate-limit-field">
                     <TextField
                       label={
                         <ResponsiveLabel
@@ -330,7 +330,6 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                       onChange={setOpenaiMaxRequestsPerMinute}
                       type="number"
                       autoComplete="off"
-                      selectTextOnFocus={false}
                     />
                   </div>
                 </InlineStack>
@@ -378,7 +377,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                   }
                 />
                 <InlineStack gap="400">
-                  <div style={{ flex: 1, maxWidth: "200px" }}>
+                  <div style={{ flex: 1 }} className="rate-limit-field">
                     <TextField
                       label={
                         <ResponsiveLabel
@@ -391,10 +390,9 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                       onChange={setGeminiMaxTokensPerMinute}
                       type="number"
                       autoComplete="off"
-                      selectTextOnFocus={false}
                     />
                   </div>
-                  <div style={{ flex: 1, maxWidth: "200px" }}>
+                  <div style={{ flex: 1 }} className="rate-limit-field">
                     <TextField
                       label={
                         <ResponsiveLabel
@@ -407,7 +405,6 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                       onChange={setGeminiMaxRequestsPerMinute}
                       type="number"
                       autoComplete="off"
-                      selectTextOnFocus={false}
                     />
                   </div>
                 </InlineStack>
@@ -455,7 +452,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                   }
                 />
                 <InlineStack gap="400">
-                  <div style={{ flex: 1, maxWidth: "200px" }}>
+                  <div style={{ flex: 1 }} className="rate-limit-field">
                     <TextField
                       label={
                         <ResponsiveLabel
@@ -468,10 +465,9 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                       onChange={setClaudeMaxTokensPerMinute}
                       type="number"
                       autoComplete="off"
-                      selectTextOnFocus={false}
                     />
                   </div>
-                  <div style={{ flex: 1, maxWidth: "200px" }}>
+                  <div style={{ flex: 1 }} className="rate-limit-field">
                     <TextField
                       label={
                         <ResponsiveLabel
@@ -484,7 +480,6 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                       onChange={setClaudeMaxRequestsPerMinute}
                       type="number"
                       autoComplete="off"
-                      selectTextOnFocus={false}
                     />
                   </div>
                 </InlineStack>
@@ -532,7 +527,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                   }
                 />
                 <InlineStack gap="400">
-                  <div style={{ flex: 1, maxWidth: "200px" }}>
+                  <div style={{ flex: 1 }} className="rate-limit-field">
                     <TextField
                       label={
                         <ResponsiveLabel
@@ -545,10 +540,9 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                       onChange={setHfMaxTokensPerMinute}
                       type="number"
                       autoComplete="off"
-                      selectTextOnFocus={false}
                     />
                   </div>
-                  <div style={{ flex: 1, maxWidth: "200px" }}>
+                  <div style={{ flex: 1 }} className="rate-limit-field">
                     <TextField
                       label={
                         <ResponsiveLabel
@@ -561,7 +555,6 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                       onChange={setHfMaxRequestsPerMinute}
                       type="number"
                       autoComplete="off"
-                      selectTextOnFocus={false}
                     />
                   </div>
                 </InlineStack>
@@ -609,7 +602,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                   }
                 />
                 <InlineStack gap="400">
-                  <div style={{ flex: 1, maxWidth: "200px" }}>
+                  <div style={{ flex: 1 }} className="rate-limit-field">
                     <TextField
                       label={
                         <ResponsiveLabel
@@ -622,10 +615,9 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                       onChange={setGrokMaxTokensPerMinute}
                       type="number"
                       autoComplete="off"
-                      selectTextOnFocus={false}
                     />
                   </div>
-                  <div style={{ flex: 1, maxWidth: "200px" }}>
+                  <div style={{ flex: 1 }} className="rate-limit-field">
                     <TextField
                       label={
                         <ResponsiveLabel
@@ -638,7 +630,6 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                       onChange={setGrokMaxRequestsPerMinute}
                       type="number"
                       autoComplete="off"
-                      selectTextOnFocus={false}
                     />
                   </div>
                 </InlineStack>
@@ -686,7 +677,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                   }
                 />
                 <InlineStack gap="400">
-                  <div style={{ flex: 1, maxWidth: "200px" }}>
+                  <div style={{ flex: 1 }} className="rate-limit-field">
                     <TextField
                       label={
                         <ResponsiveLabel
@@ -699,10 +690,9 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                       onChange={setDeepseekMaxTokensPerMinute}
                       type="number"
                       autoComplete="off"
-                      selectTextOnFocus={false}
                     />
                   </div>
-                  <div style={{ flex: 1, maxWidth: "200px" }}>
+                  <div style={{ flex: 1 }} className="rate-limit-field">
                     <TextField
                       label={
                         <ResponsiveLabel
@@ -715,7 +705,6 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                       onChange={setDeepseekMaxRequestsPerMinute}
                       type="number"
                       autoComplete="off"
-                      selectTextOnFocus={false}
                     />
                   </div>
                 </InlineStack>

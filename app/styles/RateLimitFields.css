@@ -1,0 +1,70 @@
+/* Rate Limit Fields Styling */
+
+/* Reduce height of rate limit input fields */
+.rate-limit-field input[type="number"] {
+  height: 36px !important;
+  min-height: 36px !important;
+  padding: 8px 12px !important;
+}
+
+.rate-limit-field .Polaris-TextField__Input {
+  height: 36px !important;
+  min-height: 36px !important;
+  padding: 8px 12px !important;
+}
+
+/* Remove blue focus border/outline */
+.rate-limit-field input[type="number"]:focus,
+.rate-limit-field .Polaris-TextField__Input:focus {
+  outline: none !important;
+  box-shadow: 0 0 0 2px var(--p-color-border-focus, #005bd3) !important;
+}
+
+/* Remove the blue border completely */
+.rate-limit-field input[type="number"]:focus-visible,
+.rate-limit-field .Polaris-TextField__Input:focus-visible {
+  outline: none !important;
+}
+
+/* Fix spinner button position on mobile and ensure they stay within bounds */
+.rate-limit-field input[type="number"]::-webkit-inner-spin-button,
+.rate-limit-field input[type="number"]::-webkit-outer-spin-button {
+  opacity: 1;
+  height: 34px;
+  margin: 0;
+  position: relative;
+  right: 2px;
+}
+
+/* For Firefox */
+.rate-limit-field input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.rate-limit-field input[type="number"]:hover,
+.rate-limit-field input[type="number"]:focus {
+  -moz-appearance: number-input;
+  appearance: auto;
+}
+
+/* Mobile specific adjustments */
+@media (max-width: 768px) {
+  /* Make sure the input fields don't overflow */
+  .rate-limit-field {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .rate-limit-field input[type="number"] {
+    padding-right: 28px !important; /* More space for spinner buttons */
+  }
+
+  /* Ensure spinner buttons are within the field */
+  .rate-limit-field input[type="number"]::-webkit-inner-spin-button,
+  .rate-limit-field input[type="number"]::-webkit-outer-spin-button {
+    position: absolute;
+    right: 4px;
+    width: 20px;
+  }
+}
