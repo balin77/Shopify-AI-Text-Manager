@@ -36,6 +36,7 @@ export default function App() {
   return (
     <Document>
       <meta name="shopify-api-key" content={apiKey} />
+      <meta name="shopify-debug" content="web-vitals" />
       <link rel="preconnect" href="https://cdn.shopify.com/" />
       <link
         rel="stylesheet"
