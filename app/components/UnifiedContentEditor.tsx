@@ -24,6 +24,7 @@ import { useNavigationHeight } from "../contexts/NavigationHeightContext";
 import { usePlan } from "../contexts/PlanContext";
 import { useItemSelector } from "../contexts/ItemSelectorContext";
 import { contentEditorStyles } from "../utils/contentEditor.utils";
+import { getPlanDisplayName as getPlanDisplayNameUtil } from "../utils/planUtils";
 import "../styles/UnifiedContentEditor.css";
 import type { ContentEditorConfig, UseContentEditorReturn, FieldDefinition } from "../types/content-editor.types";
 import type { UnifiedItem } from "./unified/UnifiedItemList";
@@ -153,15 +154,15 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   }));
 
   // Plan limit configuration
-  const { plan, getPlanDisplayName, getNextPlanUpgrade } = usePlan();
-  const maxItems = getMaxProducts(); // This works for all content types
+  const { plan, getNextPlanUpgrade, getMaxProducts: getMaxProductsFromPlan } = usePlan();
+  const maxItems = getMaxProductsFromPlan(); // This works for all content types
   const nextPlan = getNextPlanUpgrade();
 
   const defaultPlanLimit = {
     isAtLimit: items.length >= maxItems && maxItems !== Infinity,
     maxItems,
-    currentPlan: getPlanDisplayName(),
-    nextPlan: nextPlan ? getPlanDisplayName.call({ plan: nextPlan }) : undefined,
+    currentPlan: getPlanDisplayNameUtil(plan),
+    nextPlan: nextPlan ? getPlanDisplayNameUtil(nextPlan) : undefined,
   };
   const finalPlanLimit = planLimit || defaultPlanLimit;
 
