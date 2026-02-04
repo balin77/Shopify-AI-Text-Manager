@@ -16,7 +16,7 @@ interface SaveDiscardButtonsProps {
 
 /**
  * Unified Save/Discard buttons component
- * Used across all content editing pages (Collections, Blog, Pages, Policies, Templates)
+ * Used across all content editing pages (Collections, Blog, Pages, Policies, Templates, Products)
  *
  * Features:
  * - Discard button always visible but disabled when no changes
@@ -24,6 +24,8 @@ interface SaveDiscardButtonsProps {
  * - Pulse animation on save button when highlightSaveButton is true
  * - Loading state on save button during submission
  * - Primary variant on save button when changes exist
+ * - Consistent flex layout matching UnifiedLanguageBar styling
+ * - Responsive wrapping with proper gap spacing on mobile
  */
 export function SaveDiscardButtons({
   hasChanges,
