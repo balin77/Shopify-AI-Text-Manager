@@ -218,20 +218,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     }
 
     // Calculate storage for Content Translations (all resource types)
-    const productIds = products.length > 0
-      ? await db.product.findMany({ where: { shop }, select: { id: true } })
-      : [];
-    const collectionIds = await db.collection.findMany({ where: { shop }, select: { id: true } });
-    const articleIds = await db.article.findMany({ where: { shop }, select: { id: true } });
-    const pageIds = await db.page.findMany({ where: { shop }, select: { id: true } });
-    const policyIds = await db.shopPolicy.findMany({ where: { shop }, select: { id: true } });
-
+    // OPTIMIZED: Extract IDs from already loaded data instead of re-fetching
     const allResourceIds = [
-      ...productIds.map(p => p.id),
-      ...collectionIds.map(c => c.id),
-      ...articleIds.map(a => a.id),
-      ...pageIds.map(p => p.id),
-      ...policyIds.map(p => p.id),
+      ...products.map(p => p.id),
+      ...collections.map(c => c.id),
+      ...articles.map(a => a.id),
+      ...pages.map(p => p.id),
+      ...policies.map(p => p.id),
     ];
 
     let translationBytes = 0;
