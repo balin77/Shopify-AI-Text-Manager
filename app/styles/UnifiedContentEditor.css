@@ -60,6 +60,14 @@
     flex-direction: column;
   }
 
+  .unified-item-list-container .desktop-only {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    height: 100%;
+  }
+
   .unified-editor-container {
     /* Original: flex: 1 */
     flex: 1;
