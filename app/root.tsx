@@ -37,22 +37,33 @@ export default function App() {
     <Document>
       <meta name="shopify-api-key" content={apiKey} />
       <meta name="shopify-debug" content="web-vitals" />
-      <link rel="preconnect" href="https://cdn.shopify.com/" />
+      <link rel="preconnect" href="https://cdn.shopify.com/" crossOrigin="anonymous" />
+      <link rel="dns-prefetch" href="https://cdn.shopify.com/" />
+      <link
+        rel="preload"
+        href="https://cdn.shopify.com/shopifycloud/app-bridge.js"
+        as="script"
+      />
+      <link
+        rel="preload"
+        href="https://cdn.shopify.com/static/fonts/inter/v4/styles.css"
+        as="style"
+      />
       <link
         rel="stylesheet"
         href="https://cdn.shopify.com/static/fonts/inter/v4/styles.css"
-        media="print"
-        onLoad="this.media='all'"
       />
-      <noscript>
-        <link
-          rel="stylesheet"
-          href="https://cdn.shopify.com/static/fonts/inter/v4/styles.css"
-        />
-      </noscript>
       <style>{`
+        @font-face {
+          font-family: 'Inter Fallback';
+          src: local('Arial');
+          size-adjust: 106.5%;
+          ascent-override: 90%;
+          descent-override: 22%;
+          line-gap-override: 0%;
+        }
         body {
-          font-family: -apple-system, BlinkMacSystemFont, 'San Francisco', 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+          font-family: 'Inter', 'Inter Fallback', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
         }
       `}</style>
       <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js" />
