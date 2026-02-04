@@ -565,6 +565,19 @@ export const es: Translation = {
     },
   },
 
+  // Error Boundary
+  errors: {
+    sessionError: "Error de sesión",
+    sessionErrorDescription: "La aplicación debe recargarse. Esto sucede a veces cuando la aplicación se reinicia.",
+    reloadPage: "Recargar página",
+    updateDetected: "Actualización detectada",
+    updateAutoReload: "Una nueva versión está disponible. La página se recargará automáticamente...",
+    updateAvailable: "Una nueva versión de la aplicación está disponible. Por favor, recarga la página.",
+    errorOccurred: "Ha ocurrido un error",
+    errorDescription: "Por favor, recarga la página o inténtalo de nuevo más tarde.",
+    reloadLoopDetected: "Bucle de recarga detectado (intentos máximos alcanzados), mostrando UI de error en su lugar",
+  },
+
   // Help Tooltips
   help: {
     // Settings - AI API Access

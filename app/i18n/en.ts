@@ -565,6 +565,19 @@ export const en: Translation = {
     },
   },
 
+  // Error Boundary
+  errors: {
+    sessionError: "Session Error",
+    sessionErrorDescription: "The app needs to be reloaded. This sometimes happens when the app restarts.",
+    reloadPage: "Reload page",
+    updateDetected: "Update Detected",
+    updateAutoReload: "A new version is available. The page will reload automatically...",
+    updateAvailable: "A new version of the app is available. Please reload the page.",
+    errorOccurred: "An Error Occurred",
+    errorDescription: "Please reload the page or try again later.",
+    reloadLoopDetected: "Reload loop detected (max attempts reached), showing error UI instead",
+  },
+
   // Help Tooltips
   help: {
     // Settings - AI API Access

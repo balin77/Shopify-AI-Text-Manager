@@ -13,3 +13,6 @@ export type Locale = keyof typeof translations;
 export function getTranslation(locale: Locale) {
   return translations[locale] || translations.en;
 }
+
+// Export individual translations for direct access
+export { de, en, es };

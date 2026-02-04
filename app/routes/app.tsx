@@ -9,13 +9,14 @@ import { I18nProvider } from "../contexts/I18nContext";
 import { InfoBoxProvider } from "../contexts/InfoBoxContext";
 import { PlanProvider } from "../contexts/PlanContext";
 import { NavigationHeightProvider } from "../contexts/NavigationHeightContext";
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { getProviderDisplayName, type AIProvider } from "../utils/api-key-validation";
 import type { Locale } from "../i18n";
 import type { Plan } from "../config/plans";
 import { logger } from "~/utils/logger.server";
+import { de, en, es } from "../i18n";
 
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -215,9 +216,23 @@ function safeReload() {
   return true;
 }
 
+// Helper function to get translations based on browser language
+function getBrowserLocale(): Locale {
+  if (typeof window === 'undefined') return 'de';
+  const browserLang = navigator.language.split('-')[0];
+  if (browserLang === 'en') return 'en';
+  if (browserLang === 'es') return 'es';
+  return 'de';
+}
+
 // Shopify app boundary error handler
 export function ErrorBoundary() {
   let error: unknown;
+
+  // Get translations based on browser language
+  const locale = getBrowserLocale();
+  const translations = { de, en, es };
+  const t = translations[locale];
 
   // Try to get the route error - this can fail if we're outside router context
   try {
@@ -231,9 +246,9 @@ export function ErrorBoundary() {
         <Page>
           <Card>
             <BlockStack gap="400" align="center">
-              <Text as="h1" variant="headingLg">Session-Fehler</Text>
+              <Text as="h1" variant="headingLg">{t.errors.sessionError}</Text>
               <Text as="p" tone="subdued">
-                Die App muss neu geladen werden. Dies passiert manchmal beim Neustart der App.
+                {t.errors.sessionErrorDescription}
               </Text>
               <Button onClick={() => {
                 // Preserve shop and host params when reloading
@@ -241,7 +256,7 @@ export function ErrorBoundary() {
                 url.searchParams.set('_reload', Date.now().toString());
                 window.location.href = url.toString();
               }}>
-                Seite neu laden
+                {t.errors.reloadPage}
               </Button>
             </BlockStack>
           </Card>
@@ -265,9 +280,9 @@ export function ErrorBoundary() {
           <Page>
             <Card>
               <BlockStack gap="400" align="center">
-                <Text as="h1" variant="headingLg">Update erkannt</Text>
+                <Text as="h1" variant="headingLg">{t.errors.updateDetected}</Text>
                 <Text as="p" tone="subdued">
-                  Eine neue Version ist verfügbar. Die Seite wird automatisch neu geladen...
+                  {t.errors.updateAutoReload}
                 </Text>
               </BlockStack>
             </Card>
@@ -282,9 +297,9 @@ export function ErrorBoundary() {
         <Page>
           <Card>
             <BlockStack gap="400" align="center">
-              <Text as="h1" variant="headingLg">Update erkannt</Text>
+              <Text as="h1" variant="headingLg">{t.errors.updateDetected}</Text>
               <Text as="p" tone="subdued">
-                Eine neue Version der App ist verfügbar. Bitte laden Sie die Seite neu.
+                {t.errors.updateAvailable}
               </Text>
               <Button variant="primary" onClick={() => {
                 // Preserve shop and host params when reloading
@@ -292,7 +307,7 @@ export function ErrorBoundary() {
                 url.searchParams.set('_reload', Date.now().toString());
                 window.location.href = url.toString();
               }}>
-                Seite neu laden
+                {t.errors.reloadPage}
               </Button>
             </BlockStack>
           </Card>
@@ -311,9 +326,9 @@ export function ErrorBoundary() {
         <Page>
           <Card>
             <BlockStack gap="400" align="center">
-              <Text as="h1" variant="headingLg">Ein Fehler ist aufgetreten</Text>
+              <Text as="h1" variant="headingLg">{t.errors.errorOccurred}</Text>
               <Text as="p" tone="subdued">
-                Bitte laden Sie die Seite neu oder versuchen Sie es später erneut.
+                {t.errors.errorDescription}
               </Text>
               <Button onClick={() => {
                 // Preserve shop and host params when reloading
@@ -321,7 +336,7 @@ export function ErrorBoundary() {
                 url.searchParams.set('_reload', Date.now().toString());
                 window.location.href = url.toString();
               }}>
-                Seite neu laden
+                {t.errors.reloadPage}
               </Button>
             </BlockStack>
           </Card>

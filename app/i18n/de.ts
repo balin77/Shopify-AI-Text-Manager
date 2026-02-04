@@ -563,6 +563,19 @@ export const de = {
     },
   },
 
+  // Error Boundary
+  errors: {
+    sessionError: "Session-Fehler",
+    sessionErrorDescription: "Die App muss neu geladen werden. Dies passiert manchmal beim Neustart der App.",
+    reloadPage: "Seite neu laden",
+    updateDetected: "Update erkannt",
+    updateAutoReload: "Eine neue Version ist verfügbar. Die Seite wird automatisch neu geladen...",
+    updateAvailable: "Eine neue Version der App ist verfügbar. Bitte laden Sie die Seite neu.",
+    errorOccurred: "Ein Fehler ist aufgetreten",
+    errorDescription: "Bitte laden Sie die Seite neu oder versuchen Sie es später erneut.",
+    reloadLoopDetected: "Ladeschleife erkannt (maximale Versuche erreicht), zeige Fehler-UI statt neuem Reload",
+  },
+
   // Help Tooltips
   help: {
     // Settings - AI API Access
