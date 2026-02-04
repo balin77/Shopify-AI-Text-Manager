@@ -594,6 +594,26 @@ export default function SettingsPage() {
   // Get available plans for billing
   const availablePlans = getAvailablePlans();
 
+  // Function to safely redirect within Shopify App Bridge context
+  const redirectToApp = (path: string) => {
+    try {
+      // Check if Shopify App Bridge is available (embedded app context)
+      if (typeof window !== 'undefined' && window.shopify) {
+        // Use App Bridge Redirect action
+        const AppBridge = window.shopify;
+        // Trigger navigation using App Bridge
+        AppBridge.navigate(path);
+      } else {
+        // Fallback to standard navigation (for non-embedded or dev mode)
+        window.location.href = path;
+      }
+    } catch (error) {
+      console.error('Redirect error:', error);
+      // Final fallback - use standard navigation
+      window.location.href = path;
+    }
+  };
+
   // Handle plan selection
   const handleSelectPlan = async (plan: BillingPlan) => {
     if (plan === 'free') {
@@ -610,7 +630,8 @@ export default function SettingsPage() {
             throw new Error('Failed to cancel subscription');
           }
 
-          window.location.reload();
+          // Redirect to settings page to refresh data
+          redirectToApp('/app/settings?tab=plan');
         } catch (err) {
           setPlanError(err instanceof Error ? err.message : t.settings.errorOccurred);
           setPlanLoading(null);
@@ -635,9 +656,9 @@ export default function SettingsPage() {
         throw new Error(data.error || 'Failed to create subscription');
       }
 
-      // In development mode, directly reload the page (no Shopify Billing redirect)
+      // In development mode, directly redirect to settings page (no Shopify Billing redirect)
       if (data.directUpdate) {
-        window.location.reload();
+        redirectToApp('/app/settings?tab=plan');
         return;
       }
 
