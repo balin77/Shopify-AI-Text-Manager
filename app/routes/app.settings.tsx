@@ -22,10 +22,10 @@ import { SettingsSetupTab } from "../components/SettingsSetupTab";
 import { SettingsAITab } from "../components/SettingsAITab";
 import { SettingsLanguageTab } from "../components/SettingsLanguageTab";
 import { SettingsUsageLimitsTab } from "../components/SettingsUsageLimitsTab";
-import { SettingsNavigationMobile } from "../components/SettingsNavigationMobile";
 import { db } from "../db.server";
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
+import { useItemSelector } from "../contexts/ItemSelectorContext";
 import { sanitizeFormatExample } from "../utils/sanitizer";
 import { AISettingsSchema, AIInstructionsSchema, parseFormData } from "../utils/validation";
 import { toSafeErrorResponse } from "../utils/error-handler";
@@ -569,6 +569,7 @@ export default function SettingsPage() {
   const [searchParams] = useSearchParams();
   const { t } = useI18n();
   const { showInfoBox } = useInfoBox();
+  const { registerItems, clearItems } = useItemSelector();
   const isFreePlan = subscriptionPlan === "free";
   const isBasicPlan = subscriptionPlan === "basic";
   const aiInstructionsReadOnly = isFreePlan || isBasicPlan;
@@ -707,19 +708,41 @@ export default function SettingsPage() {
     }
   }, [fetcher.data, showInfoBox, t]);
 
+  // Register settings sections in item selector context (for mobile header dropdown)
+  useEffect(() => {
+    const sections = [
+      { id: "setup", title: t.settings.appSetup },
+      { id: "ai", title: t.settings.aiApiAccess },
+      { id: "instructions", title: t.settings.aiInstructions },
+      { id: "language", title: t.settings.appLanguage },
+      { id: "plan", title: t.settings.plan },
+    ];
+
+    registerItems({
+      items: sections,
+      selectedItemId: selectedSection,
+      onItemSelect: (itemId: string) => handleSectionChange(itemId as any),
+      resourceName: {
+        singular: "Section",
+        plural: "Settings",
+      },
+      t: {
+        searchPlaceholder: "Search settings...",
+        noResults: "No sections found",
+        selectItem: "Select section",
+      },
+    });
+
+    // Cleanup: clear items when component unmounts
+    return () => {
+      clearItems();
+    };
+  }, [selectedSection, t, registerItems, clearItems]);
+
   return (
     <Page fullWidth>
       <MainNavigation />
       <div style={{ padding: "1rem" }}>
-        {/* Mobile Navigation - Only visible on mobile */}
-        <div className="settings-mobile-nav">
-          <SettingsNavigationMobile
-            selectedSection={selectedSection}
-            onSectionSelect={handleSectionChange}
-            t={t}
-          />
-        </div>
-
         <div style={{ display: "flex", gap: "1rem" }}>
           {/* Left Sidebar - Hidden on mobile */}
           <div className="settings-desktop-nav" style={{ width: "250px", flexShrink: 0 }}>
@@ -1088,23 +1111,8 @@ export default function SettingsPage() {
 
       {/* Responsive Styles */}
       <style>{`
-        /* Hide mobile navigation by default (desktop) */
-        .settings-mobile-nav {
-          display: none;
-          margin-bottom: 1rem;
-        }
-
-        /* Show desktop navigation by default */
-        .settings-desktop-nav {
-          display: block;
-        }
-
-        /* Mobile: max-width 768px */
+        /* Hide desktop navigation on mobile */
         @media (max-width: 768px) {
-          .settings-mobile-nav {
-            display: block;
-          }
-
           .settings-desktop-nav {
             display: none !important;
           }
