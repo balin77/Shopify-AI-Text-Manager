@@ -20,6 +20,7 @@ import { SeoSidebar } from "./SeoSidebar";
 import { useNavigationHeight } from "../contexts/NavigationHeightContext";
 import { usePlan } from "../contexts/PlanContext";
 import { contentEditorStyles } from "../utils/contentEditor.utils";
+import "../styles/UnifiedContentEditor.css";
 import type { ContentEditorConfig, UseContentEditorReturn, FieldDefinition } from "../types/content-editor.types";
 import type { UnifiedItem } from "./unified/UnifiedItemList";
 
@@ -206,19 +207,10 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     <Page fullWidth>
       <style>{contentEditorStyles}</style>
 
-      <div
-        style={{
-          height: "100%",
-          minHeight: 0,
-          display: "flex",
-          gap: "16px",
-          padding: "16px",
-          overflow: "hidden",
-          boxSizing: "border-box",
-        }}
-      >
+      <div className="unified-content-editor-layout" style={{ padding: "16px" }}>
         {/* Left Sidebar - Unified Item List */}
-        <UnifiedItemList
+        <div className="unified-item-list-container">
+          <UnifiedItemList
           items={unifiedItems}
           selectedItemId={state.selectedItemId}
           onItemSelect={handlers.handleItemSelect}
@@ -239,10 +231,11 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
             paginationPrevious: t.content?.paginationPrevious || "Previous",
             paginationNext: t.content?.paginationNext || "Next",
           }}
-        />
+          />
+        </div>
 
         {/* Middle: Content Editor */}
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: "400px" }}>
+        <div className="unified-editor-container"  style={{ display: "flex", flexDirection: "column" }}>
           {selectedItem ? (
             <>
               {/* Language Selection Bar */}
@@ -271,10 +264,10 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
               </Card>
 
               {/* Operation Buttons */}
-              <Card padding="400">
+              <Card padding="400" className="operation-buttons-card">
                 <InlineStack align="space-between" blockAlign="center">
                   {/* Left: Translate All + Clear All Buttons */}
-                  <InlineStack gap="200">
+                  <InlineStack gap="200" className="operation-buttons-container">
                     {state.currentLanguage === primaryLocale ? (
                       <>
                         {/* Primary locale: Translate to ALL foreign languages */}
@@ -344,7 +337,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
               </Card>
 
               {/* Scrollable Content Area */}
-              <div style={{ flex: 1, overflowY: "auto", marginTop: "1rem" }}>
+              <div className="field-editor-area" style={{ flex: 1, overflowY: "auto", marginTop: "1rem" }}>
                 <Card padding="600">
                   <BlockStack gap="500">
                     {/* Field Pagination Header (for templates with many fields) */}

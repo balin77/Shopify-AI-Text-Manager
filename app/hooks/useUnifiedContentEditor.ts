@@ -8,6 +8,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useRevalidator, useFetcher } from "@remix-run/react";
 import { useNavigationGuard, useChangeTracking, getTranslatedValue } from "../utils/contentEditor.utils";
+import { useItemFocus } from "./useFocusManagement";
 import type {
   UseContentEditorProps,
   UseContentEditorReturn,
@@ -25,6 +26,12 @@ import { debugLog } from "../utils/debug";
 export function useUnifiedContentEditor(props: UseContentEditorProps): UseContentEditorReturn {
   const { config, items, shopLocales, primaryLocale, fetcher, showInfoBox, t, onTranslateToAllLocalesComplete } = props;
   const revalidator = useRevalidator();
+
+  // ============================================================================
+  // FOCUS MANAGEMENT (Accessibility)
+  // ============================================================================
+
+  const { firstFieldRef, setItemFocus } = useItemFocus(null);
 
   // ============================================================================
   // STATE MANAGEMENT
@@ -112,6 +119,17 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       setSelectedItemId(firstItem.id);
     }
   }, [items, selectedItemId]);
+
+  // ============================================================================
+  // FOCUS MANAGEMENT - Set focus when item changes
+  // ============================================================================
+
+  useEffect(() => {
+    if (selectedItemId && !isLoadingData) {
+      // Set focus to first field when item is selected and data is ready
+      setItemFocus();
+    }
+  }, [selectedItemId, isLoadingData, setItemFocus]);
 
   // IMPORTANT: Memoize selectedItem to prevent infinite re-renders
   // Without this, items.find() returns a new object reference on every revalidation,
@@ -2499,6 +2517,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     },
     // Dynamic field definitions (for templates and other dynamic content types)
     effectiveFieldDefinitions,
+    // Focus management for accessibility
+    focusManagement: {
+      firstFieldRef,
+      setItemFocus,
+    },
   };
 }
 

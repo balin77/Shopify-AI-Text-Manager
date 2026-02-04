@@ -1,0 +1,381 @@
+/**
+ * Unified Content Editor Responsive Layout
+ * Mobile-first design following Shopify Design Guidelines
+ */
+
+/* Base Layout Container */
+.unified-content-editor-layout {
+  display: grid;
+  gap: 16px;
+  width: 100%;
+}
+
+/* Mobile: Single column stacked layout (default) */
+@media (max-width: 767px) {
+  .unified-content-editor-layout {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "list"
+      "editor"
+      "sidebar";
+  }
+
+  .unified-item-list-container {
+    grid-area: list;
+  }
+
+  .unified-editor-container {
+    grid-area: editor;
+  }
+
+  .seo-sidebar-container {
+    grid-area: sidebar;
+    /* Show as expandable card on mobile instead of sidebar */
+    display: block;
+  }
+
+  /* Item list - compact on mobile */
+  .unified-item-list-container {
+    max-height: 300px;
+    overflow-y: auto;
+  }
+
+  /* Language bar - wrap buttons on mobile */
+  .language-bar-buttons {
+    flex-wrap: wrap !important;
+  }
+
+  /* Operation buttons - full width stack */
+  .operation-buttons-card .Polaris-InlineStack {
+    flex-direction: column !important;
+    width: 100%;
+  }
+
+  .operation-buttons-card button {
+    width: 100%;
+  }
+}
+
+/* Tablet: Two column layout (list + editor, hide sidebar) */
+@media (min-width: 768px) and (max-width: 1023px) {
+  .unified-content-editor-layout {
+    grid-template-columns: 280px 1fr;
+    grid-template-areas:
+      "list editor";
+  }
+
+  .unified-item-list-container {
+    grid-area: list;
+  }
+
+  .unified-editor-container {
+    grid-area: editor;
+  }
+
+  /* Hide SEO sidebar on tablets */
+  .seo-sidebar-container {
+    display: none;
+  }
+}
+
+/* Desktop: Three column layout (list + editor + sidebar) */
+@media (min-width: 1024px) {
+  .unified-content-editor-layout {
+    grid-template-columns: 320px 1fr 280px;
+    grid-template-areas:
+      "list editor sidebar";
+  }
+
+  .unified-item-list-container {
+    grid-area: list;
+  }
+
+  .unified-editor-container {
+    grid-area: editor;
+  }
+
+  .seo-sidebar-container {
+    grid-area: sidebar;
+    display: block;
+  }
+}
+
+/* Large Desktop: Wider layout for comfortable reading */
+@media (min-width: 1440px) {
+  .unified-content-editor-layout {
+    grid-template-columns: 360px 1fr 320px;
+  }
+}
+
+/* Item List Responsive Styling */
+.unified-item-list-container {
+  position: relative;
+}
+
+.unified-item-card {
+  cursor: pointer;
+  transition: background-color 150ms ease-in-out;
+  padding: 12px;
+  border-radius: 8px;
+  margin-bottom: 8px;
+}
+
+.unified-item-card:hover {
+  background-color: #f6f6f7;
+}
+
+.unified-item-card.selected {
+  background-color: #e3f2fd;
+  border-left: 4px solid #0066CC;
+}
+
+/* Mobile: Increase touch target for list items */
+@media (max-width: 767px) {
+  .unified-item-card {
+    padding: 16px;
+    min-height: 60px;
+  }
+}
+
+/* Editor Container */
+.unified-editor-container {
+  min-width: 0; /* Prevents grid blowout */
+}
+
+/* Language Bar Responsive */
+.language-bar-container {
+  margin-bottom: 16px;
+}
+
+.language-bar-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+/* Mobile: Wrap language buttons */
+@media (max-width: 767px) {
+  .language-bar-buttons {
+    flex-wrap: wrap;
+  }
+
+  .language-bar-buttons button {
+    flex: 1 1 calc(33.33% - 8px);
+    min-width: 70px;
+  }
+}
+
+/* Operation Buttons Responsive */
+.operation-buttons-card {
+  margin-bottom: 16px;
+}
+
+/* Mobile: Stack operation buttons */
+@media (max-width: 767px) {
+  .operation-buttons-container {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .operation-buttons-container button {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+/* Tablet & Desktop: Inline operation buttons */
+@media (min-width: 768px) {
+  .operation-buttons-container {
+    display: flex;
+    flex-direction: row;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+}
+
+/* Field Editor Area */
+.field-editor-area {
+  overflow-y: auto;
+  max-height: calc(100vh - 250px); /* Prevent infinite scroll */
+}
+
+/* Mobile: Smaller max-height for fields */
+@media (max-width: 767px) {
+  .field-editor-area {
+    max-height: calc(100vh - 350px);
+  }
+}
+
+/* SEO Sidebar Responsive */
+.seo-sidebar-container {
+  position: sticky;
+  top: 16px;
+  max-height: calc(100vh - 100px);
+  overflow-y: auto;
+}
+
+/* Mobile: SEO sidebar as expandable card */
+@media (max-width: 767px) {
+  .seo-sidebar-container {
+    position: relative;
+    top: 0;
+    max-height: none;
+  }
+}
+
+/* Pagination Controls */
+.pagination-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 12px 0;
+}
+
+/* Mobile: Larger touch targets for pagination */
+@media (max-width: 767px) {
+  .pagination-controls button {
+    min-width: 48px;
+    min-height: 48px;
+  }
+}
+
+/* Search Bar */
+.search-bar-container {
+  margin-bottom: 12px;
+}
+
+/* Mobile: Full-width search */
+@media (max-width: 767px) {
+  .search-bar-container input {
+    width: 100%;
+    font-size: 16px; /* Prevents iOS zoom */
+  }
+}
+
+/* Image Gallery Responsive */
+.image-gallery-grid {
+  display: grid;
+  gap: 16px;
+}
+
+/* Mobile: Single column */
+@media (max-width: 767px) {
+  .image-gallery-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Tablet: Two columns */
+@media (min-width: 768px) and (max-width: 1023px) {
+  .image-gallery-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* Desktop: Two columns (images need space) */
+@media (min-width: 1024px) {
+  .image-gallery-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* Save/Discard Footer Buttons */
+.save-discard-footer {
+  position: sticky;
+  bottom: 0;
+  background: white;
+  padding: 16px;
+  border-top: 1px solid #e1e3e5;
+  z-index: 10;
+}
+
+/* Mobile: Stack save/discard buttons */
+@media (max-width: 767px) {
+  .save-discard-footer {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .save-discard-footer button {
+    width: 100%;
+  }
+}
+
+/* Tablet & Desktop: Inline buttons */
+@media (min-width: 768px) {
+  .save-discard-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+}
+
+/* Loading Skeleton Responsive */
+.content-editor-skeleton {
+  display: grid;
+  gap: 16px;
+}
+
+@media (max-width: 767px) {
+  .content-editor-skeleton {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (min-width: 768px) and (max-width: 1023px) {
+  .content-editor-skeleton {
+    grid-template-columns: 280px 1fr;
+  }
+}
+
+@media (min-width: 1024px) {
+  .content-editor-skeleton {
+    grid-template-columns: 320px 1fr 280px;
+  }
+}
+
+/* Accessibility: Focus states */
+.unified-item-card:focus-visible,
+.language-button:focus-visible,
+.operation-button:focus-visible {
+  outline: 3px solid #0066CC;
+  outline-offset: 2px;
+}
+
+/* Accessibility: Skip to content link */
+.skip-to-content {
+  position: absolute;
+  left: -9999px;
+  z-index: 999;
+}
+
+.skip-to-content:focus {
+  left: 50%;
+  transform: translateX(-50%);
+  top: 10px;
+  background: #0066CC;
+  color: white;
+  padding: 8px 16px;
+  border-radius: 4px;
+  text-decoration: none;
+}
+
+/* Print styles */
+@media print {
+  .unified-item-list-container,
+  .operation-buttons-card,
+  .seo-sidebar-container,
+  .save-discard-footer {
+    display: none !important;
+  }
+
+  .unified-editor-container {
+    grid-column: 1 / -1;
+  }
+
+  .field-editor-area {
+    max-height: none;
+  }
+}

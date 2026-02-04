@@ -1,0 +1,274 @@
+/* Responsive Design for Mobile-First Approach */
+/* Shopify Design Guidelines: "Mit der Mehrheit des Online-Store-Verkehrs auf Mobilgeräten sollte das Design für mobile Geräte im Vordergrund stehen." */
+
+/* Base: Mobile-First (320px+) */
+:root {
+  --touch-target-min: 44px; /* Apple/WCAG minimum touch target size */
+  --spacing-mobile: 8px;
+  --spacing-tablet: 12px;
+  --spacing-desktop: 16px;
+}
+
+/* Touch Target Optimization for Mobile */
+@media (max-width: 768px) {
+  /* Ensure all buttons meet minimum touch target size */
+  button,
+  .Polaris-Button,
+  [role="button"] {
+    min-height: var(--touch-target-min);
+    min-width: var(--touch-target-min);
+    padding: 12px 16px;
+  }
+
+  /* Navigation tabs - larger touch targets */
+  .main-navigation button {
+    padding: 14px 12px !important;
+    min-height: 48px;
+  }
+
+  /* Reduce padding on mobile for more screen space */
+  .Polaris-Page {
+    padding: var(--spacing-mobile) !important;
+  }
+
+  .Polaris-Card {
+    margin: var(--spacing-mobile) 0;
+  }
+
+  /* Stack button groups vertically on mobile */
+  .Polaris-ButtonGroup {
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .Polaris-ButtonGroup .Polaris-Button {
+    width: 100%;
+    margin-bottom: 8px;
+  }
+
+  /* Language bar - wrap on mobile */
+  .language-bar-buttons {
+    flex-wrap: wrap !important;
+    gap: 8px !important;
+  }
+
+  .language-bar-buttons button {
+    min-width: 60px;
+    flex: 1 1 auto;
+  }
+
+  /* Operation buttons - stack vertically */
+  .operation-buttons-card .Polaris-InlineStack {
+    flex-direction: column !important;
+    gap: 8px !important;
+  }
+
+  .operation-buttons-card button {
+    width: 100%;
+  }
+
+  /* InfoBox - full width on mobile */
+  .main-navigation .info-box {
+    flex: 1 1 100% !important;
+    max-width: 100% !important;
+    order: 10; /* Move to bottom */
+  }
+
+  /* Plan selector - stack vertically */
+  .plan-selector-container {
+    width: 100%;
+    margin-top: 8px;
+  }
+
+  .plan-selector-container .Polaris-ButtonGroup {
+    width: 100%;
+  }
+
+  /* Text inputs - larger for touch */
+  input[type="text"],
+  input[type="email"],
+  input[type="search"],
+  textarea,
+  .Polaris-TextField__Input {
+    min-height: var(--touch-target-min);
+    font-size: 16px; /* Prevents iOS zoom */
+  }
+
+  /* Modal - full screen on mobile */
+  .Polaris-Modal-Dialog {
+    max-width: 100vw !important;
+    margin: 0 !important;
+    border-radius: 0 !important;
+  }
+
+  /* SEO Sidebar - hide on mobile, show as expandable section */
+  .seo-sidebar-container {
+    display: none;
+  }
+}
+
+/* Tablet Optimization (768px - 1024px) */
+@media (min-width: 768px) and (max-width: 1024px) {
+  /* Two-column layout for tablets */
+  .unified-content-editor-layout {
+    grid-template-columns: 300px 1fr !important;
+  }
+
+  /* Hide SEO sidebar on tablets in portrait mode */
+  .seo-sidebar-container {
+    display: none;
+  }
+
+  /* Increase padding slightly */
+  .Polaris-Page {
+    padding: var(--spacing-tablet) !important;
+  }
+
+  /* Operation buttons - still stacked for better touch */
+  .operation-buttons-card .Polaris-InlineStack {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .operation-buttons-card button {
+    min-width: 140px;
+  }
+}
+
+/* Desktop (1024px+) */
+@media (min-width: 1024px) {
+  /* Full three-column layout */
+  .unified-content-editor-layout {
+    display: grid;
+    grid-template-columns: 320px 1fr 280px;
+    gap: var(--spacing-desktop);
+  }
+
+  /* Show SEO sidebar on desktop */
+  .seo-sidebar-container {
+    display: block;
+  }
+
+  /* Standard padding */
+  .Polaris-Page {
+    padding: var(--spacing-desktop) !important;
+  }
+
+  /* Inline button groups on desktop */
+  .operation-buttons-card .Polaris-InlineStack {
+    flex-direction: row !important;
+  }
+}
+
+/* Large Desktop (1440px+) */
+@media (min-width: 1440px) {
+  /* Wider sidebars for more comfortable reading */
+  .unified-content-editor-layout {
+    grid-template-columns: 360px 1fr 320px;
+  }
+
+  /* More generous spacing */
+  .Polaris-Page {
+    padding: 20px !important;
+  }
+}
+
+/* Touch Device Optimizations (regardless of screen size) */
+@media (hover: none) and (pointer: coarse) {
+  /* This targets touch devices specifically */
+
+  /* Increase all interactive element sizes */
+  button,
+  a,
+  [role="button"],
+  [role="link"] {
+    min-height: var(--touch-target-min);
+    min-width: var(--touch-target-min);
+  }
+
+  /* Increase spacing between interactive elements */
+  .Polaris-InlineStack > * {
+    margin: 4px;
+  }
+
+  /* Remove hover states (not applicable on touch) */
+  button:hover,
+  a:hover {
+    /* Touch devices don't have hover, so remove hover-only styles */
+    transform: none;
+  }
+
+  /* Add active/pressed states for better touch feedback */
+  button:active,
+  [role="button"]:active {
+    transform: scale(0.97);
+    transition: transform 100ms ease-out;
+  }
+}
+
+/* High Contrast Mode Support (Accessibility) */
+@media (prefers-contrast: high) {
+  /* Increase border visibility */
+  input,
+  textarea,
+  button,
+  .Polaris-Card {
+    border-width: 2px !important;
+  }
+
+  /* Ensure text meets WCAG AAA standards */
+  body,
+  .Polaris-Text {
+    color: #000 !important;
+  }
+}
+
+/* Reduced Motion (Accessibility) */
+@media (prefers-reduced-motion: reduce) {
+  /* Disable all animations for users who prefer reduced motion */
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Focus Visible for Keyboard Navigation (Accessibility) */
+/* Modern browsers support :focus-visible for better keyboard navigation */
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+[role="button"]:focus-visible {
+  outline: 3px solid #0066CC !important;
+  outline-offset: 2px !important;
+}
+
+/* Hide outline for mouse/touch users */
+button:focus:not(:focus-visible),
+a:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* Print Styles (Bonus) */
+@media print {
+  /* Hide navigation and non-essential elements when printing */
+  .main-navigation,
+  .operation-buttons-card,
+  .seo-sidebar-container,
+  button {
+    display: none !important;
+  }
+
+  /* Optimize content for printing */
+  .Polaris-Page {
+    padding: 0 !important;
+  }
+
+  .Polaris-Card {
+    border: 1px solid #000 !important;
+    page-break-inside: avoid;
+  }
+}

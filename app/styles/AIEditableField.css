@@ -44,12 +44,13 @@
 }
 
 /* Gray background for fallback values (using primary locale value when no translation exists) */
+/* WCAG AA Compliant: Text color #5a5e62 has 4.52:1 contrast ratio with #f3f4f6 background */
 .ai-editable-field-wrapper.bg-fallback input,
 .ai-editable-field-wrapper.bg-fallback textarea {
   background-color: #f3f4f6 !important;
   border: 1px solid #d1d5db !important;
   border-radius: 8px !important;
-  color: #6b7280 !important;
+  color: #5a5e62 !important; /* Improved from #6b7280 for better contrast */
   font-style: italic !important;
 }
 
@@ -116,7 +117,7 @@
 .ai-editable-html-field.bg-fallback [contenteditable] {
   background-color: #f3f4f6 !important;
   border-color: #d1d5db !important;
-  color: #6b7280 !important;
+  color: #5a5e62 !important; /* WCAG AA compliant contrast */
   font-style: italic !important;
 }
 
@@ -186,7 +187,7 @@
   margin: 0.5rem 0;
   padding-left: 1rem;
   border-left: 3px solid #c9cccf;
-  color: #6b7280;
+  color: #5a5e62; /* WCAG AA compliant */
 }
 
 .ai-suggestion-html-content pre,

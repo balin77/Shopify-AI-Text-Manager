@@ -295,8 +295,10 @@ export function MainNavigation() {
   return (
     <>
       {/* Fixed Navigation */}
-      <div
+      <nav
         ref={navRef}
+        role="navigation"
+        aria-label="Main navigation"
         style={{
           background: "white",
           borderBottom: "1px solid #e1e3e5",
@@ -308,9 +310,9 @@ export function MainNavigation() {
         }}
       >
         {/* Einzeilige Leiste mit Navigation, InfoBox und Plan Selector */}
-        <div style={{ display: "flex", alignItems: "center", padding: "1rem", gap: "2rem", flexWrap: "wrap" }}>
+        <div className="main-navigation" style={{ display: "flex", alignItems: "center", padding: "1rem", gap: "2rem", flexWrap: "wrap" }}>
           {/* Navigation Tabs */}
-          <InlineStack gap="400" blockAlign="center">
+          <InlineStack gap="400" blockAlign="center" role="tablist">
             {tabs.map((tab) => {
               const isActive = location.pathname.startsWith(tab.path);
               const showProductCount = tab.id === "products" && productCount !== undefined;
@@ -321,6 +323,10 @@ export function MainNavigation() {
                 <button
                   key={tab.id}
                   onClick={() => handleClick(tab.path, tab.id)}
+                  role="tab"
+                  aria-selected={isActive}
+                  aria-label={`Navigate to ${tab.label}${showProductCount ? ` (${productCount} products)` : ''}${showTaskCount ? ` (${runningTaskCount} running tasks)` : ''}`}
+                  aria-current={isActive ? "page" : undefined}
                   style={{
                     textDecoration: "none",
                     padding: "1rem 0.5rem",
@@ -401,6 +407,10 @@ export function MainNavigation() {
           {/* InfoBox auf gleicher Ebene - schlanke Variante */}
           {infoBox && (
             <div
+              className="info-box"
+              role="status"
+              aria-live="polite"
+              aria-label={`${infoBox.tone === "success" ? "Success" : infoBox.tone === "critical" ? "Error" : infoBox.tone === "warning" ? "Warning" : "Information"} notification`}
               style={{
                 flex: 1,
                 maxWidth: "600px",
@@ -448,14 +458,15 @@ export function MainNavigation() {
           )}
 
           {/* Plan Selector - click navigates to settings/plan */}
-          <div style={{ marginLeft: "auto" }}>
-            <ButtonGroup variant="segmented">
+          <div className="plan-selector-container" style={{ marginLeft: "auto" }}>
+            <ButtonGroup variant="segmented" aria-label="Subscription plan selector">
               {plans.map((planOption) => (
                 <Button
                   key={planOption}
                   pressed={plan === planOption}
                   onClick={handlePlanNavigation}
                   size="slim"
+                  ariaLabel={`${plan === planOption ? 'Current plan: ' : 'Switch to '}${planOption.charAt(0).toUpperCase() + planOption.slice(1)} plan`}
                 >
                   {planOption.charAt(0).toUpperCase() + planOption.slice(1)}
                 </Button>
@@ -463,10 +474,10 @@ export function MainNavigation() {
             </ButtonGroup>
           </div>
         </div>
-      </div>
+      </nav>
 
       {/* Dynamic spacer to prevent content from going under fixed navigation */}
-      <div style={{ height: `${navHeight}px` }} />
+      <div style={{ height: `${navHeight}px` }} aria-hidden="true" />
     </>
   );
 }

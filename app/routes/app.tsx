@@ -3,6 +3,7 @@ import { Outlet, useLoaderData, useRouteError } from "@remix-run/react";
 import { boundary } from "@shopify/shopify-app-remix/server";
 import { AppProvider, Page, Card, BlockStack, Text, Button } from "@shopify/polaris";
 import "@shopify/polaris/build/esm/styles.css";
+import "../styles/responsive.css";
 import { authenticate } from "../shopify.server";
 import { I18nProvider } from "../contexts/I18nContext";
 import { InfoBoxProvider } from "../contexts/InfoBoxContext";
