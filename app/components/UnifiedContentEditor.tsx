@@ -5,7 +5,7 @@
  * Based on the products page structure with all bug fixes included.
  */
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Page, Card, Text, BlockStack, InlineStack, Button, Modal, TextContainer, TextField, Icon, Spinner } from "@shopify/polaris";
 import { SearchIcon, ChevronLeftIcon, ChevronRightIcon } from "@shopify/polaris-icons";
 import { AIEditableField } from "./AIEditableField";
@@ -208,6 +208,22 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   const sidebarRenderer = renderSidebar || defaultRenderSidebar;
   const { getTotalNavHeight } = useNavigationHeight();
 
+  // Media query to detect mobile vs desktop
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(max-width: 768px)');
+
+    // Set initial value
+    setIsMobile(mediaQuery.matches);
+
+    // Listen for changes
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    mediaQuery.addEventListener('change', handler);
+
+    return () => mediaQuery.removeEventListener('change', handler);
+  }, []);
+
   // Register items in the item selector context (for mobile navbar dropdown)
   useEffect(() => {
     registerItems({
@@ -300,7 +316,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           {selectedItem ? (
             <>
               {/* Language Selection Bar - Desktop */}
-              <div className="desktop-only">
+              {!isMobile && (
                 <Card padding="400">
                   <UnifiedLanguageBar
                     shopLocales={shopLocales}
@@ -324,10 +340,11 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                     }}
                   />
                 </Card>
-              </div>
+              )}
 
               {/* Mobile: Language and Operations Dropdowns Side-by-Side */}
-              <div className="mobile-only mobile-dropdowns-container">
+              {isMobile && (
+                <div className="mobile-dropdowns-container">
                 <UnifiedLanguageBarMobile
                   shopLocales={shopLocales}
                   currentLanguage={state.currentLanguage}
@@ -375,10 +392,11 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                     discard: t.content?.discardChanges || "Discard",
                   }}
                 />
-              </div>
+                </div>
+              )}
 
               {/* Operation Buttons - Desktop */}
-              <div className="desktop-only">
+              {!isMobile && (
                 <Card padding="400" className="operation-buttons-card">
                 <InlineStack align="space-between" blockAlign="center">
                   {/* Left: Translate All + Clear All Buttons */}
@@ -450,7 +468,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   </InlineStack>
                 </InlineStack>
               </Card>
-              </div>
+              )}
 
               {/* Scrollable Content Area */}
               <div className="field-editor-area" style={{ flex: 1, overflowY: "auto", marginTop: "1rem" }}>
