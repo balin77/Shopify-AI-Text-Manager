@@ -347,6 +347,7 @@ export const de = {
     languages: {
       de: "Deutsch",
       en: "English",
+      es: "Español",
     },
     // App Setup
     setupInstructions: "Setup-Anweisungen",

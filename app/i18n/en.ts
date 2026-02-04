@@ -349,6 +349,7 @@ export const en: Translation = {
     languages: {
       de: "Deutsch",
       en: "English",
+      es: "Español",
     },
     // App Setup
     setupInstructions: "Setup Instructions",
