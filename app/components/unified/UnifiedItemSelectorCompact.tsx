@@ -133,6 +133,7 @@ export function UnifiedItemSelectorCompact({
 
           {/* Dropdown Panel */}
           <div
+            className="compact-selector-dropdown"
             style={{
               position: "fixed",
               top: "60px",
@@ -250,13 +251,13 @@ export function UnifiedItemSelectorCompact({
       )}
 
       <style>{`
-        /* Remove blue focus border from search field in compact selector */
-        .mobile-navbar-item-selector .Polaris-TextField__Input:focus {
+        /* Remove blue focus border from search field in compact selector dropdown */
+        .compact-selector-dropdown .Polaris-TextField__Input:focus {
           border-color: #c9cccf !important;
           box-shadow: none !important;
         }
 
-        .mobile-navbar-item-selector .Polaris-TextField__Input:focus-visible {
+        .compact-selector-dropdown .Polaris-TextField__Input:focus-visible {
           outline: 2px solid #0066CC;
           outline-offset: 2px;
         }
