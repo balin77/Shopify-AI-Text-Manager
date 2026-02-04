@@ -159,30 +159,19 @@ export function UnifiedItemList({
 
       // Use requestAnimationFrame to debounce and prevent flickering
       rafId = requestAnimationFrame(() => {
-        // Get the wrapper height (from flexbox layout)
-        const wrapperHeight = wrapperRef.current?.clientHeight;
         const headerHeight = headerRef.current?.offsetHeight || 0;
         const paginationHeight = showPagination && paginationRef.current?.offsetHeight
           ? paginationRef.current.offsetHeight
           : (showPagination ? 56 : 0);
 
         // Calculate available height for the list
-        let availableHeight: number;
+        // Always use window-based calculation for more reliable results
+        const navHeight = getTotalNavHeight();
+        const layoutPadding = 32; // Padding from parent layout (16px gap on each side)
+        const cardPaddingAndBorders = 4; // Card borders
+        const bottomSpacing = 20; // Bottom spacing for visual breathing room
 
-        if (wrapperHeight && wrapperHeight > 200) {
-          // Use wrapper height minus header, pagination, borders and bottom spacing
-          // Account for: header, pagination, Card padding, borders, and bottom margin
-          const cardPaddingAndBorders = 4; // Border pixels
-          const bottomSpacing = 20; // Bottom spacing for visual breathing room
-          availableHeight = wrapperHeight - headerHeight - paginationHeight - cardPaddingAndBorders - bottomSpacing;
-        } else {
-          // Fallback: calculate from window
-          const navHeight = getTotalNavHeight();
-          const layoutPadding = 32; // Padding from parent layout
-          const cardPaddingAndBorders = 4;
-          const bottomSpacing = 20;
-          availableHeight = window.innerHeight - navHeight - headerHeight - paginationHeight - layoutPadding - cardPaddingAndBorders - bottomSpacing;
-        }
+        const availableHeight = window.innerHeight - navHeight - headerHeight - paginationHeight - layoutPadding - cardPaddingAndBorders - bottomSpacing;
 
         // Only update if height changed significantly (more than 10px difference)
         // This prevents flickering from minor layout shifts
