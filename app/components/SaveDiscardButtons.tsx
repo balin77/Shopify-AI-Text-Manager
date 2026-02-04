@@ -1,5 +1,5 @@
 import { useRef } from "react";
-import { Button, InlineStack, BlockStack } from "@shopify/polaris";
+import { Button } from "@shopify/polaris";
 
 interface SaveDiscardButtonsProps {
   hasChanges: boolean;
@@ -12,8 +12,6 @@ interface SaveDiscardButtonsProps {
   action?: string;
   fetcherState?: string;
   fetcherFormData?: FormData | null;
-  /** Optional: Use vertical layout (default: false) */
-  vertical?: boolean;
 }
 
 /**
@@ -38,7 +36,6 @@ export function SaveDiscardButtons({
   action = "updateContent",
   fetcherState = "idle",
   fetcherFormData = null,
-  vertical = false,
 }: SaveDiscardButtonsProps) {
   const saveButtonRef = useRef<HTMLDivElement>(null);
 
@@ -46,11 +43,12 @@ export function SaveDiscardButtons({
   const isSubmitting = fetcherState !== "idle" &&
     fetcherFormData?.get("action") === action;
 
-  const buttons = (
-    <>
+  return (
+    <div ref={saveButtonRef} style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", flex: 1, minWidth: 0, alignItems: "center" }}>
       <Button
         onClick={onDiscard}
         disabled={!hasChanges || fetcherState !== "idle"}
+        size="slim"
       >
         {discardText}
       </Button>
@@ -65,24 +63,11 @@ export function SaveDiscardButtons({
           onClick={onSave}
           disabled={!hasChanges}
           loading={isSubmitting}
+          size="slim"
         >
           {saveText}
         </Button>
       </div>
-    </>
-  );
-
-  return (
-    <div ref={saveButtonRef}>
-      {vertical ? (
-        <BlockStack gap="200">
-          {buttons}
-        </BlockStack>
-      ) : (
-        <InlineStack gap="200">
-          {buttons}
-        </InlineStack>
-      )}
     </div>
   );
 }

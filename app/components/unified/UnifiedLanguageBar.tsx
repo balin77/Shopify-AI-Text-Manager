@@ -102,7 +102,6 @@ export function UnifiedLanguageBar({
 
   return (
     <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", flex: 1, minWidth: 0, alignItems: "center" }}>
-      <HelpTooltip helpKey="ctrlClickLanguage" position="below" />
       {shopLocales.map((locale) => {
         const buttonStyle = useLocaleButtonStyle(
           locale,
@@ -144,6 +143,9 @@ export function UnifiedLanguageBar({
           </div>
         );
       })}
+      <div style={{ marginLeft: "auto" }}>
+        <HelpTooltip helpKey="ctrlClickLanguage" position="below" />
+      </div>
     </div>
   );
 }

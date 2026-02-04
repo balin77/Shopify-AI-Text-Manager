@@ -175,7 +175,7 @@ function isManifestMismatchError(error: unknown): boolean {
   return false;
 }
 
-// Helper to safely reload with loop prevention
+// Helper to safely reload with loop prevention and session preservation
 function safeReload() {
   const RELOAD_KEY = 'manifest_reload_timestamp';
   const RELOAD_COUNT_KEY = 'manifest_reload_count';
@@ -201,6 +201,16 @@ function safeReload() {
   // Force a cache-busted reload by navigating to current URL with cache-busting param
   const url = new URL(window.location.href);
   url.searchParams.set('_reload', now.toString());
+
+  // Preserve shop and host params to maintain Shopify session
+  const currentUrl = new URL(window.location.href);
+  if (!url.searchParams.has('shop') && currentUrl.searchParams.has('shop')) {
+    url.searchParams.set('shop', currentUrl.searchParams.get('shop')!);
+  }
+  if (!url.searchParams.has('host') && currentUrl.searchParams.has('host')) {
+    url.searchParams.set('host', currentUrl.searchParams.get('host')!);
+  }
+
   window.location.href = url.toString();
   return true;
 }
@@ -225,7 +235,12 @@ export function ErrorBoundary() {
               <Text as="p" tone="subdued">
                 Die App muss neu geladen werden. Dies passiert manchmal beim Neustart der App.
               </Text>
-              <Button onClick={() => window.location.reload()}>
+              <Button onClick={() => {
+                // Preserve shop and host params when reloading
+                const url = new URL(window.location.href);
+                url.searchParams.set('_reload', Date.now().toString());
+                window.location.href = url.toString();
+              }}>
                 Seite neu laden
               </Button>
             </BlockStack>
@@ -271,7 +286,12 @@ export function ErrorBoundary() {
               <Text as="p" tone="subdued">
                 Eine neue Version der App ist verfügbar. Bitte laden Sie die Seite neu.
               </Text>
-              <Button variant="primary" onClick={() => window.location.reload()}>
+              <Button variant="primary" onClick={() => {
+                // Preserve shop and host params when reloading
+                const url = new URL(window.location.href);
+                url.searchParams.set('_reload', Date.now().toString());
+                window.location.href = url.toString();
+              }}>
                 Seite neu laden
               </Button>
             </BlockStack>
@@ -295,7 +315,12 @@ export function ErrorBoundary() {
               <Text as="p" tone="subdued">
                 Bitte laden Sie die Seite neu oder versuchen Sie es später erneut.
               </Text>
-              <Button onClick={() => window.location.reload()}>
+              <Button onClick={() => {
+                // Preserve shop and host params when reloading
+                const url = new URL(window.location.href);
+                url.searchParams.set('_reload', Date.now().toString());
+                window.location.href = url.toString();
+              }}>
                 Seite neu laden
               </Button>
             </BlockStack>
