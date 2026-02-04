@@ -212,6 +212,14 @@
   .operations-dropdown-mobile {
     min-width: 0; /* Allow flex items to shrink below content size */
     position: relative; /* For absolute positioning of expanded content */
+    z-index: 10; /* Ensure dropdowns appear above other content */
+  }
+
+  /* Prevent height calculation from expanded dropdown */
+  .language-dropdown-mobile:has(> .Polaris-Card:nth-child(2)),
+  .operations-dropdown-mobile:has(> .Polaris-Card:nth-child(2)) {
+    /* Don't let the absolutely positioned dropdown affect height */
+    height: 44px; /* Match button height */
   }
 
   /* Ensure dropdown buttons are compact and same height */
