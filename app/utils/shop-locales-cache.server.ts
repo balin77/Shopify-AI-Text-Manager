@@ -7,6 +7,7 @@
 
 interface ShopLocale {
   locale: string;
+  name: string;
   primary: boolean;
   published: boolean;
 }
@@ -45,6 +46,7 @@ export async function getCachedShopLocales(
       query getShopLocales {
         shopLocales {
           locale
+          name
           primary
           published
         }

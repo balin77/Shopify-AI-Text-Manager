@@ -348,11 +348,6 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
               <div style={{ flex: 1, overflowY: "auto", marginTop: "1rem" }}>
                 <Card padding="600">
                   <BlockStack gap="500">
-                    {/* Item ID */}
-                    <Text as="p" variant="bodySm" tone="subdued">
-                      {config.idPrefix || t.content?.idPrefix || "ID:"} {selectedItem.id.split("/").pop()}
-                    </Text>
-
                     {/* Field Pagination Header (for templates with many fields) */}
                     {fieldPagination && fieldPagination.totalCount > fieldPagination.limit && (
                       <div style={{
