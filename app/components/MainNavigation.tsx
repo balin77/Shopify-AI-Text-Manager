@@ -277,14 +277,22 @@ export function MainNavigation() {
 
   const handleClick = (path: string, tabId: string) => {
     console.log("🖱️ [MainNavigation] Tab clicked:", tabId, "->", path);
+    console.log("🎯 [MainNavigation] Current location:", location.pathname);
     console.log("🎯 [MainNavigation] Using client-side navigation (SPA)");
 
     // Preserve critical URL parameters for Shopify embedded app session
     const searchParams = new URLSearchParams(location.search);
     const newPath = `${path}?${searchParams.toString()}`;
 
-    console.log("🖱️ [MainNavigation] Navigating to:", newPath);
-    navigate(newPath);
+    console.log("🖱️ [MainNavigation] Full navigation path:", newPath);
+    console.log("🖱️ [MainNavigation] Query params:", searchParams.toString());
+
+    try {
+      navigate(newPath);
+      console.log("✅ [MainNavigation] Navigate function called successfully");
+    } catch (error) {
+      console.error("❌ [MainNavigation] Navigation error:", error);
+    }
   };
 
   // Navigate to settings/plan page when any plan button is clicked

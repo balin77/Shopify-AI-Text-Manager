@@ -61,10 +61,22 @@ export function MobileMenu({
   const plans: Plan[] = ["free", "basic", "pro", "max"];
 
   const handleNavigation = (path: string) => {
+    console.log("📱 [MobileMenu] Navigation clicked:", path);
+    console.log("📱 [MobileMenu] Current location:", location.pathname);
+
     const searchParams = new URLSearchParams(location.search);
     const newPath = `${path}?${searchParams.toString()}`;
-    navigate(newPath);
-    setIsOpen(false);
+
+    console.log("📱 [MobileMenu] Full navigation path:", newPath);
+    console.log("📱 [MobileMenu] Query params:", searchParams.toString());
+
+    try {
+      navigate(newPath);
+      console.log("✅ [MobileMenu] Navigate function called successfully");
+      setIsOpen(false);
+    } catch (error) {
+      console.error("❌ [MobileMenu] Navigation error:", error);
+    }
   };
 
   const handlePlanNavigation = (planOption?: Plan) => {
