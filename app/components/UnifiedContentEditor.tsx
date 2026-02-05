@@ -837,7 +837,12 @@ function FieldRenderer(props: FieldRendererProps & { plan?: string; state?: any;
         onAcceptAndTranslateSuggestion={handlers.handleAcceptAndTranslateAltText}
         onRejectSuggestion={handlers.handleRejectAltTextSuggestion}
         onClearAltText={(imageIndex) => handlers.handleAltTextChange(imageIndex, "")}
-        isFieldLoading={() => isImageAIActionRunning}
+        isFieldLoading={(imageIndex) => {
+          // Check if generateAllAltTexts is running (affects all images)
+          if (state.loadingFieldKeys?.has("allAltTexts")) return true;
+          // Check if this specific image's alt-text is loading
+          return state.loadingFieldKeys?.has(`altText_${imageIndex}`) || false;
+        }}
         t={{
           image: t.products?.image || "Image",
           featuredImage: t.products?.featuredImage || "Featured Image",

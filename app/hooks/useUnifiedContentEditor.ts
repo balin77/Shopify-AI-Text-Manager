@@ -2604,6 +2604,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     handleRejectAltTextSuggestion,
   };
 
+  // Helper function to check if a specific field is currently loading
+  const isFieldLoading = useCallback((fieldKey: string, action?: string) => {
+    // Check if this exact field key is in the loading set
+    return loadingFieldKeys.has(fieldKey);
+  }, [loadingFieldKeys]);
+
   return {
     state,
     handlers,
@@ -2622,6 +2628,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       setEditableValue,
       setOriginalTemplateValues,
       triggerDataRefresh,
+      isFieldLoading,
     },
     // Dynamic field definitions (for templates and other dynamic content types)
     effectiveFieldDefinitions,
