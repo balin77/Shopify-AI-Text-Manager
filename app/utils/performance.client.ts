@@ -4,7 +4,7 @@
  * Automatically measures and logs page load performance in the browser console.
  * Uses the Web Performance API (performance.mark, performance.measure).
  *
- * Logs are only displayed in development mode (NODE_ENV=development or APP_ENV=development).
+ * Logs are only displayed when APP_ENV=development (NODE_ENV is always 'production').
  *
  * Shopify "Built for Shopify" Performance Standards (75th percentile):
  * - Largest Contentful Paint (LCP): ≤ 2500ms
@@ -24,22 +24,16 @@
 
 /**
  * Check if we're in development mode
- * Checks both window.ENV (injected by Remix) and import.meta.env
+ * Only checks APP_ENV (NODE_ENV is always 'production' in Railway)
  */
 function isDevelopment(): boolean {
-  // Check window.ENV first (Remix injects this)
+  // Check window.ENV first (injected by Remix from server)
   if (typeof window !== 'undefined' && (window as any).ENV) {
     const env = (window as any).ENV;
-    return env.NODE_ENV === 'development' || env.APP_ENV === 'development';
+    return env.APP_ENV === 'development';
   }
 
-  // Fallback: Check import.meta.env (Vite)
-  if (typeof import.meta !== 'undefined' && import.meta.env) {
-    return import.meta.env.MODE === 'development' ||
-           import.meta.env.DEV === true;
-  }
-
-  // Default to false in production
+  // Default to false (production)
   return false;
 }
 

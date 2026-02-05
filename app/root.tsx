@@ -9,7 +9,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   return json({
     apiKey,
     ENV: {
-      NODE_ENV: process.env.NODE_ENV,
+      // Only pass APP_ENV to client (NODE_ENV is always 'production')
       APP_ENV: process.env.APP_ENV,
     },
   });
