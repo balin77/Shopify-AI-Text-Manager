@@ -174,7 +174,7 @@ export function MobileMenu({
                 const isAtLimit = showProductCount && productCount >= (maxProducts || Infinity);
                 const showTaskCount = tab.id === "tasks" && runningTaskCount && runningTaskCount > 0;
                 const isContentTab = tab.id === "content";
-                const hasContentTypes = showContentTypes && contentTypes.length > 0;
+                const hasContentTypes = contentTypes.length > 0;
 
                 return (
                   <div key={tab.id}>
