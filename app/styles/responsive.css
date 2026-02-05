@@ -153,9 +153,9 @@
 
 
   /* Ensure all buttons meet minimum touch target size */
-  button,
+  button:not(.help-tooltip-trigger),
   .Polaris-Button,
-  [role="button"] {
+  [role="button"]:not(.help-tooltip-trigger) {
     min-height: var(--touch-target-min);
     min-width: var(--touch-target-min);
     padding: 12px 16px;
@@ -441,9 +441,9 @@
   /* This targets touch devices specifically */
 
   /* Increase all interactive element sizes */
-  button,
+  button:not(.help-tooltip-trigger),
   a,
-  [role="button"],
+  [role="button"]:not(.help-tooltip-trigger),
   [role="link"] {
     min-height: var(--touch-target-min);
     min-width: var(--touch-target-min);
@@ -515,20 +515,7 @@ a:focus:not(:focus-visible) {
   outline: none;
 }
 
-/* Responsive Labels for Rate Limits */
-/* Show shortened labels on small screens to prevent line breaks */
-.show-on-small {
-  display: none;
-}
-
-@media (max-width: 768px) {
-  .hide-on-small {
-    display: none !important;
-  }
-  .show-on-small {
-    display: inline !important;
-  }
-}
+/* Responsive Labels for Rate Limits - now handled in RateLimitFields.css */
 
 /* Print Styles (Bonus) */
 @media print {

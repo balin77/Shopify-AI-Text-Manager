@@ -2,8 +2,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
   border-radius: 50%;
   background: transparent;
   border: none;
@@ -12,6 +12,11 @@
   margin-left: 4px;
   transition: opacity 0.2s;
   opacity: 0.6;
+}
+
+.help-tooltip-trigger svg {
+  width: 20px !important;
+  height: 20px !important;
 }
 
 .help-tooltip-trigger:hover {
