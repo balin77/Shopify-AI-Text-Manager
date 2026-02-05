@@ -213,9 +213,14 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   const { getTotalNavHeight } = useNavigationHeight();
 
   // Media query to detect mobile vs desktop
-  const [isMobile, setIsMobile] = useState(false);
+  // Initialize with undefined to avoid hydration mismatch, then set client-side
+  const [isMobile, setIsMobile] = useState<boolean | undefined>(undefined);
+  const [isClient, setIsClient] = useState(false);
 
   useEffect(() => {
+    // Mark that we're now on the client
+    setIsClient(true);
+
     const mediaQuery = window.matchMedia('(max-width: 768px)');
 
     // Set initial value
@@ -301,7 +306,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           {selectedItem ? (
             <>
               {/* Language Selection Bar - Desktop */}
-              {!isMobile && (
+              {isClient && !isMobile && (
                 <Card padding="400">
                   <UnifiedLanguageBar
                     shopLocales={shopLocales}
@@ -328,7 +333,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
               )}
 
               {/* Mobile: Language and Operations Dropdowns Side-by-Side */}
-              {isMobile && (
+              {isClient && isMobile && (
                 <div className="mobile-dropdowns-container">
                 <UnifiedLanguageBarMobile
                   shopLocales={shopLocales}
@@ -381,7 +386,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
               )}
 
               {/* Operation Buttons - Desktop */}
-              {!isMobile && (
+              {isClient && !isMobile && (
                 <div style={{ marginTop: "1rem" }}>
                 <Card padding="400" className="operation-buttons-card">
                 <InlineStack align="space-between" blockAlign="center">

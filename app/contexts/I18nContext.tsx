@@ -8,8 +8,8 @@ interface I18nContextType {
 }
 
 const I18nContext = createContext<I18nContextType>({
-  locale: "de",
-  t: getTranslation("de"),
+  locale: "en",
+  t: getTranslation("en"),
 });
 
 export function I18nProvider({
