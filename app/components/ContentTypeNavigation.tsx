@@ -53,7 +53,7 @@ export function ContentTypeNavigation() {
     { id: "blogs", label: t.content.blogs, icon: "📝", description: t.content.blogsDescription, path: "/app/blog", planContentType: "articles" },
     { id: "pages", label: t.content.pages, icon: "📄", description: t.content.pagesDescription, path: "/app/pages", planContentType: "pages" },
     { id: "policies", label: t.content.policies, icon: "📋", description: t.content.policiesDescription, path: "/app/policies", planContentType: "policies" },
-    { id: "menus", label: t.content.menus, icon: "🍔", description: t.content.menusDescription, path: "/app/content?type=menus", planContentType: "menus" },
+    { id: "menus", label: t.content.menus, icon: "🍔", description: t.content.menusDescription, path: "/app/menus", planContentType: "menus" },
     { id: "templates", label: t.content.templates, icon: "🧪", description: "Theme translatable resources...", path: "/app/templates", planContentType: "templates" },
     { id: "metaobjects", label: t.content.metaobjects, icon: "🗂️", description: t.content.metaobjectsDescription, path: "/app/content?type=metaobjects", comingSoon: true, planContentType: "metaobjects" },
     { id: "shopMetadata", label: t.content.shopMetadata, icon: "🏷️", description: t.content.shopMetadataDescription, path: "/app/content?type=shopMetadata", comingSoon: true, planContentType: "metadata" },
@@ -65,6 +65,7 @@ export function ContentTypeNavigation() {
     if (location.pathname === "/app/blog") return "blogs";
     if (location.pathname === "/app/pages") return "pages";
     if (location.pathname === "/app/policies") return "policies";
+    if (location.pathname === "/app/menus") return "menus";
     if (location.pathname === "/app/templates") return "templates";
     if (location.pathname === "/app/content") {
       const params = new URLSearchParams(location.search);

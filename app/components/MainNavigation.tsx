@@ -332,6 +332,7 @@ export function MainNavigation() {
     location.pathname.startsWith("/app/blog") ||
     location.pathname.startsWith("/app/pages") ||
     location.pathname.startsWith("/app/policies") ||
+    location.pathname.startsWith("/app/menus") ||
     location.pathname.startsWith("/app/templates") ||
     location.pathname.startsWith("/app/content");
 
@@ -340,7 +341,7 @@ export function MainNavigation() {
     { id: "blogs", label: t.content.blogs, icon: "📝", path: "/app/blog" },
     { id: "pages", label: t.content.pages, icon: "📄", path: "/app/pages" },
     { id: "policies", label: t.content.policies, icon: "📋", path: "/app/policies" },
-    { id: "menus", label: t.content.menus, icon: "🍔", path: "/app/content?type=menus", comingSoon: true },
+    { id: "menus", label: t.content.menus, icon: "🍔", path: "/app/menus" },
     { id: "templates", label: t.content.templates, icon: "🧪", path: "/app/templates" },
     { id: "metaobjects", label: t.content.metaobjects, icon: "🗂️", path: "/app/content?type=metaobjects", comingSoon: true },
     { id: "shopMetadata", label: t.content.shopMetadata, icon: "🏷️", path: "/app/content?type=shopMetadata", comingSoon: true },
