@@ -7,10 +7,10 @@
  * - Plan selector (shows only current plan, expandable)
  */
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useLocation, useNavigate } from "@remix-run/react";
 import { Icon } from "@shopify/polaris";
-import { MenuIcon, XIcon } from "@shopify/polaris-icons";
+import { MenuIcon, XIcon, ChevronRightIcon, ChevronDownIcon } from "@shopify/polaris-icons";
 import { useI18n } from "../contexts/I18nContext";
 import { usePlan } from "../contexts/PlanContext";
 import { useAppNavigation } from "../hooks/useAppNavigation";
@@ -46,11 +46,19 @@ export function MobileMenu({
   showContentTypes = false,
 }: MobileMenuProps) {
   const [isOpen, setIsOpen] = useState(false);
+  const [isContentExpanded, setIsContentExpanded] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
   const { handleNavigate } = useAppNavigation();
   const { t } = useI18n();
   const { plan, getPlanDisplayName } = usePlan();
+
+  // Auto-expand content submenu when on a content page
+  useEffect(() => {
+    if (showContentTypes) {
+      setIsContentExpanded(true);
+    }
+  }, [showContentTypes]);
 
   const tabs = [
     { id: "products", label: t.nav.products, path: "/app/products" },
@@ -170,61 +178,85 @@ export function MobileMenu({
 
                 return (
                   <div key={tab.id}>
-                    <button
-                      onClick={() => handleNavigation(tab.path)}
-                      className={`mobile-menu-item ${isActive ? "active" : ""}`}
-                      aria-current={isActive ? "page" : undefined}
-                      style={{
-                        width: "100%",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                        padding: "12px 16px",
-                        border: "none",
-                        background: isActive ? "#f6f6f7" : "transparent",
-                        borderLeft: isActive ? "4px solid #0066CC" : "4px solid transparent",
-                        cursor: "pointer",
-                        fontSize: "15px",
-                        fontWeight: isActive ? "600" : "400",
-                        color: isActive ? "#202223" : "#5c5f62",
-                        textAlign: "left",
-                        transition: "background-color 150ms ease",
-                      }}
-                    >
-                      <span>{tab.label}</span>
-                      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                        {showProductCount && (
-                          <span
-                            style={{
-                              fontSize: "13px",
-                              color: isAtLimit ? "#d72c0d" : "#6d7175",
-                              fontWeight: "500",
-                            }}
-                          >
-                            {productCount}
-                          </span>
-                        )}
-                        {showTaskCount && (
-                          <div
-                            style={{
-                              backgroundColor: "#0066CC",
-                              color: "white",
-                              borderRadius: "10px",
-                              padding: "2px 8px",
-                              fontSize: "12px",
-                              fontWeight: "600",
-                              minWidth: "20px",
-                              textAlign: "center",
-                            }}
-                          >
-                            {runningTaskCount}
-                          </div>
-                        )}
-                      </div>
-                    </button>
+                    <div style={{ display: "flex", alignItems: "center" }}>
+                      <button
+                        onClick={() => handleNavigation(tab.path)}
+                        className={`mobile-menu-item ${isActive ? "active" : ""}`}
+                        aria-current={isActive ? "page" : undefined}
+                        style={{
+                          flex: 1,
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          padding: "12px 16px",
+                          border: "none",
+                          background: isActive ? "#f6f6f7" : "transparent",
+                          borderLeft: isActive ? "4px solid #0066CC" : "4px solid transparent",
+                          cursor: "pointer",
+                          fontSize: "15px",
+                          fontWeight: isActive ? "600" : "400",
+                          color: isActive ? "#202223" : "#5c5f62",
+                          textAlign: "left",
+                          transition: "background-color 150ms ease",
+                        }}
+                      >
+                        <span>{tab.label}</span>
+                        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                          {showProductCount && (
+                            <span
+                              style={{
+                                fontSize: "13px",
+                                color: isAtLimit ? "#d72c0d" : "#6d7175",
+                                fontWeight: "500",
+                              }}
+                            >
+                              {productCount}
+                            </span>
+                          )}
+                          {showTaskCount && (
+                            <div
+                              style={{
+                                backgroundColor: "#0066CC",
+                                color: "white",
+                                borderRadius: "10px",
+                                padding: "2px 8px",
+                                fontSize: "12px",
+                                fontWeight: "600",
+                                minWidth: "20px",
+                                textAlign: "center",
+                              }}
+                            >
+                              {runningTaskCount}
+                            </div>
+                          )}
+                        </div>
+                      </button>
 
-                    {/* Content Types Submenu - always visible */}
-                    {isContentTab && hasContentTypes && (
+                      {/* Toggle button for content submenu */}
+                      {isContentTab && hasContentTypes && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setIsContentExpanded(!isContentExpanded);
+                          }}
+                          aria-label={isContentExpanded ? "Collapse content types" : "Expand content types"}
+                          aria-expanded={isContentExpanded}
+                          style={{
+                            background: "none",
+                            border: "none",
+                            padding: "12px 16px",
+                            cursor: "pointer",
+                            display: "flex",
+                            alignItems: "center",
+                          }}
+                        >
+                          <Icon source={isContentExpanded ? ChevronDownIcon : ChevronRightIcon} />
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Content Types Submenu - collapsible */}
+                    {isContentTab && hasContentTypes && isContentExpanded && (
                       <div style={{ paddingLeft: "12px" }}>
                         {contentTypes.map((type) => {
                           const isContentTypeActive = location.pathname === type.path || location.pathname.startsWith(type.path);
