@@ -8,17 +8,23 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   return json({
     apiKey,
+    ENV: {
+      NODE_ENV: process.env.NODE_ENV,
+      APP_ENV: process.env.APP_ENV,
+    },
   });
 };
 
 function Document({
   children,
   title = "App",
-  apiKey
+  apiKey,
+  env,
 }: {
   children: React.ReactNode;
   title?: string;
   apiKey?: string;
+  env?: any;
 }) {
   return (
     <html lang="en">
@@ -28,6 +34,13 @@ function Document({
         <title>{title}</title>
         {apiKey && <meta name="shopify-api-key" content={apiKey} />}
         <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js" />
+        {env && (
+          <script
+            dangerouslySetInnerHTML={{
+              __html: `window.ENV = ${JSON.stringify(env)}`,
+            }}
+          />
+        )}
         <Meta />
         <Links />
         <link rel="preconnect" href="https://cdn.shopify.com/" />
@@ -46,10 +59,10 @@ function Document({
 }
 
 export default function App() {
-  const { apiKey } = useLoaderData<typeof loader>();
+  const { apiKey, ENV } = useLoaderData<typeof loader>();
 
   return (
-    <Document apiKey={apiKey}>
+    <Document apiKey={apiKey} env={ENV}>
       <Outlet />
     </Document>
   );

@@ -4,6 +4,8 @@
  * Automatically measures and logs page load performance in the browser console.
  * Uses the Web Performance API (performance.mark, performance.measure).
  *
+ * Logs are only displayed in development mode (NODE_ENV=development or APP_ENV=development).
+ *
  * Shopify "Built for Shopify" Performance Standards (75th percentile):
  * - Largest Contentful Paint (LCP): ≤ 2500ms
  * - Cumulative Layout Shift (CLS): ≤ 0.1
@@ -20,6 +22,27 @@
  * }, []);
  */
 
+/**
+ * Check if we're in development mode
+ * Checks both window.ENV (injected by Remix) and import.meta.env
+ */
+function isDevelopment(): boolean {
+  // Check window.ENV first (Remix injects this)
+  if (typeof window !== 'undefined' && (window as any).ENV) {
+    const env = (window as any).ENV;
+    return env.NODE_ENV === 'development' || env.APP_ENV === 'development';
+  }
+
+  // Fallback: Check import.meta.env (Vite)
+  if (typeof import.meta !== 'undefined' && import.meta.env) {
+    return import.meta.env.MODE === 'development' ||
+           import.meta.env.DEV === true;
+  }
+
+  // Default to false in production
+  return false;
+}
+
 interface PerformanceMetrics {
   pageName: string;
   loadTime: number;
@@ -32,9 +55,15 @@ interface PerformanceMetrics {
 /**
  * Measures and logs the page load performance
  * Call this in useEffect() after the page has loaded
+ * Only logs in development mode
  */
 export function measurePageLoad(pageName: string, additionalData?: Record<string, any>) {
   if (typeof window === 'undefined' || !window.performance) {
+    return;
+  }
+
+  // Only log performance in development mode
+  if (!isDevelopment()) {
     return;
   }
 
@@ -151,9 +180,15 @@ export function measurePageLoad(pageName: string, additionalData?: Record<string
 
 /**
  * Measures a specific operation (e.g., data loading, rendering)
+ * Only logs in development mode
  */
 export function measureOperation(operationName: string, startMark?: string) {
   if (typeof window === 'undefined' || !window.performance) {
+    return () => {};
+  }
+
+  // Only log performance in development mode
+  if (!isDevelopment()) {
     return () => {};
   }
 
