@@ -122,20 +122,18 @@ export function SettingsLanguageTab({ settings, fetcher, t, onHasChangesChange }
           </BlockStack>
         </Card>
 
-        <div className="settings-action-buttons-desktop">
-          <Card>
-            <SaveDiscardButtons
-              hasChanges={languageChanged}
-              onSave={handleSave}
-              onDiscard={handleDiscard}
-              saveText={t.products.saveChanges}
-              discardText={t.content?.discardChanges || "Verwerfen"}
-              action="saveSettings"
-              fetcherState={fetcher.state}
-              fetcherFormData={fetcher.formData}
-            />
-          </Card>
-        </div>
+        <Card className="settings-action-buttons-desktop">
+          <SaveDiscardButtons
+            hasChanges={languageChanged}
+            onSave={handleSave}
+            onDiscard={handleDiscard}
+            saveText={t.products.saveChanges}
+            discardText={t.content?.discardChanges || "Verwerfen"}
+            action="saveSettings"
+            fetcherState={fetcher.state}
+            fetcherFormData={fetcher.formData}
+          />
+        </Card>
       </BlockStack>
 
       <style>{`
