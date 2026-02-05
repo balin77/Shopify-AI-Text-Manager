@@ -1,5 +1,5 @@
 import { RemixBrowser } from "@remix-run/react";
-import { startTransition, StrictMode } from "react";
+import { startTransition } from "react";
 import { hydrateRoot } from "react-dom/client";
 
 // Filter out known third-party library warnings
@@ -50,10 +50,5 @@ if (typeof window !== 'undefined') {
 }
 
 startTransition(() => {
-  hydrateRoot(
-    document,
-    <StrictMode>
-      <RemixBrowser />
-    </StrictMode>
-  );
+  hydrateRoot(document, <RemixBrowser />);
 });
