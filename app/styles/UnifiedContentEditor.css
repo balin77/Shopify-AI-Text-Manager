@@ -138,6 +138,7 @@
 
 /* Operation Buttons Responsive */
 .operation-buttons-card {
+  margin-top: 1rem !important;
   margin-bottom: 16px;
 }
 
