@@ -342,7 +342,7 @@ export function UnifiedItemList({
 
   return (
     <div ref={wrapperRef} style={{ width: "330px", flexShrink: 0, height: "100%", overflow: "hidden" }}>
-      <style>{`
+      <style dangerouslySetInnerHTML={{ __html: `
         /* UnifiedItemList - Full height card with scrollable list */
         .unified-item-list-wrapper {
           height: 100% !important;
@@ -376,7 +376,7 @@ export function UnifiedItemList({
           display: flex !important;
           align-items: center !important;
         }
-      `}</style>
+      ` }} />
       <div className="unified-item-list-wrapper" style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden" }}>
       <Card padding="0">
         {/* Header */}
