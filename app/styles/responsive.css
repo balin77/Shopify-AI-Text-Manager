@@ -51,6 +51,12 @@
   }
 }
 
+/* Image Gallery: Keep aspect ratio consistent at all screen sizes */
+.image-preview-large > div {
+  padding-bottom: 100% !important; /* Always maintain square aspect ratio */
+  aspect-ratio: 1 / 1;
+}
+
 /* Image Gallery: Stack vertically only on very narrow screens */
 @media (max-width: 470px) {
   /* CRITICAL: Fix image preview that stays at 280px on very narrow screens */
