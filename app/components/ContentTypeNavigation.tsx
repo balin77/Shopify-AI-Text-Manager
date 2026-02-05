@@ -4,7 +4,7 @@
  * This component provides consistent navigation across all content management pages
  */
 
-import { useNavigate, useLocation } from "@remix-run/react";
+import { useLocation } from "@remix-run/react";
 import { InlineStack, Text, Tooltip } from "@shopify/polaris";
 import { useI18n } from "../contexts/I18nContext";
 import { usePlan } from "../contexts/PlanContext";
@@ -12,6 +12,21 @@ import { useNavigationHeight } from "../contexts/NavigationHeightContext";
 import { type ContentType as PlanContentType } from "../config/plans";
 import { getPlanDisplayName as getPlanDisplayNameUtil } from "../utils/planUtils";
 import { useState, useEffect, useRef } from "react";
+
+// Navigation helper using App Bridge for embedded apps
+function navigateWithAppBridge(path: string, searchParams: URLSearchParams) {
+  const fullPath = `${path}?${searchParams.toString()}`;
+
+  // Check if we're in an embedded app with App Bridge available
+  if (window.shopify && typeof window.shopify.loading === 'function') {
+    console.log("🚀 [ContentTypeNavigation] Using App Bridge Redirect for:", fullPath);
+    window.shopify.loading(true);
+    window.location.href = fullPath;
+  } else {
+    console.log("🔄 [ContentTypeNavigation] Using window.location for:", fullPath);
+    window.location.href = fullPath;
+  }
+}
 
 type ContentType = "collections" | "blogs" | "pages" | "policies" | "menus" | "templates" | "metaobjects" | "shopMetadata";
 
@@ -26,7 +41,6 @@ interface ContentTypeConfig {
 }
 
 export function ContentTypeNavigation() {
-  const navigate = useNavigate();
   const location = useLocation();
   const { t } = useI18n();
   const { canAccessContentType, getNextPlanUpgrade } = usePlan();
@@ -104,7 +118,14 @@ export function ContentTypeNavigation() {
                 key={type.id}
                 onClick={() => {
                   if (!isDisabled) {
-                    navigate(type.path);
+                    console.log("🖱️ [ContentTypeNavigation] Item clicked:", type.id, "->", type.path);
+                    console.log("🎯 [ContentTypeNavigation] Current location:", location.pathname);
+
+                    // Preserve critical URL parameters for Shopify embedded app session
+                    const searchParams = new URLSearchParams(location.search);
+
+                    // Use App Bridge redirect for embedded apps (causes full page reload but works)
+                    navigateWithAppBridge(type.path, searchParams);
                   }
                 }}
                 disabled={isDisabled}
