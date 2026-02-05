@@ -2192,14 +2192,27 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     const productTitle = getItemFieldValue(selectedItem, 'title', primaryLocale, config);
     const mainLanguage = shopLocales.find((l: ShopLocale) => l.locale === primaryLocale)?.name || primaryLocale;
 
-    safeSubmit({
-      action: "generateAltText",
-      productId: selectedItem.id,
-      imageIndex: String(imageIndex),
-      imageUrl: image.url,
-      productTitle,
-      mainLanguage
-    }, { method: "POST" });
+    submitAIAction(
+      {
+        action: "generateAltText",
+        itemId: selectedItem.id,
+        productId: selectedItem.id,
+        imageIndex: String(imageIndex),
+        imageUrl: image.url,
+        productTitle,
+        mainLanguage
+      },
+      `altText_${imageIndex}`,
+      (result) => {
+        // Handle success - set AI suggestion for this alt-text
+        if (result.altText) {
+          setAltTextSuggestions((prev) => ({
+            ...prev,
+            [imageIndex]: result.altText,
+          }));
+        }
+      }
+    );
   };
 
   const handleGenerateAllAltTexts = () => {
@@ -2233,13 +2246,27 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       return;
     }
 
-    safeSubmit({
-      action: "translateAltText",
-      productId: selectedItem.id,
-      imageIndex: String(imageIndex),
-      sourceAltText,
-      targetLocale: currentLanguage
-    }, { method: "POST" });
+    submitAIAction(
+      {
+        action: "translateAltText",
+        itemId: selectedItem.id,
+        productId: selectedItem.id,
+        imageIndex: String(imageIndex),
+        sourceAltText,
+        targetLocale: currentLanguage,
+        primaryLocale
+      },
+      `altText_${imageIndex}`,
+      (result) => {
+        // Handle success - set AI suggestion for this alt-text translation
+        if (result.translatedAltText) {
+          setAltTextSuggestions((prev) => ({
+            ...prev,
+            [imageIndex]: result.translatedAltText,
+          }));
+        }
+      }
+    );
   };
 
   const handleTranslateAltTextToAllLocales = (imageIndex: number) => {
@@ -2268,13 +2295,39 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       return;
     }
 
-    safeSubmit({
-      action: "translateAltTextToAllLocales",
-      productId: selectedItem.id,
-      imageIndex: String(imageIndex),
-      sourceAltText,
-      targetLocales: JSON.stringify(targetLocales)
-    }, { method: "POST" });
+    submitAIAction(
+      {
+        action: "translateAltTextToAllLocales",
+        itemId: selectedItem.id,
+        productId: selectedItem.id,
+        imageIndex: String(imageIndex),
+        sourceAltText,
+        targetLocales: JSON.stringify(targetLocales),
+        primaryLocale
+      },
+      `altText_${imageIndex}`,
+      (result) => {
+        // Handle success - translations have been saved to Shopify and DB
+        const translatedCount = result.translatedAltTexts ? Object.keys(result.translatedAltTexts).length : targetLocales.length;
+
+        showInfoBox(
+          t.content?.altTextTranslatedToLanguages
+            ?.replace("{count}", String(translatedCount))
+            || `Alt-text translated to ${translatedCount} language(s)`,
+          "success",
+          t.common?.success || "Success"
+        );
+
+        // Revalidate to fetch fresh data from the database
+        if (revalidator.state === 'idle') {
+          try {
+            revalidator.revalidate();
+          } catch (error) {
+            debugLog.revalidate(' Error during revalidation (ignored):', error);
+          }
+        }
+      }
+    );
   };
 
   const handleAcceptAltTextSuggestion = (imageIndex: number) => {

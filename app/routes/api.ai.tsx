@@ -1069,6 +1069,487 @@ IMPORTANT: Return ONLY the improved and formatted text, nothing else. No explana
         }
       }
 
+      case "generateAltText": {
+        const imageIndex = parseInt(formData.get("imageIndex") as string);
+        const imageUrl = formData.get("imageUrl") as string;
+        const productTitle = formData.get("productTitle") as string;
+        const mainLanguage = formData.get("mainLanguage") as string || "German";
+
+        if (!imageUrl) {
+          return json({ success: false, error: "No image URL provided" }, { status: 400 });
+        }
+
+        // Load AI instructions
+        const aiInstructions = await db.aIInstructions.findUnique({
+          where: { shop: session.shop },
+        });
+
+        // Create task entry with prompt
+        const task = await db.task.create({
+          data: {
+            shop: session.shop,
+            type: "aiGeneration",
+            status: "pending",
+            resourceType: contentType,
+            resourceId: itemId,
+            resourceTitle: productTitle,
+            fieldType: `altText_${imageIndex}`,
+            progress: 0,
+            expiresAt: getTaskExpirationDate(),
+          },
+        });
+
+        try {
+          // Update task to running
+          await db.task.update({
+            where: { id: task.id },
+            data: { status: "running", progress: 20 },
+          });
+
+          const aiService = new AIService(
+            settings?.preferredProvider as any || 'huggingface',
+            {
+              huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
+              geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
+              claudeApiKey: decryptApiKey(settings?.claudeApiKey) || undefined,
+              openaiApiKey: decryptApiKey(settings?.openaiApiKey) || undefined,
+              grokApiKey: decryptApiKey(settings?.grokApiKey) || undefined,
+              deepseekApiKey: decryptApiKey(settings?.deepseekApiKey) || undefined,
+            },
+            session.shop,
+            task.id
+          );
+
+          logger.debug("[API-AI] Generating alt-text for image", {
+            context: "AI",
+            imageIndex,
+            productTitle,
+            textLength: imageUrl.length
+          });
+
+          let prompt = `Create an optimized alt text for a product image.
+Product: ${productTitle}
+Image URL: ${imageUrl}`;
+
+          if (aiInstructions?.productAltTextFormat) {
+            prompt += `\n\nFormat Example:\n${aiInstructions.productAltTextFormat}`;
+          }
+
+          if (aiInstructions?.productAltTextInstructions) {
+            prompt += `\n\nInstructions:\n${aiInstructions.productAltTextInstructions}`;
+          }
+
+          prompt += `\n\nReturn ONLY the alt text, without explanations.${mainLanguage ? ` Output the result in ${mainLanguage}.` : ''}`;
+
+          const altText = await aiService.generateImageAltText(imageUrl, productTitle, prompt);
+
+          // Update task to completed with full AI response
+          await db.task.update({
+            where: { id: task.id },
+            data: {
+              status: "completed",
+              progress: 100,
+              completedAt: new Date(),
+              result: altText,
+            },
+          });
+
+          return json({
+            success: true,
+            altText,
+            imageIndex
+          });
+        } catch (error: any) {
+          // Update task to failed
+          await db.task.update({
+            where: { id: task.id },
+            data: {
+              status: "failed",
+              completedAt: new Date(),
+              error: (error.message || String(error)).substring(0, 1000),
+            },
+          });
+          throw error;
+        }
+      }
+
+      case "translateAltText": {
+        const imageIndex = parseInt(formData.get("imageIndex") as string);
+        const sourceAltText = formData.get("sourceAltText") as string;
+        const targetLocale = formData.get("targetLocale") as string;
+        const primaryLocale = formData.get("primaryLocale") as string;
+
+        if (!sourceAltText) {
+          return json({ success: false, error: "No source alt-text available" }, { status: 400 });
+        }
+
+        // Build the prompt
+        const prompt = buildTranslationPrompt(sourceAltText, primaryLocale, targetLocale);
+
+        // Create task entry with prompt
+        const task = await db.task.create({
+          data: {
+            shop: session.shop,
+            type: "translation",
+            status: "pending",
+            resourceType: contentType,
+            resourceId: itemId,
+            resourceTitle: `altText_${imageIndex}`,
+            fieldType: `altText_${imageIndex}`,
+            targetLocale,
+            progress: 0,
+            prompt,
+            expiresAt: getTaskExpirationDate(),
+          },
+        });
+
+        try {
+          // Update task to running
+          await db.task.update({
+            where: { id: task.id },
+            data: { status: "running", progress: 20 },
+          });
+
+          const aiService = new AIService(
+            settings?.preferredProvider as any || 'huggingface',
+            {
+              huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
+              geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
+              claudeApiKey: decryptApiKey(settings?.claudeApiKey) || undefined,
+              openaiApiKey: decryptApiKey(settings?.openaiApiKey) || undefined,
+              grokApiKey: decryptApiKey(settings?.grokApiKey) || undefined,
+              deepseekApiKey: decryptApiKey(settings?.deepseekApiKey) || undefined,
+            },
+            session.shop,
+            task.id
+          );
+
+          logger.debug("[API-AI] Translating alt-text", {
+            context: "AI",
+            imageIndex,
+            from: primaryLocale,
+            to: targetLocale,
+            textLength: sourceAltText.length
+          });
+
+          const translatedAltText = await aiService.translateContent(sourceAltText, primaryLocale, targetLocale);
+
+          // Update task to completed with full AI response
+          await db.task.update({
+            where: { id: task.id },
+            data: {
+              status: "completed",
+              progress: 100,
+              completedAt: new Date(),
+              result: translatedAltText,
+            },
+          });
+
+          return json({
+            success: true,
+            translatedAltText,
+            imageIndex,
+            targetLocale
+          });
+        } catch (error: any) {
+          // Update task to failed
+          await db.task.update({
+            where: { id: task.id },
+            data: {
+              status: "failed",
+              completedAt: new Date(),
+              error: (error.message || String(error)).substring(0, 1000),
+            },
+          });
+          throw error;
+        }
+      }
+
+      case "translateAltTextToAllLocales": {
+        const imageIndex = parseInt(formData.get("imageIndex") as string);
+        const sourceAltText = formData.get("sourceAltText") as string;
+        const targetLocalesJson = formData.get("targetLocales") as string;
+        const primaryLocale = formData.get("primaryLocale") as string;
+        const productId = formData.get("productId") as string;
+
+        if (!sourceAltText) {
+          return json({ success: false, error: "No source alt-text available" }, { status: 400 });
+        }
+
+        const targetLocales = targetLocalesJson ? JSON.parse(targetLocalesJson) : [];
+        if (targetLocales.length === 0) {
+          return json({ success: false, error: "No target locales specified" }, { status: 400 });
+        }
+
+        // Build prompts for all locales
+        const allPrompts = targetLocales.map((locale: string) => ({
+          locale,
+          prompt: buildTranslationPrompt(sourceAltText, primaryLocale, locale)
+        }));
+
+        // Create task entry with prompts
+        const task = await db.task.create({
+          data: {
+            shop: session.shop,
+            type: "translationBulk",
+            status: "pending",
+            resourceType: contentType,
+            resourceId: itemId,
+            resourceTitle: `altText_${imageIndex}`,
+            fieldType: `altText_${imageIndex}`,
+            progress: 0,
+            prompt: JSON.stringify(allPrompts, null, 2),
+            expiresAt: getTaskExpirationDate(),
+          },
+        });
+
+        try {
+          // Update task to running
+          await db.task.update({
+            where: { id: task.id },
+            data: { status: "running", progress: 10 },
+          });
+
+          const aiService = new AIService(
+            settings?.preferredProvider as any || 'huggingface',
+            {
+              huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
+              geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
+              claudeApiKey: decryptApiKey(settings?.claudeApiKey) || undefined,
+              openaiApiKey: decryptApiKey(settings?.openaiApiKey) || undefined,
+              grokApiKey: decryptApiKey(settings?.grokApiKey) || undefined,
+              deepseekApiKey: decryptApiKey(settings?.deepseekApiKey) || undefined,
+            },
+            session.shop,
+            task.id
+          );
+
+          logger.debug("[API-AI] Translating alt-text to all locales", {
+            context: "AI",
+            imageIndex,
+            from: primaryLocale,
+            to: targetLocales,
+            textLength: sourceAltText.length
+          });
+
+          const translatedAltTexts: Record<string, string> = {};
+          const aiResponses: Array<{ locale: string; response: string }> = [];
+          const totalLocales = targetLocales.length;
+
+          // Translate to each locale
+          for (let i = 0; i < targetLocales.length; i++) {
+            const locale = targetLocales[i];
+            try {
+              const translatedValue = await aiService.translateContent(sourceAltText, primaryLocale, locale);
+              translatedAltTexts[locale] = translatedValue;
+              aiResponses.push({ locale, response: translatedValue });
+
+              // Update progress
+              const progress = Math.round(10 + ((i + 1) / totalLocales) * 80);
+              await db.task.update({
+                where: { id: task.id },
+                data: { progress },
+              });
+
+              logger.debug("[API-AI] Translated alt-text to locale", {
+                context: "AI",
+                imageIndex,
+                locale
+              });
+            } catch (error: any) {
+              logger.error("[API-AI] Error translating alt-text to locale", {
+                context: "AI",
+                imageIndex,
+                locale,
+                error: error?.message
+              });
+              translatedAltTexts[locale] = sourceAltText; // Fallback to original
+              aiResponses.push({ locale, response: `ERROR: ${error?.message}` });
+            }
+          }
+
+          // Now save the translations to Shopify and DB
+          if (productId && contentType === 'products') {
+            const { ShopifyApiGateway } = await import("~/services/shopify-api-gateway.service");
+            const gateway = new ShopifyApiGateway(admin, session.shop);
+
+            // Get DB product image to find mediaId
+            const dbProduct = await db.product.findUnique({
+              where: { id: productId },
+              include: {
+                images: {
+                  orderBy: { position: 'asc' },
+                },
+              },
+            });
+
+            const dbImage = dbProduct?.images?.[imageIndex];
+
+            if (dbImage?.mediaId) {
+              // First, fetch the translatable content to get the digest
+              const translatableResponse = await gateway.graphql(
+                `#graphql
+                  query translatableContent($resourceId: ID!) {
+                    translatableResource(resourceId: $resourceId) {
+                      resourceId
+                      translatableContent {
+                        key
+                        digest
+                        value
+                      }
+                    }
+                  }`,
+                { variables: { resourceId: dbImage.mediaId } }
+              );
+
+              const translatableData = await translatableResponse.json();
+              const translatableContent = translatableData.data?.translatableResource?.translatableContent || [];
+              const altDigest = translatableContent.find((c: any) => c.key === "alt")?.digest;
+
+              if (altDigest) {
+                // Save each translation to Shopify
+                for (const locale of targetLocales) {
+                  const altText = translatedAltTexts[locale];
+                  if (!altText) continue;
+
+                  try {
+                    const translateResponse = await gateway.graphql(
+                      `#graphql
+                        mutation translateMediaImage($resourceId: ID!, $translations: [TranslationInput!]!) {
+                          translationsRegister(resourceId: $resourceId, translations: $translations) {
+                            userErrors {
+                              field
+                              message
+                            }
+                            translations {
+                              locale
+                              key
+                              value
+                            }
+                          }
+                        }`,
+                      {
+                        variables: {
+                          resourceId: dbImage.mediaId,
+                          translations: [
+                            {
+                              key: "alt",
+                              value: altText,
+                              locale: locale,
+                              translatableContentDigest: altDigest,
+                            },
+                          ],
+                        },
+                      }
+                    );
+
+                    const translateData = await translateResponse.json();
+                    if (translateData.data?.translationsRegister?.userErrors?.length > 0) {
+                      logger.error("[API-AI] Failed to save alt-text translation to Shopify", {
+                        context: "AI",
+                        locale,
+                        errors: translateData.data.translationsRegister.userErrors,
+                      });
+                    } else {
+                      logger.debug("[API-AI] Saved alt-text translation to Shopify", {
+                        context: "AI",
+                        locale
+                      });
+                    }
+                  } catch (shopifyError: any) {
+                    logger.error("[API-AI] Error saving alt-text to Shopify", {
+                      context: "AI",
+                      locale,
+                      error: shopifyError?.message
+                    });
+                  }
+                }
+              }
+            }
+
+            // Save translations to DB
+            if (dbImage) {
+              try {
+                for (const locale of targetLocales) {
+                  const altText = translatedAltTexts[locale];
+                  if (!altText) continue;
+
+                  const existing = await db.productImageAltTranslation.findUnique({
+                    where: {
+                      imageId_locale: {
+                        imageId: dbImage.id,
+                        locale: locale,
+                      },
+                    },
+                  });
+
+                  if (existing) {
+                    await db.productImageAltTranslation.update({
+                      where: { id: existing.id },
+                      data: { altText },
+                    });
+                  } else {
+                    await db.productImageAltTranslation.create({
+                      data: {
+                        imageId: dbImage.id,
+                        locale: locale,
+                        altText: altText,
+                      },
+                    });
+                  }
+                }
+                logger.debug("[API-AI] Saved alt-text translations to DB", {
+                  context: "AI",
+                  imageIndex,
+                  locales: targetLocales,
+                });
+              } catch (dbError: any) {
+                // If the image was deleted by a concurrent sync, log and continue
+                if (dbError.code === 'P2003' || dbError.message?.includes('Foreign key constraint')) {
+                  logger.error("[API-AI] Image was deleted during translation save (concurrent sync)", {
+                    context: "AI",
+                    imageIndex,
+                    productId,
+                    error: dbError.message,
+                  });
+                } else {
+                  throw dbError; // Re-throw other errors
+                }
+              }
+            }
+          }
+
+          // Update task to completed with all AI responses
+          await db.task.update({
+            where: { id: task.id },
+            data: {
+              status: "completed",
+              progress: 100,
+              completedAt: new Date(),
+              result: JSON.stringify(aiResponses, null, 2),
+            },
+          });
+
+          return json({
+            success: true,
+            translatedAltTexts,
+            imageIndex,
+            targetLocales
+          });
+        } catch (error: any) {
+          // Update task to failed
+          await db.task.update({
+            where: { id: task.id },
+            data: {
+              status: "failed",
+              completedAt: new Date(),
+              error: (error.message || String(error)).substring(0, 1000),
+            },
+          });
+          throw error;
+        }
+      }
+
       default:
         return json({ success: false, error: `Unknown action: ${actionType}` }, { status: 400 });
     }
