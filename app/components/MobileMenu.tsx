@@ -10,7 +10,7 @@
 import { useState } from "react";
 import { useLocation, useNavigate } from "@remix-run/react";
 import { Icon } from "@shopify/polaris";
-import { MenuIcon, XIcon, ChevronRightIcon, ChevronDownIcon } from "@shopify/polaris-icons";
+import { MenuIcon, XIcon } from "@shopify/polaris-icons";
 import { useI18n } from "../contexts/I18nContext";
 import { usePlan } from "../contexts/PlanContext";
 import { useAppNavigation } from "../hooks/useAppNavigation";
@@ -46,7 +46,6 @@ export function MobileMenu({
   showContentTypes = false,
 }: MobileMenuProps) {
   const [isOpen, setIsOpen] = useState(false);
-  const [isContentExpanded, setIsContentExpanded] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
   const { handleNavigate } = useAppNavigation();
@@ -172,16 +171,9 @@ export function MobileMenu({
                 return (
                   <div key={tab.id}>
                     <button
-                      onClick={() => {
-                        if (isContentTab && hasContentTypes) {
-                          setIsContentExpanded(!isContentExpanded);
-                        } else {
-                          handleNavigation(tab.path);
-                        }
-                      }}
+                      onClick={() => handleNavigation(tab.path)}
                       className={`mobile-menu-item ${isActive ? "active" : ""}`}
                       aria-current={isActive ? "page" : undefined}
-                      aria-expanded={isContentTab && hasContentTypes ? isContentExpanded : undefined}
                       style={{
                         width: "100%",
                         display: "flex",
@@ -228,14 +220,11 @@ export function MobileMenu({
                             {runningTaskCount}
                           </div>
                         )}
-                        {isContentTab && hasContentTypes && (
-                          <Icon source={isContentExpanded ? ChevronDownIcon : ChevronRightIcon} />
-                        )}
                       </div>
                     </button>
 
-                    {/* Content Types Submenu */}
-                    {isContentTab && hasContentTypes && isContentExpanded && (
+                    {/* Content Types Submenu - always visible */}
+                    {isContentTab && hasContentTypes && (
                       <div style={{ paddingLeft: "12px" }}>
                         {contentTypes.map((type) => {
                           const isContentTypeActive = location.pathname === type.path || location.pathname.startsWith(type.path);
