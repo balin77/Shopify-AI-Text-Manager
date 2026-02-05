@@ -53,16 +53,42 @@
 
 /* Touch Target Optimization for Mobile */
 @media (max-width: 768px) {
-  /* Prevent horizontal overflow on mobile */
+  /* Prevent horizontal overflow on mobile - CRITICAL */
+  html {
+    overflow-x: hidden !important;
+    max-width: 100vw !important;
+  }
+
   body {
-    overflow-x: hidden;
+    overflow-x: hidden !important;
+    max-width: 100vw !important;
+  }
+
+  /* Force ALL Polaris components to respect mobile width */
+  [class*="Polaris"] {
+    min-width: 0 !important;
+    max-width: 100% !important;
   }
 
   /* Force Polaris TextField inputs to shrink on mobile */
   .Polaris-TextField,
-  .Polaris-TextField__Input {
+  .Polaris-TextField__Input,
+  .Polaris-TextField__Backdrop {
     min-width: 0 !important;
     width: 100% !important;
+  }
+
+  /* Force Polaris Card to respect width */
+  .Polaris-Card {
+    min-width: 0 !important;
+    max-width: 100% !important;
+  }
+
+  /* Force Polaris Layout components */
+  .Polaris-Layout,
+  .Polaris-Layout__Section {
+    min-width: 0 !important;
+    max-width: 100% !important;
   }
 
   /* Force images to scale down */

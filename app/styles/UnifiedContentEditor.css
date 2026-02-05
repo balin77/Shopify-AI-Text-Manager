@@ -132,7 +132,7 @@
 
   .language-bar-buttons button {
     flex: 1 1 calc(33.33% - 8px);
-    min-width: 70px;
+    min-width: 0 !important;
   }
 }
 
@@ -217,7 +217,7 @@
 /* Mobile: Larger touch targets for pagination */
 @media (max-width: 767px) {
   .pagination-controls button {
-    min-width: 48px;
+    min-width: 0 !important;
     min-height: 48px;
   }
 }
