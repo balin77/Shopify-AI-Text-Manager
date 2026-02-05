@@ -26,9 +26,10 @@ function Document({
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width,initial-scale=1" />
         <title>{title}</title>
+        {apiKey && <meta name="shopify-api-key" content={apiKey} />}
+        <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js" />
         <Meta />
         <Links />
-        {apiKey && <meta name="shopify-api-key" content={apiKey} />}
         <link rel="preconnect" href="https://cdn.shopify.com/" />
         <link
           rel="stylesheet"
@@ -39,10 +40,6 @@ function Document({
         {children}
         <ScrollRestoration />
         <Scripts />
-        <script
-          src="https://cdn.shopify.com/shopifycloud/app-bridge.js"
-          defer
-        />
       </body>
     </html>
   );
