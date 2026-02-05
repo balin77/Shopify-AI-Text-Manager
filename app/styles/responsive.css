@@ -9,27 +9,6 @@
   --spacing-desktop: 16px;
 }
 
-/* Global Mobile Viewport Constraint - Apply to ALL container elements */
-html, body {
-  max-width: 100vw;
-  overflow-x: hidden;
-}
-
-/* Ensure all major containers respect viewport width */
-* {
-  box-sizing: border-box;
-}
-
-/* Polaris Frame and all content containers */
-.Polaris-Frame,
-.Polaris-Frame__Content,
-.Polaris-Frame__Main,
-main,
-#app-root {
-  max-width: 100vw;
-  overflow-x: hidden;
-}
-
 /* Visibility Utilities for Mobile/Tablet/Desktop */
 /* Breakpoint bei 900px: Unter 900px = Mobile Dropdown, ab 900px = Desktop Sidebar */
 .mobile-only {
@@ -74,24 +53,22 @@ main,
 
 /* Touch Target Optimization for Mobile */
 @media (max-width: 768px) {
-  /* Force all content to respect viewport width on mobile */
-  * {
-    max-width: 100vw;
+  /* Prevent horizontal overflow on mobile */
+  body {
+    overflow-x: hidden;
   }
 
-  /* Ensure all containers and major elements stay within viewport */
-  .Polaris-Frame,
-  .Polaris-Frame__Content,
-  .Polaris-Frame__Main,
-  .Polaris-Page,
-  .Polaris-Card,
-  .Polaris-Layout,
-  .Polaris-Layout__Section,
-  main,
-  section,
-  div {
+  /* Force Polaris TextField inputs to shrink on mobile */
+  .Polaris-TextField,
+  .Polaris-TextField__Input {
+    min-width: 0 !important;
+    width: 100% !important;
+  }
+
+  /* Force images to scale down */
+  img {
     max-width: 100% !important;
-    overflow-x: hidden !important;
+    height: auto !important;
   }
 
   /* Ensure all buttons meet minimum touch target size */
@@ -134,15 +111,10 @@ main,
   /* Reduce padding on mobile for more screen space */
   .Polaris-Page {
     padding: var(--spacing-mobile) !important;
-    max-width: 100vw !important;
-    overflow-x: hidden !important;
   }
 
   .Polaris-Card {
     margin: var(--spacing-mobile) 0;
-    max-width: 100% !important;
-    overflow-x: hidden !important;
-    box-sizing: border-box !important;
   }
 
   /* Stack button groups vertically on mobile */

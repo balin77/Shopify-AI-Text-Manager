@@ -8,8 +8,6 @@
   display: grid;
   gap: 16px;
   width: 100%;
-  max-width: 100vw;
-  overflow-x: hidden;
 }
 
 /* Mobile: Single column with dropdown (< 900px) */
@@ -114,8 +112,6 @@
 /* Editor Container */
 .unified-editor-container {
   min-width: 0; /* Prevents grid blowout */
-  max-width: 100%;
-  overflow-x: hidden;
 }
 
 /* Language Bar Responsive */
