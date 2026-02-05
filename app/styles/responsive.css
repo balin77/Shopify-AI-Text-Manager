@@ -51,6 +51,19 @@
   }
 }
 
+/* Image Gallery: Stack vertically only on very narrow screens */
+@media (max-width: 400px) {
+  /* CRITICAL: Fix image preview that stays at 280px on very narrow screens */
+  .image-gallery-container {
+    flex-direction: column !important;
+  }
+
+  .image-preview-large {
+    flex: 1 1 auto !important;
+    max-width: 100% !important;
+  }
+}
+
 /* Touch Target Optimization for Mobile */
 @media (max-width: 768px) {
   /* Prevent horizontal overflow on mobile - CRITICAL */
@@ -132,15 +145,6 @@
     height: auto !important;
   }
 
-  /* CRITICAL: Fix image preview that stays at 280px */
-  .image-gallery-container {
-    flex-direction: column !important;
-  }
-
-  .image-preview-large {
-    flex: 1 1 auto !important;
-    max-width: 100% !important;
-  }
 
   /* Ensure all buttons meet minimum touch target size */
   button,
