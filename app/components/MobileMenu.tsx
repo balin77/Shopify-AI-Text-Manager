@@ -13,22 +13,8 @@ import { Icon } from "@shopify/polaris";
 import { MenuIcon, XIcon, ChevronRightIcon, ChevronDownIcon } from "@shopify/polaris-icons";
 import { useI18n } from "../contexts/I18nContext";
 import { usePlan } from "../contexts/PlanContext";
+import { useAppNavigation } from "../hooks/useAppNavigation";
 import type { Plan } from "../config/plans";
-
-// Helper function to navigate using App Bridge in embedded apps
-function navigateWithAppBridge(path: string, searchParams: URLSearchParams) {
-  const fullPath = `${path}?${searchParams.toString()}`;
-
-  // Check if we're in an embedded app with App Bridge available
-  if (window.shopify && typeof window.shopify.loading === 'function') {
-    console.log("🚀 [MobileMenu] Using App Bridge Redirect for:", fullPath);
-    window.shopify.loading(true);
-    window.location.href = fullPath;
-  } else {
-    console.log("🔄 [MobileMenu] Using window.location for:", fullPath);
-    window.location.href = fullPath;
-  }
-}
 
 interface MobileMenuProps {
   /** Current active tab */
@@ -63,6 +49,7 @@ export function MobileMenu({
   const [isContentExpanded, setIsContentExpanded] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
+  const { handleNavigate } = useAppNavigation();
   const { t } = useI18n();
   const { plan, getPlanDisplayName } = usePlan();
 
@@ -77,17 +64,15 @@ export function MobileMenu({
 
   const handleNavigation = (path: string) => {
     console.log("📱 [MobileMenu] Navigation clicked:", path);
-
-    const searchParams = new URLSearchParams(location.search);
     setIsOpen(false);
-    navigateWithAppBridge(path, searchParams);
+    handleNavigate(path);
   };
 
   const handlePlanNavigation = () => {
-    const searchParams = new URLSearchParams(location.search);
+    const searchParams = new URLSearchParams();
     searchParams.set("tab", "plan");
     setIsOpen(false);
-    navigateWithAppBridge("/app/settings", searchParams);
+    handleNavigate("/app/settings", { searchParams });
   };
 
   return (

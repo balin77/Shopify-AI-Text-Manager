@@ -5,31 +5,18 @@ import { useInfoBox } from "../contexts/InfoBoxContext";
 import { usePlan } from "../contexts/PlanContext";
 import { useNavigationHeight } from "../contexts/NavigationHeightContext";
 import { useItemSelector } from "../contexts/ItemSelectorContext";
+import { useAppNavigation } from "../hooks/useAppNavigation";
 import { MobileMenu } from "./MobileMenu";
 import { UnifiedItemSelectorCompact } from "./unified/UnifiedItemSelectorCompact";
 import { type Plan } from "../config/plans";
 import { useState, useEffect, useRef } from "react";
-
-// Helper function to navigate using App Bridge in embedded apps
-function navigateWithAppBridge(path: string, searchParams: URLSearchParams) {
-  const fullPath = `${path}?${searchParams.toString()}`;
-
-  // Check if we're in an embedded app with App Bridge available
-  if (window.shopify && typeof window.shopify.loading === 'function') {
-    console.log("🚀 [MainNavigation] Using App Bridge Redirect for:", fullPath);
-    window.shopify.loading(true);
-    window.location.href = fullPath;
-  } else {
-    console.log("🔄 [MainNavigation] Using window.location for:", fullPath);
-    window.location.href = fullPath;
-  }
-}
 
 export function MainNavigation() {
   const location = useLocation();
   const navigate = useNavigate();
   const navigation = useNavigation();
   const matches = useMatches();
+  const { handleNavigate } = useAppNavigation();
   const { t } = useI18n();
   const { infoBox, hideInfoBox, showInfoBox, isGlobalLoading } = useInfoBox();
   const { plan, getPlanDisplayName, getMaxProducts } = usePlan();
@@ -309,20 +296,14 @@ export function MainNavigation() {
 
   const handleClick = (path: string, tabId: string) => {
     console.log("🖱️ [MainNavigation] Tab clicked:", tabId, "->", path);
-    console.log("🎯 [MainNavigation] Current location:", location.pathname);
-
-    // Preserve critical URL parameters for Shopify embedded app session
-    const searchParams = new URLSearchParams(location.search);
-
-    // Use App Bridge redirect for embedded apps (causes full page reload but works)
-    navigateWithAppBridge(path, searchParams);
+    handleNavigate(path);
   };
 
   // Navigate to settings/plan page when any plan button is clicked
   const handlePlanNavigation = () => {
-    const searchParams = new URLSearchParams(location.search);
+    const searchParams = new URLSearchParams();
     searchParams.set("tab", "plan");
-    navigateWithAppBridge("/app/settings", searchParams);
+    handleNavigate("/app/settings", { searchParams });
   };
 
   const plans: Plan[] = ["free", "basic", "pro", "max"];
