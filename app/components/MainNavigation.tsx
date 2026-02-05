@@ -324,8 +324,6 @@ export function MainNavigation() {
     { id: "policies", label: t.content.policies, icon: "📋", path: "/app/policies" },
     { id: "menus", label: t.content.menus, icon: "🍔", path: "/app/menus" },
     { id: "templates", label: t.content.templates, icon: "🧪", path: "/app/templates" },
-    { id: "metaobjects", label: t.content.metaobjects, icon: "🗂️", path: "/app/content?type=metaobjects", comingSoon: true },
-    { id: "shopMetadata", label: t.content.shopMetadata, icon: "🏷️", path: "/app/content?type=shopMetadata", comingSoon: true },
   ];
 
   return (
