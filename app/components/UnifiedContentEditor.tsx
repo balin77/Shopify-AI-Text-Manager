@@ -382,7 +382,8 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
 
               {/* Operation Buttons - Desktop */}
               {!isMobile && (
-                <Card padding="400" className="operation-buttons-card" style={{ marginTop: "1rem" }}>
+                <div style={{ marginTop: "1rem" }}>
+                <Card padding="400" className="operation-buttons-card">
                 <InlineStack align="space-between" blockAlign="center">
                   {/* Left: Translate All + Clear All Buttons */}
                   <InlineStack gap="200" className="operation-buttons-container">
@@ -453,6 +454,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   </InlineStack>
                 </InlineStack>
               </Card>
+              </div>
               )}
 
               {/* Scrollable Content Area */}
