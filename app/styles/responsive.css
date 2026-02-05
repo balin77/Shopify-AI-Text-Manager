@@ -109,6 +109,21 @@
   /* CRITICAL FIX: Override inline min-width: 400px on unified-editor-container */
   .unified-editor-container {
     min-width: 0 !important;
+    max-width: 100% !important;
+  }
+
+  /* Override mobile dropdowns container width */
+  .mobile-dropdowns-container {
+    min-width: 0 !important;
+    max-width: 100% !important;
+    width: 100% !important;
+  }
+
+  /* Override field editor area width */
+  .field-editor-area {
+    min-width: 0 !important;
+    max-width: 100% !important;
+    width: 100% !important;
   }
 
   /* Force images to scale down */
