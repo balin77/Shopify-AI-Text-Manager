@@ -230,52 +230,26 @@ function getBrowserLocale(): Locale {
 
 // Shopify app boundary error handler
 export function ErrorBoundary() {
-  let error: unknown;
-
-  // Get translations based on browser language
-  const locale = getBrowserLocale();
+  // Get translations based on browser language (safe for SSR)
+  const locale = typeof window !== 'undefined' ? getBrowserLocale() : 'de';
   const translations = { de, en, es };
   const t = translations[locale];
 
-  // Try to get the route error - this can fail if we're outside router context
-  try {
-    error = useRouteError();
-  } catch {
-    // useRouteError failed - we're outside router context
-    // This can happen during error recovery when the router isn't fully set up
-    console.error('[APP.TSX ErrorBoundary] useRouteError failed - likely outside router context');
-    return (
-      <AppProvider i18n={{}}>
-        <Page>
-          <Card>
-            <BlockStack gap="400" align="center">
-              <Text as="h1" variant="headingLg">{t.errors.sessionError}</Text>
-              <Text as="p" tone="subdued">
-                {t.errors.sessionErrorDescription}
-              </Text>
-              <Button onClick={() => {
-                // Preserve shop and host params when reloading
-                const url = new URL(window.location.href);
-                url.searchParams.set('_reload', Date.now().toString());
-                window.location.href = url.toString();
-              }}>
-                {t.errors.reloadPage}
-              </Button>
-            </BlockStack>
-          </Card>
-        </Page>
-      </AppProvider>
-    );
-  }
+  // Get the error - useRouteError is safe to call in ErrorBoundary
+  const error = useRouteError();
 
-  // Log the error for debugging - note: can't use server logger in client component
-  console.error('[APP.TSX ErrorBoundary] Caught error:', error);
+  // Log the error for debugging
+  if (typeof window !== 'undefined') {
+    console.error('[APP.TSX ErrorBoundary] Caught error:', error);
+  }
 
   // Handle manifest version mismatch: automatic reload after deployment
   if (isManifestMismatchError(error)) {
-    console.log('[APP.TSX ErrorBoundary] Manifest mismatch detected - attempting automatic reload');
+    if (typeof window !== 'undefined') {
+      console.log('[APP.TSX ErrorBoundary] Manifest mismatch detected - attempting automatic reload');
+    }
 
-    // Try automatic reload (with loop prevention)
+    // Try automatic reload (with loop prevention) - only on client side
     if (typeof window !== 'undefined' && safeReload()) {
       // Show brief loading state while reload happens
       return (
@@ -304,12 +278,17 @@ export function ErrorBoundary() {
               <Text as="p" tone="subdued">
                 {t.errors.updateAvailable}
               </Text>
-              <Button variant="primary" onClick={() => {
-                // Preserve shop and host params when reloading
-                const url = new URL(window.location.href);
-                url.searchParams.set('_reload', Date.now().toString());
-                window.location.href = url.toString();
-              }}>
+              <Button
+                variant="primary"
+                onClick={() => {
+                  if (typeof window !== 'undefined') {
+                    // Preserve shop and host params when reloading
+                    const url = new URL(window.location.href);
+                    url.searchParams.set('_reload', Date.now().toString());
+                    window.location.href = url.toString();
+                  }
+                }}
+              >
                 {t.errors.reloadPage}
               </Button>
             </BlockStack>
@@ -319,34 +298,8 @@ export function ErrorBoundary() {
     );
   }
 
-  // Try Shopify's boundary first, but provide fallback UI if it fails
-  try {
-    return boundary.error(error);
-  } catch {
-    // Fallback UI when Shopify boundary fails - using Polaris components
-    return (
-      <AppProvider i18n={{}}>
-        <Page>
-          <Card>
-            <BlockStack gap="400" align="center">
-              <Text as="h1" variant="headingLg">{t.errors.errorOccurred}</Text>
-              <Text as="p" tone="subdued">
-                {t.errors.errorDescription}
-              </Text>
-              <Button onClick={() => {
-                // Preserve shop and host params when reloading
-                const url = new URL(window.location.href);
-                url.searchParams.set('_reload', Date.now().toString());
-                window.location.href = url.toString();
-              }}>
-                {t.errors.reloadPage}
-              </Button>
-            </BlockStack>
-          </Card>
-        </Page>
-      </AppProvider>
-    );
-  }
+  // Try Shopify's boundary first
+  return boundary.error(error);
 }
 
 export const headers = boundary.headers;
