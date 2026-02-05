@@ -34,6 +34,7 @@ export function ContentTypeNavigation() {
   const { mainNavHeight, setContentNavHeight } = useNavigationHeight();
   const navRef = useRef<HTMLDivElement>(null);
   const [navHeight, setNavHeight] = useState(85);
+  const [isClient, setIsClient] = useState(false);
 
   const contentTypes: ContentTypeConfig[] = [
     { id: "collections", label: t.content.collections, icon: "📂", description: t.content.collectionsDescription, path: "/app/collections", planContentType: "collections" },
@@ -61,8 +62,15 @@ export function ContentTypeNavigation() {
 
   const activeType = getActiveType();
 
-  // Dynamically measure content navigation height and update context
+  // Mark when we're on the client
   useEffect(() => {
+    setIsClient(true);
+  }, []);
+
+  // Dynamically measure content navigation height and update context (client-only)
+  useEffect(() => {
+    if (!isClient) return;
+
     const updateHeight = () => {
       if (navRef.current) {
         const height = navRef.current.offsetHeight;
@@ -87,7 +95,7 @@ export function ContentTypeNavigation() {
     return () => {
       window.removeEventListener('resize', updateHeight);
     };
-  }, [setContentNavHeight]);
+  }, [setContentNavHeight, isClient]);
 
   return (
     <>
