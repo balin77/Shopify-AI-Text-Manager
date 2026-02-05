@@ -94,15 +94,19 @@ export function useAppNavigation() {
 
     // Build final path with params
     const searchString = finalParams.toString();
-    const fullPath = searchString ? `${path}?${searchString}` : path;
+    const pathWithParams = searchString ? `${path}?${searchString}` : path;
 
-    console.log(`🎯 [useAppNavigation] Final path: ${fullPath}`);
+    // IMPORTANT: Use absolute URL with current origin to avoid iframe navigation issues
+    // If we use a relative path, the browser might resolve it to admin.shopify.com
+    const fullUrl = new URL(pathWithParams, window.location.origin).toString();
+
+    console.log(`🎯 [useAppNavigation] Final URL: ${fullUrl}`);
 
     // Use window.location.href for reliable navigation in iframe
     if (window.shopify && typeof window.shopify.loading === 'function') {
       window.shopify.loading(true);
     }
-    window.location.href = fullPath;
+    window.location.href = fullUrl;
   }, []);
 
   return { handleNavigate };
