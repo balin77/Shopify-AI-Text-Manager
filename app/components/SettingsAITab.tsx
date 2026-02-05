@@ -20,9 +20,9 @@ import "../styles/RateLimitFields.css";
 // Responsive label component that shows short version on small screens
 function ResponsiveLabel({ fullText, shortText, helpKey }: { fullText: string; shortText: string; helpKey?: string }) {
   return (
-    <InlineStack gap="100" blockAlign="center">
+    <InlineStack gap="100" blockAlign="center" wrap={false}>
       <span className="hide-on-small">{fullText}</span>
-      <span className="show-on-small" style={{ display: "none" }}>{shortText}</span>
+      <span className="show-on-small">{shortText}</span>
       {helpKey && <HelpTooltip helpKey={helpKey} />}
     </InlineStack>
   );

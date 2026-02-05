@@ -18,6 +18,7 @@ import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { useEffect } from "react";
 import type { ContentItem } from "../types/content-editor.types";
+import { measurePageLoad } from "~/utils/performance.client";
 
 // ============================================================================
 // LOADER - Load data from database
@@ -156,6 +157,13 @@ export default function PagesPage() {
       showInfoBox(error, "critical", t.content?.error || "Error");
     }
   }, [error, showInfoBox, t]);
+
+  // Measure page load performance
+  useEffect(() => {
+    measurePageLoad('PagesPage', {
+      pageCount: pages.length,
+    });
+  }, [pages]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" }}>

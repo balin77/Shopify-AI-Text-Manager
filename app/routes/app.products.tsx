@@ -28,6 +28,7 @@ import { useEffect, useState, useRef } from "react";
 import { Spinner, Text } from "@shopify/polaris";
 import type { ContentItem } from "../types/content-editor.types";
 import { logger } from "~/utils/logger.server";
+import { measurePageLoad } from "~/utils/performance.client";
 
 // ============================================================================
 // LOADER - Load data from database
@@ -269,6 +270,16 @@ export default function ProductsPage() {
       return () => clearTimeout(timer);
     }
   }, [products, isInitialLoad]);
+
+  // Measure page load performance
+  useEffect(() => {
+    if (!isInitialLoad && products.length >= 0) {
+      measurePageLoad('ProductsPage', {
+        productCount: products.length,
+        hasImages: products.some(p => p.images && p.images.length > 0),
+      });
+    }
+  }, [isInitialLoad, products]);
 
   useEffect(() => {
     // Skip if no product selected or already loading or component unmounted

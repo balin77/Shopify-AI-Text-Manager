@@ -22,6 +22,7 @@ import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { useEffect } from "react";
 import type { ContentItem } from "../types/content-editor.types";
+import { measurePageLoad } from "~/utils/performance.client";
 
 // ============================================================================
 // LOADER - Load data from database
@@ -186,6 +187,13 @@ export default function PoliciesPage() {
       showInfoBox(error, "critical", t.content?.error || "Error");
     }
   }, [error, showInfoBox, t]);
+
+  // Measure page load performance
+  useEffect(() => {
+    measurePageLoad('PoliciesPage', {
+      policyCount: policies.length,
+    });
+  }, [policies]);
 
   // Custom render for policy list items (show type as subtitle)
   const renderListItem = (item: any, isSelected: boolean) => {

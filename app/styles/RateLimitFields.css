@@ -63,6 +63,25 @@
   appearance: auto;
 }
 
+/* Responsive label visibility - show short text on mobile */
+.show-on-small {
+  display: none !important;
+}
+
+.hide-on-small {
+  display: inline !important;
+}
+
+@media (max-width: 768px) {
+  .show-on-small {
+    display: inline !important;
+  }
+
+  .hide-on-small {
+    display: none !important;
+  }
+}
+
 /* Mobile specific adjustments */
 @media (max-width: 768px) {
   /* Make sure the input fields don't overflow */
