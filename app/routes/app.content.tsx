@@ -132,23 +132,24 @@ export default function ContentHub() {
 
   const CONTENT_TYPES = getContentTypes(t);
 
-  // Get initial type from URL or localStorage
+  // Get initial type from URL only (not localStorage) to avoid hydration mismatch
   const getInitialType = (): ContentType | null => {
     const urlType = searchParams.get("type") as ContentType;
-    if (urlType) return urlType;
-
-    if (typeof window !== "undefined") {
-      const stored = localStorage.getItem("lastContentHubType");
-      if (stored && ["menus", "templates", "metaobjects", "shopMetadata"].includes(stored)) {
-        return stored as ContentType;
-      }
-    }
-
-    // If no type specified and no valid localStorage, redirect to collections
-    return null;
+    return urlType || null;
   };
 
   const [selectedType, setSelectedType] = useState<ContentType | null>(getInitialType());
+
+  // Restore from localStorage only on client-side mount
+  useEffect(() => {
+    const urlType = searchParams.get("type") as ContentType;
+    if (!urlType && typeof window !== "undefined") {
+      const stored = localStorage.getItem("lastContentHubType");
+      if (stored && ["menus", "templates", "metaobjects", "shopMetadata"].includes(stored)) {
+        setSelectedType(stored as ContentType);
+      }
+    }
+  }, []);
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [currentLanguage, setCurrentLanguage] = useState(primaryLocale);
 
