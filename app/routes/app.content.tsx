@@ -76,7 +76,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
     const localesData = await localesResponse.json();
     const shopLocales = localesData.data?.shopLocales || [];
-    const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "de";
+    const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "en";
 
     // Initialize data
     let metadata = {};
@@ -114,7 +114,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       metaobjects: [],
       shop: session.shop,
       shopLocales: [],
-      primaryLocale: "de",
+      primaryLocale: "en",
       requestedType: null,
       error: error.message
     }, { status: 500 });

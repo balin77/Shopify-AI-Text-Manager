@@ -46,7 +46,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
     const localesData = await localesResponse.json();
     const shopLocales = localesData.data?.shopLocales || [];
-    const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "de";
+    const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "en";
 
     // LAZY LOADING: Only load navigation metadata, not the full content
     const { db } = await import("../db.server");
@@ -89,7 +89,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       themes: [],
       shop: session.shop,
       shopLocales: [],
-      primaryLocale: "de",
+      primaryLocale: "en",
       error: error.message
     }, { status: 500 });
   }
@@ -275,7 +275,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
             data: { status: "running", progress: 20 },
           });
 
-          const primaryLocale = primaryLocaleFromForm || "de";
+          const primaryLocale = primaryLocaleFromForm || "en";
 
           const aiService = new AIService(
             settings?.preferredProvider as any || 'huggingface',
@@ -400,7 +400,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
             data: { status: "running", progress: 10 },
           });
 
-          const primaryLocale = primaryLocaleFromForm || "de";
+          const primaryLocale = primaryLocaleFromForm || "en";
 
           const aiService = new AIService(
             settings?.preferredProvider as any || 'huggingface',
@@ -553,7 +553,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
             task.id
           );
 
-          const primaryLocale = formData.get("primaryLocale") as string || "de";
+          const primaryLocale = formData.get("primaryLocale") as string || "en";
 
           // Translate to all target locales
           const translations: Record<string, Record<string, string>> = {};

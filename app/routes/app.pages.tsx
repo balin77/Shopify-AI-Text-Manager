@@ -59,7 +59,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       loadAISettingsForValidation(db, session.shop),
     ]);
 
-    const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "de";
+    const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "en";
 
     const pagesData = await pagesResponse.json();
     const pages = pagesData.data?.pages?.edges?.map((e: any) => e.node) || [];
@@ -96,7 +96,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       pages: [],
       shop: session.shop,
       shopLocales: [],
-      primaryLocale: "de",
+      primaryLocale: "en",
       error: error.message,
       aiSettings: null,
     }, { status: 500 });

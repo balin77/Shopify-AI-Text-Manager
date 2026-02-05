@@ -221,7 +221,7 @@ export class ShopifyContentService {
 
     const data = await response.json();
     const shopLocales = data.data?.shopLocales || [];
-    const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "de";
+    const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "en";
 
     return { shopLocales, primaryLocale };
   }

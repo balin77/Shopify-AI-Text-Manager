@@ -446,7 +446,7 @@ Allowed formatting changes:
   if (action === "translateAll") {
     const targetLocalesStr = formData.get("targetLocales") as string;
     const contextTitle = formData.get("title") as string;
-    const sourceLocale = (formData.get("sourceLocale") as string) || "de";
+    const sourceLocale = (formData.get("sourceLocale") as string) || "en";
 
     // Create task entry
     const task = await db.task.create({
@@ -541,7 +541,7 @@ Allowed formatting changes:
   if (action === "translateAllForLocale") {
     const targetLocale = formData.get("targetLocale") as string;
     const contextTitle = formData.get("title") as string;
-    const sourceLocale = (formData.get("sourceLocale") as string) || "de";
+    const sourceLocale = (formData.get("sourceLocale") as string) || "en";
 
     // Create task entry
     const task = await db.task.create({
@@ -644,7 +644,7 @@ Allowed formatting changes:
     const sourceText = formData.get("sourceText") as string;
     const targetLocalesStr = formData.get("targetLocales") as string;
     const contextTitle = formData.get("contextTitle") as string;
-    const sourceLocale = (formData.get("sourceLocale") as string) || "de";
+    const sourceLocale = (formData.get("sourceLocale") as string) || "en";
 
     logger.debug('[UnifiedContent] [translateFieldToAllLocales] Starting...');
     logger.debug('[UnifiedContent] fieldType:', fieldType);

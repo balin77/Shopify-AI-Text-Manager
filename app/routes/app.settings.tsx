@@ -58,7 +58,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     );
 
     const localesData = await localesResponse.json();
-    const primaryShopLocale = localesData.data.shopLocales.find((l: any) => l.primary)?.locale || "de";
+    const primaryShopLocale = localesData.data.shopLocales.find((l: any) => l.primary)?.locale || "en";
 
     let settings = await db.aISettings.findUnique({
       where: { shop: session.shop },
@@ -310,7 +310,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       settings: {
         ...decryptedKeys,
         preferredProvider: settings.preferredProvider,
-        appLanguage: settings.appLanguage || "de",
+        appLanguage: settings.appLanguage || "en",
 
         // Rate limits
         hfMaxTokensPerMinute: settings.hfMaxTokensPerMinute || 1000000,

@@ -34,7 +34,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
     // Load shopLocales (with caching)
     const shopLocales = await getCachedShopLocales(admin, session.shop);
-    const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "de";
+    const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "en";
 
     // Load collections from database
     const [collections, aiSettings] = await Promise.all([
@@ -96,7 +96,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       collections: [],
       shop: session.shop,
       shopLocales: [],
-      primaryLocale: "de",
+      primaryLocale: "en",
       error: error.message,
       aiSettings: null,
     }, { status: 500 });

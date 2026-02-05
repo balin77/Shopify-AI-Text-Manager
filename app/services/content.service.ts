@@ -763,7 +763,7 @@ export class ContentService {
       this.getMetaobjects()
     ]);
 
-    const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "de";
+    const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "en";
 
     return {
       shopLocales,

@@ -33,7 +33,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     logger.debug("[APP.TSX LOADER] Prefetch request detected - returning default language", { context: "App" });
     // Return default data for prefetch - no auth needed
     return json({
-      appLanguage: "de" as Locale,
+      appLanguage: "en" as Locale,
       subscriptionPlan: "basic" as Plan,
       aiSettings: null,
     });
@@ -69,7 +69,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
     logger.debug("[APP.TSX LOADER] Settings loaded", { context: "App", found: !!settings });
 
-    const appLanguage = (settings?.appLanguage || "de") as Locale;
+    const appLanguage = (settings?.appLanguage || "en") as Locale;
     const subscriptionPlan = (settings?.subscriptionPlan || "basic") as Plan;
     logger.debug("[APP.TSX LOADER] App settings", { context: "App", appLanguage, subscriptionPlan });
 
@@ -97,7 +97,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // Return default values instead of throwing to prevent blank page
     // This can happen during plan changes when auth session is temporarily invalid
     return json({
-      appLanguage: "de" as Locale,
+      appLanguage: "en" as Locale,
       subscriptionPlan: "basic" as Plan,
       aiSettings: null,
       loaderError: true,
@@ -221,17 +221,18 @@ function safeReload() {
 
 // Helper function to get translations based on browser language
 function getBrowserLocale(): Locale {
-  if (typeof window === 'undefined') return 'de';
+  if (typeof window === 'undefined') return 'en';
   const browserLang = navigator.language.split('-')[0];
-  if (browserLang === 'en') return 'en';
+  if (browserLang === 'de') return 'de';
   if (browserLang === 'es') return 'es';
-  return 'de';
+  return 'en';
 }
 
 // Shopify app boundary error handler
 export function ErrorBoundary() {
-  // Get translations based on browser language (safe for SSR)
-  const locale = typeof window !== 'undefined' ? getBrowserLocale() : 'de';
+  // Always use 'en' as default to avoid hydration mismatch
+  // The ErrorBoundary should show a consistent message across server/client
+  const locale: Locale = 'en';
   const translations = { de, en, es };
   const t = translations[locale];
 

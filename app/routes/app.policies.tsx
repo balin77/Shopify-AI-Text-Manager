@@ -73,7 +73,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
     const localesData = await localesResponse.json();
     const shopLocales = localesData.data?.shopLocales || [];
-    const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "de";
+    const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "en";
 
     const policiesData = await policiesResponse.json();
     const policies = policiesData.data?.shop?.shopPolicies || [];
@@ -111,7 +111,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       policies: [],
       shop: session.shop,
       shopLocales: [],
-      primaryLocale: "de",
+      primaryLocale: "en",
       error: error.message,
       aiSettings: null,
     }, { status: 500 });

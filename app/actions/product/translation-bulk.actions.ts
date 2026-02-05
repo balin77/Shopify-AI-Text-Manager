@@ -66,7 +66,7 @@ export async function handleTranslateFieldToAllLocales(
   };
 
   // Detect source language from form data or default to "de"
-  const sourceLocale = (formData.get("sourceLocale") as string) || "de";
+  const sourceLocale = (formData.get("sourceLocale") as string) || "en";
 
   loggers.translation("info", "Starting field translation to all locales", {
     ...params,
@@ -447,7 +447,7 @@ export async function handleTranslateAll(
   };
 
   // Detect source language from form data or default to "de"
-  const sourceLocale = (formData.get("sourceLocale") as string) || "de";
+  const sourceLocale = (formData.get("sourceLocale") as string) || "en";
 
   // Separate short and long fields
   const shortFields: Record<string, string> = {};

@@ -588,7 +588,7 @@ export function hasMissingTranslations(
 ): boolean {
   if (!selectedItem) return false;
 
-  const primaryLocale = shopLocales.find(l => l.primary)?.locale || "de";
+  const primaryLocale = shopLocales.find(l => l.primary)?.locale || "en";
   const foreignLocales = shopLocales.filter(l => !l.primary);
 
   return foreignLocales.some(locale =>

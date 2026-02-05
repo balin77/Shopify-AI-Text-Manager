@@ -56,7 +56,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // 1. Fetch shop locales (with caching)
     const { getCachedShopLocales } = await import("../utils/shop-locales-cache.server");
     const shopLocales = await getCachedShopLocales(admin, session.shop);
-    const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "de";
+    const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "en";
 
     logger.debug("[PRODUCTS-LOADER] Locales loaded", { context: "Products", primaryLocale, availableLocales: shopLocales.length });
 
@@ -167,7 +167,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         products: [],
         shop: session.shop,
         shopLocales: [],
-        primaryLocale: "de",
+        primaryLocale: "en",
         error: error.message,
         plan: "basic",
         maxProducts: 100,

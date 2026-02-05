@@ -47,7 +47,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
     const localesData = await localesResponse.json();
     const shopLocales = localesData.data?.shopLocales || [];
-    const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "de";
+    const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "en";
 
     // Try to load menus from database first
     logger.debug("[MENUS-LOADER] Attempting to load menus from database", { context: "Menus", shop: session.shop });
@@ -127,7 +127,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       menus: [],
       shop: session.shop,
       shopLocales: [],
-      primaryLocale: "de",
+      primaryLocale: "en",
       error: error.message
     }, { status: 500 });
   }
