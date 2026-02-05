@@ -11,7 +11,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   });
 };
 
-function Document({ children, title = "App" }: { children: React.ReactNode; title?: string }) {
+function Document({
+  children,
+  title = "App",
+  apiKey
+}: {
+  children: React.ReactNode;
+  title?: string;
+  apiKey?: string;
+}) {
   return (
     <html lang="en">
       <head>
@@ -20,6 +28,13 @@ function Document({ children, title = "App" }: { children: React.ReactNode; titl
         <title>{title}</title>
         <Meta />
         <Links />
+        {apiKey && <meta name="shopify-api-key" content={apiKey} />}
+        <link rel="preconnect" href="https://cdn.shopify.com/" />
+        <link
+          rel="stylesheet"
+          href="https://cdn.shopify.com/static/fonts/inter/v4/styles.css"
+        />
+        <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js" />
       </head>
       <body>
         {children}
@@ -34,14 +49,7 @@ export default function App() {
   const { apiKey } = useLoaderData<typeof loader>();
 
   return (
-    <Document>
-      <meta name="shopify-api-key" content={apiKey} />
-      <link rel="preconnect" href="https://cdn.shopify.com/" />
-      <link
-        rel="stylesheet"
-        href="https://cdn.shopify.com/static/fonts/inter/v4/styles.css"
-      />
-      <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js" />
+    <Document apiKey={apiKey}>
       <Outlet />
     </Document>
   );
@@ -52,9 +60,11 @@ export function ErrorBoundary() {
 
   try {
     error = useRouteError();
+    console.error("[APP.TSX ErrorBoundary] Caught error:", error);
   } catch (e) {
     // If useRouteError fails (e.g., called outside router context),
     // render a generic error page
+    console.error("[APP.TSX ErrorBoundary] useRouteError failed - likely outside router context", e);
     return (
       <Document title="Error">
         <div style={{
