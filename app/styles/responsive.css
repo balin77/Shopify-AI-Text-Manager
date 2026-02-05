@@ -53,6 +53,12 @@
 
 /* Touch Target Optimization for Mobile */
 @media (max-width: 768px) {
+  /* Ensure viewport-wide constraint for all elements */
+  body {
+    max-width: 100vw !important;
+    overflow-x: hidden !important;
+  }
+
   /* Ensure all buttons meet minimum touch target size */
   button,
   .Polaris-Button,
@@ -93,10 +99,15 @@
   /* Reduce padding on mobile for more screen space */
   .Polaris-Page {
     padding: var(--spacing-mobile) !important;
+    max-width: 100vw !important;
+    overflow-x: hidden !important;
   }
 
   .Polaris-Card {
     margin: var(--spacing-mobile) 0;
+    max-width: 100% !important;
+    overflow-x: hidden !important;
+    box-sizing: border-box !important;
   }
 
   /* Stack button groups vertically on mobile */

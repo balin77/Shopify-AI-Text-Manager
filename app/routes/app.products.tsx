@@ -227,8 +227,9 @@ export default function ProductsPage() {
   // Track which products we've already synced translations for (to avoid duplicate syncs)
   // IMPORTANT: All hooks must be called before any conditional returns
   const syncedProductsRef = useRef<Set<string>>(new Set());
+  const isMountedRef = useRef(true); // Track mount status to prevent state updates after unmount
 
-  // Initialize unified content editor
+  // Initialize unified content editor - MUST be called before any conditional returns
   const editor = useUnifiedContentEditor({
     config: PRODUCTS_CONFIG,
     items: products as ContentItem[],
@@ -239,26 +240,39 @@ export default function ProductsPage() {
     t,
   });
 
+  // Get selected product AFTER editor is initialized
+  const selectedProductId = editor.state.selectedItemId;
+  const selectedProduct = editor.selectedItem;
+
   // ============================================================================
   // ON-DEMAND TRANSLATION LOADING
   // When a product is selected, check if it has translations. If not, load them.
   // ============================================================================
 
-  const selectedProductId = editor.state.selectedItemId;
-  const selectedProduct = editor.selectedItem;
+  // Track component mount status to prevent state updates after unmount
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   // Mark initial load as complete after first render
   useEffect(() => {
-    if (isInitialLoad && products.length >= 0) {
+    if (isInitialLoad && products.length >= 0 && isMountedRef.current) {
       // Small delay to ensure smooth transition
-      const timer = setTimeout(() => setIsInitialLoad(false), 100);
+      const timer = setTimeout(() => {
+        if (isMountedRef.current) {
+          setIsInitialLoad(false);
+        }
+      }, 100);
       return () => clearTimeout(timer);
     }
   }, [products, isInitialLoad]);
 
   useEffect(() => {
-    // Skip if no product selected or already loading
-    if (!selectedProductId || !selectedProduct || isLoadingTranslations) return;
+    // Skip if no product selected or already loading or component unmounted
+    if (!selectedProductId || !selectedProduct || isLoadingTranslations || !isMountedRef.current) return;
 
     // Skip if we've already synced this product
     if (syncedProductsRef.current.has(selectedProductId)) return;
@@ -267,7 +281,7 @@ export default function ProductsPage() {
     const hasTranslations = selectedProduct.translations && selectedProduct.translations.length > 0;
 
     // If product has no translations, trigger sync
-    if (!hasTranslations) {
+    if (!hasTranslations && isMountedRef.current) {
       console.log(`🔄 [ON-DEMAND] Product "${selectedProduct.title}" has no translations, loading...`);
       setIsLoadingTranslations(true);
 
@@ -288,11 +302,13 @@ export default function ProductsPage() {
 
   // Handle translation sync completion
   useEffect(() => {
-    if (isLoadingTranslations && translationSyncFetcher.state === "idle" && translationSyncFetcher.data) {
+    if (isLoadingTranslations && translationSyncFetcher.state === "idle" && translationSyncFetcher.data && isMountedRef.current) {
       console.log("✅ [ON-DEMAND] Translation sync complete:", translationSyncFetcher.data);
-      setIsLoadingTranslations(false);
+      if (isMountedRef.current) {
+        setIsLoadingTranslations(false);
+      }
 
-      if (translationSyncFetcher.data.success) {
+      if (translationSyncFetcher.data.success && isMountedRef.current) {
         // Revalidate to fetch fresh data with translations
         if (revalidator.state === "idle") {
           console.log("🔄 [ON-DEMAND] Revalidating to load translations...");
@@ -309,8 +325,10 @@ export default function ProductsPage() {
 
   // Check for sync parameter and trigger background sync
   useEffect(() => {
+    if (!isMountedRef.current) return;
+
     const url = new URL(window.location.href);
-    if (url.searchParams.has("sync") && !isSyncing && syncFetcher.state === "idle") {
+    if (url.searchParams.has("sync") && !isSyncing && syncFetcher.state === "idle" && isMountedRef.current) {
       console.log("🔄 [ProductsPage] Triggering background sync...");
       setIsSyncing(true);
 
@@ -332,18 +350,20 @@ export default function ProductsPage() {
 
   // Handle sync completion
   useEffect(() => {
-    if (isSyncing && syncFetcher.state === "idle" && syncFetcher.data) {
+    if (isSyncing && syncFetcher.state === "idle" && syncFetcher.data && isMountedRef.current) {
       console.log("✅ [ProductsPage] Sync complete:", syncFetcher.data);
 
       // Hide loading spinner
-      setGlobalLoading(false);
+      if (isMountedRef.current) {
+        setGlobalLoading(false);
+      }
 
-      if (syncFetcher.data.success && syncFetcher.data.synced > 0) {
+      if (syncFetcher.data.success && syncFetcher.data.synced > 0 && isMountedRef.current) {
         const message = t.products.syncComplete.replace("{count}", String(syncFetcher.data.synced));
         showInfoBox(message, "success", t.products.syncCompleteTitle);
         // Reload to show new products
         window.location.reload();
-      } else {
+      } else if (isMountedRef.current) {
         setIsSyncing(false);
       }
     }
@@ -351,15 +371,18 @@ export default function ProductsPage() {
 
   // Show loader error
   useEffect(() => {
-    if (error) {
+    if (error && isMountedRef.current) {
       showInfoBox(error, "critical", t.common?.error || "Error");
     }
   }, [error, showInfoBox, t]);
 
   // Show loading spinner during initial page load or navigation
   const isPageLoading = navigation.state === "loading" && navigation.location?.pathname === "/app/products";
+  const shouldShowLoader = isInitialLoad || isPageLoading;
 
-  if (isInitialLoad || isPageLoading) {
+  // IMPORTANT: Return loading UI at the end, after ALL hooks and effects are defined
+  // This prevents React error #425 (inconsistent hook count between renders)
+  if (shouldShowLoader) {
     return (
       <div
         style={{

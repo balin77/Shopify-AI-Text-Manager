@@ -45,6 +45,7 @@ export function MainNavigation() {
   const completedTasksPollIntervalRef = useRef(10000); // Separate interval for completed tasks polling
   const completedTasksErrorCountRef = useRef(0); // Track consecutive errors for completed tasks
   const notifiedTaskIds = useRef<Set<string>>(new Set()); // Track which tasks we've already notified about
+  const isMountedRef = useRef(true); // Track if component is mounted to prevent state updates after unmount
 
   // Get product count from products route loader data
   const productsRouteData = matches.find((match) => match.id === "routes/app.products")?.data as any;
@@ -122,7 +123,7 @@ export function MainNavigation() {
 
   // Show notifications for newly completed tasks
   useEffect(() => {
-    if (!completedTasksFetcher.data?.tasks) return;
+    if (!completedTasksFetcher.data?.tasks || !isMountedRef.current) return;
 
     const tasks = completedTasksFetcher.data.tasks;
 
@@ -153,15 +154,19 @@ export function MainNavigation() {
         message = t.tasks?.taskCompleted || `Task completed for "${resourceTitle}"`;
       }
 
-      showInfoBox(message, "success", t.tasks?.completedTitle || "✓ Completed");
+      if (isMountedRef.current) {
+        showInfoBox(message, "success", t.tasks?.completedTitle || "✓ Completed");
+      }
     }
 
     // Cleanup old task IDs after 5 minutes
-    setTimeout(() => {
+    const cleanupTimeout = setTimeout(() => {
       for (const task of tasks) {
         notifiedTaskIds.current.delete(task.id);
       }
     }, 300000);
+
+    return () => clearTimeout(cleanupTimeout);
   }, [completedTasksFetcher.data, showInfoBox, t]);
 
   // Monitor fetcher state and implement exponential backoff on errors for running tasks
@@ -231,16 +236,28 @@ export function MainNavigation() {
     }
   }, [completedTasksFetcher.state, completedTasksFetcher.data]);
 
+  // Track component mount status to prevent state updates after unmount
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
   // Show loading indicator only if loading takes longer than 1 second
   useEffect(() => {
     let timer: NodeJS.Timeout | null = null;
 
     if (navigation.state === "loading" || navigation.state === "submitting") {
       timer = setTimeout(() => {
-        setShowLoadingIndicator(true);
+        if (isMountedRef.current) {
+          setShowLoadingIndicator(true);
+        }
       }, 1000);
     } else {
-      setShowLoadingIndicator(false);
+      if (isMountedRef.current) {
+        setShowLoadingIndicator(false);
+      }
       if (timer) {
         clearTimeout(timer);
       }
@@ -256,7 +273,7 @@ export function MainNavigation() {
   // Dynamically measure navigation height and update spacer + context
   useEffect(() => {
     const updateHeight = () => {
-      if (navRef.current) {
+      if (navRef.current && isMountedRef.current) {
         const height = navRef.current.offsetHeight;
         setNavHeight(height);
         setMainNavHeight(height); // Update context for other components
