@@ -21,6 +21,7 @@ import {
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
+import { ContentTypeNavigation } from "../components/ContentTypeNavigation";
 import { useI18n } from "../contexts/I18nContext";
 import { useNavigationHeight } from "../contexts/NavigationHeightContext";
 import { ContentService } from "../services/content.service";
@@ -135,7 +136,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 export default function MenusPage() {
   const { menus, shop, shopLocales, primaryLocale, error } = useLoaderData<typeof loader>();
   const { t } = useI18n();
-  const { mainNavHeight } = useNavigationHeight();
+  const { getTotalNavHeight } = useNavigationHeight();
 
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
 
@@ -181,8 +182,9 @@ export default function MenusPage() {
   return (
     <Page fullWidth>
       <MainNavigation />
+      <ContentTypeNavigation />
 
-      <div style={{ height: `calc(100vh - ${mainNavHeight}px)`, display: "flex", gap: "1rem", padding: "1rem", overflow: "hidden" }}>
+      <div style={{ height: `calc(100vh - ${getTotalNavHeight()}px)`, display: "flex", gap: "1rem", padding: "1rem", overflow: "hidden" }}>
         {/* Left Sidebar - Menus List */}
         <div style={{ width: "350px", flexShrink: 0 }}>
           <Card padding="0">
