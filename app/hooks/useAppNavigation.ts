@@ -1,50 +1,41 @@
 /**
  * useAppNavigation Hook
  *
- * Centralized navigation logic for Shopify embedded apps using Remix.
- * Handles client-side routing while preserving critical session parameters.
+ * Centralized navigation logic for Shopify embedded apps.
+ * Preserves all Shopify session parameters across navigation.
  *
- * This hook replaces window.location.href redirects with proper Remix navigation
- * to prevent full page reloads and session loss in embedded iframes.
+ * Uses window.location.href for navigation to ensure reliable page loads
+ * in the Shopify Admin iframe context.
  */
 
-import { useNavigate, useLocation } from "@remix-run/react";
+import { useLocation } from "@remix-run/react";
 import { useCallback, useEffect } from "react";
 
 interface NavigateOptions {
   /** Additional search params to include (will be merged with preserved params) */
   searchParams?: URLSearchParams;
-  /** Replace current history entry instead of pushing new one */
-  replace?: boolean;
 }
 
 /**
  * Custom hook for navigation in Shopify embedded apps
  *
  * Features:
- * - Preserves shop and host parameters across navigation
- * - Uses Remix client-side routing (no full page reload)
+ * - Preserves ALL Shopify session parameters
  * - Stores session params in SessionStorage as fallback
- * - Works seamlessly in Shopify iframe context
+ * - Works reliably in Shopify iframe context
  *
  * @returns handleNavigate function for navigation
  */
 export function useAppNavigation() {
-  const navigate = useNavigate();
   const location = useLocation();
 
   // Save critical session params to SessionStorage on mount and location change
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
-    // Try multiple sources for shop/host params
-    const searchParams = new URLSearchParams(location.search);
-    const windowParams = new URLSearchParams(window.location.search);
-
-    const shop = searchParams.get('shop') || windowParams.get('shop');
-    const host = searchParams.get('host') || windowParams.get('host');
-
-    console.log(`💾 [useAppNavigation] Saving params - Shop: ${shop}, Host: ${host}`);
+    const searchParams = new URLSearchParams(window.location.search);
+    const shop = searchParams.get('shop');
+    const host = searchParams.get('host');
 
     // Store in SessionStorage if present
     if (shop) {
@@ -56,36 +47,25 @@ export function useAppNavigation() {
   }, [location.search]);
 
   /**
-   * Navigate to a path while preserving Shopify session parameters
+   * Navigate to a path while preserving ALL Shopify session parameters
    *
    * @param path - The path to navigate to (e.g., "/app/products")
    * @param options - Optional configuration
    */
   const handleNavigate = useCallback((path: string, options: NavigateOptions = {}) => {
-    console.log(`🚀 [useAppNavigation] Navigating to: ${path}`);
-    console.log(`📍 [useAppNavigation] Current location: ${location.pathname}${location.search}`);
+    if (typeof window === 'undefined') return;
 
-    // Get current search params
-    const currentParams = new URLSearchParams(location.search);
+    console.log(`🚀 [useAppNavigation] Navigating to: ${path}`);
+
+    // Get current search params from window.location (most reliable source)
+    const currentParams = new URLSearchParams(window.location.search);
     console.log(`🔍 [useAppNavigation] Current search params:`, currentParams.toString());
 
     // Get additional params from options
     const additionalParams = options.searchParams || new URLSearchParams();
 
-    // Build final search params, preserving ALL current Shopify params
+    // Build final search params, preserving ALL current params
     const finalParams = new URLSearchParams();
-
-    // Critical Shopify params that must be preserved
-    const shopifyParams = [
-      'shop',
-      'host',
-      'embedded',
-      'hmac',
-      'id_token',
-      'locale',
-      'session',
-      'timestamp'
-    ];
 
     // 1. Copy ALL current params first (preserve everything from Shopify)
     currentParams.forEach((value, key) => {
@@ -112,33 +92,18 @@ export function useAppNavigation() {
 
     console.log(`🏪 [useAppNavigation] Shop: "${shop}", Host: "${host}"`);
 
-    // If we STILL don't have shop/host params, fall back to full page reload
-    if (!shop || !host) {
-      console.warn(`⚠️ [useAppNavigation] Missing shop/host parameters! Falling back to window.location.href`);
-
-      // Use window.location.href as fallback when session params are missing
-      const fallbackUrl = new URL(path, window.location.origin);
-      finalParams.forEach((value, key) => {
-        fallbackUrl.searchParams.set(key, value);
-      });
-
-      window.location.href = fallbackUrl.toString();
-      return;
-    }
-
     // Build final path with params
     const searchString = finalParams.toString();
     const fullPath = searchString ? `${path}?${searchString}` : path;
 
     console.log(`🎯 [useAppNavigation] Final path: ${fullPath}`);
 
-    // Use Remix navigate for client-side routing (no full page reload!)
-    navigate(fullPath, {
-      replace: options.replace || false,
-      // Preserve scroll position for better UX
-      preventScrollReset: false,
-    });
-  }, [navigate, location]);
+    // Use window.location.href for reliable navigation in iframe
+    if (window.shopify && typeof window.shopify.loading === 'function') {
+      window.shopify.loading(true);
+    }
+    window.location.href = fullPath;
+  }, []);
 
   return { handleNavigate };
 }
