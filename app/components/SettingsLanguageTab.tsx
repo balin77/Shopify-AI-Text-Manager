@@ -87,54 +87,56 @@ export function SettingsLanguageTab({ settings, fetcher, t, onHasChangesChange }
 
   return (
     <>
-      <Card>
-        <BlockStack gap="500">
-          <InlineStack align="space-between" blockAlign="center" wrap={false}>
-            <Text as="h2" variant="headingLg">
-              {t.settings.appLanguage}
-            </Text>
-            {/* Show action buttons inline on mobile only */}
-            <div className="settings-action-buttons-mobile" style={{ marginLeft: "auto" }}>
-              <SaveDiscardButtons
-                hasChanges={languageChanged}
-                onSave={handleSave}
-                onDiscard={handleDiscard}
-                saveText={t.products.saveChanges}
-                discardText={t.content?.discardChanges || "Verwerfen"}
-                action="saveSettings"
-                fetcherState={fetcher.state}
-                fetcherFormData={fetcher.formData}
-              />
-            </div>
-          </InlineStack>
-
-          <Text as="p" variant="bodyMd" tone="subdued">
-            {t.settings.appLanguageDescription}
-          </Text>
-
-          <Select
-            label=""
-            options={APP_LANGUAGES}
-            value={appLanguage}
-            onChange={setAppLanguage}
-          />
-        </BlockStack>
-      </Card>
-
-      <div className="settings-action-buttons-desktop">
+      <BlockStack gap="400">
         <Card>
-          <SaveDiscardButtons
-            hasChanges={languageChanged}
-            onSave={handleSave}
-            onDiscard={handleDiscard}
-            saveText={t.products.saveChanges}
-            discardText={t.content?.discardChanges || "Verwerfen"}
-            action="saveSettings"
-            fetcherState={fetcher.state}
-            fetcherFormData={fetcher.formData}
-          />
+          <BlockStack gap="500">
+            <InlineStack align="space-between" blockAlign="center" wrap={false}>
+              <Text as="h2" variant="headingLg">
+                {t.settings.appLanguage}
+              </Text>
+              {/* Show action buttons inline on mobile only */}
+              <div className="settings-action-buttons-mobile" style={{ marginLeft: "auto" }}>
+                <SaveDiscardButtons
+                  hasChanges={languageChanged}
+                  onSave={handleSave}
+                  onDiscard={handleDiscard}
+                  saveText={t.products.saveChanges}
+                  discardText={t.content?.discardChanges || "Verwerfen"}
+                  action="saveSettings"
+                  fetcherState={fetcher.state}
+                  fetcherFormData={fetcher.formData}
+                />
+              </div>
+            </InlineStack>
+
+            <Text as="p" variant="bodyMd" tone="subdued">
+              {t.settings.appLanguageDescription}
+            </Text>
+
+            <Select
+              label=""
+              options={APP_LANGUAGES}
+              value={appLanguage}
+              onChange={setAppLanguage}
+            />
+          </BlockStack>
         </Card>
-      </div>
+
+        <div className="settings-action-buttons-desktop">
+          <Card>
+            <SaveDiscardButtons
+              hasChanges={languageChanged}
+              onSave={handleSave}
+              onDiscard={handleDiscard}
+              saveText={t.products.saveChanges}
+              discardText={t.content?.discardChanges || "Verwerfen"}
+              action="saveSettings"
+              fetcherState={fetcher.state}
+              fetcherFormData={fetcher.formData}
+            />
+          </Card>
+        </div>
+      </BlockStack>
 
       <style>{`
         /* Show action buttons in separate card on desktop (900px+) */
