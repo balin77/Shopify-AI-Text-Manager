@@ -161,6 +161,7 @@ export function ImageGalleryField({
 
       {/* Image Layout: Preview left, Grid right */}
       <div
+        className="image-gallery-container"
         style={{
           display: "flex",
           gap: "16px",
@@ -169,6 +170,7 @@ export function ImageGalleryField({
       >
         {/* Large Preview Image */}
         <div
+          className="image-preview-large"
           style={{
             flex: "0 0 280px",
             position: "relative",
