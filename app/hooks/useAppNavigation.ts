@@ -72,39 +72,59 @@ export function useAppNavigation() {
     // Get additional params from options
     const additionalParams = options.searchParams || new URLSearchParams();
 
-    // Build final search params, preserving critical Shopify params
+    // Build final search params, preserving ALL current Shopify params
     const finalParams = new URLSearchParams();
 
-    // 1. Start with shop and host from current URL
-    const shop = currentParams.get('shop') || sessionStorage.getItem('shopify_shop');
-    const host = currentParams.get('host') || sessionStorage.getItem('shopify_host');
+    // Critical Shopify params that must be preserved
+    const shopifyParams = [
+      'shop',
+      'host',
+      'embedded',
+      'hmac',
+      'id_token',
+      'locale',
+      'session',
+      'timestamp'
+    ];
+
+    // 1. Copy ALL current params first (preserve everything from Shopify)
+    currentParams.forEach((value, key) => {
+      finalParams.set(key, value);
+    });
+
+    // 2. Override with any additional params from options
+    additionalParams.forEach((value, key) => {
+      finalParams.set(key, value);
+    });
+
+    // 3. Ensure shop and host are present (fallback to SessionStorage)
+    if (!finalParams.has('shop')) {
+      const shop = sessionStorage.getItem('shopify_shop');
+      if (shop) finalParams.set('shop', shop);
+    }
+    if (!finalParams.has('host')) {
+      const host = sessionStorage.getItem('shopify_host');
+      if (host) finalParams.set('host', host);
+    }
+
+    const shop = finalParams.get('shop');
+    const host = finalParams.get('host');
 
     console.log(`🏪 [useAppNavigation] Shop: "${shop}", Host: "${host}"`);
 
-    // If we don't have shop/host params, this is a problem - warn and use window.location as fallback
+    // If we STILL don't have shop/host params, fall back to full page reload
     if (!shop || !host) {
       console.warn(`⚠️ [useAppNavigation] Missing shop/host parameters! Falling back to window.location.href`);
-      console.warn(`⚠️ [useAppNavigation] Shop: ${shop}, Host: ${host}`);
 
       // Use window.location.href as fallback when session params are missing
       const fallbackUrl = new URL(path, window.location.origin);
-      if (shop) fallbackUrl.searchParams.set('shop', shop);
-      if (host) fallbackUrl.searchParams.set('host', host);
-      additionalParams.forEach((value, key) => {
+      finalParams.forEach((value, key) => {
         fallbackUrl.searchParams.set(key, value);
       });
 
       window.location.href = fallbackUrl.toString();
       return;
     }
-
-    if (shop) finalParams.set('shop', shop);
-    if (host) finalParams.set('host', host);
-
-    // 2. Add any additional params (these can override shop/host if needed)
-    additionalParams.forEach((value, key) => {
-      finalParams.set(key, value);
-    });
 
     // Build final path with params
     const searchString = finalParams.toString();
