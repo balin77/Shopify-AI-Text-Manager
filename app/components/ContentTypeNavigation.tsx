@@ -28,7 +28,7 @@ function navigateWithAppBridge(path: string, searchParams: URLSearchParams) {
   }
 }
 
-type ContentType = "collections" | "blogs" | "pages" | "policies" | "menus" | "templates" | "metaobjects" | "shopMetadata";
+type ContentType = "collections" | "blogs" | "pages" | "policies" | "menus" | "templates";
 
 interface ContentTypeConfig {
   id: ContentType;
@@ -55,8 +55,6 @@ export function ContentTypeNavigation() {
     { id: "policies", label: t.content.policies, icon: "📋", description: t.content.policiesDescription, path: "/app/policies", planContentType: "policies" },
     { id: "menus", label: t.content.menus, icon: "🍔", description: t.content.menusDescription, path: "/app/menus", planContentType: "menus" },
     { id: "templates", label: t.content.templates, icon: "🧪", description: "Theme translatable resources...", path: "/app/templates", planContentType: "templates" },
-    { id: "metaobjects", label: t.content.metaobjects, icon: "🗂️", description: t.content.metaobjectsDescription, path: "/app/content?type=metaobjects", comingSoon: true, planContentType: "metaobjects" },
-    { id: "shopMetadata", label: t.content.shopMetadata, icon: "🏷️", description: t.content.shopMetadataDescription, path: "/app/content?type=shopMetadata", comingSoon: true, planContentType: "metadata" },
   ];
 
   // Determine which tab is currently active based on the location
