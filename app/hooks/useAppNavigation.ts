@@ -37,9 +37,14 @@ export function useAppNavigation() {
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
+    // Try multiple sources for shop/host params
     const searchParams = new URLSearchParams(location.search);
-    const shop = searchParams.get('shop');
-    const host = searchParams.get('host');
+    const windowParams = new URLSearchParams(window.location.search);
+
+    const shop = searchParams.get('shop') || windowParams.get('shop');
+    const host = searchParams.get('host') || windowParams.get('host');
+
+    console.log(`💾 [useAppNavigation] Saving params - Shop: ${shop}, Host: ${host}`);
 
     // Store in SessionStorage if present
     if (shop) {
@@ -58,9 +63,11 @@ export function useAppNavigation() {
    */
   const handleNavigate = useCallback((path: string, options: NavigateOptions = {}) => {
     console.log(`🚀 [useAppNavigation] Navigating to: ${path}`);
+    console.log(`📍 [useAppNavigation] Current location: ${location.pathname}${location.search}`);
 
     // Get current search params
     const currentParams = new URLSearchParams(location.search);
+    console.log(`🔍 [useAppNavigation] Current search params:`, currentParams.toString());
 
     // Get additional params from options
     const additionalParams = options.searchParams || new URLSearchParams();
@@ -71,6 +78,25 @@ export function useAppNavigation() {
     // 1. Start with shop and host from current URL
     const shop = currentParams.get('shop') || sessionStorage.getItem('shopify_shop');
     const host = currentParams.get('host') || sessionStorage.getItem('shopify_host');
+
+    console.log(`🏪 [useAppNavigation] Shop: "${shop}", Host: "${host}"`);
+
+    // If we don't have shop/host params, this is a problem - warn and use window.location as fallback
+    if (!shop || !host) {
+      console.warn(`⚠️ [useAppNavigation] Missing shop/host parameters! Falling back to window.location.href`);
+      console.warn(`⚠️ [useAppNavigation] Shop: ${shop}, Host: ${host}`);
+
+      // Use window.location.href as fallback when session params are missing
+      const fallbackUrl = new URL(path, window.location.origin);
+      if (shop) fallbackUrl.searchParams.set('shop', shop);
+      if (host) fallbackUrl.searchParams.set('host', host);
+      additionalParams.forEach((value, key) => {
+        fallbackUrl.searchParams.set(key, value);
+      });
+
+      window.location.href = fallbackUrl.toString();
+      return;
+    }
 
     if (shop) finalParams.set('shop', shop);
     if (host) finalParams.set('host', host);
@@ -85,7 +111,6 @@ export function useAppNavigation() {
     const fullPath = searchString ? `${path}?${searchString}` : path;
 
     console.log(`🎯 [useAppNavigation] Final path: ${fullPath}`);
-    console.log(`📍 [useAppNavigation] Current location: ${location.pathname}`);
 
     // Use Remix navigate for client-side routing (no full page reload!)
     navigate(fullPath, {
