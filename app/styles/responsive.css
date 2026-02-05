@@ -91,6 +91,21 @@
     max-width: 100% !important;
   }
 
+  /* Force Polaris Box, BlockStack, InlineStack to respect width */
+  .Polaris-Box,
+  .Polaris-BlockStack,
+  .Polaris-InlineStack {
+    min-width: 0 !important;
+    max-width: 100% !important;
+  }
+
+  /* Force Polaris Page to respect width */
+  .Polaris-Page,
+  .Polaris-Page__Content {
+    min-width: 0 !important;
+    max-width: 100% !important;
+  }
+
   /* Force images to scale down */
   img {
     max-width: 100% !important;
