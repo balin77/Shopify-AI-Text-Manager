@@ -127,6 +127,24 @@
 /* Mobile: Ensure buttons wrap horizontally and take proper space */
 /* IMPORTANT: Override responsive.css global button rules */
 @media (max-width: 768px) {
+  /* Stack footer vertically for ALL field types on mobile */
+  .ai-field-footer {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 0.5rem !important;
+  }
+
+  .ai-field-footer-left {
+    width: 100%;
+    order: 1;
+  }
+
+  .ai-field-footer-right {
+    width: 100%;
+    order: 2;
+    margin-left: 0 !important;
+  }
+
   /* Override ButtonGroup vertical stacking on mobile */
   .ai-editable-html-field .Polaris-ButtonGroup,
   .ai-editable-html-field .Polaris-ButtonGroup--variantSegmented,
@@ -135,31 +153,6 @@
     flex-direction: row !important;
     flex-wrap: wrap !important;
     width: auto !important;
-  }
-  /* Footer container - keep horizontal layout for character count and buttons */
-  .ai-editable-html-field .ai-field-footer {
-    display: flex !important;
-    flex-direction: row !important;
-    justify-content: space-between !important;
-    align-items: flex-start !important;
-    gap: 0.5rem !important;
-    flex-wrap: wrap !important;
-  }
-
-  .ai-editable-html-field .ai-field-footer-left {
-    text-align: left;
-    flex: 0 0 auto !important;
-  }
-
-  /* Buttons container - horizontal flow with wrap */
-  .ai-editable-html-field .ai-field-footer-right {
-    display: flex !important;
-    flex-direction: row !important;
-    flex-wrap: wrap !important;
-    gap: 0.5rem !important;
-    margin-left: 0 !important;
-    justify-content: flex-start !important;
-    flex: 1 1 auto !important;
   }
 
   /* Individual buttons in footer - CRITICAL: Override width: 100% from responsive.css */
