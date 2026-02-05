@@ -138,6 +138,12 @@ export default function TasksPage() {
   const { t } = useI18n();
   const [searchParams, setSearchParams] = useSearchParams();
   const [expandedTaskIds, setExpandedTaskIds] = useState<Set<string>>(new Set());
+  const [isClient, setIsClient] = useState(false);
+
+  // Mark when we're on the client to avoid hydration mismatches with date formatting
+  useEffect(() => {
+    setIsClient(true);
+  }, []);
 
   // Auto-refresh every 3 seconds if there are running tasks
   useEffect(() => {
@@ -413,22 +419,24 @@ export default function TasksPage() {
                       </div>
                     )}
 
-                    {/* Time Info - Always Visible */}
-                    <InlineStack gap="400">
-                      <Text as="p" variant="bodySm" tone="subdued">
-                        {t.tasks.startedAt}: {new Date(task.startedAt).toLocaleString()}
-                      </Text>
-                      {task.completedAt && (
+                    {/* Time Info - Always Visible (only render after client mount to avoid hydration issues) */}
+                    {isClient && (
+                      <InlineStack gap="400">
                         <Text as="p" variant="bodySm" tone="subdued">
-                          {t.tasks.duration}: {formatDuration(task.startedAt, task.completedAt)}
+                          {t.tasks.startedAt}: {new Date(task.startedAt).toLocaleString()}
                         </Text>
-                      )}
-                      {!task.completedAt && task.status === "running" && (
-                        <Text as="p" variant="bodySm" tone="subdued">
-                          {t.tasks.duration}: {formatDuration(task.startedAt)}
-                        </Text>
-                      )}
-                    </InlineStack>
+                        {task.completedAt && (
+                          <Text as="p" variant="bodySm" tone="subdued">
+                            {t.tasks.duration}: {formatDuration(task.startedAt, task.completedAt)}
+                          </Text>
+                        )}
+                        {!task.completedAt && task.status === "running" && (
+                          <Text as="p" variant="bodySm" tone="subdued">
+                            {t.tasks.duration}: {formatDuration(task.startedAt)}
+                          </Text>
+                        )}
+                      </InlineStack>
+                    )}
 
                     {/* Error Message - Always Visible */}
                     {task.error && (
@@ -470,7 +478,7 @@ export default function TasksPage() {
                                           {parsed.map((entry: { timestamp: string; prompt: string }, index: number) => (
                                             <div key={index} style={{ padding: "0.75rem", background: "white", borderRadius: "4px", border: "1px solid #e5e5e5" }}>
                                               <Text as="p" variant="bodySm" tone="subdued">
-                                                #{index + 1} - {new Date(entry.timestamp).toLocaleTimeString()}
+                                                #{index + 1} - {isClient ? new Date(entry.timestamp).toLocaleTimeString() : entry.timestamp}
                                               </Text>
                                               <div style={{ fontFamily: "monospace", fontSize: "11px", whiteSpace: "pre-wrap", marginTop: "0.5rem", maxHeight: "150px", overflowY: "auto" }}>
                                                 {entry.prompt}
