@@ -34,12 +34,15 @@ function Document({
           rel="stylesheet"
           href="https://cdn.shopify.com/static/fonts/inter/v4/styles.css"
         />
-        <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js" />
       </head>
       <body>
         {children}
         <ScrollRestoration />
         <Scripts />
+        <script
+          src="https://cdn.shopify.com/shopifycloud/app-bridge.js"
+          defer
+        />
       </body>
     </html>
   );
@@ -60,11 +63,9 @@ export function ErrorBoundary() {
 
   try {
     error = useRouteError();
-    console.error("[APP.TSX ErrorBoundary] Caught error:", error);
   } catch (e) {
     // If useRouteError fails (e.g., called outside router context),
     // render a generic error page
-    console.error("[APP.TSX ErrorBoundary] useRouteError failed - likely outside router context", e);
     return (
       <Document title="Error">
         <div style={{
