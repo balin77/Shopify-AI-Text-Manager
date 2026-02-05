@@ -41,9 +41,9 @@ export interface PlanLimits {
 
 export const PLAN_CONFIG: Record<Plan, PlanLimits> = {
   free: {
-    maxProducts: 15,
+    maxProducts: 25,
     maxLocales: 2,
-    maxCollections: 100,
+    maxCollections: 5,
     maxArticles: 0,
     maxPages: 0,
     maxThemeTranslations: 0,
@@ -51,7 +51,7 @@ export const PLAN_CONFIG: Record<Plan, PlanLimits> = {
     contentTypes: ["products", "collections"],
     aiInstructionsEditable: false,
     cacheEnabled: {
-      products: true, // limited to 15
+      products: true, // limited to 25
       productImages: false, // only featured image
       productOptions: false,
       productMetafields: false,
@@ -63,9 +63,9 @@ export const PLAN_CONFIG: Record<Plan, PlanLimits> = {
     },
   },
   basic: {
-    maxProducts: 50,
+    maxProducts: 75,
     maxLocales: 5,
-    maxCollections: 200,
+    maxCollections: 50,
     maxArticles: 0,
     maxPages: 20,
     maxThemeTranslations: 0,
@@ -87,7 +87,7 @@ export const PLAN_CONFIG: Record<Plan, PlanLimits> = {
   pro: {
     maxProducts: 150,
     maxLocales: 10,
-    maxCollections: 300,
+    maxCollections: 100,
     maxArticles: 100,
     maxPages: 50,
     maxThemeTranslations: 50000,
