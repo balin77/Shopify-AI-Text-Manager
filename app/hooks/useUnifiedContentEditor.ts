@@ -1462,8 +1462,16 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
   // Show global InfoBox for success/error messages and revalidate after save
   useEffect(() => {
+    console.log('💾 [SAVE-RESPONSE] useEffect triggered:', {
+      hasFetcherData: !!fetcher.data,
+      fetcherData: fetcher.data,
+      fetcherState: fetcher.state,
+      alreadyProcessed: fetcher.data === processedSaveResponseRef.current,
+    });
+
     // Skip if this response was already processed (prevents duplicate processing on re-renders)
     if (fetcher.data === processedSaveResponseRef.current) {
+      console.log('⏭️ [SAVE-RESPONSE] Already processed, skipping');
       return;
     }
 
@@ -1473,6 +1481,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       !(fetcher.data as any).translatedValue &&
       !(fetcher.data as any).translations // Skip revalidate for bulk operations, they handle it differently
     ) {
+      console.log('✅ [SAVE-RESPONSE] Save successful, showing InfoBox and revalidating');
       // Mark this response as processed
       processedSaveResponseRef.current = fetcher.data;
 
@@ -1567,10 +1576,18 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         }
       }
     } else if (fetcher.data && !fetcher.data.success && 'error' in fetcher.data) {
+      console.log('❌ [SAVE-RESPONSE] Save failed, showing error');
       // Also mark error responses as processed
       processedSaveResponseRef.current = fetcher.data;
       const translatedError = translateErrorMessage(fetcher.data.error as string, t);
       showInfoBox(translatedError, "critical", t.common?.error || "Error");
+    } else if (fetcher.data) {
+      console.log('⚠️ [SAVE-RESPONSE] Response does not match save conditions:', {
+        success: fetcher.data.success,
+        hasGeneratedContent: !!(fetcher.data as any).generatedContent,
+        hasTranslatedValue: !!(fetcher.data as any).translatedValue,
+        hasTranslations: !!(fetcher.data as any).translations,
+      });
     }
   }, [fetcher.data, showInfoBox, t, revalidator, safeSubmit, submitAIAction, effectiveFieldDefinitions, currentLanguage, primaryLocale]);
 
@@ -1584,7 +1601,17 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   };
 
   const handleSave = () => {
-    if (!selectedItemId || !hasChanges) return;
+    console.log('💾 [SAVE] handleSave called:', {
+      selectedItemId,
+      hasChanges,
+      currentLanguage,
+      editableValues,
+    });
+
+    if (!selectedItemId || !hasChanges) {
+      console.log('⏭️ [SAVE] Skipping save - no item selected or no changes');
+      return;
+    }
 
     // If we're saving in the primary locale, clear all translations for changed fields
     if (currentLanguage === primaryLocale && selectedItem) {
@@ -1658,9 +1685,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // Skip next data load to prevent revalidation from overwriting user changes
     skipNextDataLoadRef.current = true;
 
+    console.log('📤 [SAVE] Submitting form data:', formDataObj);
     savedLocaleRef.current = currentLanguage; // Track which locale we're saving
     safeSubmit(formDataObj, { method: "POST" });
     clearPendingNavigation();
+    console.log('✅ [SAVE] Form submitted successfully');
   };
 
   const handleDiscard = () => {
