@@ -611,6 +611,7 @@ export default function ProductsPage() {
             currentPlan: plan,
             nextPlan: getNextPlanUpgrade() || undefined,
           }}
+          revalidator={revalidator}
         />
       </div>
     </div>

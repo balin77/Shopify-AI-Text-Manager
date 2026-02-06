@@ -8,6 +8,10 @@ interface ReloadButtonProps {
   resourceType: "product" | "collection" | "article" | "page" | "policy" | "templates";
   locale: string;
   onReloadComplete?: () => void;
+  revalidator?: {
+    revalidate: () => void;
+    state: 'idle' | 'loading';
+  };
 }
 
 export function ReloadButton({
@@ -15,8 +19,10 @@ export function ReloadButton({
   resourceType,
   locale,
   onReloadComplete,
+  revalidator,
 }: ReloadButtonProps) {
   const [isLoading, setIsLoading] = useState(false);
+  const [waitingForRevalidation, setWaitingForRevalidation] = useState(false);
   const fetcher = useFetcher();
 
   // Monitor fetcher state
@@ -29,42 +35,55 @@ export function ReloadButton({
         console.log("✅ [RELOAD-BUTTON] Sync successful!");
         console.log("🔄 [RELOAD-BUTTON] Resource:", { resourceId, resourceType, locale });
 
-        // Save selected resource ID to restore after reload
-        setTimeout(() => {
-          console.log("🔄 [RELOAD-BUTTON] Reloading page to show updated data...");
+        if (revalidator) {
+          // Use revalidation approach (non-destructive)
+          setTimeout(() => {
+            console.log("🔄 [RELOAD-BUTTON] Triggering revalidation...");
+            console.log("🔍 [RELOAD-BUTTON] Revalidator state before:", revalidator.state);
 
-          // Store the selected product ID in URL to restore selection after reload
-          const url = new URL(window.location.href);
-          url.searchParams.set('selected', resourceId);
-          url.searchParams.set('_t', Date.now().toString()); // Cache bust
+            setWaitingForRevalidation(true);
+            revalidator.revalidate();
 
-          console.log("💾 [RELOAD-BUTTON] Saving selection for restoration:", {
-            resourceId,
-            resourceType,
-            currentUrl: window.location.href,
-            newUrl: url.toString(),
-          });
+            console.log("🔍 [RELOAD-BUTTON] Revalidator state after trigger:", revalidator.state);
+          }, 1000); // Wait 1 second for DB write to complete
+        } else {
+          // Fallback to page reload if revalidator not available
+          setTimeout(() => {
+            console.log("🔄 [RELOAD-BUTTON] Reloading page to show updated data...");
 
-          // Also store in localStorage as fallback
-          try {
-            const storageData = {
-              id: resourceId,
-              type: resourceType,
-              timestamp: Date.now()
-            };
-            localStorage.setItem('lastSelectedResource', JSON.stringify(storageData));
-            console.log("💾 [RELOAD-BUTTON] Saved to localStorage:", storageData);
-          } catch (e) {
-            console.warn('[RELOAD-BUTTON] Failed to save to localStorage:', e);
+            // Store the selected product ID in URL to restore selection after reload
+            const url = new URL(window.location.href);
+            url.searchParams.set('selected', resourceId);
+            url.searchParams.set('_t', Date.now().toString()); // Cache bust
+
+            console.log("💾 [RELOAD-BUTTON] Saving selection for restoration:", {
+              resourceId,
+              resourceType,
+              currentUrl: window.location.href,
+              newUrl: url.toString(),
+            });
+
+            // Also store in localStorage as fallback
+            try {
+              const storageData = {
+                id: resourceId,
+                type: resourceType,
+                timestamp: Date.now()
+              };
+              localStorage.setItem('lastSelectedResource', JSON.stringify(storageData));
+              console.log("💾 [RELOAD-BUTTON] Saved to localStorage:", storageData);
+            } catch (e) {
+              console.warn('[RELOAD-BUTTON] Failed to save to localStorage:', e);
+            }
+
+            // Navigate to URL with selected parameter (forces full reload with selection preserved)
+            console.log("🌐 [RELOAD-BUTTON] Navigating to:", url.toString());
+            window.location.href = url.toString();
+          }, 500);
+
+          if (onReloadComplete) {
+            onReloadComplete();
           }
-
-          // Navigate to URL with selected parameter (forces full reload with selection preserved)
-          console.log("🌐 [RELOAD-BUTTON] Navigating to:", url.toString());
-          window.location.href = url.toString();
-        }, 500);
-
-        if (onReloadComplete) {
-          onReloadComplete();
         }
       } else {
         console.error("❌ [RELOAD-BUTTON] Sync failed:", data.error);
@@ -72,7 +91,26 @@ export function ReloadButton({
         alert(`Fehler beim Neuladen: ${data.error || "Unbekannter Fehler"}`);
       }
     }
-  }, [fetcher.state, fetcher.data, isLoading, onReloadComplete, resourceId, resourceType, locale]);
+  }, [fetcher.state, fetcher.data, isLoading, onReloadComplete, resourceId, resourceType, locale, revalidator]);
+
+  // Monitor revalidation state
+  useEffect(() => {
+    if (!waitingForRevalidation || !revalidator) return;
+
+    console.log("🔍 [RELOAD-BUTTON] Monitoring revalidation, current state:", revalidator.state);
+
+    // Revalidation completed
+    if (revalidator.state === 'idle') {
+      console.log("✅ [RELOAD-BUTTON] Revalidation completed!");
+      setWaitingForRevalidation(false);
+      setIsLoading(false);
+
+      if (onReloadComplete) {
+        console.log("🔄 [RELOAD-BUTTON] Calling onReloadComplete to refresh data");
+        onReloadComplete();
+      }
+    }
+  }, [revalidator?.state, waitingForRevalidation, onReloadComplete, revalidator]);
 
   const handleReload = () => {
     if (isLoading) {
