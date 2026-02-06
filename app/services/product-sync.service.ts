@@ -28,8 +28,32 @@ export class ProductSyncService {
       const productData = await this.fetchProductData(productId);
 
       if (!productData) {
-        logger.warn(`[ProductSync] Product not found: ${productId}`);
+        logger.warn(`[ProductSync] Product not found in Shopify: ${productId} - attempting to delete from local database`);
+
+        // Product doesn't exist in Shopify anymore - remove from local database
+        try {
+          await this.deleteProduct(productId);
+          logger.info(`[ProductSync] Successfully deleted non-existent product from database: ${productId}`);
+        } catch (deleteError) {
+          // Product might not exist in database either - this is OK
+          logger.debug(`[ProductSync] Product not found in database (already deleted): ${productId}`);
+        }
         return;
+      }
+
+      // Log product data for debugging
+      logger.debug(`[ProductSync] Product data fetched:`, {
+        id: productData.id,
+        title: productData.title,
+        status: productData.status,
+        productType: productData.productType || 'NULL',
+        hasDescription: !!productData.descriptionHtml,
+        imageCount: productData.media?.edges?.length || 0,
+      });
+
+      // Check if product is DRAFT or ARCHIVED
+      if (productData.status === 'DRAFT' || productData.status === 'ARCHIVED') {
+        logger.debug(`[ProductSync] Product is ${productData.status}: ${productId} - syncing anyway with current status`);
       }
 
       // 2. Fetch all available locales
@@ -206,7 +230,48 @@ export class ProductSyncService {
     );
 
     const data = await response.json();
-    return data.data?.product || null;
+
+    // Check for GraphQL errors
+    if (data.errors && data.errors.length > 0) {
+      logger.error(`[ProductSync] GraphQL errors for product ${productId}:`, {
+        errors: data.errors,
+        productId,
+      });
+
+      // Distinguish between "not found" errors and other errors
+      const notFoundError = data.errors.some((e: any) =>
+        e.message?.toLowerCase().includes('not found') ||
+        e.message?.toLowerCase().includes('does not exist') ||
+        e.message?.toLowerCase().includes('could not find')
+      );
+
+      if (notFoundError) {
+        logger.debug(`[ProductSync] Product not found (GraphQL error): ${productId}`);
+        return null; // Product doesn't exist - this is expected for deleted products
+      }
+
+      // For other errors (rate limiting, permissions, etc.), throw to retry
+      throw new Error(`GraphQL error: ${data.errors[0].message}`);
+    }
+
+    // Check if product data is present
+    const product = data.data?.product;
+
+    if (!product) {
+      logger.warn(`[ProductSync] Product data is null (but no GraphQL errors): ${productId}`);
+      return null;
+    }
+
+    // Log warning if productType is missing (this shouldn't happen normally)
+    if (!product.productType) {
+      logger.warn(`[ProductSync] ⚠️ Product has NULL productType in Shopify:`, {
+        productId: product.id,
+        title: product.title,
+        status: product.status,
+      });
+    }
+
+    return product;
   }
 
   /**
@@ -226,7 +291,22 @@ export class ProductSyncService {
     );
 
     const data = await response.json();
-    return data.data?.shopLocales || [];
+
+    // Check for GraphQL errors
+    if (data.errors && data.errors.length > 0) {
+      logger.error(`[ProductSync] GraphQL errors fetching shop locales:`, {
+        errors: data.errors,
+      });
+      throw new Error(`Failed to fetch shop locales: ${data.errors[0].message}`);
+    }
+
+    const locales = data.data?.shopLocales || [];
+
+    if (locales.length === 0) {
+      logger.warn(`[ProductSync] No shop locales found - this might indicate an API issue`);
+    }
+
+    return locales;
   }
 
   /**
@@ -248,63 +328,85 @@ export class ProductSyncService {
 
       logger.debug(`[ProductSync] Fetching translations for locale: ${locale.locale}`);
 
-      const response = await this.admin.graphql(
-        `#graphql
-          query getTranslations($resourceId: ID!, $locale: String!) {
-            translatableResource(resourceId: $resourceId) {
-              translatableContent {
-                key
-                value
-                digest
-                locale
+      try {
+        const response = await this.admin.graphql(
+          `#graphql
+            query getTranslations($resourceId: ID!, $locale: String!) {
+              translatableResource(resourceId: $resourceId) {
+                translatableContent {
+                  key
+                  value
+                  digest
+                  locale
+                }
+                translations(locale: $locale) {
+                  key
+                  value
+                  locale
+                }
               }
-              translations(locale: $locale) {
-                key
-                value
-                locale
-              }
-            }
-          }`,
-        { variables: { resourceId: productId, locale: locale.locale } }
-      );
+            }`,
+          { variables: { resourceId: productId, locale: locale.locale } }
+        );
 
-      const data = await response.json();
-      const resource = data.data?.translatableResource;
+        const data = await response.json();
 
-      if (!resource) {
-        logger.warn(`[ProductSync] No translatable resource found for ${locale.locale}`);
-        continue;
-      }
-
-      // Build digest map from translatableContent (for reference only)
-      if (resource.translatableContent) {
-        logger.debug(`[ProductSync] Available translatable keys for ${locale.locale}:`,
-          resource.translatableContent.map((c: any) => c.key).join(', '));
-
-        for (const content of resource.translatableContent) {
-          // Store digest for future updates - but DO NOT store as translation
-          digestMap.set(content.key, content.digest);
-        }
-      }
-
-      // ONLY save actual translations from Shopify
-      // DO NOT save translatableContent values - those are the source language text
-      if (resource.translations && resource.translations.length > 0) {
-        logger.debug(`[ProductSync] Actual translations for ${locale.locale}:`,
-          resource.translations.map((t: any) => t.key).join(', '));
-
-        for (const translation of resource.translations) {
-          allTranslations.push({
-            key: translation.key,
-            value: translation.value,
-            locale: translation.locale,
-            digest: digestMap.get(translation.key),
+        // Check for GraphQL errors for this locale
+        if (data.errors && data.errors.length > 0) {
+          logger.warn(`[ProductSync] GraphQL errors fetching translations for locale ${locale.locale}:`, {
+            errors: data.errors,
+            productId,
+            locale: locale.locale,
           });
+          // Continue with other locales instead of failing completely
+          continue;
         }
 
-        logger.debug(`[ProductSync] Saved ${resource.translations.length} actual translations for ${locale.locale}`);
-      } else {
-        logger.debug(`[ProductSync] No translations found for ${locale.locale} - nothing to save`);
+        const resource = data.data?.translatableResource;
+
+        if (!resource) {
+          logger.warn(`[ProductSync] No translatable resource found for ${locale.locale}`);
+          continue;
+        }
+
+        // Build digest map from translatableContent (for reference only)
+        if (resource.translatableContent) {
+          logger.debug(`[ProductSync] Available translatable keys for ${locale.locale}:`,
+            resource.translatableContent.map((c: any) => c.key).join(', '));
+
+          for (const content of resource.translatableContent) {
+            // Store digest for future updates - but DO NOT store as translation
+            digestMap.set(content.key, content.digest);
+          }
+        }
+
+        // ONLY save actual translations from Shopify
+        // DO NOT save translatableContent values - those are the source language text
+        if (resource.translations && resource.translations.length > 0) {
+          logger.debug(`[ProductSync] Actual translations for ${locale.locale}:`,
+            resource.translations.map((t: any) => t.key).join(', '));
+
+          for (const translation of resource.translations) {
+            allTranslations.push({
+              key: translation.key,
+              value: translation.value,
+              locale: translation.locale,
+              digest: digestMap.get(translation.key),
+            });
+          }
+
+          logger.debug(`[ProductSync] Saved ${resource.translations.length} actual translations for ${locale.locale}`);
+        } else {
+          logger.debug(`[ProductSync] No translations found for ${locale.locale} - nothing to save`);
+        }
+      } catch (error: any) {
+        // Log error but continue with other locales (graceful degradation)
+        logger.error(`[ProductSync] Error fetching translations for locale ${locale.locale}:`, {
+          error: error.message,
+          productId,
+          locale: locale.locale,
+        });
+        // Continue to next locale
       }
     }
 
