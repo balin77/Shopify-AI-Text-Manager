@@ -23,26 +23,37 @@ export function ReloadButton({
   // Monitor fetcher state
   useEffect(() => {
     if (fetcher.state === "idle" && fetcher.data && isLoading) {
+      console.log("🔄 [RELOAD-BUTTON] Sync complete, fetcher data:", fetcher.data);
       setIsLoading(false);
 
       const data = fetcher.data as any;
       if (data.success) {
+        console.log("✅ [RELOAD-BUTTON] Sync successful, triggering revalidation...");
+        console.log("🔄 [RELOAD-BUTTON] Resource:", { resourceId, resourceType, locale });
+
         // Success - revalidate to fetch fresh data without full page reload
         revalidator.revalidate();
+
+        console.log("✅ [RELOAD-BUTTON] Revalidation triggered, state:", revalidator.state);
 
         if (onReloadComplete) {
           onReloadComplete();
         }
       } else {
+        console.error("❌ [RELOAD-BUTTON] Sync failed:", data.error);
         // Error
         alert(`Fehler beim Neuladen: ${data.error || "Unbekannter Fehler"}`);
       }
     }
-  }, [fetcher.state, fetcher.data, isLoading, onReloadComplete, revalidator]);
+  }, [fetcher.state, fetcher.data, isLoading, onReloadComplete, revalidator, resourceId, resourceType, locale]);
 
   const handleReload = () => {
-    if (isLoading) return;
+    if (isLoading) {
+      console.log("⚠️ [RELOAD-BUTTON] Already loading, ignoring click");
+      return;
+    }
 
+    console.log("🔄 [RELOAD-BUTTON] Reload button clicked:", { resourceId, resourceType, locale });
     setIsLoading(true);
 
     // Call the sync API endpoint
@@ -57,6 +68,7 @@ export function ReloadButton({
         action: "/api/sync-single-resource",
       }
     );
+    console.log("🔄 [RELOAD-BUTTON] Fetch submitted to /api/sync-single-resource");
   };
 
   return (
