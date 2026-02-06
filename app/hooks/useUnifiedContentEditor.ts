@@ -528,10 +528,18 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           debugLog.dataLoad(' Handle field: using fallback to primary locale value:', item.handle);
           newValues[field.key] = item.handle;
           newFallbackFields.add(field.key);
-        } else if (field.key === 'seoTitle' && !translatedValue && item.title) {
-          // Special handling for seoTitle field: fallback to main title if no translation
-          debugLog.dataLoad(' SEO Title field: using fallback to main title:', item.title);
-          newValues[field.key] = item.title;
+        } else if (field.key === 'seoTitle' && !translatedValue) {
+          // Special handling for seoTitle field: fallback to translated title (or primary if no translation)
+          const translatedTitle = getTranslatedValue(
+            item,
+            "translatedBody", // Translation key for title
+            currentLanguage,
+            "",
+            primaryLocale
+          );
+          const fallbackTitle = translatedTitle || item.title || "";
+          debugLog.dataLoad(' SEO Title field: using fallback to title:', fallbackTitle);
+          newValues[field.key] = fallbackTitle;
           newFallbackFields.add(field.key);
         } else {
           newValues[field.key] = translatedValue;
