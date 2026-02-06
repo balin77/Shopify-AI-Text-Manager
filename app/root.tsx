@@ -15,47 +15,20 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   });
 };
 
-function Document({
-  children,
-  title = "App",
-  apiKey,
-  env,
-}: {
-  children: React.ReactNode;
-  title?: string;
-  apiKey?: string;
-  env?: any;
-}) {
+function Document({ children, title = "App" }: { children: React.ReactNode; title?: string }) {
   return (
     <html lang="en">
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width,initial-scale=1" />
         <title>{title}</title>
-        {apiKey && <meta name="shopify-api-key" content={apiKey} />}
-        {env && (
-          <script
-            dangerouslySetInnerHTML={{
-              __html: `window.ENV = ${JSON.stringify(env)}`,
-            }}
-          />
-        )}
         <Meta />
         <Links />
-        <link rel="preconnect" href="https://cdn.shopify.com/" />
-        <link
-          rel="stylesheet"
-          href="https://cdn.shopify.com/static/fonts/inter/v4/styles.css"
-        />
       </head>
       <body>
         {children}
         <ScrollRestoration />
         <Scripts />
-        <script
-          src="https://cdn.shopify.com/shopifycloud/app-bridge.js"
-          defer
-        />
       </body>
     </html>
   );
@@ -65,7 +38,21 @@ export default function App() {
   const { apiKey, ENV } = useLoaderData<typeof loader>();
 
   return (
-    <Document apiKey={apiKey} env={ENV}>
+    <Document>
+      <meta name="shopify-api-key" content={apiKey} />
+      {ENV && (
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `window.ENV = ${JSON.stringify(ENV)}`,
+          }}
+        />
+      )}
+      <link rel="preconnect" href="https://cdn.shopify.com/" />
+      <link
+        rel="stylesheet"
+        href="https://cdn.shopify.com/static/fonts/inter/v4/styles.css"
+      />
+      <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js" />
       <Outlet />
     </Document>
   );
