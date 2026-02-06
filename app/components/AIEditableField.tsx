@@ -89,9 +89,12 @@ export function AIEditableField({
 
     if (isPrimaryLocale && value && fieldHasMissingTranslations) return "bg-missing-translation";
 
-    // Priority 4: Foreign locale - fallback value (gray), orange if not translated, white if translated
+    // Priority 4: Fallback value (gray) - works for both primary and foreign locales
+    // Example: SEO Title field using Product Title as fallback
+    if (isFallbackValue) return "bg-fallback";
+
+    // Priority 5: Foreign locale - orange if not translated, white if translated
     if (!isPrimaryLocale) {
-      if (isFallbackValue) return "bg-fallback";
       return isTranslated ? "bg-white" : "bg-untranslated";
     }
 
