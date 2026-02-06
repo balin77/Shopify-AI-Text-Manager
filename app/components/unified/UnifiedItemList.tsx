@@ -206,6 +206,25 @@ export function UnifiedItemList({
     setCurrentPage(1);
   };
 
+  // Auto-navigate to page with selected item
+  useEffect(() => {
+    if (!selectedItemId || !showPagination) return;
+
+    // Find the selected item in the filtered items
+    const selectedIndex = filteredItems.findIndex(item => item.id === selectedItemId);
+
+    if (selectedIndex === -1) return; // Item not found (maybe filtered out)
+
+    // Calculate which page the selected item is on
+    const selectedPage = Math.floor(selectedIndex / itemsPerPage) + 1;
+
+    // Navigate to that page if not already there
+    if (selectedPage !== currentPage) {
+      console.log(`🔄 [UnifiedItemList] Auto-navigating to page ${selectedPage} for selected item`);
+      setCurrentPage(selectedPage);
+    }
+  }, [selectedItemId, filteredItems, itemsPerPage, currentPage, showPagination]);
+
   // Get status color for stripe
   const getStatusColor = (status?: string) => {
     if (!status) return "#babfc3";
