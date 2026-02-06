@@ -17,12 +17,13 @@ export function ReloadButton({
   onReloadComplete,
 }: ReloadButtonProps) {
   const [isLoading, setIsLoading] = useState(false);
+  const [isRevalidating, setIsRevalidating] = useState(false);
   const fetcher = useFetcher();
   const revalidator = useRevalidator();
 
   // Monitor fetcher state
   useEffect(() => {
-    if (fetcher.state === "idle" && fetcher.data && isLoading) {
+    if (fetcher.state === "idle" && fetcher.data && isLoading && !isRevalidating) {
       console.log("🔄 [RELOAD-BUTTON] Sync complete, fetcher data:", fetcher.data);
 
       const data = fetcher.data as any;
@@ -33,6 +34,7 @@ export function ReloadButton({
         // Add a small delay before revalidating to ensure DB transaction completed
         setTimeout(() => {
           console.log("🔄 [RELOAD-BUTTON] Triggering revalidation...");
+          setIsRevalidating(true);
           revalidator.revalidate();
         }, 500);
 
@@ -45,15 +47,16 @@ export function ReloadButton({
         alert(`Fehler beim Neuladen: ${data.error || "Unbekannter Fehler"}`);
       }
     }
-  }, [fetcher.state, fetcher.data, isLoading, onReloadComplete, resourceId, resourceType, locale, revalidator]);
+  }, [fetcher.state, fetcher.data, isLoading, isRevalidating, onReloadComplete, resourceId, resourceType, locale, revalidator]);
 
-  // Monitor revalidator state
+  // Monitor revalidator state - only after we've triggered revalidation
   useEffect(() => {
-    if (revalidator.state === "idle" && isLoading) {
+    if (isRevalidating && revalidator.state === "idle") {
       console.log("✅ [RELOAD-BUTTON] Revalidation complete, UI should update now");
       setIsLoading(false);
+      setIsRevalidating(false);
     }
-  }, [revalidator.state, isLoading]);
+  }, [revalidator.state, isRevalidating]);
 
   const handleReload = () => {
     if (isLoading) {
@@ -63,6 +66,7 @@ export function ReloadButton({
 
     console.log("🔄 [RELOAD-BUTTON] Reload button clicked:", { resourceId, resourceType, locale });
     setIsLoading(true);
+    setIsRevalidating(false); // Reset revalidation flag
 
     // Call the sync API endpoint
     fetcher.submit(
