@@ -691,9 +691,17 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
     debugLog.submit(' Submitting data:', data);
     debugLog.submit(' Options:', options);
+
+    // Convert data object to FormData for proper Shopify embedded app compatibility
+    // Using plain objects doesn't trigger fetcher state changes in embedded context
+    const formData = new FormData();
+    Object.entries(data).forEach(([key, value]) => {
+      formData.append(key, String(value));
+    });
+
     try {
-      console.log('🔄 [safeSubmit] Calling fetcher.submit()...');
-      fetcherRef.current.submit(data, options || { method: "POST" });
+      console.log('🔄 [safeSubmit] Calling fetcher.submit() with FormData...');
+      fetcherRef.current.submit(formData, options || { method: "POST" });
       console.log('✅ [safeSubmit] fetcher.submit() returned, new state:', fetcherRef.current.state);
     } catch (error) {
       console.error('❌ [safeSubmit] Error caught:', error);
