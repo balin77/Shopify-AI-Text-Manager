@@ -94,6 +94,12 @@ interface UnifiedContentEditorProps {
 
   /** Optional: Loading state for field pagination */
   isFieldsLoading?: boolean;
+
+  /** Optional: Revalidator for data refresh */
+  revalidator?: {
+    revalidate: () => void;
+    state: 'idle' | 'loading';
+  };
 }
 
 export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
@@ -116,6 +122,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     onFieldPageChange,
     onFieldSearch,
     isFieldsLoading = false,
+    revalidator,
   } = props;
 
   // Local state for search input (debounced)
@@ -451,6 +458,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                       resourceType={getResourceType(config.contentType)}
                       locale={state.currentLanguage}
                       onReloadComplete={editor.helpers.triggerDataRefresh}
+                      revalidator={revalidator}
                     />
                   </InlineStack>
                 </InlineStack>
