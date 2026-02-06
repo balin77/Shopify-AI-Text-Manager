@@ -41,6 +41,12 @@ export function ReloadButton({
             console.log("🔄 [RELOAD-BUTTON] Triggering revalidation...");
             console.log("🔍 [RELOAD-BUTTON] Revalidator state before:", revalidator.state);
 
+            // Cache-bust: Add timestamp to URL to force Remix to reload data
+            const url = new URL(window.location.href);
+            url.searchParams.set('_reload', Date.now().toString());
+            window.history.replaceState({}, '', url.toString());
+            console.log("🔄 [RELOAD-BUTTON] Added cache-busting timestamp to URL");
+
             setWaitingForRevalidation(true);
             revalidator.revalidate();
 
