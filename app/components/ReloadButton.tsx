@@ -28,13 +28,16 @@ export function ReloadButton({
 
       const data = fetcher.data as any;
       if (data.success) {
-        console.log("✅ [RELOAD-BUTTON] Sync successful, triggering revalidation...");
+        console.log("✅ [RELOAD-BUTTON] Sync successful, forcing page reload...");
         console.log("🔄 [RELOAD-BUTTON] Resource:", { resourceId, resourceType, locale });
 
-        // Success - revalidate to fetch fresh data without full page reload
-        revalidator.revalidate();
+        // CRITICAL FIX: Use full page reload instead of revalidation
+        // Revalidation doesn't guarantee the loader runs again, especially if data appears "fresh"
+        // This ensures we always get the latest data from the database
+        window.location.reload();
 
-        console.log("✅ [RELOAD-BUTTON] Revalidation triggered, state:", revalidator.state);
+        // Old approach (doesn't work reliably):
+        // revalidator.revalidate();
 
         if (onReloadComplete) {
           onReloadComplete();
