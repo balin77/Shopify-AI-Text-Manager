@@ -111,10 +111,13 @@ export function ReloadButton({
       setWaitingForRevalidation(false);
       setIsLoading(false);
 
-      // NOTE: We don't call onReloadComplete here anymore
-      // The parent component (e.g., products.tsx) will detect the revalidation completion
-      // and trigger data refresh automatically via its own useEffect
-      console.log("ℹ️ [RELOAD-BUTTON] Revalidation done - parent will handle data refresh");
+      // Trigger data refresh in the parent component (e.g., useUnifiedContentEditor)
+      // This calls triggerDataRefresh() which increments dataRefreshTrigger
+      // which causes the editor to reload editableValues from the fresh data
+      if (onReloadComplete) {
+        console.log("🔄 [RELOAD-BUTTON] Calling onReloadComplete to refresh frontend data");
+        onReloadComplete();
+      }
     }
   }, [revalidator?.state, waitingForRevalidation, onReloadComplete, revalidator]);
 
