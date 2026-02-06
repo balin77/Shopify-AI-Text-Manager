@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useRef, useEffect } from "react";
 import { Button } from "@shopify/polaris";
 
 interface SaveDiscardButtonsProps {
@@ -44,6 +44,18 @@ export function SaveDiscardButtons({
   // Determine if currently submitting this specific action
   const isSubmitting = fetcherState !== "idle" &&
     fetcherFormData?.get("action") === action;
+
+  // DEBUG: Log fetcher state changes
+  useEffect(() => {
+    console.log('🔘 [SAVE-BUTTON] State changed:', {
+      fetcherState,
+      hasFormData: !!fetcherFormData,
+      formDataAction: fetcherFormData?.get("action"),
+      expectedAction: action,
+      isSubmitting,
+      hasChanges,
+    });
+  }, [fetcherState, fetcherFormData, isSubmitting, hasChanges, action]);
 
   return (
     <div ref={saveButtonRef} style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", flex: 1, minWidth: 0, alignItems: "center" }}>
