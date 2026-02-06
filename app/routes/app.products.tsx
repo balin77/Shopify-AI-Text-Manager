@@ -305,12 +305,12 @@ export default function ProductsPage() {
       isMounted: isMountedRef.current,
       productsCount: products.length,
       hasHandlers: !!editor.handlers,
-      hasSelectFn: typeof editor.handlers?.handleSelectItem === 'function',
+      hasSelectFn: typeof editor.handlers?.handleItemSelect === 'function',
       currentSelection: editor.state.selectedItemId,
     });
 
     // Wait for products to load and editor to be ready
-    if (!isMountedRef.current || !products.length || !editor.handlers || typeof editor.handlers.handleSelectItem !== 'function') {
+    if (!isMountedRef.current || !products.length || !editor.handlers || typeof editor.handlers.handleItemSelect !== 'function') {
       console.log('⏸️ [PRODUCTS] Waiting for initialization...');
       return;
     }
@@ -342,13 +342,13 @@ export default function ProductsPage() {
       if (productExists) {
         // Restore selection via editor
         try {
-          console.log('🎯 [PRODUCTS] Calling handleSelectItem with:', selectedFromUrl);
+          console.log('🎯 [PRODUCTS] Calling handleItemSelect with:', selectedFromUrl);
           console.log('🔍 [PRODUCTS] Editor state BEFORE selection:', {
             selectedItemId: editor.state.selectedItemId,
             selectedItem: editor.selectedItem ? { id: editor.selectedItem.id, title: editor.selectedItem.title } : null,
           });
 
-          editor.handlers.handleSelectItem(selectedFromUrl);
+          editor.handlers.handleItemSelect(selectedFromUrl);
 
           console.log('🔍 [PRODUCTS] Editor state AFTER selection:', {
             selectedItemId: editor.state.selectedItemId,
@@ -387,8 +387,8 @@ export default function ProductsPage() {
             const productExists = products.find((p: any) => p.id === parsed.id);
             if (productExists) {
               try {
-                console.log('🎯 [PRODUCTS] Calling handleSelectItem (from localStorage) with:', parsed.id);
-                editor.handlers.handleSelectItem(parsed.id);
+                console.log('🎯 [PRODUCTS] Calling handleItemSelect (from localStorage) with:', parsed.id);
+                editor.handlers.handleItemSelect(parsed.id);
                 console.log('✅ [PRODUCTS] Selection restored from localStorage');
               } catch (error) {
                 console.error('[PRODUCTS] Failed to restore from localStorage:', error);
