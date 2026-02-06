@@ -79,6 +79,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const { config, items, shopLocales, primaryLocale, fetcher, showInfoBox, t, onTranslateToAllLocalesComplete } = props;
   const revalidator = useRevalidator();
 
+  // DEBUG: Log hook execution on every render
+  console.log('🎯 [HOOK] useUnifiedContentEditor render - fetcher.state:', fetcher.state, 'has data:', !!fetcher.data);
+
   // ============================================================================
   // FOCUS MANAGEMENT (Accessibility)
   // ============================================================================
