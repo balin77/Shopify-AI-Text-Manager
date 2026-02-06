@@ -68,6 +68,86 @@ export async function handleUpdateProduct(
     hasAltTexts: Object.keys(params.imageAltTexts || {}).length > 0,
   });
 
+  // 🧪 DEBUG MODE: Skip Shopify sync for testing
+  // Add ?skipShopifySync=true to URL to only save to DB without syncing to Shopify
+  const skipShopifySync = formData.get("skipShopifySync") === "true";
+  if (skipShopifySync) {
+    logger.warn("⚠️ [DEBUG MODE] Skipping Shopify sync - only saving to local DB", {
+      context: "UpdateProduct",
+      productId,
+      locale: params.locale,
+    });
+
+    // Only update local DB without Shopify sync
+    try {
+      // Update translations in DB
+      if (params.locale !== params.primaryLocale) {
+        // For translations: Update ContentTranslation table
+        const translationKeys = {
+          title: "translatedBody",
+          description: "body",
+          handle: "handle",
+          seoTitle: "seo_title",
+          metaDescription: "seo_description",
+          productType: "product_type",
+        };
+
+        for (const [fieldKey, translationKey] of Object.entries(translationKeys)) {
+          const value = (params as any)[fieldKey === 'description' ? 'descriptionHtml' : fieldKey];
+          if (value !== undefined && value !== null) {
+            await db.contentTranslation.upsert({
+              where: {
+                resourceId_locale_key: {
+                  resourceId: productId,
+                  locale: params.locale,
+                  key: translationKey,
+                },
+              },
+              update: { value },
+              create: {
+                resourceId: productId,
+                resourceType: "Product",
+                locale: params.locale,
+                key: translationKey,
+                value,
+              },
+            });
+          }
+        }
+      } else {
+        // For primary locale: Update Product table directly
+        const updateData: any = {};
+        if (params.title) updateData.title = params.title;
+        if (params.descriptionHtml !== undefined) updateData.descriptionHtml = params.descriptionHtml;
+        if (params.handle) updateData.handle = params.handle;
+        if (params.seoTitle !== undefined) updateData.seoTitle = params.seoTitle;
+        if (params.metaDescription !== undefined) updateData.seoDescription = params.metaDescription;
+        if (params.productType !== undefined) updateData.productType = params.productType;
+
+        await db.product.update({
+          where: { id: productId },
+          data: updateData,
+        });
+      }
+
+      logger.info("✅ [DEBUG MODE] Successfully saved to DB (Shopify sync skipped)", {
+        context: "UpdateProduct",
+        productId,
+      });
+
+      return json({
+        success: true,
+        message: "⚠️ DEBUG MODE: Saved to DB only (Shopify sync skipped)",
+      });
+    } catch (error: any) {
+      logger.error("[DEBUG MODE] DB update failed", {
+        context: "UpdateProduct",
+        error: error.message,
+      });
+      return json({ success: false, error: error.message }, { status: 500 });
+    }
+  }
+
   // Sanitize handle
   if (params.handle) {
     params.handle = sanitizeSlug(params.handle);

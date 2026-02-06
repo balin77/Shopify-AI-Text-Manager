@@ -1599,6 +1599,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       primaryLocale,
     };
 
+    // 🧪 DEBUG MODE: Check for skipShopifySync URL parameter
+    if (typeof window !== 'undefined') {
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.get('skipShopifySync') === 'true') {
+        formDataObj.skipShopifySync = 'true';
+        console.log('🧪 [DEBUG MODE] skipShopifySync enabled - will only save to DB');
+      }
+    }
+
     // Add all field values
     effectiveFieldDefinitions.forEach((field) => {
       formDataObj[field.key] = editableValues[field.key] || "";
