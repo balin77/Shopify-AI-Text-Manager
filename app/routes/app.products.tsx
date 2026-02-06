@@ -296,6 +296,61 @@ export default function ProductsPage() {
   const selectedProduct = editor.selectedItem;
 
   // ============================================================================
+  // RESTORE SELECTION AFTER RELOAD
+  // If user clicked reload button, restore the previously selected product
+  // ============================================================================
+
+  useEffect(() => {
+    // Only run once on mount
+    if (!isMountedRef.current) return;
+
+    // Check URL for selected parameter
+    const urlParams = new URLSearchParams(window.location.search);
+    const selectedFromUrl = urlParams.get('selected');
+
+    if (selectedFromUrl) {
+      console.log('🔄 [PRODUCTS] Restoring selection from URL:', selectedFromUrl);
+
+      // Find the product in the list
+      const productExists = products.find((p: any) => p.id === selectedFromUrl);
+
+      if (productExists) {
+        // Restore selection via editor
+        editor.handlers.handleSelectItem(selectedFromUrl);
+
+        // Clean up URL parameter
+        urlParams.delete('selected');
+        urlParams.delete('_t');
+        const newUrl = `${window.location.pathname}${urlParams.toString() ? '?' + urlParams.toString() : ''}`;
+        window.history.replaceState({}, '', newUrl);
+      }
+    } else {
+      // Fallback: Check localStorage
+      try {
+        const stored = localStorage.getItem('lastSelectedResource');
+        if (stored) {
+          const parsed = JSON.parse(stored);
+
+          // Only restore if it's recent (within last 10 seconds)
+          if (Date.now() - parsed.timestamp < 10000) {
+            console.log('🔄 [PRODUCTS] Restoring selection from localStorage:', parsed.id);
+
+            const productExists = products.find((p: any) => p.id === parsed.id);
+            if (productExists) {
+              editor.handlers.handleSelectItem(parsed.id);
+            }
+          }
+
+          // Clean up localStorage
+          localStorage.removeItem('lastSelectedResource');
+        }
+      } catch (e) {
+        console.warn('[PRODUCTS] Failed to restore from localStorage:', e);
+      }
+    }
+  }, []); // Run only once on mount
+
+  // ============================================================================
   // ON-DEMAND TRANSLATION LOADING
   // When a product is selected, check if it has translations. If not, load them.
   // ============================================================================

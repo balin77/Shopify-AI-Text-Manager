@@ -29,11 +29,28 @@ export function ReloadButton({
         console.log("✅ [RELOAD-BUTTON] Sync successful!");
         console.log("🔄 [RELOAD-BUTTON] Resource:", { resourceId, resourceType, locale });
 
-        // SIMPLEST FIX: Just reload the page after successful sync
-        // This guarantees fresh data from the loader
+        // Save selected resource ID to restore after reload
         setTimeout(() => {
           console.log("🔄 [RELOAD-BUTTON] Reloading page to show updated data...");
-          window.location.reload();
+
+          // Store the selected product ID in URL to restore selection after reload
+          const url = new URL(window.location.href);
+          url.searchParams.set('selected', resourceId);
+          url.searchParams.set('_t', Date.now().toString()); // Cache bust
+
+          // Also store in localStorage as fallback
+          try {
+            localStorage.setItem('lastSelectedResource', JSON.stringify({
+              id: resourceId,
+              type: resourceType,
+              timestamp: Date.now()
+            }));
+          } catch (e) {
+            console.warn('[RELOAD-BUTTON] Failed to save to localStorage:', e);
+          }
+
+          // Navigate to URL with selected parameter (forces full reload with selection preserved)
+          window.location.href = url.toString();
         }, 500);
 
         if (onReloadComplete) {
