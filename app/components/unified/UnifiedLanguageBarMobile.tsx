@@ -12,11 +12,10 @@ import { useState, useRef } from "react";
 import { Card, Button, BlockStack, InlineStack, Text, Icon } from "@shopify/polaris";
 import { ChevronDownIcon, ChevronUpIcon } from "@shopify/polaris-icons";
 import { useLocaleButtonStyle } from "../../utils/contentEditor.utils";
-import type { ShopLocale, TranslatableItem, ContentType } from "../../types/contentEditor.types";
 
 interface UnifiedLanguageBarMobileProps {
   /** Shop locales from Shopify */
-  shopLocales: ShopLocale[];
+  shopLocales: any[];
 
   /** Currently selected language */
   currentLanguage: string;
@@ -25,10 +24,10 @@ interface UnifiedLanguageBarMobileProps {
   primaryLocale: string;
 
   /** Currently selected item */
-  selectedItem: TranslatableItem | null;
+  selectedItem: any | null;
 
   /** Content type for translation status */
-  contentType: ContentType;
+  contentType: string;
 
   /** Whether there are unsaved changes */
   hasChanges: boolean;
@@ -65,20 +64,8 @@ export function UnifiedLanguageBarMobile({
   isLoadingData = false,
   t = {},
 }: UnifiedLanguageBarMobileProps) {
-  // IMPORTANT: Always call hooks in the same order - no conditional hooks!
   const [isExpanded, setIsExpanded] = useState(false);
   const ctrlPressedRef = useRef<Record<string, boolean>>({});
-
-  // Call useLocaleButtonStyle for all locales to ensure consistent hook calls
-  const buttonStyles = shopLocales.map((locale) =>
-    useLocaleButtonStyle(
-      locale,
-      selectedItem,
-      primaryLocale,
-      contentType,
-      isLoadingData
-    )
-  );
 
   // Find current locale object
   const currentLocale = shopLocales.find((l) => l.locale === currentLanguage);
@@ -98,18 +85,15 @@ export function UnifiedLanguageBarMobile({
             background: "transparent",
             cursor: "pointer",
             textAlign: "left",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
           }}
         >
-          <Text as="span" variant="bodyMd" fontWeight="semibold">
-            {currentLocaleName}
-            {isPrimaryLocale && ` (${t.primaryLocaleSuffix || "Primary"})`}
-          </Text>
-          <span style={{ marginLeft: "auto", flexShrink: 0, display: "flex", alignItems: "center" }}>
+          <InlineStack align="space-between" blockAlign="center">
+            <Text as="span" variant="bodyMd" fontWeight="semibold">
+              {currentLocaleName}
+              {isPrimaryLocale && ` (${t.primaryLocaleSuffix || "Primary"})`}
+            </Text>
             <Icon source={isExpanded ? ChevronUpIcon : ChevronDownIcon} />
-          </span>
+          </InlineStack>
         </button>
       </Card>
 
@@ -117,9 +101,14 @@ export function UnifiedLanguageBarMobile({
       {isExpanded && (
         <Card padding="300">
           <BlockStack gap="200">
-            {shopLocales.map((locale, index) => {
-              // Use pre-calculated button styles to avoid conditional hook calls
-              const buttonStyle = buttonStyles[index];
+            {shopLocales.map((locale) => {
+              const buttonStyle = useLocaleButtonStyle(
+                locale,
+                selectedItem,
+                primaryLocale,
+                contentType,
+                isLoadingData
+              );
 
               const isEnabled = !enabledLanguages || enabledLanguages.includes(locale.locale);
               const isPrimary = locale.primary;
