@@ -296,10 +296,114 @@ export default function ProductsPage() {
   const selectedProduct = editor.selectedItem;
 
   // ============================================================================
-  // NOTE: Selection restoration is no longer needed!
-  // With revalidation instead of full page reload, the selection persists
-  // automatically in React state (editor.state.selectedItemId).
+  // RESTORE SELECTION AFTER RELOAD
+  // If user clicked reload button, restore the previously selected product
   // ============================================================================
+
+  useEffect(() => {
+    console.log('🔍 [PRODUCTS] Selection restoration effect running', {
+      isMounted: isMountedRef.current,
+      productsCount: products.length,
+      hasHandlers: !!editor.handlers,
+      hasSelectFn: typeof editor.handlers?.handleItemSelect === 'function',
+      currentSelection: editor.state.selectedItemId,
+    });
+
+    // Wait for products to load and editor to be ready
+    if (!isMountedRef.current || !products.length || !editor.handlers || typeof editor.handlers.handleItemSelect !== 'function') {
+      console.log('⏸️ [PRODUCTS] Waiting for initialization...');
+      return;
+    }
+
+    // Check URL for selected parameter
+    const urlParams = new URLSearchParams(window.location.search);
+    const selectedFromUrl = urlParams.get('selected');
+
+    console.log('🔍 [PRODUCTS] URL check:', {
+      hasSelectedParam: !!selectedFromUrl,
+      selectedValue: selectedFromUrl,
+      fullUrl: window.location.href,
+      productIds: products.slice(0, 3).map((p: any) => p.id),
+    });
+
+    if (selectedFromUrl) {
+      console.log('🔄 [PRODUCTS] Restoring selection from URL:', selectedFromUrl);
+
+      // Find the product in the list
+      const productExists = products.find((p: any) => p.id === selectedFromUrl);
+
+      console.log('🔍 [PRODUCTS] Product lookup:', {
+        searchingFor: selectedFromUrl,
+        found: !!productExists,
+        foundProduct: productExists ? { id: productExists.id, title: productExists.title } : null,
+        totalProducts: products.length,
+      });
+
+      if (productExists) {
+        // Restore selection via editor
+        try {
+          console.log('🎯 [PRODUCTS] Calling handleItemSelect with:', selectedFromUrl);
+          console.log('🔍 [PRODUCTS] Editor state BEFORE selection:', {
+            selectedItemId: editor.state.selectedItemId,
+            selectedItem: editor.selectedItem ? { id: editor.selectedItem.id, title: editor.selectedItem.title } : null,
+          });
+
+          editor.handlers.handleItemSelect(selectedFromUrl);
+
+          console.log('🔍 [PRODUCTS] Editor state AFTER selection:', {
+            selectedItemId: editor.state.selectedItemId,
+            selectedItem: editor.selectedItem ? { id: editor.selectedItem.id, title: editor.selectedItem.title } : null,
+          });
+          console.log('✅ [PRODUCTS] Selection restored successfully');
+        } catch (error) {
+          console.error('[PRODUCTS] Failed to restore selection:', error);
+        }
+
+        // Clean up URL parameter
+        urlParams.delete('selected');
+        urlParams.delete('_t');
+        const newUrl = `${window.location.pathname}${urlParams.toString() ? '?' + urlParams.toString() : ''}`;
+        window.history.replaceState({}, '', newUrl);
+        console.log('🧹 [PRODUCTS] Cleaned up URL parameters');
+      } else {
+        console.warn('⚠️ [PRODUCTS] Product not found in list:', selectedFromUrl);
+      }
+    } else {
+      // Fallback: Check localStorage
+      try {
+        const stored = localStorage.getItem('lastSelectedResource');
+        console.log('🔍 [PRODUCTS] localStorage check:', {
+          hasStored: !!stored,
+          storedValue: stored,
+        });
+
+        if (stored) {
+          const parsed = JSON.parse(stored);
+
+          // Only restore if it's recent (within last 10 seconds)
+          if (Date.now() - parsed.timestamp < 10000) {
+            console.log('🔄 [PRODUCTS] Restoring selection from localStorage:', parsed.id);
+
+            const productExists = products.find((p: any) => p.id === parsed.id);
+            if (productExists) {
+              try {
+                console.log('🎯 [PRODUCTS] Calling handleItemSelect (from localStorage) with:', parsed.id);
+                editor.handlers.handleItemSelect(parsed.id);
+                console.log('✅ [PRODUCTS] Selection restored from localStorage');
+              } catch (error) {
+                console.error('[PRODUCTS] Failed to restore from localStorage:', error);
+              }
+            }
+          }
+
+          // Clean up localStorage
+          localStorage.removeItem('lastSelectedResource');
+        }
+      } catch (e) {
+        console.warn('[PRODUCTS] Failed to restore from localStorage:', e);
+      }
+    }
+  }, [products, editor.handlers]); // Run when products or editor changes
 
   // ============================================================================
   // ON-DEMAND TRANSLATION LOADING
@@ -507,7 +611,6 @@ export default function ProductsPage() {
             currentPlan: plan,
             nextPlan: getNextPlanUpgrade() || undefined,
           }}
-          revalidator={revalidator}
         />
       </div>
     </div>

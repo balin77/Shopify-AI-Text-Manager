@@ -8,10 +8,6 @@ interface ReloadButtonProps {
   resourceType: "product" | "collection" | "article" | "page" | "policy" | "templates";
   locale: string;
   onReloadComplete?: () => void;
-  revalidator?: {
-    revalidate: () => void;
-    state: 'idle' | 'loading';
-  };
 }
 
 export function ReloadButton({
@@ -19,7 +15,6 @@ export function ReloadButton({
   resourceType,
   locale,
   onReloadComplete,
-  revalidator,
 }: ReloadButtonProps) {
   const [isLoading, setIsLoading] = useState(false);
   const fetcher = useFetcher();
@@ -34,40 +29,43 @@ export function ReloadButton({
         console.log("✅ [RELOAD-BUTTON] Sync successful!");
         console.log("🔄 [RELOAD-BUTTON] Resource:", { resourceId, resourceType, locale });
 
-        // Wait a bit to ensure DB write is complete, then revalidate
+        // Save selected resource ID to restore after reload
         setTimeout(() => {
-          if (revalidator) {
-            console.log("🔄 [RELOAD-BUTTON] Revalidating to fetch updated data...");
-            revalidator.revalidate();
+          console.log("🔄 [RELOAD-BUTTON] Reloading page to show updated data...");
 
-            // Wait for revalidation to complete, then trigger data refresh
-            const checkRevalidation = setInterval(() => {
-              if (revalidator.state === 'idle') {
-                clearInterval(checkRevalidation);
-                console.log("✅ [RELOAD-BUTTON] Revalidation complete");
-                setIsLoading(false);
+          // Store the selected product ID in URL to restore selection after reload
+          const url = new URL(window.location.href);
+          url.searchParams.set('selected', resourceId);
+          url.searchParams.set('_t', Date.now().toString()); // Cache bust
 
-                if (onReloadComplete) {
-                  onReloadComplete();
-                }
-              }
-            }, 100);
+          console.log("💾 [RELOAD-BUTTON] Saving selection for restoration:", {
+            resourceId,
+            resourceType,
+            currentUrl: window.location.href,
+            newUrl: url.toString(),
+          });
 
-            // Timeout after 10 seconds
-            setTimeout(() => {
-              clearInterval(checkRevalidation);
-              setIsLoading(false);
-              console.warn("⚠️ [RELOAD-BUTTON] Revalidation timeout");
-            }, 10000);
-          } else {
-            // Fallback to full page reload if revalidator not available
-            console.log("⚠️ [RELOAD-BUTTON] No revalidator provided, falling back to page reload");
-            const url = new URL(window.location.href);
-            url.searchParams.set('selected', resourceId);
-            url.searchParams.set('_t', Date.now().toString());
-            window.location.href = url.toString();
+          // Also store in localStorage as fallback
+          try {
+            const storageData = {
+              id: resourceId,
+              type: resourceType,
+              timestamp: Date.now()
+            };
+            localStorage.setItem('lastSelectedResource', JSON.stringify(storageData));
+            console.log("💾 [RELOAD-BUTTON] Saved to localStorage:", storageData);
+          } catch (e) {
+            console.warn('[RELOAD-BUTTON] Failed to save to localStorage:', e);
           }
-        }, 1000); // Wait 1 second for DB write to complete
+
+          // Navigate to URL with selected parameter (forces full reload with selection preserved)
+          console.log("🌐 [RELOAD-BUTTON] Navigating to:", url.toString());
+          window.location.href = url.toString();
+        }, 500);
+
+        if (onReloadComplete) {
+          onReloadComplete();
+        }
       } else {
         console.error("❌ [RELOAD-BUTTON] Sync failed:", data.error);
         setIsLoading(false);
