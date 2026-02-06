@@ -578,6 +578,16 @@ export class ProductSyncService {
       });
       logger.debug(`[ProductSync] Deleted ${deletedTranslations.count} old translations from database`);
 
+      // DIAGNOSTIC: Log what we're about to save for productType
+      logger.debug(`[ProductSync] 🔍 DIAGNOSTIC - About to save product to DB:`, {
+        productId: productData.id,
+        title: productData.title,
+        productType: productData.productType === null ? "NULL_FROM_SHOPIFY" : productData.productType === "" ? "EMPTY_STRING" : productData.productType || "FALSY_VALUE",
+        productTypeLength: productData.productType?.length || 0,
+        translationsCount: validTranslations.length,
+        hasTranslations: validTranslations.length > 0,
+      });
+
       await tx.productImage.deleteMany({ where: { productId: productData.id } });
       await tx.productOption.deleteMany({ where: { productId: productData.id } });
       await tx.productMetafield.deleteMany({ where: { productId: productData.id } });

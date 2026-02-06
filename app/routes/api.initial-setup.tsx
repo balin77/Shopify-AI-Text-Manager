@@ -88,6 +88,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                 descriptionHtml
                 handle
                 status
+                productType
                 updatedAt
                 seo {
                   title
@@ -138,6 +139,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
               descriptionHtml: product.descriptionHtml || "",
               handle: product.handle,
               status: product.status,
+              productType: product.productType || null,
               seoTitle: product.seo?.title || null,
               seoDescription: product.seo?.description || null,
               featuredImageUrl: product.featuredImage?.url || null,
@@ -150,6 +152,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
               descriptionHtml: product.descriptionHtml || "",
               handle: product.handle,
               status: product.status,
+              productType: product.productType || null,
               seoTitle: product.seo?.title || null,
               seoDescription: product.seo?.description || null,
               featuredImageUrl: product.featuredImage?.url || null,

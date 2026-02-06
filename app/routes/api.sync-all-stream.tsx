@@ -421,6 +421,7 @@ async function syncProductsWithProgress(
                 descriptionHtml
                 handle
                 status
+                productType
                 updatedAt
                 seo {
                   title
@@ -519,6 +520,7 @@ async function syncProductsWithProgress(
             descriptionHtml: product.descriptionHtml || "",
             handle: product.handle,
             status: product.status,
+            productType: product.productType || null,
             seoTitle: product.seo?.title || null,
             seoDescription: product.seo?.description || null,
             featuredImageUrl: product.featuredImage?.url || null,
@@ -531,6 +533,7 @@ async function syncProductsWithProgress(
             descriptionHtml: product.descriptionHtml || "",
             handle: product.handle,
             status: product.status,
+            productType: product.productType || null,
             seoTitle: product.seo?.title || null,
             seoDescription: product.seo?.description || null,
             featuredImageUrl: product.featuredImage?.url || null,
