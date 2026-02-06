@@ -61,12 +61,41 @@ export class ProductSyncService {
       logger.debug(`[ProductSync] Found ${locales.length} locales`);
 
       // 3. Fetch translations for all non-primary locales
-      const allTranslations = await this.fetchAllTranslations(
+      const foreignLocales = locales.filter((l: any) => !l.primary);
+      const translationResult = await this.fetchAllTranslations(
         productId,
-        locales.filter((l: any) => !l.primary),
+        foreignLocales,
         productData // Pass product data for fallback values
       );
-      logger.debug(`[ProductSync] Fetched ${allTranslations.length} translations`);
+
+      const allTranslations = translationResult.translations;
+
+      // CRITICAL: Check if translation fetch was successful
+      const publishedLocales = foreignLocales.filter((l: any) => l.published);
+      const expectedTranslations = publishedLocales.length > 0;
+
+      if (expectedTranslations && allTranslations.length === 0) {
+        logger.error(`[ProductSync] 🔴 CRITICAL: No translations fetched for product with ${publishedLocales.length} published locales!`, {
+          productId,
+          title: productData.title,
+          publishedLocales: publishedLocales.map((l: any) => l.locale).join(', '),
+          hadErrors: translationResult.hadErrors,
+          errorCount: translationResult.errorCount,
+        });
+
+        // Check if this might be a complete API failure
+        // If we have multiple locales AND had errors, this is likely an API failure
+        if (publishedLocales.length >= 2 && translationResult.errorCount >= 2) {
+          logger.error(`[ProductSync] 🔴 ABORTING SYNC: ${translationResult.errorCount}/${publishedLocales.length} locales failed - refusing to delete existing translations`);
+          throw new Error(`Translation fetch failed for ${translationResult.errorCount}/${publishedLocales.length} locales - aborting to prevent data loss`);
+        } else if (translationResult.hadErrors) {
+          logger.warn(`[ProductSync] ⚠️ Some locales failed (${translationResult.errorCount}), but continuing with partial data`);
+        } else {
+          logger.warn(`[ProductSync] ⚠️ Product might genuinely have no translations, continuing with sync`);
+        }
+      }
+
+      logger.debug(`[ProductSync] Fetched ${allTranslations.length} translations from ${foreignLocales.length} foreign locales (errors: ${translationResult.errorCount})`);
 
       // 4. Fetch image alt-text translations (API 2025-10+)
       const imageAltTranslations = await this.fetchImageAltTextTranslations(
@@ -315,14 +344,25 @@ export class ProductSyncService {
    * IMPORTANT: Only saves ACTUAL translations from Shopify.
    * If a field has no translation in Shopify, it will NOT be stored in the database.
    * This prevents the primary language text from appearing as a "translation".
+   *
+   * Returns: { translations, hadErrors, errorCount }
    */
-  private async fetchAllTranslations(productId: string, locales: any[], productData: any) {
+  private async fetchAllTranslations(productId: string, locales: any[], productData: any): Promise<{
+    translations: any[];
+    hadErrors: boolean;
+    errorCount: number;
+  }> {
     const allTranslations = [];
     const digestMap = new Map<string, string>();
+    const errors: string[] = [];
+    const skipped: string[] = [];
+
+    logger.debug(`[ProductSync] Starting translation fetch for ${locales.length} locales`);
 
     for (const locale of locales) {
       if (!locale.published) {
         logger.debug(`[ProductSync] Skipping unpublished locale: ${locale.locale}`);
+        skipped.push(locale.locale);
         continue;
       }
 
@@ -358,6 +398,7 @@ export class ProductSyncService {
             productId,
             locale: locale.locale,
           });
+          errors.push(`${locale.locale}: ${data.errors[0].message}`);
           // Continue with other locales instead of failing completely
           continue;
         }
@@ -366,6 +407,7 @@ export class ProductSyncService {
 
         if (!resource) {
           logger.warn(`[ProductSync] No translatable resource found for ${locale.locale}`);
+          errors.push(`${locale.locale}: No translatable resource`);
           continue;
         }
 
@@ -406,11 +448,33 @@ export class ProductSyncService {
           productId,
           locale: locale.locale,
         });
+        errors.push(`${locale.locale}: ${error.message}`);
         // Continue to next locale
       }
     }
 
-    return allTranslations;
+    // Summary logging
+    const successfulLocales = locales.length - skipped.length - errors.length;
+    logger.debug(`[ProductSync] Translation fetch complete:`, {
+      totalLocales: locales.length,
+      successful: successfulLocales,
+      skipped: skipped.length,
+      errors: errors.length,
+      translationsFound: allTranslations.length,
+    });
+
+    if (errors.length > 0) {
+      logger.warn(`[ProductSync] Failed to fetch translations for ${errors.length} locale(s):`, {
+        productId,
+        errors: errors.join('; '),
+      });
+    }
+
+    return {
+      translations: allTranslations,
+      hadErrors: errors.length > 0,
+      errorCount: errors.length,
+    };
   }
 
   /**
@@ -508,7 +572,12 @@ export class ProductSyncService {
       });
 
       // Delete old relations and create new ones (all within transaction)
-      await tx.contentTranslation.deleteMany({ where: { resourceId: productData.id, resourceType: "Product" } });
+      // IMPORTANT: This deletes ALL existing translations before inserting new ones
+      const deletedTranslations = await tx.contentTranslation.deleteMany({
+        where: { resourceId: productData.id, resourceType: "Product" }
+      });
+      logger.debug(`[ProductSync] Deleted ${deletedTranslations.count} old translations from database`);
+
       await tx.productImage.deleteMany({ where: { productId: productData.id } });
       await tx.productOption.deleteMany({ where: { productId: productData.id } });
       await tx.productMetafield.deleteMany({ where: { productId: productData.id } });
