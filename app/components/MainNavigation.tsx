@@ -373,10 +373,9 @@ export function MainNavigation() {
             </div>
           )}
 
-          {/* Navigation Tabs - versteckt auf Mobile (nur sichtbar ab 900px) */}
-          <div className="desktop-only">
-            <InlineStack gap="400" blockAlign="center" role="tablist">
-              {tabs.map((tab) => {
+          {/* Navigation Tabs - versteckt auf Mobile */}
+          <InlineStack gap="400" blockAlign="center" role="tablist" className="desktop-only">
+            {tabs.map((tab) => {
               const isActive = location.pathname.startsWith(tab.path);
               const showProductCount = tab.id === "products" && productCount !== undefined;
               const isAtLimit = showProductCount && productCount >= maxProducts && maxProducts !== Infinity;
@@ -448,9 +447,8 @@ export function MainNavigation() {
               }
 
               return tabContent;
-              })}
-            </InlineStack>
-          </div>
+            })}
+          </InlineStack>
 
           {/* Loading Indicator - shows for navigation or global loading state */}
           {(showLoadingIndicator || isGlobalLoading) && (
