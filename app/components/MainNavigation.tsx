@@ -159,21 +159,24 @@ export function MainNavigation() {
   // Monitor fetcher state and implement exponential backoff on errors for running tasks
   useEffect(() => {
     // Check if fetcher encountered an error (including 429, 502, etc.)
+    // Also check for warning flag (rate limited but returned 200)
+    const data = tasksFetcher.data as any;
     const hasError = tasksFetcher.state === "idle" &&
-      (tasksFetcher.data === undefined || (tasksFetcher.data as any)?.error);
+      (tasksFetcher.data === undefined || data?.error || data?.warning);
 
     if (hasError) {
-      // Likely an error occurred
+      // Likely an error occurred or rate limited
       errorCountRef.current += 1;
 
       // Exponential backoff: double the interval on each consecutive error, max 60 seconds
       const newInterval = Math.min(pollIntervalRef.current * 2, 60000);
 
       if (newInterval !== pollIntervalRef.current) {
-        console.warn(`⚠️ [MainNavigation] Running tasks error detected (502/429/etc). Increasing poll interval to ${newInterval}ms`);
+        const errorType = data?.warning ? "Rate limited" : "Error";
+        console.warn(`⚠️ [MainNavigation] Running tasks ${errorType}. Increasing poll interval to ${newInterval}ms`);
         pollIntervalRef.current = newInterval;
       }
-    } else if (tasksFetcher.state === "idle" && tasksFetcher.data !== undefined && !(tasksFetcher.data as any)?.error) {
+    } else if (tasksFetcher.state === "idle" && tasksFetcher.data !== undefined && !data?.error && !data?.warning) {
       // Successful fetch - reset error count and gradually reduce interval
       if (errorCountRef.current > 0) {
         errorCountRef.current = 0;
