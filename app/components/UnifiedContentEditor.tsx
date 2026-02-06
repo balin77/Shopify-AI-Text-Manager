@@ -5,13 +5,12 @@
  * Based on the products page structure with all bug fixes included.
  */
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Page, Card, Text, BlockStack, InlineStack, Button, Modal, TextContainer, TextField, Icon, Spinner } from "@shopify/polaris";
 import { SearchIcon, ChevronLeftIcon, ChevronRightIcon } from "@shopify/polaris-icons";
 import { AIEditableField } from "./AIEditableField";
 import { AIEditableHTMLField } from "./AIEditableHTMLField";
 import { UnifiedItemList } from "./unified/UnifiedItemList";
-import { UnifiedItemListMobile } from "./unified/UnifiedItemListMobile";
 import { UnifiedLanguageBar } from "./unified/UnifiedLanguageBar";
 import { UnifiedLanguageBarMobile } from "./unified/UnifiedLanguageBarMobile";
 import { UnifiedOperationsBarMobile } from "./unified/UnifiedOperationsBarMobile";
@@ -22,6 +21,7 @@ import { ReloadButton } from "./ReloadButton";
 import { SeoSidebar } from "./SeoSidebar";
 import { useNavigationHeight } from "../contexts/NavigationHeightContext";
 import { usePlan } from "../contexts/PlanContext";
+import { useItemSelector } from "../contexts/ItemSelectorContext";
 import { contentEditorStyles } from "../utils/contentEditor.utils";
 import "../styles/UnifiedContentEditor.css";
 import type { ContentEditorConfig, UseContentEditorReturn, FieldDefinition } from "../types/content-editor.types";
@@ -121,6 +121,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
 
   const { state, handlers, selectedItem, navigationGuard, helpers, effectiveFieldDefinitions } = editor;
   const { getMaxProducts } = usePlan();
+  const { registerItems, clearItems } = useItemSelector();
 
   // Use effective field definitions (dynamic for templates, static for other content types)
   const fieldDefinitions = effectiveFieldDefinitions || config.fieldDefinitions;
@@ -206,6 +207,29 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   const sidebarRenderer = renderSidebar || defaultRenderSidebar;
   const { getTotalNavHeight } = useNavigationHeight();
 
+  // Register items in the item selector context (for mobile navbar dropdown)
+  useEffect(() => {
+    registerItems({
+      items: unifiedItems,
+      selectedItemId: state.selectedItemId,
+      onItemSelect: handlers.handleItemSelect,
+      resourceName: {
+        singular: config.displayNameSingular,
+        plural: config.displayName,
+      },
+      t: {
+        searchPlaceholder: t.content?.searchPlaceholder,
+        noResults: t.content?.noResults || "No items found",
+        selectItem: t.content?.selectItem || `Select ${config.displayNameSingular}`,
+      },
+    });
+
+    // Cleanup: clear items when component unmounts
+    return () => {
+      clearItems();
+    };
+  }, [unifiedItems, state.selectedItemId, handlers.handleItemSelect, config.displayNameSingular, config.displayName, t.content, registerItems, clearItems]);
+
   return (
     <Page fullWidth>
       <style>{contentEditorStyles}</style>
@@ -252,25 +276,6 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
 
         {/* Middle: Content Editor */}
         <div className="unified-editor-container" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: "400px" }}>
-          {/* Mobile: Item Selection Dropdown (CSS-controlled visibility) */}
-          <div className="mobile-only" style={{ marginBottom: "1rem" }}>
-            <UnifiedItemListMobile
-              items={unifiedItems}
-              selectedItemId={state.selectedItemId}
-              onItemSelect={handlers.handleItemSelect}
-              resourceName={{
-                singular: config.displayNameSingular,
-                plural: config.displayName,
-              }}
-              renderItem={renderListItem}
-              t={{
-                searchPlaceholder: t.content?.searchPlaceholder,
-                noResults: t.content?.noResults || "No items found",
-                selectItem: t.content?.selectItem || `Select ${config.displayNameSingular}`,
-              }}
-            />
-          </div>
-
           {selectedItem ? (
             <>
 
