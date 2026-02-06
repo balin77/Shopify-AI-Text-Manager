@@ -676,19 +676,33 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   fetcherRef.current = fetcher;
 
   // Safe submit helper that catches AbortError from Shopify admin interference
-  // The AbortError can occur when Shopify admin's own requests interfere with ours,
+  // The AbortError can be thrown when Shopify admin's own requests interfere with ours,
   // but the submit usually still works, so we just log and ignore the error
   // IMPORTANT: Uses fetcherRef to avoid dependency on fetcher which changes frequently
   const safeSubmit = useCallback((data: Record<string, any>, options?: { method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" }) => {
+    console.log('📤 [safeSubmit] About to submit:', {
+      hasFetcher: !!fetcherRef.current,
+      fetcherExists: fetcherRef.current !== undefined,
+      fetcherState: fetcherRef.current?.state,
+      hasSubmitFn: typeof fetcherRef.current?.submit === 'function',
+      dataKeys: Object.keys(data),
+      options,
+    });
+
     debugLog.submit(' Submitting data:', data);
     debugLog.submit(' Options:', options);
     try {
+      console.log('🔄 [safeSubmit] Calling fetcher.submit()...');
       fetcherRef.current.submit(data, options || { method: "POST" });
+      console.log('✅ [safeSubmit] fetcher.submit() returned, new state:', fetcherRef.current.state);
     } catch (error) {
+      console.error('❌ [safeSubmit] Error caught:', error);
       // AbortError can be thrown when Shopify admin interferes, but data is usually saved
       if (error instanceof Error && error.name === 'AbortError') {
+        console.log('⚠️ [safeSubmit] AbortError - ignoring:', error.message);
         debugLog.submit(' AbortError caught (data likely saved):', error.message);
       } else {
+        console.error('🔴 [safeSubmit] Non-AbortError - re-throwing:', error);
         // Re-throw non-AbortError errors
         throw error;
       }
