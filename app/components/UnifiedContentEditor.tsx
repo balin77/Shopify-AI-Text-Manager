@@ -6,11 +6,12 @@
  */
 
 import { useState } from "react";
-import { Page, Card, Text, BlockStack, InlineStack, Button, Modal, TextContainer, TextField, Icon, Spinner, Select } from "@shopify/polaris";
+import { Page, Card, Text, BlockStack, InlineStack, Button, Modal, TextContainer, TextField, Icon, Spinner } from "@shopify/polaris";
 import { SearchIcon, ChevronLeftIcon, ChevronRightIcon } from "@shopify/polaris-icons";
 import { AIEditableField } from "./AIEditableField";
 import { AIEditableHTMLField } from "./AIEditableHTMLField";
 import { UnifiedItemList } from "./unified/UnifiedItemList";
+import { UnifiedItemListMobile } from "./unified/UnifiedItemListMobile";
 import { UnifiedLanguageBar } from "./unified/UnifiedLanguageBar";
 import { UnifiedLanguageBarMobile } from "./unified/UnifiedLanguageBarMobile";
 import { UnifiedOperationsBarMobile } from "./unified/UnifiedOperationsBarMobile";
@@ -251,20 +252,27 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
 
         {/* Middle: Content Editor */}
         <div className="unified-editor-container" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: "400px" }}>
+          {/* Mobile: Item Selection Dropdown (CSS-controlled visibility) */}
+          <div className="mobile-only" style={{ marginBottom: "1rem" }}>
+            <UnifiedItemListMobile
+              items={unifiedItems}
+              selectedItemId={state.selectedItemId}
+              onItemSelect={handlers.handleItemSelect}
+              resourceName={{
+                singular: config.displayNameSingular,
+                plural: config.displayName,
+              }}
+              renderItem={renderListItem}
+              t={{
+                searchPlaceholder: t.content?.searchPlaceholder,
+                noResults: t.content?.noResults || "No items found",
+                selectItem: t.content?.selectItem || `Select ${config.displayNameSingular}`,
+              }}
+            />
+          </div>
+
           {selectedItem ? (
             <>
-              {/* Mobile: Item Selection Dropdown (CSS-controlled visibility) */}
-              <div className="mobile-only" style={{ marginBottom: "1rem" }}>
-                <Select
-                  label={config.displayNameSingular || "Item"}
-                  options={unifiedItems.map((item) => ({
-                    label: item.title || `${config.displayNameSingular} ${item.id}`,
-                    value: item.id,
-                  }))}
-                  value={state.selectedItemId || ""}
-                  onChange={(value) => handlers.handleItemSelect(value)}
-                />
-              </div>
 
               {/* Language Selection Bar - Desktop */}
               <div className="desktop-only">
