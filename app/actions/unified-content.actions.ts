@@ -817,6 +817,13 @@ Allowed formatting changes:
           logger.debug('[UnifiedContent] [UNIFIED-ACTION] changedAltTextIndices SET in productFormData:', changedAltTextIndicesStr);
         }
 
+        // 🧪 DEBUG MODE: Pass skipShopifySync parameter
+        const skipShopifySync = formData.get("skipShopifySync") as string;
+        if (skipShopifySync === "true") {
+          productFormData.set("skipShopifySync", "true");
+          logger.debug('[UnifiedContent] [UNIFIED-ACTION] 🧪 DEBUG MODE: skipShopifySync enabled');
+        }
+
         logger.debug('[UnifiedContent] [UNIFIED-ACTION] Calling handleUpdateProduct...');
         return handleUpdateProduct(context, productFormData, itemId);
       }
