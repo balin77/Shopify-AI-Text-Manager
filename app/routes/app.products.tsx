@@ -301,8 +301,10 @@ export default function ProductsPage() {
   // ============================================================================
 
   useEffect(() => {
-    // Only run once on mount
-    if (!isMountedRef.current) return;
+    // Wait for products to load and editor to be ready
+    if (!isMountedRef.current || !products.length || !editor.handlers || typeof editor.handlers.handleSelectItem !== 'function') {
+      return;
+    }
 
     // Check URL for selected parameter
     const urlParams = new URLSearchParams(window.location.search);
@@ -316,7 +318,12 @@ export default function ProductsPage() {
 
       if (productExists) {
         // Restore selection via editor
-        editor.handlers.handleSelectItem(selectedFromUrl);
+        try {
+          editor.handlers.handleSelectItem(selectedFromUrl);
+          console.log('✅ [PRODUCTS] Selection restored successfully');
+        } catch (error) {
+          console.error('[PRODUCTS] Failed to restore selection:', error);
+        }
 
         // Clean up URL parameter
         urlParams.delete('selected');
@@ -337,7 +344,12 @@ export default function ProductsPage() {
 
             const productExists = products.find((p: any) => p.id === parsed.id);
             if (productExists) {
-              editor.handlers.handleSelectItem(parsed.id);
+              try {
+                editor.handlers.handleSelectItem(parsed.id);
+                console.log('✅ [PRODUCTS] Selection restored from localStorage');
+              } catch (error) {
+                console.error('[PRODUCTS] Failed to restore from localStorage:', error);
+              }
             }
           }
 
@@ -348,7 +360,7 @@ export default function ProductsPage() {
         console.warn('[PRODUCTS] Failed to restore from localStorage:', e);
       }
     }
-  }, []); // Run only once on mount
+  }, [products, editor.handlers]); // Run when products or editor changes
 
   // ============================================================================
   // ON-DEMAND TRANSLATION LOADING
