@@ -1,7 +1,29 @@
 /**
  * Unified Content Editor Responsive Layout
  * Mobile-first design following Shopify Design Guidelines
+ *
+ * IMPORTANT: Uses CSS-only mobile/desktop detection to avoid React re-renders
+ * Both mobile and desktop components are always mounted, only visibility is toggled
  */
+
+/* Mobile/Desktop Visibility Control */
+.desktop-only {
+  display: none;
+}
+
+.mobile-only {
+  display: block;
+}
+
+@media (min-width: 769px) {
+  .desktop-only {
+    display: block;
+  }
+
+  .mobile-only {
+    display: none;
+  }
+}
 
 /* Base Layout Container */
 .unified-content-editor-layout {
@@ -112,6 +134,19 @@
 /* Editor Container */
 .unified-editor-container {
   min-width: 0; /* Prevents grid blowout */
+}
+
+/* Mobile Dropdowns Container (Language + Operations side-by-side) */
+.mobile-dropdowns-container {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.mobile-dropdowns-container > * {
+  flex: 1 1 calc(50% - 6px);
+  min-width: 150px;
 }
 
 /* Language Bar Responsive */

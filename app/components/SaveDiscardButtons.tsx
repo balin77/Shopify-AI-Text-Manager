@@ -1,5 +1,6 @@
 import { useRef } from "react";
 import { Button, InlineStack, BlockStack } from "@shopify/polaris";
+import "../styles/SaveDiscardButtons.css";
 
 interface SaveDiscardButtonsProps {
   hasChanges: boolean;
@@ -14,11 +15,13 @@ interface SaveDiscardButtonsProps {
   fetcherFormData?: FormData | null;
   /** Optional: Use vertical layout (default: false) */
   vertical?: boolean;
+  /** Optional: Use slim button size (default: false) */
+  slim?: boolean;
 }
 
 /**
  * Unified Save/Discard buttons component
- * Used across all content editing pages (Collections, Blog, Pages, Policies, Templates)
+ * Used across all content editing pages (Collections, Blog, Pages, Policies, Templates, Products)
  *
  * Features:
  * - Discard button always visible but disabled when no changes
@@ -26,6 +29,8 @@ interface SaveDiscardButtonsProps {
  * - Pulse animation on save button when highlightSaveButton is true
  * - Loading state on save button during submission
  * - Primary variant on save button when changes exist
+ * - Responsive design with proper wrapping
+ * - Uses Polaris InlineStack/BlockStack for proper event handling
  */
 export function SaveDiscardButtons({
   hasChanges,
@@ -39,6 +44,7 @@ export function SaveDiscardButtons({
   fetcherState = "idle",
   fetcherFormData = null,
   vertical = false,
+  slim = false,
 }: SaveDiscardButtonsProps) {
   const saveButtonRef = useRef<HTMLDivElement>(null);
 
@@ -51,6 +57,7 @@ export function SaveDiscardButtons({
       <Button
         onClick={onDiscard}
         disabled={!hasChanges || fetcherState !== "idle"}
+        size={slim ? "slim" : undefined}
       >
         {discardText}
       </Button>
@@ -65,6 +72,7 @@ export function SaveDiscardButtons({
           onClick={onSave}
           disabled={!hasChanges}
           loading={isSubmitting}
+          size={slim ? "slim" : undefined}
         >
           {saveText}
         </Button>
@@ -72,14 +80,16 @@ export function SaveDiscardButtons({
     </>
   );
 
+  const className = `save-discard-buttons-container${slim ? " slim-buttons" : ""}`;
+
   return (
-    <div ref={saveButtonRef}>
+    <div ref={saveButtonRef} className={className}>
       {vertical ? (
         <BlockStack gap="200">
           {buttons}
         </BlockStack>
       ) : (
-        <InlineStack gap="200">
+        <InlineStack gap="200" wrap={true}>
           {buttons}
         </InlineStack>
       )}
