@@ -33,7 +33,6 @@ function Document({
         <meta name="viewport" content="width=device-width,initial-scale=1" />
         <title>{title}</title>
         {apiKey && <meta name="shopify-api-key" content={apiKey} />}
-        <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js" />
         {env && (
           <script
             dangerouslySetInnerHTML={{
@@ -53,6 +52,10 @@ function Document({
         {children}
         <ScrollRestoration />
         <Scripts />
+        <script
+          src="https://cdn.shopify.com/shopifycloud/app-bridge.js"
+          defer
+        />
       </body>
     </html>
   );
