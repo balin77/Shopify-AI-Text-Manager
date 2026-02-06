@@ -207,11 +207,23 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     <Page fullWidth>
       <style>{contentEditorStyles}</style>
 
-      <div className="unified-content-editor-layout" style={{ padding: "16px" }}>
-        {/* Left Sidebar - Unified Item List */}
+      <div
+        className="unified-content-editor-layout"
+        style={{
+          height: "100%",
+          minHeight: 0,
+          display: "flex",
+          gap: "16px",
+          padding: "16px",
+          overflow: "hidden",
+          boxSizing: "border-box",
+        }}
+      >
+        {/* Left Sidebar - Unified Item List (Desktop only via CSS) */}
         <div className="unified-item-list-container">
-          <UnifiedItemList
-          items={unifiedItems}
+          <div className="desktop-only">
+            <UnifiedItemList
+            items={unifiedItems}
           selectedItemId={state.selectedItemId}
           onItemSelect={handlers.handleItemSelect}
           resourceName={{
@@ -232,10 +244,11 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
             paginationNext: t.content?.paginationNext || "Next",
           }}
           />
+          </div>
         </div>
 
         {/* Middle: Content Editor */}
-        <div className="unified-editor-container"  style={{ display: "flex", flexDirection: "column" }}>
+        <div className="unified-editor-container" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: "400px" }}>
           {selectedItem ? (
             <>
               {/* Language Selection Bar */}
@@ -264,7 +277,8 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
               </Card>
 
               {/* Operation Buttons */}
-              <Card padding="400" className="operation-buttons-card">
+              <div style={{ marginTop: "1rem" }}>
+                <Card padding="400" className="operation-buttons-card">
                 <InlineStack align="space-between" blockAlign="center">
                   {/* Left: Translate All + Clear All Buttons */}
                   <InlineStack gap="200" className="operation-buttons-container">
@@ -335,6 +349,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   </InlineStack>
                 </InlineStack>
               </Card>
+              </div>
 
               {/* Scrollable Content Area */}
               <div className="field-editor-area" style={{ flex: 1, overflowY: "auto", marginTop: "1rem" }}>
