@@ -86,6 +86,21 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
     logger.debug("[PRODUCTS-LOADER] Loaded products from database", { context: "Products", count: initialDbProducts.length });
 
+    // Log sample of productTypes to debug NULL issue
+    const productsWithNullType = initialDbProducts.filter(p => p.productType === null || p.productType === undefined);
+    if (productsWithNullType.length > 0) {
+      logger.warn("[PRODUCTS-LOADER] ⚠️ Products with NULL productType found in DB:", {
+        context: "Products",
+        count: productsWithNullType.length,
+        examples: productsWithNullType.slice(0, 3).map(p => ({
+          id: p.id,
+          title: p.title,
+          productType: p.productType,
+          lastSyncedAt: p.lastSyncedAt,
+        })),
+      });
+    }
+
     // 3. Fetch translations only for products that belong to this shop
     const productIds = initialDbProducts.map(p => p.id);
     const allTranslations = productIds.length > 0
@@ -96,6 +111,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
           }
         })
       : [];
+
+    logger.debug("[PRODUCTS-LOADER] Loaded translations from database", {
+      context: "Products",
+      totalTranslations: allTranslations.length,
+      uniqueProducts: new Set(allTranslations.map(t => t.resourceId)).size,
+    });
 
     // Use initialDbProducts directly - sync is now done via separate API call
     const dbProducts = initialDbProducts;
@@ -109,6 +130,21 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       return acc;
     }, {});
 
+    // Log products WITHOUT translations
+    const productsWithoutTranslations = dbProducts.filter(p => !translationsByResource[p.id] || translationsByResource[p.id].length === 0);
+    if (productsWithoutTranslations.length > 0) {
+      logger.warn("[PRODUCTS-LOADER] ⚠️ Products without translations found:", {
+        context: "Products",
+        count: productsWithoutTranslations.length,
+        examples: productsWithoutTranslations.slice(0, 3).map(p => ({
+          id: p.id,
+          title: p.title,
+          productType: p.productType,
+          lastSyncedAt: p.lastSyncedAt,
+        })),
+      });
+    }
+
     // 3. Transform to frontend format (unified pattern)
     const products = dbProducts.map((p) => ({
       id: p.id,
@@ -116,7 +152,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       descriptionHtml: p.descriptionHtml || "",
       handle: p.handle,
       status: p.status,
-      productType: p.productType || "",
+      productType: p.productType || "", // ⚠️ NULL becomes empty string here
       featuredImage: {
         url: p.featuredImageUrl || "",
         altText: p.featuredImageAlt || undefined,
@@ -138,6 +174,20 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     }));
 
     logger.debug("[PRODUCTS-LOADER] Total translations loaded", { context: "Products", count: products.reduce((sum, p) => sum + p.translations.length, 0) });
+
+    // Debug: Log a sample product to see the full data structure
+    if (products.length > 0) {
+      const sampleProduct = products[0];
+      logger.debug("[PRODUCTS-LOADER] Sample product data:", {
+        context: "Products",
+        id: sampleProduct.id,
+        title: sampleProduct.title,
+        productType: sampleProduct.productType === "" ? "EMPTY_STRING" : sampleProduct.productType,
+        productTypeFromDB: dbProducts[0].productType === null ? "NULL_IN_DB" : dbProducts[0].productType,
+        translationCount: sampleProduct.translations.length,
+        hasImages: sampleProduct.images.length > 0,
+      });
+    }
 
     // Log products with null alt-texts to debug clearing issue
     const productsWithNullAlt = products.filter((p: any) =>
@@ -323,11 +373,30 @@ export default function ProductsPage() {
         // Revalidate to fetch fresh data with translations
         if (revalidator.state === "idle") {
           console.log("🔄 [ON-DEMAND] Revalidating to load translations...");
+          console.log("🔄 [ON-DEMAND] Current product before revalidate:", {
+            id: selectedProduct?.id,
+            title: selectedProduct?.title,
+            productType: selectedProduct?.productType,
+            translationCount: selectedProduct?.translations?.length || 0,
+          });
           revalidator.revalidate();
         }
       }
     }
-  }, [isLoadingTranslations, translationSyncFetcher.state, translationSyncFetcher.data, revalidator]);
+  }, [isLoadingTranslations, translationSyncFetcher.state, translationSyncFetcher.data, revalidator, selectedProduct]);
+
+  // Log after revalidation to see if data changed
+  useEffect(() => {
+    if (revalidator.state === "idle" && selectedProduct) {
+      console.log("✅ [REVALIDATE] Revalidation complete, current product data:", {
+        id: selectedProduct.id,
+        title: selectedProduct.title,
+        productType: selectedProduct.productType === "" ? "EMPTY_STRING" : selectedProduct.productType || "UNDEFINED",
+        translationCount: selectedProduct.translations?.length || 0,
+        translations: selectedProduct.translations?.map(t => `${t.locale}:${t.key}`).slice(0, 5) || [],
+      });
+    }
+  }, [revalidator.state, selectedProduct]);
 
   // Reset ContentNavigation height to 0 (since we don't have ContentTypeNavigation on Products page)
   useEffect(() => {
