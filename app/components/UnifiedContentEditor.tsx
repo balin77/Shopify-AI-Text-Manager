@@ -5,16 +5,13 @@
  * Based on the products page structure with all bug fixes included.
  */
 
-import { useState, useEffect, useMemo } from "react";
+import { useState } from "react";
 import { Page, Card, Text, BlockStack, InlineStack, Button, Modal, TextContainer, TextField, Icon, Spinner } from "@shopify/polaris";
 import { SearchIcon, ChevronLeftIcon, ChevronRightIcon } from "@shopify/polaris-icons";
 import { AIEditableField } from "./AIEditableField";
 import { AIEditableHTMLField } from "./AIEditableHTMLField";
 import { UnifiedItemList } from "./unified/UnifiedItemList";
-import { UnifiedItemListMobile } from "./unified/UnifiedItemListMobile";
 import { UnifiedLanguageBar } from "./unified/UnifiedLanguageBar";
-import { UnifiedLanguageBarMobile } from "./unified/UnifiedLanguageBarMobile";
-import { UnifiedOperationsBarMobile } from "./unified/UnifiedOperationsBarMobile";
 import { ImageGalleryField } from "./unified/ImageGalleryField";
 import { OptionsField } from "./unified/OptionsField";
 import { SaveDiscardButtons } from "./SaveDiscardButtons";
@@ -22,9 +19,7 @@ import { ReloadButton } from "./ReloadButton";
 import { SeoSidebar } from "./SeoSidebar";
 import { useNavigationHeight } from "../contexts/NavigationHeightContext";
 import { usePlan } from "../contexts/PlanContext";
-import { useItemSelector } from "../contexts/ItemSelectorContext";
 import { contentEditorStyles } from "../utils/contentEditor.utils";
-import { getPlanDisplayName as getPlanDisplayNameUtil } from "../utils/planUtils";
 import "../styles/UnifiedContentEditor.css";
 import type { ContentEditorConfig, UseContentEditorReturn, FieldDefinition } from "../types/content-editor.types";
 import type { UnifiedItem } from "./unified/UnifiedItemList";
@@ -94,12 +89,6 @@ interface UnifiedContentEditorProps {
 
   /** Optional: Loading state for field pagination */
   isFieldsLoading?: boolean;
-
-  /** Optional: Revalidator for data refresh */
-  revalidator?: {
-    revalidate: () => void;
-    state: 'idle' | 'loading';
-  };
 }
 
 export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
@@ -122,7 +111,6 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     onFieldPageChange,
     onFieldSearch,
     isFieldsLoading = false,
-    revalidator,
   } = props;
 
   // Local state for search input (debounced)
@@ -130,7 +118,6 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
 
   const { state, handlers, selectedItem, navigationGuard, helpers, effectiveFieldDefinitions } = editor;
   const { getMaxProducts } = usePlan();
-  const { registerItems, clearItems } = useItemSelector();
 
   // Use effective field definitions (dynamic for templates, static for other content types)
   const fieldDefinitions = effectiveFieldDefinitions || config.fieldDefinitions;
@@ -161,15 +148,12 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   }));
 
   // Plan limit configuration
-  const { plan, getNextPlanUpgrade, getMaxProducts: getMaxProductsFromPlan } = usePlan();
-  const maxItems = getMaxProductsFromPlan(); // This works for all content types
-  const nextPlan = getNextPlanUpgrade();
-
+  const maxItems = getMaxProducts(); // This works for all content types
   const defaultPlanLimit = {
     isAtLimit: items.length >= maxItems && maxItems !== Infinity,
     maxItems,
-    currentPlan: getPlanDisplayNameUtil(plan),
-    nextPlan: nextPlan ? getPlanDisplayNameUtil(nextPlan) : undefined,
+    currentPlan: "current", // TODO: Get from plan context
+    nextPlan: "Pro", // TODO: Get from plan context
   };
   const finalPlanLimit = planLimit || defaultPlanLimit;
 
@@ -219,126 +203,44 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   const sidebarRenderer = renderSidebar || defaultRenderSidebar;
   const { getTotalNavHeight } = useNavigationHeight();
 
-  // Media query to detect mobile vs desktop
-  // Start with desktop (false) to match SSR, then update client-side
-  const [isMobile, setIsMobile] = useState(false);
-
-  useEffect(() => {
-    const mediaQuery = window.matchMedia('(max-width: 768px)');
-
-    // Set initial value
-    setIsMobile(mediaQuery.matches);
-
-    // Listen for changes
-    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
-    mediaQuery.addEventListener('change', handler);
-
-    return () => mediaQuery.removeEventListener('change', handler);
-  }, []);
-
-  // Register items in the item selector context (for mobile navbar dropdown)
-  useEffect(() => {
-    registerItems({
-      items: unifiedItems,
-      selectedItemId: state.selectedItemId,
-      onItemSelect: handlers.handleItemSelect,
-      resourceName: {
-        singular: config.displayNameSingular,
-        plural: config.displayName,
-      },
-      t: {
-        searchPlaceholder: t.content?.searchPlaceholder,
-        noResults: t.content?.noResults || "No items found",
-        selectItem: t.content?.selectItem || `Select ${config.displayNameSingular}`,
-      },
-    });
-
-    // Cleanup: clear items when component unmounts
-    return () => {
-      clearItems();
-    };
-  }, [unifiedItems, state.selectedItemId, handlers.handleItemSelect, config.displayNameSingular, config.displayName, t.content, registerItems, clearItems]);
-
   return (
     <Page fullWidth>
       <style>{contentEditorStyles}</style>
 
-      <div
-        className="unified-content-editor-layout"
-        style={{
-          height: "100%",
-          minHeight: 0,
-          display: "flex",
-          gap: "16px",
-          padding: "16px",
-          overflow: "hidden",
-          boxSizing: "border-box",
-        }}
-      >
-        {/* Left Sidebar - Unified Item List (Desktop only) */}
+      <div className="unified-content-editor-layout" style={{ padding: "16px" }}>
+        {/* Left Sidebar - Unified Item List */}
         <div className="unified-item-list-container">
-          {/* Desktop: Full List */}
-          <div className="desktop-only">
-            <UnifiedItemList
-              items={unifiedItems}
-              selectedItemId={state.selectedItemId}
-              onItemSelect={handlers.handleItemSelect}
-              resourceName={{
-                singular: config.displayNameSingular,
-                plural: config.displayName,
-              }}
-              renderItem={renderListItem}
-              showSearch={true}
-              showPagination={true}
-              showStatusStripe={!hideItemListStatusBars}
-              showThumbnails={!hideItemListImages}
-              showCategoryBadge={showItemListCategoryBadge}
-              planLimit={finalPlanLimit}
-              t={{
-                searchPlaceholder: t.content?.searchPlaceholder,
-                paginationOf: t.content?.paginationOf || "of",
-                paginationPrevious: t.content?.paginationPrevious || "Previous",
-                paginationNext: t.content?.paginationNext || "Next",
-              }}
-            />
-          </div>
+          <UnifiedItemList
+          items={unifiedItems}
+          selectedItemId={state.selectedItemId}
+          onItemSelect={handlers.handleItemSelect}
+          resourceName={{
+            singular: config.displayNameSingular,
+            plural: config.displayName,
+          }}
+          renderItem={renderListItem}
+          showSearch={true}
+          showPagination={true}
+          showStatusStripe={!hideItemListStatusBars}
+          showThumbnails={!hideItemListImages}
+          showCategoryBadge={showItemListCategoryBadge}
+          planLimit={finalPlanLimit}
+          t={{
+            searchPlaceholder: t.content?.searchPlaceholder,
+            paginationOf: t.content?.paginationOf || "of",
+            paginationPrevious: t.content?.paginationPrevious || "Previous",
+            paginationNext: t.content?.paginationNext || "Next",
+          }}
+          />
         </div>
 
         {/* Middle: Content Editor */}
-        <div className="unified-editor-container" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: "400px" }}>
+        <div className="unified-editor-container"  style={{ display: "flex", flexDirection: "column" }}>
           {selectedItem ? (
             <>
-              {/* Language Selection Bar - Desktop */}
-              {!isMobile && (
-                <Card padding="400">
-                  <UnifiedLanguageBar
-                    shopLocales={shopLocales}
-                    currentLanguage={state.currentLanguage}
-                    primaryLocale={primaryLocale}
-                    selectedItem={selectedItem}
-                    contentType={config.contentType}
-                    hasChanges={state.hasChanges}
-                    onLanguageChange={handlers.handleLanguageChange}
-                    enabledLanguages={state.enabledLanguages}
-                    onToggleLanguage={handlers.handleToggleLanguage}
-                    onTranslateAll={handlers.handleTranslateAll}
-                    isTranslating={fetcherState !== "idle" && fetcherFormData?.get("action") === "translateAll"}
-                    showTranslateAll={true}
-                    showReloadButton={true}
-                    isLoadingData={state.isLoadingData}
-                    t={{
-                      primaryLocaleSuffix: t.content?.primaryLanguageSuffix || "Primary",
-                      translateAll: t.content?.translateAll || "🌍 Translate All",
-                      translating: t.content?.translating || "Translating...",
-                    }}
-                  />
-                </Card>
-              )}
-
-              {/* Mobile: Language and Operations Dropdowns Side-by-Side */}
-              {isMobile && (
-                <div className="mobile-dropdowns-container">
-                <UnifiedLanguageBarMobile
+              {/* Language Selection Bar */}
+              <Card padding="400">
+                <UnifiedLanguageBar
                   shopLocales={shopLocales}
                   currentLanguage={state.currentLanguage}
                   primaryLocale={primaryLocale}
@@ -348,50 +250,21 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   onLanguageChange={handlers.handleLanguageChange}
                   enabledLanguages={state.enabledLanguages}
                   onToggleLanguage={handlers.handleToggleLanguage}
+                  onTranslateAll={handlers.handleTranslateAll}
+                  isTranslating={fetcherState !== "idle" && fetcherFormData?.get("action") === "translateAll"}
+                  showTranslateAll={true}
+                  showReloadButton={true}
                   isLoadingData={state.isLoadingData}
                   t={{
                     primaryLocaleSuffix: t.content?.primaryLanguageSuffix || "Primary",
-                    selectLanguage: t.content?.selectLanguage || "Select Language",
-                  }}
-                />
-                <UnifiedOperationsBarMobile
-                  isPrimaryLocale={state.currentLanguage === primaryLocale}
-                  hasChanges={state.hasChanges}
-                  fetcherState={fetcherState}
-                  fetcherFormData={fetcherFormData}
-                  resourceId={selectedItem.id}
-                  resourceType={getResourceType(config.contentType)}
-                  locale={state.currentLanguage}
-                  onTranslateAll={
-                    state.currentLanguage === primaryLocale
-                      ? handlers.handleTranslateAll
-                      : handlers.handleTranslateAllForLocale
-                  }
-                  onClearAll={
-                    state.currentLanguage === primaryLocale
-                      ? handlers.handleClearAllClick
-                      : handlers.handleClearAllForLocaleClick
-                  }
-                  onSave={handlers.handleSave}
-                  onDiscard={handlers.handleDiscard}
-                  onReloadComplete={editor.helpers.triggerDataRefresh}
-                  highlightSaveButton={navigationGuard.highlightSaveButton}
-                  t={{
-                    actions: t.content?.actions || "Actions",
                     translateAll: t.content?.translateAll || "🌍 Translate All",
                     translating: t.content?.translating || "Translating...",
-                    clearAll: t.content?.clearAll || "Clear All",
-                    saveChanges: t.content?.saveChanges || "Save Changes",
-                    discard: t.content?.discardChanges || "Discard",
                   }}
                 />
-                </div>
-              )}
+              </Card>
 
-              {/* Operation Buttons - Desktop */}
-              {!isMobile && (
-                <div style={{ marginTop: "1rem" }}>
-                <Card padding="400" className="operation-buttons-card">
+              {/* Operation Buttons */}
+              <Card padding="400" className="operation-buttons-card">
                 <InlineStack align="space-between" blockAlign="center">
                   {/* Left: Translate All + Clear All Buttons */}
                   <InlineStack gap="200" className="operation-buttons-container">
@@ -458,13 +331,10 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                       resourceType={getResourceType(config.contentType)}
                       locale={state.currentLanguage}
                       onReloadComplete={editor.helpers.triggerDataRefresh}
-                      revalidator={revalidator}
                     />
                   </InlineStack>
                 </InlineStack>
               </Card>
-              </div>
-              )}
 
               {/* Scrollable Content Area */}
               <div className="field-editor-area" style={{ flex: 1, overflowY: "auto", marginTop: "1rem" }}>
@@ -581,7 +451,6 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         primaryLocale={primaryLocale}
                         selectedItem={selectedItem}
                         t={t}
-                        plan={plan}
                         state={state}
                         handlers={handlers}
                         fetcherState={fetcherState}
@@ -716,7 +585,7 @@ interface FieldRendererProps {
   t: any;
 }
 
-function FieldRenderer(props: FieldRendererProps & { plan?: string; state?: any; handlers?: any; fetcherState?: string; fetcherFormData?: FormData }) {
+function FieldRenderer(props: FieldRendererProps & { state?: any; handlers?: any; fetcherState?: string; fetcherFormData?: FormData }) {
   const {
     field,
     value,
@@ -744,7 +613,6 @@ function FieldRenderer(props: FieldRendererProps & { plan?: string; state?: any;
     primaryLocale,
     selectedItem,
     t,
-    plan,
     state,
     handlers,
     fetcherState,
@@ -834,7 +702,7 @@ function FieldRenderer(props: FieldRendererProps & { plan?: string; state?: any;
         currentLanguage={currentLanguage}
         primaryLocale={primaryLocale}
         isPrimaryLocale={isPrimaryLocale}
-        isFreePlan={plan === 'free'}
+        isFreePlan={false} // TODO: Get from plan context
         altTexts={state.imageAltTexts}
         onAltTextChange={handlers.handleAltTextChange}
         onGenerateAltText={handlers.handleGenerateAltText}
@@ -846,12 +714,7 @@ function FieldRenderer(props: FieldRendererProps & { plan?: string; state?: any;
         onAcceptAndTranslateSuggestion={handlers.handleAcceptAndTranslateAltText}
         onRejectSuggestion={handlers.handleRejectAltTextSuggestion}
         onClearAltText={(imageIndex) => handlers.handleAltTextChange(imageIndex, "")}
-        isFieldLoading={(imageIndex) => {
-          // Check if generateAllAltTexts is running (affects all images)
-          if (state.loadingFieldKeys?.has("allAltTexts")) return true;
-          // Check if this specific image's alt-text is loading
-          return state.loadingFieldKeys?.has(`altText_${imageIndex}`) || false;
-        }}
+        isFieldLoading={() => isImageAIActionRunning}
         t={{
           image: t.products?.image || "Image",
           featuredImage: t.products?.featuredImage || "Featured Image",
@@ -899,7 +762,6 @@ function FieldRenderer(props: FieldRendererProps & { plan?: string; state?: any;
         isDataLoading={isDataLoading}
         sourceTextAvailable={sourceTextAvailable}
         disableGeneration={disableGeneration}
-        isFallbackValue={isFallbackValue}
         onGenerateAI={field.supportsAI !== false && isPrimaryLocale ? onGenerateAI : undefined}
         onFormatAI={field.supportsFormatting !== false && isPrimaryLocale ? onFormatAI : undefined}
         onTranslate={field.supportsTranslation !== false ? onTranslate : undefined}
