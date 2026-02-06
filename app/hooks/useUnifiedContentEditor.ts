@@ -1460,6 +1460,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     }
   }, [fetcher.data, primaryLocale, editableValues, effectiveFieldDefinitions]); // Removed selectedItem - use ref instead
 
+  // DEBUG: Log fetcher state on every render to see if it changes
+  console.log('🔍 [FETCHER] Current state on render:', {
+    state: fetcher.state,
+    hasData: !!fetcher.data,
+    data: fetcher.data,
+  });
+
   // Show global InfoBox for success/error messages and revalidate after save
   useEffect(() => {
     console.log('💾 [SAVE-RESPONSE] useEffect triggered:', {
