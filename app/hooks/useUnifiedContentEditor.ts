@@ -461,9 +461,21 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         newValues[field.key] = getItemFieldValue(item, field.key, primaryLocale, config);
 
         // Mark seoTitle as fallback if it's using the title as fallback
-        if (field.key === 'seoTitle' && !item.seo?.title && item.title) {
-          debugLog.dataLoad(' SEO Title field: using fallback to main title:', item.title);
-          newFallbackFields.add(field.key);
+        if (field.key === 'seoTitle') {
+          const actualSeoTitle = item.seo?.title;
+          const isUsingFallback = !actualSeoTitle && item.title;
+          console.log('🔍 [EDITOR] seoTitle check:', {
+            actualSeoTitle,
+            itemTitle: item.title,
+            isUsingFallback,
+            valueSet: newValues[field.key],
+            itemSeo: item.seo,
+          });
+          if (isUsingFallback) {
+            debugLog.dataLoad(' SEO Title field: using fallback to main title:', item.title);
+            newFallbackFields.add(field.key);
+            console.log('✅ [EDITOR] Added seoTitle to fallback fields');
+          }
         }
       });
 
