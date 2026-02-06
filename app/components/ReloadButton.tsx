@@ -1,7 +1,7 @@
 import { Button, Tooltip } from "@shopify/polaris";
 import { RefreshIcon } from "@shopify/polaris-icons";
 import { useState, useEffect } from "react";
-import { useFetcher, useRevalidator } from "@remix-run/react";
+import { useFetcher, useNavigate } from "@remix-run/react";
 
 interface ReloadButtonProps {
   resourceId: string;
@@ -18,7 +18,7 @@ export function ReloadButton({
 }: ReloadButtonProps) {
   const [isLoading, setIsLoading] = useState(false);
   const fetcher = useFetcher();
-  const revalidator = useRevalidator();
+  const navigate = useNavigate();
 
   // Monitor fetcher state
   useEffect(() => {
@@ -28,16 +28,18 @@ export function ReloadButton({
 
       const data = fetcher.data as any;
       if (data.success) {
-        console.log("✅ [RELOAD-BUTTON] Sync successful, forcing page reload...");
+        console.log("✅ [RELOAD-BUTTON] Sync successful, navigating to force reload...");
         console.log("🔄 [RELOAD-BUTTON] Resource:", { resourceId, resourceType, locale });
 
-        // CRITICAL FIX: Use full page reload instead of revalidation
-        // Revalidation doesn't guarantee the loader runs again, especially if data appears "fresh"
-        // This ensures we always get the latest data from the database
-        window.location.reload();
+        // BETTER FIX: Navigate to same page with cache-busting parameter
+        // This forces the loader to run again without losing too much state
+        const currentUrl = new URL(window.location.href);
+        currentUrl.searchParams.set('_reload', Date.now().toString());
 
-        // Old approach (doesn't work reliably):
-        // revalidator.revalidate();
+        // Use replace: true to avoid adding to history
+        navigate(currentUrl.pathname + currentUrl.search, { replace: true });
+
+        console.log("✅ [RELOAD-BUTTON] Navigation triggered with cache-bust parameter");
 
         if (onReloadComplete) {
           onReloadComplete();
@@ -48,7 +50,7 @@ export function ReloadButton({
         alert(`Fehler beim Neuladen: ${data.error || "Unbekannter Fehler"}`);
       }
     }
-  }, [fetcher.state, fetcher.data, isLoading, onReloadComplete, revalidator, resourceId, resourceType, locale]);
+  }, [fetcher.state, fetcher.data, isLoading, onReloadComplete, navigate, resourceId, resourceType, locale]);
 
   const handleReload = () => {
     if (isLoading) {
