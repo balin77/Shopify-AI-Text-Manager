@@ -38,18 +38,28 @@ export function ReloadButton({
           url.searchParams.set('selected', resourceId);
           url.searchParams.set('_t', Date.now().toString()); // Cache bust
 
+          console.log("💾 [RELOAD-BUTTON] Saving selection for restoration:", {
+            resourceId,
+            resourceType,
+            currentUrl: window.location.href,
+            newUrl: url.toString(),
+          });
+
           // Also store in localStorage as fallback
           try {
-            localStorage.setItem('lastSelectedResource', JSON.stringify({
+            const storageData = {
               id: resourceId,
               type: resourceType,
               timestamp: Date.now()
-            }));
+            };
+            localStorage.setItem('lastSelectedResource', JSON.stringify(storageData));
+            console.log("💾 [RELOAD-BUTTON] Saved to localStorage:", storageData);
           } catch (e) {
             console.warn('[RELOAD-BUTTON] Failed to save to localStorage:', e);
           }
 
           // Navigate to URL with selected parameter (forces full reload with selection preserved)
+          console.log("🌐 [RELOAD-BUTTON] Navigating to:", url.toString());
           window.location.href = url.toString();
         }, 500);
 

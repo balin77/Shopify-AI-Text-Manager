@@ -301,8 +301,17 @@ export default function ProductsPage() {
   // ============================================================================
 
   useEffect(() => {
+    console.log('🔍 [PRODUCTS] Selection restoration effect running', {
+      isMounted: isMountedRef.current,
+      productsCount: products.length,
+      hasHandlers: !!editor.handlers,
+      hasSelectFn: typeof editor.handlers?.handleSelectItem === 'function',
+      currentSelection: editor.state.selectedItemId,
+    });
+
     // Wait for products to load and editor to be ready
     if (!isMountedRef.current || !products.length || !editor.handlers || typeof editor.handlers.handleSelectItem !== 'function') {
+      console.log('⏸️ [PRODUCTS] Waiting for initialization...');
       return;
     }
 
@@ -310,16 +319,41 @@ export default function ProductsPage() {
     const urlParams = new URLSearchParams(window.location.search);
     const selectedFromUrl = urlParams.get('selected');
 
+    console.log('🔍 [PRODUCTS] URL check:', {
+      hasSelectedParam: !!selectedFromUrl,
+      selectedValue: selectedFromUrl,
+      fullUrl: window.location.href,
+      productIds: products.slice(0, 3).map((p: any) => p.id),
+    });
+
     if (selectedFromUrl) {
       console.log('🔄 [PRODUCTS] Restoring selection from URL:', selectedFromUrl);
 
       // Find the product in the list
       const productExists = products.find((p: any) => p.id === selectedFromUrl);
 
+      console.log('🔍 [PRODUCTS] Product lookup:', {
+        searchingFor: selectedFromUrl,
+        found: !!productExists,
+        foundProduct: productExists ? { id: productExists.id, title: productExists.title } : null,
+        totalProducts: products.length,
+      });
+
       if (productExists) {
         // Restore selection via editor
         try {
+          console.log('🎯 [PRODUCTS] Calling handleSelectItem with:', selectedFromUrl);
+          console.log('🔍 [PRODUCTS] Editor state BEFORE selection:', {
+            selectedItemId: editor.state.selectedItemId,
+            selectedItem: editor.selectedItem ? { id: editor.selectedItem.id, title: editor.selectedItem.title } : null,
+          });
+
           editor.handlers.handleSelectItem(selectedFromUrl);
+
+          console.log('🔍 [PRODUCTS] Editor state AFTER selection:', {
+            selectedItemId: editor.state.selectedItemId,
+            selectedItem: editor.selectedItem ? { id: editor.selectedItem.id, title: editor.selectedItem.title } : null,
+          });
           console.log('✅ [PRODUCTS] Selection restored successfully');
         } catch (error) {
           console.error('[PRODUCTS] Failed to restore selection:', error);
@@ -330,11 +364,19 @@ export default function ProductsPage() {
         urlParams.delete('_t');
         const newUrl = `${window.location.pathname}${urlParams.toString() ? '?' + urlParams.toString() : ''}`;
         window.history.replaceState({}, '', newUrl);
+        console.log('🧹 [PRODUCTS] Cleaned up URL parameters');
+      } else {
+        console.warn('⚠️ [PRODUCTS] Product not found in list:', selectedFromUrl);
       }
     } else {
       // Fallback: Check localStorage
       try {
         const stored = localStorage.getItem('lastSelectedResource');
+        console.log('🔍 [PRODUCTS] localStorage check:', {
+          hasStored: !!stored,
+          storedValue: stored,
+        });
+
         if (stored) {
           const parsed = JSON.parse(stored);
 
@@ -345,6 +387,7 @@ export default function ProductsPage() {
             const productExists = products.find((p: any) => p.id === parsed.id);
             if (productExists) {
               try {
+                console.log('🎯 [PRODUCTS] Calling handleSelectItem (from localStorage) with:', parsed.id);
                 editor.handlers.handleSelectItem(parsed.id);
                 console.log('✅ [PRODUCTS] Selection restored from localStorage');
               } catch (error) {
