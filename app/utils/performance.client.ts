@@ -94,13 +94,21 @@ export function measurePageLoad(pageName: string, additionalData?: Record<string
       Object.assign(metrics, additionalData);
     }
 
-    // Calculate Largest Contentful Paint (LCP) if available
+    // Calculate Largest Contentful Paint (LCP) if available using PerformanceObserver
     let lcp: number | undefined;
     try {
-      const lcpEntries = performance.getEntriesByType('largest-contentful-paint');
-      if (lcpEntries.length > 0) {
-        const lastLcp = lcpEntries[lcpEntries.length - 1] as PerformanceEntry;
-        lcp = Math.round(lastLcp.startTime);
+      // Use PerformanceObserver with buffered: true to get past LCP entries
+      if ('PerformanceObserver' in window && PerformanceObserver.supportedEntryTypes?.includes('largest-contentful-paint')) {
+        const observer = new PerformanceObserver((list) => {
+          const entries = list.getEntries();
+          if (entries.length > 0) {
+            const lastEntry = entries[entries.length - 1];
+            lcp = Math.round(lastEntry.startTime);
+          }
+        });
+        observer.observe({ type: 'largest-contentful-paint', buffered: true });
+        // Disconnect immediately after reading buffered entries
+        observer.disconnect();
       }
     } catch (e) {
       // LCP might not be available in all browsers
