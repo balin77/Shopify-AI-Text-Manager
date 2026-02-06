@@ -186,10 +186,18 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // IMPORTANT: Memoize selectedItem to prevent infinite re-renders
   // Without this, items.find() returns a new object reference on every revalidation,
   // which triggers useChangeTracking and other effects, causing an infinite loop
-  const baseSelectedItem = useMemo(
-    () => items.find((item) => item.id === selectedItemId),
-    [items, selectedItemId]
-  );
+  const baseSelectedItem = useMemo(() => {
+    const found = items.find((item) => item.id === selectedItemId);
+    if (found && selectedItemId) {
+      console.log('🔍 [EDITOR] baseSelectedItem updated:', {
+        id: found.id,
+        title: found.title,
+        translationsCount: found.translations?.length || 0,
+        itemsArrayLength: items.length,
+      });
+    }
+    return found;
+  }, [items, selectedItemId]);
 
   // Hybrid image loading:
   // - If images exist in DB -> use them directly (instant)
@@ -411,6 +419,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     prevDataRefreshTriggerRef.current = dataRefreshTrigger;
 
     if (refreshTriggered) {
+      console.log('🔄 [EDITOR] Data refresh triggered by ReloadButton, reloading data for:', {
+        itemId: selectedItemId,
+        itemTitle: item?.title,
+        language: currentLanguage,
+        itemObject: item,
+      });
       debugLog.dataLoad(' Data refresh triggered by ReloadButton');
     }
 
@@ -515,6 +529,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       setFallbackFields(newFallbackFields);
     }
 
+    console.log('🔄 [EDITOR] Setting editableValues to:', {
+      language: currentLanguage,
+      values: newValues,
+      fieldCount: Object.keys(newValues).length,
+      refreshTriggered,
+      itemTitle: item?.title,
+    });
     setEditableValues(newValues);
 
     // For templates: Store original values for change detection
@@ -2545,8 +2566,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
   // Trigger data refresh (called by ReloadButton after revalidation to reload editableValues)
   const triggerDataRefresh = useCallback(() => {
+    console.log('🔄 [EDITOR] triggerDataRefresh called - will reload editableValues from fresh data');
     debugLog.dataLoad(' triggerDataRefresh called - will reload editableValues from fresh data');
-    setDataRefreshTrigger(prev => prev + 1);
+    setDataRefreshTrigger(prev => {
+      console.log('🔄 [EDITOR] dataRefreshTrigger updated:', prev, '->', prev + 1);
+      return prev + 1;
+    });
   }, []);
 
   // ============================================================================

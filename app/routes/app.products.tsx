@@ -296,6 +296,42 @@ export default function ProductsPage() {
   const selectedProduct = editor.selectedItem;
 
   // ============================================================================
+  // TRIGGER DATA REFRESH AFTER REVALIDATION
+  // Wait for revalidation to complete and new data to arrive before refreshing editor
+  // ============================================================================
+
+  const prevRevalidatorStateRef = useRef(revalidator.state);
+  const prevProductsLengthRef = useRef(products.length);
+
+  useEffect(() => {
+    const wasLoading = prevRevalidatorStateRef.current === 'loading';
+    const isNowIdle = revalidator.state === 'idle';
+    const productsChanged = prevProductsLengthRef.current !== products.length;
+
+    // Update refs
+    prevRevalidatorStateRef.current = revalidator.state;
+    prevProductsLengthRef.current = products.length;
+
+    // If revalidation just completed (was loading, now idle), trigger data refresh
+    // This ensures we reload the editor with fresh data from the server
+    if (wasLoading && isNowIdle && isMountedRef.current) {
+      console.log('🔄 [PRODUCTS] Revalidation completed, triggering editor data refresh', {
+        productsCount: products.length,
+        productsChanged,
+        selectedProductId,
+      });
+
+      // Small delay to ensure React has finished updating all components
+      setTimeout(() => {
+        if (isMountedRef.current && editor.helpers?.triggerDataRefresh) {
+          console.log('🔄 [PRODUCTS] Calling triggerDataRefresh after revalidation');
+          editor.helpers.triggerDataRefresh();
+        }
+      }, 100);
+    }
+  }, [revalidator.state, products, products.length, selectedProductId, editor.helpers]);
+
+  // ============================================================================
   // RESTORE SELECTION AFTER RELOAD
   // If user clicked reload button, restore the previously selected product
   // ============================================================================
