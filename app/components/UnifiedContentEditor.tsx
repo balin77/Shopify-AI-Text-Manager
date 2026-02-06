@@ -274,9 +274,8 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           {selectedItem ? (
             <>
 
-              {/* Language Selection Bar - Desktop */}
-              <div className="desktop-only">
-                <Card padding="400">
+              {/* Language Selection Bar - Normal (shown >= 768px) */}
+              <Card padding="400" className="hide-on-narrow-mobile">
                 <UnifiedLanguageBar
                   shopLocales={shopLocales}
                   currentLanguage={state.currentLanguage}
@@ -299,10 +298,9 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   }}
                 />
               </Card>
-              </div>
 
-              {/* Mobile: Language and Operations Dropdowns Side-by-Side */}
-              <div className="mobile-only mobile-dropdowns-container">
+              {/* Mobile: Language and Operations Dropdowns Side-by-Side (shown < 768px) */}
+              <div className="mobile-dropdowns-only mobile-dropdowns-container">
                 <UnifiedLanguageBarMobile
                   shopLocales={shopLocales}
                   currentLanguage={state.currentLanguage}
@@ -352,8 +350,8 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                 />
               </div>
 
-              {/* Operation Buttons - Desktop */}
-              <div className="desktop-only" style={{ marginTop: "1rem" }}>
+              {/* Operation Buttons - Normal (shown >= 768px) */}
+              <div style={{ marginTop: "1rem" }} className="hide-on-narrow-mobile">
                 <Card padding="400" className="operation-buttons-card">
                 <InlineStack align="space-between" blockAlign="center">
                   {/* Left: Translate All + Clear All Buttons */}

@@ -7,6 +7,7 @@
  */
 
 /* Mobile/Desktop Visibility Control */
+/* Breakpoint: 900px for item list, 768px for dropdowns */
 .desktop-only {
   display: none;
 }
@@ -15,7 +16,35 @@
   display: block;
 }
 
-@media (min-width: 769px) {
+.mobile-dropdowns-only {
+  display: none;
+}
+
+.hide-on-narrow-mobile {
+  display: block;
+}
+
+@media (max-width: 767px) {
+  .mobile-dropdowns-only {
+    display: block;
+  }
+
+  .hide-on-narrow-mobile {
+    display: none;
+  }
+}
+
+@media (min-width: 768px) {
+  .mobile-dropdowns-only {
+    display: none;
+  }
+
+  .hide-on-narrow-mobile {
+    display: block;
+  }
+}
+
+@media (min-width: 900px) {
   .desktop-only {
     display: block;
   }
@@ -138,15 +167,20 @@
 
 /* Mobile Dropdowns Container (Language + Operations side-by-side) */
 .mobile-dropdowns-container {
-  display: flex;
-  gap: 12px;
-  margin-bottom: 16px;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 12px;
 }
 
 .mobile-dropdowns-container > * {
-  flex: 1 1 calc(50% - 6px);
-  min-width: 150px;
+  min-width: 0; /* Allow grid items to shrink */
+}
+
+/* Make expanded dropdowns span both columns */
+.mobile-dropdowns-container .language-dropdown-mobile:has(> :nth-child(2)),
+.mobile-dropdowns-container .operations-dropdown-mobile:has(> :nth-child(2)) {
+  grid-column: 1 / -1;
 }
 
 /* Language Bar Responsive */
