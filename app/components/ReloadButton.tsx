@@ -1,7 +1,7 @@
 import { Button, Tooltip } from "@shopify/polaris";
 import { RefreshIcon } from "@shopify/polaris-icons";
 import { useState, useEffect } from "react";
-import { useFetcher, useNavigate } from "@remix-run/react";
+import { useFetcher, useRevalidator } from "@remix-run/react";
 
 interface ReloadButtonProps {
   resourceId: string;
@@ -18,39 +18,42 @@ export function ReloadButton({
 }: ReloadButtonProps) {
   const [isLoading, setIsLoading] = useState(false);
   const fetcher = useFetcher();
-  const navigate = useNavigate();
+  const revalidator = useRevalidator();
 
   // Monitor fetcher state
   useEffect(() => {
     if (fetcher.state === "idle" && fetcher.data && isLoading) {
       console.log("🔄 [RELOAD-BUTTON] Sync complete, fetcher data:", fetcher.data);
-      setIsLoading(false);
 
       const data = fetcher.data as any;
       if (data.success) {
-        console.log("✅ [RELOAD-BUTTON] Sync successful, navigating to force reload...");
+        console.log("✅ [RELOAD-BUTTON] Sync successful!");
         console.log("🔄 [RELOAD-BUTTON] Resource:", { resourceId, resourceType, locale });
 
-        // BETTER FIX: Navigate to same page with cache-busting parameter
-        // This forces the loader to run again without losing too much state
-        const currentUrl = new URL(window.location.href);
-        currentUrl.searchParams.set('_reload', Date.now().toString());
-
-        // Use replace: true to avoid adding to history
-        navigate(currentUrl.pathname + currentUrl.search, { replace: true });
-
-        console.log("✅ [RELOAD-BUTTON] Navigation triggered with cache-bust parameter");
+        // Add a small delay before revalidating to ensure DB transaction completed
+        setTimeout(() => {
+          console.log("🔄 [RELOAD-BUTTON] Triggering revalidation...");
+          revalidator.revalidate();
+        }, 500);
 
         if (onReloadComplete) {
           onReloadComplete();
         }
       } else {
         console.error("❌ [RELOAD-BUTTON] Sync failed:", data.error);
-        // Error
+        setIsLoading(false);
         alert(`Fehler beim Neuladen: ${data.error || "Unbekannter Fehler"}`);
       }
     }
-  }, [fetcher.state, fetcher.data, isLoading, onReloadComplete, navigate, resourceId, resourceType, locale]);
+  }, [fetcher.state, fetcher.data, isLoading, onReloadComplete, resourceId, resourceType, locale, revalidator]);
+
+  // Monitor revalidator state
+  useEffect(() => {
+    if (revalidator.state === "idle" && isLoading) {
+      console.log("✅ [RELOAD-BUTTON] Revalidation complete, UI should update now");
+      setIsLoading(false);
+    }
+  }, [revalidator.state, isLoading]);
 
   const handleReload = () => {
     if (isLoading) {
