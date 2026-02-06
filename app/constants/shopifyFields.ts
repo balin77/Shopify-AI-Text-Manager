@@ -10,6 +10,8 @@ export const SHOPIFY_TRANSLATION_KEYS = {
   HANDLE: 'handle',
   META_TITLE: 'meta_title',
   META_DESCRIPTION: 'meta_description',
+  PRODUCT_TYPE: 'product_type',
+  SUMMARY: 'summary',
 } as const;
 
 /**
@@ -36,6 +38,9 @@ export const UI_FIELD_TO_TRANSLATION_KEY: Record<string, string> = {
   meta_title: SHOPIFY_TRANSLATION_KEYS.META_TITLE,
   metaDescription: SHOPIFY_TRANSLATION_KEYS.META_DESCRIPTION,
   meta_description: SHOPIFY_TRANSLATION_KEYS.META_DESCRIPTION,
+  productType: SHOPIFY_TRANSLATION_KEYS.PRODUCT_TYPE,
+  product_type: SHOPIFY_TRANSLATION_KEYS.PRODUCT_TYPE,
+  summary: SHOPIFY_TRANSLATION_KEYS.SUMMARY,
 };
 
 /**
@@ -58,7 +63,8 @@ export const TRANSLATION_KEY_MAP = {
   descriptionHtml: SHOPIFY_TRANSLATION_KEYS.BODY_HTML,
   body: SHOPIFY_TRANSLATION_KEYS.BODY_HTML,
   handle: SHOPIFY_TRANSLATION_KEYS.HANDLE,
-  productType: 'product_type',
+  productType: SHOPIFY_TRANSLATION_KEYS.PRODUCT_TYPE,
+  summary: SHOPIFY_TRANSLATION_KEYS.SUMMARY,
   'seo.title': SHOPIFY_TRANSLATION_KEYS.META_TITLE,
   'seo.description': SHOPIFY_TRANSLATION_KEYS.META_DESCRIPTION,
 } as const;

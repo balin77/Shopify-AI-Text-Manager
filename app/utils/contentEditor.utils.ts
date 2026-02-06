@@ -275,6 +275,8 @@ export function useChangeTracking(
     handle?: string;
     seoTitle?: string;
     metaDescription?: string;
+    productType?: string;
+    summary?: string;
   },
   contentType: ContentType
 ) {
@@ -289,6 +291,8 @@ export function useChangeTracking(
     handle: string;
     seoTitle: string;
     metaDescription: string;
+    productType: string;
+    summary: string;
   } | null>(null);
 
   // Track previous item ID and language to detect actual changes
@@ -320,6 +324,12 @@ export function useChangeTracking(
       handle: getOriginalValue(SHOPIFY_TRANSLATION_KEYS.HANDLE, item.handle || ""),
       seoTitle: getOriginalValue(SHOPIFY_TRANSLATION_KEYS.META_TITLE, item.seo?.title || ""),
       metaDescription: getOriginalValue(SHOPIFY_TRANSLATION_KEYS.META_DESCRIPTION, item.seo?.description || ""),
+      productType: contentType === 'products'
+        ? getOriginalValue(SHOPIFY_TRANSLATION_KEYS.PRODUCT_TYPE, (item as any).productType || "")
+        : "",
+      summary: contentType === 'pages'
+        ? getOriginalValue(SHOPIFY_TRANSLATION_KEYS.SUMMARY, (item as any).summary || "")
+        : "",
     };
   }, [contentType, currentLanguage, primaryLocale]);
 
@@ -355,6 +365,8 @@ export function useChangeTracking(
         handle: editableFields.handle || "",
         seoTitle: editableFields.seoTitle || "",
         metaDescription: editableFields.metaDescription || "",
+        productType: editableFields.productType || "",
+        summary: editableFields.summary || "",
       };
     }
   }
@@ -380,8 +392,14 @@ export function useChangeTracking(
     const handleChanged = (editableFields.handle || "") !== originals.handle;
     const seoTitleChanged = (editableFields.seoTitle || "") !== originals.seoTitle;
     const metaDescChanged = (editableFields.metaDescription || "") !== originals.metaDescription;
+    const productTypeChanged = contentType === 'products'
+      ? (editableFields.productType || "") !== originals.productType
+      : false;
+    const summaryChanged = contentType === 'pages'
+      ? (editableFields.summary || "") !== originals.summary
+      : false;
 
-    const newHasChanges = titleChanged || descChanged || handleChanged || seoTitleChanged || metaDescChanged;
+    const newHasChanges = titleChanged || descChanged || handleChanged || seoTitleChanged || metaDescChanged || productTypeChanged || summaryChanged;
 
     // Only update state if value actually changed to prevent unnecessary re-renders
     if (newHasChanges !== hasChanges) {
@@ -394,6 +412,8 @@ export function useChangeTracking(
     editableFields.handle,
     editableFields.seoTitle,
     editableFields.metaDescription,
+    editableFields.productType,
+    editableFields.summary,
     // Use selectedItem?.id instead of selectedItem to prevent re-runs on reference changes
     selectedItem?.id,
     currentLanguage,

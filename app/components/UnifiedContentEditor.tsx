@@ -899,6 +899,7 @@ function FieldRenderer(props: FieldRendererProps & { plan?: string; state?: any;
         isDataLoading={isDataLoading}
         sourceTextAvailable={sourceTextAvailable}
         disableGeneration={disableGeneration}
+        isFallbackValue={isFallbackValue}
         onGenerateAI={field.supportsAI !== false && isPrimaryLocale ? onGenerateAI : undefined}
         onFormatAI={field.supportsFormatting !== false && isPrimaryLocale ? onFormatAI : undefined}
         onTranslate={field.supportsTranslation !== false ? onTranslate : undefined}

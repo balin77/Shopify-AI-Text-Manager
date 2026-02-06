@@ -28,6 +28,8 @@ interface AIEditableHTMLFieldProps {
   hasFieldMissingTranslations?: boolean;
   /** If true, only "Improve with AI" is shown (disabled when empty). Used for templates. */
   disableGeneration?: boolean;
+  /** If true, the value is a fallback from primary locale (shown in gray) */
+  isFallbackValue?: boolean;
   onGenerateAI?: () => void;
   onFormatAI?: () => void;
   onTranslate?: () => void;
@@ -56,6 +58,7 @@ export function AIEditableHTMLField({
   hasMissingTranslations = false,
   hasFieldMissingTranslations = false,
   disableGeneration = false,
+  isFallbackValue = false,
   onGenerateAI,
   onFormatAI,
   onTranslate,
@@ -155,8 +158,11 @@ export function AIEditableHTMLField({
 
     if (isPrimaryLocale && value && fieldHasMissingTranslations) return "bg-missing-translation";
 
-    // Priority 4: Foreign locale - orange if not translated, white if translated
-    if (!isPrimaryLocale) return isTranslated ? "bg-white" : "bg-untranslated";
+    // Priority 4: Foreign locale - fallback value (gray), orange if not translated, white if translated
+    if (!isPrimaryLocale) {
+      if (isFallbackValue) return "bg-fallback";
+      return isTranslated ? "bg-white" : "bg-untranslated";
+    }
 
     // Default: White for primary locale with content
     return "bg-white";
