@@ -21,17 +21,16 @@
   display: none;
 }
 
-/* Force consistent slim size for language bar and operation buttons at ALL breakpoints */
-.unified-editor-container > .Polaris-Card button,
-.unified-editor-container > .Polaris-Card .Polaris-Button,
-.unified-editor-container > div > .Polaris-Card button,
-.unified-editor-container > div > .Polaris-Card .Polaris-Button,
-.operation-buttons-card button,
-.operation-buttons-card .Polaris-Button {
-  min-height: unset !important;
-  min-width: unset !important;
-  padding: 4px 12px !important;
-  width: auto !important;
+/*
+ * Force consistent button size for language bar and operation buttons.
+ * Polaris buttons use --p-height-800 (32px) on mobile and --p-height-700 (28px) on desktop.
+ * By setting --p-height-800 to the desktop value, buttons stay the same size everywhere.
+ */
+.unified-editor-container > [class*="Polaris-Card"],
+.unified-editor-container > div > [class*="Polaris-Card"],
+[class*="operation-buttons"] {
+  --p-height-800: var(--p-height-700);
+  --p-width-800: var(--p-width-700);
 }
 
 @media (max-width: 767px) {
