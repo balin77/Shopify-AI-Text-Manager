@@ -21,25 +21,25 @@
   display: none;
 }
 
+/* Force consistent slim size for language bar and operation buttons at ALL breakpoints */
+.unified-editor-container > .Polaris-Card button,
+.unified-editor-container > .Polaris-Card .Polaris-Button,
+.unified-editor-container > div > .Polaris-Card button,
+.unified-editor-container > div > .Polaris-Card .Polaris-Button,
+.operation-buttons-card button,
+.operation-buttons-card .Polaris-Button {
+  min-height: unset !important;
+  min-width: unset !important;
+  padding: 4px 12px !important;
+  width: auto !important;
+}
+
 @media (max-width: 767px) {
   .lang-full {
     display: none;
   }
   .lang-short {
     display: block;
-  }
-
-  /* Override global touch-target enlargement for editor buttons */
-  .unified-editor-container > .Polaris-Card button,
-  .unified-editor-container > .Polaris-Card .Polaris-Button,
-  .unified-editor-container > div > .Polaris-Card button,
-  .unified-editor-container > div > .Polaris-Card .Polaris-Button,
-  .operation-buttons-card button,
-  .operation-buttons-card .Polaris-Button {
-    min-height: unset;
-    min-width: unset;
-    padding: 4px 12px;
-    width: auto;
   }
 }
 
