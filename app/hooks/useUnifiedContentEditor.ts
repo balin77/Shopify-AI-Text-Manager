@@ -1087,9 +1087,18 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // Add the alt-texts
     formDataObj.imageAltTexts = JSON.stringify(pendingAltTexts);
 
+    // Include changedFields so the backend knows which text fields actually changed
+    // This prevents productType from being accidentally cleared when only alt-texts changed
+    if (currentLanguage === primaryLocale) {
+      const changedFields = getChangedFields(editableValues);
+      if (changedFields.length > 0) {
+        formDataObj.changedFields = JSON.stringify(changedFields);
+      }
+    }
+
     savedLocaleRef.current = currentLanguage;
     safeSubmit(formDataObj, { method: "POST" });
-  }, [imageAltTexts, selectedItemId, currentLanguage, primaryLocale, effectiveFieldDefinitions, editableValues, safeSubmit]);
+  }, [imageAltTexts, selectedItemId, currentLanguage, primaryLocale, effectiveFieldDefinitions, editableValues, safeSubmit, getChangedFields]);
 
   // Handle "translateFieldToAllLocales" response (from Accept & Translate)
   useEffect(() => {

@@ -122,7 +122,11 @@ export async function handleUpdateProduct(
         if (params.handle) updateData.handle = params.handle;
         if (params.seoTitle !== undefined) updateData.seoTitle = params.seoTitle;
         if (params.metaDescription !== undefined) updateData.seoDescription = params.metaDescription;
-        if (params.productType !== undefined) updateData.productType = params.productType;
+        if (params.productType) {
+          updateData.productType = params.productType;
+        } else if (changedFields.includes('productType')) {
+          updateData.productType = params.productType || null;
+        }
 
         await db.product.update({
           where: { id: productId },
@@ -809,6 +813,24 @@ async function updatePrimaryProduct(
     );
   }
 
+  // Build mutation input - only include productType if it has a value or was explicitly changed
+  // Sending productType: "" to Shopify CLEARS it, so we must omit it when unchanged
+  const mutationInput: any = {
+    id: productId,
+    title: params.title,
+    handle: params.handle,
+    descriptionHtml: params.descriptionHtml,
+    seo: {
+      title: params.seoTitle,
+      description: params.metaDescription,
+    },
+  };
+
+  // Only send productType if it has a value OR if user explicitly changed it
+  if (params.productType || changedFields.includes('productType')) {
+    mutationInput.productType = params.productType || "";
+  }
+
   const response = await gateway.graphql(
     `#graphql
       mutation updateProduct($input: ProductInput!) {
@@ -831,17 +853,7 @@ async function updatePrimaryProduct(
       }`,
     {
       variables: {
-        input: {
-          id: productId,
-          title: params.title,
-          handle: params.handle,
-          descriptionHtml: params.descriptionHtml,
-          productType: params.productType,
-          seo: {
-            title: params.seoTitle,
-            description: params.metaDescription,
-          },
-        },
+        input: mutationInput,
       },
     }
   );
@@ -870,7 +882,12 @@ async function updatePrimaryProduct(
     if (params.handle !== undefined) updateData.handle = params.handle || null;
     if (params.seoTitle !== undefined) updateData.seoTitle = params.seoTitle || null;
     if (params.metaDescription !== undefined) updateData.seoDescription = params.metaDescription || null;
-    if (params.productType !== undefined) updateData.productType = params.productType || null;
+    // Only update productType in DB if it has a value or was explicitly changed
+    if (params.productType) {
+      updateData.productType = params.productType;
+    } else if (changedFields.includes('productType')) {
+      updateData.productType = params.productType || null;
+    }
 
     // Always update lastSyncedAt
     updateData.lastSyncedAt = new Date();
