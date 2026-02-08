@@ -14,7 +14,6 @@ import { UnifiedItemList } from "./unified/UnifiedItemList";
 import { UnifiedLanguageBar } from "./unified/UnifiedLanguageBar";
 import { ImageGalleryField } from "./unified/ImageGalleryField";
 import { OptionsField } from "./unified/OptionsField";
-import { SaveDiscardButtons } from "./SaveDiscardButtons";
 import { ReloadButton } from "./ReloadButton";
 import { SeoSidebar } from "./SeoSidebar";
 import { useNavigationHeight } from "../contexts/NavigationHeightContext";
@@ -357,26 +356,38 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                     )}
                   </InlineStack>
 
-                  {/* Right: Save/Discard + Reload Buttons */}
-                  <InlineStack gap="200" blockAlign="center">
-                    <SaveDiscardButtons
-                      hasChanges={state.hasChanges}
-                      onSave={handlers.handleSave}
-                      onDiscard={handlers.handleDiscard}
-                      highlightSaveButton={navigationGuard.highlightSaveButton}
-                      saveText={t.content?.save || "Save"}
-                      discardText={t.content?.discardChanges || "Discard"}
-                      action="updateContent"
-                      fetcherState={fetcherState}
-                      fetcherFormData={fetcherFormData}
-                    />
+                  {/* Right: Save/Discard + Reload Buttons - nowrap to stay together */}
+                  <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexShrink: 0, flexWrap: "nowrap" }}>
+                    <Button
+                      onClick={handlers.handleDiscard}
+                      disabled={!state.hasChanges || fetcherState !== "idle"}
+                      size="slim"
+                    >
+                      {t.content?.discardChanges || "Discard"}
+                    </Button>
+                    <div
+                      style={{
+                        animation: navigationGuard.highlightSaveButton ? "pulse 1.5s ease-in-out infinite" : "none",
+                        borderRadius: "8px",
+                      }}
+                    >
+                      <Button
+                        variant={state.hasChanges ? "primary" : undefined}
+                        onClick={handlers.handleSave}
+                        disabled={!state.hasChanges}
+                        loading={fetcherState !== "idle" && fetcherFormData?.get("action") === "updateContent"}
+                        size="slim"
+                      >
+                        {t.content?.save || "Save"}
+                      </Button>
+                    </div>
                     <ReloadButton
                       resourceId={selectedItem.id}
                       resourceType={getResourceType(config.contentType)}
                       locale={state.currentLanguage}
                       onReloadComplete={editor.helpers.triggerDataRefresh}
                     />
-                  </InlineStack>
+                  </div>
                 </InlineStack>
               </Card>
               </div>

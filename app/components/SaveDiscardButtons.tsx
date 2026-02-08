@@ -1,6 +1,5 @@
 import { useRef } from "react";
-import { Button, InlineStack, BlockStack, Tooltip } from "@shopify/polaris";
-import { UndoIcon } from "@shopify/polaris-icons";
+import { Button, InlineStack, BlockStack } from "@shopify/polaris";
 import "../styles/SaveDiscardButtons.css";
 
 interface SaveDiscardButtonsProps {
@@ -55,15 +54,13 @@ export function SaveDiscardButtons({
 
   const buttons = (
     <>
-      <Tooltip content={discardText}>
-        <Button
-          onClick={onDiscard}
-          disabled={!hasChanges || fetcherState !== "idle"}
-          size={slim ? "slim" : undefined}
-          icon={UndoIcon}
-          accessibilityLabel={discardText}
-        />
-      </Tooltip>
+      <Button
+        onClick={onDiscard}
+        disabled={!hasChanges || fetcherState !== "idle"}
+        size={slim ? "slim" : undefined}
+      >
+        {discardText}
+      </Button>
       <div
         style={{
           animation: highlightSaveButton ? "pulse 1.5s ease-in-out infinite" : "none",
