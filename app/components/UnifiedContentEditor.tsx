@@ -12,8 +12,6 @@ import { AIEditableField } from "./AIEditableField";
 import { AIEditableHTMLField } from "./AIEditableHTMLField";
 import { UnifiedItemList } from "./unified/UnifiedItemList";
 import { UnifiedLanguageBar } from "./unified/UnifiedLanguageBar";
-import { UnifiedLanguageBarMobile } from "./unified/UnifiedLanguageBarMobile";
-import { UnifiedOperationsBarMobile } from "./unified/UnifiedOperationsBarMobile";
 import { ImageGalleryField } from "./unified/ImageGalleryField";
 import { OptionsField } from "./unified/OptionsField";
 import { SaveDiscardButtons } from "./SaveDiscardButtons";
@@ -279,12 +277,12 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
         </div>
 
         {/* Middle: Content Editor */}
-        <div className="unified-editor-container" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: "400px" }}>
+        <div className="unified-editor-container" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
           {selectedItem ? (
             <>
 
-              {/* Language Selection Bar - Normal (shown >= 768px) */}
-              <Card padding="400" className="hide-on-narrow-mobile">
+              {/* Language Selection Bar */}
+              <Card padding="400">
                 <UnifiedLanguageBar
                   shopLocales={shopLocales}
                   currentLanguage={state.currentLanguage}
@@ -308,59 +306,8 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                 />
               </Card>
 
-              {/* Mobile: Language and Operations Dropdowns Side-by-Side (shown < 768px) */}
-              <div className="mobile-dropdowns-only mobile-dropdowns-container">
-                <UnifiedLanguageBarMobile
-                  shopLocales={shopLocales}
-                  currentLanguage={state.currentLanguage}
-                  primaryLocale={primaryLocale}
-                  selectedItem={selectedItem}
-                  contentType={config.contentType}
-                  hasChanges={state.hasChanges}
-                  onLanguageChange={handlers.handleLanguageChange}
-                  enabledLanguages={state.enabledLanguages}
-                  onToggleLanguage={handlers.handleToggleLanguage}
-                  isLoadingData={state.isLoadingData}
-                  t={{
-                    primaryLocaleSuffix: t.content?.primaryLanguageSuffix || "Primary",
-                    selectLanguage: t.content?.selectLanguage || "Select Language",
-                  }}
-                />
-                <UnifiedOperationsBarMobile
-                  isPrimaryLocale={state.currentLanguage === primaryLocale}
-                  hasChanges={state.hasChanges}
-                  fetcherState={fetcherState}
-                  fetcherFormData={fetcherFormData}
-                  resourceId={selectedItem.id}
-                  resourceType={getResourceType(config.contentType)}
-                  locale={state.currentLanguage}
-                  onTranslateAll={
-                    state.currentLanguage === primaryLocale
-                      ? handlers.handleTranslateAll
-                      : handlers.handleTranslateAllForLocale
-                  }
-                  onClearAll={
-                    state.currentLanguage === primaryLocale
-                      ? handlers.handleClearAllClick
-                      : handlers.handleClearAllForLocaleClick
-                  }
-                  onSave={handlers.handleSave}
-                  onDiscard={handlers.handleDiscard}
-                  onReloadComplete={editor.helpers.triggerDataRefresh}
-                  highlightSaveButton={navigationGuard.highlightSaveButton}
-                  t={{
-                    actions: t.content?.actions || "Actions",
-                    translateAll: t.content?.translateAll || "🌍 Translate All",
-                    translating: t.content?.translating || "Translating...",
-                    clearAll: t.content?.clearAll || "Clear All",
-                    saveChanges: t.content?.saveChanges || "Save Changes",
-                    discard: t.content?.discardChanges || "Discard",
-                  }}
-                />
-              </div>
-
-              {/* Operation Buttons - Normal (shown >= 768px) */}
-              <div style={{ marginTop: "1rem" }} className="hide-on-narrow-mobile">
+              {/* Operation Buttons */}
+              <div style={{ marginTop: "1rem" }}>
                 <Card padding="400" className="operation-buttons-card">
                 <InlineStack align="space-between" blockAlign="center">
                   {/* Left: Translate All + Clear All Buttons */}

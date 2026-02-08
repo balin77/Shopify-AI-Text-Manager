@@ -115,31 +115,37 @@ export function UnifiedLanguageBar({
         const isPrimary = locale.primary;
         const isCurrentLanguage = currentLanguage === locale.locale;
 
+        const buttonProps = {
+          variant: isCurrentLanguage ? "primary" as const : undefined,
+          onClick: () => {
+            if (ctrlPressedRef.current[locale.locale]) {
+              ctrlPressedRef.current[locale.locale] = false;
+              return;
+            }
+            onLanguageChange(locale.locale);
+          },
+          onPointerDown: (event: React.PointerEvent) => {
+            if (event.ctrlKey && onToggleLanguage && !isPrimary) {
+              ctrlPressedRef.current[locale.locale] = true;
+              event.preventDefault();
+              onToggleLanguage(locale.locale);
+            }
+          },
+          size: "slim" as const,
+          tone: (!isEnabled && !isPrimary ? "critical" as const : undefined),
+        };
+
+        const fullLabel = `${locale.name || locale.locale}${locale.primary ? ` (${t.primaryLocaleSuffix || "Primary"})` : ""}`;
+        const shortLabel = locale.locale.charAt(0).toUpperCase() + locale.locale.slice(1);
+
         return (
           <div key={locale.locale} style={buttonStyle}>
-            <Button
-              variant={isCurrentLanguage ? "primary" : undefined}
-              onClick={() => {
-                // Don't navigate if Ctrl was pressed - that's for toggling language mode
-                if (ctrlPressedRef.current[locale.locale]) {
-                  ctrlPressedRef.current[locale.locale] = false;
-                  return;
-                }
-                onLanguageChange(locale.locale);
-              }}
-              onPointerDown={(event: React.PointerEvent) => {
-                // Ctrl+Click toggles language activation (except for primary locale)
-                if (event.ctrlKey && onToggleLanguage && !isPrimary) {
-                  ctrlPressedRef.current[locale.locale] = true;
-                  event.preventDefault();
-                  onToggleLanguage(locale.locale);
-                }
-              }}
-              size="slim"
-              tone={!isEnabled && !isPrimary ? "critical" : undefined}
-            >
-              {locale.name || locale.locale} {locale.primary ? `(${t.primaryLocaleSuffix || "Primary"})` : ""}
-            </Button>
+            <div className="lang-full">
+              <Button {...buttonProps}>{fullLabel}</Button>
+            </div>
+            <div className="lang-short">
+              <Button {...buttonProps}>{shortLabel}</Button>
+            </div>
           </div>
         );
       })}
