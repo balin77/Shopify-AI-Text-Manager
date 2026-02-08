@@ -5,13 +5,12 @@
  * Based on the products page structure with all bug fixes included.
  */
 
-import { useState } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { Page, Card, Text, BlockStack, InlineStack, Button, Modal, TextContainer, TextField, Icon, Spinner } from "@shopify/polaris";
 import { SearchIcon, ChevronLeftIcon, ChevronRightIcon } from "@shopify/polaris-icons";
 import { AIEditableField } from "./AIEditableField";
 import { AIEditableHTMLField } from "./AIEditableHTMLField";
 import { UnifiedItemList } from "./unified/UnifiedItemList";
-import { UnifiedItemListMobile } from "./unified/UnifiedItemListMobile";
 import { UnifiedLanguageBar } from "./unified/UnifiedLanguageBar";
 import { UnifiedLanguageBarMobile } from "./unified/UnifiedLanguageBarMobile";
 import { UnifiedOperationsBarMobile } from "./unified/UnifiedOperationsBarMobile";
@@ -22,6 +21,7 @@ import { ReloadButton } from "./ReloadButton";
 import { SeoSidebar } from "./SeoSidebar";
 import { useNavigationHeight } from "../contexts/NavigationHeightContext";
 import { usePlan } from "../contexts/PlanContext";
+import { useItemSelector } from "../contexts/ItemSelectorContext";
 import { contentEditorStyles } from "../utils/contentEditor.utils";
 import "../styles/UnifiedContentEditor.css";
 import type { ContentEditorConfig, UseContentEditorReturn, FieldDefinition } from "../types/content-editor.types";
@@ -121,6 +121,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
 
   const { state, handlers, selectedItem, navigationGuard, helpers, effectiveFieldDefinitions } = editor;
   const { getMaxProducts } = usePlan();
+  const { registerItems, clearItems } = useItemSelector();
 
   // Use effective field definitions (dynamic for templates, static for other content types)
   const fieldDefinitions = effectiveFieldDefinitions || config.fieldDefinitions;
@@ -139,8 +140,8 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   // Get the set of fields with loading AI actions (for per-field loading states)
   const loadingFieldKeys = state.loadingFieldKeys;
 
-  // Transform items to UnifiedItem format
-  const unifiedItems: UnifiedItem[] = items.map((item) => ({
+  // Transform items to UnifiedItem format (memoized to prevent re-render cascades)
+  const unifiedItems: UnifiedItem[] = useMemo(() => items.map((item) => ({
     id: item.id,
     title: config.getPrimaryField ? config.getPrimaryField(item) : item.title,
     subtitle: config.getSubtitle ? config.getSubtitle(item) : undefined,
@@ -148,7 +149,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     status: item.status,
     image: item.featuredImage || item.image,
     ...item,
-  }));
+  })), [items, config.getPrimaryField, config.getSubtitle]);
 
   // Plan limit configuration
   const maxItems = getMaxProducts(); // This works for all content types
@@ -206,6 +207,33 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   const sidebarRenderer = renderSidebar || defaultRenderSidebar;
   const { getTotalNavHeight } = useNavigationHeight();
 
+  // Stable ref for handleItemSelect to avoid re-triggering useEffect
+  const handleItemSelectRef = useRef(handlers.handleItemSelect);
+  handleItemSelectRef.current = handlers.handleItemSelect;
+
+  // Register items in navbar item selector context (stable deps only)
+  useEffect(() => {
+    registerItems({
+      items: unifiedItems,
+      selectedItemId: state.selectedItemId,
+      onItemSelect: (itemId: string) => handleItemSelectRef.current(itemId),
+      resourceName: {
+        singular: config.displayNameSingular,
+        plural: config.displayName,
+      },
+      t: {
+        searchPlaceholder: t.content?.searchPlaceholder,
+        noResults: t.content?.noResults || "No items found",
+        selectItem: t.content?.selectItem || `Select ${config.displayNameSingular}`,
+      },
+    });
+  }, [unifiedItems, state.selectedItemId, config.displayNameSingular, config.displayName]);
+
+  // Cleanup: clear items when component unmounts
+  useEffect(() => {
+    return () => { clearItems(); };
+  }, [clearItems]);
+
   return (
     <Page fullWidth>
       <style>{contentEditorStyles}</style>
@@ -252,25 +280,6 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
 
         {/* Middle: Content Editor */}
         <div className="unified-editor-container" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: "400px" }}>
-          {/* Mobile: Item Selection Dropdown (CSS-controlled visibility) */}
-          <div className="mobile-only" style={{ marginBottom: "1rem" }}>
-            <UnifiedItemListMobile
-              items={unifiedItems}
-              selectedItemId={state.selectedItemId}
-              onItemSelect={handlers.handleItemSelect}
-              resourceName={{
-                singular: config.displayNameSingular,
-                plural: config.displayName,
-              }}
-              renderItem={renderListItem}
-              t={{
-                searchPlaceholder: t.content?.searchPlaceholder,
-                noResults: t.content?.noResults || "No items found",
-                selectItem: t.content?.selectItem || `Select ${config.displayNameSingular}`,
-              }}
-            />
-          </div>
-
           {selectedItem ? (
             <>
 
