@@ -28,6 +28,19 @@
   .lang-short {
     display: block;
   }
+
+  /* Override global touch-target enlargement for editor buttons */
+  .unified-editor-container > .Polaris-Card button,
+  .unified-editor-container > .Polaris-Card .Polaris-Button,
+  .unified-editor-container > div > .Polaris-Card button,
+  .unified-editor-container > div > .Polaris-Card .Polaris-Button,
+  .operation-buttons-card button,
+  .operation-buttons-card .Polaris-Button {
+    min-height: unset;
+    min-width: unset;
+    padding: 4px 12px;
+    width: auto;
+  }
 }
 
 @media (min-width: 900px) {
@@ -69,16 +82,6 @@
   /* Language bar - wrap buttons on mobile */
   .language-bar-buttons {
     flex-wrap: wrap !important;
-  }
-
-  /* Operation buttons - full width stack */
-  .operation-buttons-card .Polaris-InlineStack {
-    flex-direction: column !important;
-    width: 100%;
-  }
-
-  .operation-buttons-card button {
-    width: 100%;
   }
 }
 
@@ -180,17 +183,13 @@
   margin-bottom: 16px;
 }
 
-/* Mobile: Stack operation buttons */
+/* Mobile: Wrap operation buttons */
 @media (max-width: 767px) {
   .operation-buttons-container {
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
+    flex-wrap: wrap;
     gap: 8px;
-  }
-
-  .operation-buttons-container button {
-    width: 100%;
-    justify-content: center;
   }
 }
 
