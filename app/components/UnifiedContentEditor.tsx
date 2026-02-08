@@ -364,7 +364,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                       onSave={handlers.handleSave}
                       onDiscard={handlers.handleDiscard}
                       highlightSaveButton={navigationGuard.highlightSaveButton}
-                      saveText={t.content?.saveChanges || "Save Changes"}
+                      saveText={t.content?.save || "Save"}
                       discardText={t.content?.discardChanges || "Discard"}
                       action="updateContent"
                       fetcherState={fetcherState}
