@@ -1,5 +1,5 @@
-import { useLocation, useNavigate, useFetcher, useMatches, useNavigation } from "@remix-run/react";
-import { InlineStack, Text, Banner, ButtonGroup, Button, Tooltip, Spinner } from "@shopify/polaris";
+import { useLocation, useFetcher, useMatches, useNavigation } from "@remix-run/react";
+import { InlineStack, Text, Button, Tooltip, Spinner } from "@shopify/polaris";
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { usePlan } from "../contexts/PlanContext";
@@ -8,13 +8,11 @@ import { useItemSelector } from "../contexts/ItemSelectorContext";
 import { useAppNavigation } from "../hooks/useAppNavigation";
 import { MobileMenu } from "./MobileMenu";
 import { UnifiedItemSelectorCompact } from "./unified/UnifiedItemSelectorCompact";
-import { type Plan } from "../config/plans";
 import { UI_CONFIG } from "../config/constants";
 import { useState, useEffect, useRef } from "react";
 
 export function MainNavigation() {
   const location = useLocation();
-  const navigate = useNavigate();
   const navigation = useNavigation();
   const matches = useMatches();
   const { handleNavigate } = useAppNavigation();
@@ -128,7 +126,7 @@ export function MainNavigation() {
 
       if (task.type === "bulkTranslation") {
         if (task.fieldType === "all") {
-          message = t.tasks?.translationCompleted || `Translation completed for "${resourceTitle}"`;
+          message = t.tasks?.translationCompleted?.replace("{title}", resourceTitle) || `Translation completed for "${resourceTitle}"`;
         } else {
           const fieldName = task.fieldType || "field";
           message = t.tasks?.fieldTranslationCompleted?.replace("{field}", fieldName).replace("{title}", resourceTitle)
@@ -139,7 +137,7 @@ export function MainNavigation() {
         message = t.tasks?.generationCompleted?.replace("{field}", fieldName).replace("{title}", resourceTitle)
           || `AI generation completed for ${fieldName} in "${resourceTitle}"`;
       } else {
-        message = t.tasks?.taskCompleted || `Task completed for "${resourceTitle}"`;
+        message = t.tasks?.taskCompleted?.replace("{title}", resourceTitle) || `Task completed for "${resourceTitle}"`;
       }
 
       if (isMountedRef.current) {
@@ -309,8 +307,6 @@ export function MainNavigation() {
     searchParams.set("tab", "plan");
     handleNavigate("/app/settings", { searchParams });
   };
-
-  const plans: Plan[] = ["free", "basic", "pro", "max"];
 
   // Content types for mobile menu (wenn auf Content-Seiten)
   const isOnContentPage = location.pathname.startsWith("/app/collections") ||
