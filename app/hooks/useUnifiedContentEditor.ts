@@ -428,14 +428,21 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     }
 
     // Skip data load if flagged (e.g., after save/clear to prevent overwriting user changes)
+    // BUT: Never skip when the language changed - a language switch always needs fresh data
+    // loaded into editableValues for the new language. Without this, switching from a foreign
+    // language to primary after saving leaves stale foreign-language values in editableValues
+    // which mismatch the primary-language originals, causing a false-positive hasChanges.
     if (skipNextDataLoadRef.current) {
       skipNextDataLoadRef.current = false;
-      debugLog.dataLoad(' Skipping data load (skipNextDataLoadRef was set)');
-      // Still update refs so the next real change is detected
-      prevItemIdForDataLoadRef.current = selectedItemId;
-      prevCurrentLanguageRef.current = currentLanguage;
-      prevDataRefreshTriggerRef.current = dataRefreshTrigger;
-      return;
+      if (!languageChanged) {
+        debugLog.dataLoad(' Skipping data load (skipNextDataLoadRef was set)');
+        // Still update refs so the next real change is detected
+        prevItemIdForDataLoadRef.current = selectedItemId;
+        prevCurrentLanguageRef.current = currentLanguage;
+        prevDataRefreshTriggerRef.current = dataRefreshTrigger;
+        return;
+      }
+      debugLog.dataLoad(' skipNextDataLoadRef was set but language changed - proceeding with data load');
     }
 
     // Update refs
