@@ -2370,7 +2370,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         const translatedCount = result.translatedAltTexts ? Object.keys(result.translatedAltTexts).length : targetLocales.length;
 
         showInfoBox(
-          t.content?.altTextTranslatedToLanguages
+          (t.content?.altTextTranslatedToLanguages as string | undefined)
             ?.replace("{count}", String(translatedCount))
             || `Alt-text translated to ${translatedCount} language(s)`,
           "success",

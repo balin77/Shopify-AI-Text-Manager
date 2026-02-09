@@ -375,7 +375,7 @@ export function MainNavigation() {
 
           {/* Navigation Tabs - versteckt auf Mobile (nur sichtbar ab 900px) */}
           <div className="desktop-only">
-            <InlineStack gap="400" blockAlign="center" role="tablist">
+            <InlineStack gap="400" blockAlign="center">
               {tabs.map((tab) => {
               const isActive = location.pathname.startsWith(tab.path);
               const showProductCount = tab.id === "products" && productCount !== undefined;
@@ -527,9 +527,9 @@ export function MainNavigation() {
             <Button
               onClick={handlePlanNavigation}
               pressed
-              ariaLabel={`Current plan: ${getPlanDisplayName(plan)}`}
+              accessibilityLabel={`Current plan: ${getPlanDisplayName()}`}
             >
-              {getPlanDisplayName(plan)}
+              {getPlanDisplayName()}
             </Button>
           </div>
         </div>

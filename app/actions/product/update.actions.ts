@@ -97,7 +97,7 @@ export async function handleUpdateProduct(
           if (value !== undefined && value !== null) {
             await db.contentTranslation.upsert({
               where: {
-                resourceId_locale_key: {
+                resourceId_key_locale: {
                   resourceId: productId,
                   locale: params.locale,
                   key: translationKey,

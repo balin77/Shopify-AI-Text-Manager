@@ -381,8 +381,16 @@ export interface UseContentEditorReturn {
     setOriginalTemplateValues: (values: Record<string, string>) => void;
     /** Trigger a data refresh to reload editableValues from fresh data (used by ReloadButton) */
     triggerDataRefresh: () => void;
+    /** Check if a specific field is currently loading */
+    isFieldLoading: (fieldKey: string, action?: string) => boolean;
   };
 
   /** Effective field definitions (dynamic for templates, static for other content types) */
   effectiveFieldDefinitions: FieldDefinition[];
+
+  /** Focus management for accessibility */
+  focusManagement: {
+    firstFieldRef: React.RefObject<HTMLInputElement | HTMLTextAreaElement | null>;
+    setItemFocus: (itemId: string) => void;
+  };
 }

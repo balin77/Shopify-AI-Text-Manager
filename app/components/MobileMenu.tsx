@@ -322,7 +322,7 @@ export function MobileMenu({
                   textAlign: "left",
                 }}
               >
-                <span>{getPlanDisplayName(plan)}</span>
+                <span>{getPlanDisplayName()}</span>
               </button>
             </div>
           </nav>

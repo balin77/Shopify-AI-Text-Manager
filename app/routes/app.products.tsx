@@ -472,7 +472,7 @@ export default function ProductsPage() {
     if (!isInitialLoad && products.length >= 0) {
       measurePageLoad('ProductsPage', {
         productCount: products.length,
-        hasImages: products.some(p => p.images && p.images.length > 0),
+        hasImages: products.some(p => p?.images && p.images.length > 0),
       });
     }
   }, [isInitialLoad, products]);
