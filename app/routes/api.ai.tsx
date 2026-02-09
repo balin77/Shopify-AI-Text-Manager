@@ -1132,7 +1132,7 @@ Allowed formatting changes:
           prompt += `\n\nReturn ONLY the formatted ${fieldLabel}. Keep the original language. Do NOT add new information or rewrite the text. Output the result in ${mainLanguage}.`;
         }
 
-        // Create task entry with prompt
+        // Create task entry (prompt is saved by AI service via savePromptToTask)
         const task = await db.task.create({
           data: {
             shop: session.shop,
@@ -1143,7 +1143,6 @@ Allowed formatting changes:
             resourceTitle: fieldType,
             fieldType,
             progress: 0,
-            prompt,
             expiresAt: getTaskExpirationDate(),
           },
         });
