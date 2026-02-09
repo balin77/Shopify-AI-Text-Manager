@@ -2105,6 +2105,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // Force isLoadingData to false to ensure change detection works
     setIsLoadingData(false);
 
+    // If this field was a fallback, remove it since user accepted an AI value
+    if (fallbackFields.has(fieldKey)) {
+      setFallbackFields((prev) => {
+        const newSet = new Set(prev);
+        newSet.delete(fieldKey);
+        return newSet;
+      });
+    }
+
     // Create the new values with the accepted suggestion
     const newValues = {
       ...editableValues,
@@ -2137,6 +2146,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
     // Set flag to prevent translation deletion during this flow
     setIsAcceptAndTranslateFlow(true);
+
+    // If this field was a fallback, remove it since user accepted an AI value
+    if (fallbackFields.has(fieldKey)) {
+      setFallbackFields((prev) => {
+        const newSet = new Set(prev);
+        newSet.delete(fieldKey);
+        return newSet;
+      });
+    }
 
     // Create the new values with the accepted suggestion
     const newValues = {
