@@ -2201,9 +2201,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     });
     setEditableValues(clearedValues);
 
-    // Clear image alt texts
-    setImageAltTexts({});
-    setOriginalAltTexts({});
+    // Clear image alt texts - set each to "" explicitly so the UI doesn't fall back to original image.altText
+    if (selectedItem?.images && selectedItem.images.length > 0) {
+      const clearedAltTexts: Record<number, string> = {};
+      selectedItem.images.forEach((_: ContentImage, index: number) => {
+        clearedAltTexts[index] = "";
+      });
+      setImageAltTexts(clearedAltTexts);
+      setOriginalAltTexts({});
+    }
     setAltTextSuggestions({});
 
     // Close modal
@@ -2233,9 +2239,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     });
     setEditableValues(clearedValues);
 
-    // Clear image alt texts
-    setImageAltTexts({});
-    setOriginalAltTexts({});
+    // Clear image alt texts - set each to "" explicitly so the UI doesn't fall back to original image.altText
+    if (selectedItem?.images && selectedItem.images.length > 0) {
+      const clearedAltTexts: Record<number, string> = {};
+      selectedItem.images.forEach((_: ContentImage, index: number) => {
+        clearedAltTexts[index] = "";
+      });
+      setImageAltTexts(clearedAltTexts);
+      setOriginalAltTexts({});
+    }
     setAltTextSuggestions({});
 
     // Close modal
