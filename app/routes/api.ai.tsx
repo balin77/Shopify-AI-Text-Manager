@@ -12,6 +12,17 @@ import { getTaskExpirationDate } from "../../src/utils/task.utils";
 import { logger } from "~/utils/logger.server";
 import { TRANSLATE_CONTENT } from "../graphql/content.mutations";
 import { sanitizeSlug } from "../utils/slug.utils";
+import { PRODUCTS_CONFIG, COLLECTIONS_CONFIG, BLOGS_CONFIG, PAGES_CONFIG, POLICIES_CONFIG } from "../config/content-fields.config";
+import type { ContentEditorConfig } from "../types/content-editor.types";
+
+// Map contentType to its config for looking up field definitions
+const CONTENT_CONFIGS: Record<string, ContentEditorConfig> = {
+  products: PRODUCTS_CONFIG,
+  collections: COLLECTIONS_CONFIG,
+  blogs: BLOGS_CONFIG,
+  pages: PAGES_CONFIG,
+  policies: POLICIES_CONFIG,
+};
 
 // Helper to build translation prompt (same as in AIService)
 function buildTranslationPrompt(sourceText: string, fromLang: string, toLang: string): string {
@@ -1022,15 +1033,104 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
           return json({ success: false, error: "No content available to format" }, { status: 400 });
         }
 
-        // Build the prompt
-        const prompt = `Improve and format the following content while keeping the same language (${mainLanguage}).
+        // Load AI instructions for format examples and guidelines
+        // Cast to Record for dynamic key access (keys are built from aiInstructionsKey)
+        const aiInstructions = await db.aIInstructions.findUnique({
+          where: { shop: session.shop },
+        }) as Record<string, any> | null;
 
-Field: ${fieldType}
-Current value: ${currentValue}
-Context title: ${contextTitle}
-Context description: ${contextDescription}
+        // Resolve field definition to get the correct aiInstructionsKey
+        const contentConfig = CONTENT_CONFIGS[contentType];
+        const field = contentConfig?.fieldDefinitions.find((f) => f.key === fieldType);
+        const instructionsKey = field?.aiInstructionsKey;
+        const formatKey = instructionsKey ? `${instructionsKey}Format` : null;
+        const instructionsTextKey = instructionsKey ? `${instructionsKey}Instructions` : null;
 
-IMPORTANT: Return ONLY the improved and formatted text, nothing else. No explanations, no options, no labels. Keep the same language (${mainLanguage}). Just output the single best improved version.`;
+        // Default formatting instruction (preserve original content)
+        const defaultPreserveInstruction = `CRITICAL: You must PRESERVE the original text content. DO NOT rewrite, rephrase, or generate new content.
+Only apply formatting changes such as:
+- Adding separators (| or - or :)
+- Adjusting capitalization
+- Adding HTML tags for structure (<strong>, <em>, <h2>, <h3>, <ul>, <li>, <p>)
+- Fixing punctuation and spacing
+- Removing redundant characters
+
+The meaning, words, and information must stay the same. Only the presentation/formatting changes.`;
+
+        const preserveTextInstruction = aiInstructions?.formatPreserveInstructions || defaultPreserveInstruction;
+        const fieldLabel = field?.label || fieldType;
+
+        // Build field-type-aware prompt
+        let prompt = "";
+        let isLongContent = false;
+
+        if (field?.type === "slug") {
+          prompt = `Format the following URL slug. Keep the core words intact.
+
+Original Slug:
+${currentValue}
+
+Context - Title: ${contextTitle}
+
+${preserveTextInstruction}
+
+Allowed formatting changes for handles:
+- Convert to lowercase
+- Replace spaces with hyphens
+- Convert umlauts (ä→ae, ö→oe, ü→ue, ß→ss)
+- Remove special characters
+- Remove excessive hyphens`;
+          if (formatKey && aiInstructions?.[formatKey]) {
+            prompt += `\n\nFormat Style Example:\n${aiInstructions[formatKey]}`;
+          }
+          if (instructionsTextKey && aiInstructions?.[instructionsTextKey]) {
+            prompt += `\n\nAdditional Instructions:\n${aiInstructions[instructionsTextKey]}`;
+          }
+          prompt += `\n\nReturn ONLY the formatted URL slug. Keep the original keywords.`;
+        } else if (field?.type === "html" || field?.type === "textarea") {
+          isLongContent = true;
+          prompt = `Apply HTML formatting to the following ${fieldLabel}. Keep all words, sentences, and information intact.
+
+Original ${fieldLabel} (preserve this content):
+${currentValue}
+
+${preserveTextInstruction}
+
+Allowed formatting changes:
+- Add HTML structure tags: <h2>, <h3>, <p>, <ul>, <li>
+- Add emphasis: <strong>, <em>
+- Convert plain lists to <ul>/<li> format
+- Add paragraph breaks with <p> tags
+- Fix spacing and punctuation`;
+          if (formatKey && aiInstructions?.[formatKey]) {
+            prompt += `\n\nFormat Style Example (for HTML structure reference only):\n${aiInstructions[formatKey]}`;
+          }
+          if (instructionsTextKey && aiInstructions?.[instructionsTextKey]) {
+            prompt += `\n\nAdditional Instructions:\n${aiInstructions[instructionsTextKey]}`;
+          }
+          prompt += `\n\nReturn ONLY the formatted HTML ${fieldLabel}. Keep the original language and all original content. Do NOT add new sentences or rewrite existing ones. Output the result in ${mainLanguage}.`;
+        } else {
+          // Default: text fields (title, seoTitle, metaDescription, etc.)
+          prompt = `Apply formatting to the following ${fieldLabel}. Keep all words and meaning intact.
+
+Original ${fieldLabel} (preserve this content):
+${currentValue}
+
+${preserveTextInstruction}
+
+Allowed formatting changes:
+- Add separators like | or - or – between parts
+- Adjust capitalization (e.g., Title Case)
+- Remove excessive punctuation
+- Fix spacing issues`;
+          if (formatKey && aiInstructions?.[formatKey]) {
+            prompt += `\n\nFormat Style Example (for structure reference only, do NOT copy the content):\n${aiInstructions[formatKey]}`;
+          }
+          if (instructionsTextKey && aiInstructions?.[instructionsTextKey]) {
+            prompt += `\n\nAdditional Instructions:\n${aiInstructions[instructionsTextKey]}`;
+          }
+          prompt += `\n\nReturn ONLY the formatted ${fieldLabel}. Keep the original language. Do NOT add new information or rewrite the text. Output the result in ${mainLanguage}.`;
+        }
 
         // Create task entry with prompt
         const task = await db.task.create({
@@ -1043,7 +1143,7 @@ IMPORTANT: Return ONLY the improved and formatted text, nothing else. No explana
             resourceTitle: fieldType,
             fieldType,
             progress: 0,
-            prompt, // Store the prompt
+            prompt,
             expiresAt: getTaskExpirationDate(),
           },
         });
@@ -1072,10 +1172,23 @@ IMPORTANT: Return ONLY the improved and formatted text, nothing else. No explana
           logger.debug("[API-AI] Formatting AI text", {
             context: "AI",
             fieldType,
-            textLength: currentValue.length
+            textLength: currentValue.length,
+            hasFormatExample: !!(formatKey && aiInstructions?.[formatKey]),
+            hasInstructions: !!(instructionsTextKey && aiInstructions?.[instructionsTextKey]),
           });
 
-          const formattedValue = await aiService['askAI'](prompt);
+          // Use appropriate method based on field type
+          let formattedValue: string;
+          if (isLongContent) {
+            formattedValue = await aiService.generateProductDescription(currentValue, prompt);
+          } else {
+            formattedValue = await aiService.generateProductTitle(prompt);
+          }
+
+          // Sanitize slugs
+          if (field?.type === "slug") {
+            formattedValue = sanitizeSlug(formattedValue);
+          }
 
           // Update task to completed with full AI response
           await db.task.update({
@@ -1084,7 +1197,7 @@ IMPORTANT: Return ONLY the improved and formatted text, nothing else. No explana
               status: "completed",
               progress: 100,
               completedAt: new Date(),
-              result: formattedValue, // Store full AI response
+              result: formattedValue,
             },
           });
 
