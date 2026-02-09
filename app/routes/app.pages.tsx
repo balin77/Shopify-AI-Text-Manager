@@ -6,7 +6,7 @@
  */
 
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useFetcher } from "@remix-run/react";
+import { useLoaderData, useFetcher, useRevalidator } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
 import { ContentTypeNavigation } from "../components/ContentTypeNavigation";
@@ -137,6 +137,7 @@ export const action = async (args: ActionFunctionArgs) => {
 export default function PagesPage() {
   const { pages, shopLocales, primaryLocale, error, aiSettings } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
+  const revalidator = useRevalidator();
   const { t } = useI18n();
   const { showInfoBox } = useInfoBox();
 
@@ -181,6 +182,7 @@ export default function PagesPage() {
           t={t}
           hideItemListImages={true}
           hideItemListStatusBars={true}
+          revalidator={revalidator}
         />
       </div>
     </div>

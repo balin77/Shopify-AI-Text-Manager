@@ -9,7 +9,7 @@
  */
 
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useFetcher } from "@remix-run/react";
+import { useLoaderData, useFetcher, useRevalidator } from "@remix-run/react";
 import { Text, BlockStack, Card } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
@@ -167,6 +167,7 @@ function getPolicyTypeName(type: string, t: any) {
 export default function PoliciesPage() {
   const { policies, shopLocales, primaryLocale, error, aiSettings } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
+  const revalidator = useRevalidator();
   const { t } = useI18n();
   const { showInfoBox } = useInfoBox();
 
@@ -224,6 +225,7 @@ export default function PoliciesPage() {
           fetcherFormData={fetcher.formData}
           t={t}
           renderListItem={renderListItem}
+          revalidator={revalidator}
         />
       </div>
     </div>

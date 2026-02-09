@@ -7,7 +7,7 @@
 
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useFetcher } from "@remix-run/react";
+import { useLoaderData, useFetcher, useRevalidator } from "@remix-run/react";
 import { Page } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
@@ -787,6 +787,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
 export default function TemplatesPage() {
   const { themes, shop, shopLocales: loaderShopLocales, primaryLocale, error } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
+  const revalidator = useRevalidator();
   const { t } = useI18n();
   const { showInfoBox } = useInfoBox();
 
@@ -1384,6 +1385,7 @@ export default function TemplatesPage() {
           onFieldPageChange={handleFieldPageChange}
           onFieldSearch={handleFieldSearch}
           isFieldsLoading={isLoading}
+          revalidator={revalidator}
         />
       </div>
     </div>
