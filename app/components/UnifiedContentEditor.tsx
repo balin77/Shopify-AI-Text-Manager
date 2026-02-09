@@ -16,6 +16,7 @@ import { MobileToolbar } from "./unified/MobileToolbar";
 import { ImageGalleryField } from "./unified/ImageGalleryField";
 import { OptionsField } from "./unified/OptionsField";
 import { ReloadButton } from "./ReloadButton";
+import { HelpTooltip } from "./HelpTooltip";
 import { SeoSidebar } from "./SeoSidebar";
 import { useNavigationHeight } from "../contexts/NavigationHeightContext";
 import { usePlan } from "../contexts/PlanContext";
@@ -434,6 +435,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         onReloadSuccess={() => showInfoBox(t.content?.reloadSuccess || "Data reloaded successfully!", "success", t.content?.success || "Success!")}
                         revalidator={revalidator}
                       />
+                      <HelpTooltip helpKey="mobileToolbarActions" position="below" />
                     </div>
                   </InlineStack>
                 </Card>
