@@ -188,19 +188,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         const SHORT_FIELDS = ['handle', 'slug', 'title', 'seoTitle', 'productType'];
         const isShortField = SHORT_FIELDS.includes(fieldType);
 
-        // Build batch prompt for short fields, individual prompts for long fields
-        const batchPrompt = isShortField
-          ? `Batch translation from ${primaryLocale} to [${targetLocales.join(', ')}] for field: ${fieldType}`
-          : null;
-
-        const allPrompts = isShortField
-          ? [{ timestamp: new Date().toISOString(), prompt: batchPrompt }]
-          : targetLocales.map((locale: string) => ({
-              timestamp: new Date().toISOString(),
-              prompt: buildTranslationPrompt(sourceText, primaryLocale, locale)
-            }));
-
-        // Create task entry with prompts
+        // Create task entry (prompts will be saved by AI service via savePromptToTask)
         const task = await db.task.create({
           data: {
             shop: session.shop,
@@ -211,7 +199,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             resourceTitle: fieldType,
             fieldType,
             progress: 0,
-            prompt: JSON.stringify(allPrompts),
             expiresAt: getTaskExpirationDate(),
           },
         });
@@ -1401,13 +1388,7 @@ Image URL: ${image.url}`;
           return json({ success: false, error: "No target locales specified" }, { status: 400 });
         }
 
-        // Build prompts for all locales
-        const allPrompts = targetLocales.map((locale: string) => ({
-          locale,
-          prompt: buildTranslationPrompt(sourceAltText, primaryLocale, locale)
-        }));
-
-        // Create task entry with prompts
+        // Create task entry (prompts will be saved by AI service via savePromptToTask)
         const task = await db.task.create({
           data: {
             shop: session.shop,
@@ -1418,7 +1399,6 @@ Image URL: ${image.url}`;
             resourceTitle: `altText_${imageIndex}`,
             fieldType: `altText_${imageIndex}`,
             progress: 0,
-            prompt: JSON.stringify(allPrompts, null, 2),
             expiresAt: getTaskExpirationDate(),
           },
         });

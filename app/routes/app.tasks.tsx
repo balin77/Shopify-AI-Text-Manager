@@ -18,7 +18,7 @@ import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
 import { useI18n } from "../contexts/I18nContext";
 import { getTaskDateRange } from "../../src/utils/task.utils";
-import { sanitizeHTML } from "../utils/sanitizer";
+
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -512,105 +512,6 @@ export default function TasksPage() {
                           </div>
                         )}
 
-                        {/* AI Output Section */}
-                        {task.result && (
-                          <div style={{ padding: "1rem", background: "#f0fff4", borderRadius: "8px", border: "1px solid #9ae6b4" }}>
-                            <BlockStack gap="300">
-                              <Text as="h3" variant="headingSm" fontWeight="semibold">
-                                {t.tasks.aiOutput || "AI Output"}
-                              </Text>
-                              {(() => {
-                                try {
-                                  const resultData = JSON.parse(task.result);
-
-                                  // Bulk Translation Result
-                                  if (resultData.translations) {
-                                    return (
-                                      <div style={{ maxHeight: "300px", overflowY: "auto" }}>
-                                        <BlockStack gap="200">
-                                          {Object.entries(resultData.translations).map(([locale, value]: [string, any]) => (
-                                            <div key={locale} style={{ padding: "0.5rem", background: "white", borderRadius: "4px" }}>
-                                              <Text as="p" variant="bodySm" fontWeight="semibold">
-                                                {locale}:
-                                              </Text>
-                                              <Text as="p" variant="bodySm" tone="subdued">
-                                                {typeof value === 'string' ? value : JSON.stringify(value, null, 2)}
-                                              </Text>
-                                            </div>
-                                          ))}
-                                        </BlockStack>
-                                      </div>
-                                    );
-                                  }
-
-                                  // Bulk Alt Text Generation
-                                  if (resultData.generatedAltTexts) {
-                                    return (
-                                      <div style={{ maxHeight: "300px", overflowY: "auto" }}>
-                                        <BlockStack gap="200">
-                                          {Object.entries(resultData.generatedAltTexts).map(([index, altText]: [string, any]) => (
-                                            <div key={index} style={{ padding: "0.5rem", background: "white", borderRadius: "4px" }}>
-                                              <Text as="p" variant="bodySm" fontWeight="semibold">
-                                                {t.tasks.image || "Image"} {parseInt(index) + 1}:
-                                              </Text>
-                                              <Text as="p" variant="bodySm" tone="subdued">
-                                                {altText}
-                                              </Text>
-                                            </div>
-                                          ))}
-                                        </BlockStack>
-                                      </div>
-                                    );
-                                  }
-
-                                  // Single AI Generation or Translation
-                                  if (resultData.generatedContent) {
-                                    return (
-                                      <div style={{ padding: "0.75rem", background: "white", borderRadius: "4px", maxHeight: "300px", overflowY: "auto", whiteSpace: "pre-wrap" }}>
-                                        <Text as="p" variant="bodySm">
-                                          {resultData.generatedContent}
-                                        </Text>
-                                      </div>
-                                    );
-                                  }
-
-                                  if (resultData.formattedContent) {
-                                    return (
-                                      <div style={{ padding: "0.75rem", background: "white", borderRadius: "4px", maxHeight: "300px", overflowY: "auto" }}>
-                                        <div dangerouslySetInnerHTML={{ __html: sanitizeHTML(resultData.formattedContent) }} />
-                                      </div>
-                                    );
-                                  }
-
-                                  if (resultData.altText) {
-                                    return (
-                                      <div style={{ padding: "0.75rem", background: "white", borderRadius: "4px", maxHeight: "300px", overflowY: "auto", whiteSpace: "pre-wrap" }}>
-                                        <Text as="p" variant="bodySm">
-                                          {resultData.altText}
-                                        </Text>
-                                      </div>
-                                    );
-                                  }
-
-                                  // Generic result display
-                                  return (
-                                    <div style={{ padding: "0.75rem", background: "white", borderRadius: "4px", fontFamily: "monospace", fontSize: "12px", whiteSpace: "pre-wrap", maxHeight: "300px", overflowY: "auto" }}>
-                                      {JSON.stringify(resultData, null, 2)}
-                                    </div>
-                                  );
-                                } catch (e) {
-                                  return (
-                                    <div style={{ padding: "0.75rem", background: "white", borderRadius: "4px", maxHeight: "300px", overflowY: "auto", whiteSpace: "pre-wrap" }}>
-                                      <Text as="p" variant="bodySm">
-                                        {task.result}
-                                      </Text>
-                                    </div>
-                                  );
-                                }
-                              })()}
-                            </BlockStack>
-                          </div>
-                        )}
                       </BlockStack>
                     )}
                   </BlockStack>
