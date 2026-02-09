@@ -194,9 +194,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           : null;
 
         const allPrompts = isShortField
-          ? [{ type: 'batch', locales: targetLocales, prompt: batchPrompt }]
+          ? [{ timestamp: new Date().toISOString(), prompt: batchPrompt }]
           : targetLocales.map((locale: string) => ({
-              locale,
+              timestamp: new Date().toISOString(),
               prompt: buildTranslationPrompt(sourceText, primaryLocale, locale)
             }));
 
@@ -211,7 +211,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             resourceTitle: fieldType,
             fieldType,
             progress: 0,
-            prompt: JSON.stringify(allPrompts, null, 2),
+            prompt: JSON.stringify(allPrompts),
             expiresAt: getTaskExpirationDate(),
           },
         });
