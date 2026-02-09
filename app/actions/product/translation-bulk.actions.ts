@@ -31,6 +31,7 @@ interface TranslateAllParams {
   title?: string;
   description?: string;
   handle?: string;
+  productType?: string;
   seoTitle?: string;
   metaDescription?: string;
   productId: string;
@@ -38,7 +39,7 @@ interface TranslateAllParams {
 }
 
 // Fields that can be batched in a single AI request (short fields)
-const BATCH_FIELD_TYPES = ["handle", "title", "seoTitle"];
+const BATCH_FIELD_TYPES = ["handle", "title", "seoTitle", "productType"];
 
 // Fields that should be translated one locale at a time (long fields)
 const SEQUENTIAL_FIELD_TYPES = ["description", "metaDescription"];
@@ -134,6 +135,7 @@ export async function handleTranslateFieldToAllLocales(
       title: "title",
       description: "body_html",
       handle: "handle",
+      productType: "product_type",
       seoTitle: "meta_title",
       metaDescription: "meta_description",
     };
@@ -440,6 +442,7 @@ export async function handleTranslateAll(
     title: formData.get("title") as string,
     description: formData.get("description") as string,
     handle: formData.get("handle") as string,
+    productType: formData.get("productType") as string,
     seoTitle: formData.get("seoTitle") as string,
     metaDescription: formData.get("metaDescription") as string,
     productId,
@@ -453,9 +456,14 @@ export async function handleTranslateAll(
   const shortFields: Record<string, string> = {};
   const longFields: Record<string, string> = {};
 
+  // If seoTitle is the same as title in the primary language, skip separate translation
+  // and reuse the title translation instead (saves AI cost, ensures consistency)
+  const seoTitleMatchesTitle = params.seoTitle && params.title && params.seoTitle.trim() === params.title.trim();
+
   if (params.title) shortFields.title = params.title;
-  if (params.seoTitle) shortFields.seoTitle = params.seoTitle;
+  if (params.seoTitle && !seoTitleMatchesTitle) shortFields.seoTitle = params.seoTitle;
   if (params.handle) shortFields.handle = params.handle;
+  if (params.productType) shortFields.productType = params.productType;
   if (params.description) longFields.description = params.description;
   if (params.metaDescription) longFields.metaDescription = params.metaDescription;
 
@@ -467,6 +475,7 @@ export async function handleTranslateAll(
     localesCount: params.targetLocales.length,
     shortFields: Object.keys(shortFields),
     longFields: Object.keys(longFields),
+    seoTitleMatchesTitle: !!seoTitleMatchesTitle,
     sourceLocale,
     shop: context.session.shop,
   });
@@ -555,6 +564,7 @@ export async function handleTranslateAll(
       title: "title",
       description: "body_html",
       handle: "handle",
+      productType: "product_type",
       seoTitle: "meta_title",
       metaDescription: "meta_description",
     };
@@ -670,6 +680,18 @@ export async function handleTranslateAll(
               completedOperations++;
               progressPercent = Math.round(10 + (completedOperations / totalOperations) * 90);
               await updateTaskProgress(task.id, progressPercent, { processed: completedOperations });
+            }
+          }
+        }
+
+        // If seoTitle was skipped because it matches title, copy title translation to seoTitle
+        if (seoTitleMatchesTitle) {
+          for (const locale of params.targetLocales) {
+            const titleTranslation = allTranslations[locale]?.title;
+            if (titleTranslation) {
+              allTranslations[locale].seoTitle = titleTranslation;
+              await saveTranslation(locale, "seoTitle", titleTranslation);
+              loggers.translation("info", "Copied title translation to seoTitle (matching source)", { locale });
             }
           }
         }
