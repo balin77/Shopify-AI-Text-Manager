@@ -867,12 +867,14 @@ export const de = {
     mobileToolbarActions: {
       title: "Aktionsleiste",
       summary: "Hier findest du alle wichtigen Aktionen zum Speichern, Übersetzen und Verwalten deiner Inhalte.",
-      details: "Die Aktionsleiste bietet schnellen Zugriff auf die wichtigsten Funktionen. Speichere deine Änderungen, übersetze Inhalte in alle Sprachen gleichzeitig oder verwerfe ungewollte Änderungen.",
+      details: "Die Funktionen von „Alles übersetzen" und „Alles leeren" hängen vom aktuell gewählten Sprach-Tab ab. In der Hauptsprache wirken sie auf alle Fremdsprachen gleichzeitig. In einer Fremdsprache wirken sie nur auf diese eine Sprache.",
       tips: [
         "Speichern: Speichert alle Änderungen der aktuellen Sprache",
         "Neu laden: Lädt die aktuellen Daten von Shopify neu",
-        "Alles übersetzen: Übersetzt alle Felder mit KI in die aktuelle Sprache",
-        "Alles leeren: Löscht alle Übersetzungen der aktuellen Sprache",
+        "Alles übersetzen (Hauptsprache): Übersetzt alle Felder in alle Fremdsprachen",
+        "Alles übersetzen (Fremdsprache): Übersetzt alle Felder nur in die aktuelle Sprache",
+        "Alles leeren (Hauptsprache): Löscht alle Einträge in der Hauptsprache und allen Fremdsprachen",
+        "Alles leeren (Fremdsprache): Löscht nur die Übersetzungen der aktuellen Sprache",
         "Verwerfen: Setzt alle ungespeicherten Änderungen zurück",
       ],
     },

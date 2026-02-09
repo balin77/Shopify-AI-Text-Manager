@@ -869,12 +869,14 @@ export const es: Translation = {
     mobileToolbarActions: {
       title: "Barra de acciones",
       summary: "Aquí encontrarás todas las acciones importantes para guardar, traducir y gestionar tu contenido.",
-      details: "La barra de acciones ofrece acceso rápido a las funciones más importantes. Guarda tus cambios, traduce contenido a todos los idiomas a la vez o descarta cambios no deseados.",
+      details: "El comportamiento de \"Traducir todo\" y \"Limpiar todo\" depende del idioma seleccionado. En el idioma principal, afectan a todos los idiomas extranjeros a la vez. En un idioma extranjero, solo afectan a ese idioma específico.",
       tips: [
         "Guardar: Guarda todos los cambios del idioma actual",
         "Recargar: Recarga los datos actuales desde Shopify",
-        "Traducir todo: Traduce todos los campos con IA al idioma actual",
-        "Limpiar todo: Elimina todas las traducciones del idioma actual",
+        "Traducir todo (idioma principal): Traduce todos los campos a todos los idiomas extranjeros",
+        "Traducir todo (idioma extranjero): Traduce todos los campos solo al idioma actual",
+        "Limpiar todo (idioma principal): Elimina todas las entradas en el idioma principal y todos los idiomas extranjeros",
+        "Limpiar todo (idioma extranjero): Elimina solo las traducciones del idioma actual",
         "Descartar: Restablece todos los cambios no guardados",
       ],
     },

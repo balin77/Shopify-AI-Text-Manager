@@ -869,12 +869,14 @@ export const en: Translation = {
     mobileToolbarActions: {
       title: "Action Bar",
       summary: "Here you'll find all important actions for saving, translating, and managing your content.",
-      details: "The action bar provides quick access to the most important functions. Save your changes, translate content to all languages at once, or discard unwanted changes.",
+      details: "The behavior of \"Translate All\" and \"Clear All\" depends on the currently selected language tab. In the primary language, they affect all foreign languages at once. In a foreign language, they only affect that specific language.",
       tips: [
         "Save: Saves all changes for the current language",
         "Reload: Reloads the current data from Shopify",
-        "Translate All: Translates all fields with AI into the current language",
-        "Clear All: Deletes all translations for the current language",
+        "Translate All (primary language): Translates all fields into all foreign languages",
+        "Translate All (foreign language): Translates all fields only into the current language",
+        "Clear All (primary language): Deletes all entries in the primary language and all foreign languages",
+        "Clear All (foreign language): Deletes only the translations for the current language",
         "Discard: Resets all unsaved changes",
       ],
     },
