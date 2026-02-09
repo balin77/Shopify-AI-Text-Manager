@@ -9,6 +9,8 @@ export type { UnifiedItem } from "./UnifiedItemList";
 
 export { UnifiedLanguageBar } from "./UnifiedLanguageBar";
 
+export { MobileToolbar } from "./MobileToolbar";
+
 export { ImageGalleryField } from "./ImageGalleryField";
 export type { ImageData } from "./ImageGalleryField";
 

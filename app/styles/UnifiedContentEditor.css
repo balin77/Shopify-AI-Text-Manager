@@ -31,6 +31,38 @@
   }
 }
 
+/* Toolbar-specific mobile/desktop toggle at 768px (separate from item list at 900px) */
+.toolbar-desktop-only {
+  display: block;
+}
+.toolbar-mobile-only {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .toolbar-desktop-only {
+    display: none;
+  }
+  .toolbar-mobile-only {
+    display: block;
+  }
+}
+
+/* Mobile language scroll: horizontal scrollable, no wrapping */
+.mobile-language-scroll {
+  display: flex;
+  gap: 0.5rem;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+}
+.mobile-language-scroll::-webkit-scrollbar {
+  display: none;
+}
+
 @media (min-width: 900px) {
   .desktop-only {
     display: block;
