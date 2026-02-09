@@ -2010,6 +2010,45 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     });
 
     safeSubmit(formDataObj, { method: "POST" });
+
+    // Also translate all image alt-texts to all locales in parallel (via fetch API)
+    if (selectedItem?.images && selectedItem.images.length > 0) {
+      const altTextsData: Record<number, string> = {};
+      let hasAnyAltText = false;
+      selectedItem.images.forEach((img: ContentImage, index: number) => {
+        const altText = imageAltTexts[index] || img.altText || "";
+        if (altText) {
+          altTextsData[index] = altText;
+          hasAnyAltText = true;
+        }
+      });
+
+      if (hasAnyAltText) {
+        submitAIAction(
+          {
+            action: "translateAllAltTextsToAllLocales",
+            itemId: selectedItem.id,
+            productId: selectedItem.id,
+            altTextsData: JSON.stringify(altTextsData),
+            targetLocales: JSON.stringify(targetLocales),
+            primaryLocale
+          },
+          "allAltTextsTranslate",
+          (result) => {
+            const translatedCount = result.translatedCount || 0;
+            const imageCount = result.imageCount || 0;
+            showInfoBox(
+              `Alt-Texte für ${imageCount} Bild(er) in ${translatedCount} Sprache(n) übersetzt`,
+              "success",
+              t.common?.success || "Success"
+            );
+            if (revalidator.state === 'idle') {
+              try { revalidator.revalidate(); } catch {}
+            }
+          }
+        );
+      }
+    }
   };
 
   const handleAcceptSuggestion = (fieldKey: string) => {
@@ -2284,6 +2323,42 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     });
 
     safeSubmit(formDataObj, { method: "POST" });
+
+    // Also translate all image alt-texts for this locale in parallel (via fetch API)
+    if (selectedItem?.images && selectedItem.images.length > 0) {
+      const altTextsData: Record<number, string> = {};
+      let hasAnyAltText = false;
+      selectedItem.images.forEach((img: ContentImage, index: number) => {
+        const altText = img.altText || "";
+        if (altText) {
+          altTextsData[index] = altText;
+          hasAnyAltText = true;
+        }
+      });
+
+      if (hasAnyAltText) {
+        submitAIAction(
+          {
+            action: "translateAllAltTextsForLocale",
+            itemId: selectedItem.id,
+            productId: selectedItem.id,
+            altTextsData: JSON.stringify(altTextsData),
+            targetLocale: currentLanguage,
+            primaryLocale
+          },
+          "allAltTextsTranslate",
+          (result) => {
+            if (result.translatedAltTexts) {
+              const newSuggestions: Record<number, string> = {};
+              Object.entries(result.translatedAltTexts).forEach(([indexStr, text]) => {
+                newSuggestions[parseInt(indexStr)] = text as string;
+              });
+              setAltTextSuggestions(prev => ({ ...prev, ...newSuggestions }));
+            }
+          }
+        );
+      }
+    }
   };
 
   // ============================================================================
