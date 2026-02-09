@@ -730,7 +730,6 @@ function FieldRenderer(props: FieldRendererProps & { state?: any; handlers?: any
     "generateAltText",
     "translateAltText",
     "translateAltTextToAllLocales",
-    "generateAllAltTexts",
     "translateAllAltTextsToAllLocales",
     "translateAllAltTextsForLocale",
   ];
@@ -826,8 +825,9 @@ function FieldRenderer(props: FieldRendererProps & { state?: any; handlers?: any
         onClearAltText={(imageIndex) => handlers.handleAltTextChange(imageIndex, "")}
         isFieldLoading={(imageIndex) => {
           const isBulkTranslating = state?.loadingFieldKeys?.has("allAltTextsTranslate") ?? false;
-          if (imageIndex === -1) return isImageAIActionRunning || isBulkTranslating;
-          return isImageAIActionRunning || isBulkTranslating || (state?.loadingFieldKeys?.has(`altText_${imageIndex}`) ?? false);
+          const isBulkGenerating = state?.loadingFieldKeys?.has("allAltTextsGenerate") ?? false;
+          if (imageIndex === -1) return isImageAIActionRunning || isBulkTranslating || isBulkGenerating;
+          return isImageAIActionRunning || isBulkTranslating || isBulkGenerating || (state?.loadingFieldKeys?.has(`altText_${imageIndex}`) ?? false);
         }}
         t={{
           image: t.products?.image || "Image",
