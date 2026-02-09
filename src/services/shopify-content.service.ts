@@ -635,7 +635,12 @@ export class ShopifyContentService {
     };
 
     // Helper function to save translations to Shopify and DB
-    // Returns true if saved successfully, false if Shopify rejected (e.g. "handle already taken")
+    // Returns true if saved successfully to both Shopify and DB.
+    // Returns false if Shopify rejected the translation (e.g. "handle already taken" when
+    // the AI generates the same translated slug for two different resources).
+    // On failure: does NOT save to DB, so the local state stays consistent with Shopify.
+    // The caller uses the return value to exclude rejected fields from the response,
+    // so the client never shows a translation that wasn't actually persisted.
     const saveTranslation = async (locale: string, field: string, value: string): Promise<boolean> => {
       const translationKey = keyMapping[field];
       if (!translationKey) {
@@ -683,8 +688,11 @@ export class ShopifyContentService {
 
         const data = await response.json();
         if (data.data?.translationsRegister?.userErrors?.length > 0) {
+          // Shopify rejected this specific translation (e.g. duplicate handle across resources).
+          // Return false so the caller removes this field from allTranslations — the client
+          // should not display or cache a translation that Shopify didn't accept.
           loggers.translation('error', `Shopify rejected ${field} for ${locale}`, { errors: data.data.translationsRegister.userErrors });
-          return false; // Don't save to DB if Shopify rejected
+          return false;
         }
 
         loggers.translation('debug', `Shopify save successful for ${field} -> ${translationKey} (${locale})`);
@@ -731,7 +739,9 @@ export class ShopifyContentService {
           contentType || 'product'
         );
 
-        // Save all short field translations
+        // Save all short field translations.
+        // Only include successfully saved fields in allTranslations — if Shopify rejects
+        // a field (e.g. duplicate handle), the client should not see it as translated.
         for (const locale of targetLocales) {
           const localeTranslations = batchResult[locale];
           if (!localeTranslations) continue;

@@ -154,9 +154,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     fallbackFieldsRef.current = fallbackFields;
   }, [fallbackFields]);
 
-  // Track original loaded values for foreign locale change detection during save
-  // Only fields that differ from these values are sent to the server,
-  // preventing unchanged fields (like handle) from being re-registered at Shopify
+  // Track original loaded values for foreign locale change detection during save.
+  // Problem: Previously ALL non-fallback fields were sent on every save, even unchanged ones.
+  // If a handle translation existed (e.g. from translateAll), it was re-sent on every subsequent
+  // save of any field, causing Shopify to reject with "handle already taken".
+  // Solution: Store the values as loaded from the server, then only send fields where the
+  // current value differs from the original. This way unchanged fields like handle are never re-sent.
   const originalLoadedValuesRef = useRef<Record<string, string>>({});
 
   // Track which fields have AI actions currently running (for per-field loading states)
@@ -593,8 +596,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       setFallbackFields(newFallbackFields);
     }
 
-    // Store original loaded values for save-time change detection
-    // This allows us to only send fields that the user actually modified
+    // Snapshot the loaded values so buildFieldsForSave() can later compare against them.
+    // Without this, every save in a foreign locale would re-send ALL fields to Shopify,
+    // including unchanged ones like handle, which causes "handle already taken" errors.
     originalLoadedValuesRef.current = { ...newValues };
 
     setEditableValues(newValues);
@@ -828,21 +832,31 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     return changedFields;
   }, [effectiveFieldDefinitions, primaryLocale, config]);
 
-  // Build field values for save - for foreign locales, only includes fields that actually changed.
-  // This prevents unchanged fields (like handle) from being re-sent to Shopify,
-  // which can cause "handle already taken" errors.
+  // Builds the field key-value pairs to include in a save request.
+  //
+  // For PRIMARY locale: all fields are included (Shopify productUpdate/collectionUpdate needs them).
+  // For FOREIGN locales: only fields that the user actually modified are included.
+  //
+  // Why this matters: Shopify's translationsRegister re-validates every field sent, even
+  // unchanged ones. If a handle translation exists and is re-sent, Shopify may reject the
+  // entire save with "handle already taken". The old code sent ALL non-fallback fields on
+  // every save. Now we compare against originalLoadedValuesRef to detect actual changes.
+  //
+  // Two layers of filtering for foreign locales:
+  // 1. fallbackFields — fields showing primary locale values (no translation exists at all)
+  // 2. originalLoadedValuesRef — fields that have a translation but weren't edited by the user
   const buildFieldsForSave = useCallback((
     values: Record<string, string>,
     locale: string
   ): Record<string, string> => {
     const result: Record<string, string> = {};
     effectiveFieldDefinitions.forEach((field) => {
-      // Skip fallback fields in foreign locales (existing logic)
+      // Layer 1: Skip fallback fields (fields with no translation, showing primary value)
       if (locale !== primaryLocale && fallbackFieldsRef.current.has(field.key)) {
         return;
       }
       const value = values[field.key] || "";
-      // For foreign locales, only send fields that actually changed from their loaded value
+      // Layer 2: Skip fields that haven't changed from what was loaded from the server
       if (locale !== primaryLocale) {
         const originalValue = originalLoadedValuesRef.current[field.key] || "";
         if (value === originalValue) {
@@ -1060,7 +1074,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         isSavePendingRef.current = true;
         safeSubmit(formDataObj, { method: "POST" });
 
-        // Update original loaded values since this translation is now saved
+        // Reset the baseline so the just-saved translated field isn't re-sent on the next save.
+        // Without this, the translated field would still differ from the old originalLoadedValues
+        // and would be included again in every subsequent save.
         originalLoadedValuesRef.current = { ...newValues };
       }
 
@@ -1221,7 +1237,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             });
             setEditableValues(updatedValues);
 
-            // Update original loaded values since translations were saved on the server
+            // Reset the baseline to the post-translation values. translateAll/translateAllForLocale
+            // already saved these translations on the server, so they are now the "original" state.
+            // Without this, a subsequent manual save would re-send all translated fields because
+            // they'd still differ from the pre-translation originalLoadedValues.
             originalLoadedValuesRef.current = { ...updatedValues };
 
             // Clear fallback styling for fields that now have real translations
@@ -1901,7 +1920,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           isSavePendingRef.current = true;
           safeSubmit(formDataObj, { method: "POST" });
 
-          // Update original loaded values since this translation is now saved
+          // Reset the baseline so the just-saved translated field isn't re-sent on the next save.
           originalLoadedValuesRef.current = { ...newValues };
         }
 
