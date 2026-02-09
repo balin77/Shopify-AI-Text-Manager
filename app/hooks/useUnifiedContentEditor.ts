@@ -2348,12 +2348,16 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           },
           "allAltTextsTranslate",
           (result) => {
+            // Directly accept translations and auto-save (no suggestion banner)
             if (result.translatedAltTexts) {
-              const newSuggestions: Record<number, string> = {};
+              const translated: Record<number, string> = {};
               Object.entries(result.translatedAltTexts).forEach(([indexStr, text]) => {
-                newSuggestions[parseInt(indexStr)] = text as string;
+                translated[parseInt(indexStr)] = text as string;
               });
-              setAltTextSuggestions(prev => ({ ...prev, ...newSuggestions }));
+              const newAltTexts = { ...imageAltTexts, ...translated };
+              setImageAltTexts(newAltTexts);
+              setOriginalAltTexts(newAltTexts);
+              pendingAltTextAutoSaveRef.current = newAltTexts;
             }
           }
         );
@@ -2616,13 +2620,18 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       },
       "allAltTextsTranslate",
       (result) => {
-        // Set suggestions for each image so user can accept/reject
+        // Directly accept translations and auto-save (no suggestion banner)
         if (result.translatedAltTexts) {
-          const newSuggestions: Record<number, string> = {};
+          const translated: Record<number, string> = {};
           Object.entries(result.translatedAltTexts).forEach(([indexStr, text]) => {
-            newSuggestions[parseInt(indexStr)] = text as string;
+            translated[parseInt(indexStr)] = text as string;
           });
-          setAltTextSuggestions(prev => ({ ...prev, ...newSuggestions }));
+
+          const newAltTexts = { ...imageAltTexts, ...translated };
+          setImageAltTexts(newAltTexts);
+          setOriginalAltTexts(newAltTexts);
+          // Schedule auto-save
+          pendingAltTextAutoSaveRef.current = newAltTexts;
         }
       }
     );
