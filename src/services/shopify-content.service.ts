@@ -253,8 +253,9 @@ export class ShopifyContentService {
       // Fetch digest map once
       const digestMap = await this.loadTranslatableContent(resourceId);
 
-      const translationsInput: Array<{ key: string; value: string; locale: string; translatableContentDigest?: string }> = [];
+      const translationsInput: Array<{ key: string; value: string; locale: string; translatableContentDigest: string }> = [];
       const translationsToDelete: string[] = [];
+      const dbOnlyTranslations: Array<{ key: string; value: string; locale: string }> = [];
 
       // Map field names to Shopify translation keys
       // Note: ShopPolicy uses 'body' (not 'body_html') as its translatable content key
@@ -270,22 +271,40 @@ export class ShopifyContentService {
         summary: 'summary_html',   // Article excerpt/summary
       };
 
-      Object.entries(updates).forEach(([field, value]) => {
+      for (const [field, value] of Object.entries(updates)) {
         const translationKey = keyMapping[field];
-        if (!translationKey) return;
+        if (!translationKey) continue;
 
         if (value && value.trim()) {
-          translationsInput.push({
-            key: translationKey,
-            value,
-            locale,
-            translatableContentDigest: digestMap[translationKey]
-          });
+          let digest = digestMap[translationKey];
+
+          // If digest is missing, retry (handles race conditions / late availability)
+          if (!digest) {
+            loggers.translation('warn', `[updateContent] No digest for '${translationKey}' in initial digestMap. Re-fetching...`);
+            const freshDigestMap = await this.loadTranslatableContent(resourceId);
+            digest = freshDigestMap[translationKey];
+            if (digest) {
+              digestMap[translationKey] = digest;
+              loggers.translation('debug', `[updateContent] Got digest for '${translationKey}' on retry`);
+            }
+          }
+
+          if (digest) {
+            translationsInput.push({
+              key: translationKey,
+              value,
+              locale,
+              translatableContentDigest: digest,
+            });
+          } else {
+            loggers.translation('warn', `[updateContent] No digest for '${translationKey}' after retry. Saving to DB only.`);
+            dbOnlyTranslations.push({ key: translationKey, value, locale });
+          }
         } else if (value === "") {
           // Empty string means user cleared the translation — mark for deletion
           translationsToDelete.push(translationKey);
         }
-      });
+      }
 
       // Save non-empty translations to Shopify
       if (translationsInput.length > 0) {
@@ -297,6 +316,12 @@ export class ShopifyContentService {
         });
 
         const data = await response.json();
+
+        // Check for top-level GraphQL errors (e.g. missing required fields)
+        if (data.errors?.length > 0) {
+          loggers.translation('error', `[updateContent] GraphQL errors from translationsRegister`, { errors: data.errors });
+          throw new Error(data.errors[0].message);
+        }
 
         if (data.data?.translationsRegister?.userErrors?.length > 0) {
           throw new Error(data.data.translationsRegister.userErrors[0].message);
@@ -314,7 +339,7 @@ export class ShopifyContentService {
 
       // Update database using transaction for consistency
       await db.$transaction(async (tx: any) => {
-        // Upsert non-empty translations
+        // Upsert translations saved to Shopify
         for (const translation of translationsInput) {
           await tx.contentTranslation.upsert({
             where: {
@@ -336,6 +361,32 @@ export class ShopifyContentService {
               value: translation.value,
               locale: translation.locale,
               digest: translation.translatableContentDigest || null,
+            },
+          });
+        }
+
+        // Upsert DB-only translations (no digest available, not saved to Shopify)
+        for (const translation of dbOnlyTranslations) {
+          await tx.contentTranslation.upsert({
+            where: {
+              resourceId_key_locale: {
+                resourceId,
+                key: translation.key,
+                locale: translation.locale,
+              },
+            },
+            update: {
+              value: translation.value,
+              digest: null,
+              resourceType,
+            },
+            create: {
+              resourceId,
+              resourceType,
+              key: translation.key,
+              value: translation.value,
+              locale: translation.locale,
+              digest: null,
             },
           });
         }
