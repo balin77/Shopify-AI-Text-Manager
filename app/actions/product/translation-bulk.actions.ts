@@ -620,41 +620,40 @@ export async function handleTranslateAll(
             errors: responseData.data.translationsRegister.userErrors,
           });
         }
+        // Save to local database after successful Shopify save
+        const product = await db.product.findFirst({
+          where: { id: productId },
+          select: { shop: true },
+        });
+
+        if (product) {
+          await db.contentTranslation.upsert({
+            where: {
+              resourceId_key_locale: {
+                resourceId: productId,
+                key: shopifyKey,
+                locale,
+              },
+            },
+            update: {
+              value,
+              digest,
+            },
+            create: {
+              resourceId: productId,
+              resourceType: "Product",
+              key: shopifyKey,
+              value,
+              locale,
+              digest,
+            },
+          });
+        }
       } else {
-        loggers.translation("warn", `No digest for key '${shopifyKey}' (field '${fieldType}'). Skipping Shopify save, saving to DB only.`, {
+        loggers.translation("warn", `No digest for key '${shopifyKey}' (field '${fieldType}'). Translation NOT saved.`, {
           locale,
           fieldType,
           availableDigests: Object.keys(digestMap),
-        });
-      }
-
-      // Always save to local database (even without Shopify digest)
-      const product = await db.product.findFirst({
-        where: { id: productId },
-        select: { shop: true },
-      });
-
-      if (product) {
-        await db.contentTranslation.upsert({
-          where: {
-            resourceId_key_locale: {
-              resourceId: productId,
-              key: shopifyKey,
-              locale,
-            },
-          },
-          update: {
-            value,
-            digest: digest || null,
-          },
-          create: {
-            resourceId: productId,
-            resourceType: "Product",
-            key: shopifyKey,
-            value,
-            locale,
-            digest: digest || null,
-          },
         });
       }
     };

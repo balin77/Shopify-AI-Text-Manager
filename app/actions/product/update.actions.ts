@@ -536,9 +536,21 @@ async function updateTranslatedProduct(
   const translatableData = await translatableResponse.json();
   const translatableContent = translatableData.data?.translatableResource?.translatableContent || [];
 
+  // Log ALL entries from Shopify (including those without digest)
+  loggers.product("debug", "Raw translatableContent from Shopify", {
+    productId,
+    totalEntries: translatableContent.length,
+    entries: translatableContent.map((item: any) => ({
+      key: item.key,
+      hasDigest: !!item.digest,
+      hasValue: !!item.value,
+      valuePreview: item.value ? item.value.substring(0, 40) : "EMPTY",
+    })),
+  });
+
   // Create digest map for quick lookup
   const digestMap: Record<string, string> = {};
-  translatableContent.forEach((item: { key: string; digest: string }) => {
+  translatableContent.forEach((item: { key: string; digest: string; value: string }) => {
     if (item.digest) {
       digestMap[item.key] = item.digest;
     }
@@ -547,20 +559,21 @@ async function updateTranslatedProduct(
   loggers.product("debug", "Fetched translatable content digests", {
     productId,
     availableKeys: Object.keys(digestMap),
+    missingDigestKeys: translatableContent
+      .filter((item: any) => !item.digest)
+      .map((item: any) => item.key),
   });
 
   const translationsInput: Array<{ key: string; value: string; locale: string; translatableContentDigest: string }> = [];
-  const dbOnlyTranslations: Array<{ key: string; value: string; locale: string }> = []; // Translations without digest (DB-only save)
   const translationsToDelete: string[] = [];
   const skippedFields: string[] = [];
 
-  // Helper to add translation - saves to Shopify if digest available, otherwise DB-only
+  // Helper to add translation - only adds if digest is available (required by Shopify)
   const addTranslation = (key: string, value: string) => {
     if (digestMap[key]) {
       translationsInput.push({ key, value, locale: params.locale, translatableContentDigest: digestMap[key] });
     } else {
       skippedFields.push(key);
-      dbOnlyTranslations.push({ key, value, locale: params.locale });
     }
   };
 
@@ -712,16 +725,10 @@ async function updateTranslatedProduct(
   });
 
   if (product) {
-    // Combine Shopify-saved and DB-only translations for database persistence
-    const allTranslationsForDB = [
-      ...translationsInput.map(t => ({ key: t.key, value: t.value, locale: t.locale })),
-      ...dbOnlyTranslations,
-    ];
-
     // Use transaction to ensure all upserts and deletes succeed or fail together
     await db.$transaction(async (tx: any) => {
       // Use upsert to preserve existing translations for other fields
-      for (const translation of allTranslationsForDB) {
+      for (const translation of translationsInput) {
         await tx.contentTranslation.upsert({
           where: {
             // Unique constraint is: @@unique([resourceId, key, locale])
@@ -763,8 +770,8 @@ async function updateTranslatedProduct(
     loggers.product("info", "Saved translations to DB (ContentTranslation)", {
       productId,
       locale: params.locale,
-      saved: allTranslationsForDB.length,
-      dbOnly: dbOnlyTranslations.length,
+      saved: translationsInput.length,
+      skipped: skippedFields.length,
       deleted: translationsToDelete.length,
     });
   }

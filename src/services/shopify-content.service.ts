@@ -614,7 +614,7 @@ export class ShopifyContentService {
         }
       }
 
-      // Save to Shopify (requires digest)
+      // Save to Shopify and DB (requires digest)
       if (digest) {
         console.log(`[translateAllContent] ✓ Saving ${field} → ${translationKey} for locale ${locale}`);
         const response = await this.admin.graphql(TRANSLATE_CONTENT, {
@@ -635,31 +635,33 @@ export class ShopifyContentService {
         } else {
           console.log(`[translateAllContent] ✅ Shopify save successful for ${field} → ${translationKey} (${locale})`);
         }
-      }
 
-      // Always save to database (even without Shopify digest)
-      await db.contentTranslation.upsert({
-        where: {
-          resourceId_key_locale: {
-            resourceId,
-            key: translationKey,
-            locale,
+        // Save to database (only after successful Shopify save)
+        await db.contentTranslation.upsert({
+          where: {
+            resourceId_key_locale: {
+              resourceId,
+              key: translationKey,
+              locale,
+            },
           },
-        },
-        update: {
-          value,
-          digest: digest || null,
-          resourceType,
-        },
-        create: {
-          resourceId,
-          resourceType,
-          key: translationKey,
-          value,
-          locale,
-          digest: digest || null,
-        },
-      });
+          update: {
+            value,
+            digest,
+            resourceType,
+          },
+          create: {
+            resourceId,
+            resourceType,
+            key: translationKey,
+            value,
+            locale,
+            digest,
+          },
+        });
+      } else {
+        console.warn(`[translateAllContent] ⚠️ No digest for '${translationKey}' after retry. Translation NOT saved. Shopify translatableContent does not include this field - is the primary locale value set in Shopify?`);
+      }
     };
 
     // === STEP 1: Batch translate short fields (1 AI request for all locales) ===
