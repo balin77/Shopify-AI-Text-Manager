@@ -154,6 +154,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     fallbackFieldsRef.current = fallbackFields;
   }, [fallbackFields]);
 
+  // Track original loaded values for foreign locale change detection during save
+  // Only fields that differ from these values are sent to the server,
+  // preventing unchanged fields (like handle) from being re-registered at Shopify
+  const originalLoadedValuesRef = useRef<Record<string, string>>({});
+
   // Track which fields have AI actions currently running (for per-field loading states)
   // This allows multiple AI actions to run in parallel on different fields
   const [loadingFieldKeys, setLoadingFieldKeys] = useState<Set<string>>(new Set());
@@ -588,6 +593,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       setFallbackFields(newFallbackFields);
     }
 
+    // Store original loaded values for save-time change detection
+    // This allows us to only send fields that the user actually modified
+    originalLoadedValuesRef.current = { ...newValues };
+
     setEditableValues(newValues);
 
     // For templates: Store original values for change detection
@@ -819,6 +828,32 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     return changedFields;
   }, [effectiveFieldDefinitions, primaryLocale, config]);
 
+  // Build field values for save - for foreign locales, only includes fields that actually changed.
+  // This prevents unchanged fields (like handle) from being re-sent to Shopify,
+  // which can cause "handle already taken" errors.
+  const buildFieldsForSave = useCallback((
+    values: Record<string, string>,
+    locale: string
+  ): Record<string, string> => {
+    const result: Record<string, string> = {};
+    effectiveFieldDefinitions.forEach((field) => {
+      // Skip fallback fields in foreign locales (existing logic)
+      if (locale !== primaryLocale && fallbackFieldsRef.current.has(field.key)) {
+        return;
+      }
+      const value = values[field.key] || "";
+      // For foreign locales, only send fields that actually changed from their loaded value
+      if (locale !== primaryLocale) {
+        const originalValue = originalLoadedValuesRef.current[field.key] || "";
+        if (value === originalValue) {
+          return;
+        }
+      }
+      result[field.key] = value;
+    });
+    return result;
+  }, [effectiveFieldDefinitions, primaryLocale]);
+
   // Helper function to get which alt-text indices have changed compared to the original item
   const getChangedAltTextIndices = useCallback((): number[] => {
     const item = selectedItemRef.current;
@@ -848,15 +883,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       primaryLocale,
     };
 
-    // Add all field values from the provided values
-    // Skip fallback fields (handle, seoTitle showing primary locale values) to prevent
-    // registering primary locale values as translations in Shopify
-    effectiveFieldDefinitions.forEach((field) => {
-      if (locale !== primaryLocale && fallbackFieldsRef.current.has(field.key)) {
-        return;
-      }
-      formDataObj[field.key] = valuesToSave[field.key] || "";
-    });
+    // Add field values - for foreign locales, only send fields that actually changed
+    Object.assign(formDataObj, buildFieldsForSave(valuesToSave, locale));
 
     // Add image alt-texts if there are any changes
     if (Object.keys(imageAltTexts).length > 0) {
@@ -1025,23 +1053,21 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           locale: targetLocale,
           primaryLocale,
         };
-        effectiveFieldDefinitions.forEach((field) => {
-          if (targetLocale !== primaryLocale && fallbackFieldsRef.current.has(field.key)) {
-            return;
-          }
-          formDataObj[field.key] = newValues[field.key] || "";
-        });
+        Object.assign(formDataObj, buildFieldsForSave(newValues, targetLocale));
 
         // Track which locale we're saving so the response handler knows
         savedLocaleRef.current = targetLocale;
         isSavePendingRef.current = true;
         safeSubmit(formDataObj, { method: "POST" });
+
+        // Update original loaded values since this translation is now saved
+        originalLoadedValuesRef.current = { ...newValues };
       }
 
       // Mark as loading to reset change detection after the save completes
       setIsLoadingData(true);
     }
-  }, [fetcher.data, selectedItemId, primaryLocale, effectiveFieldDefinitions, safeSubmit]);
+  }, [fetcher.data, selectedItemId, primaryLocale, effectiveFieldDefinitions, safeSubmit, buildFieldsForSave]);
 
   // Handle single alt-text generation (show as suggestion)
   useEffect(() => {
@@ -1195,6 +1221,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             });
             setEditableValues(updatedValues);
 
+            // Update original loaded values since translations were saved on the server
+            originalLoadedValuesRef.current = { ...updatedValues };
+
             // Clear fallback styling for fields that now have real translations
             if (translatedKeys.length > 0) {
               setFallbackFields((prev) => {
@@ -1271,6 +1300,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             }
           });
           setEditableValues(updatedValues);
+
+          // Update original loaded values since translations were saved on the server
+          originalLoadedValuesRef.current = { ...updatedValues };
 
           // Clear fallback styling for fields that now have real translations
           if (translatedKeys.length > 0) {
@@ -1664,13 +1696,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       }
     }
 
-    // Add all field values (skip fallback fields to prevent registering primary values as translations)
-    effectiveFieldDefinitions.forEach((field) => {
-      if (currentLanguage !== primaryLocale && fallbackFields.has(field.key)) {
-        return;
-      }
-      formDataObj[field.key] = editableValues[field.key] || "";
-    });
+    // Add field values - for foreign locales, only send fields that actually changed
+    Object.assign(formDataObj, buildFieldsForSave(editableValues, currentLanguage));
 
     // Add image alt-texts if there are any changes
     if (Object.keys(imageAltTexts).length > 0) {
@@ -1868,16 +1895,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             locale: targetLocale,
             primaryLocale,
           };
-          effectiveFieldDefinitions.forEach((f) => {
-            if (targetLocale !== primaryLocale && fallbackFieldsRef.current.has(f.key)) {
-              return;
-            }
-            formDataObj[f.key] = newValues[f.key] || "";
-          });
+          Object.assign(formDataObj, buildFieldsForSave(newValues, targetLocale));
 
           savedLocaleRef.current = targetLocale;
           isSavePendingRef.current = true;
           safeSubmit(formDataObj, { method: "POST" });
+
+          // Update original loaded values since this translation is now saved
+          originalLoadedValuesRef.current = { ...newValues };
         }
 
         // Mark as loading to reset change detection after the save completes
@@ -2719,13 +2744,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       primaryLocale,
     };
 
-    // Add all field values (skip fallback fields to prevent registering primary values as translations)
-    effectiveFieldDefinitions.forEach((field) => {
-      if (currentLanguage !== primaryLocale && fallbackFieldsRef.current.has(field.key)) {
-        return;
-      }
-      formDataObj[field.key] = editableValues[field.key] || "";
-    });
+    // Add field values - for foreign locales, only send fields that actually changed
+    Object.assign(formDataObj, buildFieldsForSave(editableValues, currentLanguage));
 
     // Add the new image alt-texts
     formDataObj.imageAltTexts = JSON.stringify(newAltTexts);
