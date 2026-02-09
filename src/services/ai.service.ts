@@ -530,21 +530,30 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       await this.savePromptToTask(prompt);
     }
 
+    let response: string;
+
     // If no shop/taskId provided, execute directly (backward compatibility)
     if (!this.shop || !this.taskId) {
-      return this.executeAIRequest(prompt);
+      response = await this.executeAIRequest(prompt);
+    } else {
+      // Use queue for rate-limited execution
+      const estimatedTokens = this.estimateTokens(prompt);
+
+      response = await this.queue.enqueue(
+        this.shop,
+        this.taskId,
+        this.provider,
+        estimatedTokens,
+        () => this.executeAIRequest(prompt)
+      );
     }
 
-    // Use queue for rate-limited execution
-    const estimatedTokens = this.estimateTokens(prompt);
+    // Save AI response to the corresponding prompt entry
+    if (this.taskId && this.shop) {
+      await this.saveResponseToTask(response);
+    }
 
-    return this.queue.enqueue(
-      this.shop,
-      this.taskId,
-      this.provider,
-      estimatedTokens,
-      () => this.executeAIRequest(prompt)
-    );
+    return response;
   }
 
   private async savePromptToTask(prompt: string): Promise<void> {
@@ -590,6 +599,41 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     } catch (error) {
       console.error('Failed to save prompt to task:', error);
       // Don't throw - we don't want to fail the task if prompt saving fails
+    }
+  }
+
+  private async saveResponseToTask(response: string): Promise<void> {
+    try {
+      const { db } = await import('../../app/db.server');
+
+      const existingTask = await db.task.findUnique({
+        where: { id: this.taskId },
+        select: { prompt: true },
+      });
+
+      if (existingTask?.prompt) {
+        try {
+          const parsed = JSON.parse(existingTask.prompt);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            // Add response to the last prompt entry
+            const truncatedResponse = response.length > 2000
+              ? response.substring(0, 2000) + '...[truncated]'
+              : response;
+            parsed[parsed.length - 1].response = truncatedResponse;
+
+            await db.task.update({
+              where: { id: this.taskId },
+              data: {
+                prompt: JSON.stringify(parsed),
+              },
+            });
+          }
+        } catch {
+          // Not valid JSON, skip
+        }
+      }
+    } catch (error) {
+      console.error('Failed to save response to task:', error);
     }
   }
 

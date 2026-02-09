@@ -450,7 +450,7 @@ export default function TasksPage() {
                     {/* Expandable Details - AI Prompt & Output */}
                     {isExpanded && (
                       <BlockStack gap="300">
-                        {/* AI Prompt Section */}
+                        {/* AI Prompt & Response Section */}
                         {task.prompt && (
                           <div style={{ padding: "1rem", background: "#f0f7ff", borderRadius: "8px", border: "1px solid #b3d9ff" }}>
                             <BlockStack gap="200">
@@ -467,15 +467,15 @@ export default function TasksPage() {
                                   return "";
                                 })()}
                               </Text>
-                              <div style={{ maxHeight: "400px", overflowY: "auto" }}>
+                              <div style={{ maxHeight: "600px", overflowY: "auto" }}>
                                 {(() => {
                                   try {
                                     const parsed = JSON.parse(task.prompt);
                                     if (Array.isArray(parsed)) {
-                                      // New format: array of { timestamp, prompt }
+                                      // New format: array of { timestamp, prompt, response? }
                                       return (
-                                        <BlockStack gap="200">
-                                          {parsed.map((entry: { timestamp: string; prompt: string }, index: number) => (
+                                        <BlockStack gap="300">
+                                          {parsed.map((entry: { timestamp: string; prompt: string; response?: string }, index: number) => (
                                             <div key={index} style={{ padding: "0.75rem", background: "white", borderRadius: "4px", border: "1px solid #e5e5e5" }}>
                                               <Text as="p" variant="bodySm" tone="subdued">
                                                 #{index + 1} - {isClient ? new Date(entry.timestamp).toLocaleTimeString() : entry.timestamp}
@@ -483,6 +483,16 @@ export default function TasksPage() {
                                               <div style={{ fontFamily: "monospace", fontSize: "11px", whiteSpace: "pre-wrap", marginTop: "0.5rem", maxHeight: "150px", overflowY: "auto" }}>
                                                 {entry.prompt}
                                               </div>
+                                              {entry.response && (
+                                                <div style={{ marginTop: "0.5rem", padding: "0.5rem", background: "#f0fff4", borderRadius: "4px", border: "1px solid #9ae6b4" }}>
+                                                  <Text as="p" variant="bodySm" fontWeight="semibold" tone="success">
+                                                    {t.tasks.aiOutput || "AI Output"} #{index + 1}
+                                                  </Text>
+                                                  <div style={{ fontFamily: "monospace", fontSize: "11px", whiteSpace: "pre-wrap", marginTop: "0.25rem", maxHeight: "150px", overflowY: "auto" }}>
+                                                    {entry.response}
+                                                  </div>
+                                                </div>
+                                              )}
                                             </div>
                                           ))}
                                         </BlockStack>
