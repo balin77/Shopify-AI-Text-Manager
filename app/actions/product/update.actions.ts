@@ -266,18 +266,18 @@ async function updateImageAltTexts(
       });
       // Still save to DB if we have a dbImage
       if (dbImage) {
-        if (params.locale === params.primaryLocale) {
-          // When altText is empty string, save as null for consistency
-          const altTextToSave = altText === "" ? null : altText;
-          await db.productImage.update({
-            where: { id: dbImage.id },
-            data: {
-              altText: altTextToSave,
-              altTextModifiedAt: new Date(), // Prevent webhook sync from overwriting
-            },
-          });
-        } else {
-          try {
+        try {
+          if (params.locale === params.primaryLocale) {
+            // When altText is empty string, save as null for consistency
+            const altTextToSave = altText === "" ? null : altText;
+            await db.productImage.update({
+              where: { id: dbImage.id },
+              data: {
+                altText: altTextToSave,
+                altTextModifiedAt: new Date(), // Prevent webhook sync from overwriting
+              },
+            });
+          } else {
             const existing = await db.productImageAltTranslation.findUnique({
               where: { imageId_locale: { imageId: dbImage.id, locale: params.locale } },
             });
@@ -286,18 +286,18 @@ async function updateImageAltTexts(
             } else {
               await db.productImageAltTranslation.create({ data: { imageId: dbImage.id, locale: params.locale, altText } });
             }
-          } catch (dbError: any) {
-            // If the image was deleted by a concurrent sync, log and continue
-            if (dbError.code === 'P2003' || dbError.message?.includes('Foreign key constraint')) {
-              loggers.product("warn", "Image was deleted during translation save (concurrent sync)", {
-                index, locale: params.locale, error: dbError.message,
-              });
-            } else {
-              throw dbError;
-            }
+          }
+          loggers.product("debug", "Saved alt-text to DB only (no Shopify sync)", { index, locale: params.locale });
+        } catch (dbError: any) {
+          // If the image was deleted by a concurrent sync, log and continue
+          if (dbError.code === 'P2025' || dbError.code === 'P2003' || dbError.message?.includes('Foreign key constraint')) {
+            loggers.product("warn", "Image was deleted during alt-text save (concurrent sync)", {
+              index, locale: params.locale, error: dbError.message,
+            });
+          } else {
+            throw dbError;
           }
         }
-        loggers.product("debug", "Saved alt-text to DB only (no Shopify sync)", { index, locale: params.locale });
       }
       continue;
     }
@@ -435,30 +435,30 @@ async function updateImageAltTexts(
 
     // Save to Database (dbImage was already fetched above)
     if (dbImage) {
-      if (params.locale === params.primaryLocale) {
-        // Primary locale: Update ProductImage table
-        // When altText is empty string, save as null for consistency
-        const altTextToSave = altText === "" ? null : altText;
-        logger.debug('[ProductUpdate] SAVING ALT-TEXT TO DATABASE (PRIMARY) 🟢🟢🟢');
-        logger.debug(`[ProductUpdate] dbImage.id: ${dbImage.id}`);
-        logger.debug(`[ProductUpdate] altText to save: "${altTextToSave}" (original: "${altText}", isEmpty: ${altText === ""})`);
-        await db.productImage.update({
-          where: { id: dbImage.id },
-          data: {
-            altText: altTextToSave,
-            altTextModifiedAt: new Date(), // Prevent webhook sync from overwriting
-          },
-        });
-        // Verify the save worked
-        const savedImage = await db.productImage.findUnique({
-          where: { id: dbImage.id },
-          select: { altText: true },
-        });
-        logger.debug(`[ProductUpdate] ✅ Verified saved altText: "${savedImage?.altText}" (isNull: ${savedImage?.altText === null})`);
-        loggers.product("debug", "Updated primary alt-text in DB", { index, altTextSaved: altTextToSave });
-      } else {
-        // Translation: Update ProductImageAltTranslation table
-        try {
+      try {
+        if (params.locale === params.primaryLocale) {
+          // Primary locale: Update ProductImage table
+          // When altText is empty string, save as null for consistency
+          const altTextToSave = altText === "" ? null : altText;
+          logger.debug('[ProductUpdate] SAVING ALT-TEXT TO DATABASE (PRIMARY)');
+          logger.debug(`[ProductUpdate] dbImage.id: ${dbImage.id}`);
+          logger.debug(`[ProductUpdate] altText to save: "${altTextToSave}" (original: "${altText}", isEmpty: ${altText === ""})`);
+          await db.productImage.update({
+            where: { id: dbImage.id },
+            data: {
+              altText: altTextToSave,
+              altTextModifiedAt: new Date(), // Prevent webhook sync from overwriting
+            },
+          });
+          // Verify the save worked
+          const savedImage = await db.productImage.findUnique({
+            where: { id: dbImage.id },
+            select: { altText: true },
+          });
+          logger.debug(`[ProductUpdate] Verified saved altText: "${savedImage?.altText}" (isNull: ${savedImage?.altText === null})`);
+          loggers.product("debug", "Updated primary alt-text in DB", { index, altTextSaved: altTextToSave });
+        } else {
+          // Translation: Update ProductImageAltTranslation table
           const existing = await db.productImageAltTranslation.findUnique({
             where: {
               imageId_locale: {
@@ -486,15 +486,15 @@ async function updateImageAltTexts(
             index,
             locale: params.locale,
           });
-        } catch (dbError: any) {
-          // If the image was deleted by a concurrent sync, log and continue
-          if (dbError.code === 'P2003' || dbError.message?.includes('Foreign key constraint')) {
-            loggers.product("warn", "Image was deleted during translation save (concurrent sync)", {
-              index, locale: params.locale, error: dbError.message,
-            });
-          } else {
-            throw dbError;
-          }
+        }
+      } catch (dbError: any) {
+        // If the image was deleted by a concurrent sync, log and continue
+        if (dbError.code === 'P2025' || dbError.code === 'P2003' || dbError.message?.includes('Foreign key constraint')) {
+          loggers.product("warn", "Image was deleted during alt-text save (concurrent sync)", {
+            index, locale: params.locale, error: dbError.message,
+          });
+        } else {
+          throw dbError;
         }
       }
     }

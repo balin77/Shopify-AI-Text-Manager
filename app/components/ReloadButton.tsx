@@ -113,6 +113,11 @@ export function ReloadButton({
       setWaitingForRevalidation(false);
       setIsLoading(false);
 
+      // Trigger data refresh so editableValues get updated from fresh server data
+      if (onReloadComplete) {
+        onReloadComplete();
+      }
+
       // Notify parent about successful reload
       if (onReloadSuccess) {
         onReloadSuccess();
