@@ -19,6 +19,7 @@ import { useInfoBox } from "../contexts/InfoBoxContext";
 import { useEffect } from "react";
 import type { ContentItem } from "../types/content-editor.types";
 import { measurePageLoad } from "~/utils/performance.client";
+import { logger } from "~/utils/logger.server";
 
 // ============================================================================
 // LOADER - Load data from database
@@ -91,7 +92,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       aiSettings,
     });
   } catch (error: any) {
-    console.error("[PAGES-LOADER] Error:", error);
+    logger.error("[PAGES-LOADER] Error", { error: error instanceof Error ? error.message : String(error) });
     return json({
       pages: [],
       shop: session.shop,

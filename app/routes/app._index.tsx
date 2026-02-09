@@ -116,16 +116,13 @@ export default function AppIndex() {
   useEffect(() => {
     if (needsSetup && !setupStarted) {
       setSetupStarted(true);
-      console.log('[APP] Starting initial setup with progress bar...');
 
       // Register webhooks first, then start sync
       fetch('/api/setup-webhooks', { method: 'POST' })
         .then(() => {
-          console.log('[APP] Webhooks registered, starting sync...');
           startSync(false);
         })
-        .catch((err) => {
-          console.error('[APP] Webhook registration failed, continuing with sync...', err);
+        .catch(() => {
           startSync(false);
         });
     }
@@ -134,7 +131,6 @@ export default function AppIndex() {
   // Redirect to products after sync completes
   useEffect(() => {
     if (syncComplete && syncStats) {
-      console.log(`[APP] Setup complete! Redirecting to products...`, syncStats);
       // Small delay so user can see the completion message
       const timeout = setTimeout(() => {
         navigate("/app/products", { replace: true });

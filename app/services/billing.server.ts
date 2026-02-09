@@ -9,6 +9,7 @@ import { BillingInterval, BillingReplacementBehavior, shopifyApp } from '@shopif
 import type { Session } from '@shopify/shopify-api';
 import { BILLING_PLANS, type BillingPlan, isPaidPlan } from '~/config/billing';
 import { db as prisma } from '~/db.server';
+import { logger } from '~/utils/logger.server';
 
 /**
  * Creates a billing subscription for the given plan
@@ -219,7 +220,7 @@ export async function checkAndSyncSubscription(admin: any, shop: string): Promis
     await syncSubscriptionToDatabase(shop, plan);
     return plan;
   } catch (error) {
-    console.error('Error checking subscription:', error);
+    logger.error('Error checking subscription', { error });
     // On error, default to free to be safe
     await syncSubscriptionToDatabase(shop, 'free');
     return 'free';

@@ -19,6 +19,7 @@ import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
 import { useI18n } from "../contexts/I18nContext";
 import { ContentService } from "../services/content.service";
+import { logger } from "~/utils/logger.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
@@ -53,7 +54,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       error: null
     });
   } catch (error: any) {
-    console.error("[METADATA-LOADER] Error:", error);
+    logger.error("[METADATA-LOADER] Error", { error: error instanceof Error ? error.message : String(error) });
     return json({
       metadata: { metafields: [] },
       shop: session.shop,

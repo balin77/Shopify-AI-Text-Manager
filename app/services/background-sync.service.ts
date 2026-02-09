@@ -640,7 +640,7 @@ export class BackgroundSyncService {
     const translatableData = await translatableResponse.json();
 
     if (translatableData.errors) {
-      console.error(`[BackgroundSync] GraphQL error:`, translatableData.errors);
+      logger.error('[BackgroundSync] GraphQL error', { errors: translatableData.errors });
       throw new Error(translatableData.errors[0]?.message || "GraphQL error");
     }
 
@@ -690,7 +690,7 @@ export class BackgroundSyncService {
           allTranslations.push(...groupTranslations);
         }
       } catch (error: any) {
-        console.error(`[BackgroundSync] Error fetching translations for locale ${locale.locale}:`, error.message);
+        logger.error(`[BackgroundSync] Error fetching translations for locale ${locale.locale}`, { error: error.message });
       }
     }
 
@@ -872,7 +872,7 @@ export class BackgroundSyncService {
             const translatableData = await translatableResponse.json();
 
             if (translatableData.errors) {
-              console.error(`[BackgroundSync] Error loading ${resourceTypeConfig.type}:`, translatableData.errors[0].message);
+              logger.error(`[BackgroundSync] Error loading ${resourceTypeConfig.type}`, { error: translatableData.errors[0].message });
               break;
             }
 
@@ -1208,7 +1208,7 @@ export class BackgroundSyncService {
             }
           }
         } catch (error) {
-          console.error(`[BackgroundSync] Error syncing theme type ${resourceTypeConfig.type}:`, error);
+          logger.error(`[BackgroundSync] Error syncing theme type ${resourceTypeConfig.type}`, { error });
         }
       }
 

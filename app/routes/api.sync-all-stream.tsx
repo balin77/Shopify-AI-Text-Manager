@@ -4,6 +4,7 @@ import { db } from "../db.server";
 import { getPlanLimits, type Plan } from "../utils/planUtils";
 import { ContentSyncService } from "../services/content-sync.service";
 import { BackgroundSyncService } from "../services/background-sync.service";
+import { logger } from "~/utils/logger.server";
 
 /**
  * API Route: Streaming Sync All Content
@@ -28,7 +29,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       throw error;
     }
     // For other errors, return an error response
-    console.error("[SYNC-STREAM] Authentication failed:", error);
+    logger.error("[SYNC-STREAM] Authentication failed", { error: error instanceof Error ? error.message : String(error) });
     return new Response(JSON.stringify({ error: "Authentication failed" }), {
       status: 401,
       headers: { "Content-Type": "application/json" },
@@ -608,7 +609,7 @@ async function syncProductsWithProgress(
         });
       }
     } catch (err: any) {
-      console.error(`[SYNC-STREAM] Failed to save product ${product.id}:`, err.message);
+      logger.error(`[SYNC-STREAM] Failed to save product ${product.id}`, { error: err.message });
     }
   }
 

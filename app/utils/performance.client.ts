@@ -114,61 +114,6 @@ export function measurePageLoad(pageName: string, additionalData?: Record<string
       // LCP might not be available in all browsers
     }
 
-    // Log to console with styling
-    console.group(`⚡ Performance: ${pageName}`);
-    console.log(`📊 Total Load Time: ${metrics.loadTime}ms`);
-
-    if (metrics.domContentLoaded) {
-      console.log(`📄 DOM Content Loaded: ${metrics.domContentLoaded}ms`);
-    }
-
-    if (metrics.domComplete) {
-      console.log(`✅ DOM Complete: ${metrics.domComplete}ms`);
-    }
-
-    if (lcp) {
-      console.log(`🎨 Largest Contentful Paint (LCP): ${lcp}ms`);
-    }
-
-    if (metrics.resourceCount) {
-      console.log(`📦 Resources Loaded: ${metrics.resourceCount}`);
-    }
-
-    if (additionalData) {
-      console.log('📋 Additional Data:', additionalData);
-    }
-
-    // Performance assessment based on Shopify "Built for Shopify" standards
-    console.log('\n🏆 Shopify Built for Shopify Standards (75th percentile):');
-
-    // LCP Assessment (should be ≤ 2500ms)
-    if (lcp !== undefined) {
-      if (lcp <= 2500) {
-        console.log(`  ✅ LCP: ${lcp}ms (≤ 2500ms) - PASS`);
-      } else if (lcp <= 4000) {
-        console.log(`  ⚠️ LCP: ${lcp}ms (needs improvement, target: ≤ 2500ms)`);
-      } else {
-        console.log(`  ❌ LCP: ${lcp}ms (poor, target: ≤ 2500ms)`);
-      }
-    }
-
-    // Overall Load Time Assessment (general admin app guideline)
-    console.log('\n📈 Overall Performance:');
-    if (metrics.loadTime <= 500) {
-      console.log(`  🚀 Excellent: ${metrics.loadTime}ms (≤ 500ms - Shopify p95 standard)`);
-    } else if (metrics.loadTime <= 1000) {
-      console.log(`  ✅ Good: ${metrics.loadTime}ms (≤ 1000ms)`);
-    } else if (metrics.loadTime <= 2000) {
-      console.log(`  ⚠️ Acceptable: ${metrics.loadTime}ms (≤ 2000ms)`);
-    } else if (metrics.loadTime <= 3000) {
-      console.log(`  ⚠️ Needs Improvement: ${metrics.loadTime}ms (> 2000ms)`);
-    } else {
-      console.log(`  ❌ Poor: ${metrics.loadTime}ms (> 3000ms - optimize required)`);
-    }
-
-    console.log('\n💡 Tip: For Shopify admin apps, aim for <500ms response times (p95)');
-    console.groupEnd();
-
     // Store in performance timeline
     performance.measure(`${pageName}-complete`, {
       start: 0,
@@ -203,11 +148,6 @@ export function measureOperation(operationName: string, startMark?: string) {
       performance.mark(endMarkName);
 
       performance.measure(operationName, startMarkName, endMarkName);
-
-      const measure = performance.getEntriesByName(operationName, 'measure')[0];
-      if (measure) {
-        console.log(`⏱️ ${operationName}: ${Math.round(measure.duration)}ms`);
-      }
 
       // Cleanup
       performance.clearMarks(startMarkName);

@@ -4,6 +4,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import { AIQueueService } from './ai-queue.service';
 import { sanitizePromptInput } from '../../app/utils/prompt-sanitizer';
+import { loggers } from '../../app/utils/logger.server';
 
 export type AIProvider = 'huggingface' | 'gemini' | 'claude' | 'openai' | 'grok' | 'deepseek';
 
@@ -42,34 +43,34 @@ export class AIService {
     if (this.provider === 'huggingface') {
       const apiKey = this.config.huggingfaceApiKey || process.env.HUGGINGFACE_API_KEY || '';
       this.huggingface = new HfInference(apiKey);
-      console.log('🤖 AI Provider: Hugging Face (FREE)');
+      loggers.ai('info', 'AI Provider: Hugging Face (FREE)');
     } else if (this.provider === 'gemini') {
       const apiKey = this.config.geminiApiKey || process.env.GOOGLE_API_KEY || '';
       const genAI = new GoogleGenerativeAI(apiKey);
       this.gemini = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-lite' });
-      console.log('🤖 AI Provider: Google Gemini (FREE)');
+      loggers.ai('info', 'AI Provider: Google Gemini (FREE)');
     } else if (this.provider === 'claude') {
       const apiKey = this.config.claudeApiKey || process.env.ANTHROPIC_API_KEY || '';
       this.anthropic = new Anthropic({ apiKey });
-      console.log('🤖 AI Provider: Claude');
+      loggers.ai('info', 'AI Provider: Claude');
     } else if (this.provider === 'openai') {
       const apiKey = this.config.openaiApiKey || process.env.OPENAI_API_KEY || '';
       this.openai = new OpenAI({ apiKey });
-      console.log('🤖 AI Provider: OpenAI');
+      loggers.ai('info', 'AI Provider: OpenAI');
     } else if (this.provider === 'grok') {
       const apiKey = this.config.grokApiKey || process.env.GROK_API_KEY || '';
       this.grok = new OpenAI({
         apiKey,
         baseURL: 'https://api.x.ai/v1',
       });
-      console.log('🤖 AI Provider: Grok (X.AI)');
+      loggers.ai('info', 'AI Provider: Grok (X.AI)');
     } else if (this.provider === 'deepseek') {
       const apiKey = this.config.deepseekApiKey || process.env.DEEPSEEK_API_KEY || '';
       this.deepseek = new OpenAI({
         apiKey,
         baseURL: 'https://api.deepseek.com',
       });
-      console.log('🤖 AI Provider: DeepSeek');
+      loggers.ai('info', 'AI Provider: DeepSeek');
     }
   }
 
@@ -597,7 +598,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
         },
       });
     } catch (error) {
-      console.error('Failed to save prompt to task:', error);
+      loggers.ai('error', 'Failed to save prompt to task', { error: error instanceof Error ? error.message : String(error) });
       // Don't throw - we don't want to fail the task if prompt saving fails
     }
   }
@@ -633,7 +634,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
         }
       }
     } catch (error) {
-      console.error('Failed to save response to task:', error);
+      loggers.ai('error', 'Failed to save response to task', { error: error instanceof Error ? error.message : String(error) });
     }
   }
 

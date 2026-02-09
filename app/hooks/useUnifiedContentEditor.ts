@@ -201,14 +201,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // which triggers useChangeTracking and other effects, causing an infinite loop
   const baseSelectedItem = useMemo(() => {
     const found = items.find((item) => item.id === selectedItemId);
-    if (found && selectedItemId) {
-      console.log('🔍 [EDITOR] baseSelectedItem updated:', {
-        id: found.id,
-        title: found.title,
-        translationsCount: found.translations?.length || 0,
-        itemsArrayLength: items.length,
-      });
-    }
     return found;
   }, [items, selectedItemId]);
 
@@ -275,7 +267,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     }
 
     // No DB images - load from Shopify API as fallback
-    console.log(`🖼️ [OnDemandImages] No DB images, loading from Shopify for ${selectedItemId}`);
     setIsLoadingImages(true);
     imageFetcher.load(`/api/product-images?productId=${encodeURIComponent(selectedItemId)}`);
   }, [selectedItemId, baseSelectedItem, config.contentType]);
@@ -291,8 +282,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       }
 
       if (imageFetcher.data.success && imageFetcher.data.images) {
-        console.log(`🖼️ [OnDemandImages] Loaded ${imageFetcher.data.images.length} images from Shopify`);
-
         const images: ContentImage[] = imageFetcher.data.images.map((img: any) => ({
           url: img.url,
           altText: img.altText,
@@ -302,7 +291,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         setOnDemandImages(images);
         loadedImagesForProductRef.current = selectedItemId;
       } else if (imageFetcher.data.error) {
-        console.error(`🖼️ [OnDemandImages] Error:`, imageFetcher.data.error);
         loadedImagesForProductRef.current = selectedItemId;
       }
     }
@@ -451,12 +439,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     prevDataRefreshTriggerRef.current = dataRefreshTrigger;
 
     if (refreshTriggered) {
-      console.log('🔄 [EDITOR] Data refresh triggered by ReloadButton, reloading data for:', {
-        itemId: selectedItemId,
-        itemTitle: item?.title,
-        language: currentLanguage,
-        itemObject: item,
-      });
       debugLog.dataLoad(' Data refresh triggered by ReloadButton');
 
       // Clear saved values cache on manual reload - user expects fresh server data
@@ -528,17 +510,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           if (field.key === 'seoTitle') {
             const actualSeoTitle = item.seo?.title;
             const isUsingFallback = !actualSeoTitle && item.title;
-            console.log('🔍 [EDITOR] seoTitle check:', {
-              actualSeoTitle,
-              itemTitle: item.title,
-              isUsingFallback,
-              valueSet: newValues[field.key],
-              itemSeo: item.seo,
-            });
             if (isUsingFallback) {
               debugLog.dataLoad(' SEO Title field: using fallback to main title:', item.title);
               newFallbackFields.add(field.key);
-              console.log('✅ [EDITOR] Added seoTitle to fallback fields');
             }
           }
         });
@@ -614,13 +588,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       setFallbackFields(newFallbackFields);
     }
 
-    console.log('🔄 [EDITOR] Setting editableValues to:', {
-      language: currentLanguage,
-      values: newValues,
-      fieldCount: Object.keys(newValues).length,
-      refreshTriggered,
-      itemTitle: item?.title,
-    });
     setEditableValues(newValues);
 
     // For templates: Store original values for change detection
@@ -790,7 +757,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       const contentType = response.headers.get('content-type');
       if (!contentType || !contentType.includes('application/json')) {
         const text = await response.text();
-        console.error('Non-JSON response received:', text.substring(0, 500));
         throw new Error(`Server returned ${response.status}: Expected JSON but got ${contentType || 'unknown content type'}`);
       }
 
@@ -1695,7 +1661,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       const urlParams = new URLSearchParams(window.location.search);
       if (urlParams.get('skipShopifySync') === 'true') {
         formDataObj.skipShopifySync = 'true';
-        console.log('🧪 [DEBUG MODE] skipShopifySync enabled - will only save to DB');
       }
     }
 
@@ -2942,12 +2907,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
   // Trigger data refresh (called by ReloadButton after revalidation to reload editableValues)
   const triggerDataRefresh = useCallback(() => {
-    console.log('🔄 [EDITOR] triggerDataRefresh called - will reload editableValues from fresh data');
     debugLog.dataLoad(' triggerDataRefresh called - will reload editableValues from fresh data');
-    setDataRefreshTrigger(prev => {
-      console.log('🔄 [EDITOR] dataRefreshTrigger updated:', prev, '->', prev + 1);
-      return prev + 1;
-    });
+    setDataRefreshTrigger(prev => prev + 1);
   }, []);
 
   // ============================================================================

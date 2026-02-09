@@ -6,6 +6,7 @@
 
 import type { PrismaClient } from "@prisma/client";
 import { decryptApiKey } from "./encryption.server";
+import { logger } from '~/utils/logger.server';
 
 /**
  * Load AI settings for API key validation in loaders.
@@ -39,7 +40,7 @@ export async function loadAISettingsForValidation(db: PrismaClient, shop: string
       preferredProvider: settings?.preferredProvider || null,
     };
   } catch (error) {
-    console.error('[LOADER-HELPERS] Decryption error - returning false for all keys:', error instanceof Error ? error.message : 'Unknown error');
+    logger.error('[LOADER-HELPERS] Decryption error - returning false for all keys', { error: error instanceof Error ? error.message : 'Unknown error' });
     // If decryption fails (wrong key, corrupted data), return all false
     // This allows the app to continue working, user can re-enter keys
     return {

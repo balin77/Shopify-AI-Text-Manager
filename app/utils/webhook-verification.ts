@@ -17,6 +17,7 @@
  */
 
 import * as crypto from "crypto";
+import { loggers } from '~/utils/logger.server';
 
 /**
  * Verify Shopify webhook signature using HMAC-SHA256
@@ -30,13 +31,13 @@ export function verifyShopifyWebhook(
   hmac: string | null
 ): boolean {
   if (!hmac) {
-    console.warn("[WEBHOOK-VERIFY] No HMAC signature provided");
+    loggers.webhook("warn", "No HMAC signature provided");
     return false;
   }
 
   const secret = process.env.SHOPIFY_API_SECRET;
   if (!secret) {
-    console.error("[WEBHOOK-VERIFY] SHOPIFY_API_SECRET environment variable not configured");
+    loggers.webhook("error", "SHOPIFY_API_SECRET environment variable not configured");
     return false;
   }
 
@@ -61,18 +62,16 @@ export function verifyShopifyWebhook(
     }
   } catch (error) {
     // timingSafeEqual throws if buffers have different lengths
-    console.warn("[WEBHOOK-VERIFY] Error during comparison:", error);
+    loggers.webhook("warn", "Error during comparison", { error });
     verified = false;
   }
 
   if (!verified) {
-    console.warn("[WEBHOOK-VERIFY] HMAC signature mismatch");
-    console.warn("[WEBHOOK-VERIFY] This could indicate:");
-    console.warn("  - Request not from Shopify");
-    console.warn("  - Man-in-the-middle attack");
-    console.warn("  - Wrong SHOPIFY_API_SECRET configured");
-    console.warn("[WEBHOOK-VERIFY] Expected:", calculatedHmac.substring(0, 20) + "...");
-    console.warn("[WEBHOOK-VERIFY] Received:", hmac.substring(0, 20) + "...");
+    loggers.webhook("warn", "HMAC signature mismatch - possible unauthorized request", {
+      possibleCauses: ["Request not from Shopify", "Man-in-the-middle attack", "Wrong SHOPIFY_API_SECRET configured"],
+      expectedPrefix: calculatedHmac.substring(0, 20) + "...",
+      receivedPrefix: hmac.substring(0, 20) + "..."
+    });
   }
 
   return verified;
@@ -126,7 +125,7 @@ export async function verifyAndParseWebhook<T = any>(
     try {
       body = JSON.parse(rawBody);
     } catch (error) {
-      console.error("[WEBHOOK-VERIFY] Failed to parse JSON body:", error);
+      loggers.webhook("error", "Failed to parse JSON body", { error });
     }
   }
 

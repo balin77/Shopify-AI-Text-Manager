@@ -194,13 +194,11 @@ function safeReload() {
 
   // Prevent reload loop: max 2 reloads within 30 seconds
   if (reloadCount >= 2) {
-    console.warn('[APP.TSX] Reload loop detected (max attempts reached), showing error UI instead');
     return false;
   }
 
   sessionStorage.setItem(RELOAD_KEY, now.toString());
   sessionStorage.setItem(RELOAD_COUNT_KEY, (reloadCount + 1).toString());
-  console.log('[APP.TSX] Performing cache-busted reload due to manifest mismatch (attempt ' + (reloadCount + 1) + ')');
 
   // Force a cache-busted reload by navigating to current URL with cache-busting param
   const url = new URL(window.location.href);
@@ -246,10 +244,6 @@ export function ErrorBoundary() {
 
   // Handle manifest version mismatch: automatic reload after deployment
   if (isManifestMismatchError(error)) {
-    if (typeof window !== 'undefined') {
-      console.log('[APP.TSX ErrorBoundary] Manifest mismatch detected - attempting automatic reload');
-    }
-
     // Try automatic reload (with loop prevention) - only on client side
     if (typeof window !== 'undefined' && safeReload()) {
       // Show brief loading state while reload happens

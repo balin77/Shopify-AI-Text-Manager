@@ -152,7 +152,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       descriptionHtml: p.descriptionHtml || "",
       handle: p.handle,
       status: p.status,
-      productType: p.productType || "", // ⚠️ NULL becomes empty string here
+      productType: p.productType || "",
       featuredImage: {
         url: p.featuredImageUrl || "",
         altText: p.featuredImageAlt || undefined,
@@ -301,17 +301,8 @@ export default function ProductsPage() {
   // ============================================================================
 
   useEffect(() => {
-    console.log('🔍 [PRODUCTS] Selection restoration effect running', {
-      isMounted: isMountedRef.current,
-      productsCount: products.length,
-      hasHandlers: !!editor.handlers,
-      hasSelectFn: typeof editor.handlers?.handleItemSelect === 'function',
-      currentSelection: editor.state.selectedItemId,
-    });
-
     // Wait for products to load and editor to be ready
     if (!isMountedRef.current || !products.length || !editor.handlers || typeof editor.handlers.handleItemSelect !== 'function') {
-      console.log('⏸️ [PRODUCTS] Waiting for initialization...');
       return;
     }
 
@@ -319,44 +310,16 @@ export default function ProductsPage() {
     const urlParams = new URLSearchParams(window.location.search);
     const selectedFromUrl = urlParams.get('selected');
 
-    console.log('🔍 [PRODUCTS] URL check:', {
-      hasSelectedParam: !!selectedFromUrl,
-      selectedValue: selectedFromUrl,
-      fullUrl: window.location.href,
-      productIds: products.slice(0, 3).map((p: any) => p.id),
-    });
-
     if (selectedFromUrl) {
-      console.log('🔄 [PRODUCTS] Restoring selection from URL:', selectedFromUrl);
-
       // Find the product in the list
       const productExists = products.find((p: any) => p.id === selectedFromUrl);
-
-      console.log('🔍 [PRODUCTS] Product lookup:', {
-        searchingFor: selectedFromUrl,
-        found: !!productExists,
-        foundProduct: productExists ? { id: productExists.id, title: productExists.title } : null,
-        totalProducts: products.length,
-      });
 
       if (productExists) {
         // Restore selection via editor
         try {
-          console.log('🎯 [PRODUCTS] Calling handleItemSelect with:', selectedFromUrl);
-          console.log('🔍 [PRODUCTS] Editor state BEFORE selection:', {
-            selectedItemId: editor.state.selectedItemId,
-            selectedItem: editor.selectedItem ? { id: editor.selectedItem.id, title: editor.selectedItem.title } : null,
-          });
-
           editor.handlers.handleItemSelect(selectedFromUrl);
-
-          console.log('🔍 [PRODUCTS] Editor state AFTER selection:', {
-            selectedItemId: editor.state.selectedItemId,
-            selectedItem: editor.selectedItem ? { id: editor.selectedItem.id, title: editor.selectedItem.title } : null,
-          });
-          console.log('✅ [PRODUCTS] Selection restored successfully');
         } catch (error) {
-          console.error('[PRODUCTS] Failed to restore selection:', error);
+          // Selection restoration failed - non-critical
         }
 
         // Clean up URL parameter
@@ -364,34 +327,22 @@ export default function ProductsPage() {
         urlParams.delete('_t');
         const newUrl = `${window.location.pathname}${urlParams.toString() ? '?' + urlParams.toString() : ''}`;
         window.history.replaceState({}, '', newUrl);
-        console.log('🧹 [PRODUCTS] Cleaned up URL parameters');
-      } else {
-        console.warn('⚠️ [PRODUCTS] Product not found in list:', selectedFromUrl);
       }
     } else {
       // Fallback: Check localStorage
       try {
         const stored = localStorage.getItem('lastSelectedResource');
-        console.log('🔍 [PRODUCTS] localStorage check:', {
-          hasStored: !!stored,
-          storedValue: stored,
-        });
-
         if (stored) {
           const parsed = JSON.parse(stored);
 
           // Only restore if it's recent (within last 10 seconds)
           if (Date.now() - parsed.timestamp < 10000) {
-            console.log('🔄 [PRODUCTS] Restoring selection from localStorage:', parsed.id);
-
             const productExists = products.find((p: any) => p.id === parsed.id);
             if (productExists) {
               try {
-                console.log('🎯 [PRODUCTS] Calling handleItemSelect (from localStorage) with:', parsed.id);
                 editor.handlers.handleItemSelect(parsed.id);
-                console.log('✅ [PRODUCTS] Selection restored from localStorage');
               } catch (error) {
-                console.error('[PRODUCTS] Failed to restore from localStorage:', error);
+                // Selection restoration failed - non-critical
               }
             }
           }
@@ -400,7 +351,7 @@ export default function ProductsPage() {
           localStorage.removeItem('lastSelectedResource');
         }
       } catch (e) {
-        console.warn('[PRODUCTS] Failed to restore from localStorage:', e);
+        // Failed to restore from localStorage - non-critical
       }
     }
   }, [products, editor.handlers]); // Run when products or editor changes
@@ -442,10 +393,9 @@ export default function ProductsPage() {
   }, [isInitialLoad, products]);
 
   useEffect(() => {
-    // 🧪 DEBUG MODE: Skip auto-sync if skipShopifySync is enabled
+    // DEBUG MODE: Skip auto-sync if skipShopifySync is enabled
     const urlParams = new URLSearchParams(window.location.search);
     if (urlParams.get('skipShopifySync') === 'true') {
-      console.log('🧪 [DEBUG MODE] Auto-sync disabled - skipShopifySync is active');
       return;
     }
 
@@ -460,7 +410,6 @@ export default function ProductsPage() {
 
     // If product has no translations, trigger sync
     if (!hasTranslations && isMountedRef.current) {
-      console.log(`🔄 [ON-DEMAND] Product "${selectedProduct.title}" has no translations, loading...`);
       setIsLoadingTranslations(true);
 
       // Mark as synced to prevent duplicate syncs
@@ -481,7 +430,6 @@ export default function ProductsPage() {
   // Handle translation sync completion
   useEffect(() => {
     if (isLoadingTranslations && translationSyncFetcher.state === "idle" && translationSyncFetcher.data && isMountedRef.current) {
-      console.log("✅ [ON-DEMAND] Translation sync complete:", translationSyncFetcher.data);
       if (isMountedRef.current) {
         setIsLoadingTranslations(false);
       }
@@ -489,31 +437,11 @@ export default function ProductsPage() {
       if (translationSyncFetcher.data.success && isMountedRef.current) {
         // Revalidate to fetch fresh data with translations
         if (revalidator.state === "idle") {
-          console.log("🔄 [ON-DEMAND] Revalidating to load translations...");
-          console.log("🔄 [ON-DEMAND] Current product before revalidate:", {
-            id: selectedProduct?.id,
-            title: selectedProduct?.title,
-            productType: selectedProduct?.productType,
-            translationCount: selectedProduct?.translations?.length || 0,
-          });
           revalidator.revalidate();
         }
       }
     }
   }, [isLoadingTranslations, translationSyncFetcher.state, translationSyncFetcher.data, revalidator, selectedProduct]);
-
-  // Log after revalidation to see if data changed
-  useEffect(() => {
-    if (revalidator.state === "idle" && selectedProduct) {
-      console.log("✅ [REVALIDATE] Revalidation complete, current product data:", {
-        id: selectedProduct.id,
-        title: selectedProduct.title,
-        productType: selectedProduct.productType === "" ? "EMPTY_STRING" : selectedProduct.productType || "UNDEFINED",
-        translationCount: selectedProduct.translations?.length || 0,
-        translations: selectedProduct.translations?.map(t => `${t.locale}:${t.key}`).slice(0, 5) || [],
-      });
-    }
-  }, [revalidator.state, selectedProduct]);
 
   // Reset ContentNavigation height to 0 (since we don't have ContentTypeNavigation on Products page)
   useEffect(() => {
@@ -526,7 +454,6 @@ export default function ProductsPage() {
 
     const url = new URL(window.location.href);
     if (url.searchParams.has("sync") && !isSyncing && syncFetcher.state === "idle" && isMountedRef.current) {
-      console.log("🔄 [ProductsPage] Triggering background sync...");
       setIsSyncing(true);
 
       // Remove sync parameter from URL
@@ -548,8 +475,6 @@ export default function ProductsPage() {
   // Handle sync completion
   useEffect(() => {
     if (isSyncing && syncFetcher.state === "idle" && syncFetcher.data && isMountedRef.current) {
-      console.log("✅ [ProductsPage] Sync complete:", syncFetcher.data);
-
       // Hide loading spinner
       if (isMountedRef.current) {
         setGlobalLoading(false);

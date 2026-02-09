@@ -55,11 +55,8 @@ export function useAppNavigation() {
   const handleNavigate = useCallback((path: string, options: NavigateOptions = {}) => {
     if (typeof window === 'undefined') return;
 
-    console.log(`🚀 [useAppNavigation] Navigating to: ${path}`);
-
     // Get current search params from window.location (most reliable source)
     const currentParams = new URLSearchParams(window.location.search);
-    console.log(`🔍 [useAppNavigation] Current search params:`, currentParams.toString());
 
     // Get additional params from options
     const additionalParams = options.searchParams || new URLSearchParams();
@@ -87,11 +84,6 @@ export function useAppNavigation() {
       if (host) finalParams.set('host', host);
     }
 
-    const shop = finalParams.get('shop');
-    const host = finalParams.get('host');
-
-    console.log(`🏪 [useAppNavigation] Shop: "${shop}", Host: "${host}"`);
-
     // Build final path with params
     const searchString = finalParams.toString();
     const pathWithParams = searchString ? `${path}?${searchString}` : path;
@@ -99,8 +91,6 @@ export function useAppNavigation() {
     // IMPORTANT: Use absolute URL with current origin to avoid iframe navigation issues
     // If we use a relative path, the browser might resolve it to admin.shopify.com
     const fullUrl = new URL(pathWithParams, window.location.origin).toString();
-
-    console.log(`🎯 [useAppNavigation] Final URL: ${fullUrl}`);
 
     // Use window.location.href for reliable navigation in iframe
     if (window.shopify && typeof window.shopify.loading === 'function') {

@@ -8,6 +8,7 @@ import type { LoaderFunctionArgs } from '@remix-run/node';
 import { json } from '@remix-run/node';
 import { authenticate } from '~/shopify.server';
 import { db } from '~/db.server';
+import { logger } from '~/utils/logger.server';
 
 export interface StorageStats {
   products: number;
@@ -277,7 +278,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       }
     });
   } catch (error) {
-    console.error('Error calculating storage stats:', error);
+    logger.error('Error calculating storage stats', { error: error instanceof Error ? error.message : String(error) });
     return json(
       { error: error instanceof Error ? error.message : 'Failed to calculate storage stats' },
       { status: 500 }

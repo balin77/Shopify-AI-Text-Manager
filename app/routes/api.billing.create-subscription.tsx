@@ -11,6 +11,7 @@ import { authenticate } from '~/shopify.server';
 import { createSubscription, syncSubscriptionToDatabase } from '~/services/billing.server';
 import type { BillingPlan } from '~/config/billing';
 import { isPaidPlan } from '~/config/billing';
+import { logger } from '~/utils/logger.server';
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
@@ -50,7 +51,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       subscriptionId: result.subscriptionId,
     });
   } catch (error) {
-    console.error('Error creating subscription:', error);
+    logger.error('Error creating subscription', { error: error instanceof Error ? error.message : String(error) });
     return json(
       { error: error instanceof Error ? error.message : 'Failed to create subscription' },
       { status: 500 }

@@ -4,6 +4,7 @@
  */
 
 import { AIQueueService } from './ai-queue.service';
+import { loggers } from '../../app/utils/logger.server';
 import type { AIProvider } from './ai-queue.service';
 
 // Task type from Prisma
@@ -59,20 +60,20 @@ export class TaskRecoveryService {
    */
   startStuckTaskMonitoring(): void {
     if (this.stuckCheckInterval) {
-      console.log('[TaskRecovery] Stuck task monitoring already running');
+      loggers.queue('info', 'Stuck task monitoring already running');
       return;
     }
 
-    console.log('[TaskRecovery] Starting stuck task monitoring (every 2 minutes)');
+    loggers.queue('info', 'Starting stuck task monitoring (every 2 minutes)');
 
     this.stuckCheckInterval = setInterval(async () => {
       try {
         const stuckCount = await this.markStuckTasksAsFailed();
         if (stuckCount > 0) {
-          console.log(`[TaskRecovery] Periodic check: marked ${stuckCount} stuck task(s) as failed`);
+          loggers.queue('info', `Periodic check: marked ${stuckCount} stuck task(s) as failed`);
         }
       } catch (error) {
-        console.error('[TaskRecovery] Error during stuck task check:', error);
+        loggers.queue('error', 'Error during stuck task check', { error: error instanceof Error ? error.message : String(error) });
       }
     }, STUCK_CHECK_INTERVAL_MS);
   }
@@ -84,7 +85,7 @@ export class TaskRecoveryService {
     if (this.stuckCheckInterval) {
       clearInterval(this.stuckCheckInterval);
       this.stuckCheckInterval = null;
-      console.log('[TaskRecovery] Stopped stuck task monitoring');
+      loggers.queue('info', 'Stopped stuck task monitoring');
     }
   }
 
@@ -95,7 +96,7 @@ export class TaskRecoveryService {
   async recoverPendingTasks(): Promise<{ recovered: number; failed: number }> {
     const { db } = await import('../../app/db.server');
 
-    console.log('[TaskRecovery] Starting task recovery...');
+    loggers.queue('info', 'Starting task recovery...');
 
     // First, mark stuck tasks as failed
     const stuckCount = await this.markStuckTasksAsFailed();
@@ -111,7 +112,7 @@ export class TaskRecoveryService {
       orderBy: { createdAt: 'asc' }, // Process oldest first
     });
 
-    console.log(`[TaskRecovery] Found ${recoverableTasks.length} tasks to recover`);
+    loggers.queue('info', `Found ${recoverableTasks.length} tasks to recover`);
 
     let recovered = 0;
     let failed = stuckCount;
@@ -121,14 +122,14 @@ export class TaskRecoveryService {
         const success = await this.recoverTask(task as Task);
         if (success) {
           recovered++;
-          console.log(`[TaskRecovery] Recovered task ${task.id} (${task.type})`);
+          loggers.queue('info', `Recovered task ${task.id} (${task.type})`);
         } else {
           failed++;
-          console.log(`[TaskRecovery] Could not recover task ${task.id} - missing data`);
+          loggers.queue('warn', `Could not recover task ${task.id} - missing data`);
         }
       } catch (error) {
         failed++;
-        console.error(`[TaskRecovery] Failed to recover task ${task.id}:`, error);
+        loggers.queue('error', `Failed to recover task ${task.id}`, { error: error instanceof Error ? error.message : String(error) });
 
         // Mark as failed in database
         await db.task.update({
@@ -142,7 +143,7 @@ export class TaskRecoveryService {
       }
     }
 
-    console.log(`[TaskRecovery] Recovery complete: ${recovered} recovered, ${failed} failed/stuck`);
+    loggers.queue('info', `Recovery complete: ${recovered} recovered, ${failed} failed/stuck`);
 
     return { recovered, failed };
   }
@@ -169,7 +170,7 @@ export class TaskRecoveryService {
     });
 
     if (result.count > 0) {
-      console.log(`[TaskRecovery] Marked ${result.count} stuck task(s) as failed`);
+      loggers.queue('info', `Marked ${result.count} stuck task(s) as failed`);
     }
 
     return result.count;
@@ -192,14 +193,14 @@ export class TaskRecoveryService {
     });
 
     if (!aiSettings) {
-      console.warn(`[TaskRecovery] No AI settings found for shop ${task.shop}`);
+      loggers.queue('warn', `No AI settings found for shop ${task.shop}`);
       return false;
     }
 
     // Validate that the provider has an API key configured
     const provider = task.provider as AIProvider;
     if (!this.hasProviderApiKey(provider, aiSettings)) {
-      console.warn(`[TaskRecovery] No API key for provider ${provider} in shop ${task.shop}`);
+      loggers.queue('warn', `No API key for provider ${provider} in shop ${task.shop}`);
       return false;
     }
 

@@ -1,5 +1,6 @@
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
+import { logger } from "~/utils/logger.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   try {
@@ -30,7 +31,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         }
       );
     } catch (dbError: any) {
-      console.error("Database error in running-tasks-count:", dbError);
+      logger.error("Database error in running-tasks-count", { error: dbError instanceof Error ? dbError.message : String(dbError) });
       return json(
         { count: 0, error: "Database error" },
         {
@@ -44,11 +45,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     }
   } catch (authError: any) {
     // Handle authentication errors (including rate limiting)
-    console.error("Authentication error in running-tasks-count:", authError);
+    logger.error("Authentication error in running-tasks-count", { error: authError instanceof Error ? authError.message : String(authError) });
 
     // If this is a rate limit error, return 200 with count 0 to prevent client errors
     if (authError.status === 429) {
-      console.warn("Rate limit hit on running-tasks-count, returning 0");
+      logger.warn("Rate limit hit on running-tasks-count, returning 0");
       return json(
         { count: 0, warning: "Rate limited" },
         {

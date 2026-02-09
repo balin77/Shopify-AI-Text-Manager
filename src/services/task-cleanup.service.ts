@@ -4,6 +4,7 @@
  */
 
 import { db } from "../../app/db.server";
+import { loggers } from '../../app/utils/logger.server';
 
 export class TaskCleanupService {
   private static instance: TaskCleanupService;
@@ -25,11 +26,11 @@ export class TaskCleanupService {
    */
   start() {
     if (this.isRunning) {
-      console.log('[TaskCleanup] Service already running');
+      loggers.queue('info', 'Task cleanup service already running');
       return;
     }
 
-    console.log('[TaskCleanup] Starting task cleanup service...');
+    loggers.queue('info', 'Starting task cleanup service...');
     this.isRunning = true;
 
     // Run immediately on start
@@ -49,7 +50,7 @@ export class TaskCleanupService {
       clearInterval(this.intervalId);
       this.intervalId = null;
       this.isRunning = false;
-      console.log('[TaskCleanup] Service stopped');
+      loggers.queue('info', 'Task cleanup service stopped');
     }
   }
 
@@ -60,7 +61,7 @@ export class TaskCleanupService {
   async cleanup() {
     try {
       const now = new Date();
-      console.log(`[TaskCleanup] Running cleanup at ${now.toISOString()}...`);
+      loggers.queue('info', `Running cleanup at ${now.toISOString()}...`);
 
       const result = await db.task.deleteMany({
         where: {
@@ -71,12 +72,12 @@ export class TaskCleanupService {
       });
 
       if (result.count > 0) {
-        console.log(`[TaskCleanup] Deleted ${result.count} expired task(s)`);
+        loggers.queue('info', `Deleted ${result.count} expired task(s)`);
       } else {
-        console.log('[TaskCleanup] No expired tasks to delete');
+        loggers.queue('debug', 'No expired tasks to delete');
       }
     } catch (error) {
-      console.error('[TaskCleanup] Error during cleanup:', error);
+      loggers.queue('error', 'Error during cleanup', { error: error instanceof Error ? error.message : String(error) });
     }
   }
 

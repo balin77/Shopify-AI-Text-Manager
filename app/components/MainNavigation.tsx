@@ -171,8 +171,6 @@ export function MainNavigation() {
       const newInterval = Math.min(pollIntervalRef.current * 2, 60000);
 
       if (newInterval !== pollIntervalRef.current) {
-        const errorType = data?.warning ? "Rate limited" : "Error";
-        console.warn(`⚠️ [MainNavigation] Running tasks ${errorType}. Increasing poll interval to ${newInterval}ms`);
         pollIntervalRef.current = newInterval;
       }
     } else if (tasksFetcher.state === "idle" && tasksFetcher.data !== undefined && !data?.error && !data?.warning) {
@@ -183,7 +181,6 @@ export function MainNavigation() {
         // Gradually reduce interval back to configured minimum
         const newInterval = Math.max(pollIntervalRef.current / 2, UI_CONFIG.TASK_POLL_INTERVAL_MS);
         if (newInterval !== pollIntervalRef.current) {
-          console.log(`✅ [MainNavigation] Running tasks connection restored. Reducing poll interval to ${newInterval}ms`);
           pollIntervalRef.current = newInterval;
         }
       }
@@ -206,8 +203,6 @@ export function MainNavigation() {
       const newInterval = Math.min(completedTasksPollIntervalRef.current * 2, 60000);
 
       if (newInterval !== completedTasksPollIntervalRef.current) {
-        const errorType = data?.warning ? "Rate limited" : "Error";
-        console.warn(`⚠️ [MainNavigation] Completed tasks ${errorType}. Increasing poll interval to ${newInterval}ms`);
         completedTasksPollIntervalRef.current = newInterval;
       }
     } else if (completedTasksFetcher.state === "idle" && completedTasksFetcher.data !== undefined && !data?.error && !data?.warning) {
@@ -218,7 +213,6 @@ export function MainNavigation() {
         // Gradually reduce interval back to configured minimum
         const newInterval = Math.max(completedTasksPollIntervalRef.current / 2, UI_CONFIG.TASK_POLL_INTERVAL_MS);
         if (newInterval !== completedTasksPollIntervalRef.current) {
-          console.log(`✅ [MainNavigation] Completed tasks connection restored. Reducing poll interval to ${newInterval}ms`);
           completedTasksPollIntervalRef.current = newInterval;
         }
       }
@@ -296,8 +290,7 @@ export function MainNavigation() {
     { id: "settings", label: t.nav.settings, path: "/app/settings" },
   ];
 
-  const handleClick = (path: string, tabId: string) => {
-    console.log("🖱️ [MainNavigation] Tab clicked:", tabId, "->", path);
+  const handleClick = (path: string, _tabId: string) => {
     handleNavigate(path);
   };
 
