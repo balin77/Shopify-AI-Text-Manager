@@ -87,9 +87,27 @@ export function useHtmlFormatting({ editorRef, onChange }: UseHtmlFormattingProp
         case "redo":
           document.execCommand("redo", false);
           break;
-        case "removeFormat":
-          document.execCommand("removeFormat", false);
+        case "removeFormat": {
+          const selection = window.getSelection();
+          const hasSelection =
+            selection &&
+            !selection.isCollapsed &&
+            editorRef.current.contains(selection.anchorNode);
+
+          if (hasSelection) {
+            // Strip formatting from selected text only
+            const plainText = selection.toString();
+            // First remove inline formatting
+            document.execCommand("removeFormat", false);
+            // Then replace with plain text to also remove block-level formatting
+            document.execCommand("insertText", false, plainText);
+          } else {
+            // No selection: strip ALL formatting from entire field
+            const plainText = editorRef.current.textContent || "";
+            editorRef.current.textContent = plainText;
+          }
           break;
+        }
       }
 
       onChange(editorRef.current.innerHTML);
