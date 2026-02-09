@@ -550,86 +550,64 @@ async function updateTranslatedProduct(
   });
 
   const translationsInput: Array<{ key: string; value: string; locale: string; translatableContentDigest: string }> = [];
+  const dbOnlyTranslations: Array<{ key: string; value: string; locale: string }> = []; // Translations without digest (DB-only save)
   const translationsToDelete: string[] = [];
   const skippedFields: string[] = [];
 
+  // Helper to add translation - saves to Shopify if digest available, otherwise DB-only
+  const addTranslation = (key: string, value: string) => {
+    if (digestMap[key]) {
+      translationsInput.push({ key, value, locale: params.locale, translatableContentDigest: digestMap[key] });
+    } else {
+      skippedFields.push(key);
+      dbOnlyTranslations.push({ key, value, locale: params.locale });
+    }
+  };
+
   // Only add non-empty translations that have a digest (meaning primary content exists)
   if (params.title && params.title.trim()) {
-    if (digestMap["title"]) {
-      translationsInput.push({ key: "title", value: params.title, locale: params.locale, translatableContentDigest: digestMap["title"] });
-    } else {
-      skippedFields.push("title");
-    }
+    addTranslation("title", params.title);
   } else if (params.title === "") {
     // Empty string means user wants to delete the translation
     translationsToDelete.push("title");
   }
 
   if (params.descriptionHtml && params.descriptionHtml.trim()) {
-    if (digestMap["body_html"]) {
-      translationsInput.push({ key: "body_html", value: params.descriptionHtml, locale: params.locale, translatableContentDigest: digestMap["body_html"] });
-    } else {
-      skippedFields.push("body_html");
-    }
+    addTranslation("body_html", params.descriptionHtml);
   } else if (params.descriptionHtml === "") {
     translationsToDelete.push("body_html");
   }
 
   if (params.handle && params.handle.trim()) {
-    if (digestMap["handle"]) {
-      translationsInput.push({ key: "handle", value: params.handle, locale: params.locale, translatableContentDigest: digestMap["handle"] });
-    } else {
-      skippedFields.push("handle");
-    }
+    addTranslation("handle", params.handle);
   } else if (params.handle === "") {
     translationsToDelete.push("handle");
   }
 
   if (params.seoTitle && params.seoTitle.trim()) {
-    if (digestMap["meta_title"]) {
-      translationsInput.push({ key: "meta_title", value: params.seoTitle, locale: params.locale, translatableContentDigest: digestMap["meta_title"] });
-    } else {
-      skippedFields.push("meta_title");
-    }
+    addTranslation("meta_title", params.seoTitle);
   } else if (params.seoTitle === "") {
     translationsToDelete.push("meta_title");
   }
 
   if (params.metaDescription && params.metaDescription.trim()) {
-    if (digestMap["meta_description"]) {
-      translationsInput.push({
-        key: "meta_description",
-        value: params.metaDescription,
-        locale: params.locale,
-        translatableContentDigest: digestMap["meta_description"],
-      });
-    } else {
-      skippedFields.push("meta_description");
-    }
+    addTranslation("meta_description", params.metaDescription);
   } else if (params.metaDescription === "") {
     translationsToDelete.push("meta_description");
   }
 
   if (params.productType && params.productType.trim()) {
-    if (digestMap["product_type"]) {
-      translationsInput.push({
-        key: "product_type",
-        value: params.productType,
-        locale: params.locale,
-        translatableContentDigest: digestMap["product_type"],
-      });
-    } else {
-      skippedFields.push("product_type");
-    }
+    addTranslation("product_type", params.productType);
   } else if (params.productType === "") {
     translationsToDelete.push("product_type");
   }
 
   if (skippedFields.length > 0) {
-    loggers.product("warn", "Skipped translations - no primary content exists", {
+    loggers.product("warn", "Skipped Shopify save for fields without digest (will save to DB only)", {
       productId,
       locale: params.locale,
       skippedFields,
+      availableDigestKeys: Object.keys(digestMap),
     });
   }
 
@@ -734,10 +712,16 @@ async function updateTranslatedProduct(
   });
 
   if (product) {
+    // Combine Shopify-saved and DB-only translations for database persistence
+    const allTranslationsForDB = [
+      ...translationsInput.map(t => ({ key: t.key, value: t.value, locale: t.locale })),
+      ...dbOnlyTranslations,
+    ];
+
     // Use transaction to ensure all upserts and deletes succeed or fail together
     await db.$transaction(async (tx: any) => {
       // Use upsert to preserve existing translations for other fields
-      for (const translation of translationsInput) {
+      for (const translation of allTranslationsForDB) {
         await tx.contentTranslation.upsert({
           where: {
             // Unique constraint is: @@unique([resourceId, key, locale])
@@ -779,7 +763,8 @@ async function updateTranslatedProduct(
     loggers.product("info", "Saved translations to DB (ContentTranslation)", {
       productId,
       locale: params.locale,
-      saved: translationsInput.length,
+      saved: allTranslationsForDB.length,
+      dbOnly: dbOnlyTranslations.length,
       deleted: translationsToDelete.length,
     });
   }
