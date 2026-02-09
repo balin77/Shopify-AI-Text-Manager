@@ -659,6 +659,12 @@ export function hasFieldMissingTranslations(
   });
 }
 
+// Module-level reference point for synchronizing all pulse animations across buttons.
+// A negative animation-delay calculated from this epoch ensures every button starts
+// at the correct phase of the shared pulse cycle, even when animations restart at
+// different times (e.g., after editing a field briefly removes the "missing" state).
+const PULSE_SYNC_EPOCH = Date.now();
+
 /**
  * Get button style for locale navigation
  * Shows pulsing border animation when translations are missing
@@ -673,22 +679,16 @@ export function getLocaleButtonStyle(
   const primaryContentMissing = locale.primary && hasPrimaryContentMissing(selectedItem, contentType);
   const foreignTranslationMissing = !locale.primary && hasLocaleMissingTranslations(selectedItem, locale.locale, primaryLocale, contentType);
 
-  if (primaryContentMissing) {
-    // Pulsing border animation (orange) when primary content is missing
-    // 1s delay to allow data loading, smooth fade-in start
-    return {
-      animation: `pulseFadeIn 500ms ease-out forwards, pulse ${TIMING.HIGHLIGHT_DURATION_MS}ms ease-in-out 1.5s infinite`,
-      animationDelay: "1s, 1.5s",
-      borderRadius: "8px",
-    };
-  }
+  if (primaryContentMissing || foreignTranslationMissing) {
+    const pulseDuration = TIMING.HIGHLIGHT_DURATION_MS;
+    const syncOffset = (Date.now() - PULSE_SYNC_EPOCH) % pulseDuration;
+    const isOrange = primaryContentMissing;
+    const fadeIn = isOrange ? 'pulseFadeIn' : 'pulseBlueFadeIn';
+    const pulse = isOrange ? 'pulse' : 'pulseBlue';
 
-  if (foreignTranslationMissing) {
-    // Pulsing border animation (blue) when translations are missing
-    // 1s delay to allow data loading, smooth fade-in start
     return {
-      animation: `pulseBlueFadeIn 500ms ease-out forwards, pulseBlue ${TIMING.HIGHLIGHT_DURATION_MS}ms ease-in-out 1.5s infinite`,
-      animationDelay: "1s, 1.5s",
+      animation: `${fadeIn} 500ms ease-out forwards, ${pulse} ${pulseDuration}ms ease-in-out infinite`,
+      animationDelay: `0s, -${syncOffset}ms`,
       borderRadius: "8px",
     };
   }
@@ -717,22 +717,19 @@ export function useLocaleButtonStyle(
     const primaryContentMissing = locale.primary && hasPrimaryContentMissing(selectedItem, contentType);
     const foreignTranslationMissing = !locale.primary && hasLocaleMissingTranslations(selectedItem, locale.locale, primaryLocale, contentType);
 
-    if (primaryContentMissing) {
-      // Pulsing border animation (orange) when primary content is missing
-      // 1s delay to allow data loading, smooth fade-in start
-      return {
-        animation: `pulseFadeIn 500ms ease-out forwards, pulse ${TIMING.HIGHLIGHT_DURATION_MS}ms ease-in-out 1.5s infinite`,
-        animationDelay: "1s, 1.5s",
-        borderRadius: "8px",
-      };
-    }
+    if (primaryContentMissing || foreignTranslationMissing) {
+      // Synchronize all pulse animations to a shared reference point (PULSE_SYNC_EPOCH).
+      // A negative delay starts the animation mid-cycle at the correct phase,
+      // so all buttons pulse in lockstep even when animations restart at different times.
+      const pulseDuration = TIMING.HIGHLIGHT_DURATION_MS;
+      const syncOffset = (Date.now() - PULSE_SYNC_EPOCH) % pulseDuration;
+      const isOrange = primaryContentMissing;
+      const fadeIn = isOrange ? 'pulseFadeIn' : 'pulseBlueFadeIn';
+      const pulse = isOrange ? 'pulse' : 'pulseBlue';
 
-    if (foreignTranslationMissing) {
-      // Pulsing border animation (blue) when translations are missing
-      // 1s delay to allow data loading, smooth fade-in start
       return {
-        animation: `pulseBlueFadeIn 500ms ease-out forwards, pulseBlue ${TIMING.HIGHLIGHT_DURATION_MS}ms ease-in-out 1.5s infinite`,
-        animationDelay: "1s, 1.5s",
+        animation: `${fadeIn} 500ms ease-out forwards, ${pulse} ${pulseDuration}ms ease-in-out infinite`,
+        animationDelay: `0s, -${syncOffset}ms`,
         borderRadius: "8px",
       };
     }
