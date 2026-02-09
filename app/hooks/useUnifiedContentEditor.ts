@@ -481,7 +481,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       localTranslationsRef.current = {};
       processedSaveResponseRef.current = null;
       isSavePendingRef.current = false;
-      processedResponseRef.current = null;
       processedTranslateFieldRef.current = null;
       acceptedPrimaryValueRef.current = null;
       setIsInitialDataReady(false); // Reset data ready flag for new item
@@ -965,9 +964,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     value: string;
   } | null>(null);
 
-  // Ref to track which fetcher responses have been processed (prevents duplicate processing)
-  const processedResponseRef = useRef<string | null>(null);
-
   // Ref to track the last fetcher.data object (to detect actual data changes vs dependency re-runs)
   const lastFetcherDataRef = useRef<any>(null);
 
@@ -1162,112 +1158,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     isSavePendingRef.current = true;
     safeSubmit(formDataObj, { method: "POST" });
   }, [imageAltTexts, selectedItemId, currentLanguage, primaryLocale, effectiveFieldDefinitions, editableValues, safeSubmit, getChangedFields]);
-
-  // Handle "translateFieldToAllLocales" response (from Accept & Translate)
-  useEffect(() => {
-    if (
-      fetcher.data?.success &&
-      'translations' in fetcher.data &&
-      'fieldType' in fetcher.data &&
-      !('locale' in fetcher.data)
-    ) {
-      const { translations, fieldType } = fetcher.data as any;
-
-      // Create a unique key for this response to prevent duplicate processing
-      const responseKey = `translateFieldToAllLocales-${fieldType}-${Object.keys(translations).join(',')}`;
-
-      if (processedResponseRef.current === responseKey) {
-        return; // Already processed this response
-      }
-      processedResponseRef.current = responseKey;
-
-      // translations is Record<string, string> where key is locale and value is translated text
-      const field = effectiveFieldDefinitions.find(f => f.key === fieldType);
-      if (!field) return;
-
-      const shopifyKey = field.translationKey;
-      const item = selectedItemRef.current;
-
-      if (item && shopifyKey) {
-        // IMPORTANT: Clear this translation key from deleted set since we now have new translations
-        // This ensures the DATA-LOAD effect will load the new translation when switching languages
-        if (deletedTranslationKeysRef.current.has(shopifyKey)) {
-          deletedTranslationKeysRef.current.delete(shopifyKey);
-        }
-
-        // Update item translations for all locales
-        for (const [locale, translatedValue] of Object.entries(translations as Record<string, string>)) {
-          // Remove existing translation for this key and locale
-          item.translations = item.translations.filter(
-            (t: Translation) => !(t.locale === locale && t.key === shopifyKey)
-          );
-
-          // Add new translation
-          item.translations.push({
-            key: shopifyKey,
-            value: translatedValue,
-            locale
-          });
-        }
-
-        // Store translations locally as backup (item.translations mutations can be lost on re-render)
-        if (!localTranslationsRef.current[shopifyKey]) {
-          localTranslationsRef.current[shopifyKey] = {};
-        }
-        for (const [locale, translatedValue] of Object.entries(translations as Record<string, string>)) {
-          localTranslationsRef.current[shopifyKey][locale] = translatedValue;
-        }
-        debugLog.acceptAndTranslate(' Stored local translations for', shopifyKey, ':', Object.keys(translations));
-
-        // If the current language is one of the translated languages, update editableValues immediately
-        // This ensures the UI shows the new translation without needing to switch languages
-        if (translations[currentLanguage]) {
-          setEditableValues(prev => ({
-            ...prev,
-            [fieldType]: translations[currentLanguage]
-          }));
-        } else if (currentLanguage === primaryLocale && acceptedPrimaryValueRef.current?.fieldKey === fieldType) {
-          // If we're on the primary locale, restore the accepted value from Accept & Translate flow
-          // This is needed because the translation response only contains foreign languages,
-          // and the editableValues for primary locale might have been lost during re-renders
-          debugLog.acceptAndTranslate(' Restoring accepted primary value for', fieldType, ':', acceptedPrimaryValueRef.current!.value.substring(0, 50) + '...');
-          setEditableValues(prev => ({
-            ...prev,
-            [fieldType]: acceptedPrimaryValueRef.current!.value
-          }));
-        }
-
-        // Clear the accepted primary value ref after processing
-        acceptedPrimaryValueRef.current = null;
-
-        showInfoBox(
-          t.common?.fieldTranslatedToLanguages
-            ?.replace("{fieldType}", fieldType)
-            .replace("{count}", String(Object.keys(translations).length))
-            || `${fieldType} translated to ${Object.keys(translations).length} language(s)`,
-          "success",
-          t.common?.success || "Success"
-        );
-
-        // Reset the accept-and-translate flow flag after translations are complete
-        setIsAcceptAndTranslateFlow(false);
-
-        // For templates: Update original value for this field so hasChanges becomes false after translation
-        // This prevents the save button from showing false changes after translateFieldToAllLocales
-        if (config.contentType === 'templates' && translations[currentLanguage]) {
-          originalTemplateValuesRef.current = {
-            ...originalTemplateValuesRef.current,
-            [fieldType]: translations[currentLanguage]
-          };
-        }
-
-        // Mark as loading to reset change detection
-        // DON'T revalidate here - it would overwrite our local changes to selectedItem.translations
-        // The translations are already saved server-side by the action
-        setIsLoadingData(true);
-      }
-    }
-  }, [fetcher.data, effectiveFieldDefinitions, showInfoBox, t, currentLanguage, config.contentType]); // Include currentLanguage to access current value
 
   // Handle "translateAll" response (translates to ALL enabled locales)
   useEffect(() => {
@@ -1636,6 +1526,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
             // Reset the accept-and-translate flow flag after translations are complete
             setIsAcceptAndTranslateFlow(false);
+
+            // For templates: Update original value so hasChanges becomes false after translation
+            if (config.contentType === 'templates' && translations[currentLanguage]) {
+              originalTemplateValuesRef.current = {
+                ...originalTemplateValuesRef.current,
+                [fieldKey]: translations[currentLanguage]
+              };
+            }
 
             setIsLoadingData(true);
           }
@@ -2069,6 +1967,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             t.common?.success || "Success"
           );
 
+          // For templates: Update original value so hasChanges becomes false after translation
+          if (config.contentType === 'templates' && translations[currentLanguage]) {
+            originalTemplateValuesRef.current = {
+              ...originalTemplateValuesRef.current,
+              [fieldKey]: translations[currentLanguage]
+            };
+          }
+
           // Call callback to update cache if provided
           if (onTranslateToAllLocalesComplete) {
             onTranslateToAllLocalesComplete(fieldKey, translations as Record<string, string>);
@@ -2195,9 +2101,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const handleAcceptAndTranslate = (fieldKey: string) => {
     const suggestion = aiSuggestions[fieldKey];
     if (!suggestion || !selectedItemId) return;
-
-    // Reset processed response ref for new operation
-    processedResponseRef.current = null;
 
     // Set flag to prevent translation deletion during this flow
     setIsAcceptAndTranslateFlow(true);
