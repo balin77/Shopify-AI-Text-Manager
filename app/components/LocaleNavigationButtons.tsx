@@ -1,6 +1,6 @@
 import { useRef } from "react";
-import { Button } from "@shopify/polaris";
-import { useLocaleButtonStyle } from "../utils/contentEditor.utils";
+import { Button, Tooltip } from "@shopify/polaris";
+import { useLocaleButtonStyle, getLocaleButtonTooltip } from "../utils/contentEditor.utils";
 import type { ShopLocale, TranslatableItem, ContentType } from "../types/contentEditor.types";
 import { ReloadButton } from "./ReloadButton";
 import { HelpTooltip } from "./HelpTooltip";
@@ -50,11 +50,13 @@ export function LocaleNavigationButtons({
               isLoadingData
             );
 
+            const tooltip = getLocaleButtonTooltip(locale, selectedItem, primaryLocale, contentType, isLoadingData);
+
             const isEnabled = !enabledLanguages || enabledLanguages.includes(locale.locale);
             const isPrimary = locale.primary;
             const isCurrentLanguage = currentLanguage === locale.locale;
 
-            return (
+            const button = (
               <div key={locale.locale} style={buttonStyle}>
                 <Button
                   variant={isCurrentLanguage ? "primary" : undefined}
@@ -81,6 +83,11 @@ export function LocaleNavigationButtons({
                 </Button>
               </div>
             );
+
+            if (tooltip) {
+              return <Tooltip content={tooltip} dismissOnMouseOut>{button}</Tooltip>;
+            }
+            return button;
           };
 
           return <LocaleButton key={locale.locale} />;

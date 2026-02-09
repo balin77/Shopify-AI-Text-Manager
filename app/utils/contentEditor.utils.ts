@@ -10,6 +10,7 @@ import {
   CONTENT_TYPE_DESCRIPTION_KEY,
   UI_FIELD_TO_TRANSLATION_KEY,
   FIELD_CONFIGS,
+  FIELD_LABEL_MAP,
 } from "~/constants/shopifyFields";
 import { TIMING } from "~/constants/timing";
 
@@ -602,6 +603,104 @@ export function hasLocaleMissingTranslations(
     // Check if translation exists
     return !hasTranslationForField(selectedItem, field, locale);
   });
+}
+
+/**
+ * Get the list of missing primary content fields (returns field keys, not just boolean)
+ */
+export function getMissingPrimaryFields(
+  selectedItem: TranslatableItem | null,
+  contentType: ContentType
+): string[] {
+  if (!selectedItem) return [];
+
+  if (contentType === 'templates') {
+    const translatableContent = (selectedItem as any).translatableContent;
+    if (!translatableContent || !Array.isArray(translatableContent) || translatableContent.length === 0) {
+      return [];
+    }
+    return translatableContent
+      .filter((item: any) => item != null)
+      .filter((item: { key: string; value: string }) => isFieldEmpty(item.value))
+      .map((item: { key: string; value: string }) => item.key);
+  }
+
+  const requiredFields = FIELD_CONFIGS[contentType];
+  return requiredFields.filter(field => {
+    const value = getFieldValue(selectedItem, field);
+    return isFieldEmpty(value);
+  });
+}
+
+/**
+ * Get the list of missing translation fields for a specific locale (returns field keys, not just boolean)
+ */
+export function getMissingLocaleTranslationFields(
+  selectedItem: TranslatableItem | null,
+  locale: string,
+  primaryLocale: string,
+  contentType: ContentType
+): string[] {
+  if (!selectedItem || locale === primaryLocale) return [];
+
+  if (contentType === 'templates') {
+    const translatableContent = (selectedItem as any).translatableContent;
+    if (!translatableContent || !Array.isArray(translatableContent) || translatableContent.length === 0) {
+      return [];
+    }
+    const translations = selectedItem.translations || [];
+    return translatableContent
+      .filter((item: any) => item != null)
+      .filter((item: { key: string; value: string }) => {
+        if (isFieldEmpty(item.value)) return false;
+        const translation = translations.find(
+          (t: any) => t.key === item.key && t.locale === locale
+        );
+        return !translation || isFieldEmpty(translation.value);
+      })
+      .map((item: { key: string; value: string }) => item.key);
+  }
+
+  const requiredFields = getRequiredFieldsForContentType(contentType);
+  return requiredFields.filter(field => {
+    if (field === 'handle') return false;
+    if (!primaryHasFieldContent(selectedItem, field, contentType)) return false;
+    return !hasTranslationForField(selectedItem, field, locale);
+  });
+}
+
+/**
+ * Get tooltip text for a locale button listing missing fields.
+ * Returns null if nothing is missing (no tooltip needed).
+ */
+export function getLocaleButtonTooltip(
+  locale: ShopLocale,
+  selectedItem: TranslatableItem | null,
+  primaryLocale: string,
+  contentType: ContentType,
+  isLoadingData: boolean = false
+): string | null {
+  if (isLoadingData || !selectedItem) return null;
+
+  let missingFields: string[];
+  let prefix: string;
+
+  if (locale.primary) {
+    missingFields = getMissingPrimaryFields(selectedItem, contentType);
+    prefix = 'Fehlende Inhalte:';
+  } else {
+    missingFields = getMissingLocaleTranslationFields(
+      selectedItem, locale.locale, primaryLocale, contentType
+    );
+    prefix = 'Fehlende Übersetzungen:';
+  }
+
+  if (missingFields.length === 0) return null;
+
+  const labels = missingFields.map(key => FIELD_LABEL_MAP[key] || key);
+  // Deduplicate (e.g. 'body' and 'body_html' both map to 'Beschreibung')
+  const unique = [...new Set(labels)];
+  return `${prefix} ${unique.join(', ')}`;
 }
 
 /**

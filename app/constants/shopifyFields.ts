@@ -68,3 +68,25 @@ export const TRANSLATION_KEY_MAP = {
   'seo.title': SHOPIFY_TRANSLATION_KEYS.META_TITLE,
   'seo.description': SHOPIFY_TRANSLATION_KEYS.META_DESCRIPTION,
 } as const;
+
+/**
+ * Maps all field keys (both FIELD_CONFIGS paths and Shopify translation keys)
+ * to human-readable labels for tooltip display.
+ */
+export const FIELD_LABEL_MAP: Record<string, string> = {
+  // FIELD_CONFIGS paths (used by getMissingPrimaryFields)
+  title: 'Titel',
+  descriptionHtml: 'Beschreibung',
+  body: 'Inhalt',
+  handle: 'URL-Pfad',
+  productType: 'Produkttyp',
+  summary: 'Zusammenfassung',
+  'seo.title': 'SEO-Titel',
+  'seo.description': 'Meta-Beschreibung',
+  // Shopify translation keys (used by getMissingLocaleTranslationFields)
+  body_html: 'Beschreibung',
+  meta_title: 'SEO-Titel',
+  meta_description: 'Meta-Beschreibung',
+  product_type: 'Produkttyp',
+  summary_html: 'Zusammenfassung',
+};

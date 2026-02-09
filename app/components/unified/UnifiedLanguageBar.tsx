@@ -13,8 +13,8 @@
  */
 
 import { useRef } from "react";
-import { Button, InlineStack, ButtonGroup } from "@shopify/polaris";
-import { useLocaleButtonStyle } from "../../utils/contentEditor.utils";
+import { Button, InlineStack, ButtonGroup, Tooltip } from "@shopify/polaris";
+import { useLocaleButtonStyle, getLocaleButtonTooltip } from "../../utils/contentEditor.utils";
 import { ReloadButton } from "../ReloadButton";
 import { HelpTooltip } from "../HelpTooltip";
 import type { ShopLocale, TranslatableItem, ContentType } from "../../types/contentEditor.types";
@@ -138,7 +138,9 @@ export function UnifiedLanguageBar({
         const fullLabel = `${locale.name || locale.locale}${locale.primary ? ` (${t.primaryLocaleSuffix || "Primary"})` : ""}`;
         const shortLabel = locale.locale.charAt(0).toUpperCase() + locale.locale.slice(1);
 
-        return (
+        const tooltip = getLocaleButtonTooltip(locale, selectedItem, primaryLocale, contentType, isLoadingData);
+
+        const buttonContent = (
           <div key={locale.locale} style={buttonStyle}>
             <div className="lang-full">
               <Button {...buttonProps}>{fullLabel}</Button>
@@ -148,6 +150,16 @@ export function UnifiedLanguageBar({
             </div>
           </div>
         );
+
+        if (tooltip) {
+          return (
+            <Tooltip key={locale.locale} content={tooltip} dismissOnMouseOut>
+              {buttonContent}
+            </Tooltip>
+          );
+        }
+
+        return buttonContent;
       })}
       <div style={{ marginLeft: "auto" }}>
         <HelpTooltip helpKey="ctrlClickLanguage" position="below" />

@@ -11,9 +11,9 @@
  */
 
 import { useState, useCallback } from "react";
-import { Card, Button, Popover, ActionList } from "@shopify/polaris";
+import { Card, Button, Popover, ActionList, Tooltip } from "@shopify/polaris";
 import { MenuHorizontalIcon } from "@shopify/polaris-icons";
-import { useLocaleButtonStyle } from "../../utils/contentEditor.utils";
+import { useLocaleButtonStyle, getLocaleButtonTooltip } from "../../utils/contentEditor.utils";
 import { ReloadButton } from "../ReloadButton";
 import { HelpTooltip } from "../HelpTooltip";
 import type { ShopLocale, TranslatableItem, ContentType } from "../../types/contentEditor.types";
@@ -112,12 +112,14 @@ export function MobileToolbar({
               isLoadingData
             );
 
+            const tooltip = getLocaleButtonTooltip(locale, selectedItem, primaryLocale, contentType, isLoadingData);
+
             const isEnabled = !enabledLanguages || enabledLanguages.includes(locale.locale);
             const isPrimary = locale.primary;
             const isCurrentLanguage = currentLanguage === locale.locale;
             const shortLabel = locale.locale.charAt(0).toUpperCase() + locale.locale.slice(1);
 
-            return (
+            const buttonEl = (
               <div key={locale.locale} style={{ ...buttonStyle, flexShrink: 0 }}>
                 <Button
                   variant={isCurrentLanguage ? "primary" : undefined}
@@ -129,6 +131,16 @@ export function MobileToolbar({
                 </Button>
               </div>
             );
+
+            if (tooltip) {
+              return (
+                <Tooltip key={locale.locale} content={tooltip} dismissOnMouseOut>
+                  {buttonEl}
+                </Tooltip>
+              );
+            }
+
+            return buttonEl;
           })}
         </div>
 
