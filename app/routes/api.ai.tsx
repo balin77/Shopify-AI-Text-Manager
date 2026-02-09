@@ -1052,7 +1052,7 @@ IMPORTANT: Return ONLY the improved and formatted text, nothing else. No explana
 
           return json({
             success: true,
-            formattedValue,
+            generatedContent: formattedValue,
             fieldType
           });
         } catch (error: any) {
