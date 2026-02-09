@@ -24,30 +24,6 @@ const CONTENT_CONFIGS: Record<string, ContentEditorConfig> = {
   policies: POLICIES_CONFIG,
 };
 
-// Helper to build translation prompt (same as in AIService)
-function buildTranslationPrompt(sourceText: string, fromLang: string, toLang: string): string {
-  return `Translate the following text from ${fromLang} to ${toLang}. Keep HTML tags.
-
-Text: ${sourceText}
-
-Return only the translation, without additional explanations.`;
-}
-
-// Helper to build URL slug translation prompt
-function buildSlugTranslationPrompt(sourceText: string, fromLang: string, toLang: string): string {
-  return `Translate the following URL slug/handle from ${fromLang} to ${toLang}.
-
-IMPORTANT: The result MUST be a valid URL slug:
-- Use only lowercase letters (a-z), numbers (0-9), and hyphens (-)
-- Replace spaces with hyphens
-- No special characters, no umlauts, no accents
-- No spaces, no underscores
-- Examples: "storage-boxes", "wooden-chair", "blue-t-shirt"
-
-Source slug: ${sourceText}
-
-Return only the translated URL slug, nothing else.`;
-}
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
@@ -79,12 +55,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         // Check if this is a URL slug/handle field
         const isSlugField = fieldType === 'handle' || fieldType === 'slug';
 
-        // Build the prompt (use special prompt for URL slugs)
-        const prompt = isSlugField
-          ? buildSlugTranslationPrompt(sourceText, primaryLocale, targetLocale)
-          : buildTranslationPrompt(sourceText, primaryLocale, targetLocale);
-
-        // Create task entry with prompt
+        // Create task entry (prompt is saved by AI service via savePromptToTask)
         const task = await db.task.create({
           data: {
             shop: session.shop,
@@ -96,7 +67,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             fieldType,
             targetLocale,
             progress: 0,
-            prompt, // Store the prompt
+            // prompt is saved by AI service via savePromptToTask
             expiresAt: getTaskExpirationDate(),
           },
         });
@@ -865,7 +836,7 @@ Return only the formatted text, without explanations.`;
             resourceTitle: fieldType,
             fieldType,
             progress: 0,
-            prompt, // Store the prompt
+            // prompt is saved by AI service via savePromptToTask
             expiresAt: getTaskExpirationDate(),
           },
         });
@@ -958,7 +929,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
             resourceTitle: fieldType,
             fieldType,
             progress: 0,
-            prompt, // Store the prompt
+            // prompt is saved by AI service via savePromptToTask
             expiresAt: getTaskExpirationDate(),
           },
         });
@@ -1453,10 +1424,7 @@ Image URL: ${image.url}`;
           return json({ success: false, error: "No source alt-text available" }, { status: 400 });
         }
 
-        // Build the prompt
-        const prompt = buildTranslationPrompt(sourceAltText, primaryLocale, targetLocale);
-
-        // Create task entry with prompt
+        // Create task entry (prompt is saved by AI service via savePromptToTask)
         const task = await db.task.create({
           data: {
             shop: session.shop,
@@ -1468,7 +1436,6 @@ Image URL: ${image.url}`;
             fieldType: `altText_${imageIndex}`,
             targetLocale,
             progress: 0,
-            prompt,
             expiresAt: getTaskExpirationDate(),
           },
         });
