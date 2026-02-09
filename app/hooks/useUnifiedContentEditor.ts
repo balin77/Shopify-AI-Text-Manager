@@ -162,6 +162,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // Reset when item or language changes, allowing retry during new load cycles
   const initialLoadSuccessfulRef = useRef(false);
 
+  // Cache of saved primary-locale values per item ID.
+  // After a save, revalidation replaces the items array with new objects, losing any
+  // in-memory mutations. This ref preserves the saved values so the data load effect
+  // can use them instead of potentially stale item data from the server.
+  // Cleared on manual reload (dataRefreshTrigger) or when server data matches.
+  const savedPrimaryValuesRef = useRef<Record<string, Record<string, string>>>({});
+
   // Trigger for forcing data refresh (used by ReloadButton after revalidation)
   // When this counter increments, the data loading effect will re-run
   const [dataRefreshTrigger, setDataRefreshTrigger] = useState(0);
@@ -444,6 +451,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         itemObject: item,
       });
       debugLog.dataLoad(' Data refresh triggered by ReloadButton');
+
+      // Clear saved values cache on manual reload - user expects fresh server data
+      if (selectedItemId && savedPrimaryValuesRef.current[selectedItemId]) {
+        delete savedPrimaryValuesRef.current[selectedItemId];
+      }
     }
 
     // Mark as loading immediately
@@ -475,27 +487,55 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // Load primary locale values
       const newFallbackFields = new Set<string>();
 
-      fieldDefs.forEach((field) => {
-        newValues[field.key] = getItemFieldValue(item, field.key, primaryLocale, config);
+      // Check if we have saved values from a recent save that should override
+      // potentially stale item data (revalidation replaces item objects, losing mutations)
+      const savedOverride = selectedItemId ? savedPrimaryValuesRef.current[selectedItemId] : undefined;
 
-        // Mark seoTitle as fallback if it's using the title as fallback
-        if (field.key === 'seoTitle') {
-          const actualSeoTitle = item.seo?.title;
-          const isUsingFallback = !actualSeoTitle && item.title;
-          console.log('🔍 [EDITOR] seoTitle check:', {
-            actualSeoTitle,
-            itemTitle: item.title,
-            isUsingFallback,
-            valueSet: newValues[field.key],
-            itemSeo: item.seo,
-          });
-          if (isUsingFallback) {
-            debugLog.dataLoad(' SEO Title field: using fallback to main title:', item.title);
-            newFallbackFields.add(field.key);
-            console.log('✅ [EDITOR] Added seoTitle to fallback fields');
+      if (savedOverride) {
+        debugLog.dataLoad(' Using saved primary values override for item:', selectedItemId);
+        fieldDefs.forEach((field) => {
+          newValues[field.key] = savedOverride[field.key] ?? "";
+        });
+
+        // Check if the server data has caught up (matches saved values)
+        const serverCaughtUp = fieldDefs.every((field) => {
+          const serverValue = getItemFieldValue(item, field.key, primaryLocale, config);
+          const savedValue = savedOverride[field.key] ?? "";
+          // For seoTitle, getItemFieldValue falls back to title - compare with that in mind
+          if (field.key === 'seoTitle' && savedValue === "" && serverValue === (item.title || "")) {
+            return true; // Server returns title as fallback, saved is empty - that's expected
           }
+          return serverValue === savedValue;
+        });
+
+        if (serverCaughtUp) {
+          debugLog.dataLoad(' Server data caught up, clearing saved values override');
+          delete savedPrimaryValuesRef.current[selectedItemId!];
         }
-      });
+      } else {
+        // Normal data load from item
+        fieldDefs.forEach((field) => {
+          newValues[field.key] = getItemFieldValue(item, field.key, primaryLocale, config);
+
+          // Mark seoTitle as fallback if it's using the title as fallback
+          if (field.key === 'seoTitle') {
+            const actualSeoTitle = item.seo?.title;
+            const isUsingFallback = !actualSeoTitle && item.title;
+            console.log('🔍 [EDITOR] seoTitle check:', {
+              actualSeoTitle,
+              itemTitle: item.title,
+              isUsingFallback,
+              valueSet: newValues[field.key],
+              itemSeo: item.seo,
+            });
+            if (isUsingFallback) {
+              debugLog.dataLoad(' SEO Title field: using fallback to main title:', item.title);
+              newFallbackFields.add(field.key);
+              console.log('✅ [EDITOR] Added seoTitle to fallback fields');
+            }
+          }
+        });
+      }
 
       setFallbackFields(newFallbackFields);
     } else if (config.contentType === 'templates') {
@@ -1635,9 +1675,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       });
 
       // Update in-memory item field values to match what's being saved.
-      // This prevents stale data from showing when navigating away and back,
-      // since the data load effect reads from the in-memory item object.
       updateItemInMemory(selectedItem, editableValues, config);
+
+      // Also cache the saved values in a ref that survives revalidation.
+      // Revalidation replaces the items array with new objects, losing the mutations above.
+      // The data load effect checks this cache and uses it instead of stale server data.
+      savedPrimaryValuesRef.current[selectedItemId] = { ...editableValues };
     }
 
     const formDataObj: Record<string, string> = {
