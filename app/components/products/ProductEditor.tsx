@@ -653,6 +653,7 @@ export function ProductEditor({
             onAcceptSuggestion={() => onAcceptSuggestion("title")}
             onAcceptAndTranslate={() => onAcceptAndTranslate("title")}
             onRejectSuggestion={() => onRejectSuggestion("title")}
+            onClear={!isPrimaryLocale ? () => setEditableTitle("") : undefined}
           />
 
           {/* Description Field */}
@@ -683,6 +684,7 @@ export function ProductEditor({
             onAcceptSuggestion={() => onAcceptSuggestion("description")}
             onAcceptAndTranslate={() => onAcceptAndTranslate("description")}
             onRejectSuggestion={() => onRejectSuggestion("description")}
+            onClear={() => setEditableDescription("")}
           />
 
           {/* Handle Field */}
@@ -709,6 +711,7 @@ export function ProductEditor({
             onAcceptSuggestion={() => onAcceptSuggestion("handle")}
             onAcceptAndTranslate={() => onAcceptAndTranslate("handle")}
             onRejectSuggestion={() => onRejectSuggestion("handle")}
+            onClear={() => setEditableHandle("")}
           />
 
           {/* SEO Title Field */}
@@ -736,6 +739,7 @@ export function ProductEditor({
             onAcceptSuggestion={() => onAcceptSuggestion("seoTitle")}
             onAcceptAndTranslate={() => onAcceptAndTranslate("seoTitle")}
             onRejectSuggestion={() => onRejectSuggestion("seoTitle")}
+            onClear={() => setEditableSeoTitle("")}
           />
 
           {/* Meta Description Field */}
@@ -764,6 +768,7 @@ export function ProductEditor({
             onAcceptSuggestion={() => onAcceptSuggestion("metaDescription")}
             onAcceptAndTranslate={() => onAcceptAndTranslate("metaDescription")}
             onRejectSuggestion={() => onRejectSuggestion("metaDescription")}
+            onClear={() => setEditableMetaDescription("")}
           />
 
           </BlockStack>
