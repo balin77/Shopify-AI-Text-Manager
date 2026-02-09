@@ -919,6 +919,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
     debugLog.autoSave(' Saving with values:', valuesToSave, 'locale:', locale);
     savedLocaleRef.current = locale; // Track which locale we're saving
+    isSavePendingRef.current = true; // Track that a save was initiated
     safeSubmit(formDataObj, { method: "POST" });
     clearPendingNavigation();
   }, [selectedItemId, primaryLocale, effectiveFieldDefinitions, imageAltTexts, clearPendingNavigation, getChangedFields, getChangedAltTextIndices, safeSubmit]);
@@ -979,6 +980,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
   // Ref to track processed save responses (prevents duplicate InfoBox/revalidation on re-renders)
   const processedSaveResponseRef = useRef<any>(null);
+
+  // Ref to track whether a save operation is actually pending (prevents false "saved" messages on revalidation)
+  const isSavePendingRef = useRef(false);
 
   // Handle translated field response (single field translation)
   // Auto-save immediately after receiving translation
@@ -1042,6 +1046,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
         // Track which locale we're saving so the response handler knows
         savedLocaleRef.current = targetLocale;
+        isSavePendingRef.current = true;
         safeSubmit(formDataObj, { method: "POST" });
       }
 
@@ -1146,6 +1151,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     }
 
     savedLocaleRef.current = currentLanguage;
+    isSavePendingRef.current = true;
     safeSubmit(formDataObj, { method: "POST" });
   }, [imageAltTexts, selectedItemId, currentLanguage, primaryLocale, effectiveFieldDefinitions, editableValues, safeSubmit, getChangedFields]);
 
@@ -1644,6 +1650,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const handleSave = () => {
     if (!selectedItemId || !hasChanges) return;
 
+    // Compute changed fields BEFORE updateItemInMemory mutates the item,
+    // otherwise getChangedFields compares against already-cleared values and misses changes.
+    let changedFields: string[] = [];
+    let changedAltTextIndices: number[] = [];
+    if (currentLanguage === primaryLocale) {
+      changedFields = getChangedFields(editableValues);
+      changedAltTextIndices = getChangedAltTextIndices();
+    }
+
     // If we're saving in the primary locale, clear all translations for changed fields
     // and update in-memory item values so navigation back shows correct data
     if (currentLanguage === primaryLocale && selectedItem) {
@@ -1713,16 +1728,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       debugLog.save(' 🖼️ imageAltTexts being sent:', JSON.stringify(imageAltTexts));
     }
 
-    // If saving primary locale, include changed fields for server-side translation deletion
+    // If saving primary locale, include pre-computed changed fields for server-side translation deletion
     if (currentLanguage === primaryLocale) {
-      const changedFields = getChangedFields(editableValues);
       if (changedFields.length > 0) {
         formDataObj.changedFields = JSON.stringify(changedFields);
         debugLog.save(' Changed fields (translations will be deleted on server):', changedFields);
       }
 
-      // Include changed alt-text indices for translation deletion
-      const changedAltTextIndices = getChangedAltTextIndices();
       if (changedAltTextIndices.length > 0) {
         formDataObj.changedAltTextIndices = JSON.stringify(changedAltTextIndices);
         debugLog.save(' Changed alt-text indices (translations will be deleted):', changedAltTextIndices);
@@ -1735,6 +1747,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     skipNextDataLoadRef.current = true;
 
     savedLocaleRef.current = currentLanguage; // Track which locale we're saving
+    isSavePendingRef.current = true; // Track that a save was initiated
     safeSubmit(formDataObj, { method: "POST" });
     clearPendingNavigation();
   };
