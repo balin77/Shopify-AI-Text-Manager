@@ -919,7 +919,7 @@ Return only the formatted text, without explanations.`;
         const genFormatKey = genInstructionsKey ? `${genInstructionsKey}Format` : null;
         const genInstructionsTextKey = genInstructionsKey ? `${genInstructionsKey}Instructions` : null;
         const genFieldLabel = genField?.label || fieldType;
-        const isGenLongContent = genField?.type === "html" || genField?.type === "textarea";
+        const isGenLongContent = genField?.type === "html";
 
         // Build field-type-aware prompt
         let prompt = "";
