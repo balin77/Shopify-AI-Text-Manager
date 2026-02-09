@@ -1685,10 +1685,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       }
     }
 
-    // NOTE: Do NOT set skipNextDataLoadRef here. The data load effect doesn't depend
-    // on items/selectedItem, so revalidation won't trigger it. Setting the flag would
-    // incorrectly skip the next legitimate data load (e.g., navigating to a different item).
-    // Instead, we update the in-memory item above so any future data load reads correct values.
+    // Skip next data load to prevent revalidation from overwriting cleared/saved values.
+    // The in-memory item is also updated above (updateItemInMemory) so that subsequent
+    // data loads after navigation read the correct saved values instead of stale data.
+    skipNextDataLoadRef.current = true;
 
     savedLocaleRef.current = currentLanguage; // Track which locale we're saving
     safeSubmit(formDataObj, { method: "POST" });
