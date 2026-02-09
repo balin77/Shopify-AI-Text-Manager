@@ -920,6 +920,7 @@ function getSourceText(item: any, fieldKey: string, primaryLocale: string): stri
     title: item.title || "",
     description: item.descriptionHtml || item.body || "",
     handle: item.handle || "",
+    productType: item.productType || "",
     seoTitle: item.seo?.title || "",
     metaDescription: item.seo?.description || "",
     body: item.body || "",
