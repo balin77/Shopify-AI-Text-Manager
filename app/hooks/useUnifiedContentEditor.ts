@@ -924,6 +924,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       }
     }
 
+    // Cache saved primary values so they survive revalidation (mirrors handleSave behavior).
+    // Without this, switching away and back to the primary locale after an auto-save
+    // (e.g. Accept & Translate) would show stale item data because revalidation hasn't
+    // reflected the new values yet.
+    if (locale === primaryLocale) {
+      savedPrimaryValuesRef.current[selectedItemId] = { ...valuesToSave };
+    }
+
     debugLog.autoSave(' Saving with values:', valuesToSave, 'locale:', locale);
     savedLocaleRef.current = locale; // Track which locale we're saving
     isSavePendingRef.current = true; // Track that a save was initiated
