@@ -1607,6 +1607,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     if (!selectedItemId || !hasChanges) return;
 
     // If we're saving in the primary locale, clear all translations for changed fields
+    // and update in-memory item values so navigation back shows correct data
     if (currentLanguage === primaryLocale && selectedItem) {
       effectiveFieldDefinitions.forEach((field) => {
         const currentValue = editableValues[field.key] || "";
@@ -1615,6 +1616,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         // Only clear translations if the value actually changed
         if (currentValue !== originalValue && field.translationKey) {
           const translationKey = field.translationKey;
+
+          // Track deleted translation keys for immediate UI update
+          // This ensures that even if revalidation brings back old data, we show empty fields
+          deletedTranslationKeysRef.current.add(translationKey);
 
           // Remove all translations for this field across all locales
           if (selectedItem.translations) {
@@ -1630,6 +1635,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           }
         }
       });
+
+      // Update in-memory item field values to match what's being saved.
+      // This prevents stale data from showing when navigating away and back,
+      // since the data load effect reads from the in-memory item object.
+      updateItemInMemory(selectedItem, editableValues, config);
     }
 
     const formDataObj: Record<string, string> = {
@@ -1675,8 +1685,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       }
     }
 
-    // Skip next data load to prevent revalidation from overwriting user changes
-    skipNextDataLoadRef.current = true;
+    // NOTE: Do NOT set skipNextDataLoadRef here. The data load effect doesn't depend
+    // on items/selectedItem, so revalidation won't trigger it. Setting the flag would
+    // incorrectly skip the next legitimate data load (e.g., navigating to a different item).
+    // Instead, we update the in-memory item above so any future data load reads correct values.
 
     savedLocaleRef.current = currentLanguage; // Track which locale we're saving
     safeSubmit(formDataObj, { method: "POST" });
@@ -2430,6 +2442,117 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     );
   };
 
+  // Translate ALL image alt-texts to ALL foreign languages (primary locale button)
+  const handleTranslateAllAltTexts = () => {
+    if (!selectedItem || !selectedItem.images || selectedItem.images.length === 0) return;
+
+    const targetLocales = enabledLanguages.filter(l => l !== primaryLocale);
+    if (targetLocales.length === 0) {
+      showInfoBox(
+        t.common?.noTargetLanguagesSelected || "No target languages selected",
+        "warning",
+        t.common?.warning || "Warning"
+      );
+      return;
+    }
+
+    // Collect all source alt texts
+    const altTextsData: Record<number, string> = {};
+    let hasAnyAltText = false;
+    selectedItem.images.forEach((img: ContentImage, index: number) => {
+      const altText = imageAltTexts[index] || img.altText || "";
+      if (altText) {
+        altTextsData[index] = altText;
+        hasAnyAltText = true;
+      }
+    });
+
+    if (!hasAnyAltText) {
+      showInfoBox(
+        t.content?.noSourceText || "Kein Alt-Text in der Hauptsprache vorhanden zum Übersetzen",
+        "warning",
+        "Warnung"
+      );
+      return;
+    }
+
+    submitAIAction(
+      {
+        action: "translateAllAltTextsToAllLocales",
+        itemId: selectedItem.id,
+        productId: selectedItem.id,
+        altTextsData: JSON.stringify(altTextsData),
+        targetLocales: JSON.stringify(targetLocales),
+        primaryLocale
+      },
+      "allAltTextsTranslate",
+      (result) => {
+        const translatedCount = result.translatedCount || 0;
+        const imageCount = result.imageCount || 0;
+        showInfoBox(
+          `Alt-Texte für ${imageCount} Bild(er) in ${translatedCount} Sprache(n) übersetzt`,
+          "success",
+          t.common?.success || "Success"
+        );
+
+        if (revalidator.state === 'idle') {
+          try {
+            revalidator.revalidate();
+          } catch (error) {
+            debugLog.revalidate(' Error during revalidation (ignored):', error);
+          }
+        }
+      }
+    );
+  };
+
+  // Translate ALL image alt-texts into ONE foreign language (foreign locale button)
+  const handleTranslateAllAltTextsForLocale = () => {
+    if (!selectedItem || !selectedItem.images || selectedItem.images.length === 0) return;
+
+    // Collect all source alt texts from primary locale
+    const altTextsData: Record<number, string> = {};
+    let hasAnyAltText = false;
+    selectedItem.images.forEach((img: ContentImage, index: number) => {
+      const altText = img.altText || "";
+      if (altText) {
+        altTextsData[index] = altText;
+        hasAnyAltText = true;
+      }
+    });
+
+    if (!hasAnyAltText) {
+      showInfoBox(
+        t.content?.noSourceText || "Kein Alt-Text in der Hauptsprache vorhanden zum Übersetzen",
+        "warning",
+        "Warnung"
+      );
+      return;
+    }
+
+    submitAIAction(
+      {
+        action: "translateAllAltTextsForLocale",
+        itemId: selectedItem.id,
+        productId: selectedItem.id,
+        altTextsData: JSON.stringify(altTextsData),
+        targetLocale: currentLanguage,
+        primaryLocale
+      },
+      "allAltTextsTranslate",
+      (result) => {
+        // Set suggestions for each image so user can accept/reject
+        if (result.translatedAltTexts) {
+          const newSuggestions: Record<number, string> = {};
+          Object.entries(result.translatedAltTexts).forEach(([indexStr, text]) => {
+            newSuggestions[parseInt(indexStr)] = text as string;
+          });
+          setAltTextSuggestions(prev => ({ ...prev, ...newSuggestions }));
+        }
+      }
+    );
+  };
+
   const handleAcceptAltTextSuggestion = (imageIndex: number) => {
     const suggestion = altTextSuggestions[imageIndex];
     if (!suggestion || !selectedItemId) return;
@@ -2703,6 +2826,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     handleGenerateAllAltTexts,
     handleTranslateAltText,
     handleTranslateAltTextToAllLocales,
+    handleTranslateAllAltTexts,
+    handleTranslateAllAltTextsForLocale,
     handleAcceptAltTextSuggestion,
     handleAcceptAndTranslateAltText,
     handleRejectAltTextSuggestion,
@@ -2778,4 +2903,39 @@ function getItemFieldValue(item: TranslatableContentItem, fieldKey: string, prim
   };
 
   return fieldMappings[fieldKey] || "";
+}
+
+/**
+ * Updates an in-memory item's field values to match the saved editable values.
+ * This is a direct mutation of the item object (which lives in the items array from route data).
+ * It ensures that when the data load effect reads from the item (e.g., after navigation),
+ * it gets the correct saved values instead of stale pre-save data.
+ */
+function updateItemInMemory(item: TranslatableContentItem, values: Record<string, string>, config: ContentEditorConfig): void {
+  // Templates: update translatableContent array
+  if (config.contentType === 'templates' && item.translatableContent) {
+    item.translatableContent.forEach((content: { key: string; value: string }) => {
+      if (content && values[content.key] !== undefined) {
+        content.value = values[content.key];
+      }
+    });
+    return;
+  }
+
+  // Standard content types: update item properties
+  if (values.title !== undefined) item.title = values.title;
+  if (values.description !== undefined) {
+    item.descriptionHtml = values.description;
+  }
+  if (values.body !== undefined) item.body = values.body;
+  if (values.handle !== undefined) item.handle = values.handle;
+  if (values.productType !== undefined) item.productType = values.productType;
+  if (values.summary !== undefined) item.summary = values.summary;
+  if (values.seoTitle !== undefined || values.metaDescription !== undefined) {
+    item.seo = {
+      ...item.seo,
+      ...(values.seoTitle !== undefined ? { title: values.seoTitle } : {}),
+      ...(values.metaDescription !== undefined ? { description: values.metaDescription } : {}),
+    };
+  }
 }

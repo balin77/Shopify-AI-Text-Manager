@@ -53,6 +53,7 @@ export const en: Translation = {
     changesSavedMessage: "Changes saved successfully!",
     translateFromPrimary: "Translate from primary language",
     generateAllAltTexts: "Generate alt texts for all images with AI",
+    translateAllAltTexts: "Translate all alt-texts",
     altTextForImage: "Alt text for image",
     altTextPlaceholder: "Enter alt text for this image...",
     image: "Image",

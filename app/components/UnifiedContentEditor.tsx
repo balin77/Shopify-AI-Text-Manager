@@ -135,6 +135,8 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     "translateAll",
     "translateAllForLocale",
     "generateAllAltTexts",
+    "translateAllAltTextsToAllLocales",
+    "translateAllAltTextsForLocale",
   ];
 
   // Check if a global AI action is currently running (affects all fields)
@@ -728,6 +730,8 @@ function FieldRenderer(props: FieldRendererProps & { state?: any; handlers?: any
     "translateAltText",
     "translateAltTextToAllLocales",
     "generateAllAltTexts",
+    "translateAllAltTextsToAllLocales",
+    "translateAllAltTextsForLocale",
   ];
 
   // Check if an image-related AI action is currently running (used for ImageGalleryField)
@@ -812,14 +816,17 @@ function FieldRenderer(props: FieldRendererProps & { state?: any; handlers?: any
         onGenerateAllAltTexts={handlers.handleGenerateAllAltTexts}
         onTranslateAltText={handlers.handleTranslateAltText}
         onTranslateAltTextToAllLocales={handlers.handleTranslateAltTextToAllLocales}
+        onTranslateAllAltTexts={handlers.handleTranslateAllAltTexts}
+        onTranslateAllAltTextsForLocale={handlers.handleTranslateAllAltTextsForLocale}
         altTextSuggestions={state.altTextSuggestions}
         onAcceptSuggestion={handlers.handleAcceptAltTextSuggestion}
         onAcceptAndTranslateSuggestion={handlers.handleAcceptAndTranslateAltText}
         onRejectSuggestion={handlers.handleRejectAltTextSuggestion}
         onClearAltText={(imageIndex) => handlers.handleAltTextChange(imageIndex, "")}
         isFieldLoading={(imageIndex) => {
-          if (imageIndex === -1) return isImageAIActionRunning;
-          return isImageAIActionRunning || (state?.loadingFieldKeys?.has(`altText_${imageIndex}`) ?? false);
+          const isBulkTranslating = state?.loadingFieldKeys?.has("allAltTextsTranslate") ?? false;
+          if (imageIndex === -1) return isImageAIActionRunning || isBulkTranslating;
+          return isImageAIActionRunning || isBulkTranslating || (state?.loadingFieldKeys?.has(`altText_${imageIndex}`) ?? false);
         }}
         t={{
           image: t.products?.image || "Image",
@@ -827,6 +834,7 @@ function FieldRenderer(props: FieldRendererProps & { state?: any; handlers?: any
           altTextForImage: t.products?.altTextForImage || "Alt-text for image",
           altTextPlaceholder: t.products?.altTextPlaceholder || "Describe the image...",
           generateAllAltTexts: t.products?.generateAllAltTexts || "Generate all alt-texts",
+          translateAllAltTexts: t.products?.translateAllAltTexts || "Translate all alt-texts",
           onlyFeaturedImageAvailable: t.products?.onlyFeaturedImageAvailable || "Only the featured image is available in the free plan.",
           additionalImagesLocked: t.products?.additionalImagesLocked || "Additional images are locked",
           availableInBasicPlan: t.products?.availableInBasicPlan || "Available in Basic plan and above",

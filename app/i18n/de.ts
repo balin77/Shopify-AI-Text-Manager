@@ -51,6 +51,7 @@ export const de = {
     changesSavedMessage: "Änderungen erfolgreich gespeichert!",
     translateFromPrimary: "Aus Hauptsprache übersetzen",
     generateAllAltTexts: "Alt-Texte für alle Bilder mit KI generieren",
+    translateAllAltTexts: "Alle Alt-Texte übersetzen",
     altTextForImage: "Alt-Text für Bild",
     altTextPlaceholder: "Alt-Text für dieses Bild eingeben...",
     image: "Bild",

@@ -53,6 +53,7 @@ export const es: Translation = {
     changesSavedMessage: "¡Cambios guardados correctamente!",
     translateFromPrimary: "Traducir desde el idioma principal",
     generateAllAltTexts: "Generar textos alt para todas las imágenes con IA",
+    translateAllAltTexts: "Traducir todos los textos alt",
     altTextForImage: "Texto alt para imagen",
     altTextPlaceholder: "Introduce el texto alt para esta imagen...",
     image: "Imagen",
