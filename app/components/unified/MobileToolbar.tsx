@@ -16,6 +16,7 @@ import { MenuHorizontalIcon } from "@shopify/polaris-icons";
 import { useLocaleButtonStyle, getLocaleButtonTooltip } from "../../utils/contentEditor.utils";
 import { ReloadButton } from "../ReloadButton";
 import { HelpTooltip } from "../HelpTooltip";
+import { useI18n } from "../../contexts/I18nContext";
 import type { ShopLocale, TranslatableItem, ContentType } from "../../types/contentEditor.types";
 
 interface MobileToolbarProps {
@@ -83,6 +84,12 @@ export function MobileToolbar({
   revalidator,
   t = {},
 }: MobileToolbarProps) {
+  const { t: i18n } = useI18n();
+  const tooltipI18n = {
+    missingContent: i18n.common.missingContent,
+    missingTranslations: i18n.common.missingTranslations,
+    fieldLabels: i18n.common.fieldLabels,
+  };
   const [popoverActive, setPopoverActive] = useState(false);
 
   const togglePopover = useCallback(() => setPopoverActive((prev) => !prev), []);
@@ -112,7 +119,7 @@ export function MobileToolbar({
               isLoadingData
             );
 
-            const tooltip = getLocaleButtonTooltip(locale, selectedItem, primaryLocale, contentType, isLoadingData);
+            const tooltip = getLocaleButtonTooltip(locale, selectedItem, primaryLocale, contentType, isLoadingData, tooltipI18n);
 
             const isEnabled = !enabledLanguages || enabledLanguages.includes(locale.locale);
             const isPrimary = locale.primary;
@@ -134,7 +141,7 @@ export function MobileToolbar({
 
             if (tooltip) {
               return (
-                <Tooltip key={locale.locale} content={tooltip} dismissOnMouseOut>
+                <Tooltip key={locale.locale} content={tooltip} dismissOnMouseOut preferredPosition="below">
                   {buttonEl}
                 </Tooltip>
               );

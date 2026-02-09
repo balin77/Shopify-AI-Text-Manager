@@ -71,22 +71,23 @@ export const TRANSLATION_KEY_MAP = {
 
 /**
  * Maps all field keys (both FIELD_CONFIGS paths and Shopify translation keys)
- * to human-readable labels for tooltip display.
+ * to i18n label keys (common.fieldLabels.*).
+ * Used by getLocaleButtonTooltip to resolve human-readable labels.
  */
-export const FIELD_LABEL_MAP: Record<string, string> = {
+export const FIELD_TO_LABEL_KEY: Record<string, string> = {
   // FIELD_CONFIGS paths (used by getMissingPrimaryFields)
-  title: 'Titel',
-  descriptionHtml: 'Beschreibung',
-  body: 'Inhalt',
-  handle: 'URL-Pfad',
-  productType: 'Produkttyp',
-  summary: 'Zusammenfassung',
-  'seo.title': 'SEO-Titel',
-  'seo.description': 'Meta-Beschreibung',
+  title: 'title',
+  descriptionHtml: 'description',
+  body: 'content',
+  handle: 'handle',
+  productType: 'productType',
+  summary: 'summary',
+  'seo.title': 'seoTitle',
+  'seo.description': 'metaDescription',
   // Shopify translation keys (used by getMissingLocaleTranslationFields)
-  body_html: 'Beschreibung',
-  meta_title: 'SEO-Titel',
-  meta_description: 'Meta-Beschreibung',
-  product_type: 'Produkttyp',
-  summary_html: 'Zusammenfassung',
+  body_html: 'description',
+  meta_title: 'seoTitle',
+  meta_description: 'metaDescription',
+  product_type: 'productType',
+  summary_html: 'summary',
 };

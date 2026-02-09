@@ -17,6 +17,7 @@ import { Button, InlineStack, ButtonGroup, Tooltip } from "@shopify/polaris";
 import { useLocaleButtonStyle, getLocaleButtonTooltip } from "../../utils/contentEditor.utils";
 import { ReloadButton } from "../ReloadButton";
 import { HelpTooltip } from "../HelpTooltip";
+import { useI18n } from "../../contexts/I18nContext";
 import type { ShopLocale, TranslatableItem, ContentType } from "../../types/contentEditor.types";
 
 interface UnifiedLanguageBarProps {
@@ -89,6 +90,12 @@ export function UnifiedLanguageBar({
 }: UnifiedLanguageBarProps) {
   const isPrimaryLocale = currentLanguage === primaryLocale;
   const ctrlPressedRef = useRef<Record<string, boolean>>({});
+  const { t: i18n } = useI18n();
+  const tooltipI18n = {
+    missingContent: i18n.common.missingContent,
+    missingTranslations: i18n.common.missingTranslations,
+    fieldLabels: i18n.common.fieldLabels,
+  };
 
   // Map content type to resource type for the API
   const resourceTypeMap: Record<string, string> = {
@@ -138,7 +145,7 @@ export function UnifiedLanguageBar({
         const fullLabel = `${locale.name || locale.locale}${locale.primary ? ` (${t.primaryLocaleSuffix || "Primary"})` : ""}`;
         const shortLabel = locale.locale.charAt(0).toUpperCase() + locale.locale.slice(1);
 
-        const tooltip = getLocaleButtonTooltip(locale, selectedItem, primaryLocale, contentType, isLoadingData);
+        const tooltip = getLocaleButtonTooltip(locale, selectedItem, primaryLocale, contentType, isLoadingData, tooltipI18n);
 
         const buttonContent = (
           <div key={locale.locale} style={buttonStyle}>
@@ -153,7 +160,7 @@ export function UnifiedLanguageBar({
 
         if (tooltip) {
           return (
-            <Tooltip key={locale.locale} content={tooltip} dismissOnMouseOut>
+            <Tooltip key={locale.locale} content={tooltip} dismissOnMouseOut preferredPosition="below">
               {buttonContent}
             </Tooltip>
           );

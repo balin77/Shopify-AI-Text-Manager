@@ -10,7 +10,7 @@ import {
   CONTENT_TYPE_DESCRIPTION_KEY,
   UI_FIELD_TO_TRANSLATION_KEY,
   FIELD_CONFIGS,
-  FIELD_LABEL_MAP,
+  FIELD_TO_LABEL_KEY,
 } from "~/constants/shopifyFields";
 import { TIMING } from "~/constants/timing";
 
@@ -672,13 +672,20 @@ export function getMissingLocaleTranslationFields(
 /**
  * Get tooltip text for a locale button listing missing fields.
  * Returns null if nothing is missing (no tooltip needed).
+ *
+ * @param i18n - Translation strings from common.fieldLabels / common.missingContent / common.missingTranslations
  */
 export function getLocaleButtonTooltip(
   locale: ShopLocale,
   selectedItem: TranslatableItem | null,
   primaryLocale: string,
   contentType: ContentType,
-  isLoadingData: boolean = false
+  isLoadingData: boolean = false,
+  i18n?: {
+    missingContent: string;
+    missingTranslations: string;
+    fieldLabels: Record<string, string>;
+  }
 ): string | null {
   if (isLoadingData || !selectedItem) return null;
 
@@ -687,18 +694,22 @@ export function getLocaleButtonTooltip(
 
   if (locale.primary) {
     missingFields = getMissingPrimaryFields(selectedItem, contentType);
-    prefix = 'Fehlende Inhalte:';
+    prefix = i18n?.missingContent ?? 'Missing content:';
   } else {
     missingFields = getMissingLocaleTranslationFields(
       selectedItem, locale.locale, primaryLocale, contentType
     );
-    prefix = 'Fehlende Übersetzungen:';
+    prefix = i18n?.missingTranslations ?? 'Missing translations:';
   }
 
   if (missingFields.length === 0) return null;
 
-  const labels = missingFields.map(key => FIELD_LABEL_MAP[key] || key);
-  // Deduplicate (e.g. 'body' and 'body_html' both map to 'Beschreibung')
+  const fieldLabels = i18n?.fieldLabels ?? {};
+  const labels = missingFields.map(key => {
+    const labelKey = FIELD_TO_LABEL_KEY[key];
+    return (labelKey && fieldLabels[labelKey]) || labelKey || key;
+  });
+  // Deduplicate (e.g. 'body' and 'body_html' both map to 'description')
   const unique = [...new Set(labels)];
   return `${prefix} ${unique.join(', ')}`;
 }

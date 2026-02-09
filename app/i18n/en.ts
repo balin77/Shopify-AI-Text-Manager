@@ -440,6 +440,19 @@ export const en: Translation = {
     noTargetLanguagesSelected: "No target languages selected",
     noTargetLanguagesEnabled: "No target languages enabled",
     fieldTranslatedToLanguages: "{fieldType} has been translated to {count} language(s)",
+    // Tooltip for locale buttons
+    missingContent: "Missing content:",
+    missingTranslations: "Missing translations:",
+    fieldLabels: {
+      title: "Title",
+      description: "Description",
+      content: "Content",
+      handle: "URL slug",
+      productType: "Product type",
+      summary: "Summary",
+      seoTitle: "SEO title",
+      metaDescription: "Meta description",
+    },
   },
 
   // Tasks Page

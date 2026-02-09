@@ -438,6 +438,19 @@ export const de = {
     noTargetLanguagesSelected: "Keine Zielsprachen ausgewählt",
     noTargetLanguagesEnabled: "Keine Zielsprachen aktiviert",
     fieldTranslatedToLanguages: "{fieldType} wurde in {count} Sprache(n) übersetzt",
+    // Tooltip for locale buttons
+    missingContent: "Fehlende Inhalte:",
+    missingTranslations: "Fehlende Übersetzungen:",
+    fieldLabels: {
+      title: "Titel",
+      description: "Beschreibung",
+      content: "Inhalt",
+      handle: "URL-Pfad",
+      productType: "Produkttyp",
+      summary: "Zusammenfassung",
+      seoTitle: "SEO-Titel",
+      metaDescription: "Meta-Beschreibung",
+    },
   },
 
   // Tasks Page
