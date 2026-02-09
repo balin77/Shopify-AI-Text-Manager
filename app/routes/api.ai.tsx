@@ -907,18 +907,64 @@ Return only the formatted text, without explanations.`;
         const contextDescription = formData.get("contextDescription") as string || "";
         const mainLanguage = formData.get("mainLanguage") as string || "German";
 
-        // Build the prompt
-        const prompt = `Improve the following content field.
+        // Load AI instructions for format guidelines
+        const genAiInstructions = await db.aIInstructions.findUnique({
+          where: { shop: session.shop },
+        }) as Record<string, any> | null;
 
-Field: ${fieldType}
-Current value: ${currentValue || "(empty)"}
-Context title: ${contextTitle}
-Context description: ${contextDescription}
+        // Resolve field definition for aiInstructionsKey
+        const genContentConfig = CONTENT_CONFIGS[contentType];
+        const genField = genContentConfig?.fieldDefinitions.find((f) => f.key === fieldType);
+        const genInstructionsKey = genField?.aiInstructionsKey;
+        const genFormatKey = genInstructionsKey ? `${genInstructionsKey}Format` : null;
+        const genInstructionsTextKey = genInstructionsKey ? `${genInstructionsKey}Instructions` : null;
+        const genFieldLabel = genField?.label || fieldType;
+        const isGenLongContent = genField?.type === "html" || genField?.type === "textarea";
+
+        // Build field-type-aware prompt
+        let prompt = "";
+
+        if (genField?.type === "slug") {
+          prompt = `Create an optimized URL slug for the following content.
+
+Context - Title: ${contextTitle}
+Current slug: ${currentValue || "(empty)"}
 Language: ${mainLanguage}
 
-IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no options, no formatting, no labels. Just output the single best improved version of the content in ${mainLanguage}.`;
+Requirements:
+- Use only lowercase letters (a-z), digits (0-9), and hyphens (-)
+- No umlauts - convert them (ä→ae, ö→oe, ü→ue, ß→ss)
+- No spaces, underscores, or special characters
+- 3-5 relevant keywords`;
+        } else if (isGenLongContent) {
+          prompt = `Create an improved ${genFieldLabel} for the following content.
 
-        // Create task entry with prompt
+Context - Title: ${contextTitle}
+Current ${genFieldLabel}: ${currentValue || "(empty)"}
+Language: ${mainLanguage}
+
+Use HTML formatting (<h2>, <h3>, <p>, <strong>, <em>, <ul>, <li>) for structure.`;
+        } else {
+          prompt = `Create an improved ${genFieldLabel} for the following content.
+
+Context - Title: ${contextTitle}
+Context - Description: ${contextDescription}
+Current ${genFieldLabel}: ${currentValue || "(empty)"}
+Language: ${mainLanguage}`;
+        }
+
+        // Add format example as soft guidance (not strict)
+        if (genFormatKey && genAiInstructions?.[genFormatKey]) {
+          prompt += `\n\nUse the following as a rough structural guideline (adapt freely to the actual content):\n${genAiInstructions[genFormatKey]}`;
+        }
+        // Add instructions as guidance
+        if (genInstructionsTextKey && genAiInstructions?.[genInstructionsTextKey]) {
+          prompt += `\n\nGuidelines:\n${genAiInstructions[genInstructionsTextKey]}`;
+        }
+
+        prompt += `\n\nIMPORTANT: Return ONLY the generated ${genFieldLabel}, nothing else. No explanations, no options, no labels. Output the result in ${mainLanguage}.`;
+
+        // Create task entry (prompt is saved by AI service via savePromptToTask)
         const task = await db.task.create({
           data: {
             shop: session.shop,
@@ -929,7 +975,6 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
             resourceTitle: fieldType,
             fieldType,
             progress: 0,
-            // prompt is saved by AI service via savePromptToTask
             expiresAt: getTaskExpirationDate(),
           },
         });
@@ -958,10 +1003,23 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
           logger.debug("[API-AI] Generating AI text", {
             context: "AI",
             fieldType,
-            textLength: currentValue?.length || 0
+            textLength: currentValue?.length || 0,
+            hasFormatExample: !!(genFormatKey && genAiInstructions?.[genFormatKey]),
+            hasInstructions: !!(genInstructionsTextKey && genAiInstructions?.[genInstructionsTextKey]),
           });
 
-          const generatedContent = await aiService['askAI'](prompt);
+          // Use appropriate method based on field type
+          let generatedContent: string;
+          if (isGenLongContent) {
+            generatedContent = await aiService.generateProductDescription(contextTitle, prompt);
+          } else {
+            generatedContent = await aiService.generateProductTitle(prompt);
+          }
+
+          // Sanitize slugs
+          if (genField?.type === "slug") {
+            generatedContent = sanitizeSlug(generatedContent);
+          }
 
           // Update task to completed with full AI response
           await db.task.update({
