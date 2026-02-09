@@ -576,75 +576,86 @@ export async function handleTranslateAll(
       value: string
     ) => {
       const shopifyKey = fieldKeyMap[fieldType];
-      if (!shopifyKey || !digestMap[shopifyKey]) return;
+      if (!shopifyKey) return;
 
-      const response = await gateway.graphql(
-        `#graphql
-          mutation translateProduct($resourceId: ID!, $translations: [TranslationInput!]!) {
-            translationsRegister(resourceId: $resourceId, translations: $translations) {
-              userErrors {
-                field
-                message
+      const digest = digestMap[shopifyKey];
+
+      // Save to Shopify (requires digest)
+      if (digest) {
+        const response = await gateway.graphql(
+          `#graphql
+            mutation translateProduct($resourceId: ID!, $translations: [TranslationInput!]!) {
+              translationsRegister(resourceId: $resourceId, translations: $translations) {
+                userErrors {
+                  field
+                  message
+                }
+                translations {
+                  locale
+                  key
+                  value
+                }
               }
-              translations {
-                locale
-                key
-                value
-              }
-            }
-          }`,
-        {
-          variables: {
-            resourceId: productId,
-            translations: [
-              {
-                key: shopifyKey,
-                value,
-                locale,
-                translatableContentDigest: digestMap[shopifyKey],
-              },
-            ],
-          },
-        }
-      );
-
-      const responseData = await response.json();
-      if (responseData.data?.translationsRegister?.userErrors?.length > 0) {
-        loggers.translation("error", "Shopify API error", {
-          locale,
-          fieldType,
-          errors: responseData.data.translationsRegister.userErrors,
-        });
-      } else {
-        // Save to local database
-        const product = await db.product.findFirst({
-          where: { id: productId },
-          select: { shop: true },
-        });
-
-        if (product) {
-          await db.contentTranslation.upsert({
-            where: {
-              resourceId_key_locale: {
-                resourceId: productId,
-                key: shopifyKey,
-                locale,
-              },
-            },
-            update: {
-              value,
-              digest: digestMap[shopifyKey] || null,
-            },
-            create: {
+            }`,
+          {
+            variables: {
               resourceId: productId,
-              resourceType: "Product",
-              key: shopifyKey,
-              value,
-              locale,
-              digest: digestMap[shopifyKey] || null,
+              translations: [
+                {
+                  key: shopifyKey,
+                  value,
+                  locale,
+                  translatableContentDigest: digest,
+                },
+              ],
             },
+          }
+        );
+
+        const responseData = await response.json();
+        if (responseData.data?.translationsRegister?.userErrors?.length > 0) {
+          loggers.translation("error", "Shopify API error", {
+            locale,
+            fieldType,
+            errors: responseData.data.translationsRegister.userErrors,
           });
         }
+      } else {
+        loggers.translation("warn", `No digest for key '${shopifyKey}' (field '${fieldType}'). Skipping Shopify save, saving to DB only.`, {
+          locale,
+          fieldType,
+          availableDigests: Object.keys(digestMap),
+        });
+      }
+
+      // Always save to local database (even without Shopify digest)
+      const product = await db.product.findFirst({
+        where: { id: productId },
+        select: { shop: true },
+      });
+
+      if (product) {
+        await db.contentTranslation.upsert({
+          where: {
+            resourceId_key_locale: {
+              resourceId: productId,
+              key: shopifyKey,
+              locale,
+            },
+          },
+          update: {
+            value,
+            digest: digest || null,
+          },
+          create: {
+            resourceId: productId,
+            resourceType: "Product",
+            key: shopifyKey,
+            value,
+            locale,
+            digest: digest || null,
+          },
+        });
       }
     };
 

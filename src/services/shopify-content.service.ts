@@ -587,14 +587,6 @@ export class ShopifyContentService {
         return;
       }
 
-      const digest = digestMap[translationKey];
-      if (!digest) {
-        console.warn(`[translateAllContent] ⚠️ No digest for key '${translationKey}' (field '${field}'). Available digests: ${Object.keys(digestMap).join(', ')}`);
-        return;
-      }
-
-      console.log(`[translateAllContent] ✓ Saving ${field} → ${translationKey} for locale ${locale}`);
-
       // Skip if translation is same as source
       const sourceValue = fields[field];
       if (sourceValue && value.trim() === sourceValue.trim()) {
@@ -602,25 +594,32 @@ export class ShopifyContentService {
         return;
       }
 
-      // Save to Shopify
-      const response = await this.admin.graphql(TRANSLATE_CONTENT, {
-        variables: {
-          resourceId,
-          translations: [{
-            key: translationKey,
-            value,
-            locale,
-            translatableContentDigest: digest
-          }]
-        }
-      });
+      const digest = digestMap[translationKey];
 
-      const data = await response.json();
-      if (data.data?.translationsRegister?.userErrors?.length > 0) {
-        console.error(`[translateAllContent] Error saving ${field} for ${locale}:`, data.data.translationsRegister.userErrors);
+      // Save to Shopify (requires digest)
+      if (digest) {
+        console.log(`[translateAllContent] ✓ Saving ${field} → ${translationKey} for locale ${locale}`);
+        const response = await this.admin.graphql(TRANSLATE_CONTENT, {
+          variables: {
+            resourceId,
+            translations: [{
+              key: translationKey,
+              value,
+              locale,
+              translatableContentDigest: digest
+            }]
+          }
+        });
+
+        const data = await response.json();
+        if (data.data?.translationsRegister?.userErrors?.length > 0) {
+          console.error(`[translateAllContent] Error saving ${field} for ${locale}:`, data.data.translationsRegister.userErrors);
+        }
+      } else {
+        console.warn(`[translateAllContent] ⚠️ No digest for key '${translationKey}' (field '${field}'). Skipping Shopify save, saving to DB only. Available digests: ${Object.keys(digestMap).join(', ')}`);
       }
 
-      // Save to database
+      // Always save to database (even without Shopify digest)
       await db.contentTranslation.upsert({
         where: {
           resourceId_key_locale: {
