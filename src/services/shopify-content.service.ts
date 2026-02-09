@@ -253,10 +253,12 @@ export class ShopifyContentService {
       const translationsToDelete: string[] = [];
 
       // Map field names to Shopify translation keys
+      // Note: ShopPolicy uses 'body' (not 'body_html') as its translatable content key
+      const bodyKey = resourceType === 'ShopPolicy' ? 'body' : 'body_html';
       const keyMapping: Record<string, string> = {
         title: 'title',
-        description: 'body_html',  // Always body_html for all resource types
-        body: 'body_html',         // Always body_html for all resource types
+        description: bodyKey,
+        body: bodyKey,
         handle: 'handle',
         seoTitle: 'meta_title',
         metaDescription: 'meta_description',

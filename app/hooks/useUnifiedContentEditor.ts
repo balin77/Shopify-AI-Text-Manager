@@ -591,7 +591,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           // Special handling for seoTitle field: fallback to translated title (or primary if no translation)
           const translatedTitle = getTranslatedValue(
             item,
-            "translatedBody", // Translation key for title
+            "title", // Translation key for title
             currentLanguage,
             "",
             primaryLocale

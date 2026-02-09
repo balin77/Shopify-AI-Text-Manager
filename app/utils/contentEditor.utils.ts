@@ -708,6 +708,12 @@ export function useLocaleButtonStyle(
   contentType: ContentType,
   isLoadingData: boolean = false
 ): React.CSSProperties {
+  // Track translations length separately so the memo recalculates when
+  // item.translations is mutated in-place (e.g. after Accept & Translate).
+  // Without this, useMemo sees the same selectedItem reference and returns
+  // a stale pulsing state even though translations were added.
+  const translationsLength = selectedItem?.translations?.length ?? 0;
+
   return useMemo(() => {
     // Don't show blinking animations while data is still loading
     if (isLoadingData) {
@@ -735,7 +741,7 @@ export function useLocaleButtonStyle(
     }
 
     return {};
-  }, [locale, selectedItem, primaryLocale, contentType, isLoadingData]);
+  }, [locale, selectedItem, primaryLocale, contentType, isLoadingData, translationsLength]);
 }
 
 /**
