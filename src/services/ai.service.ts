@@ -218,7 +218,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     contentType: string = 'product'
   ): Promise<Record<string, Record<string, string>>> {
     // Only allow short fields
-    const shortFieldKeys = ['title', 'seoTitle', 'handle'];
+    const shortFieldKeys = ['title', 'seoTitle', 'handle', 'productType'];
     const filteredFields: Record<string, string> = {};
 
     for (const [key, value] of Object.entries(fields)) {
@@ -247,6 +247,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       title: 'Title',
       seoTitle: 'SEO Title',
       handle: 'URL Slug',
+      productType: 'Product Type',
     };
 
     const targetLanguages = targetLocales
@@ -469,6 +470,7 @@ Output the result in ${language}.`;
       title: 'Title',
       description: 'Description',
       handle: 'URL Slug',
+      productType: 'Product Type',
       seoTitle: 'SEO Title',
       metaDescription: 'Meta Description',
       body: 'Body',

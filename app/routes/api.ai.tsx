@@ -185,7 +185,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         const isSlugField = fieldType === 'handle' || fieldType === 'slug';
 
         // Check if this is a short field that can use batch translation
-        const SHORT_FIELDS = ['handle', 'slug', 'title', 'seoTitle'];
+        const SHORT_FIELDS = ['handle', 'slug', 'title', 'seoTitle', 'productType'];
         const isShortField = SHORT_FIELDS.includes(fieldType);
 
         // Build batch prompt for short fields, individual prompts for long fields
