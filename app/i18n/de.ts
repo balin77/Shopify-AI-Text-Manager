@@ -148,6 +148,7 @@ export const de = {
     saveChanges: "Änderungen speichern",
     discardChanges: "Verwerfen",
     changesSaved: "Änderungen erfolgreich gespeichert!",
+    reloadSuccess: "Daten erfolgreich von Shopify neu geladen!",
     error: "Fehler",
     success: "Erfolg!",
     aiSuggestion: "KI-Vorschlag:",

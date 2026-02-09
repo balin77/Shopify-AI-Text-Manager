@@ -8,6 +8,7 @@ interface ReloadButtonProps {
   resourceType: "product" | "collection" | "article" | "page" | "policy" | "templates";
   locale: string;
   onReloadComplete?: () => void;
+  onReloadSuccess?: () => void;
   revalidator?: {
     revalidate: () => void;
     state: 'idle' | 'loading';
@@ -19,6 +20,7 @@ export function ReloadButton({
   resourceType,
   locale,
   onReloadComplete,
+  onReloadSuccess,
   revalidator,
 }: ReloadButtonProps) {
   const [isLoading, setIsLoading] = useState(false);
@@ -111,9 +113,11 @@ export function ReloadButton({
       setWaitingForRevalidation(false);
       setIsLoading(false);
 
-      // NOTE: We don't call onReloadComplete here anymore
-      // The parent component (e.g., products.tsx) will detect the revalidation completion
-      // and trigger data refresh automatically via its own useEffect
+      // Notify parent about successful reload
+      if (onReloadSuccess) {
+        onReloadSuccess();
+      }
+
       console.log("ℹ️ [RELOAD-BUTTON] Revalidation done - parent will handle data refresh");
     }
   }, [revalidator?.state, waitingForRevalidation, onReloadComplete, revalidator]);

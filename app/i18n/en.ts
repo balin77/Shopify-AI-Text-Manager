@@ -150,6 +150,7 @@ export const en: Translation = {
     saveChanges: "Save changes",
     discardChanges: "Discard",
     changesSaved: "Changes saved successfully!",
+    reloadSuccess: "Data reloaded from Shopify successfully!",
     error: "Error",
     success: "Success!",
     aiSuggestion: "AI suggestion:",

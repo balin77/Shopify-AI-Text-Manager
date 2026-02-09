@@ -150,6 +150,7 @@ export const es: Translation = {
     saveChanges: "Guardar cambios",
     discardChanges: "Descartar",
     changesSaved: "¡Cambios guardados correctamente!",
+    reloadSuccess: "¡Datos recargados de Shopify correctamente!",
     error: "Error",
     success: "¡Éxito!",
     aiSuggestion: "Sugerencia de IA:",

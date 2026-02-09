@@ -19,6 +19,7 @@ import { ReloadButton } from "./ReloadButton";
 import { SeoSidebar } from "./SeoSidebar";
 import { useNavigationHeight } from "../contexts/NavigationHeightContext";
 import { usePlan } from "../contexts/PlanContext";
+import { useInfoBox } from "../contexts/InfoBoxContext";
 import { useItemSelector } from "../contexts/ItemSelectorContext";
 import { contentEditorStyles } from "../utils/contentEditor.utils";
 import "../styles/UnifiedContentEditor.css";
@@ -123,6 +124,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
 
   const { state, handlers, selectedItem, navigationGuard, helpers, effectiveFieldDefinitions } = editor;
   const { getMaxProducts } = usePlan();
+  const { showInfoBox } = useInfoBox();
   const { registerItems, clearItems } = useItemSelector();
 
   // Use effective field definitions (dynamic for templates, static for other content types)
@@ -428,6 +430,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         resourceType={getResourceType(config.contentType)}
                         locale={state.currentLanguage}
                         onReloadComplete={editor.helpers.triggerDataRefresh}
+                        onReloadSuccess={() => showInfoBox(t.content?.reloadSuccess || "Data reloaded successfully!", "success", t.content?.success || "Success!")}
                         revalidator={revalidator}
                       />
                     </div>
