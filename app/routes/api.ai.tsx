@@ -435,7 +435,31 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                       }
                     });
 
-                    logger.debug("[API-AI] Batch: Saved translation to Shopify", {
+                    // Also save to local DB so revalidation picks it up immediately
+                    const resourceTypeMap: Record<string, string> = {
+                      products: "Product", collections: "Collection",
+                      pages: "Page", blogs: "Article", policies: "ShopPolicy",
+                    };
+                    await db.contentTranslation.upsert({
+                      where: {
+                        resourceId_key_locale: {
+                          resourceId: itemId,
+                          key: shopifyKey,
+                          locale,
+                        },
+                      },
+                      update: { value: translatedValue, digest, resourceType: resourceTypeMap[contentType] || "Product" },
+                      create: {
+                        resourceId: itemId,
+                        resourceType: resourceTypeMap[contentType] || "Product",
+                        key: shopifyKey,
+                        value: translatedValue,
+                        locale,
+                        digest,
+                      },
+                    });
+
+                    logger.debug("[API-AI] Batch: Saved translation to Shopify + DB", {
                       context: "AI",
                       resourceId: itemId,
                       fieldType,
@@ -711,7 +735,31 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                       shopifyKey
                     });
                   } else {
-                    logger.debug("[API-AI] Saved translation to Shopify for " + contentType, {
+                    // Also save to local DB so revalidation picks it up immediately
+                    const resourceTypeMap: Record<string, string> = {
+                      products: "Product", collections: "Collection",
+                      pages: "Page", blogs: "Article", policies: "ShopPolicy",
+                    };
+                    await db.contentTranslation.upsert({
+                      where: {
+                        resourceId_key_locale: {
+                          resourceId: itemId,
+                          key: shopifyKey,
+                          locale,
+                        },
+                      },
+                      update: { value: translatedValue, digest, resourceType: resourceTypeMap[contentType] || "Product" },
+                      create: {
+                        resourceId: itemId,
+                        resourceType: resourceTypeMap[contentType] || "Product",
+                        key: shopifyKey,
+                        value: translatedValue,
+                        locale,
+                        digest,
+                      },
+                    });
+
+                    logger.debug("[API-AI] Saved translation to Shopify + DB for " + contentType, {
                       context: "AI",
                       resourceId: itemId,
                       fieldType,
