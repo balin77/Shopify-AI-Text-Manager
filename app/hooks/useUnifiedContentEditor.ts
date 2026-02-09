@@ -1021,26 +1021,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     }
   }, [fetcher.data]);
 
-  // Handle bulk alt-text generation (auto-accept all and auto-save)
-  useEffect(() => {
-    if (fetcher.data?.success && 'generatedAltTexts' in fetcher.data) {
-      const { generatedAltTexts } = fetcher.data as any;
-      debugLog.altText(' Auto-accepting bulk generated alt-texts:', generatedAltTexts);
-
-      // Merge with existing alt-texts
-      const newAltTexts = {
-        ...imageAltTexts,
-        ...generatedAltTexts
-      };
-
-      setImageAltTexts(newAltTexts);
-      // Set original to match so hasChanges = false after save
-      setOriginalAltTexts(newAltTexts);
-      // Schedule auto-save
-      pendingAltTextAutoSaveRef.current = newAltTexts;
-    }
-  }, [fetcher.data]); // Note: imageAltTexts intentionally not in deps to avoid loops
-
   // Handle translated alt-text response (auto-save)
   useEffect(() => {
     if (fetcher.data?.success && 'translatedAltText' in fetcher.data) {
@@ -2437,13 +2417,28 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     const mainLanguage = shopLocales.find((l: ShopLocale) => l.locale === primaryLocale)?.name || primaryLocale;
     const imagesData = selectedItem.images.map((img: ContentImage) => ({ url: img.url }));
 
-    safeSubmit({
-      action: "generateAllAltTexts",
-      productId: selectedItem.id,
-      productTitle,
-      mainLanguage,
-      imagesData: JSON.stringify(imagesData)
-    }, { method: "POST" });
+    submitAIAction(
+      {
+        action: "generateAllAltTexts",
+        itemId: selectedItem.id,
+        productId: selectedItem.id,
+        productTitle,
+        mainLanguage,
+        imagesData: JSON.stringify(imagesData)
+      },
+      "allAltTextsGenerate",
+      (result) => {
+        if (result.generatedAltTexts) {
+          const newAltTexts = {
+            ...imageAltTexts,
+            ...result.generatedAltTexts
+          };
+          setImageAltTexts(newAltTexts);
+          setOriginalAltTexts(newAltTexts);
+          pendingAltTextAutoSaveRef.current = newAltTexts;
+        }
+      }
+    );
   };
 
   const handleTranslateAltText = (imageIndex: number) => {

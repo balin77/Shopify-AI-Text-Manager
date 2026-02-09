@@ -134,7 +134,6 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   const GLOBAL_AI_ACTIONS = [
     "translateAll",
     "translateAllForLocale",
-    "generateAllAltTexts",
     "translateAllAltTextsToAllLocales",
     "translateAllAltTextsForLocale",
   ];

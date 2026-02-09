@@ -1173,6 +1173,126 @@ Image URL: ${imageUrl}`;
         }
       }
 
+      case "generateAllAltTexts": {
+        const productId = formData.get("productId") as string;
+        const productTitle = formData.get("productTitle") as string;
+        const mainLanguage = formData.get("mainLanguage") as string || "German";
+        const imagesDataJson = formData.get("imagesData") as string;
+
+        if (!imagesDataJson) {
+          return json({ success: false, error: "No images data provided" }, { status: 400 });
+        }
+
+        const imagesData: Array<{ url: string }> = JSON.parse(imagesDataJson);
+        const totalImages = imagesData.length;
+
+        if (totalImages === 0) {
+          return json({ success: false, error: "No images to process" }, { status: 400 });
+        }
+
+        // Load AI instructions
+        const altTextInstructions = await db.aIInstructions.findUnique({
+          where: { shop: session.shop },
+        });
+
+        // Create task entry
+        const bulkTask = await db.task.create({
+          data: {
+            shop: session.shop,
+            type: "bulkAIGeneration",
+            status: "pending",
+            resourceType: contentType,
+            resourceId: productId,
+            resourceTitle: productTitle,
+            fieldType: "allAltTexts",
+            progress: 0,
+            total: totalImages,
+            processed: 0,
+            expiresAt: getTaskExpirationDate(),
+          },
+        });
+
+        try {
+          await db.task.update({
+            where: { id: bulkTask.id },
+            data: { status: "running", progress: 10 },
+          });
+
+          const bulkAiService = new AIService(
+            settings?.preferredProvider as any || 'huggingface',
+            {
+              huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
+              geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
+              claudeApiKey: decryptApiKey(settings?.claudeApiKey) || undefined,
+              openaiApiKey: decryptApiKey(settings?.openaiApiKey) || undefined,
+              grokApiKey: decryptApiKey(settings?.grokApiKey) || undefined,
+              deepseekApiKey: decryptApiKey(settings?.deepseekApiKey) || undefined,
+            },
+            session.shop,
+            bulkTask.id
+          );
+
+          const generatedAltTexts: Record<number, string> = {};
+
+          for (let i = 0; i < imagesData.length; i++) {
+            const image = imagesData[i];
+            try {
+              let prompt = `Create an optimized alt text for a product image.
+Product: ${productTitle}
+Image URL: ${image.url}`;
+
+              if (altTextInstructions?.productAltTextFormat) {
+                prompt += `\n\nFormat Example:\n${altTextInstructions.productAltTextFormat}`;
+              }
+
+              if (altTextInstructions?.productAltTextInstructions) {
+                prompt += `\n\nInstructions:\n${altTextInstructions.productAltTextInstructions}`;
+              }
+
+              prompt += `\n\nReturn ONLY the alt text, without explanations.${mainLanguage ? ` Output the result in ${mainLanguage}.` : ''}`;
+
+              const altText = await bulkAiService.generateImageAltText(image.url, productTitle, prompt);
+              generatedAltTexts[i] = altText;
+
+              const progressPercent = Math.round(10 + ((i + 1) / totalImages) * 90);
+              await db.task.update({
+                where: { id: bulkTask.id },
+                data: { progress: progressPercent, processed: i + 1 },
+              });
+            } catch (imgError: any) {
+              logger.error("[API-AI] Failed to generate alt-text for image", {
+                context: "AI",
+                imageIndex: i,
+                error: imgError.message,
+              });
+            }
+          }
+
+          // Mark task as completed
+          await db.task.update({
+            where: { id: bulkTask.id },
+            data: {
+              status: "completed",
+              progress: 100,
+              completedAt: new Date(),
+              result: JSON.stringify({ generatedAltTexts }),
+            },
+          });
+
+          return json({ success: true, generatedAltTexts });
+        } catch (error: any) {
+          await db.task.update({
+            where: { id: bulkTask.id },
+            data: {
+              status: "failed",
+              completedAt: new Date(),
+              error: (error.message || String(error)).substring(0, 1000),
+            },
+          });
+          throw error;
+        }
+      }
+
       case "translateAltText": {
         const imageIndex = parseInt(formData.get("imageIndex") as string);
         const sourceAltText = formData.get("sourceAltText") as string;
