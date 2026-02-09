@@ -396,6 +396,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                     handle: "handle",
                     seoTitle: "meta_title",
                     metaDescription: "meta_description",
+                    productType: "product_type",
+                    summary: "summary_html",
                   };
                   const shopifyKey = fieldKeyMap[fieldType] || fieldType;
 
@@ -658,6 +660,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                   seoTitle: "meta_title",
                   metaDescription: "meta_description",
                   productType: "product_type",
+                  summary: "summary_html",
                 };
                 const shopifyKey = fieldKeyMap[fieldType] || fieldType;
 
