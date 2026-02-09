@@ -635,18 +635,19 @@ export class ShopifyContentService {
     };
 
     // Helper function to save translations to Shopify and DB
-    const saveTranslation = async (locale: string, field: string, value: string) => {
+    // Returns true if saved successfully, false if Shopify rejected (e.g. "handle already taken")
+    const saveTranslation = async (locale: string, field: string, value: string): Promise<boolean> => {
       const translationKey = keyMapping[field];
       if (!translationKey) {
         loggers.translation('warn', `No keyMapping for field '${field}'`);
-        return;
+        return false;
       }
 
       // Skip if translation is same as source
       const sourceValue = fields[field];
       if (sourceValue && value.trim() === sourceValue.trim()) {
         loggers.translation('warn', `Skipping field '${field}' for locale '${locale}' - same as source`);
-        return;
+        return false;
       }
 
       let digest = digestMap[translationKey];
@@ -682,12 +683,13 @@ export class ShopifyContentService {
 
         const data = await response.json();
         if (data.data?.translationsRegister?.userErrors?.length > 0) {
-          loggers.translation('error', `Shopify error saving ${field} for ${locale}`, { errors: data.data.translationsRegister.userErrors });
-        } else {
-          loggers.translation('debug', `Shopify save successful for ${field} -> ${translationKey} (${locale})`);
+          loggers.translation('error', `Shopify rejected ${field} for ${locale}`, { errors: data.data.translationsRegister.userErrors });
+          return false; // Don't save to DB if Shopify rejected
         }
 
-        // Save to database (only after successful Shopify save)
+        loggers.translation('debug', `Shopify save successful for ${field} -> ${translationKey} (${locale})`);
+
+        // Save to database only after successful Shopify save
         await db.contentTranslation.upsert({
           where: {
             resourceId_key_locale: {
@@ -710,8 +712,10 @@ export class ShopifyContentService {
             digest,
           },
         });
+        return true;
       } else {
         loggers.translation('warn', `No digest for '${translationKey}' after retry. Translation NOT saved. Shopify translatableContent does not include this field - is the primary locale value set in Shopify?`);
+        return false;
       }
     };
 
@@ -734,8 +738,10 @@ export class ShopifyContentService {
 
           for (const [field, value] of Object.entries(localeTranslations)) {
             if (value) {
-              allTranslations[locale][field] = value;
-              await saveTranslation(locale, field, value as string);
+              const saved = await saveTranslation(locale, field, value as string);
+              if (saved) {
+                allTranslations[locale][field] = value;
+              }
             }
           }
         }
@@ -752,8 +758,10 @@ export class ShopifyContentService {
             if (translatedFields) {
               for (const [field, value] of Object.entries(translatedFields)) {
                 if (value) {
-                  allTranslations[locale][field] = value;
-                  await saveTranslation(locale, field, value as string);
+                  const saved = await saveTranslation(locale, field, value as string);
+                  if (saved) {
+                    allTranslations[locale][field] = value;
+                  }
                 }
               }
             }
@@ -785,8 +793,10 @@ export class ShopifyContentService {
                   stringValue = String(value);
                 }
 
-                allTranslations[locale][field] = stringValue;
-                await saveTranslation(locale, field, stringValue);
+                const saved = await saveTranslation(locale, field, stringValue);
+                if (saved) {
+                  allTranslations[locale][field] = stringValue;
+                }
               }
             }
           }
