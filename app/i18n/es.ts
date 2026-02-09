@@ -864,6 +864,20 @@ export const es: Translation = {
       details: "Los textos del tema son botones, etiquetas y mensajes en tu tema de Shopify. Los planes Pro+ permiten la traducción de estos elementos.",
     },
 
+    // Mobile Toolbar Actions
+    mobileToolbarActions: {
+      title: "Barra de acciones",
+      summary: "Aquí encontrarás todas las acciones importantes para guardar, traducir y gestionar tu contenido.",
+      details: "La barra de acciones ofrece acceso rápido a las funciones más importantes. Guarda tus cambios, traduce contenido a todos los idiomas a la vez o descarta cambios no deseados.",
+      tips: [
+        "Guardar: Guarda todos los cambios del idioma actual",
+        "Recargar: Recarga los datos actuales desde Shopify",
+        "Traducir todo: Traduce todos los campos con IA al idioma actual",
+        "Limpiar todo: Elimina todas las traducciones del idioma actual",
+        "Descartar: Restablece todos los cambios no guardados",
+      ],
+    },
+
     // Language Bar
     ctrlClickLanguage: {
       title: "Habilitar/Deshabilitar idiomas",

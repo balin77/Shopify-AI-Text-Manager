@@ -864,6 +864,20 @@ export const en: Translation = {
       details: "Theme texts are buttons, labels, and messages in your Shopify theme. Pro+ plans allow translation of these elements.",
     },
 
+    // Mobile Toolbar Actions
+    mobileToolbarActions: {
+      title: "Action Bar",
+      summary: "Here you'll find all important actions for saving, translating, and managing your content.",
+      details: "The action bar provides quick access to the most important functions. Save your changes, translate content to all languages at once, or discard unwanted changes.",
+      tips: [
+        "Save: Saves all changes for the current language",
+        "Reload: Reloads the current data from Shopify",
+        "Translate All: Translates all fields with AI into the current language",
+        "Clear All: Deletes all translations for the current language",
+        "Discard: Resets all unsaved changes",
+      ],
+    },
+
     // Language Bar
     ctrlClickLanguage: {
       title: "Enable/Disable Languages",

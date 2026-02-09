@@ -413,6 +413,17 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       return;
     }
 
+    // Skip data load if flagged (e.g., after save/clear to prevent overwriting user changes)
+    if (skipNextDataLoadRef.current) {
+      skipNextDataLoadRef.current = false;
+      debugLog.dataLoad(' Skipping data load (skipNextDataLoadRef was set)');
+      // Still update refs so the next real change is detected
+      prevItemIdForDataLoadRef.current = selectedItemId;
+      prevCurrentLanguageRef.current = currentLanguage;
+      prevDataRefreshTriggerRef.current = dataRefreshTrigger;
+      return;
+    }
+
     // Update refs
     prevItemIdForDataLoadRef.current = selectedItemId;
     prevCurrentLanguageRef.current = currentLanguage;
@@ -2173,6 +2184,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // Force isLoadingData to false to ensure change detection works
     setIsLoadingData(false);
 
+    // Prevent retry mechanism from restoring old values after intentional clear
+    initialLoadSuccessfulRef.current = true;
+    retryCountRef.current = 0;
+
     // Clear all field values except title (title should never be empty in primary locale)
     const clearedValues: Record<string, string> = {};
     effectiveFieldDefinitions.forEach((field) => {
@@ -2201,6 +2216,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const handleClearAllForLocaleConfirm = () => {
     // Force isLoadingData to false to ensure change detection works
     setIsLoadingData(false);
+
+    // Prevent retry mechanism from restoring old values after intentional clear
+    initialLoadSuccessfulRef.current = true;
+    retryCountRef.current = 0;
 
     // Clear all field values for the current foreign language
     const clearedValues: Record<string, string> = {};

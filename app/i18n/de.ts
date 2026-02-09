@@ -862,6 +862,20 @@ export const de = {
       details: "Theme-Texte sind Buttons, Labels und Meldungen in Ihrem Shopify-Theme. Pro+ Pläne ermöglichen die Übersetzung dieser Elemente.",
     },
 
+    // Mobile Toolbar Actions
+    mobileToolbarActions: {
+      title: "Aktionsleiste",
+      summary: "Hier findest du alle wichtigen Aktionen zum Speichern, Übersetzen und Verwalten deiner Inhalte.",
+      details: "Die Aktionsleiste bietet schnellen Zugriff auf die wichtigsten Funktionen. Speichere deine Änderungen, übersetze Inhalte in alle Sprachen gleichzeitig oder verwerfe ungewollte Änderungen.",
+      tips: [
+        "Speichern: Speichert alle Änderungen der aktuellen Sprache",
+        "Neu laden: Lädt die aktuellen Daten von Shopify neu",
+        "Alles übersetzen: Übersetzt alle Felder mit KI in die aktuelle Sprache",
+        "Alles leeren: Löscht alle Übersetzungen der aktuellen Sprache",
+        "Verwerfen: Setzt alle ungespeicherten Änderungen zurück",
+      ],
+    },
+
     // Language Bar
     ctrlClickLanguage: {
       title: "Sprachen aktivieren/deaktivieren",

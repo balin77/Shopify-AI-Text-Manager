@@ -15,6 +15,7 @@ import { Card, Button, Popover, ActionList } from "@shopify/polaris";
 import { MenuHorizontalIcon } from "@shopify/polaris-icons";
 import { useLocaleButtonStyle } from "../../utils/contentEditor.utils";
 import { ReloadButton } from "../ReloadButton";
+import { HelpTooltip } from "../HelpTooltip";
 import type { ShopLocale, TranslatableItem, ContentType } from "../../types/contentEditor.types";
 
 interface MobileToolbarProps {
@@ -194,6 +195,7 @@ export function MobileToolbar({
               ]}
             />
           </Popover>
+          <HelpTooltip helpKey="mobileToolbarActions" position="below" />
         </div>
       </div>
     </Card>
