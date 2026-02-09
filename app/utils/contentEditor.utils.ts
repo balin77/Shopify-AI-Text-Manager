@@ -278,9 +278,14 @@ export function useChangeTracking(
     productType?: string;
     summary?: string;
   },
-  contentType: ContentType
+  contentType: ContentType,
+  fallbackFields?: Set<string>
 ) {
   const [hasChanges, setHasChanges] = useState(false);
+
+  // Use ref for fallbackFields to avoid triggering useEffect on Set reference changes
+  const fallbackFieldsRef = useRef(fallbackFields);
+  fallbackFieldsRef.current = fallbackFields;
 
   // Cache original values to prevent recalculation on every selectedItem reference change
   const originalValuesRef = useRef<{
@@ -389,8 +394,9 @@ export function useChangeTracking(
       ? (editableFields.title || "") !== originals.title
       : false;
     const descChanged = currentDescValue !== originals.description;
-    const handleChanged = (editableFields.handle || "") !== originals.handle;
-    const seoTitleChanged = (editableFields.seoTitle || "") !== originals.seoTitle;
+    // Skip fallback fields - they show primary locale values and shouldn't count as changes
+    const handleChanged = !fallbackFieldsRef.current?.has('handle') && (editableFields.handle || "") !== originals.handle;
+    const seoTitleChanged = !fallbackFieldsRef.current?.has('seoTitle') && (editableFields.seoTitle || "") !== originals.seoTitle;
     const metaDescChanged = (editableFields.metaDescription || "") !== originals.metaDescription;
     const productTypeChanged = contentType === 'products'
       ? (editableFields.productType || "") !== originals.productType

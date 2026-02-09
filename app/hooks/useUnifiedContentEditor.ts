@@ -148,6 +148,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // This happens when Shopify doesn't return a translation because it's identical to the primary value
   const [fallbackFields, setFallbackFields] = useState<Set<string>>(new Set());
 
+  // Ref for fallbackFields to avoid stale closures in callbacks/effects
+  const fallbackFieldsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    fallbackFieldsRef.current = fallbackFields;
+  }, [fallbackFields]);
+
   // Track which fields have AI actions currently running (for per-field loading states)
   // This allows multiple AI actions to run in parallel on different fields
   const [loadingFieldKeys, setLoadingFieldKeys] = useState<Set<string>>(new Set());
@@ -323,7 +329,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     currentLanguage,
     primaryLocale,
     editableValues as any,
-    config.contentType
+    config.contentType,
+    fallbackFields
   );
 
   // Template-specific change detection: compare editableValues with originalTemplateValuesRef
@@ -829,7 +836,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     };
 
     // Add all field values from the provided values
+    // Skip fallback fields (handle, seoTitle showing primary locale values) to prevent
+    // registering primary locale values as translations in Shopify
     effectiveFieldDefinitions.forEach((field) => {
+      if (locale !== primaryLocale && fallbackFieldsRef.current.has(field.key)) {
+        return;
+      }
       formDataObj[field.key] = valuesToSave[field.key] || "";
     });
 
@@ -982,6 +994,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           primaryLocale,
         };
         effectiveFieldDefinitions.forEach((field) => {
+          if (targetLocale !== primaryLocale && fallbackFieldsRef.current.has(field.key)) {
+            return;
+          }
           formDataObj[field.key] = newValues[field.key] || "";
         });
 
@@ -1090,8 +1105,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       primaryLocale,
     };
 
-    // Add all field values
+    // Add all field values (skip fallback fields to prevent registering primary values as translations)
     effectiveFieldDefinitions.forEach((field) => {
+      if (currentLanguage !== primaryLocale && fallbackFieldsRef.current.has(field.key)) {
+        return;
+      }
       formDataObj[field.key] = editableValues[field.key] || "";
     });
 
@@ -1658,8 +1676,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       }
     }
 
-    // Add all field values
+    // Add all field values (skip fallback fields to prevent registering primary values as translations)
     effectiveFieldDefinitions.forEach((field) => {
+      if (currentLanguage !== primaryLocale && fallbackFields.has(field.key)) {
+        return;
+      }
       formDataObj[field.key] = editableValues[field.key] || "";
     });
 
@@ -1862,6 +1883,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             primaryLocale,
           };
           effectiveFieldDefinitions.forEach((f) => {
+            if (targetLocale !== primaryLocale && fallbackFieldsRef.current.has(f.key)) {
+              return;
+            }
             formDataObj[f.key] = newValues[f.key] || "";
           });
 
@@ -2670,8 +2694,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       primaryLocale,
     };
 
-    // Add all field values
+    // Add all field values (skip fallback fields to prevent registering primary values as translations)
     effectiveFieldDefinitions.forEach((field) => {
+      if (currentLanguage !== primaryLocale && fallbackFieldsRef.current.has(field.key)) {
+        return;
+      }
       formDataObj[field.key] = editableValues[field.key] || "";
     });
 

@@ -250,6 +250,7 @@ export class ShopifyContentService {
       const digestMap = await this.loadTranslatableContent(resourceId);
 
       const translationsInput: Array<{ key: string; value: string; locale: string; translatableContentDigest?: string }> = [];
+      const translationsToDelete: string[] = [];
 
       // Map field names to Shopify translation keys
       const keyMapping: Record<string, string> = {
@@ -264,18 +265,23 @@ export class ShopifyContentService {
       };
 
       Object.entries(updates).forEach(([field, value]) => {
-        if (value && keyMapping[field]) {
-          const translationKey = keyMapping[field];
+        const translationKey = keyMapping[field];
+        if (!translationKey) return;
+
+        if (value && value.trim()) {
           translationsInput.push({
             key: translationKey,
             value,
             locale,
             translatableContentDigest: digestMap[translationKey]
           });
+        } else if (value === "") {
+          // Empty string means user cleared the translation — mark for deletion
+          translationsToDelete.push(translationKey);
         }
       });
 
-      // Save to Shopify with digests
+      // Save non-empty translations to Shopify
       if (translationsInput.length > 0) {
         const response = await this.admin.graphql(TRANSLATE_CONTENT, {
           variables: {
@@ -291,12 +297,21 @@ export class ShopifyContentService {
         }
       }
 
-      // Update database - use upsert to preserve existing translations
-      if (translationsInput.length > 0) {
+      // Delete cleared translations from Shopify
+      if (translationsToDelete.length > 0) {
+        await this.deleteAllTranslationsForKeys({
+          resourceId,
+          translationKeys: translationsToDelete,
+          foreignLocales: [locale],
+        });
+      }
+
+      // Update database using transaction for consistency
+      await db.$transaction(async (tx: any) => {
+        // Upsert non-empty translations
         for (const translation of translationsInput) {
-          await db.contentTranslation.upsert({
+          await tx.contentTranslation.upsert({
             where: {
-              // Unique constraint is: @@unique([resourceId, key, locale])
               resourceId_key_locale: {
                 resourceId,
                 key: translation.key,
@@ -306,7 +321,7 @@ export class ShopifyContentService {
             update: {
               value: translation.value,
               digest: translation.translatableContentDigest || null,
-              resourceType, // Update resourceType in case it changed
+              resourceType,
             },
             create: {
               resourceId,
@@ -318,7 +333,19 @@ export class ShopifyContentService {
             },
           });
         }
-      }
+
+        // Delete cleared translations from database
+        for (const key of translationsToDelete) {
+          await tx.contentTranslation.deleteMany({
+            where: {
+              resourceId,
+              resourceType,
+              locale,
+              key,
+            },
+          });
+        }
+      });
 
       return { success: true };
     } else {
