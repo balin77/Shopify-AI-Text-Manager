@@ -1581,6 +1581,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             const item = selectedItemRef.current;
 
             if (item && shopifyKey) {
+              // Clear this translation key from deleted set since we now have new translations
+              if (deletedTranslationKeysRef.current.has(shopifyKey)) {
+                deletedTranslationKeysRef.current.delete(shopifyKey);
+              }
+
               // Update item translations for all locales
               for (const [locale, translatedValue] of Object.entries(translations as Record<string, string>)) {
                 item.translations = item.translations.filter(
@@ -1593,13 +1598,31 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
                 });
               }
 
+              // Store translations locally as backup (item.translations mutations can be lost on revalidation)
+              if (!localTranslationsRef.current[shopifyKey]) {
+                localTranslationsRef.current[shopifyKey] = {};
+              }
+              for (const [locale, translatedValue] of Object.entries(translations as Record<string, string>)) {
+                localTranslationsRef.current[shopifyKey][locale] = translatedValue;
+              }
+              debugLog.acceptAndTranslate(' Stored local translations for', shopifyKey, ':', Object.keys(translations));
+
               // If the current language is one of the translated languages, update editableValues
               if (translations[currentLanguage]) {
                 setEditableValues(prev => ({
                   ...prev,
                   [fieldKey]: translations[currentLanguage]
                 }));
+              } else if (currentLanguage === primaryLocale && acceptedPrimaryValueRef.current?.fieldKey === fieldKey) {
+                // Restore the accepted primary value (translation response only contains foreign languages)
+                setEditableValues(prev => ({
+                  ...prev,
+                  [fieldKey]: acceptedPrimaryValueRef.current!.value
+                }));
               }
+
+              // Clear the accepted primary value ref after processing
+              acceptedPrimaryValueRef.current = null;
             }
 
             showInfoBox(
@@ -1610,6 +1633,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
               "success",
               t.common?.success || "Success"
             );
+
+            // Reset the accept-and-translate flow flag after translations are complete
+            setIsAcceptAndTranslateFlow(false);
 
             setIsLoadingData(true);
           }
