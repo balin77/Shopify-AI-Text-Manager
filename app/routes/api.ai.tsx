@@ -1075,19 +1075,11 @@ Language: ${mainLanguage}`;
         const formatKey = instructionsKey ? `${instructionsKey}Format` : null;
         const instructionsTextKey = instructionsKey ? `${instructionsKey}Instructions` : null;
 
-        // Default formatting instruction (preserve original content)
-        const defaultPreserveInstruction = `CRITICAL: You must PRESERVE the original text content. DO NOT rewrite, rephrase, or generate new content.
-Only apply formatting changes such as:
-- Adding separators (| or - or :)
-- Adjusting capitalization
-- Adding HTML tags for structure (<strong>, <em>, <h2>, <h3>, <ul>, <li>, <p>)
-- Fixing punctuation and spacing
-- Removing redundant characters
-
-The meaning, words, and information must stay the same. Only the presentation/formatting changes.`;
-
-        const preserveTextInstruction = aiInstructions?.formatPreserveInstructions || defaultPreserveInstruction;
         const fieldLabel = field?.label || fieldType;
+
+        // Determine if this field supports HTML formatting
+        // Only description/body fields and blog summary (type "html") get HTML formatting
+        const supportsHtmlFormatting = field?.type === "html";
 
         // Build field-type-aware prompt
         let prompt = "";
@@ -1100,8 +1092,6 @@ Original Slug:
 ${currentValue}
 
 Context - Title: ${contextTitle}
-
-${preserveTextInstruction}
 
 Allowed formatting changes for handles:
 - Convert to lowercase
@@ -1116,49 +1106,58 @@ Allowed formatting changes for handles:
             prompt += `\n\nAdditional Instructions:\n${aiInstructions[instructionsTextKey]}`;
           }
           prompt += `\n\nReturn ONLY the formatted URL slug. Keep the original keywords.`;
-        } else if (field?.type === "html" || field?.type === "textarea") {
+        } else if (supportsHtmlFormatting) {
+          // HTML fields: description, body, blog summary - full HTML formatting allowed
           isLongContent = true;
-          prompt = `Apply HTML formatting to the following ${fieldLabel}. Keep all words, sentences, and information intact.
+          prompt = `Apply HTML formatting to the following ${fieldLabel}. Keep the core content and meaning intact, but you may make slight adjustments to improve readability and presentation.
 
-Original ${fieldLabel} (preserve this content):
+Original ${fieldLabel}:
 ${currentValue}
 
-${preserveTextInstruction}
-
-Allowed formatting changes:
+You may:
 - Add HTML structure tags: <h2>, <h3>, <p>, <ul>, <li>
 - Add emphasis: <strong>, <em>
 - Convert plain lists to <ul>/<li> format
 - Add paragraph breaks with <p> tags
-- Fix spacing and punctuation`;
+- Fix spacing, punctuation, and grammar
+- Slightly rephrase for better flow or clarity (but keep the meaning)
+
+Do NOT:
+- Completely rewrite or replace the content
+- Add entirely new information or paragraphs
+- Change the language or tone significantly`;
           if (formatKey && aiInstructions?.[formatKey]) {
-            prompt += `\n\nFormat Style Example (for HTML structure reference only):\n${aiInstructions[formatKey]}`;
+            prompt += `\n\nFormat Style Example (for HTML structure reference):\n${aiInstructions[formatKey]}`;
           }
           if (instructionsTextKey && aiInstructions?.[instructionsTextKey]) {
             prompt += `\n\nAdditional Instructions:\n${aiInstructions[instructionsTextKey]}`;
           }
-          prompt += `\n\nReturn ONLY the formatted HTML ${fieldLabel}. Keep the original language and all original content. Do NOT add new sentences or rewrite existing ones. Output the result in ${mainLanguage}.`;
+          prompt += `\n\nReturn ONLY the formatted HTML ${fieldLabel}. Keep the original language. Output the result in ${mainLanguage}.`;
         } else {
-          // Default: text fields (title, seoTitle, metaDescription, etc.)
-          prompt = `Apply formatting to the following ${fieldLabel}. Keep all words and meaning intact.
+          // Text fields (title, seoTitle, metaDescription, etc.) - light formatting only, no HTML
+          prompt = `Improve the formatting of the following ${fieldLabel}. Keep the core content intact but you may make slight adjustments to improve presentation.
 
-Original ${fieldLabel} (preserve this content):
+Original ${fieldLabel}:
 ${currentValue}
 
-${preserveTextInstruction}
-
-Allowed formatting changes:
-- Add separators like | or - or – between parts
+You may:
 - Adjust capitalization (e.g., Title Case)
-- Remove excessive punctuation
-- Fix spacing issues`;
+- Add or improve separators (| or - or –)
+- Fix punctuation, spacing, and grammar
+- Slightly rephrase for better readability or flow
+
+Do NOT:
+- Add any HTML tags
+- Completely rewrite the content
+- Add new information that wasn't there
+- Change the language or core meaning`;
           if (formatKey && aiInstructions?.[formatKey]) {
-            prompt += `\n\nFormat Style Example (for structure reference only, do NOT copy the content):\n${aiInstructions[formatKey]}`;
+            prompt += `\n\nFormat Style Example (use as structural reference, adapt to the actual content):\n${aiInstructions[formatKey]}`;
           }
           if (instructionsTextKey && aiInstructions?.[instructionsTextKey]) {
             prompt += `\n\nAdditional Instructions:\n${aiInstructions[instructionsTextKey]}`;
           }
-          prompt += `\n\nReturn ONLY the formatted ${fieldLabel}. Keep the original language. Do NOT add new information or rewrite the text. Output the result in ${mainLanguage}.`;
+          prompt += `\n\nReturn ONLY the formatted ${fieldLabel} as plain text (no HTML). Keep the original language. Output the result in ${mainLanguage}.`;
         }
 
         // Create task entry (prompt is saved by AI service via savePromptToTask)
