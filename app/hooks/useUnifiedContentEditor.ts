@@ -473,6 +473,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       deletedTranslationKeysRef.current.clear();
       localTranslationsRef.current = {};
       processedSaveResponseRef.current = null;
+      isSavePendingRef.current = false;
       processedResponseRef.current = null;
       processedTranslateFieldRef.current = null;
       acceptedPrimaryValueRef.current = null;
@@ -1531,14 +1532,20 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       return;
     }
 
+    // Skip if no save was actually initiated (prevents false "saved" messages during reload/revalidation)
+    if (!isSavePendingRef.current) {
+      return;
+    }
+
     if (
       fetcher.data?.success &&
       !(fetcher.data as any).generatedContent &&
       !(fetcher.data as any).translatedValue &&
       !(fetcher.data as any).translations // Skip revalidate for bulk operations, they handle it differently
     ) {
-      // Mark this response as processed
+      // Mark this response as processed and clear save pending flag
       processedSaveResponseRef.current = fetcher.data;
+      isSavePendingRef.current = false;
 
       // Check if there's a pending translation to start after this save
       if (pendingTranslationAfterSaveRef.current) {
@@ -1630,9 +1637,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           debugLog.revalidate(' Error during revalidation (ignored):', error);
         }
       }
-    } else if (fetcher.data && !fetcher.data.success && 'error' in fetcher.data) {
+    } else if (fetcher.data && !fetcher.data.success && 'error' in fetcher.data && isSavePendingRef.current) {
       // Also mark error responses as processed
       processedSaveResponseRef.current = fetcher.data;
+      isSavePendingRef.current = false;
       const translatedError = translateErrorMessage(fetcher.data.error as string, t);
       showInfoBox(translatedError, "critical", t.common?.error || "Error");
     }
@@ -1926,6 +1934,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           });
 
           savedLocaleRef.current = targetLocale;
+          isSavePendingRef.current = true;
           safeSubmit(formDataObj, { method: "POST" });
         }
 
@@ -2775,6 +2784,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     formDataObj.imageAltTexts = JSON.stringify(newAltTexts);
 
     savedLocaleRef.current = currentLanguage;
+    isSavePendingRef.current = true;
     safeSubmit(formDataObj, { method: "POST" });
 
     // Update original alt-texts so hasChanges becomes false after save completes
@@ -2823,6 +2833,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       });
       formDataObj.imageAltTexts = JSON.stringify(newAltTexts);
       savedLocaleRef.current = primaryLocale;
+      isSavePendingRef.current = true;
       safeSubmit(formDataObj, { method: "POST" });
       setOriginalAltTexts(newAltTexts);
       return;
@@ -2845,6 +2856,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     });
     formDataObj.imageAltTexts = JSON.stringify(newAltTexts);
     savedLocaleRef.current = primaryLocale;
+    isSavePendingRef.current = true;
     safeSubmit(formDataObj, { method: "POST" });
     setOriginalAltTexts(newAltTexts);
 
