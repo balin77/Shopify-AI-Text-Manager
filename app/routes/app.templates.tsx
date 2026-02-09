@@ -20,7 +20,7 @@ import { useInfoBox } from "../contexts/InfoBoxContext";
 import { AIService } from "../../src/services/ai.service";
 import { TranslationService } from "../../src/services/translation.service";
 import { decryptApiKey } from "../utils/encryption.server";
-import { getTaskExpirationDate } from "../../src/utils/task.utils";
+import { getTaskExpirationDate } from "~/config/constants";
 import { logger } from "~/utils/logger.server";
 
 // ============================================================================

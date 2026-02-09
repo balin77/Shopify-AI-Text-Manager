@@ -17,7 +17,7 @@ import {
 import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
 import { useI18n } from "../contexts/I18nContext";
-import { getTaskDateRange } from "../../src/utils/task.utils";
+import { getTaskDateRange } from "~/config/constants";
 
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {

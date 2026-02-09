@@ -87,28 +87,6 @@ export function getAccessibleContentTypes(plan: Plan): ContentType[] {
   return getPlanLimits(plan).contentTypes;
 }
 
-/**
- * Get a user-friendly description of plan limits
- */
-export function getPlanLimitDescription(plan: Plan): string {
-  const limits = getPlanLimits(plan);
-  const productLimit = limits.maxProducts === Infinity ? "Unlimited" : `${limits.maxProducts}`;
-  const contentCount = limits.contentTypes.length;
-
-  return `${productLimit} products, ${contentCount} content types`;
-}
-
-/**
- * Check if a specific cache type is enabled for the plan
- */
-export function isCacheEnabled(plan: Plan, cacheType: keyof PlanLimits["cacheEnabled"]): boolean {
-  return getPlanLimits(plan).cacheEnabled[cacheType];
-}
-
-// ============================================
-// New Limit Check Functions
-// ============================================
-
 export type ResourceType =
   | "products"
   | "locales"
@@ -116,46 +94,6 @@ export type ResourceType =
   | "articles"
   | "pages"
   | "themeTranslations";
-
-/**
- * Check if the current locale count is within the plan's limit
- */
-export function isWithinLocaleLimit(plan: Plan, currentCount: number): boolean {
-  const limits = getPlanLimits(plan);
-  return currentCount <= limits.maxLocales;
-}
-
-/**
- * Check if the current collection count is within the plan's limit
- */
-export function isWithinCollectionLimit(plan: Plan, currentCount: number): boolean {
-  const limits = getPlanLimits(plan);
-  return currentCount <= limits.maxCollections;
-}
-
-/**
- * Check if the current article count is within the plan's limit
- */
-export function isWithinArticleLimit(plan: Plan, currentCount: number): boolean {
-  const limits = getPlanLimits(plan);
-  return currentCount <= limits.maxArticles;
-}
-
-/**
- * Check if the current page count is within the plan's limit
- */
-export function isWithinPageLimit(plan: Plan, currentCount: number): boolean {
-  const limits = getPlanLimits(plan);
-  return currentCount <= limits.maxPages;
-}
-
-/**
- * Check if the current theme translation count is within the plan's limit
- */
-export function isWithinThemeTranslationsLimit(plan: Plan, currentCount: number): boolean {
-  const limits = getPlanLimits(plan);
-  return currentCount <= limits.maxThemeTranslations;
-}
 
 /**
  * Get the maximum value for a specific resource type
@@ -178,14 +116,6 @@ export function getMaxForResource(plan: Plan, resourceType: ResourceType): numbe
     default:
       return 0;
   }
-}
-
-/**
- * Check if the current count is within the limit for a specific resource type
- */
-export function isWithinLimit(plan: Plan, resourceType: ResourceType, currentCount: number): boolean {
-  const max = getMaxForResource(plan, resourceType);
-  return currentCount <= max;
 }
 
 /**

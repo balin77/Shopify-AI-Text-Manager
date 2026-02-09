@@ -8,7 +8,7 @@ import { json, type ActionFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import { AIService } from "../../src/services/ai.service";
 import { decryptApiKey } from "../utils/encryption.server";
-import { getTaskExpirationDate } from "../../src/utils/task.utils";
+import { getTaskExpirationDate } from "~/config/constants";
 import { logger } from "~/utils/logger.server";
 import { TRANSLATE_CONTENT } from "../graphql/content.mutations";
 import { sanitizeSlug } from "../utils/slug.utils";
