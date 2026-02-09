@@ -2201,6 +2201,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     });
     setEditableValues(clearedValues);
 
+    // Clear image alt texts
+    setImageAltTexts({});
+    setOriginalAltTexts({});
+    setAltTextSuggestions({});
+
     // Close modal
     setIsClearAllModalOpen(false);
   };
@@ -2227,6 +2232,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       clearedValues[field.key] = "";
     });
     setEditableValues(clearedValues);
+
+    // Clear image alt texts
+    setImageAltTexts({});
+    setOriginalAltTexts({});
+    setAltTextSuggestions({});
 
     // Close modal
     setIsClearAllModalOpen(false);
