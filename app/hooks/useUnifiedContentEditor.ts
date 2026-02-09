@@ -1024,6 +1024,16 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // Update UI
       setEditableValues(newValues);
 
+      // Clear fallback styling for this field since it now has a real translation
+      if (fallbackFieldsRef.current.has(fieldType)) {
+        setFallbackFields((prev) => {
+          const newSet = new Set(prev);
+          newSet.delete(fieldType);
+          return newSet;
+        });
+        fallbackFieldsRef.current.delete(fieldType);
+      }
+
       // Update item.translations directly so hasChanges becomes false after save
       const item = selectedItemRef.current;
       if (item && field?.translationKey) {
@@ -1209,13 +1219,27 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           // If we're currently viewing this locale, update the editable fields
           if (currentLanguage === locale) {
             const updatedValues = { ...editableValues };
+            const translatedKeys: string[] = [];
             effectiveFieldDefinitions.forEach((fieldDef) => {
               const value = (fields as any)[fieldDef.key];
               if (value) {
                 updatedValues[fieldDef.key] = value;
+                translatedKeys.push(fieldDef.key);
               }
             });
             setEditableValues(updatedValues);
+
+            // Clear fallback styling for fields that now have real translations
+            if (translatedKeys.length > 0) {
+              setFallbackFields((prev) => {
+                const newSet = new Set(prev);
+                translatedKeys.forEach((key) => newSet.delete(key));
+                return newSet;
+              });
+              fallbackFieldsRef.current = new Set(
+                [...fallbackFieldsRef.current].filter((key) => !translatedKeys.includes(key))
+              );
+            }
 
             // For templates: Update original values so hasChanges becomes false after translation
             // This prevents the save button from showing false changes after translateAll
@@ -1272,13 +1296,27 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         // If we're currently viewing this locale, update the editable fields
         if (currentLanguage === targetLocale) {
           const updatedValues = { ...editableValues };
+          const translatedKeys: string[] = [];
           effectiveFieldDefinitions.forEach((fieldDef) => {
             const value = translations[fieldDef.key];
             if (value) {
               updatedValues[fieldDef.key] = value;
+              translatedKeys.push(fieldDef.key);
             }
           });
           setEditableValues(updatedValues);
+
+          // Clear fallback styling for fields that now have real translations
+          if (translatedKeys.length > 0) {
+            setFallbackFields((prev) => {
+              const newSet = new Set(prev);
+              translatedKeys.forEach((key) => newSet.delete(key));
+              return newSet;
+            });
+            fallbackFieldsRef.current = new Set(
+              [...fallbackFieldsRef.current].filter((key) => !translatedKeys.includes(key))
+            );
+          }
 
           // For templates: Update original values so hasChanges becomes false after translation
           // This prevents the save button from showing false changes after translateAllForLocale
