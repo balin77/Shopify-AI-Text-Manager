@@ -9,6 +9,7 @@ import { useAppNavigation } from "../hooks/useAppNavigation";
 import { MobileMenu } from "./MobileMenu";
 import { UnifiedItemSelectorCompact } from "./unified/UnifiedItemSelectorCompact";
 import { type Plan } from "../config/plans";
+import { UI_CONFIG } from "../config/constants";
 import { useState, useEffect, useRef } from "react";
 
 export function MainNavigation() {
@@ -27,9 +28,9 @@ export function MainNavigation() {
   const [showLoadingIndicator, setShowLoadingIndicator] = useState(false);
   const navRef = useRef<HTMLDivElement>(null);
   const [navHeight, setNavHeight] = useState(73);
-  const pollIntervalRef = useRef(10000); // Start with 10 seconds, use ref to persist across renders
+  const pollIntervalRef = useRef<number>(UI_CONFIG.TASK_POLL_INTERVAL_MS); // Use configured interval, ref persists across renders
   const errorCountRef = useRef(0); // Track consecutive errors
-  const completedTasksPollIntervalRef = useRef(10000); // Separate interval for completed tasks polling
+  const completedTasksPollIntervalRef = useRef<number>(UI_CONFIG.TASK_POLL_INTERVAL_MS); // Separate interval for completed tasks polling
   const completedTasksErrorCountRef = useRef(0); // Track consecutive errors for completed tasks
   const notifiedTaskIds = useRef<Set<string>>(new Set()); // Track which tasks we've already notified about
   const isMountedRef = useRef(true); // Track if component is mounted to prevent state updates after unmount
@@ -181,8 +182,8 @@ export function MainNavigation() {
       if (errorCountRef.current > 0) {
         errorCountRef.current = 0;
 
-        // Gradually reduce interval back to 10 seconds
-        const newInterval = Math.max(pollIntervalRef.current / 2, 10000);
+        // Gradually reduce interval back to configured minimum
+        const newInterval = Math.max(pollIntervalRef.current / 2, UI_CONFIG.TASK_POLL_INTERVAL_MS);
         if (newInterval !== pollIntervalRef.current) {
           console.log(`✅ [MainNavigation] Running tasks connection restored. Reducing poll interval to ${newInterval}ms`);
           pollIntervalRef.current = newInterval;
@@ -216,8 +217,8 @@ export function MainNavigation() {
       if (completedTasksErrorCountRef.current > 0) {
         completedTasksErrorCountRef.current = 0;
 
-        // Gradually reduce interval back to 10 seconds
-        const newInterval = Math.max(completedTasksPollIntervalRef.current / 2, 10000);
+        // Gradually reduce interval back to configured minimum
+        const newInterval = Math.max(completedTasksPollIntervalRef.current / 2, UI_CONFIG.TASK_POLL_INTERVAL_MS);
         if (newInterval !== completedTasksPollIntervalRef.current) {
           console.log(`✅ [MainNavigation] Completed tasks connection restored. Reducing poll interval to ${newInterval}ms`);
           completedTasksPollIntervalRef.current = newInterval;
