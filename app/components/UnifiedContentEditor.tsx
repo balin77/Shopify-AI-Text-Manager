@@ -817,7 +817,10 @@ function FieldRenderer(props: FieldRendererProps & { state?: any; handlers?: any
         onAcceptAndTranslateSuggestion={handlers.handleAcceptAndTranslateAltText}
         onRejectSuggestion={handlers.handleRejectAltTextSuggestion}
         onClearAltText={(imageIndex) => handlers.handleAltTextChange(imageIndex, "")}
-        isFieldLoading={() => isImageAIActionRunning}
+        isFieldLoading={(imageIndex) => {
+          if (imageIndex === -1) return isImageAIActionRunning;
+          return isImageAIActionRunning || (state?.loadingFieldKeys?.has(`altText_${imageIndex}`) ?? false);
+        }}
         t={{
           image: t.products?.image || "Image",
           featuredImage: t.products?.featuredImage || "Featured Image",
