@@ -112,7 +112,6 @@ export function ContentTypeNavigation() {
                 key={type.id}
                 onClick={() => {
                   if (!isDisabled) {
-                    console.log("🖱️ [ContentTypeNavigation] Item clicked:", type.id, "->", type.path);
                     handleNavigate(type.path);
                   }
                 }}

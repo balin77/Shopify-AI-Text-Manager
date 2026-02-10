@@ -51,6 +51,7 @@ export const de = {
     changesSavedMessage: "Änderungen erfolgreich gespeichert!",
     translateFromPrimary: "Aus Hauptsprache übersetzen",
     generateAllAltTexts: "Alt-Texte für alle Bilder mit KI generieren",
+    translateAllAltTexts: "Alle Alt-Texte übersetzen",
     altTextForImage: "Alt-Text für Bild",
     altTextPlaceholder: "Alt-Text für dieses Bild eingeben...",
     image: "Bild",
@@ -148,6 +149,7 @@ export const de = {
     saveChanges: "Änderungen speichern",
     discardChanges: "Verwerfen",
     changesSaved: "Änderungen erfolgreich gespeichert!",
+    reloadSuccess: "Daten erfolgreich von Shopify neu geladen!",
     error: "Fehler",
     success: "Erfolg!",
     aiSuggestion: "KI-Vorschlag:",
@@ -436,6 +438,19 @@ export const de = {
     noTargetLanguagesSelected: "Keine Zielsprachen ausgewählt",
     noTargetLanguagesEnabled: "Keine Zielsprachen aktiviert",
     fieldTranslatedToLanguages: "{fieldType} wurde in {count} Sprache(n) übersetzt",
+    // Tooltip for locale buttons
+    missingContent: "Fehlende Inhalte:",
+    missingTranslations: "Fehlende Übersetzungen:",
+    fieldLabels: {
+      title: "Titel",
+      description: "Beschreibung",
+      content: "Inhalt",
+      handle: "URL-Pfad",
+      productType: "Produkttyp",
+      summary: "Zusammenfassung",
+      seoTitle: "SEO-Titel",
+      metaDescription: "Meta-Beschreibung",
+    },
   },
 
   // Tasks Page
@@ -859,6 +874,23 @@ export const de = {
       title: "Theme-Übersetzungen",
       summary: "Anzahl der übersetzbaren Theme-Textbausteine.",
       details: "Theme-Texte sind Buttons, Labels und Meldungen in Ihrem Shopify-Theme. Pro+ Pläne ermöglichen die Übersetzung dieser Elemente.",
+    },
+
+    // Mobile Toolbar Actions
+    mobileToolbarActions: {
+      title: "Aktionsleiste",
+      summary: "Hier findest du alle wichtigen Aktionen zum Speichern, Übersetzen und Verwalten deiner Inhalte.",
+      details: "Die Funktionen von \"Alles übersetzen\" und \"Alles leeren\" hängen vom aktuell gewählten Sprach-Tab ab. In der Hauptsprache wirken sie auf alle Fremdsprachen gleichzeitig. In einer Fremdsprache wirken sie nur auf diese eine Sprache.",
+      tips: [
+        "Speichern: Speichert alle Änderungen der aktuellen Sprache",
+        "Neu laden: Lädt die aktuellen Daten von Shopify neu",
+        "Alles übersetzen (Hauptsprache): Übersetzt alle Felder in alle Fremdsprachen",
+        "Alles übersetzen (Fremdsprache): Übersetzt alle Felder nur in die aktuelle Sprache",
+        "Alles leeren (Hauptsprache): Löscht alle Einträge in der Hauptsprache und allen Fremdsprachen",
+        "Alles leeren (Fremdsprache): Löscht nur die Übersetzungen der aktuellen Sprache",
+        "Verwerfen: Setzt alle ungespeicherten Änderungen zurück",
+        "Bild an AI senden: Wenn aktiviert, wird das aktuell ausgewählte/Featured-Bild an KI-Modelle mit Bilderkennung (Claude, GPT-4o, Gemini) gesendet, um bessere Inhalte zu generieren. Kann API-Kosten erhöhen. Hinweis: Einige KI-Anbieter (HuggingFace, DeepSeek) können Bilder möglicherweise nicht verarbeiten.",
+      ],
     },
 
     // Language Bar

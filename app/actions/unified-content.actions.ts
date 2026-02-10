@@ -12,7 +12,7 @@ import { TranslationService } from "../../src/services/translation.service";
 import { ShopifyContentService } from "../../src/services/shopify-content.service";
 import { sanitizeSlug } from "../utils/slug.utils";
 import { decryptApiKey } from "../utils/encryption.server";
-import { getTaskExpirationDate } from "../../src/utils/task.utils";
+import { getTaskExpirationDate } from "~/config/constants";
 import type { ContentEditorConfig } from "../types/content-editor.types";
 import { logger } from "../utils/logger.server";
 

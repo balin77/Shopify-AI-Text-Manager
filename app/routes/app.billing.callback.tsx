@@ -8,6 +8,7 @@ import type { LoaderFunctionArgs } from '@remix-run/node';
 import { redirect } from '@remix-run/node';
 import { authenticate } from '~/shopify.server';
 import { checkAndSyncSubscription } from '~/services/billing.server';
+import { logger } from '~/utils/logger.server';
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
@@ -27,7 +28,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // Redirect to settings page with success message
     return redirect('/app/settings?billing=success&plan=' + (plan || 'unknown'));
   } catch (error) {
-    console.error('Error in billing callback:', error);
+    logger.error('Error in billing callback', { error: error instanceof Error ? error.message : String(error) });
     return redirect('/app/settings?billing=error');
   }
 };

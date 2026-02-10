@@ -13,10 +13,11 @@
  */
 
 import { useRef } from "react";
-import { Button, InlineStack, ButtonGroup } from "@shopify/polaris";
-import { useLocaleButtonStyle } from "../../utils/contentEditor.utils";
+import { Button, InlineStack, ButtonGroup, Tooltip } from "@shopify/polaris";
+import { useLocaleButtonStyle, getLocaleButtonTooltip } from "../../utils/contentEditor.utils";
 import { ReloadButton } from "../ReloadButton";
 import { HelpTooltip } from "../HelpTooltip";
+import { useI18n } from "../../contexts/I18nContext";
 import type { ShopLocale, TranslatableItem, ContentType } from "../../types/contentEditor.types";
 
 interface UnifiedLanguageBarProps {
@@ -89,6 +90,12 @@ export function UnifiedLanguageBar({
 }: UnifiedLanguageBarProps) {
   const isPrimaryLocale = currentLanguage === primaryLocale;
   const ctrlPressedRef = useRef<Record<string, boolean>>({});
+  const { t: i18n } = useI18n();
+  const tooltipI18n = {
+    missingContent: i18n.common.missingContent,
+    missingTranslations: i18n.common.missingTranslations,
+    fieldLabels: i18n.common.fieldLabels,
+  };
 
   // Map content type to resource type for the API
   const resourceTypeMap: Record<string, string> = {
@@ -115,33 +122,51 @@ export function UnifiedLanguageBar({
         const isPrimary = locale.primary;
         const isCurrentLanguage = currentLanguage === locale.locale;
 
-        return (
+        const buttonProps = {
+          variant: isCurrentLanguage ? "primary" as const : undefined,
+          onClick: () => {
+            if (ctrlPressedRef.current[locale.locale]) {
+              ctrlPressedRef.current[locale.locale] = false;
+              return;
+            }
+            onLanguageChange(locale.locale);
+          },
+          onPointerDown: (event: React.PointerEvent) => {
+            if (event.ctrlKey && onToggleLanguage && !isPrimary) {
+              ctrlPressedRef.current[locale.locale] = true;
+              event.preventDefault();
+              onToggleLanguage(locale.locale);
+            }
+          },
+          size: "slim" as const,
+          tone: (!isEnabled && !isPrimary ? "critical" as const : undefined),
+        };
+
+        const fullLabel = `${locale.name || locale.locale}${locale.primary ? ` (${t.primaryLocaleSuffix || "Primary"})` : ""}`;
+        const shortLabel = locale.locale.charAt(0).toUpperCase() + locale.locale.slice(1);
+
+        const tooltip = getLocaleButtonTooltip(locale, selectedItem, primaryLocale, contentType, isLoadingData, tooltipI18n);
+
+        const buttonContent = (
           <div key={locale.locale} style={buttonStyle}>
-            <Button
-              variant={isCurrentLanguage ? "primary" : undefined}
-              onClick={() => {
-                // Don't navigate if Ctrl was pressed - that's for toggling language mode
-                if (ctrlPressedRef.current[locale.locale]) {
-                  ctrlPressedRef.current[locale.locale] = false;
-                  return;
-                }
-                onLanguageChange(locale.locale);
-              }}
-              onPointerDown={(event: React.PointerEvent) => {
-                // Ctrl+Click toggles language activation (except for primary locale)
-                if (event.ctrlKey && onToggleLanguage && !isPrimary) {
-                  ctrlPressedRef.current[locale.locale] = true;
-                  event.preventDefault();
-                  onToggleLanguage(locale.locale);
-                }
-              }}
-              size="slim"
-              tone={!isEnabled && !isPrimary ? "critical" : undefined}
-            >
-              {locale.name || locale.locale} {locale.primary ? `(${t.primaryLocaleSuffix || "Primary"})` : ""}
-            </Button>
+            <div className="lang-full">
+              <Button {...buttonProps}>{fullLabel}</Button>
+            </div>
+            <div className="lang-short">
+              <Button {...buttonProps}>{shortLabel}</Button>
+            </div>
           </div>
         );
+
+        if (tooltip) {
+          return (
+            <Tooltip key={locale.locale} content={tooltip} dismissOnMouseOut preferredPosition="below">
+              {buttonContent}
+            </Tooltip>
+          );
+        }
+
+        return buttonContent;
       })}
       <div style={{ marginLeft: "auto" }}>
         <HelpTooltip helpKey="ctrlClickLanguage" position="below" />

@@ -1,4 +1,5 @@
 import type { AIProvider, AIServiceConfig } from './ai.service';
+import { loggers } from '../../app/utils/logger.server';
 
 // Re-export AIProvider for use in other services
 export type { AIProvider } from './ai.service';
@@ -199,7 +200,7 @@ export class AIQueueService {
 
       const shopQueue = this.getShopQueue(shop);
       shopQueue.push(request);
-      console.log(`[AIQueue] Enqueued request ${request.id} for shop ${shop}, task ${taskId}. Shop queue size: ${shopQueue.length}, Total: ${this.getTotalQueueLength()}`);
+      loggers.queue('debug', `Enqueued request ${request.id} for shop ${shop}, task ${taskId}`, { shopQueueSize: shopQueue.length, totalQueueSize: this.getTotalQueueLength() });
 
       // Update task queue position in database (shop-specific)
       this.updateQueuePositions(shop);
@@ -245,7 +246,7 @@ export class AIQueueService {
   private canExecute(provider: AIProvider, estimatedTokens: number): boolean {
     const limits = this.rateLimits.get(provider);
     if (!limits) {
-      console.warn(`[AIQueue] No rate limits configured for provider: ${provider}`);
+      loggers.queue('warn', `No rate limits configured for provider: ${provider}`);
       return true;
     }
 
@@ -256,11 +257,7 @@ export class AIQueueService {
       usage.requests + 1 <= limits.maxRequestsPerMinute;
 
     if (!canExecute) {
-      console.log(
-        `[AIQueue] Rate limit check for ${provider}: ` +
-        `tokens ${usage.tokens + estimatedTokens}/${limits.maxTokensPerMinute}, ` +
-        `requests ${usage.requests + 1}/${limits.maxRequestsPerMinute}`
-      );
+      loggers.queue('debug', `Rate limit check for ${provider}`, { tokens: usage.tokens + estimatedTokens, maxTokens: limits.maxTokensPerMinute, requests: usage.requests + 1, maxRequests: limits.maxRequestsPerMinute });
     }
 
     return canExecute;
@@ -358,10 +355,7 @@ export class AIQueueService {
           this.queues.delete(shop);
         }
 
-        console.log(
-          `[AIQueue] Executing request ${request.id} for shop ${shop}, task ${request.taskId}. ` +
-          `Shop queue remaining: ${shopQueue.length}, Total: ${this.getTotalQueueLength()}`
-        );
+        loggers.queue('debug', `Executing request ${request.id} for shop ${shop}, task ${request.taskId}`, { shopQueueRemaining: shopQueue.length, totalQueueSize: this.getTotalQueueLength() });
 
         // Update task status to running
         await this.updateTaskStatus(shop, request.taskId, 'running');
@@ -376,9 +370,9 @@ export class AIQueueService {
           // Resolve the promise
           request.resolve(result);
 
-          console.log(`[AIQueue] Successfully executed request ${request.id}`);
+          loggers.queue('debug', `Successfully executed request ${request.id}`);
         } catch (error: any) {
-          console.error(`[AIQueue] Error executing request ${request.id}:`, error);
+          loggers.queue('error', `Error executing request ${request.id}`, { error: error?.message || String(error) });
 
           // Check if it's a rate limit error
           const isRateLimitError =
@@ -392,10 +386,7 @@ export class AIQueueService {
             request.retryCount++;
             const backoffTime = Math.pow(2, request.retryCount) * 1000;
 
-            console.log(
-              `[AIQueue] Rate limit hit. Retrying request ${request.id} ` +
-              `(attempt ${request.retryCount}/3) after ${backoffTime}ms`
-            );
+            loggers.queue('warn', `Rate limit hit. Retrying request ${request.id}`, { attempt: request.retryCount, maxAttempts: 3, backoffMs: backoffTime });
 
             // Update retry count in database
             await this.updateTaskRetryCount(shop, request.taskId, request.retryCount);
@@ -422,7 +413,7 @@ export class AIQueueService {
 
     // Start processing
     processNext();
-    console.log('[AIQueue] Started adaptive queue processing (100ms when active, 1s when idle)');
+    loggers.queue('info', 'Started adaptive queue processing (100ms when active, 1s when idle)');
   }
 
   /**
@@ -451,13 +442,13 @@ export class AIQueueService {
       // Log any failures but don't throw - queue positions are not critical
       const failures = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
       if (failures.length > 0) {
-        console.error(`[AIQueue] ${failures.length}/${updates.length} queue position updates failed for shop ${shop}`);
+        loggers.queue('error', `${failures.length}/${updates.length} queue position updates failed for shop ${shop}`);
         failures.forEach((failure, index) => {
-          console.error(`[AIQueue] Update ${index} failed:`, failure.reason);
+          loggers.queue('error', `Update ${index} failed`, { reason: failure.reason });
         });
       }
     } catch (error) {
-      console.error(`[AIQueue] Error updating queue positions for shop ${shop}:`, error);
+      loggers.queue('error', `Error updating queue positions for shop ${shop}`, { error: error instanceof Error ? error.message : String(error) });
     }
   }
 
@@ -476,7 +467,7 @@ export class AIQueueService {
         },
       });
     } catch (error) {
-      console.error('[AIQueue] Error updating task status:', error);
+      loggers.queue('error', 'Error updating task status', { error: error instanceof Error ? error.message : String(error) });
     }
   }
 
@@ -492,7 +483,7 @@ export class AIQueueService {
         data: { retryCount },
       });
     } catch (error) {
-      console.error('[AIQueue] Error updating retry count:', error);
+      loggers.queue('error', 'Error updating retry count', { error: error instanceof Error ? error.message : String(error) });
     }
   }
 
@@ -552,7 +543,7 @@ export class AIQueueService {
 
       const shopQueue = this.getShopQueue(task.shop);
       shopQueue.push(request);
-      console.log(`[AIQueue] Re-enqueued recovered task ${task.id} for shop ${task.shop}. Shop queue size: ${shopQueue.length}, Total: ${this.getTotalQueueLength()}`);
+      loggers.queue('info', `Re-enqueued recovered task ${task.id} for shop ${task.shop}`, { shopQueueSize: shopQueue.length, totalQueueSize: this.getTotalQueueLength() });
 
       // Update task queue position in database
       this.updateQueuePositions(task.shop);
@@ -576,9 +567,9 @@ export class AIQueueService {
         },
       });
 
-      console.log(`[AIQueue] Recovered task ${taskId} completed successfully`);
+      loggers.queue('info', `Recovered task ${taskId} completed successfully`);
     } catch (error) {
-      console.error(`[AIQueue] Error completing recovered task ${taskId}:`, error);
+      loggers.queue('error', `Error completing recovered task ${taskId}`, { error: error instanceof Error ? error.message : String(error) });
     }
   }
 
@@ -597,9 +588,9 @@ export class AIQueueService {
         },
       });
 
-      console.log(`[AIQueue] Recovered task ${taskId} failed: ${error?.message}`);
+      loggers.queue('warn', `Recovered task ${taskId} failed`, { error: error?.message });
     } catch (dbError) {
-      console.error(`[AIQueue] Error failing recovered task ${taskId}:`, dbError);
+      loggers.queue('error', `Error failing recovered task ${taskId}`, { error: dbError instanceof Error ? dbError.message : String(dbError) });
     }
   }
 
@@ -654,7 +645,7 @@ export class AIQueueService {
       this.cleanupInactiveShops();
     }, 60 * 60 * 1000); // 1 hour
 
-    console.log('[AIQueue] Cleanup interval started (runs every hour)');
+    loggers.queue('info', 'Cleanup interval started (runs every hour)');
   }
 
   /**
@@ -675,14 +666,14 @@ export class AIQueueService {
         this.queues.delete(shop);
         this.lastShopActivity.delete(shop);
         cleanedCount++;
-        console.log(`[AIQueue] Cleaned up inactive shop: ${shop} (inactive for ${Math.round(inactiveDuration / 1000 / 60 / 60)}h)`);
+        loggers.queue('info', `Cleaned up inactive shop: ${shop}`, { inactiveHours: Math.round(inactiveDuration / 1000 / 60 / 60) });
       }
     }
 
     if (cleanedCount > 0) {
-      console.log(`[AIQueue] Cleanup complete: Removed ${cleanedCount} inactive shop(s). Remaining shops: ${this.queues.size}`);
+      loggers.queue('info', `Cleanup complete: Removed ${cleanedCount} inactive shop(s)`, { remainingShops: this.queues.size });
     } else {
-      console.log(`[AIQueue] Cleanup complete: No inactive shops to remove. Active shops: ${this.queues.size}`);
+      loggers.queue('debug', 'Cleanup complete: No inactive shops to remove', { activeShops: this.queues.size });
     }
   }
 
@@ -700,7 +691,7 @@ export class AIQueueService {
     if (this.cleanupIntervalId) {
       clearInterval(this.cleanupIntervalId);
       this.cleanupIntervalId = undefined;
-      console.log('[AIQueue] Cleanup interval stopped');
+      loggers.queue('info', 'Cleanup interval stopped');
     }
   }
 }

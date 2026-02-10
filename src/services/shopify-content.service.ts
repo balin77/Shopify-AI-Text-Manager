@@ -5,6 +5,7 @@
 
 import { TRANSLATE_CONTENT, UPDATE_PAGE, UPDATE_ARTICLE, UPDATE_SHOP_POLICY, UPDATE_COLLECTION } from "../../app/graphql/content.mutations";
 import { GET_TRANSLATIONS, GET_TRANSLATABLE_CONTENT } from "../../app/graphql/content.queries";
+import { loggers } from '../../app/utils/logger.server';
 
 export interface ShopifyAdminClient {
   graphql: (query: string, options?: { variables?: Record<string, any> }) => Promise<Response>;
@@ -45,6 +46,9 @@ export class ShopifyContentService {
     content.forEach((item: any) => {
       digestMap[item.key] = item.digest;
     });
+
+    // Diagnostic: log all returned keys with digest presence
+    loggers.translation('debug', `Resource ${resourceId} - returned ${content.length} translatable fields`, { fields: content.map((c: any) => `${c.key}=${c.digest ? 'HAS_DIGEST' : 'NO_DIGEST'}(val=${c.value ? c.value.substring(0, 30) : 'EMPTY'})`) });
 
     return digestMap;
   }
@@ -167,7 +171,7 @@ export class ShopifyContentService {
       return { success: true };
     }
 
-    console.log('[TRANSLATIONS-DELETE] Deleting translations for keys:', translationKeys, 'locales:', foreignLocales);
+    loggers.translation('info', 'Deleting translations for keys', { translationKeys, foreignLocales });
 
     const response = await this.admin.graphql(
       `#graphql
@@ -195,11 +199,11 @@ export class ShopifyContentService {
     const data = await response.json();
 
     if (data.data?.translationsRemove?.userErrors?.length > 0) {
-      console.error('[TRANSLATIONS-DELETE] Error:', data.data.translationsRemove.userErrors);
+      loggers.translation('error', 'Error deleting translations', { errors: data.data.translationsRemove.userErrors });
       throw new Error(data.data.translationsRemove.userErrors[0].message);
     }
 
-    console.log('[TRANSLATIONS-DELETE] Successfully deleted translations');
+    loggers.translation('info', 'Successfully deleted translations');
     return { success: true };
   }
 
@@ -249,13 +253,17 @@ export class ShopifyContentService {
       // Fetch digest map once
       const digestMap = await this.loadTranslatableContent(resourceId);
 
-      const translationsInput: Array<{ key: string; value: string; locale: string; translatableContentDigest?: string }> = [];
+      const translationsInput: Array<{ key: string; value: string; locale: string; translatableContentDigest: string }> = [];
+      const translationsToDelete: string[] = [];
+      const dbOnlyTranslations: Array<{ key: string; value: string; locale: string }> = [];
 
       // Map field names to Shopify translation keys
+      // Note: ShopPolicy uses 'body' (not 'body_html') as its translatable content key
+      const bodyKey = resourceType === 'ShopPolicy' ? 'body' : 'body_html';
       const keyMapping: Record<string, string> = {
         title: 'title',
-        description: 'body_html',  // Always body_html for all resource types
-        body: 'body_html',         // Always body_html for all resource types
+        description: bodyKey,
+        body: bodyKey,
         handle: 'handle',
         seoTitle: 'meta_title',
         metaDescription: 'meta_description',
@@ -263,19 +271,42 @@ export class ShopifyContentService {
         summary: 'summary_html',   // Article excerpt/summary
       };
 
-      Object.entries(updates).forEach(([field, value]) => {
-        if (value && keyMapping[field]) {
-          const translationKey = keyMapping[field];
-          translationsInput.push({
-            key: translationKey,
-            value,
-            locale,
-            translatableContentDigest: digestMap[translationKey]
-          });
-        }
-      });
+      for (const [field, value] of Object.entries(updates)) {
+        const translationKey = keyMapping[field];
+        if (!translationKey) continue;
 
-      // Save to Shopify with digests
+        if (value && value.trim()) {
+          let digest = digestMap[translationKey];
+
+          // If digest is missing, retry (handles race conditions / late availability)
+          if (!digest) {
+            loggers.translation('warn', `[updateContent] No digest for '${translationKey}' in initial digestMap. Re-fetching...`);
+            const freshDigestMap = await this.loadTranslatableContent(resourceId);
+            digest = freshDigestMap[translationKey];
+            if (digest) {
+              digestMap[translationKey] = digest;
+              loggers.translation('debug', `[updateContent] Got digest for '${translationKey}' on retry`);
+            }
+          }
+
+          if (digest) {
+            translationsInput.push({
+              key: translationKey,
+              value,
+              locale,
+              translatableContentDigest: digest,
+            });
+          } else {
+            loggers.translation('warn', `[updateContent] No digest for '${translationKey}' after retry. Saving to DB only.`);
+            dbOnlyTranslations.push({ key: translationKey, value, locale });
+          }
+        } else if (value === "") {
+          // Empty string means user cleared the translation — mark for deletion
+          translationsToDelete.push(translationKey);
+        }
+      }
+
+      // Save non-empty translations to Shopify
       if (translationsInput.length > 0) {
         const response = await this.admin.graphql(TRANSLATE_CONTENT, {
           variables: {
@@ -286,17 +317,32 @@ export class ShopifyContentService {
 
         const data = await response.json();
 
+        // Check for top-level GraphQL errors (e.g. missing required fields)
+        if (data.errors?.length > 0) {
+          loggers.translation('error', `[updateContent] GraphQL errors from translationsRegister`, { errors: data.errors });
+          throw new Error(data.errors[0].message);
+        }
+
         if (data.data?.translationsRegister?.userErrors?.length > 0) {
           throw new Error(data.data.translationsRegister.userErrors[0].message);
         }
       }
 
-      // Update database - use upsert to preserve existing translations
-      if (translationsInput.length > 0) {
+      // Delete cleared translations from Shopify
+      if (translationsToDelete.length > 0) {
+        await this.deleteAllTranslationsForKeys({
+          resourceId,
+          translationKeys: translationsToDelete,
+          foreignLocales: [locale],
+        });
+      }
+
+      // Update database using transaction for consistency
+      await db.$transaction(async (tx: any) => {
+        // Upsert translations saved to Shopify
         for (const translation of translationsInput) {
-          await db.contentTranslation.upsert({
+          await tx.contentTranslation.upsert({
             where: {
-              // Unique constraint is: @@unique([resourceId, key, locale])
               resourceId_key_locale: {
                 resourceId,
                 key: translation.key,
@@ -306,7 +352,7 @@ export class ShopifyContentService {
             update: {
               value: translation.value,
               digest: translation.translatableContentDigest || null,
-              resourceType, // Update resourceType in case it changed
+              resourceType,
             },
             create: {
               resourceId,
@@ -318,7 +364,45 @@ export class ShopifyContentService {
             },
           });
         }
-      }
+
+        // Upsert DB-only translations (no digest available, not saved to Shopify)
+        for (const translation of dbOnlyTranslations) {
+          await tx.contentTranslation.upsert({
+            where: {
+              resourceId_key_locale: {
+                resourceId,
+                key: translation.key,
+                locale: translation.locale,
+              },
+            },
+            update: {
+              value: translation.value,
+              digest: null,
+              resourceType,
+            },
+            create: {
+              resourceId,
+              resourceType,
+              key: translation.key,
+              value: translation.value,
+              locale: translation.locale,
+              digest: null,
+            },
+          });
+        }
+
+        // Delete cleared translations from database
+        for (const key of translationsToDelete) {
+          await tx.contentTranslation.deleteMany({
+            where: {
+              resourceId,
+              resourceType,
+              locale,
+              key,
+            },
+          });
+        }
+      });
 
       return { success: true };
     } else {
@@ -464,7 +548,7 @@ export class ShopifyContentService {
               }
             }
 
-            console.log(`[PRIMARY-UPDATE] Deleted translations for fields: ${changedFields.join(', ')}`);
+            loggers.translation('info', `Deleted translations for fields: ${changedFields.join(', ')}`);
           }
         }
       }
@@ -495,11 +579,11 @@ export class ShopifyContentService {
 
     // Fetch digest map once for all translations
     const digestMap = await this.loadTranslatableContent(resourceId);
-    console.log(`🔶 [translateAllContent] resourceType: ${resourceType}`);
-    console.log(`🔶 [translateAllContent] fields received:`, Object.keys(fields));
-    console.log(`🔶 [translateAllContent] fields values:`, Object.entries(fields).map(([k, v]) => `${k}=${v ? (v as string).substring(0, 50) + '...' : 'EMPTY'}`));
-    console.log(`🔶 [translateAllContent] digestMap keys for ${resourceId}:`, Object.keys(digestMap));
-    console.log(`🔶 [translateAllContent] has summary_html digest:`, !!digestMap['summary_html']);
+    loggers.translation('debug', `translateAllContent resourceType: ${resourceType}`);
+    loggers.translation('debug', 'translateAllContent fields received', { fields: Object.keys(fields) });
+    loggers.translation('debug', 'translateAllContent fields values', { values: Object.entries(fields).map(([k, v]) => `${k}=${v ? (v as string).substring(0, 50) + '...' : 'EMPTY'}`) });
+    loggers.translation('debug', `translateAllContent digestMap keys for ${resourceId}`, { keys: Object.keys(digestMap) });
+    loggers.translation('debug', 'translateAllContent has summary_html digest', { hasSummaryHtmlDigest: !!digestMap['summary_html'] });
 
     // Get target locales (use custom list if provided, otherwise all published locales)
     let targetLocales: string[];
@@ -537,7 +621,7 @@ export class ShopifyContentService {
     const hasShortFields = Object.keys(shortFields).length > 0;
     const hasLongFields = Object.keys(longFields).length > 0;
 
-    console.log(`🔶 [translateAllContent] Using hybrid approach - shortFields: ${Object.keys(shortFields)}, longFields: ${Object.keys(longFields)}`);
+    loggers.translation('debug', 'Using hybrid approach', { shortFields: Object.keys(shortFields), longFields: Object.keys(longFields) });
 
     const keyMapping: Record<string, string> = {
       title: 'title',
@@ -551,75 +635,102 @@ export class ShopifyContentService {
     };
 
     // Helper function to save translations to Shopify and DB
-    const saveTranslation = async (locale: string, field: string, value: string) => {
+    // Returns true if saved successfully to both Shopify and DB.
+    // Returns false if Shopify rejected the translation (e.g. "handle already taken" when
+    // the AI generates the same translated slug for two different resources).
+    // On failure: does NOT save to DB, so the local state stays consistent with Shopify.
+    // The caller uses the return value to exclude rejected fields from the response,
+    // so the client never shows a translation that wasn't actually persisted.
+    const saveTranslation = async (locale: string, field: string, value: string): Promise<boolean> => {
       const translationKey = keyMapping[field];
       if (!translationKey) {
-        console.warn(`[translateAllContent] ⚠️ No keyMapping for field '${field}'`);
-        return;
+        loggers.translation('warn', `No keyMapping for field '${field}'`);
+        return false;
       }
-
-      const digest = digestMap[translationKey];
-      if (!digest) {
-        console.warn(`[translateAllContent] ⚠️ No digest for key '${translationKey}' (field '${field}'). Available digests: ${Object.keys(digestMap).join(', ')}`);
-        return;
-      }
-
-      console.log(`[translateAllContent] ✓ Saving ${field} → ${translationKey} for locale ${locale}`);
 
       // Skip if translation is same as source
       const sourceValue = fields[field];
       if (sourceValue && value.trim() === sourceValue.trim()) {
-        console.warn(`[translateAllContent] Skipping field '${field}' for locale '${locale}' - same as source`);
-        return;
+        loggers.translation('warn', `Skipping field '${field}' for locale '${locale}' - same as source`);
+        return false;
       }
 
-      // Save to Shopify
-      const response = await this.admin.graphql(TRANSLATE_CONTENT, {
-        variables: {
-          resourceId,
-          translations: [{
+      let digest = digestMap[translationKey];
+
+      // If digest is missing, try to re-fetch (handles race conditions / late availability)
+      if (!digest) {
+        loggers.translation('warn', `No digest for '${translationKey}' in initial digestMap. Re-fetching translatableContent...`);
+        const freshDigestMap = await this.loadTranslatableContent(resourceId);
+        digest = freshDigestMap[translationKey];
+        if (digest) {
+          // Cache the fresh digest for subsequent saves
+          digestMap[translationKey] = digest;
+          loggers.translation('debug', `Got digest for '${translationKey}' on retry`);
+        } else {
+          loggers.translation('warn', `Still no digest for '${translationKey}' after retry. Shopify may not support translating this field. Saving to DB only.`, { availableKeys: Object.keys(freshDigestMap).join(', ') });
+        }
+      }
+
+      // Save to Shopify and DB (requires digest)
+      if (digest) {
+        loggers.translation('debug', `Saving ${field} -> ${translationKey} for locale ${locale}`);
+        const response = await this.admin.graphql(TRANSLATE_CONTENT, {
+          variables: {
+            resourceId,
+            translations: [{
+              key: translationKey,
+              value,
+              locale,
+              translatableContentDigest: digest
+            }]
+          }
+        });
+
+        const data = await response.json();
+        if (data.data?.translationsRegister?.userErrors?.length > 0) {
+          // Shopify rejected this specific translation (e.g. duplicate handle across resources).
+          // Return false so the caller removes this field from allTranslations — the client
+          // should not display or cache a translation that Shopify didn't accept.
+          loggers.translation('error', `Shopify rejected ${field} for ${locale}`, { errors: data.data.translationsRegister.userErrors });
+          return false;
+        }
+
+        loggers.translation('debug', `Shopify save successful for ${field} -> ${translationKey} (${locale})`);
+
+        // Save to database only after successful Shopify save
+        await db.contentTranslation.upsert({
+          where: {
+            resourceId_key_locale: {
+              resourceId,
+              key: translationKey,
+              locale,
+            },
+          },
+          update: {
+            value,
+            digest,
+            resourceType,
+          },
+          create: {
+            resourceId,
+            resourceType,
             key: translationKey,
             value,
             locale,
-            translatableContentDigest: digest
-          }]
-        }
-      });
-
-      const data = await response.json();
-      if (data.data?.translationsRegister?.userErrors?.length > 0) {
-        console.error(`[translateAllContent] Error saving ${field} for ${locale}:`, data.data.translationsRegister.userErrors);
-      }
-
-      // Save to database
-      await db.contentTranslation.upsert({
-        where: {
-          resourceId_key_locale: {
-            resourceId,
-            key: translationKey,
-            locale,
+            digest,
           },
-        },
-        update: {
-          value,
-          digest: digest || null,
-          resourceType,
-        },
-        create: {
-          resourceId,
-          resourceType,
-          key: translationKey,
-          value,
-          locale,
-          digest: digest || null,
-        },
-      });
+        });
+        return true;
+      } else {
+        loggers.translation('warn', `No digest for '${translationKey}' after retry. Translation NOT saved. Shopify translatableContent does not include this field - is the primary locale value set in Shopify?`);
+        return false;
+      }
     };
 
     // === STEP 1: Batch translate short fields (1 AI request for all locales) ===
     if (hasShortFields) {
       try {
-        console.log(`🔶 [translateAllContent] Batch translating short fields: ${Object.keys(shortFields)} to ${targetLocales.length} locales`);
+        loggers.translation('debug', `Batch translating short fields to ${targetLocales.length} locales`, { shortFields: Object.keys(shortFields) });
 
         const batchResult = await translationService.translateShortFieldsBatch(
           shortFields,
@@ -628,24 +739,28 @@ export class ShopifyContentService {
           contentType || 'product'
         );
 
-        // Save all short field translations
+        // Save all short field translations.
+        // Only include successfully saved fields in allTranslations — if Shopify rejects
+        // a field (e.g. duplicate handle), the client should not see it as translated.
         for (const locale of targetLocales) {
           const localeTranslations = batchResult[locale];
           if (!localeTranslations) continue;
 
           for (const [field, value] of Object.entries(localeTranslations)) {
             if (value) {
-              allTranslations[locale][field] = value;
-              await saveTranslation(locale, field, value as string);
+              const saved = await saveTranslation(locale, field, value as string);
+              if (saved) {
+                allTranslations[locale][field] = value;
+              }
             }
           }
         }
 
-        console.log(`🔶 [translateAllContent] ✓ Batch short fields completed`);
+        loggers.translation('debug', 'Batch short fields completed');
       } catch (batchError: any) {
-        console.error(`🔶 [translateAllContent] ❌ Batch short fields failed:`, batchError);
+        loggers.translation('error', 'Batch short fields failed', { error: batchError?.message || String(batchError) });
         // Fallback: translate short fields sequentially
-        console.log(`🔶 [translateAllContent] Falling back to sequential for short fields...`);
+        loggers.translation('warn', 'Falling back to sequential for short fields...');
         for (const locale of targetLocales) {
           try {
             const localeTranslations = await translationService.translateProduct(shortFields, [locale], contentType, customInstructions);
@@ -653,13 +768,15 @@ export class ShopifyContentService {
             if (translatedFields) {
               for (const [field, value] of Object.entries(translatedFields)) {
                 if (value) {
-                  allTranslations[locale][field] = value;
-                  await saveTranslation(locale, field, value as string);
+                  const saved = await saveTranslation(locale, field, value as string);
+                  if (saved) {
+                    allTranslations[locale][field] = value;
+                  }
                 }
               }
             }
           } catch (localeError: any) {
-            console.error(`[translateAllContent] ❌ Fallback failed for ${locale}:`, localeError);
+            loggers.translation('error', `Fallback failed for ${locale}`, { error: localeError?.message || String(localeError) });
           }
         }
       }
@@ -669,7 +786,7 @@ export class ShopifyContentService {
     if (hasLongFields) {
       for (const locale of targetLocales) {
         try {
-          console.log(`🔶 [translateAllContent] Translating long fields to ${locale}: ${Object.keys(longFields)}`);
+          loggers.translation('debug', `Translating long fields to ${locale}`, { longFields: Object.keys(longFields) });
           const localeTranslations = await translationService.translateProduct(longFields, [locale], contentType, customInstructions);
           const translatedFields = localeTranslations[locale];
 
@@ -686,18 +803,20 @@ export class ShopifyContentService {
                   stringValue = String(value);
                 }
 
-                allTranslations[locale][field] = stringValue;
-                await saveTranslation(locale, field, stringValue);
+                const saved = await saveTranslation(locale, field, stringValue);
+                if (saved) {
+                  allTranslations[locale][field] = stringValue;
+                }
               }
             }
           }
         } catch (localeError: any) {
-          console.error(`🔷 [translateAllContent] ❌ Failed to translate long fields to ${locale}:`, localeError);
+          loggers.translation('error', `Failed to translate long fields to ${locale}`, { error: localeError?.message || String(localeError) });
         }
       }
     }
 
-    console.log(`🔷🔷🔷 [translateAllContent] FINAL: allTranslations contains locales:`, Object.keys(allTranslations));
+    loggers.translation('info', 'translateAllContent FINAL', { locales: Object.keys(allTranslations) });
     return allTranslations;
   }
 }

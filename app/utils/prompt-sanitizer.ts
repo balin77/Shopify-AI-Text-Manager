@@ -5,6 +5,8 @@
  * before including it in AI prompts.
  */
 
+import { logger } from '~/utils/logger.server';
+
 /**
  * List of dangerous patterns that could be used for prompt injection
  */
@@ -70,13 +72,13 @@ export function sanitizePromptInput(
   // 2. Truncate to max length
   if (sanitized.length > maxLength) {
     sanitized = sanitized.substring(0, maxLength);
-    console.warn(`[PROMPT_SANITIZER] Input truncated from ${input.length} to ${maxLength} characters`);
+    logger.warn(`[PROMPT_SANITIZER] Input truncated from ${input.length} to ${maxLength} characters`);
   }
 
   // 3. Remove dangerous patterns
   for (const pattern of DANGEROUS_PATTERNS) {
     if (pattern.test(sanitized)) {
-      console.warn(`[PROMPT_SANITIZER] Dangerous pattern detected and removed: ${pattern}`);
+      logger.warn(`[PROMPT_SANITIZER] Dangerous pattern detected and removed: ${pattern}`);
       sanitized = sanitized.replace(pattern, '[REMOVED]');
     }
   }

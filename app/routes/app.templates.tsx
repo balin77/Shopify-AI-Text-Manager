@@ -7,7 +7,7 @@
 
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useFetcher } from "@remix-run/react";
+import { useLoaderData, useFetcher, useRevalidator } from "@remix-run/react";
 import { Page } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
@@ -20,7 +20,7 @@ import { useInfoBox } from "../contexts/InfoBoxContext";
 import { AIService } from "../../src/services/ai.service";
 import { TranslationService } from "../../src/services/translation.service";
 import { decryptApiKey } from "../utils/encryption.server";
-import { getTaskExpirationDate } from "../../src/utils/task.utils";
+import { getTaskExpirationDate } from "~/config/constants";
 import { logger } from "~/utils/logger.server";
 
 // ============================================================================
@@ -787,6 +787,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
 export default function TemplatesPage() {
   const { themes, shop, shopLocales: loaderShopLocales, primaryLocale, error } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
+  const revalidator = useRevalidator();
   const { t } = useI18n();
   const { showInfoBox } = useInfoBox();
 
@@ -948,8 +949,7 @@ export default function TemplatesPage() {
 
       // Preload all foreign language translations in background
       preloadAllTranslations(groupId);
-    } catch (error) {
-      console.error('Error loading theme data:', error);
+    } catch {
       showInfoBox(
         "Error loading theme content",
         "critical",
@@ -1014,8 +1014,6 @@ export default function TemplatesPage() {
   const handleTranslateToAllLocalesComplete = useCallback((fieldKey: string, translations: Record<string, string>) => {
     if (!selectedGroupId) return;
 
-    console.log(`[CACHE] Callback: Updating translation cache for field: ${fieldKey}`);
-
     setLoadedTranslations(prev => {
       const newCache = { ...prev };
       const groupCache = { ...(newCache[selectedGroupId] || {}) };
@@ -1036,7 +1034,6 @@ export default function TemplatesPage() {
       }
 
       newCache[selectedGroupId] = groupCache;
-      console.log(`[CACHE] Callback: Updated translations for ${Object.keys(translations).length} locales`);
       return newCache;
     });
   }, [selectedGroupId]);
@@ -1109,8 +1106,7 @@ export default function TemplatesPage() {
               originalHandleItemSelectRef.current(itemId);
             }, 0);
           })
-          .catch(error => {
-            console.error('Error loading theme data:', error);
+          .catch(() => {
             showInfoBox("Error loading theme content", "critical", t.content?.error || "Error");
           })
           .finally(() => {
@@ -1149,8 +1145,6 @@ export default function TemplatesPage() {
 
     // Check if already cached
     const cachedTranslations = loadedTranslations[selectedGroupId]?.[currentLanguage];
-    console.log(`[NAV-LOAD] Group: ${selectedGroupId}, Language: ${currentLanguage}`);
-    console.log(`[NAV-LOAD] Cache exists: ${!!cachedTranslations}, Cache size: ${cachedTranslations?.length || 0}`);
 
     if (cachedTranslations) {
       // Use cached translations - update editable values directly
@@ -1163,13 +1157,11 @@ export default function TemplatesPage() {
           newValues[item.key] = value;
           editorHelpersRef.current.setEditableValue(item.key, value);
         });
-        console.log(`[NAV-LOAD] Applied ${Object.keys(newValues).length} values from cache`);
         // Update original values so hasChanges is false after language switch
         editorHelpersRef.current.setOriginalTemplateValues(newValues);
       }
     } else {
       // Load from server
-      console.log(`[NAV-LOAD] No cache, loading from server...`);
       loadTranslationsForLocale(selectedGroupId, currentLanguage);
     }
   }, [editor.state.currentLanguage, selectedGroupId, primaryLocale, loadTranslationsForLocale, loadedTranslations, loadedThemes]);
@@ -1260,7 +1252,6 @@ export default function TemplatesPage() {
           setLoadedTranslations(prev => {
             const newCache = { ...prev };
             delete newCache[selectedGroupId]; // Remove all cached translations for this group
-            console.log(`[CACHE] Invalidated translation cache for group: ${selectedGroupId}`);
             return newCache;
           });
         }
@@ -1281,8 +1272,6 @@ export default function TemplatesPage() {
               updatedCache.push({ key, value, locale: currentLanguage });
             }
           });
-
-          console.log(`[CACHE] Updated translation cache for group: ${selectedGroupId}, locale: ${currentLanguage}`);
 
           return {
             ...prev,
@@ -1315,8 +1304,6 @@ export default function TemplatesPage() {
 
     if (!selectedGroupId) return;
 
-    console.log(`[CACHE] Updating translation cache after translateFieldToAllLocales for field: ${fieldType}`);
-
     // Update the loadedTranslations cache with new translations
     setLoadedTranslations(prev => {
       const newCache = { ...prev };
@@ -1338,7 +1325,6 @@ export default function TemplatesPage() {
       }
 
       newCache[selectedGroupId] = groupCache;
-      console.log(`[CACHE] Updated translations for ${Object.keys(translations).length} locales`);
       return newCache;
     });
   }, [fetcher.data, selectedGroupId]);
@@ -1384,6 +1370,7 @@ export default function TemplatesPage() {
           onFieldPageChange={handleFieldPageChange}
           onFieldSearch={handleFieldSearch}
           isFieldsLoading={isLoading}
+          revalidator={revalidator}
         />
       </div>
     </div>

@@ -70,7 +70,6 @@ export function MobileMenu({
   const plans: Plan[] = ["free", "basic", "pro", "max"];
 
   const handleNavigation = (path: string) => {
-    console.log("📱 [MobileMenu] Navigation clicked:", path);
     setIsOpen(false);
     handleNavigate(path);
   };
@@ -322,7 +321,7 @@ export function MobileMenu({
                   textAlign: "left",
                 }}
               >
-                <span>{getPlanDisplayName(plan)}</span>
+                <span>{getPlanDisplayName()}</span>
               </button>
             </div>
           </nav>

@@ -22,7 +22,7 @@ interface LoadingSkeletonProps {
 export function LoadingSkeleton({ type = "page", showTitle = true, lines = 5 }: LoadingSkeletonProps) {
   if (type === "page") {
     return (
-      <SkeletonPage primaryAction secondaryActions={2}>
+      <SkeletonPage primaryAction>
         <BlockStack gap="400">
           <Card>
             <SkeletonBodyText lines={3} />

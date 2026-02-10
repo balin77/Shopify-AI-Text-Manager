@@ -121,7 +121,8 @@ export function SettingsLanguageTab({ settings, fetcher, t, onHasChangesChange }
         </BlockStack>
       </Card>
 
-      <Card className="settings-action-buttons-desktop" style={{ marginTop: "var(--p-space-400)" }}>
+      <div className="settings-action-buttons-desktop" style={{ marginTop: "var(--p-space-400)" }}>
+      <Card>
         <SaveDiscardButtons
           hasChanges={languageChanged}
           onSave={handleSave}
@@ -133,6 +134,7 @@ export function SettingsLanguageTab({ settings, fetcher, t, onHasChangesChange }
           fetcherFormData={fetcher.formData}
         />
       </Card>
+      </div>
 
       <style>{`
         /* Show action buttons in separate card on desktop (900px+) */

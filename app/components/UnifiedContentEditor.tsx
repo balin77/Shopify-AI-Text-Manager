@@ -5,26 +5,24 @@
  * Based on the products page structure with all bug fixes included.
  */
 
-import { useState, useEffect, useMemo } from "react";
-import { Page, Card, Text, BlockStack, InlineStack, Button, Modal, TextContainer, TextField, Icon, Spinner } from "@shopify/polaris";
+import { useState, useEffect, useMemo, useRef } from "react";
+import { Page, Card, Text, BlockStack, InlineStack, Button, Modal, TextContainer, TextField, Icon, Spinner, Checkbox } from "@shopify/polaris";
 import { SearchIcon, ChevronLeftIcon, ChevronRightIcon } from "@shopify/polaris-icons";
 import { AIEditableField } from "./AIEditableField";
 import { AIEditableHTMLField } from "./AIEditableHTMLField";
 import { UnifiedItemList } from "./unified/UnifiedItemList";
-import { UnifiedItemListMobile } from "./unified/UnifiedItemListMobile";
 import { UnifiedLanguageBar } from "./unified/UnifiedLanguageBar";
-import { UnifiedLanguageBarMobile } from "./unified/UnifiedLanguageBarMobile";
-import { UnifiedOperationsBarMobile } from "./unified/UnifiedOperationsBarMobile";
+import { MobileToolbar } from "./unified/MobileToolbar";
 import { ImageGalleryField } from "./unified/ImageGalleryField";
 import { OptionsField } from "./unified/OptionsField";
-import { SaveDiscardButtons } from "./SaveDiscardButtons";
 import { ReloadButton } from "./ReloadButton";
+import { HelpTooltip } from "./HelpTooltip";
 import { SeoSidebar } from "./SeoSidebar";
 import { useNavigationHeight } from "../contexts/NavigationHeightContext";
 import { usePlan } from "../contexts/PlanContext";
+import { useInfoBox } from "../contexts/InfoBoxContext";
 import { useItemSelector } from "../contexts/ItemSelectorContext";
 import { contentEditorStyles } from "../utils/contentEditor.utils";
-import { getPlanDisplayName as getPlanDisplayNameUtil } from "../utils/planUtils";
 import "../styles/UnifiedContentEditor.css";
 import type { ContentEditorConfig, UseContentEditorReturn, FieldDefinition } from "../types/content-editor.types";
 import type { UnifiedItem } from "./unified/UnifiedItemList";
@@ -95,11 +93,8 @@ interface UnifiedContentEditorProps {
   /** Optional: Loading state for field pagination */
   isFieldsLoading?: boolean;
 
-  /** Optional: Revalidator for data refresh */
-  revalidator?: {
-    revalidate: () => void;
-    state: 'idle' | 'loading';
-  };
+  /** Optional: Remix revalidator for non-destructive data reload */
+  revalidator?: { state: "idle" | "loading"; revalidate: () => void };
 }
 
 export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
@@ -130,6 +125,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
 
   const { state, handlers, selectedItem, navigationGuard, helpers, effectiveFieldDefinitions } = editor;
   const { getMaxProducts } = usePlan();
+  const { showInfoBox } = useInfoBox();
   const { registerItems, clearItems } = useItemSelector();
 
   // Use effective field definitions (dynamic for templates, static for other content types)
@@ -139,7 +135,8 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   const GLOBAL_AI_ACTIONS = [
     "translateAll",
     "translateAllForLocale",
-    "generateAllAltTexts",
+    "translateAllAltTextsToAllLocales",
+    "translateAllAltTextsForLocale",
   ];
 
   // Check if a global AI action is currently running (affects all fields)
@@ -149,8 +146,8 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   // Get the set of fields with loading AI actions (for per-field loading states)
   const loadingFieldKeys = state.loadingFieldKeys;
 
-  // Transform items to UnifiedItem format
-  const unifiedItems: UnifiedItem[] = items.map((item) => ({
+  // Transform items to UnifiedItem format (memoized to prevent re-render cascades)
+  const unifiedItems: UnifiedItem[] = useMemo(() => items.map((item) => ({
     id: item.id,
     title: config.getPrimaryField ? config.getPrimaryField(item) : item.title,
     subtitle: config.getSubtitle ? config.getSubtitle(item) : undefined,
@@ -158,18 +155,15 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     status: item.status,
     image: item.featuredImage || item.image,
     ...item,
-  }));
+  })), [items, config.getPrimaryField, config.getSubtitle]);
 
   // Plan limit configuration
-  const { plan, getNextPlanUpgrade, getMaxProducts: getMaxProductsFromPlan } = usePlan();
-  const maxItems = getMaxProductsFromPlan(); // This works for all content types
-  const nextPlan = getNextPlanUpgrade();
-
+  const maxItems = getMaxProducts(); // This works for all content types
   const defaultPlanLimit = {
     isAtLimit: items.length >= maxItems && maxItems !== Infinity,
     maxItems,
-    currentPlan: getPlanDisplayNameUtil(plan),
-    nextPlan: nextPlan ? getPlanDisplayNameUtil(nextPlan) : undefined,
+    currentPlan: "current", // TODO: Get from plan context
+    nextPlan: "Pro", // TODO: Get from plan context
   };
   const finalPlanLimit = planLimit || defaultPlanLimit;
 
@@ -219,29 +213,16 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   const sidebarRenderer = renderSidebar || defaultRenderSidebar;
   const { getTotalNavHeight } = useNavigationHeight();
 
-  // Media query to detect mobile vs desktop
-  // Start with desktop (false) to match SSR, then update client-side
-  const [isMobile, setIsMobile] = useState(false);
+  // Stable ref for handleItemSelect to avoid re-triggering useEffect
+  const handleItemSelectRef = useRef(handlers.handleItemSelect);
+  handleItemSelectRef.current = handlers.handleItemSelect;
 
-  useEffect(() => {
-    const mediaQuery = window.matchMedia('(max-width: 768px)');
-
-    // Set initial value
-    setIsMobile(mediaQuery.matches);
-
-    // Listen for changes
-    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
-    mediaQuery.addEventListener('change', handler);
-
-    return () => mediaQuery.removeEventListener('change', handler);
-  }, []);
-
-  // Register items in the item selector context (for mobile navbar dropdown)
+  // Register items in navbar item selector context (stable deps only)
   useEffect(() => {
     registerItems({
       items: unifiedItems,
       selectedItemId: state.selectedItemId,
-      onItemSelect: handlers.handleItemSelect,
+      onItemSelect: (itemId: string) => handleItemSelectRef.current(itemId),
       resourceName: {
         singular: config.displayNameSingular,
         plural: config.displayName,
@@ -252,12 +233,12 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
         selectItem: t.content?.selectItem || `Select ${config.displayNameSingular}`,
       },
     });
+  }, [unifiedItems, state.selectedItemId, config.displayNameSingular, config.displayName]);
 
-    // Cleanup: clear items when component unmounts
-    return () => {
-      clearItems();
-    };
-  }, [unifiedItems, state.selectedItemId, handlers.handleItemSelect, config.displayNameSingular, config.displayName, t.content, registerItems, clearItems]);
+  // Cleanup: clear items when component unmounts
+  useEffect(() => {
+    return () => { clearItems(); };
+  }, [clearItems]);
 
   return (
     <Page fullWidth>
@@ -275,41 +256,81 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           boxSizing: "border-box",
         }}
       >
-        {/* Left Sidebar - Unified Item List (Desktop only) */}
+        {/* Left Sidebar - Unified Item List (Desktop only via CSS) */}
         <div className="unified-item-list-container">
-          {/* Desktop: Full List */}
           <div className="desktop-only">
             <UnifiedItemList
-              items={unifiedItems}
-              selectedItemId={state.selectedItemId}
-              onItemSelect={handlers.handleItemSelect}
-              resourceName={{
-                singular: config.displayNameSingular,
-                plural: config.displayName,
-              }}
-              renderItem={renderListItem}
-              showSearch={true}
-              showPagination={true}
-              showStatusStripe={!hideItemListStatusBars}
-              showThumbnails={!hideItemListImages}
-              showCategoryBadge={showItemListCategoryBadge}
-              planLimit={finalPlanLimit}
-              t={{
-                searchPlaceholder: t.content?.searchPlaceholder,
-                paginationOf: t.content?.paginationOf || "of",
-                paginationPrevious: t.content?.paginationPrevious || "Previous",
-                paginationNext: t.content?.paginationNext || "Next",
-              }}
-            />
+            items={unifiedItems}
+          selectedItemId={state.selectedItemId}
+          onItemSelect={handlers.handleItemSelect}
+          resourceName={{
+            singular: config.displayNameSingular,
+            plural: config.displayName,
+          }}
+          renderItem={renderListItem}
+          showSearch={true}
+          showPagination={true}
+          showStatusStripe={!hideItemListStatusBars}
+          showThumbnails={!hideItemListImages}
+          showCategoryBadge={showItemListCategoryBadge}
+          planLimit={finalPlanLimit}
+          t={{
+            searchPlaceholder: t.content?.searchPlaceholder,
+            paginationOf: t.content?.paginationOf || "of",
+            paginationPrevious: t.content?.paginationPrevious || "Previous",
+            paginationNext: t.content?.paginationNext || "Next",
+          }}
+          />
           </div>
         </div>
 
         {/* Middle: Content Editor */}
-        <div className="unified-editor-container" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: "400px" }}>
+        <div className="unified-editor-container" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
           {selectedItem ? (
             <>
-              {/* Language Selection Bar - Desktop */}
-              {!isMobile && (
+
+              {/* Mobile: Compact single-row toolbar (< 768px) */}
+              <div className="toolbar-mobile-only">
+                <MobileToolbar
+                  shopLocales={shopLocales}
+                  currentLanguage={state.currentLanguage}
+                  primaryLocale={primaryLocale}
+                  selectedItem={selectedItem}
+                  contentType={config.contentType}
+                  hasChanges={state.hasChanges}
+                  onLanguageChange={handlers.handleLanguageChange}
+                  enabledLanguages={state.enabledLanguages}
+                  isLoadingData={state.isLoadingData}
+                  onTranslateAll={state.currentLanguage === primaryLocale ? handlers.handleTranslateAll : handlers.handleTranslateAllForLocale}
+                  onClearAll={state.currentLanguage === primaryLocale ? handlers.handleClearAllClick : handlers.handleClearAllForLocaleClick}
+                  onSave={handlers.handleSave}
+                  onDiscard={handlers.handleDiscard}
+                  onToggleSendImageToAI={handlers.handleToggleSendImageToAI}
+                  sendImageToAI={state.sendImageToAI}
+                  images={state.images}
+                  featuredImage={state.featuredImage}
+                  fetcherState={fetcherState}
+                  fetcherFormData={fetcherFormData}
+                  highlightSaveButton={navigationGuard.highlightSaveButton}
+                  reloadResourceId={selectedItem.id}
+                  reloadResourceType={getResourceType(config.contentType)}
+                  reloadLocale={state.currentLanguage}
+                  onReloadComplete={editor.helpers.triggerDataRefresh}
+                  revalidator={revalidator}
+                  t={{
+                    primaryLocaleSuffix: t.content?.primaryLanguageSuffix || "Primary",
+                    translateAll: t.content?.translateAll || "🌍 Translate All",
+                    translating: t.content?.translating || "Translating...",
+                    clearAll: t.content?.clearAll || "Clear All",
+                    save: t.content?.save || "Save",
+                    discardChanges: t.content?.discardChanges || "Discard",
+                  }}
+                />
+              </div>
+
+              {/* Desktop: Language Bar + Operation Buttons (>= 769px) */}
+              <div className="toolbar-desktop-only">
+                {/* Language Selection Bar */}
                 <Card padding="400">
                   <UnifiedLanguageBar
                     shopLocales={shopLocales}
@@ -333,138 +354,106 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                     }}
                   />
                 </Card>
-              )}
 
-              {/* Mobile: Language and Operations Dropdowns Side-by-Side */}
-              {isMobile && (
-                <div className="mobile-dropdowns-container">
-                <UnifiedLanguageBarMobile
-                  shopLocales={shopLocales}
-                  currentLanguage={state.currentLanguage}
-                  primaryLocale={primaryLocale}
-                  selectedItem={selectedItem}
-                  contentType={config.contentType}
-                  hasChanges={state.hasChanges}
-                  onLanguageChange={handlers.handleLanguageChange}
-                  enabledLanguages={state.enabledLanguages}
-                  onToggleLanguage={handlers.handleToggleLanguage}
-                  isLoadingData={state.isLoadingData}
-                  t={{
-                    primaryLocaleSuffix: t.content?.primaryLanguageSuffix || "Primary",
-                    selectLanguage: t.content?.selectLanguage || "Select Language",
-                  }}
-                />
-                <UnifiedOperationsBarMobile
-                  isPrimaryLocale={state.currentLanguage === primaryLocale}
-                  hasChanges={state.hasChanges}
-                  fetcherState={fetcherState}
-                  fetcherFormData={fetcherFormData}
-                  resourceId={selectedItem.id}
-                  resourceType={getResourceType(config.contentType)}
-                  locale={state.currentLanguage}
-                  onTranslateAll={
-                    state.currentLanguage === primaryLocale
-                      ? handlers.handleTranslateAll
-                      : handlers.handleTranslateAllForLocale
-                  }
-                  onClearAll={
-                    state.currentLanguage === primaryLocale
-                      ? handlers.handleClearAllClick
-                      : handlers.handleClearAllForLocaleClick
-                  }
-                  onSave={handlers.handleSave}
-                  onDiscard={handlers.handleDiscard}
-                  onReloadComplete={editor.helpers.triggerDataRefresh}
-                  highlightSaveButton={navigationGuard.highlightSaveButton}
-                  t={{
-                    actions: t.content?.actions || "Actions",
-                    translateAll: t.content?.translateAll || "🌍 Translate All",
-                    translating: t.content?.translating || "Translating...",
-                    clearAll: t.content?.clearAll || "Clear All",
-                    saveChanges: t.content?.saveChanges || "Save Changes",
-                    discard: t.content?.discardChanges || "Discard",
-                  }}
-                />
-                </div>
-              )}
-
-              {/* Operation Buttons - Desktop */}
-              {!isMobile && (
+                {/* Operation Buttons */}
                 <div style={{ marginTop: "1rem" }}>
-                <Card padding="400" className="operation-buttons-card">
-                <InlineStack align="space-between" blockAlign="center">
-                  {/* Left: Translate All + Clear All Buttons */}
-                  <InlineStack gap="200" className="operation-buttons-container">
-                    {state.currentLanguage === primaryLocale ? (
-                      <>
-                        {/* Primary locale: Translate to ALL foreign languages */}
-                        <Button
-                          onClick={handlers.handleTranslateAll}
-                          loading={fetcherState !== "idle" && fetcherFormData?.get("action") === "translateAll"}
-                          disabled={fetcherState !== "idle" && fetcherFormData?.get("action") === "translateAll"}
-                          size="slim"
-                        >
-                          {fetcherState !== "idle" && fetcherFormData?.get("action") === "translateAll"
-                            ? (t.content?.translating || "Translating...")
-                            : (t.content?.translateAll || "🌍 Translate All")}
-                        </Button>
-                        <Button
-                          onClick={handlers.handleClearAllClick}
-                          size="slim"
-                          tone="critical"
-                        >
-                          🗑️ {t.content?.clearAll || "Clear All"}
-                        </Button>
-                      </>
-                    ) : (
-                      <>
-                        {/* Foreign locale: Translate ONLY this locale */}
-                        <Button
-                          onClick={handlers.handleTranslateAllForLocale}
-                          loading={fetcherState !== "idle" && fetcherFormData?.get("action") === "translateAllForLocale"}
-                          disabled={fetcherState !== "idle" && fetcherFormData?.get("action") === "translateAllForLocale"}
-                          size="slim"
-                        >
-                          {fetcherState !== "idle" && fetcherFormData?.get("action") === "translateAllForLocale"
-                            ? (t.content?.translating || "Translating...")
-                            : (t.content?.translateAll || "🌍 Translate All")}
-                        </Button>
-                        <Button
-                          onClick={handlers.handleClearAllForLocaleClick}
-                          size="slim"
-                          tone="critical"
-                        >
-                          🗑️ {t.content?.clearAll || "Clear All"}
-                        </Button>
-                      </>
-                    )}
-                  </InlineStack>
+                  <Card padding="400">
+                  <InlineStack align="space-between" blockAlign="center">
+                    {/* Left: Translate All + Clear All Buttons */}
+                    <InlineStack gap="200">
+                      {state.currentLanguage === primaryLocale ? (
+                        <>
+                          {/* Primary locale: Translate to ALL foreign languages */}
+                          <Button
+                            onClick={handlers.handleTranslateAll}
+                            loading={fetcherState !== "idle" && fetcherFormData?.get("action") === "translateAll"}
+                            disabled={fetcherState !== "idle" && fetcherFormData?.get("action") === "translateAll"}
+                            size="slim"
+                          >
+                            {fetcherState !== "idle" && fetcherFormData?.get("action") === "translateAll"
+                              ? (t.content?.translating || "Translating...")
+                              : (t.content?.translateAll || "🌍 Translate All")}
+                          </Button>
+                          <Button
+                            onClick={handlers.handleClearAllClick}
+                            size="slim"
+                            tone="critical"
+                          >
+                            🗑️ {t.content?.clearAll || "Clear All"}
+                          </Button>
+                          {/* Send Image to AI checkbox - only in main language for products/collections/blogs with images */}
+                          {(config.contentType === "products" || config.contentType === "collections" || config.contentType === "blogs") &&
+                           (state.images?.length > 0 || state.featuredImage?.url) && (
+                            <Checkbox
+                              label="📷 Send image to AI"
+                              checked={state.sendImageToAI}
+                              onChange={handlers.handleToggleSendImageToAI}
+                            />
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          {/* Foreign locale: Translate ONLY this locale */}
+                          <Button
+                            onClick={handlers.handleTranslateAllForLocale}
+                            loading={fetcherState !== "idle" && fetcherFormData?.get("action") === "translateAllForLocale"}
+                            disabled={fetcherState !== "idle" && fetcherFormData?.get("action") === "translateAllForLocale"}
+                            size="slim"
+                          >
+                            {fetcherState !== "idle" && fetcherFormData?.get("action") === "translateAllForLocale"
+                              ? (t.content?.translating || "Translating...")
+                              : (t.content?.translateAll || "🌍 Translate All")}
+                          </Button>
+                          <Button
+                            onClick={handlers.handleClearAllForLocaleClick}
+                            size="slim"
+                            tone="critical"
+                          >
+                            🗑️ {t.content?.clearAll || "Clear All"}
+                          </Button>
+                        </>
+                      )}
+                    </InlineStack>
 
-                  {/* Right: Save/Discard + Reload Buttons */}
-                  <InlineStack gap="200" blockAlign="center">
-                    <SaveDiscardButtons
-                      hasChanges={state.hasChanges}
-                      onSave={handlers.handleSave}
-                      onDiscard={handlers.handleDiscard}
-                      highlightSaveButton={navigationGuard.highlightSaveButton}
-                      saveText={t.content?.saveChanges || "Save Changes"}
-                      discardText={t.content?.discardChanges || "Discard"}
-                      action="updateContent"
-                      fetcherState={fetcherState}
-                      fetcherFormData={fetcherFormData}
-                    />
-                    <ReloadButton
-                      resourceId={selectedItem.id}
-                      resourceType={getResourceType(config.contentType)}
-                      locale={state.currentLanguage}
-                      onReloadComplete={editor.helpers.triggerDataRefresh}
-                      revalidator={revalidator}
-                    />
+                    {/* Right: Save/Discard + Reload Buttons - nowrap to stay together */}
+                    <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexShrink: 0, flexWrap: "nowrap" }}>
+                      <Button
+                        onClick={handlers.handleDiscard}
+                        disabled={!state.hasChanges || fetcherState !== "idle"}
+                        size="slim"
+                      >
+                        {t.content?.discardChanges || "Discard"}
+                      </Button>
+                      <div
+                        style={{
+                          animation: navigationGuard.highlightSaveButton ? "pulse 1.5s ease-in-out infinite" : "none",
+                          borderRadius: "8px",
+                        }}
+                      >
+                        <Button
+                          variant={state.hasChanges ? "primary" : undefined}
+                          onClick={handlers.handleSave}
+                          disabled={!state.hasChanges}
+                          loading={fetcherState !== "idle" && fetcherFormData?.get("action") === "updateContent"}
+                          size="slim"
+                        >
+                          {t.content?.save || "Save"}
+                        </Button>
+                      </div>
+                      <ReloadButton
+                        resourceId={selectedItem.id}
+                        resourceType={getResourceType(config.contentType)}
+                        locale={state.currentLanguage}
+                        onReloadComplete={editor.helpers.triggerDataRefresh}
+                        onReloadSuccess={() => showInfoBox(t.content?.reloadSuccess || "Data reloaded successfully!", "success", t.content?.success || "Success!")}
+                        revalidator={revalidator}
+                      />
+                      <HelpTooltip helpKey="mobileToolbarActions" position="below" />
+                    </div>
                   </InlineStack>
-                </InlineStack>
-              </Card>
+                </Card>
+                </div>
               </div>
-              )}
 
               {/* Scrollable Content Area */}
               <div className="field-editor-area" style={{ flex: 1, overflowY: "auto", marginTop: "1rem" }}>
@@ -581,7 +570,6 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         primaryLocale={primaryLocale}
                         selectedItem={selectedItem}
                         t={t}
-                        plan={plan}
                         state={state}
                         handlers={handlers}
                         fetcherState={fetcherState}
@@ -716,7 +704,7 @@ interface FieldRendererProps {
   t: any;
 }
 
-function FieldRenderer(props: FieldRendererProps & { plan?: string; state?: any; handlers?: any; fetcherState?: string; fetcherFormData?: FormData }) {
+function FieldRenderer(props: FieldRendererProps & { state?: any; handlers?: any; fetcherState?: string; fetcherFormData?: FormData }) {
   const {
     field,
     value,
@@ -744,7 +732,6 @@ function FieldRenderer(props: FieldRendererProps & { plan?: string; state?: any;
     primaryLocale,
     selectedItem,
     t,
-    plan,
     state,
     handlers,
     fetcherState,
@@ -756,7 +743,8 @@ function FieldRenderer(props: FieldRendererProps & { plan?: string; state?: any;
     "generateAltText",
     "translateAltText",
     "translateAltTextToAllLocales",
-    "generateAllAltTexts",
+    "translateAllAltTextsToAllLocales",
+    "translateAllAltTextsForLocale",
   ];
 
   // Check if an image-related AI action is currently running (used for ImageGalleryField)
@@ -834,23 +822,25 @@ function FieldRenderer(props: FieldRendererProps & { plan?: string; state?: any;
         currentLanguage={currentLanguage}
         primaryLocale={primaryLocale}
         isPrimaryLocale={isPrimaryLocale}
-        isFreePlan={plan === 'free'}
+        isFreePlan={false} // TODO: Get from plan context
         altTexts={state.imageAltTexts}
         onAltTextChange={handlers.handleAltTextChange}
         onGenerateAltText={handlers.handleGenerateAltText}
         onGenerateAllAltTexts={handlers.handleGenerateAllAltTexts}
         onTranslateAltText={handlers.handleTranslateAltText}
         onTranslateAltTextToAllLocales={handlers.handleTranslateAltTextToAllLocales}
+        onTranslateAllAltTexts={handlers.handleTranslateAllAltTexts}
+        onTranslateAllAltTextsForLocale={handlers.handleTranslateAllAltTextsForLocale}
         altTextSuggestions={state.altTextSuggestions}
         onAcceptSuggestion={handlers.handleAcceptAltTextSuggestion}
         onAcceptAndTranslateSuggestion={handlers.handleAcceptAndTranslateAltText}
         onRejectSuggestion={handlers.handleRejectAltTextSuggestion}
         onClearAltText={(imageIndex) => handlers.handleAltTextChange(imageIndex, "")}
         isFieldLoading={(imageIndex) => {
-          // Check if generateAllAltTexts is running (affects all images)
-          if (state.loadingFieldKeys?.has("allAltTexts")) return true;
-          // Check if this specific image's alt-text is loading
-          return state.loadingFieldKeys?.has(`altText_${imageIndex}`) || false;
+          const isBulkTranslating = state?.loadingFieldKeys?.has("allAltTextsTranslate") ?? false;
+          const isBulkGenerating = state?.loadingFieldKeys?.has("allAltTextsGenerate") ?? false;
+          if (imageIndex === -1) return isImageAIActionRunning || isBulkTranslating || isBulkGenerating;
+          return isImageAIActionRunning || isBulkTranslating || isBulkGenerating || (state?.loadingFieldKeys?.has(`altText_${imageIndex}`) ?? false);
         }}
         t={{
           image: t.products?.image || "Image",
@@ -858,6 +848,7 @@ function FieldRenderer(props: FieldRendererProps & { plan?: string; state?: any;
           altTextForImage: t.products?.altTextForImage || "Alt-text for image",
           altTextPlaceholder: t.products?.altTextPlaceholder || "Describe the image...",
           generateAllAltTexts: t.products?.generateAllAltTexts || "Generate all alt-texts",
+          translateAllAltTexts: t.products?.translateAllAltTexts || "Translate all alt-texts",
           onlyFeaturedImageAvailable: t.products?.onlyFeaturedImageAvailable || "Only the featured image is available in the free plan.",
           additionalImagesLocked: t.products?.additionalImagesLocked || "Additional images are locked",
           availableInBasicPlan: t.products?.availableInBasicPlan || "Available in Basic plan and above",
@@ -899,7 +890,6 @@ function FieldRenderer(props: FieldRendererProps & { plan?: string; state?: any;
         isDataLoading={isDataLoading}
         sourceTextAvailable={sourceTextAvailable}
         disableGeneration={disableGeneration}
-        isFallbackValue={isFallbackValue}
         onGenerateAI={field.supportsAI !== false && isPrimaryLocale ? onGenerateAI : undefined}
         onFormatAI={field.supportsFormatting !== false && isPrimaryLocale ? onFormatAI : undefined}
         onTranslate={field.supportsTranslation !== false ? onTranslate : undefined}
@@ -952,6 +942,7 @@ function getSourceText(item: any, fieldKey: string, primaryLocale: string): stri
     title: item.title || "",
     description: item.descriptionHtml || item.body || "",
     handle: item.handle || "",
+    productType: item.productType || "",
     seoTitle: item.seo?.title || "",
     metaDescription: item.seo?.description || "",
     body: item.body || "",

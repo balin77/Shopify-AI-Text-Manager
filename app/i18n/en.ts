@@ -53,6 +53,7 @@ export const en: Translation = {
     changesSavedMessage: "Changes saved successfully!",
     translateFromPrimary: "Translate from primary language",
     generateAllAltTexts: "Generate alt texts for all images with AI",
+    translateAllAltTexts: "Translate all alt-texts",
     altTextForImage: "Alt text for image",
     altTextPlaceholder: "Enter alt text for this image...",
     image: "Image",
@@ -150,6 +151,7 @@ export const en: Translation = {
     saveChanges: "Save changes",
     discardChanges: "Discard",
     changesSaved: "Changes saved successfully!",
+    reloadSuccess: "Data reloaded from Shopify successfully!",
     error: "Error",
     success: "Success!",
     aiSuggestion: "AI suggestion:",
@@ -438,6 +440,19 @@ export const en: Translation = {
     noTargetLanguagesSelected: "No target languages selected",
     noTargetLanguagesEnabled: "No target languages enabled",
     fieldTranslatedToLanguages: "{fieldType} has been translated to {count} language(s)",
+    // Tooltip for locale buttons
+    missingContent: "Missing content:",
+    missingTranslations: "Missing translations:",
+    fieldLabels: {
+      title: "Title",
+      description: "Description",
+      content: "Content",
+      handle: "URL slug",
+      productType: "Product type",
+      summary: "Summary",
+      seoTitle: "SEO title",
+      metaDescription: "Meta description",
+    },
   },
 
   // Tasks Page
@@ -861,6 +876,23 @@ export const en: Translation = {
       title: "Theme Translations",
       summary: "Number of translatable theme text elements.",
       details: "Theme texts are buttons, labels, and messages in your Shopify theme. Pro+ plans allow translation of these elements.",
+    },
+
+    // Mobile Toolbar Actions
+    mobileToolbarActions: {
+      title: "Action Bar",
+      summary: "Here you'll find all important actions for saving, translating, and managing your content.",
+      details: "The behavior of \"Translate All\" and \"Clear All\" depends on the currently selected language tab. In the primary language, they affect all foreign languages at once. In a foreign language, they only affect that specific language.",
+      tips: [
+        "Save: Saves all changes for the current language",
+        "Reload: Reloads the current data from Shopify",
+        "Translate All (primary language): Translates all fields into all foreign languages",
+        "Translate All (foreign language): Translates all fields only into the current language",
+        "Clear All (primary language): Deletes all entries in the primary language and all foreign languages",
+        "Clear All (foreign language): Deletes only the translations for the current language",
+        "Discard: Resets all unsaved changes",
+        "Send image to AI: When enabled, sends the currently selected/featured image to vision-capable AI models (Claude, GPT-4o, Gemini) for better content generation. May increase API costs. Note: Some AI providers (HuggingFace, DeepSeek) may not be able to process images.",
+      ],
     },
 
     // Language Bar

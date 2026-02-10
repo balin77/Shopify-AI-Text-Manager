@@ -53,6 +53,7 @@ export const es: Translation = {
     changesSavedMessage: "¡Cambios guardados correctamente!",
     translateFromPrimary: "Traducir desde el idioma principal",
     generateAllAltTexts: "Generar textos alt para todas las imágenes con IA",
+    translateAllAltTexts: "Traducir todos los textos alt",
     altTextForImage: "Texto alt para imagen",
     altTextPlaceholder: "Introduce el texto alt para esta imagen...",
     image: "Imagen",
@@ -150,6 +151,7 @@ export const es: Translation = {
     saveChanges: "Guardar cambios",
     discardChanges: "Descartar",
     changesSaved: "¡Cambios guardados correctamente!",
+    reloadSuccess: "¡Datos recargados de Shopify correctamente!",
     error: "Error",
     success: "¡Éxito!",
     aiSuggestion: "Sugerencia de IA:",
@@ -438,6 +440,19 @@ export const es: Translation = {
     noTargetLanguagesSelected: "No hay idiomas de destino seleccionados",
     noTargetLanguagesEnabled: "No hay idiomas de destino habilitados",
     fieldTranslatedToLanguages: "{fieldType} ha sido traducido a {count} idioma(s)",
+    // Tooltip for locale buttons
+    missingContent: "Contenido faltante:",
+    missingTranslations: "Traducciones faltantes:",
+    fieldLabels: {
+      title: "Título",
+      description: "Descripción",
+      content: "Contenido",
+      handle: "URL slug",
+      productType: "Tipo de producto",
+      summary: "Resumen",
+      seoTitle: "Título SEO",
+      metaDescription: "Meta descripción",
+    },
   },
 
   // Tasks Page
@@ -861,6 +876,23 @@ export const es: Translation = {
       title: "Traducciones del tema",
       summary: "Número de elementos de texto del tema traducibles.",
       details: "Los textos del tema son botones, etiquetas y mensajes en tu tema de Shopify. Los planes Pro+ permiten la traducción de estos elementos.",
+    },
+
+    // Mobile Toolbar Actions
+    mobileToolbarActions: {
+      title: "Barra de acciones",
+      summary: "Aquí encontrarás todas las acciones importantes para guardar, traducir y gestionar tu contenido.",
+      details: "El comportamiento de \"Traducir todo\" y \"Limpiar todo\" depende del idioma seleccionado. En el idioma principal, afectan a todos los idiomas extranjeros a la vez. En un idioma extranjero, solo afectan a ese idioma específico.",
+      tips: [
+        "Guardar: Guarda todos los cambios del idioma actual",
+        "Recargar: Recarga los datos actuales desde Shopify",
+        "Traducir todo (idioma principal): Traduce todos los campos a todos los idiomas extranjeros",
+        "Traducir todo (idioma extranjero): Traduce todos los campos solo al idioma actual",
+        "Limpiar todo (idioma principal): Elimina todas las entradas en el idioma principal y todos los idiomas extranjeros",
+        "Limpiar todo (idioma extranjero): Elimina solo las traducciones del idioma actual",
+        "Descartar: Restablece todos los cambios no guardados",
+        "Enviar imagen a IA: Cuando está habilitado, envía la imagen seleccionada/destacada actual a modelos de IA con capacidad de visión (Claude, GPT-4o, Gemini) para una mejor generación de contenido. Puede aumentar los costos de API. Nota: Algunos proveedores de IA (HuggingFace, DeepSeek) pueden no ser capaces de procesar imágenes.",
+      ],
     },
 
     // Language Bar

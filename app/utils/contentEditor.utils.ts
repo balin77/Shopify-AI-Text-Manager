@@ -10,6 +10,7 @@ import {
   CONTENT_TYPE_DESCRIPTION_KEY,
   UI_FIELD_TO_TRANSLATION_KEY,
   FIELD_CONFIGS,
+  FIELD_TO_LABEL_KEY,
 } from "~/constants/shopifyFields";
 import { TIMING } from "~/constants/timing";
 
@@ -278,9 +279,14 @@ export function useChangeTracking(
     productType?: string;
     summary?: string;
   },
-  contentType: ContentType
+  contentType: ContentType,
+  fallbackFields?: Set<string>
 ) {
   const [hasChanges, setHasChanges] = useState(false);
+
+  // Use ref for fallbackFields to avoid triggering useEffect on Set reference changes
+  const fallbackFieldsRef = useRef(fallbackFields);
+  fallbackFieldsRef.current = fallbackFields;
 
   // Cache original values to prevent recalculation on every selectedItem reference change
   const originalValuesRef = useRef<{
@@ -389,8 +395,9 @@ export function useChangeTracking(
       ? (editableFields.title || "") !== originals.title
       : false;
     const descChanged = currentDescValue !== originals.description;
-    const handleChanged = (editableFields.handle || "") !== originals.handle;
-    const seoTitleChanged = (editableFields.seoTitle || "") !== originals.seoTitle;
+    // Skip fallback fields - they show primary locale values and shouldn't count as changes
+    const handleChanged = !fallbackFieldsRef.current?.has('handle') && (editableFields.handle || "") !== originals.handle;
+    const seoTitleChanged = !fallbackFieldsRef.current?.has('seoTitle') && (editableFields.seoTitle || "") !== originals.seoTitle;
     const metaDescChanged = (editableFields.metaDescription || "") !== originals.metaDescription;
     const productTypeChanged = contentType === 'products'
       ? (editableFields.productType || "") !== originals.productType
@@ -599,6 +606,115 @@ export function hasLocaleMissingTranslations(
 }
 
 /**
+ * Get the list of missing primary content fields (returns field keys, not just boolean)
+ */
+export function getMissingPrimaryFields(
+  selectedItem: TranslatableItem | null,
+  contentType: ContentType
+): string[] {
+  if (!selectedItem) return [];
+
+  if (contentType === 'templates') {
+    const translatableContent = (selectedItem as any).translatableContent;
+    if (!translatableContent || !Array.isArray(translatableContent) || translatableContent.length === 0) {
+      return [];
+    }
+    return translatableContent
+      .filter((item: any) => item != null)
+      .filter((item: { key: string; value: string }) => isFieldEmpty(item.value))
+      .map((item: { key: string; value: string }) => item.key);
+  }
+
+  const requiredFields = FIELD_CONFIGS[contentType];
+  return requiredFields.filter(field => {
+    const value = getFieldValue(selectedItem, field);
+    return isFieldEmpty(value);
+  });
+}
+
+/**
+ * Get the list of missing translation fields for a specific locale (returns field keys, not just boolean)
+ */
+export function getMissingLocaleTranslationFields(
+  selectedItem: TranslatableItem | null,
+  locale: string,
+  primaryLocale: string,
+  contentType: ContentType
+): string[] {
+  if (!selectedItem || locale === primaryLocale) return [];
+
+  if (contentType === 'templates') {
+    const translatableContent = (selectedItem as any).translatableContent;
+    if (!translatableContent || !Array.isArray(translatableContent) || translatableContent.length === 0) {
+      return [];
+    }
+    const translations = selectedItem.translations || [];
+    return translatableContent
+      .filter((item: any) => item != null)
+      .filter((item: { key: string; value: string }) => {
+        if (isFieldEmpty(item.value)) return false;
+        const translation = translations.find(
+          (t: any) => t.key === item.key && t.locale === locale
+        );
+        return !translation || isFieldEmpty(translation.value);
+      })
+      .map((item: { key: string; value: string }) => item.key);
+  }
+
+  const requiredFields = getRequiredFieldsForContentType(contentType);
+  return requiredFields.filter(field => {
+    if (field === 'handle') return false;
+    if (!primaryHasFieldContent(selectedItem, field, contentType)) return false;
+    return !hasTranslationForField(selectedItem, field, locale);
+  });
+}
+
+/**
+ * Get tooltip text for a locale button listing missing fields.
+ * Returns null if nothing is missing (no tooltip needed).
+ *
+ * @param i18n - Translation strings from common.fieldLabels / common.missingContent / common.missingTranslations
+ */
+export function getLocaleButtonTooltip(
+  locale: ShopLocale,
+  selectedItem: TranslatableItem | null,
+  primaryLocale: string,
+  contentType: ContentType,
+  isLoadingData: boolean = false,
+  i18n?: {
+    missingContent: string;
+    missingTranslations: string;
+    fieldLabels: Record<string, string>;
+  }
+): string | null {
+  if (isLoadingData || !selectedItem) return null;
+
+  let missingFields: string[];
+  let prefix: string;
+
+  if (locale.primary) {
+    missingFields = getMissingPrimaryFields(selectedItem, contentType);
+    prefix = i18n?.missingContent ?? 'Missing content:';
+  } else {
+    missingFields = getMissingLocaleTranslationFields(
+      selectedItem, locale.locale, primaryLocale, contentType
+    );
+    prefix = i18n?.missingTranslations ?? 'Missing translations:';
+  }
+
+  if (missingFields.length === 0) return null;
+
+  const fieldLabels = i18n?.fieldLabels ?? {};
+  const labels = missingFields.map(key => {
+    const labelKey = FIELD_TO_LABEL_KEY[key];
+    return (labelKey && fieldLabels[labelKey]) || labelKey || key;
+  });
+  // Deduplicate (e.g. 'body' and 'body_html' both map to 'description')
+  const unique = [...new Set(labels)];
+  return `${prefix} ${unique.join(', ')}`;
+}
+
+/**
  * Check if any foreign locale has missing translations
  */
 export function hasMissingTranslations(
@@ -653,6 +769,12 @@ export function hasFieldMissingTranslations(
   });
 }
 
+// Module-level reference point for synchronizing all pulse animations across buttons.
+// A negative animation-delay calculated from this epoch ensures every button starts
+// at the correct phase of the shared pulse cycle, even when animations restart at
+// different times (e.g., after editing a field briefly removes the "missing" state).
+const PULSE_SYNC_EPOCH = Date.now();
+
 /**
  * Get button style for locale navigation
  * Shows pulsing border animation when translations are missing
@@ -667,22 +789,16 @@ export function getLocaleButtonStyle(
   const primaryContentMissing = locale.primary && hasPrimaryContentMissing(selectedItem, contentType);
   const foreignTranslationMissing = !locale.primary && hasLocaleMissingTranslations(selectedItem, locale.locale, primaryLocale, contentType);
 
-  if (primaryContentMissing) {
-    // Pulsing border animation (orange) when primary content is missing
-    // 1s delay to allow data loading, smooth fade-in start
-    return {
-      animation: `pulseFadeIn 500ms ease-out forwards, pulse ${TIMING.HIGHLIGHT_DURATION_MS}ms ease-in-out 1.5s infinite`,
-      animationDelay: "1s, 1.5s",
-      borderRadius: "8px",
-    };
-  }
+  if (primaryContentMissing || foreignTranslationMissing) {
+    const pulseDuration = TIMING.HIGHLIGHT_DURATION_MS;
+    const syncOffset = (Date.now() - PULSE_SYNC_EPOCH) % pulseDuration;
+    const isOrange = primaryContentMissing;
+    const fadeIn = isOrange ? 'pulseFadeIn' : 'pulseBlueFadeIn';
+    const pulse = isOrange ? 'pulse' : 'pulseBlue';
 
-  if (foreignTranslationMissing) {
-    // Pulsing border animation (blue) when translations are missing
-    // 1s delay to allow data loading, smooth fade-in start
     return {
-      animation: `pulseBlueFadeIn 500ms ease-out forwards, pulseBlue ${TIMING.HIGHLIGHT_DURATION_MS}ms ease-in-out 1.5s infinite`,
-      animationDelay: "1s, 1.5s",
+      animation: `${fadeIn} 500ms ease-out forwards, ${pulse} ${pulseDuration}ms ease-in-out infinite`,
+      animationDelay: `0s, -${syncOffset}ms`,
       borderRadius: "8px",
     };
   }
@@ -702,6 +818,12 @@ export function useLocaleButtonStyle(
   contentType: ContentType,
   isLoadingData: boolean = false
 ): React.CSSProperties {
+  // Track translations length separately so the memo recalculates when
+  // item.translations is mutated in-place (e.g. after Accept & Translate).
+  // Without this, useMemo sees the same selectedItem reference and returns
+  // a stale pulsing state even though translations were added.
+  const translationsLength = selectedItem?.translations?.length ?? 0;
+
   return useMemo(() => {
     // Don't show blinking animations while data is still loading
     if (isLoadingData) {
@@ -711,28 +833,25 @@ export function useLocaleButtonStyle(
     const primaryContentMissing = locale.primary && hasPrimaryContentMissing(selectedItem, contentType);
     const foreignTranslationMissing = !locale.primary && hasLocaleMissingTranslations(selectedItem, locale.locale, primaryLocale, contentType);
 
-    if (primaryContentMissing) {
-      // Pulsing border animation (orange) when primary content is missing
-      // 1s delay to allow data loading, smooth fade-in start
-      return {
-        animation: `pulseFadeIn 500ms ease-out forwards, pulse ${TIMING.HIGHLIGHT_DURATION_MS}ms ease-in-out 1.5s infinite`,
-        animationDelay: "1s, 1.5s",
-        borderRadius: "8px",
-      };
-    }
+    if (primaryContentMissing || foreignTranslationMissing) {
+      // Synchronize all pulse animations to a shared reference point (PULSE_SYNC_EPOCH).
+      // A negative delay starts the animation mid-cycle at the correct phase,
+      // so all buttons pulse in lockstep even when animations restart at different times.
+      const pulseDuration = TIMING.HIGHLIGHT_DURATION_MS;
+      const syncOffset = (Date.now() - PULSE_SYNC_EPOCH) % pulseDuration;
+      const isOrange = primaryContentMissing;
+      const fadeIn = isOrange ? 'pulseFadeIn' : 'pulseBlueFadeIn';
+      const pulse = isOrange ? 'pulse' : 'pulseBlue';
 
-    if (foreignTranslationMissing) {
-      // Pulsing border animation (blue) when translations are missing
-      // 1s delay to allow data loading, smooth fade-in start
       return {
-        animation: `pulseBlueFadeIn 500ms ease-out forwards, pulseBlue ${TIMING.HIGHLIGHT_DURATION_MS}ms ease-in-out 1.5s infinite`,
-        animationDelay: "1s, 1.5s",
+        animation: `${fadeIn} 500ms ease-out forwards, ${pulse} ${pulseDuration}ms ease-in-out infinite`,
+        animationDelay: `0s, -${syncOffset}ms`,
         borderRadius: "8px",
       };
     }
 
     return {};
-  }, [locale, selectedItem, primaryLocale, contentType, isLoadingData]);
+  }, [locale, selectedItem, primaryLocale, contentType, isLoadingData, translationsLength]);
 }
 
 /**

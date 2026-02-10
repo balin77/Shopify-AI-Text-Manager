@@ -5,6 +5,8 @@
  * to end users while maintaining detailed server-side logging.
  */
 
+import { logger } from '~/utils/logger.server';
+
 /**
  * Generic error messages for different error types
  */
@@ -56,7 +58,7 @@ export class SafeError extends Error {
 export function logError(error: Error | SafeError, context?: Record<string, any>) {
   const timestamp = new Date().toISOString();
 
-  console.error(`[ERROR] ${timestamp}`, {
+  logger.error(`[ERROR] ${timestamp}`, {
     name: error.name,
     message: error.message,
     stack: error.stack,
@@ -105,7 +107,7 @@ export function toSafeErrorResponse(error: unknown, context?: Record<string, any
   }
 
   // Handle unknown error types
-  console.error('[ERROR] Unknown error type:', error, context);
+  logger.error('[ERROR] Unknown error type', { error, context });
   return {
     message: SAFE_ERROR_MESSAGES.unknown,
     type: 'unknown',

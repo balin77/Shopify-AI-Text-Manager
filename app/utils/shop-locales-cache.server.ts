@@ -5,6 +5,8 @@
  * Shop locales don't change frequently, so caching them improves TTFB.
  */
 
+import { logger } from '~/utils/logger.server';
+
 interface ShopLocale {
   locale: string;
   name: string;
@@ -34,11 +36,11 @@ export async function getCachedShopLocales(
   const now = Date.now();
 
   if (cached && (now - cached.timestamp) < CACHE_TTL_MS) {
-    console.log(`[ShopLocalesCache] Cache HIT for shop: ${shop} (age: ${Math.round((now - cached.timestamp) / 1000)}s)`);
+    logger.debug(`[ShopLocalesCache] Cache HIT for shop: ${shop} (age: ${Math.round((now - cached.timestamp) / 1000)}s)`);
     return cached.locales;
   }
 
-  console.log(`[ShopLocalesCache] Cache MISS for shop: ${shop} - fetching from Shopify`);
+  logger.debug(`[ShopLocalesCache] Cache MISS for shop: ${shop} - fetching from Shopify`);
 
   // Fetch fresh data from Shopify
   try {
@@ -62,14 +64,14 @@ export async function getCachedShopLocales(
       timestamp: now,
     });
 
-    console.log(`[ShopLocalesCache] Cached ${locales.length} locales for shop: ${shop}`);
+    logger.info(`[ShopLocalesCache] Cached ${locales.length} locales for shop: ${shop}`);
     return locales;
   } catch (error) {
-    console.error(`[ShopLocalesCache] Error fetching locales for shop: ${shop}`, error);
+    logger.error(`[ShopLocalesCache] Error fetching locales for shop: ${shop}`, { error });
 
     // If we have stale cache, return it as fallback
     if (cached) {
-      console.log(`[ShopLocalesCache] Returning stale cache as fallback`);
+      logger.info('[ShopLocalesCache] Returning stale cache as fallback');
       return cached.locales;
     }
 
@@ -83,7 +85,7 @@ export async function getCachedShopLocales(
  */
 export function clearShopLocalesCache(shop: string): void {
   SHOP_LOCALES_CACHE.delete(shop);
-  console.log(`[ShopLocalesCache] Cache cleared for shop: ${shop}`);
+  logger.debug(`[ShopLocalesCache] Cache cleared for shop: ${shop}`);
 }
 
 /**
@@ -92,7 +94,7 @@ export function clearShopLocalesCache(shop: string): void {
 export function clearAllShopLocalesCache(): void {
   const size = SHOP_LOCALES_CACHE.size;
   SHOP_LOCALES_CACHE.clear();
-  console.log(`[ShopLocalesCache] All cache cleared (${size} entries)`);
+  logger.debug(`[ShopLocalesCache] All cache cleared (${size} entries)`);
 }
 
 /**

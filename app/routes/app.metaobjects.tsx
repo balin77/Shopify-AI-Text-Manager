@@ -22,6 +22,7 @@ import { useI18n } from "../contexts/I18nContext";
 import { useNavigationHeight } from "../contexts/NavigationHeightContext";
 import { ContentService } from "../services/content.service";
 import { CONTENT_MAX_HEIGHT } from "../constants/layout";
+import { logger } from "~/utils/logger.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
@@ -56,7 +57,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       error: null
     });
   } catch (error: any) {
-    console.error("[METAOBJECTS-LOADER] Error:", error);
+    logger.error("[METAOBJECTS-LOADER] Error", { error: error instanceof Error ? error.message : String(error) });
     return json({
       metaobjects: [],
       shop: session.shop,

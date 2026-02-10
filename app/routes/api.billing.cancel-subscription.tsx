@@ -12,6 +12,7 @@ import type { ActionFunctionArgs } from '@remix-run/node';
 import { json } from '@remix-run/node';
 import { authenticate } from '~/shopify.server';
 import { cancelSubscription, getCurrentSubscription, syncSubscriptionToDatabase } from '~/services/billing.server';
+import { logger } from '~/utils/logger.server';
 
 const MAX_DB_RETRIES = 3;
 const RETRY_DELAY_MS = 500;
@@ -62,7 +63,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         break;
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
-        console.error(`[Billing] DB update attempt ${attempt}/${MAX_DB_RETRIES} failed:`, lastError.message);
+        logger.error(`[Billing] DB update attempt ${attempt}/${MAX_DB_RETRIES} failed`, { error: lastError.message });
 
         if (attempt < MAX_DB_RETRIES) {
           await sleep(RETRY_DELAY_MS * attempt); // Exponential backoff
@@ -72,7 +73,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     if (!dbUpdateSuccess) {
       // Critical: Shopify subscription cancelled but DB not updated
-      console.error('[Billing] CRITICAL: Shopify subscription cancelled but DB update failed after all retries');
+      logger.error('[Billing] CRITICAL: Shopify subscription cancelled but DB update failed after all retries');
       return json(
         {
           error: 'Subscription cancelled but database update failed. Please contact support.',
@@ -85,7 +86,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     return json({ success: true, message: 'Subscription cancelled successfully' });
   } catch (error) {
-    console.error('Error cancelling subscription:', error);
+    logger.error('Error cancelling subscription', { error: error instanceof Error ? error.message : String(error) });
     return json(
       { error: error instanceof Error ? error.message : 'Failed to cancel subscription' },
       { status: 500 }

@@ -1,0 +1,22 @@
+/* SaveDiscardButtons responsive styles */
+.save-discard-buttons-container {
+  /* Use flexWrap from InlineStack, don't override with CSS */
+}
+
+/* Optional: Add slim button styling if needed */
+.save-discard-buttons-container.slim-buttons .Polaris-Button {
+  min-height: 32px;
+  padding: 0.5rem 1rem;
+}
+
+/* Ensure buttons are properly sized on mobile */
+@media (max-width: 768px) {
+  .save-discard-buttons-container {
+    width: 100%;
+  }
+
+  .save-discard-buttons-container .Polaris-Button {
+    flex: 1 1 auto;
+    min-width: fit-content;
+  }
+}

@@ -30,21 +30,26 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     logger.debug("[SYNC-MISSING] Shop and plan details", { context: "SyncMissing", shop: session.shop, plan, maxProducts: planLimits.maxProducts });
 
-    // Get existing products from database
+    // Get existing products from database (include productType to detect NULL entries)
     const existingProducts = await db.product.findMany({
       where: { shop: session.shop },
-      select: { id: true },
+      select: { id: true, productType: true },
     });
     const existingIds = new Set(existingProducts.map(p => p.id));
+    const productsWithNullType = new Set(
+      existingProducts.filter(p => p.productType === null).map(p => p.id)
+    );
 
-    logger.debug("[SYNC-MISSING] Found existing products in database", { context: "SyncMissing", count: existingProducts.length });
+    logger.debug("[SYNC-MISSING] Found existing products in database", { context: "SyncMissing", count: existingProducts.length, nullProductType: productsWithNullType.size });
 
-    // Check if we need to sync more products
-    if (existingProducts.length >= planLimits.maxProducts) {
-      logger.debug("[SYNC-MISSING] Already at plan limit, no sync needed", { context: "SyncMissing" });
+    // Check if we need to sync more products (but always allow repair of NULL productTypes)
+    const atPlanLimit = existingProducts.length >= planLimits.maxProducts;
+    if (atPlanLimit && productsWithNullType.size === 0) {
+      logger.debug("[SYNC-MISSING] Already at plan limit and no repairs needed", { context: "SyncMissing" });
       return json({
         success: true,
         synced: 0,
+        repaired: 0,
         total: existingProducts.length,
         message: "Already at plan limit",
       });
@@ -101,20 +106,42 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     logger.debug("[SYNC-MISSING] Fetched products from Shopify", { context: "SyncMissing", count: shopifyProducts.length });
 
-    // Filter to only products we don't have
+    // Filter to products we don't have OR existing products with NULL productType
     const missingProducts = shopifyProducts.filter((p: any) => !existingIds.has(p.id));
+    const productsToRepair = shopifyProducts.filter((p: any) =>
+      productsWithNullType.has(p.id) && p.productType
+    );
 
-    if (missingProducts.length === 0) {
-      logger.debug("[SYNC-MISSING] No missing products to sync", { context: "SyncMissing" });
+    if (missingProducts.length === 0 && productsToRepair.length === 0) {
+      logger.debug("[SYNC-MISSING] No missing products to sync and no NULL productTypes to repair", { context: "SyncMissing" });
       return json({
         success: true,
         synced: 0,
+        repaired: 0,
         total: existingProducts.length,
         message: "All products already synced",
       });
     }
 
-    logger.debug("[SYNC-MISSING] Saving new products to database", { context: "SyncMissing", count: missingProducts.length });
+    logger.debug("[SYNC-MISSING] Products to process", { context: "SyncMissing", missing: missingProducts.length, toRepair: productsToRepair.length });
+
+    // Repair existing products with NULL productType (fast: only update productType)
+    let repaired = 0;
+    for (const product of productsToRepair) {
+      try {
+        await db.product.update({
+          where: { shop_id: { shop: session.shop, id: product.id } },
+          data: { productType: product.productType },
+        });
+        repaired++;
+      } catch (error: any) {
+        logger.error("[SYNC-MISSING] Failed to repair productType", { context: "SyncMissing", productId: product.id, error: error.message });
+      }
+    }
+
+    if (repaired > 0) {
+      logger.debug("[SYNC-MISSING] Repaired NULL productTypes", { context: "SyncMissing", repaired });
+    }
 
     // Save all products to database
     let synced = 0;
@@ -195,14 +222,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
     }
 
-    logger.debug("[SYNC-MISSING] FAST sync complete", { context: "SyncMissing", synced, failed });
+    logger.debug("[SYNC-MISSING] FAST sync complete", { context: "SyncMissing", synced, failed, repaired });
 
     return json({
       success: true,
       synced,
+      repaired,
       failed,
       total: existingProducts.length + synced,
-      message: `Synced ${synced} products`,
+      message: `Synced ${synced} products${repaired > 0 ? `, repaired ${repaired} productTypes` : ""}`,
     });
   } catch (error: any) {
     logger.error("[SYNC-MISSING] Error", { context: "SyncMissing", error: error.message, stack: error.stack });

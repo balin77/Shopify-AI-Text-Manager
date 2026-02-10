@@ -220,14 +220,10 @@
     flex: 1 1 auto;
   }
 
-  /* Operation buttons - stack vertically with gap */
+  /* Operation buttons - wrap inline on mobile */
   .operation-buttons-card .Polaris-InlineStack {
-    flex-direction: column !important;
+    flex-wrap: wrap;
     gap: 8px !important;
-  }
-
-  .operation-buttons-card button {
-    width: 100%;
   }
 
   /* Save/Discard buttons - add vertical spacing when wrapped */

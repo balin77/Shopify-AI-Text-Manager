@@ -1,9 +1,10 @@
 import { useRef } from "react";
-import { Button } from "@shopify/polaris";
-import { useLocaleButtonStyle } from "../utils/contentEditor.utils";
+import { Button, Tooltip } from "@shopify/polaris";
+import { useLocaleButtonStyle, getLocaleButtonTooltip } from "../utils/contentEditor.utils";
 import type { ShopLocale, TranslatableItem, ContentType } from "../types/contentEditor.types";
 import { ReloadButton } from "./ReloadButton";
 import { HelpTooltip } from "./HelpTooltip";
+import { useI18n } from "../contexts/I18nContext";
 
 interface LocaleNavigationButtonsProps {
   shopLocales: ShopLocale[];
@@ -32,6 +33,13 @@ export function LocaleNavigationButtons({
   onToggleLanguage,
   isLoadingData = false,
 }: LocaleNavigationButtonsProps) {
+  const { t: i18n } = useI18n();
+  const tooltipI18n = {
+    missingContent: i18n.common.missingContent,
+    missingTranslations: i18n.common.missingTranslations,
+    fieldLabels: i18n.common.fieldLabels,
+  };
+
   // Map content type to resource type for the API
   const resourceType = contentType === 'blogs' ? 'article' : contentType === 'pages' ? 'page' : contentType === 'policies' ? 'policy' : contentType;
 
@@ -50,11 +58,13 @@ export function LocaleNavigationButtons({
               isLoadingData
             );
 
+            const tooltip = getLocaleButtonTooltip(locale, selectedItem, primaryLocale, contentType, isLoadingData, tooltipI18n);
+
             const isEnabled = !enabledLanguages || enabledLanguages.includes(locale.locale);
             const isPrimary = locale.primary;
             const isCurrentLanguage = currentLanguage === locale.locale;
 
-            return (
+            const button = (
               <div key={locale.locale} style={buttonStyle}>
                 <Button
                   variant={isCurrentLanguage ? "primary" : undefined}
@@ -81,6 +91,11 @@ export function LocaleNavigationButtons({
                 </Button>
               </div>
             );
+
+            if (tooltip) {
+              return <Tooltip content={tooltip} dismissOnMouseOut preferredPosition="below">{button}</Tooltip>;
+            }
+            return button;
           };
 
           return <LocaleButton key={locale.locale} />;

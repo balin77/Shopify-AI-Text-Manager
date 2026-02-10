@@ -5,6 +5,8 @@
  * Used by the background sync scheduler to determine if a shop is still active.
  */
 
+import { logger } from '~/utils/logger.server';
+
 /**
  * Updates the lastActivityAt timestamp for all sessions of a given shop
  * @param shop - The shop domain (e.g., "example.myshopify.com")
@@ -21,7 +23,7 @@ export async function trackActivity(shop: string): Promise<void> {
 
     // Note: We don't log here to avoid spam - this runs on every request
   } catch (error) {
-    console.error('[ActivityTracker] Error updating activity:', error);
+    logger.error('[ActivityTracker] Error updating activity', { error });
     // Don't throw - activity tracking should never break the app
   }
 }
@@ -43,7 +45,7 @@ export async function getLastActivity(shop: string): Promise<Date | null> {
 
     return session?.lastActivityAt || null;
   } catch (error) {
-    console.error('[ActivityTracker] Error getting last activity:', error);
+    logger.error('[ActivityTracker] Error getting last activity', { error });
     return null;
   }
 }
@@ -65,7 +67,7 @@ export async function isShopActive(shop: string, minutesThreshold: number = 5): 
     const minutesSinceActivity = (Date.now() - lastActivity.getTime()) / 60000;
     return minutesSinceActivity < minutesThreshold;
   } catch (error) {
-    console.error('[ActivityTracker] Error checking if shop is active:', error);
+    logger.error('[ActivityTracker] Error checking if shop is active', { error });
     return false;
   }
 }

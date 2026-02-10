@@ -6,7 +6,7 @@
  */
 
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useFetcher } from "@remix-run/react";
+import { useLoaderData, useFetcher, useRevalidator } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
 import { ContentTypeNavigation } from "../components/ContentTypeNavigation";
@@ -19,6 +19,7 @@ import { useInfoBox } from "../contexts/InfoBoxContext";
 import { useEffect } from "react";
 import type { ContentItem } from "../types/content-editor.types";
 import { measurePageLoad } from "~/utils/performance.client";
+import { logger } from "~/utils/logger.server";
 
 // ============================================================================
 // LOADER - Load data from database
@@ -94,7 +95,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       aiSettings,
     });
   } catch (error: any) {
-    console.error("[BLOG-LOADER] Error:", error);
+    logger.error("[BLOG-LOADER] Error", { error: error instanceof Error ? error.message : String(error) });
     return json({
       articles: [],
       shop: session.shop,
@@ -140,6 +141,7 @@ export const action = async (args: ActionFunctionArgs) => {
 export default function BlogPage() {
   const { articles, shopLocales, primaryLocale, error, aiSettings } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
+  const revalidator = useRevalidator();
   const { t } = useI18n();
   const { showInfoBox } = useInfoBox();
 
@@ -185,6 +187,7 @@ export default function BlogPage() {
           hideItemListImages={false}
           hideItemListStatusBars={true}
           showItemListCategoryBadge={true}
+          revalidator={revalidator}
         />
       </div>
     </div>

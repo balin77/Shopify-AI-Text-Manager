@@ -220,20 +220,12 @@ export default function ContentHub() {
       return;
     }
 
-    console.log('[CONTENT-TEMPLATES] Loading values for:', {
-      currentLanguage,
-      primaryLocale,
-      hasContent: !!selectedItem.translatableContent,
-      contentLength: selectedItem.translatableContent?.length
-    });
-
     if (currentLanguage === primaryLocale) {
       // Load primary locale values
       const values: Record<string, string> = {};
       selectedItem.translatableContent?.forEach((item: any) => {
         values[item.key] = item.value || "";
       });
-      console.log('[CONTENT-TEMPLATES] Primary values loaded:', Object.keys(values).length);
       setEditableValues(values);
       setOriginalValues({ ...values });
     } else {
@@ -256,17 +248,14 @@ export default function ContentHub() {
   };
 
   const handleGenerateAI = (fieldKey: string) => {
-    console.log('[CONTENT-TEMPLATES] Generate AI for:', fieldKey);
     // TODO: Implement AI generation
   };
 
   const handleTranslate = (fieldKey: string) => {
-    console.log('[CONTENT-TEMPLATES] Translate field:', fieldKey);
     // TODO: Implement translation
   };
 
   const handleTranslateAll = () => {
-    console.log('[CONTENT-TEMPLATES] Translate all');
     // TODO: Implement translate all
   };
 

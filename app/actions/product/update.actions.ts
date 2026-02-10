@@ -97,7 +97,7 @@ export async function handleUpdateProduct(
           if (value !== undefined && value !== null) {
             await db.contentTranslation.upsert({
               where: {
-                resourceId_locale_key: {
+                resourceId_key_locale: {
                   resourceId: productId,
                   locale: params.locale,
                   key: translationKey,
@@ -122,7 +122,11 @@ export async function handleUpdateProduct(
         if (params.handle) updateData.handle = params.handle;
         if (params.seoTitle !== undefined) updateData.seoTitle = params.seoTitle;
         if (params.metaDescription !== undefined) updateData.seoDescription = params.metaDescription;
-        if (params.productType !== undefined) updateData.productType = params.productType;
+        if (params.productType) {
+          updateData.productType = params.productType;
+        } else if (changedFields.includes('productType')) {
+          updateData.productType = params.productType || null;
+        }
 
         await db.product.update({
           where: { id: productId },
@@ -262,18 +266,18 @@ async function updateImageAltTexts(
       });
       // Still save to DB if we have a dbImage
       if (dbImage) {
-        if (params.locale === params.primaryLocale) {
-          // When altText is empty string, save as null for consistency
-          const altTextToSave = altText === "" ? null : altText;
-          await db.productImage.update({
-            where: { id: dbImage.id },
-            data: {
-              altText: altTextToSave,
-              altTextModifiedAt: new Date(), // Prevent webhook sync from overwriting
-            },
-          });
-        } else {
-          try {
+        try {
+          if (params.locale === params.primaryLocale) {
+            // When altText is empty string, save as null for consistency
+            const altTextToSave = altText === "" ? null : altText;
+            await db.productImage.update({
+              where: { id: dbImage.id },
+              data: {
+                altText: altTextToSave,
+                altTextModifiedAt: new Date(), // Prevent webhook sync from overwriting
+              },
+            });
+          } else {
             const existing = await db.productImageAltTranslation.findUnique({
               where: { imageId_locale: { imageId: dbImage.id, locale: params.locale } },
             });
@@ -282,18 +286,18 @@ async function updateImageAltTexts(
             } else {
               await db.productImageAltTranslation.create({ data: { imageId: dbImage.id, locale: params.locale, altText } });
             }
-          } catch (dbError: any) {
-            // If the image was deleted by a concurrent sync, log and continue
-            if (dbError.code === 'P2003' || dbError.message?.includes('Foreign key constraint')) {
-              loggers.product("warn", "Image was deleted during translation save (concurrent sync)", {
-                index, locale: params.locale, error: dbError.message,
-              });
-            } else {
-              throw dbError;
-            }
+          }
+          loggers.product("debug", "Saved alt-text to DB only (no Shopify sync)", { index, locale: params.locale });
+        } catch (dbError: any) {
+          // If the image was deleted by a concurrent sync, log and continue
+          if (dbError.code === 'P2025' || dbError.code === 'P2003' || dbError.message?.includes('Foreign key constraint')) {
+            loggers.product("warn", "Image was deleted during alt-text save (concurrent sync)", {
+              index, locale: params.locale, error: dbError.message,
+            });
+          } else {
+            throw dbError;
           }
         }
-        loggers.product("debug", "Saved alt-text to DB only (no Shopify sync)", { index, locale: params.locale });
       }
       continue;
     }
@@ -431,30 +435,30 @@ async function updateImageAltTexts(
 
     // Save to Database (dbImage was already fetched above)
     if (dbImage) {
-      if (params.locale === params.primaryLocale) {
-        // Primary locale: Update ProductImage table
-        // When altText is empty string, save as null for consistency
-        const altTextToSave = altText === "" ? null : altText;
-        logger.debug('[ProductUpdate] SAVING ALT-TEXT TO DATABASE (PRIMARY) 🟢🟢🟢');
-        logger.debug(`[ProductUpdate] dbImage.id: ${dbImage.id}`);
-        logger.debug(`[ProductUpdate] altText to save: "${altTextToSave}" (original: "${altText}", isEmpty: ${altText === ""})`);
-        await db.productImage.update({
-          where: { id: dbImage.id },
-          data: {
-            altText: altTextToSave,
-            altTextModifiedAt: new Date(), // Prevent webhook sync from overwriting
-          },
-        });
-        // Verify the save worked
-        const savedImage = await db.productImage.findUnique({
-          where: { id: dbImage.id },
-          select: { altText: true },
-        });
-        logger.debug(`[ProductUpdate] ✅ Verified saved altText: "${savedImage?.altText}" (isNull: ${savedImage?.altText === null})`);
-        loggers.product("debug", "Updated primary alt-text in DB", { index, altTextSaved: altTextToSave });
-      } else {
-        // Translation: Update ProductImageAltTranslation table
-        try {
+      try {
+        if (params.locale === params.primaryLocale) {
+          // Primary locale: Update ProductImage table
+          // When altText is empty string, save as null for consistency
+          const altTextToSave = altText === "" ? null : altText;
+          logger.debug('[ProductUpdate] SAVING ALT-TEXT TO DATABASE (PRIMARY)');
+          logger.debug(`[ProductUpdate] dbImage.id: ${dbImage.id}`);
+          logger.debug(`[ProductUpdate] altText to save: "${altTextToSave}" (original: "${altText}", isEmpty: ${altText === ""})`);
+          await db.productImage.update({
+            where: { id: dbImage.id },
+            data: {
+              altText: altTextToSave,
+              altTextModifiedAt: new Date(), // Prevent webhook sync from overwriting
+            },
+          });
+          // Verify the save worked
+          const savedImage = await db.productImage.findUnique({
+            where: { id: dbImage.id },
+            select: { altText: true },
+          });
+          logger.debug(`[ProductUpdate] Verified saved altText: "${savedImage?.altText}" (isNull: ${savedImage?.altText === null})`);
+          loggers.product("debug", "Updated primary alt-text in DB", { index, altTextSaved: altTextToSave });
+        } else {
+          // Translation: Update ProductImageAltTranslation table
           const existing = await db.productImageAltTranslation.findUnique({
             where: {
               imageId_locale: {
@@ -482,15 +486,15 @@ async function updateImageAltTexts(
             index,
             locale: params.locale,
           });
-        } catch (dbError: any) {
-          // If the image was deleted by a concurrent sync, log and continue
-          if (dbError.code === 'P2003' || dbError.message?.includes('Foreign key constraint')) {
-            loggers.product("warn", "Image was deleted during translation save (concurrent sync)", {
-              index, locale: params.locale, error: dbError.message,
-            });
-          } else {
-            throw dbError;
-          }
+        }
+      } catch (dbError: any) {
+        // If the image was deleted by a concurrent sync, log and continue
+        if (dbError.code === 'P2025' || dbError.code === 'P2003' || dbError.message?.includes('Foreign key constraint')) {
+          loggers.product("warn", "Image was deleted during alt-text save (concurrent sync)", {
+            index, locale: params.locale, error: dbError.message,
+          });
+        } else {
+          throw dbError;
         }
       }
     }
@@ -532,9 +536,21 @@ async function updateTranslatedProduct(
   const translatableData = await translatableResponse.json();
   const translatableContent = translatableData.data?.translatableResource?.translatableContent || [];
 
+  // Log ALL entries from Shopify (including those without digest)
+  loggers.product("debug", "Raw translatableContent from Shopify", {
+    productId,
+    totalEntries: translatableContent.length,
+    entries: translatableContent.map((item: any) => ({
+      key: item.key,
+      hasDigest: !!item.digest,
+      hasValue: !!item.value,
+      valuePreview: item.value ? item.value.substring(0, 40) : "EMPTY",
+    })),
+  });
+
   // Create digest map for quick lookup
   const digestMap: Record<string, string> = {};
-  translatableContent.forEach((item: { key: string; digest: string }) => {
+  translatableContent.forEach((item: { key: string; digest: string; value: string }) => {
     if (item.digest) {
       digestMap[item.key] = item.digest;
     }
@@ -543,89 +559,68 @@ async function updateTranslatedProduct(
   loggers.product("debug", "Fetched translatable content digests", {
     productId,
     availableKeys: Object.keys(digestMap),
+    missingDigestKeys: translatableContent
+      .filter((item: any) => !item.digest)
+      .map((item: any) => item.key),
   });
 
   const translationsInput: Array<{ key: string; value: string; locale: string; translatableContentDigest: string }> = [];
   const translationsToDelete: string[] = [];
   const skippedFields: string[] = [];
 
+  // Helper to add translation - only adds if digest is available (required by Shopify)
+  const addTranslation = (key: string, value: string) => {
+    if (digestMap[key]) {
+      translationsInput.push({ key, value, locale: params.locale, translatableContentDigest: digestMap[key] });
+    } else {
+      skippedFields.push(key);
+    }
+  };
+
   // Only add non-empty translations that have a digest (meaning primary content exists)
   if (params.title && params.title.trim()) {
-    if (digestMap["title"]) {
-      translationsInput.push({ key: "title", value: params.title, locale: params.locale, translatableContentDigest: digestMap["title"] });
-    } else {
-      skippedFields.push("title");
-    }
+    addTranslation("title", params.title);
   } else if (params.title === "") {
     // Empty string means user wants to delete the translation
     translationsToDelete.push("title");
   }
 
   if (params.descriptionHtml && params.descriptionHtml.trim()) {
-    if (digestMap["body_html"]) {
-      translationsInput.push({ key: "body_html", value: params.descriptionHtml, locale: params.locale, translatableContentDigest: digestMap["body_html"] });
-    } else {
-      skippedFields.push("body_html");
-    }
+    addTranslation("body_html", params.descriptionHtml);
   } else if (params.descriptionHtml === "") {
     translationsToDelete.push("body_html");
   }
 
   if (params.handle && params.handle.trim()) {
-    if (digestMap["handle"]) {
-      translationsInput.push({ key: "handle", value: params.handle, locale: params.locale, translatableContentDigest: digestMap["handle"] });
-    } else {
-      skippedFields.push("handle");
-    }
+    addTranslation("handle", params.handle);
   } else if (params.handle === "") {
     translationsToDelete.push("handle");
   }
 
   if (params.seoTitle && params.seoTitle.trim()) {
-    if (digestMap["meta_title"]) {
-      translationsInput.push({ key: "meta_title", value: params.seoTitle, locale: params.locale, translatableContentDigest: digestMap["meta_title"] });
-    } else {
-      skippedFields.push("meta_title");
-    }
+    addTranslation("meta_title", params.seoTitle);
   } else if (params.seoTitle === "") {
     translationsToDelete.push("meta_title");
   }
 
   if (params.metaDescription && params.metaDescription.trim()) {
-    if (digestMap["meta_description"]) {
-      translationsInput.push({
-        key: "meta_description",
-        value: params.metaDescription,
-        locale: params.locale,
-        translatableContentDigest: digestMap["meta_description"],
-      });
-    } else {
-      skippedFields.push("meta_description");
-    }
+    addTranslation("meta_description", params.metaDescription);
   } else if (params.metaDescription === "") {
     translationsToDelete.push("meta_description");
   }
 
   if (params.productType && params.productType.trim()) {
-    if (digestMap["product_type"]) {
-      translationsInput.push({
-        key: "product_type",
-        value: params.productType,
-        locale: params.locale,
-        translatableContentDigest: digestMap["product_type"],
-      });
-    } else {
-      skippedFields.push("product_type");
-    }
+    addTranslation("product_type", params.productType);
   } else if (params.productType === "") {
     translationsToDelete.push("product_type");
   }
 
   if (skippedFields.length > 0) {
-    loggers.product("warn", "Skipped translations - no primary content exists", {
+    loggers.product("warn", "Skipped Shopify save for fields without digest (will save to DB only)", {
       productId,
       locale: params.locale,
       skippedFields,
+      availableDigestKeys: Object.keys(digestMap),
     });
   }
 
@@ -776,6 +771,7 @@ async function updateTranslatedProduct(
       productId,
       locale: params.locale,
       saved: translationsInput.length,
+      skipped: skippedFields.length,
       deleted: translationsToDelete.length,
     });
   }
@@ -809,6 +805,24 @@ async function updatePrimaryProduct(
     );
   }
 
+  // Build mutation input - only include productType if it has a value or was explicitly changed
+  // Sending productType: "" to Shopify CLEARS it, so we must omit it when unchanged
+  const mutationInput: any = {
+    id: productId,
+    title: params.title,
+    handle: params.handle,
+    descriptionHtml: params.descriptionHtml,
+    seo: {
+      title: params.seoTitle,
+      description: params.metaDescription,
+    },
+  };
+
+  // Only send productType if it has a value OR if user explicitly changed it
+  if (params.productType || changedFields.includes('productType')) {
+    mutationInput.productType = params.productType || "";
+  }
+
   const response = await gateway.graphql(
     `#graphql
       mutation updateProduct($input: ProductInput!) {
@@ -831,17 +845,7 @@ async function updatePrimaryProduct(
       }`,
     {
       variables: {
-        input: {
-          id: productId,
-          title: params.title,
-          handle: params.handle,
-          descriptionHtml: params.descriptionHtml,
-          productType: params.productType,
-          seo: {
-            title: params.seoTitle,
-            description: params.metaDescription,
-          },
-        },
+        input: mutationInput,
       },
     }
   );
@@ -870,7 +874,12 @@ async function updatePrimaryProduct(
     if (params.handle !== undefined) updateData.handle = params.handle || null;
     if (params.seoTitle !== undefined) updateData.seoTitle = params.seoTitle || null;
     if (params.metaDescription !== undefined) updateData.seoDescription = params.metaDescription || null;
-    if (params.productType !== undefined) updateData.productType = params.productType || null;
+    // Only update productType in DB if it has a value or was explicitly changed
+    if (params.productType) {
+      updateData.productType = params.productType;
+    } else if (changedFields.includes('productType')) {
+      updateData.productType = params.productType || null;
+    }
 
     // Always update lastSyncedAt
     updateData.lastSyncedAt = new Date();

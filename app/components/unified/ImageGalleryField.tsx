@@ -58,6 +58,12 @@ interface ImageGalleryFieldProps {
   /** Callback to generate AI alt-text for all images */
   onGenerateAllAltTexts?: () => void;
 
+  /** Callback to translate all alt-texts to all foreign locales (primary locale) */
+  onTranslateAllAltTexts?: () => void;
+
+  /** Callback to translate all alt-texts into the current foreign locale */
+  onTranslateAllAltTextsForLocale?: () => void;
+
   /** Callback to translate alt-text (for non-primary locale) */
   onTranslateAltText: (imageIndex: number) => void;
 
@@ -89,6 +95,7 @@ interface ImageGalleryFieldProps {
     altTextForImage?: string;
     altTextPlaceholder?: string;
     generateAllAltTexts?: string;
+    translateAllAltTexts?: string;
     onlyFeaturedImageAvailable?: string;
     additionalImagesLocked?: string;
     availableInBasicPlan?: string;
@@ -106,6 +113,8 @@ export function ImageGalleryField({
   onAltTextChange,
   onGenerateAltText,
   onGenerateAllAltTexts,
+  onTranslateAllAltTexts,
+  onTranslateAllAltTextsForLocale,
   onTranslateAltText,
   onTranslateAltTextToAllLocales,
   altTextSuggestions = {},
@@ -394,16 +403,36 @@ export function ImageGalleryField({
         ) : null}
       </div>
 
-      {/* Auto-generate all button - below images (only in primary locale) */}
-      {!isFreePlan && isPrimaryLocale && onGenerateAllAltTexts && images && images.length > 1 && (
-        <InlineStack align="start">
-          <Button
-            size="slim"
-            onClick={onGenerateAllAltTexts}
-            loading={isFieldLoading ? isFieldLoading(-1) : false}
-          >
-            ✨ {t.generateAllAltTexts || "Generate all alt-texts"}
-          </Button>
+      {/* Bulk action buttons - below images */}
+      {!isFreePlan && images && images.length > 0 && (
+        <InlineStack align="start" gap="200">
+          {isPrimaryLocale && onGenerateAllAltTexts && images.length > 1 && (
+            <Button
+              size="slim"
+              onClick={onGenerateAllAltTexts}
+              loading={isFieldLoading ? isFieldLoading(-1) : false}
+            >
+              ✨ {t.generateAllAltTexts || "Generate all alt-texts"}
+            </Button>
+          )}
+          {isPrimaryLocale && onTranslateAllAltTexts && (
+            <Button
+              size="slim"
+              onClick={onTranslateAllAltTexts}
+              loading={isFieldLoading ? isFieldLoading(-1) : false}
+            >
+              🌍 {t.translateAllAltTexts || "Translate all alt-texts"}
+            </Button>
+          )}
+          {!isPrimaryLocale && onTranslateAllAltTextsForLocale && (
+            <Button
+              size="slim"
+              onClick={onTranslateAllAltTextsForLocale}
+              loading={isFieldLoading ? isFieldLoading(-1) : false}
+            >
+              🌍 {t.translateAllAltTexts || "Translate all alt-texts"}
+            </Button>
+          )}
         </InlineStack>
       )}
 

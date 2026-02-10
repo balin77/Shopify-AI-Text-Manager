@@ -8,6 +8,7 @@ import type { LoaderFunctionArgs } from '@remix-run/node';
 import { json } from '@remix-run/node';
 import { authenticate } from '~/shopify.server';
 import { getCurrentSubscription, getPlanFromSubscription } from '~/services/billing.server';
+import { logger } from '~/utils/logger.server';
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
@@ -35,7 +36,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         : null,
     });
   } catch (error) {
-    console.error('Error checking billing status:', error);
+    logger.error('Error checking billing status', { error: error instanceof Error ? error.message : String(error) });
     return json(
       { error: error instanceof Error ? error.message : 'Failed to check billing status' },
       { status: 500 }
