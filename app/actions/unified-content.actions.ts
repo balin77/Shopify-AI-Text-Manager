@@ -844,6 +844,23 @@ Allowed formatting changes:
         updates[field.key] = value;
       });
 
+      // Handle featured image alt text for Collections and Blogs
+      if (contentConfig.resourceType === "Collection" || contentConfig.resourceType === "Article") {
+        const imageAltTextsStr = formData.get("imageAltTexts") as string;
+        if (imageAltTextsStr) {
+          try {
+            const imageAltTexts = JSON.parse(imageAltTextsStr);
+            // Featured image alt text is at index 0
+            if (imageAltTexts[0] !== undefined) {
+              updates.imageAltText = imageAltTexts[0];
+              logger.debug('[UnifiedContent] Setting featured image alt text:', imageAltTexts[0]);
+            }
+          } catch (e) {
+            logger.error('Failed to parse imageAltTexts:', e);
+          }
+        }
+      }
+
       // Get changed fields (for translation deletion when saving primary locale)
       const changedFieldsStr = formData.get("changedFields") as string;
       const changedFields = changedFieldsStr ? JSON.parse(changedFieldsStr) : undefined;

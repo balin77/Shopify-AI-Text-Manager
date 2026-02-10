@@ -75,10 +75,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       handle: a.handle,
       body: a.body,
       summary: a.summary,
-      image: a.imageUrl ? {
+      featuredImage: a.imageUrl ? {
         url: a.imageUrl,
         altText: a.imageAltText || '',
       } : undefined,
+      images: [], // Blogs only have featured image, no gallery
       seo: {
         title: a.seoTitle,
         description: a.seoDescription,

@@ -72,10 +72,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       title: c.title,
       handle: c.handle,
       descriptionHtml: c.descriptionHtml,
-      image: c.imageUrl ? {
+      featuredImage: c.imageUrl ? {
         url: c.imageUrl,
         altText: c.imageAltText || '',
       } : undefined,
+      images: [], // Collections only have featured image, no gallery
       seo: {
         title: c.seoTitle,
         description: c.seoDescription,

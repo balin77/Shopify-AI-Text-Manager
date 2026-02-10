@@ -139,6 +139,15 @@ export const COLLECTIONS_CONFIG: ContentEditorConfig = {
       aiInstructionsKey: "collectionDescription",
     },
     {
+      key: "images",
+      type: "image-gallery",
+      label: "Featured Image",
+      translationKey: "images",
+      supportsAI: true,
+      supportsTranslation: true,
+      aiInstructionsKey: "collectionAltText",
+    },
+    {
       key: "handle",
       type: "slug",
       label: "URL Slug",
@@ -218,6 +227,15 @@ export const BLOGS_CONFIG: ContentEditorConfig = {
       supportsFormatting: true,
       supportsTranslation: true,
       aiInstructionsKey: "blogSummary",
+    },
+    {
+      key: "images",
+      type: "image-gallery",
+      label: "Featured Image",
+      translationKey: "images",
+      supportsAI: true,
+      supportsTranslation: true,
+      aiInstructionsKey: "blogAltText",
     },
     {
       key: "handle",
