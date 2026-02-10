@@ -200,10 +200,10 @@ export function UnifiedItemSelectorCompact({
                         aria-current={isSelected ? "true" : undefined}
                       >
                         <InlineStack gap="200" blockAlign="center">
-                          {item.image?.url && (
+                          {item.featuredImage?.url && (
                             <Thumbnail
-                              source={item.image.url}
-                              alt={item.image.altText || item.title || ""}
+                              source={item.featuredImage.url}
+                              alt={item.featuredImage.altText || item.title || ""}
                               size="small"
                             />
                           )}

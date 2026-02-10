@@ -232,10 +232,10 @@ export function UnifiedItemListMobile({
                       >
                         <InlineStack gap="300" blockAlign="center">
                           {/* Thumbnail */}
-                          {item.image?.url && (
+                          {item.featuredImage?.url && (
                             <Thumbnail
-                              source={item.image.url}
-                              alt={item.image.altText || item.title || ""}
+                              source={item.featuredImage.url}
+                              alt={item.featuredImage.altText || item.title || ""}
                               size="small"
                             />
                           )}

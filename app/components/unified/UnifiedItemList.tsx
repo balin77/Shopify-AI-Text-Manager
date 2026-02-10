@@ -271,8 +271,8 @@ export function UnifiedItemList({
         {showThumbnails && (
           <div style={{ position: "relative", flexShrink: 0 }}>
             <Thumbnail
-              source={item.image?.url || ""}
-              alt={item.image?.altText || item.title || ""}
+              source={item.featuredImage?.url || ""}
+              alt={item.featuredImage?.altText || item.title || ""}
               size="small"
             />
             {/* Category Badge overlay on thumbnail */}
