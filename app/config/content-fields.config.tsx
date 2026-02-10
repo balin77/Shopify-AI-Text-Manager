@@ -117,6 +117,15 @@ export const COLLECTIONS_CONFIG: ContentEditorConfig = {
 
   fieldDefinitions: [
     {
+      key: "images",
+      type: "image-gallery",
+      label: "Featured Image",
+      translationKey: "images",
+      supportsAI: true,
+      supportsTranslation: true,
+      aiInstructionsKey: "collectionAltText",
+    },
+    {
       key: "title",
       type: "text",
       label: "Title",
@@ -137,15 +146,6 @@ export const COLLECTIONS_CONFIG: ContentEditorConfig = {
       supportsFormatting: true,
       supportsTranslation: true,
       aiInstructionsKey: "collectionDescription",
-    },
-    {
-      key: "images",
-      type: "image-gallery",
-      label: "Featured Image",
-      translationKey: "images",
-      supportsAI: true,
-      supportsTranslation: true,
-      aiInstructionsKey: "collectionAltText",
     },
     {
       key: "handle",
@@ -197,6 +197,15 @@ export const BLOGS_CONFIG: ContentEditorConfig = {
 
   fieldDefinitions: [
     {
+      key: "images",
+      type: "image-gallery",
+      label: "Featured Image",
+      translationKey: "images",
+      supportsAI: true,
+      supportsTranslation: true,
+      aiInstructionsKey: "blogAltText",
+    },
+    {
       key: "title",
       type: "text",
       label: "Title",
@@ -227,15 +236,6 @@ export const BLOGS_CONFIG: ContentEditorConfig = {
       supportsFormatting: true,
       supportsTranslation: true,
       aiInstructionsKey: "blogSummary",
-    },
-    {
-      key: "images",
-      type: "image-gallery",
-      label: "Featured Image",
-      translationKey: "images",
-      supportsAI: true,
-      supportsTranslation: true,
-      aiInstructionsKey: "blogAltText",
     },
     {
       key: "handle",
