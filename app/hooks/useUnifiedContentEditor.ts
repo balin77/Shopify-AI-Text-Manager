@@ -1853,6 +1853,18 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     const contextDescription = editableValues.description || editableValues.body || "";
     const mainLanguage = shopLocales.find((l: ShopLocale) => l.locale === primaryLocale)?.name || primaryLocale;
 
+    // Determine which image to send based on content type and sendImageToAI state
+    let imageUrl: string | undefined;
+    if (sendImageToAI) {
+      if (config.contentType === "products") {
+        // For products: use currently selected image or fallback to featured image
+        imageUrl = images[selectedImageIndex]?.url || featuredImage?.url;
+      } else if (config.contentType === "collections" || config.contentType === "blogs") {
+        // For collections/blogs: use featured image only
+        imageUrl = featuredImage?.url;
+      }
+    }
+
     submitAIAction(
       {
         action: "generateAIText",
@@ -1862,6 +1874,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         contextTitle,
         contextDescription,
         mainLanguage,
+        sendImageToAI: sendImageToAI.toString(),
+        ...(imageUrl && { imageUrl }),
       },
       fieldKey,
       (result) => {
@@ -1891,6 +1905,18 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     const contextDescription = editableValues.description || editableValues.body || "";
     const mainLanguage = shopLocales.find((l: ShopLocale) => l.locale === primaryLocale)?.name || primaryLocale;
 
+    // Determine which image to send based on content type and sendImageToAI state
+    let imageUrl: string | undefined;
+    if (sendImageToAI) {
+      if (config.contentType === "products") {
+        // For products: use currently selected image or fallback to featured image
+        imageUrl = images[selectedImageIndex]?.url || featuredImage?.url;
+      } else if (config.contentType === "collections" || config.contentType === "blogs") {
+        // For collections/blogs: use featured image only
+        imageUrl = featuredImage?.url;
+      }
+    }
+
     submitAIAction(
       {
         action: "formatAIText",
@@ -1900,6 +1926,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         contextTitle,
         contextDescription,
         mainLanguage,
+        sendImageToAI: sendImageToAI.toString(),
+        ...(imageUrl && { imageUrl }),
       },
       fieldKey,
       (result) => {
@@ -2538,7 +2566,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         imageIndex: String(imageIndex),
         imageUrl: image.url,
         productTitle,
-        mainLanguage
+        mainLanguage,
+        sendImageToAI: sendImageToAI.toString(),
       },
       `altText_${imageIndex}`,
       (result) => {
@@ -2567,7 +2596,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         productId: selectedItem.id,
         productTitle,
         mainLanguage,
-        imagesData: JSON.stringify(imagesData)
+        imagesData: JSON.stringify(imagesData),
+        sendImageToAI: sendImageToAI.toString(),
       },
       "allAltTextsGenerate",
       (result) => {

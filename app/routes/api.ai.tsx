@@ -906,6 +906,8 @@ Return only the formatted text, without explanations.`;
         const contextTitle = formData.get("contextTitle") as string || "";
         const contextDescription = formData.get("contextDescription") as string || "";
         const mainLanguage = formData.get("mainLanguage") as string || "German";
+        const sendImageToAI = formData.get("sendImageToAI") === "true";
+        const imageUrl = formData.get("imageUrl") as string | undefined;
 
         // Load AI instructions for format guidelines
         const genAiInstructions = await db.aIInstructions.findUnique({
@@ -1010,10 +1012,11 @@ Language: ${mainLanguage}`;
 
           // Use appropriate method based on field type
           let generatedContent: string;
+          const imageUrlToSend = sendImageToAI ? imageUrl : undefined;
           if (isGenLongContent) {
-            generatedContent = await aiService.generateProductDescription(contextTitle, prompt);
+            generatedContent = await aiService.generateProductDescription(contextTitle, prompt, imageUrlToSend);
           } else {
-            generatedContent = await aiService.generateProductTitle(prompt);
+            generatedContent = await aiService.generateProductTitle(prompt, imageUrlToSend);
           }
 
           // Sanitize slugs
@@ -1057,6 +1060,8 @@ Language: ${mainLanguage}`;
         const contextTitle = formData.get("contextTitle") as string || "";
         const contextDescription = formData.get("contextDescription") as string || "";
         const mainLanguage = formData.get("mainLanguage") as string || "German";
+        const sendImageToAI = formData.get("sendImageToAI") === "true";
+        const imageUrl = formData.get("imageUrl") as string | undefined;
 
         if (!currentValue) {
           return json({ success: false, error: "No content available to format" }, { status: 400 });
@@ -1206,10 +1211,11 @@ Do NOT:
 
           // Use appropriate method based on field type
           let formattedValue: string;
+          const imageUrlToSend = sendImageToAI ? imageUrl : undefined;
           if (isLongContent) {
-            formattedValue = await aiService.generateProductDescription(currentValue, prompt);
+            formattedValue = await aiService.generateProductDescription(currentValue, prompt, imageUrlToSend);
           } else {
-            formattedValue = await aiService.generateProductTitle(prompt);
+            formattedValue = await aiService.generateProductTitle(prompt, imageUrlToSend);
           }
 
           // Sanitize slugs
@@ -1252,6 +1258,7 @@ Do NOT:
         const imageUrl = formData.get("imageUrl") as string;
         const productTitle = formData.get("productTitle") as string;
         const mainLanguage = formData.get("mainLanguage") as string || "German";
+        const sendImageToAI = formData.get("sendImageToAI") === "true";
 
         if (!imageUrl) {
           return json({ success: false, error: "No image URL provided" }, { status: 400 });
@@ -1319,7 +1326,7 @@ Image URL: ${imageUrl}`;
 
           prompt += `\n\nReturn ONLY the alt text, without explanations.${mainLanguage ? ` Output the result in ${mainLanguage}.` : ''}`;
 
-          const altText = await aiService.generateImageAltText(imageUrl, productTitle, prompt);
+          const altText = await aiService.generateImageAltText(imageUrl, productTitle, prompt, sendImageToAI);
 
           // Update task to completed with full AI response
           await db.task.update({
@@ -1356,6 +1363,7 @@ Image URL: ${imageUrl}`;
         const productTitle = formData.get("productTitle") as string;
         const mainLanguage = formData.get("mainLanguage") as string || "German";
         const imagesDataJson = formData.get("imagesData") as string;
+        const sendImageToAI = formData.get("sendImageToAI") === "true";
 
         if (!imagesDataJson) {
           return json({ success: false, error: "No images data provided" }, { status: 400 });
@@ -1429,7 +1437,7 @@ Image URL: ${image.url}`;
 
               prompt += `\n\nReturn ONLY the alt text, without explanations.${mainLanguage ? ` Output the result in ${mainLanguage}.` : ''}`;
 
-              const altText = await bulkAiService.generateImageAltText(image.url, productTitle, prompt);
+              const altText = await bulkAiService.generateImageAltText(image.url, productTitle, prompt, sendImageToAI);
               generatedAltTexts[i] = altText;
 
               const progressPercent = Math.round(10 + ((i + 1) / totalImages) * 90);

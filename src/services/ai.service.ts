@@ -525,7 +525,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     return inputTokens + outputTokens;
   }
 
-  private async askAI(prompt: string): Promise<string> {
+  private async askAI(prompt: string, imageUrl?: string): Promise<string> {
     // Save prompt to database if taskId is provided
     if (this.taskId && this.shop) {
       await this.savePromptToTask(prompt);
@@ -535,7 +535,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
 
     // If no shop/taskId provided, execute directly (backward compatibility)
     if (!this.shop || !this.taskId) {
-      response = await this.executeAIRequest(prompt);
+      response = await this.executeAIRequest(prompt, imageUrl);
     } else {
       // Use queue for rate-limited execution
       const estimatedTokens = this.estimateTokens(prompt);
@@ -545,7 +545,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
         this.taskId,
         this.provider,
         estimatedTokens,
-        () => this.executeAIRequest(prompt)
+        () => this.executeAIRequest(prompt, imageUrl)
       );
     }
 
@@ -638,8 +638,9 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     }
   }
 
-  private async executeAIRequest(prompt: string): Promise<string> {
+  private async executeAIRequest(prompt: string, imageUrl?: string): Promise<string> {
     if (this.provider === 'huggingface' && this.huggingface) {
+      // HuggingFace: text-only (no vision support)
       const response = await this.huggingface.chatCompletion({
         model: 'Qwen/Qwen2.5-72B-Instruct',
         messages: [{ role: 'user', content: prompt }],
@@ -648,33 +649,107 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       });
       return response.choices[0].message.content || '';
     } else if (this.provider === 'gemini' && this.gemini) {
-      const result = await this.gemini.generateContent(prompt);
-      const response = await result.response;
-      return response.text();
+      // Gemini: supports vision with URL
+      if (imageUrl) {
+        try {
+          const result = await this.gemini.generateContent([
+            { text: prompt },
+            {
+              inlineData: {
+                mimeType: 'image/jpeg',
+                data: await this.fetchImageAsBase64(imageUrl),
+              },
+            },
+          ]);
+          const response = await result.response;
+          return response.text();
+        } catch (error) {
+          logger.warn('[AI-SERVICE] Gemini vision failed, falling back to text-only', { error });
+          // Fallback to text-only
+          const result = await this.gemini.generateContent(prompt);
+          const response = await result.response;
+          return response.text();
+        }
+      } else {
+        const result = await this.gemini.generateContent(prompt);
+        const response = await result.response;
+        return response.text();
+      }
     } else if (this.provider === 'claude' && this.anthropic) {
-      const message = await this.anthropic.messages.create({
-        model: 'claude-3-5-sonnet-20241022',
-        max_tokens: 2000,
-        messages: [{ role: 'user', content: prompt }],
-      });
-      const content = message.content[0];
-      return content.type === 'text' ? content.text : '';
+      // Claude: supports vision with URL
+      if (imageUrl) {
+        const message = await this.anthropic.messages.create({
+          model: 'claude-3-5-sonnet-20241022',
+          max_tokens: 2000,
+          messages: [{
+            role: 'user',
+            content: [
+              { type: 'image', source: { type: 'url', url: imageUrl } },
+              { type: 'text', text: prompt },
+            ],
+          }],
+        });
+        const content = message.content[0];
+        return content.type === 'text' ? content.text : '';
+      } else {
+        const message = await this.anthropic.messages.create({
+          model: 'claude-3-5-sonnet-20241022',
+          max_tokens: 2000,
+          messages: [{ role: 'user', content: prompt }],
+        });
+        const content = message.content[0];
+        return content.type === 'text' ? content.text : '';
+      }
     } else if (this.provider === 'openai' && this.openai) {
-      const completion = await this.openai.chat.completions.create({
-        model: 'gpt-4o-mini',
-        messages: [{ role: 'user', content: prompt }],
-        max_tokens: 2000,
-      });
-      return completion.choices[0].message.content || '';
+      // GPT-4o: supports vision with URL
+      if (imageUrl) {
+        const completion = await this.openai.chat.completions.create({
+          model: 'gpt-4o-mini',
+          messages: [{
+            role: 'user',
+            content: [
+              { type: 'image_url', image_url: { url: imageUrl } },
+              { type: 'text', text: prompt },
+            ],
+          }],
+          max_tokens: 2000,
+        });
+        return completion.choices[0].message.content || '';
+      } else {
+        const completion = await this.openai.chat.completions.create({
+          model: 'gpt-4o-mini',
+          messages: [{ role: 'user', content: prompt }],
+          max_tokens: 2000,
+        });
+        return completion.choices[0].message.content || '';
+      }
     } else if (this.provider === 'grok' && this.grok) {
-      const completion = await this.grok.chat.completions.create({
-        model: 'grok-beta',
-        messages: [{ role: 'user', content: prompt }],
-        max_tokens: 2000,
-        temperature: 0.7,
-      });
-      return completion.choices[0].message.content || '';
+      // Grok: supports vision with URL (similar to GPT-4o)
+      if (imageUrl) {
+        const completion = await this.grok.chat.completions.create({
+          model: 'grok-beta',
+          messages: [{
+            role: 'user',
+            content: [
+              { type: 'image_url', image_url: { url: imageUrl } },
+              { type: 'text', text: prompt },
+            ],
+          }],
+          max_tokens: 2000,
+          temperature: 0.7,
+        });
+        return completion.choices[0].message.content || '';
+      } else {
+        const completion = await this.grok.chat.completions.create({
+          model: 'grok-beta',
+          messages: [{ role: 'user', content: prompt }],
+          max_tokens: 2000,
+          temperature: 0.7,
+        });
+        return completion.choices[0].message.content || '';
+      }
     } else if (this.provider === 'deepseek' && this.deepseek) {
+      // DeepSeek: text-only (no vision support)
       const completion = await this.deepseek.chat.completions.create({
         model: 'deepseek-chat',
         messages: [{ role: 'user', content: prompt }],
@@ -687,19 +762,34 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     throw new Error('No AI provider configured');
   }
 
-  async generateProductTitle(prompt: string): Promise<string> {
-    // The prompt is already built by the caller with AI Instructions
-    // Just execute it directly without adding additional instructions
-    return await this.askAI(prompt);
+  /**
+   * Fetch image from URL and convert to base64 (for Gemini)
+   */
+  private async fetchImageAsBase64(imageUrl: string): Promise<string> {
+    try {
+      const response = await fetch(imageUrl);
+      const arrayBuffer = await response.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
+      return buffer.toString('base64');
+    } catch (error) {
+      logger.error('[AI-SERVICE] Failed to fetch image', { imageUrl, error });
+      throw new Error('Failed to fetch image for vision AI');
+    }
   }
 
-  async generateProductDescription(title: string, prompt: string): Promise<string> {
+  async generateProductTitle(prompt: string, imageUrl?: string): Promise<string> {
     // The prompt is already built by the caller with AI Instructions
     // Just execute it directly without adding additional instructions
-    return await this.askAI(prompt);
+    return await this.askAI(prompt, imageUrl);
   }
 
-  async generateImageAltText(imageUrl: string, productTitle?: string, customPrompt?: string): Promise<string> {
+  async generateProductDescription(title: string, prompt: string, imageUrl?: string): Promise<string> {
+    // The prompt is already built by the caller with AI Instructions
+    // Just execute it directly without adding additional instructions
+    return await this.askAI(prompt, imageUrl);
+  }
+
+  async generateImageAltText(imageUrl: string, productTitle?: string, customPrompt?: string, sendImageToAI: boolean = false): Promise<string> {
     // Sanitize product title if provided
     const sanitizedTitle = productTitle
       ? sanitizePromptInput(productTitle, { fieldType: 'title' })
@@ -708,7 +798,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     const prompt = customPrompt || `You are an SEO expert for e-commerce. Create an optimized alt text for a product image.
 
 ${sanitizedTitle ? `Product: ${sanitizedTitle}` : ''}
-Image URL: ${imageUrl}
+${!sendImageToAI ? `Image URL: ${imageUrl}` : ''}
 
 The alt text should:
 - Precisely describe what is visible in the image
@@ -719,7 +809,8 @@ The alt text should:
 
 Return only the alt text, without additional explanations. Output the result in the same language as the product title.`;
 
-    return await this.askAI(prompt);
+    // Send image to vision-capable AI models if sendImageToAI is enabled
+    return await this.askAI(prompt, sendImageToAI ? imageUrl : undefined);
   }
 
   private parseJSONResponse(text: string): any {
