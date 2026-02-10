@@ -131,6 +131,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // Track pending auto-save for alt-texts (set by bulk generation and translation effects)
   const pendingAltTextAutoSaveRef = useRef<Record<number, string> | null>(null);
 
+  // Send Image to AI feature state
+  const [sendImageToAI, setSendImageToAI] = useState(false);
+  const [selectedImageIndex, setSelectedImageIndex] = useState(0);
+
   // Retry mechanism for empty fields
   const retryCountRef = useRef(0);
   const MAX_RETRIES = 3;
@@ -1836,7 +1840,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   };
 
   const handleGenerateAI = (fieldKey: string) => {
-    if (!selectedItemId) return;
+    if (!selectedItemId || !selectedItem) return;
 
     const currentValue = editableValues[fieldKey] || "";
     const contextTitle = editableValues.title || "";
@@ -1848,9 +1852,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     if (sendImageToAI) {
       if (config.contentType === "products") {
         // For products: use currently selected image or fallback to featured image
+        const images = selectedItem.images || [];
+        const featuredImage = selectedItem.featuredImage;
         imageUrl = images[selectedImageIndex]?.url || featuredImage?.url;
       } else if (config.contentType === "collections" || config.contentType === "blogs") {
         // For collections/blogs: use featured image only
+        const featuredImage = selectedItem.featuredImage;
         imageUrl = featuredImage?.url;
       }
     }
@@ -1879,7 +1886,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   };
 
   const handleFormatAI = (fieldKey: string) => {
-    if (!selectedItemId) return;
+    if (!selectedItemId || !selectedItem) return;
 
     const currentValue = editableValues[fieldKey] || "";
     if (!currentValue) {
@@ -1900,9 +1907,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     if (sendImageToAI) {
       if (config.contentType === "products") {
         // For products: use currently selected image or fallback to featured image
+        const images = selectedItem.images || [];
+        const featuredImage = selectedItem.featuredImage;
         imageUrl = images[selectedImageIndex]?.url || featuredImage?.url;
       } else if (config.contentType === "collections" || config.contentType === "blogs") {
         // For collections/blogs: use featured image only
+        const featuredImage = selectedItem.featuredImage;
         imageUrl = featuredImage?.url;
       }
     }
@@ -2951,6 +2961,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       delete newSuggestions[imageIndex];
       return newSuggestions;
     });
+  };
+
+  // ============================================================================
+  // SEND IMAGE TO AI HANDLERS
+  // ============================================================================
+
+  const handleToggleSendImageToAI = () => {
+    setSendImageToAI(prev => !prev);
   };
 
   // Reset alt-text state when product changes
