@@ -528,7 +528,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
   private async askAI(prompt: string, imageUrl?: string): Promise<string> {
     // Save prompt to database if taskId is provided
     if (this.taskId && this.shop) {
-      await this.savePromptToTask(prompt);
+      await this.savePromptToTask(prompt, imageUrl);
     }
 
     let response: string;
@@ -557,7 +557,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     return response;
   }
 
-  private async savePromptToTask(prompt: string): Promise<void> {
+  private async savePromptToTask(prompt: string, imageUrl?: string): Promise<void> {
     try {
       const { db } = await import('../../app/db.server');
 
@@ -584,10 +584,16 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
         }
       }
 
+      // Add image indicator to prompt if image is included
+      let fullPrompt = prompt;
+      if (imageUrl) {
+        fullPrompt = `[📷 Image attached: ${imageUrl}]\n\n${prompt}`;
+      }
+
       // Add new prompt with timestamp
       promptHistory.push({
         timestamp: new Date().toISOString(),
-        prompt: prompt.length > 2000 ? prompt.substring(0, 2000) + '...[truncated]' : prompt,
+        prompt: fullPrompt.length > 2000 ? fullPrompt.substring(0, 2000) + '...[truncated]' : fullPrompt,
       });
 
       await db.task.update({
