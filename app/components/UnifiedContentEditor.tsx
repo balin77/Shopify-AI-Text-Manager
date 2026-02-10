@@ -810,8 +810,11 @@ function FieldRenderer(props: FieldRendererProps & { state?: any; handlers?: any
 
   // Image Gallery Field
   if (field.type === "image-gallery") {
-    // Only render if images array exists and has items
-    if (!selectedItem || !selectedItem.images || selectedItem.images.length === 0) {
+    // Render if images array has items OR if featuredImage exists (for collections/blogs)
+    const hasImages = selectedItem?.images && selectedItem.images.length > 0;
+    const hasFeaturedImage = selectedItem?.featuredImage;
+
+    if (!selectedItem || (!hasImages && !hasFeaturedImage)) {
       return null;
     }
 
