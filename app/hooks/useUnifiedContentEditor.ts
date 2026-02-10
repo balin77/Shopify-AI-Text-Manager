@@ -1543,12 +1543,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       !(fetcher.data as any).translatedValue &&
       !(fetcher.data as any).translations // Skip revalidate for bulk operations, they handle it differently
     ) {
-<<<<<<< HEAD
-      console.log('✅ [SAVE-RESPONSE] Save successful, showing InfoBox and revalidating');
-      // Mark this response as processed
-=======
       // Mark this response as processed and clear save pending flag
->>>>>>> develop
       processedSaveResponseRef.current = fetcher.data;
       isSavePendingRef.current = false;
 
@@ -1676,12 +1671,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           debugLog.revalidate(' Error during revalidation (ignored):', error);
         }
       }
-<<<<<<< HEAD
-    } else if (fetcher.data && !fetcher.data.success && 'error' in fetcher.data) {
-      console.log('❌ [SAVE-RESPONSE] Save failed, showing error');
-=======
     } else if (fetcher.data && !fetcher.data.success && 'error' in fetcher.data && isSavePendingRef.current) {
->>>>>>> develop
       // Also mark error responses as processed
       processedSaveResponseRef.current = fetcher.data;
       isSavePendingRef.current = false;
