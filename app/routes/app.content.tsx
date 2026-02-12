@@ -174,7 +174,9 @@ export default function ContentHub() {
         localStorage.removeItem("lastContentHubType");
       }
       // Always redirect to collections when accessing /app/content without type
-      navigate("/app/collections", { replace: true });
+      // Preserve Shopify search params (shop, host) for auth
+      const search = typeof window !== 'undefined' ? window.location.search : '';
+      navigate(`/app/collections${search}`, { replace: true });
     }
   }, [searchParams, navigate]);
 
