@@ -39,12 +39,20 @@ import {
   DEFAULT_POLICY_INSTRUCTIONS
 } from "../constants/aiInstructionsDefaults";
 import { logger } from "~/utils/logger.server";
+import { checkAndSyncSubscription } from "~/services/billing.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   logger.debug("[SETTINGS] Loading settings page for shop", { context: "Settings" });
 
   try {
     const { admin, session } = await authenticate.admin(request);
+
+    // If returning from billing confirmation, sync subscription with Shopify
+    const url = new URL(request.url);
+    if (url.searchParams.get('billing') === 'success') {
+      logger.info("[SETTINGS] Billing callback detected, syncing subscription", { context: "Settings", shop: session.shop });
+      await checkAndSyncSubscription(admin, session.shop);
+    }
 
     // Fetch shop's primary locale
     const localesResponse = await admin.graphql(

@@ -40,9 +40,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
     }
 
-    // Create return URL via Shopify Admin so the app loads in the embedded iframe context.
-    // Direct app URL causes auth failure because there's no embedded session.
-    const returnUrl = `https://${session.shop}/admin/apps/${process.env.SHOPIFY_API_KEY}/app/billing/callback?plan=${plan}`;
+    // Return URL goes directly to Settings page via Shopify Admin embedded context.
+    // The settings loader detects the billing param and syncs the subscription.
+    const returnUrl = `https://${session.shop}/admin/apps/${process.env.SHOPIFY_API_KEY}/app/settings?billing=success&plan=${plan}`;
 
     const result = await createSubscription(admin, session, plan, returnUrl);
 
