@@ -2,9 +2,6 @@ import { Links, Meta, Outlet, Scripts, ScrollRestoration, useLoaderData, useRout
 import "@shopify/polaris/build/esm/styles.css";
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { addDocumentResponseHeaders } from "./shopify.server";
-
-export const headers = addDocumentResponseHeaders;
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const apiKey = process.env.SHOPIFY_API_KEY || "";
