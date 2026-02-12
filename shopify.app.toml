@@ -1,19 +1,18 @@
 # Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
 
-name = "shopify-seo-optimizer"
-client_id = "***REMOVED***"
-application_url = "https://localhost:3000"
+name = "ContentPilot AI"
+client_id = "REPLACE_WITH_NEW_CLIENT_ID"
+application_url = "https://contentpilotai.up.railway.app"
 embedded = true
 
 [access_scopes]
-# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
 scopes = "read_legal_policies,write_legal_policies,read_locales,read_online_store_navigation,write_online_store_navigation,read_online_store_pages,write_online_store_pages,read_product_listings,write_product_listings,read_products,write_products,read_content,write_content,read_themes,write_themes,read_translations,write_translations"
 
 [auth]
 redirect_urls = [
-  "https://localhost:3000/auth/callback",
-  "https://localhost:3000/auth/shopify/callback",
-  "https://localhost:3000/api/auth/callback"
+  "https://contentpilotai.up.railway.app/auth/callback",
+  "https://contentpilotai.up.railway.app/auth/shopify/callback",
+  "https://contentpilotai.up.railway.app/api/auth/callback"
 ]
 
 [webhooks]
