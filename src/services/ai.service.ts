@@ -685,7 +685,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       // Claude: supports vision with URL
       if (imageUrl) {
         const message = await this.anthropic.messages.create({
-          model: 'claude-3-5-sonnet-20241022',
+          model: 'claude-sonnet-4-5-20250929',
           max_tokens: 2000,
           messages: [{
             role: 'user',
@@ -699,7 +699,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
         return content.type === 'text' ? content.text : '';
       } else {
         const message = await this.anthropic.messages.create({
-          model: 'claude-3-5-sonnet-20241022',
+          model: 'claude-sonnet-4-5-20250929',
           max_tokens: 2000,
           messages: [{ role: 'user', content: prompt }],
         });
