@@ -12,7 +12,33 @@ import { db as prisma } from '~/db.server';
 import { logger } from '~/utils/logger.server';
 
 /**
- * Creates a billing subscription for the given plan
+ * Checks if the shop is a development/partner test store.
+ * Development stores should use test billing (no real charges).
+ */
+async function isDevStore(admin: any): Promise<boolean> {
+  try {
+    const response = await admin.graphql(
+      `#graphql
+        query {
+          shop {
+            plan {
+              partnerDevelopment
+            }
+          }
+        }
+      `
+    );
+    const result = await response.json();
+    return result.data?.shop?.plan?.partnerDevelopment === true;
+  } catch (error) {
+    logger.warn('[Billing] Could not determine shop plan type, defaulting to non-test', { error });
+    return false;
+  }
+}
+
+/**
+ * Creates a billing subscription for the given plan.
+ * Automatically uses test mode for development stores and dev environments.
  */
 export async function createSubscription(
   admin: any,
@@ -21,6 +47,15 @@ export async function createSubscription(
   returnUrl: string
 ) {
   const planConfig = BILLING_PLANS[plan];
+
+  // Use test billing for dev environments OR development/partner test stores
+  const isDevEnv = process.env.NODE_ENV === 'development' || process.env.APP_ENV === 'development';
+  const isTestStore = await isDevStore(admin);
+  const useTestBilling = isDevEnv || isTestStore;
+
+  if (useTestBilling) {
+    logger.info('[Billing] Using test billing mode', { isDevEnv, isTestStore, shop: session.shop });
+  }
 
   const response = await admin.graphql(
     `#graphql
@@ -51,9 +86,7 @@ export async function createSubscription(
       variables: {
         name: planConfig.name,
         returnUrl,
-        // Use test billing if NODE_ENV is development OR APP_ENV is development
-        // This allows running NODE_ENV=production with APP_ENV=development for testing
-        test: process.env.NODE_ENV === 'development' || process.env.APP_ENV === 'development',
+        test: useTestBilling,
         trialDays: planConfig.trialDays || 0,
         lineItems: [
           {
