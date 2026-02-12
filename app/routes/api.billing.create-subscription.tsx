@@ -40,9 +40,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
     }
 
-    // Create return URL (where user is redirected after confirming payment)
-    // Include shop param so authenticate.admin can handle the non-embedded redirect
-    const returnUrl = `${process.env.SHOPIFY_APP_URL}/app/billing/callback?plan=${plan}&shop=${session.shop}`;
+    // Create return URL via Shopify Admin so the app loads in the embedded iframe context.
+    // Direct app URL causes auth failure because there's no embedded session.
+    const returnUrl = `https://${session.shop}/admin/apps/${process.env.SHOPIFY_API_KEY}/app/billing/callback?plan=${plan}`;
 
     const result = await createSubscription(admin, session, plan, returnUrl);
 
