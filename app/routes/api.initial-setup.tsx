@@ -65,7 +65,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     // ========================================
     logger.debug("[INITIAL-SETUP] Step 2: Running FAST product sync...", { context: "InitialSetup" });
 
-    const plan = (settings?.subscriptionPlan || "basic") as "free" | "basic" | "pro" | "max";
+    const plan = (settings?.subscriptionPlan || "free") as "free" | "basic" | "pro" | "max";
     const planLimits = getPlanLimits(plan);
 
     logger.debug("[INITIAL-SETUP] Plan and limits", { context: "InitialSetup", plan, maxProducts: planLimits.maxProducts });

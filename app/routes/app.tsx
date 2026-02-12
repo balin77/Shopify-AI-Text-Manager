@@ -34,7 +34,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // Return default data for prefetch - no auth needed
     return json({
       appLanguage: "en" as Locale,
-      subscriptionPlan: "basic" as Plan,
+      subscriptionPlan: "free" as Plan,
       aiSettings: null,
     });
   }
@@ -70,7 +70,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     logger.debug("[APP.TSX LOADER] Settings loaded", { context: "App", found: !!settings });
 
     const appLanguage = (settings?.appLanguage || "en") as Locale;
-    const subscriptionPlan = (settings?.subscriptionPlan || "basic") as Plan;
+    const subscriptionPlan = (settings?.subscriptionPlan || "free") as Plan;
     logger.debug("[APP.TSX LOADER] App settings", { context: "App", appLanguage, subscriptionPlan });
 
     return json({
@@ -98,7 +98,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // This can happen during plan changes when auth session is temporarily invalid
     return json({
       appLanguage: "en" as Locale,
-      subscriptionPlan: "basic" as Plan,
+      subscriptionPlan: "free" as Plan,
       aiSettings: null,
       loaderError: true,
     });

@@ -37,7 +37,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const settings = await db.aISettings.findUnique({
       where: { shop: session.shop },
     });
-    const plan = (settings?.subscriptionPlan || "basic") as Plan;
+    const plan = (settings?.subscriptionPlan || "free") as Plan;
     const planLimits = getPlanLimits(plan);
 
     logger.debug("[SYNC-CONTENT] Plan", { context: "SyncContent", plan });

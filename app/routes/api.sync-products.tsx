@@ -35,7 +35,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       where: { shop },
     });
 
-    const plan = (settings?.subscriptionPlan || "basic") as "free" | "basic" | "pro" | "max";
+    const plan = (settings?.subscriptionPlan || "free") as "free" | "basic" | "pro" | "max";
     const planLimits = getPlanLimits(plan);
 
     logger.debug("[SYNC-PRODUCTS] Plan and limits", { context: "SyncProducts", plan, maxProducts: planLimits.maxProducts });

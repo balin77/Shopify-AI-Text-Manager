@@ -30,7 +30,7 @@ export async function action({ request }: ActionFunctionArgs) {
       where: { shop: session.shop },
       select: { subscriptionPlan: true },
     });
-    const plan = (settings?.subscriptionPlan || "basic") as "free" | "basic" | "pro" | "max";
+    const plan = (settings?.subscriptionPlan || "free") as "free" | "basic" | "pro" | "max";
     const planLimits = getPlanLimits(plan);
 
     let result;

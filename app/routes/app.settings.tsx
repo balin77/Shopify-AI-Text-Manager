@@ -270,7 +270,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const localeCount = localesData.data.shopLocales?.length || 1;
 
     // Get subscription plan
-    const subscriptionPlan = settings.subscriptionPlan || "basic";
+    const subscriptionPlan = settings.subscriptionPlan || "free";
 
     // Decrypt API keys with error handling
     let decryptedKeys;

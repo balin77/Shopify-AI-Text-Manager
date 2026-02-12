@@ -55,7 +55,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const currentSettings = await db.aISettings.findUnique({
       where: { shop: session.shop },
     });
-    const currentPlan = (currentSettings?.subscriptionPlan || "basic") as Plan;
+    const currentPlan = (currentSettings?.subscriptionPlan || "free") as Plan;
     const currentProductCount = await db.product.count({
       where: { shop: session.shop },
     });

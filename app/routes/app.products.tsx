@@ -48,7 +48,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const settings = await db.aISettings.findUnique({
       where: { shop: session.shop },
     });
-    const plan = (settings?.subscriptionPlan || "basic") as "free" | "basic" | "pro" | "max";
+    const plan = (settings?.subscriptionPlan || "free") as "free" | "basic" | "pro" | "max";
     const planLimits = getPlanLimits(plan);
 
     logger.debug("[PRODUCTS-LOADER] Current plan and limits", { context: "Products", plan, maxProducts: planLimits.maxProducts });
