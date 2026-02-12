@@ -41,16 +41,18 @@ export class ShopifyContentService {
     const data = await response.json();
     const content = data.data?.translatableResource?.translatableContent || [];
 
-    // Create digest map for quick lookup
+    // Create digest map and value map for quick lookup
     const digestMap: Record<string, string> = {};
+    const valueMap: Record<string, string> = {};
     content.forEach((item: any) => {
       digestMap[item.key] = item.digest;
+      if (item.value) valueMap[item.key] = item.value;
     });
 
     // Diagnostic: log all returned keys with digest presence
     loggers.translation('debug', `Resource ${resourceId} - returned ${content.length} translatable fields`, { fields: content.map((c: any) => `${c.key}=${c.digest ? 'HAS_DIGEST' : 'NO_DIGEST'}(val=${c.value ? c.value.substring(0, 30) : 'EMPTY'})`) });
 
-    return digestMap;
+    return { digestMap, valueMap };
   }
 
   /**
@@ -58,7 +60,7 @@ export class ShopifyContentService {
    */
   async saveTranslations(resourceId: string, translations: Array<{ key: string; value: string; locale: string }>) {
     // Fetch digest map first
-    const digestMap = await this.loadTranslatableContent(resourceId);
+    const { digestMap } = await this.loadTranslatableContent(resourceId);
 
     // Add digests to translations
     const translationsWithDigests = translations.map(t => ({
@@ -250,8 +252,8 @@ export class ShopifyContentService {
 
     if (locale !== primaryLocale) {
       // Handle translations
-      // Fetch digest map once
-      const digestMap = await this.loadTranslatableContent(resourceId);
+      // Fetch digest map and source values once
+      const { digestMap, valueMap } = await this.loadTranslatableContent(resourceId);
 
       const translationsInput: Array<{ key: string; value: string; locale: string; translatableContentDigest: string }> = [];
       const translationsToDelete: string[] = [];
@@ -275,14 +277,21 @@ export class ShopifyContentService {
         const translationKey = keyMapping[field];
         if (!translationKey) continue;
 
+        // Reject handle translations that are identical to the primary locale handle —
+        // duplicate slugs across locales cause Shopify routing conflicts.
+        if (field === 'handle' && value && valueMap['handle'] && value.trim() === valueMap['handle'].trim()) {
+          loggers.translation('warn', `[updateContent] Skipping handle for locale '${locale}' — same as primary locale handle`);
+          continue;
+        }
+
         if (value && value.trim()) {
           let digest = digestMap[translationKey];
 
           // If digest is missing, retry (handles race conditions / late availability)
           if (!digest) {
             loggers.translation('warn', `[updateContent] No digest for '${translationKey}' in initial digestMap. Re-fetching...`);
-            const freshDigestMap = await this.loadTranslatableContent(resourceId);
-            digest = freshDigestMap[translationKey];
+            const fresh = await this.loadTranslatableContent(resourceId);
+            digest = fresh.digestMap[translationKey];
             if (digest) {
               digestMap[translationKey] = digest;
               loggers.translation('debug', `[updateContent] Got digest for '${translationKey}' on retry`);
@@ -578,7 +587,7 @@ export class ShopifyContentService {
     const { resourceId, resourceType, fields, translationService, db, targetLocales: customTargetLocales, contentType, customInstructions, sourceLocale = 'de' } = params;
 
     // Fetch digest map once for all translations
-    const digestMap = await this.loadTranslatableContent(resourceId);
+    const { digestMap } = await this.loadTranslatableContent(resourceId);
     loggers.translation('debug', `translateAllContent resourceType: ${resourceType}`);
     loggers.translation('debug', 'translateAllContent fields received', { fields: Object.keys(fields) });
     loggers.translation('debug', 'translateAllContent fields values', { values: Object.entries(fields).map(([k, v]) => `${k}=${v ? (v as string).substring(0, 50) + '...' : 'EMPTY'}`) });
@@ -648,11 +657,14 @@ export class ShopifyContentService {
         return false;
       }
 
-      // Skip if translation is same as source
-      const sourceValue = fields[field];
-      if (sourceValue && value.trim() === sourceValue.trim()) {
-        loggers.translation('warn', `Skipping field '${field}' for locale '${locale}' - same as source`);
-        return false;
+      // Reject handle translations that are identical to the primary locale handle —
+      // duplicate slugs across locales cause Shopify routing conflicts.
+      if (field === 'handle') {
+        const sourceHandle = fields['handle'];
+        if (sourceHandle && value.trim() === sourceHandle.trim()) {
+          loggers.translation('warn', `Skipping handle for locale '${locale}' — same as primary locale handle`);
+          return false;
+        }
       }
 
       let digest = digestMap[translationKey];
@@ -660,8 +672,8 @@ export class ShopifyContentService {
       // If digest is missing, try to re-fetch (handles race conditions / late availability)
       if (!digest) {
         loggers.translation('warn', `No digest for '${translationKey}' in initial digestMap. Re-fetching translatableContent...`);
-        const freshDigestMap = await this.loadTranslatableContent(resourceId);
-        digest = freshDigestMap[translationKey];
+        const fresh = await this.loadTranslatableContent(resourceId);
+        digest = fresh.digestMap[translationKey];
         if (digest) {
           // Cache the fresh digest for subsequent saves
           digestMap[translationKey] = digest;
