@@ -11,7 +11,7 @@ export const DEFAULT_MODELS: Record<AIProvider, string> = {
   gemini: 'gemini-2.0-flash-lite',
   claude: 'claude-sonnet-4-5-20250929',
   openai: 'gpt-4o-mini',
-  grok: 'grok-beta',
+  grok: 'grok-3-mini',
   deepseek: 'deepseek-chat',
 };
 
@@ -40,8 +40,10 @@ export const CURATED_MODELS: Record<AIProvider, ModelInfo[]> = {
     { id: 'o3-mini', name: 'o3-mini' },
   ],
   grok: [
-    { id: 'grok-beta', name: 'Grok Beta' },
-    { id: 'grok-2', name: 'Grok 2' },
+    { id: 'grok-3-mini', name: 'Grok 3 Mini' },
+    { id: 'grok-3', name: 'Grok 3' },
+    { id: 'grok-4-fast-non-reasoning', name: 'Grok 4 Fast' },
+    { id: 'grok-2-vision-1212', name: 'Grok 2 Vision' },
   ],
   deepseek: [
     { id: 'deepseek-chat', name: 'DeepSeek Chat' },
