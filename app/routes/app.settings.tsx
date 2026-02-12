@@ -650,7 +650,9 @@ export default function SettingsPage() {
       }
 
       if (data.confirmationUrl) {
-        window.location.href = data.confirmationUrl;
+        // Must open in top-level window, not inside the embedded app iframe
+        // Shopify's billing confirmation page blocks loading within iframes
+        window.open(data.confirmationUrl, '_top');
       }
     } catch (err) {
       setPlanError(err instanceof Error ? err.message : t.settings.errorOccurred);
