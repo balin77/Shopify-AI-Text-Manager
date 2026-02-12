@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import type { FetcherWithComponents } from "@remix-run/react";
 import {
   Card,
@@ -10,11 +10,13 @@ import {
   InlineStack,
   Icon,
   Banner,
+  Spinner,
 } from "@shopify/polaris";
 import { ViewIcon, HideIcon } from "@shopify/polaris-icons";
 import { SaveDiscardButtons } from "./SaveDiscardButtons";
 import { HelpTooltip } from "./HelpTooltip";
 import { hasApiKeyForProvider, getProviderDisplayName, type AIProvider } from "../utils/api-key-validation";
+import { CURATED_MODELS, DEFAULT_MODELS } from "../config/ai-models.config";
 import "../styles/RateLimitFields.css";
 
 // Responsive label component that shows short version on small screens
@@ -36,6 +38,7 @@ interface Settings {
   grokApiKey: string;
   deepseekApiKey: string;
   preferredProvider: string;
+  selectedModel: string;
   appLanguage: string;
   hfMaxTokensPerMinute: number;
   hfMaxRequestsPerMinute: number;
@@ -75,6 +78,48 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
   const [grokKey, setGrokKey] = useState(settings.grokApiKey);
   const [deepseekKey, setDeepseekKey] = useState(settings.deepseekApiKey);
   const [provider, setProvider] = useState(settings.preferredProvider);
+  const [selectedModel, setSelectedModel] = useState(settings.selectedModel || '');
+  const [availableModels, setAvailableModels] = useState<Array<{ label: string; value: string }>>([]);
+  const [modelsLoading, setModelsLoading] = useState(false);
+  const [modelsError, setModelsError] = useState<string | null>(null);
+
+  // Fetch available models when provider changes
+  const fetchModels = useCallback(async (providerToFetch: string) => {
+    setModelsLoading(true);
+    setModelsError(null);
+    try {
+      const response = await fetch(`/api/ai-models?provider=${providerToFetch}`);
+      const data = await response.json();
+      if (data.success && data.models) {
+        const options = data.models.map((m: { id: string; name: string }) => ({
+          label: m.name,
+          value: m.id,
+        }));
+        setAvailableModels(options);
+        // If current model is not in the new list, reset to default
+        const modelIds = data.models.map((m: { id: string }) => m.id);
+        if (!modelIds.includes(selectedModel)) {
+          setSelectedModel(data.defaultModel || '');
+        }
+      } else {
+        setModelsError(data.error || t.settings.modelFetchError);
+        // Use curated fallback
+        const fallback = CURATED_MODELS[providerToFetch as AIProvider] || [];
+        setAvailableModels(fallback.map(m => ({ label: m.name, value: m.id })));
+      }
+    } catch {
+      setModelsError(t.settings.modelFetchError);
+      const fallback = CURATED_MODELS[providerToFetch as AIProvider] || [];
+      setAvailableModels(fallback.map(m => ({ label: m.name, value: m.id })));
+    } finally {
+      setModelsLoading(false);
+    }
+  }, [selectedModel, t]);
+
+  // Fetch models on mount and when provider changes
+  useEffect(() => {
+    fetchModels(provider);
+  }, [provider]);
 
   // Rate limit states
   const [hfMaxTokensPerMinute, setHfMaxTokensPerMinute] = useState(String(settings.hfMaxTokensPerMinute));
@@ -109,6 +154,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
       grokKey !== settings.grokApiKey ||
       deepseekKey !== settings.deepseekApiKey ||
       provider !== settings.preferredProvider ||
+      selectedModel !== (settings.selectedModel || '') ||
       hfMaxTokensPerMinute !== String(settings.hfMaxTokensPerMinute) ||
       hfMaxRequestsPerMinute !== String(settings.hfMaxRequestsPerMinute) ||
       geminiMaxTokensPerMinute !== String(settings.geminiMaxTokensPerMinute) ||
@@ -126,7 +172,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
       onHasChangesChange(changed);
     }
   }, [
-    huggingfaceKey, geminiKey, claudeKey, openaiKey, grokKey, deepseekKey, provider,
+    huggingfaceKey, geminiKey, claudeKey, openaiKey, grokKey, deepseekKey, provider, selectedModel,
     hfMaxTokensPerMinute, hfMaxRequestsPerMinute,
     geminiMaxTokensPerMinute, geminiMaxRequestsPerMinute,
     claudeMaxTokensPerMinute, claudeMaxRequestsPerMinute,
@@ -150,6 +196,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
         grokApiKey: grokKey,
         deepseekApiKey: deepseekKey,
         preferredProvider: provider,
+        selectedModel,
         appLanguage: settings.appLanguage,
         hfMaxTokensPerMinute,
         hfMaxRequestsPerMinute,
@@ -176,6 +223,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
     setGrokKey(settings.grokApiKey);
     setDeepseekKey(settings.deepseekApiKey);
     setProvider(settings.preferredProvider);
+    setSelectedModel(settings.selectedModel || '');
     setHfMaxTokensPerMinute(String(settings.hfMaxTokensPerMinute));
     setHfMaxRequestsPerMinute(String(settings.hfMaxRequestsPerMinute));
     setGeminiMaxTokensPerMinute(String(settings.geminiMaxTokensPerMinute));
@@ -239,18 +287,43 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
           </Banner>
         )}
 
-        <Select
-          label={
-            <InlineStack gap="100" blockAlign="center">
-              <span>{t.settings.preferredProvider}</span>
-              <HelpTooltip helpKey="preferredProvider" position="below" />
-            </InlineStack>
-          }
-          options={AI_PROVIDERS}
-          value={provider}
-          onChange={setProvider}
-          helpText={t.settings.providerHelp}
-        />
+        <InlineStack gap="400" wrap={false} blockAlign="end">
+          <div style={{ flex: 1 }}>
+            <Select
+              label={
+                <InlineStack gap="100" blockAlign="center">
+                  <span>{t.settings.preferredProvider}</span>
+                  <HelpTooltip helpKey="preferredProvider" position="below" />
+                </InlineStack>
+              }
+              options={AI_PROVIDERS}
+              value={provider}
+              onChange={setProvider}
+              helpText={t.settings.providerHelp}
+            />
+          </div>
+          <div style={{ flex: 1 }}>
+            <Select
+              label={
+                <InlineStack gap="100" blockAlign="center">
+                  <span>{t.settings.selectedModel}</span>
+                  {modelsLoading && <Spinner size="small" />}
+                </InlineStack>
+              }
+              options={availableModels.length > 0 ? availableModels : [{ label: t.settings.modelDefault, value: '' }]}
+              value={selectedModel}
+              onChange={setSelectedModel}
+              disabled={modelsLoading}
+              helpText={modelsLoading ? t.settings.loadingModels : t.settings.modelHelp}
+            />
+          </div>
+        </InlineStack>
+
+        {modelsError && (
+          <Banner tone="warning" onDismiss={() => setModelsError(null)}>
+            <Text as="p" variant="bodySm">{modelsError}</Text>
+          </Banner>
+        )}
 
         <div style={{ paddingTop: "1rem", borderTop: "1px solid #e1e3e5" }}>
           <BlockStack gap="400">

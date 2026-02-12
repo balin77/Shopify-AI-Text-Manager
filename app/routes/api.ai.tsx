@@ -88,6 +88,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
               openaiApiKey: decryptApiKey(settings?.openaiApiKey) || undefined,
               grokApiKey: decryptApiKey(settings?.grokApiKey) || undefined,
               deepseekApiKey: decryptApiKey(settings?.deepseekApiKey) || undefined,
+              selectedModel: settings?.selectedModel || undefined,
             },
             session.shop,
             task.id
@@ -201,6 +202,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
               openaiApiKey: decryptApiKey(settings?.openaiApiKey) || undefined,
               grokApiKey: decryptApiKey(settings?.grokApiKey) || undefined,
               deepseekApiKey: decryptApiKey(settings?.deepseekApiKey) || undefined,
+              selectedModel: settings?.selectedModel || undefined,
             },
             session.shop,
             task.id
@@ -857,6 +859,7 @@ Return only the formatted text, without explanations.`;
               openaiApiKey: decryptApiKey(settings?.openaiApiKey) || undefined,
               grokApiKey: decryptApiKey(settings?.grokApiKey) || undefined,
               deepseekApiKey: decryptApiKey(settings?.deepseekApiKey) || undefined,
+              selectedModel: settings?.selectedModel || undefined,
             },
             session.shop,
             task.id
@@ -997,6 +1000,7 @@ Language: ${mainLanguage}`;
               openaiApiKey: decryptApiKey(settings?.openaiApiKey) || undefined,
               grokApiKey: decryptApiKey(settings?.grokApiKey) || undefined,
               deepseekApiKey: decryptApiKey(settings?.deepseekApiKey) || undefined,
+              selectedModel: settings?.selectedModel || undefined,
             },
             session.shop,
             task.id
@@ -1196,6 +1200,7 @@ Do NOT:
               openaiApiKey: decryptApiKey(settings?.openaiApiKey) || undefined,
               grokApiKey: decryptApiKey(settings?.grokApiKey) || undefined,
               deepseekApiKey: decryptApiKey(settings?.deepseekApiKey) || undefined,
+              selectedModel: settings?.selectedModel || undefined,
             },
             session.shop,
             task.id
@@ -1300,6 +1305,7 @@ Do NOT:
               openaiApiKey: decryptApiKey(settings?.openaiApiKey) || undefined,
               grokApiKey: decryptApiKey(settings?.grokApiKey) || undefined,
               deepseekApiKey: decryptApiKey(settings?.deepseekApiKey) || undefined,
+              selectedModel: settings?.selectedModel || undefined,
             },
             session.shop,
             task.id
@@ -1413,6 +1419,7 @@ Image URL: ${imageUrl}`;
               openaiApiKey: decryptApiKey(settings?.openaiApiKey) || undefined,
               grokApiKey: decryptApiKey(settings?.grokApiKey) || undefined,
               deepseekApiKey: decryptApiKey(settings?.deepseekApiKey) || undefined,
+              selectedModel: settings?.selectedModel || undefined,
             },
             session.shop,
             bulkTask.id
@@ -1521,6 +1528,7 @@ Image URL: ${image.url}`;
               openaiApiKey: decryptApiKey(settings?.openaiApiKey) || undefined,
               grokApiKey: decryptApiKey(settings?.grokApiKey) || undefined,
               deepseekApiKey: decryptApiKey(settings?.deepseekApiKey) || undefined,
+              selectedModel: settings?.selectedModel || undefined,
             },
             session.shop,
             task.id
@@ -1614,6 +1622,7 @@ Image URL: ${image.url}`;
               openaiApiKey: decryptApiKey(settings?.openaiApiKey) || undefined,
               grokApiKey: decryptApiKey(settings?.grokApiKey) || undefined,
               deepseekApiKey: decryptApiKey(settings?.deepseekApiKey) || undefined,
+              selectedModel: settings?.selectedModel || undefined,
             },
             session.shop,
             task.id
@@ -1893,6 +1902,7 @@ Image URL: ${image.url}`;
               openaiApiKey: decryptApiKey(settings?.openaiApiKey) || undefined,
               grokApiKey: decryptApiKey(settings?.grokApiKey) || undefined,
               deepseekApiKey: decryptApiKey(settings?.deepseekApiKey) || undefined,
+              selectedModel: settings?.selectedModel || undefined,
             },
             session.shop,
             bulkAllTask.id
@@ -2107,6 +2117,7 @@ Image URL: ${image.url}`;
               openaiApiKey: decryptApiKey(settings?.openaiApiKey) || undefined,
               grokApiKey: decryptApiKey(settings?.grokApiKey) || undefined,
               deepseekApiKey: decryptApiKey(settings?.deepseekApiKey) || undefined,
+              selectedModel: settings?.selectedModel || undefined,
             },
             session.shop,
             localeTask.id

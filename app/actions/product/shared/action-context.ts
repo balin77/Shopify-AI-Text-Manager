@@ -16,6 +16,7 @@ interface AISettings {
   id: string;
   shop: string;
   preferredProvider: string | null;
+  selectedModel: string | null;
   huggingfaceApiKey: string | null;
   geminiApiKey: string | null;
   claudeApiKey: string | null;
@@ -48,6 +49,7 @@ interface AIConfig {
   openaiApiKey?: string;
   grokApiKey?: string;
   deepseekApiKey?: string;
+  selectedModel?: string;
 }
 
 export interface ActionContext {
@@ -182,6 +184,7 @@ export async function prepareActionContext(
     openaiApiKey: decryptApiKey(aiSettings?.openaiApiKey) || undefined,
     grokApiKey: decryptApiKey(aiSettings?.grokApiKey) || undefined,
     deepseekApiKey: decryptApiKey(aiSettings?.deepseekApiKey) || undefined,
+    selectedModel: aiSettings?.selectedModel || undefined,
   };
 
   // Create Shopify API Gateway

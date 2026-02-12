@@ -5,6 +5,7 @@ import OpenAI from 'openai';
 import { AIQueueService } from './ai-queue.service';
 import { sanitizePromptInput } from '../../app/utils/prompt-sanitizer';
 import { loggers } from '../../app/utils/logger.server';
+import { DEFAULT_MODELS } from '../../app/config/ai-models.config';
 
 export type AIProvider = 'huggingface' | 'gemini' | 'claude' | 'openai' | 'grok' | 'deepseek';
 
@@ -15,6 +16,7 @@ export interface AIServiceConfig {
   openaiApiKey?: string;
   grokApiKey?: string;
   deepseekApiKey?: string;
+  selectedModel?: string;
 }
 
 export class AIService {
@@ -39,6 +41,10 @@ export class AIService {
     this.initializeProvider();
   }
 
+  private getModel(): string {
+    return this.config.selectedModel || DEFAULT_MODELS[this.provider];
+  }
+
   private initializeProvider() {
     if (this.provider === 'huggingface') {
       const apiKey = this.config.huggingfaceApiKey || process.env.HUGGINGFACE_API_KEY || '';
@@ -47,7 +53,7 @@ export class AIService {
     } else if (this.provider === 'gemini') {
       const apiKey = this.config.geminiApiKey || process.env.GOOGLE_API_KEY || '';
       const genAI = new GoogleGenerativeAI(apiKey);
-      this.gemini = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-lite' });
+      this.gemini = genAI.getGenerativeModel({ model: this.getModel() });
       loggers.ai('info', 'AI Provider: Google Gemini (FREE)');
     } else if (this.provider === 'claude') {
       const apiKey = this.config.claudeApiKey || process.env.ANTHROPIC_API_KEY || '';
@@ -648,7 +654,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     if (this.provider === 'huggingface' && this.huggingface) {
       // HuggingFace: text-only (no vision support)
       const response = await this.huggingface.chatCompletion({
-        model: 'Qwen/Qwen2.5-72B-Instruct',
+        model: this.getModel(),
         messages: [{ role: 'user', content: prompt }],
         max_tokens: 2000,
         temperature: 0.7,
@@ -685,7 +691,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       // Claude: supports vision with URL
       if (imageUrl) {
         const message = await this.anthropic.messages.create({
-          model: 'claude-sonnet-4-5-20250929',
+          model: this.getModel(),
           max_tokens: 2000,
           messages: [{
             role: 'user',
@@ -699,7 +705,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
         return content.type === 'text' ? content.text : '';
       } else {
         const message = await this.anthropic.messages.create({
-          model: 'claude-sonnet-4-5-20250929',
+          model: this.getModel(),
           max_tokens: 2000,
           messages: [{ role: 'user', content: prompt }],
         });
@@ -710,7 +716,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       // GPT-4o: supports vision with URL
       if (imageUrl) {
         const completion = await this.openai.chat.completions.create({
-          model: 'gpt-4o-mini',
+          model: this.getModel(),
           messages: [{
             role: 'user',
             content: [
@@ -723,7 +729,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
         return completion.choices[0].message.content || '';
       } else {
         const completion = await this.openai.chat.completions.create({
-          model: 'gpt-4o-mini',
+          model: this.getModel(),
           messages: [{ role: 'user', content: prompt }],
           max_tokens: 2000,
         });
@@ -733,7 +739,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       // Grok: supports vision with URL (similar to GPT-4o)
       if (imageUrl) {
         const completion = await this.grok.chat.completions.create({
-          model: 'grok-beta',
+          model: this.getModel(),
           messages: [{
             role: 'user',
             content: [
@@ -747,7 +753,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
         return completion.choices[0].message.content || '';
       } else {
         const completion = await this.grok.chat.completions.create({
-          model: 'grok-beta',
+          model: this.getModel(),
           messages: [{ role: 'user', content: prompt }],
           max_tokens: 2000,
           temperature: 0.7,
@@ -757,7 +763,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     } else if (this.provider === 'deepseek' && this.deepseek) {
       // DeepSeek: text-only (no vision support)
       const completion = await this.deepseek.chat.completions.create({
-        model: 'deepseek-chat',
+        model: this.getModel(),
         messages: [{ role: 'user', content: prompt }],
         max_tokens: 2000,
         temperature: 0.7,

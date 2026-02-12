@@ -41,6 +41,7 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
     openaiApiKey: decryptApiKey(aiSettings?.openaiApiKey) || undefined,
     grokApiKey: decryptApiKey(aiSettings?.grokApiKey) || undefined,
     deepseekApiKey: decryptApiKey(aiSettings?.deepseekApiKey) || undefined,
+    selectedModel: aiSettings?.selectedModel || undefined,
   };
 
   // Update queue rate limits from settings

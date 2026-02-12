@@ -310,6 +310,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       settings: {
         ...decryptedKeys,
         preferredProvider: settings.preferredProvider,
+        selectedModel: settings.selectedModel || '',
         appLanguage: settings.appLanguage || "en",
 
         // Rate limits
@@ -511,6 +512,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           grokApiKey: encryptApiKey(data.grokApiKey),
           deepseekApiKey: encryptApiKey(data.deepseekApiKey),
           preferredProvider: data.preferredProvider,
+          selectedModel: data.selectedModel || null,
           appLanguage: data.appLanguage,
           hfMaxTokensPerMinute: data.hfMaxTokensPerMinute,
           hfMaxRequestsPerMinute: data.hfMaxRequestsPerMinute,
@@ -534,6 +536,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           grokApiKey: encryptApiKey(data.grokApiKey),
           deepseekApiKey: encryptApiKey(data.deepseekApiKey),
           preferredProvider: data.preferredProvider,
+          selectedModel: data.selectedModel || null,
           appLanguage: data.appLanguage,
           hfMaxTokensPerMinute: data.hfMaxTokensPerMinute,
           hfMaxRequestsPerMinute: data.hfMaxRequestsPerMinute,

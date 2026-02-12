@@ -38,6 +38,7 @@ model AISettings {
   grokApiKey        String?
   deepseekApiKey    String?
   preferredProvider String  @default("huggingface")
+  selectedModel     String?
   appLanguage       String  @default("de")
   subscriptionPlan  String  @default("basic") // "free", "basic", "pro", "max"
 

@@ -56,6 +56,9 @@ export const AISettingsSchema = z.object({
   // Provider selection
   preferredProvider: z.enum(['huggingface', 'gemini', 'claude', 'openai', 'grok', 'deepseek']),
 
+  // Model selection - free-form string since model IDs vary per provider
+  selectedModel: z.string().max(200).optional().or(z.literal('')),
+
   // App language
   appLanguage: z.enum(['de', 'en']),
 
