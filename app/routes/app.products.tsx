@@ -60,42 +60,53 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
     logger.debug("[PRODUCTS-LOADER] Locales loaded", { context: "Products", primaryLocale, availableLocales: shopLocales.length });
 
-    // 2. Incremental sync: fetch product IDs from Shopify, sync only missing ones
-    const maxToFetch = planLimits.maxProducts === Infinity ? 250 : planLimits.maxProducts;
-    const shopifyResponse = await admin.graphql(
-      `#graphql
-        query getProductIds($first: Int!) {
-          products(first: $first) {
-            edges {
-              node {
-                id
-                title
-                descriptionHtml
-                handle
-                status
-                productType
-                updatedAt
-                seo { title description }
-                featuredImage { url altText }
-                media(first: 20) {
-                  edges {
-                    node {
-                      ... on MediaImage {
-                        id
-                        alt
-                        image { url }
+    // 2. Incremental sync: fetch product IDs from Shopify (paginated), sync only missing ones
+    const shopifyProducts: any[] = [];
+    let hasNextPage = true;
+    let cursor: string | null = null;
+
+    while (hasNextPage) {
+      const shopifyResponse = await admin.graphql(
+        `#graphql
+          query getProductIds($first: Int!, $after: String) {
+            products(first: $first, after: $after) {
+              pageInfo { hasNextPage endCursor }
+              edges {
+                node {
+                  id
+                  title
+                  descriptionHtml
+                  handle
+                  status
+                  productType
+                  updatedAt
+                  seo { title description }
+                  featuredImage { url altText }
+                  media(first: 20) {
+                    edges {
+                      node {
+                        ... on MediaImage {
+                          id
+                          alt
+                          image { url }
+                        }
                       }
                     }
                   }
                 }
               }
             }
-          }
-        }`,
-      { variables: { first: maxToFetch } }
-    );
-    const shopifyData = await shopifyResponse.json();
-    const shopifyProducts = shopifyData.data?.products?.edges?.map((e: any) => e.node) || [];
+          }`,
+        { variables: { first: 250, after: cursor } }
+      );
+      const shopifyData = await shopifyResponse.json();
+      const page = shopifyData.data?.products;
+      const nodes = page?.edges?.map((e: any) => e.node) || [];
+      shopifyProducts.push(...nodes);
+      hasNextPage = page?.pageInfo?.hasNextPage ?? false;
+      cursor = page?.pageInfo?.endCursor ?? null;
+    }
+
     const shopifyProductIds = new Set(shopifyProducts.map((p: any) => p.id));
 
     const localProducts = await db.product.findMany({
