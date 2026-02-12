@@ -109,7 +109,11 @@ export function UnifiedLanguageBar({
 
   return (
     <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", flex: 1, minWidth: 0, alignItems: "center" }}>
-      {shopLocales.map((locale) => {
+      {[...shopLocales].sort((a, b) => {
+        if (a.primary) return -1;
+        if (b.primary) return 1;
+        return (a.name || a.locale).localeCompare(b.name || b.locale);
+      }).map((locale) => {
         const buttonStyle = useLocaleButtonStyle(
           locale,
           selectedItem,

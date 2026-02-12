@@ -19,9 +19,9 @@ interface CachedLocales {
   timestamp: number;
 }
 
-// In-memory cache with 5-minute TTL
+// In-memory cache with 60-second TTL
 const SHOP_LOCALES_CACHE = new Map<string, CachedLocales>();
-const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const CACHE_TTL_MS = 60 * 1000; // 60 seconds
 
 /**
  * Get shop locales with caching
