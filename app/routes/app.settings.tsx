@@ -272,6 +272,20 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // Get subscription plan
     const subscriptionPlan = settings.subscriptionPlan || "free";
 
+    // Check if this is a development/partner test store
+    let isTestStore = false;
+    try {
+      const shopResponse = await admin.graphql(
+        `#graphql
+          query { shop { plan { partnerDevelopment } } }
+        `
+      );
+      const shopData = await shopResponse.json();
+      isTestStore = shopData.data?.shop?.plan?.partnerDevelopment === true;
+    } catch (e) {
+      logger.warn("[SETTINGS] Could not determine shop plan type", { error: e });
+    }
+
     // Decrypt API keys with error handling
     let decryptedKeys;
     try {
@@ -306,6 +320,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       pageCount,
       themeTranslationCount,
       localeCount,
+      isTestStore,
       subscriptionPlan,
       settings: {
         ...decryptedKeys,
@@ -566,7 +581,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function SettingsPage() {
-  const { shop, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, localeCount, subscriptionPlan } = useLoaderData<typeof loader>();
+  const { shop, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, localeCount, subscriptionPlan, isTestStore } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
   const [searchParams] = useSearchParams();
@@ -913,6 +928,12 @@ export default function SettingsPage() {
                   {planError && (
                     <Banner tone="critical" title={t.common.error} onDismiss={() => setPlanError(null)}>
                       <p>{planError}</p>
+                    </Banner>
+                  )}
+
+                  {isTestStore && (
+                    <Banner tone="info" title="Test Store">
+                      <p>This is a development/test store. All plan subscriptions are free and will not be charged. You can freely switch between plans for testing purposes.</p>
                     </Banner>
                   )}
 
