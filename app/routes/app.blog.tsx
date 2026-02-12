@@ -37,6 +37,64 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const shopLocales = await getCachedShopLocales(admin, session.shop);
     const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "en";
 
+    // Incremental sync: fetch article IDs from Shopify, sync only missing ones
+    const { ContentSyncService } = await import("../services/content-sync.service");
+    const syncService = new ContentSyncService(admin, session.shop);
+
+    const blogsResponse = await admin.graphql(
+      `#graphql
+        query getBlogs {
+          blogs(first: 250) {
+            edges {
+              node {
+                id
+                articles(first: 250) {
+                  edges {
+                    node {
+                      id
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }`
+    );
+    const blogsData = await blogsResponse.json();
+    const blogs = blogsData.data?.blogs?.edges?.map((e: any) => e.node) || [];
+    const shopifyArticleIds = new Set<string>();
+    for (const blog of blogs) {
+      for (const edge of blog.articles?.edges || []) {
+        shopifyArticleIds.add(edge.node.id);
+      }
+    }
+
+    // Compare with local DB
+    const localArticles = await db.article.findMany({
+      where: { shop: session.shop },
+      select: { id: true },
+    });
+    const localArticleIds = new Set(localArticles.map(a => a.id));
+
+    // Sync missing articles (in Shopify but not in DB)
+    const missingIds = [...shopifyArticleIds].filter(id => !localArticleIds.has(id));
+    if (missingIds.length > 0) {
+      logger.info(`[BLOG-LOADER] Syncing ${missingIds.length} new article(s) from Shopify`);
+      await Promise.all(missingIds.map(id => syncService.syncArticle(id)));
+    }
+
+    // Remove deleted articles (in DB but not in Shopify)
+    const removedIds = [...localArticleIds].filter(id => !shopifyArticleIds.has(id));
+    if (removedIds.length > 0) {
+      logger.info(`[BLOG-LOADER] Removing ${removedIds.length} deleted article(s) from DB`);
+      await db.article.deleteMany({
+        where: { shop: session.shop, id: { in: removedIds } },
+      });
+      await db.contentTranslation.deleteMany({
+        where: { resourceType: 'Article', resourceId: { in: removedIds } },
+      });
+    }
+
     // Load articles from database
     const [articles, aiSettings] = await Promise.all([
       db.article.findMany({

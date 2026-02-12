@@ -26,7 +26,7 @@ import {
   Banner,
   TextField,
 } from "@shopify/polaris";
-import { SearchIcon, ChevronLeftIcon, ChevronRightIcon } from "@shopify/polaris-icons";
+import { SearchIcon, ChevronLeftIcon, ChevronRightIcon, RefreshIcon } from "@shopify/polaris-icons";
 import { Thumbnail } from "@shopify/polaris";
 import { useNavigationHeight } from "../../contexts/NavigationHeightContext";
 
@@ -89,6 +89,12 @@ interface UnifiedItemListProps {
     upgradeMessage?: string;
   };
 
+  /** Optional: Callback to reload/sync all items from Shopify */
+  onSyncAll?: () => void;
+
+  /** Optional: Whether sync is in progress */
+  isSyncing?: boolean;
+
   /** Translation strings */
   t?: {
     searchPlaceholder?: string;
@@ -113,6 +119,8 @@ export function UnifiedItemList({
   showThumbnails = false,
   showCategoryBadge = false,
   planLimit,
+  onSyncAll,
+  isSyncing = false,
   t = {},
 }: UnifiedItemListProps) {
   const [searchQuery, setSearchQuery] = useState("");
@@ -391,9 +399,21 @@ export function UnifiedItemList({
         {/* Header */}
         <div ref={headerRef} style={{ padding: "1rem", borderBottom: "1px solid #e1e3e5", flexShrink: 0 }}>
           <BlockStack gap="300">
-            <Text as="h2" variant="headingMd">
-              {resourceName.plural} ({items.length})
-            </Text>
+            <InlineStack align="space-between" blockAlign="center">
+              <Text as="h2" variant="headingMd">
+                {resourceName.plural} ({items.length})
+              </Text>
+              {onSyncAll && (
+                <Button
+                  icon={RefreshIcon}
+                  variant="plain"
+                  onClick={onSyncAll}
+                  loading={isSyncing}
+                  accessibilityLabel="Sync from Shopify"
+                  size="slim"
+                />
+              )}
+            </InlineStack>
 
             {/* Search */}
             {showSearch && (

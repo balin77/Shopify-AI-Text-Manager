@@ -60,7 +60,107 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
     logger.debug("[PRODUCTS-LOADER] Locales loaded", { context: "Products", primaryLocale, availableLocales: shopLocales.length });
 
-    // 2. Fetch products from DATABASE first
+    // 2. Incremental sync: fetch product IDs from Shopify, sync only missing ones
+    const maxToFetch = planLimits.maxProducts === Infinity ? 250 : planLimits.maxProducts;
+    const shopifyResponse = await admin.graphql(
+      `#graphql
+        query getProductIds($first: Int!) {
+          products(first: $first) {
+            edges {
+              node {
+                id
+                title
+                descriptionHtml
+                handle
+                status
+                productType
+                updatedAt
+                seo { title description }
+                featuredImage { url altText }
+                media(first: 20) {
+                  edges {
+                    node {
+                      ... on MediaImage {
+                        id
+                        alt
+                        image { url }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }`,
+      { variables: { first: maxToFetch } }
+    );
+    const shopifyData = await shopifyResponse.json();
+    const shopifyProducts = shopifyData.data?.products?.edges?.map((e: any) => e.node) || [];
+    const shopifyProductIds = new Set(shopifyProducts.map((p: any) => p.id));
+
+    const localProducts = await db.product.findMany({
+      where: { shop: session.shop },
+      select: { id: true },
+    });
+    const localProductIds = new Set(localProducts.map(p => p.id));
+
+    // Sync missing products (lightweight: basic data only, no translations)
+    const missingProducts = shopifyProducts.filter((p: any) => !localProductIds.has(p.id));
+    if (missingProducts.length > 0) {
+      logger.info(`[PRODUCTS-LOADER] Syncing ${missingProducts.length} new product(s) from Shopify`);
+      for (const product of missingProducts) {
+        await db.product.upsert({
+          where: { shop_id: { shop: session.shop, id: product.id } },
+          create: {
+            id: product.id, shop: session.shop, title: product.title,
+            descriptionHtml: product.descriptionHtml || "", handle: product.handle,
+            status: product.status, productType: product.productType || null,
+            seoTitle: product.seo?.title || null, seoDescription: product.seo?.description || null,
+            featuredImageUrl: product.featuredImage?.url || null,
+            featuredImageAlt: product.featuredImage?.altText || null,
+            shopifyUpdatedAt: new Date(product.updatedAt), lastSyncedAt: new Date(),
+          },
+          update: {
+            title: product.title, descriptionHtml: product.descriptionHtml || "",
+            handle: product.handle, status: product.status,
+            productType: product.productType || null,
+            seoTitle: product.seo?.title || null, seoDescription: product.seo?.description || null,
+            featuredImageUrl: product.featuredImage?.url || null,
+            featuredImageAlt: product.featuredImage?.altText || null,
+            shopifyUpdatedAt: new Date(product.updatedAt), lastSyncedAt: new Date(),
+          },
+        });
+
+        // Save images if plan allows
+        if (planLimits.cacheEnabled.productImages) {
+          const mediaImages = product.media?.edges
+            ?.filter((edge: any) => edge.node.id && edge.node.image?.url)
+            .map((edge: any) => edge.node) || [];
+          if (mediaImages.length > 0) {
+            await db.productImage.deleteMany({ where: { productId: product.id } });
+            await db.productImage.createMany({
+              data: mediaImages.map((media: any, index: number) => ({
+                productId: product.id, url: media.image.url,
+                altText: media.alt || null, mediaId: media.id, position: index,
+              })),
+            });
+          }
+        }
+      }
+    }
+
+    // Remove deleted products
+    const removedIds = [...localProductIds].filter(id => !shopifyProductIds.has(id));
+    if (removedIds.length > 0) {
+      logger.info(`[PRODUCTS-LOADER] Removing ${removedIds.length} deleted product(s) from DB`);
+      await db.productImage.deleteMany({ where: { productId: { in: removedIds } } });
+      await db.product.deleteMany({ where: { shop: session.shop, id: { in: removedIds } } });
+      await db.contentTranslation.deleteMany({
+        where: { resourceType: 'Product', resourceId: { in: removedIds } },
+      });
+    }
+
+    // 3. Fetch products from DATABASE
     const [initialDbProducts, aiSettings] = await Promise.all([
       db.product.findMany({
         where: {

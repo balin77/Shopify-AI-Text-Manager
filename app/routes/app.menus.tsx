@@ -24,7 +24,6 @@ import { MainNavigation } from "../components/MainNavigation";
 import { ContentTypeNavigation } from "../components/ContentTypeNavigation";
 import { useI18n } from "../contexts/I18nContext";
 import { useNavigationHeight } from "../contexts/NavigationHeightContext";
-import { ContentService } from "../services/content.service";
 import { CONTENT_MAX_HEIGHT } from "../constants/layout";
 import { logger } from "~/utils/logger.server";
 
@@ -49,69 +48,69 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const shopLocales = localesData.data?.shopLocales || [];
     const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "en";
 
-    // Try to load menus from database first
-    logger.debug("[MENUS-LOADER] Attempting to load menus from database", { context: "Menus", shop: session.shop });
+    // Incremental sync: fetch menu IDs from Shopify, sync only missing ones
     const { db } = await import("../db.server");
+    const { ContentSyncService } = await import("../services/content-sync.service");
+    const syncService = new ContentSyncService(admin, session.shop);
 
-    let menus = [];
+    const menusResponse = await admin.graphql(
+      `#graphql
+        query getMenuIds {
+          menus(first: 250) {
+            edges {
+              node {
+                id
+              }
+            }
+          }
+        }`
+    );
+    const menusData = await menusResponse.json();
+    const shopifyMenuIds = new Set<string>(
+      (menusData.data?.menus?.edges || []).map((e: any) => e.node.id)
+    );
+
+    let localMenus: any[] = [];
     try {
-      menus = await db.menu.findMany({
+      localMenus = await db.menu.findMany({
         where: { shop: session.shop },
-        orderBy: { title: "asc" }
+        select: { id: true },
       });
-      logger.debug("[MENUS-LOADER] Successfully loaded menus from database", { context: "Menus", count: menus.length });
-
-      if (menus.length > 0) {
-        logger.debug("[MENUS-LOADER] Sample menu", {
-          context: "Menus",
-          id: menus[0].id,
-          title: menus[0].title,
-          hasItems: !!menus[0].items,
-          itemsType: typeof menus[0].items
-        });
-      }
     } catch (dbError: any) {
-      logger.error("[MENUS-LOADER] Database error", { context: "Menus", error: dbError.message, code: dbError.code });
-      // If table doesn't exist, continue to API fallback
+      // If table doesn't exist yet, treat as empty
       if (dbError.code === 'P2021') {
-        logger.debug("[MENUS-LOADER] Menu table does not exist yet, falling back to API", { context: "Menus" });
+        logger.debug("[MENUS-LOADER] Menu table does not exist yet", { context: "Menus" });
+      }
+    }
+    const localMenuIds = new Set(localMenus.map(m => m.id));
+
+    // Sync missing menus
+    const missingIds = [...shopifyMenuIds].filter(id => !localMenuIds.has(id));
+    if (missingIds.length > 0) {
+      logger.info(`[MENUS-LOADER] Syncing ${missingIds.length} new menu(s) from Shopify`);
+      for (const id of missingIds) {
+        await syncService.syncMenu(id);
       }
     }
 
-    // If no menus in database, fetch from API and cache them
-    if (menus.length === 0) {
-      logger.debug("[MENUS-LOADER] No cached menus found, fetching from Shopify API", { context: "Menus" });
-      const contentService = new ContentService(admin);
-      const apiMenus = await contentService.getMenus();
-      logger.debug("[MENUS-LOADER] API returned menus", { context: "Menus", count: apiMenus.length });
+    // Remove deleted menus
+    const removedIds = [...localMenuIds].filter(id => !shopifyMenuIds.has(id));
+    if (removedIds.length > 0) {
+      logger.info(`[MENUS-LOADER] Removing ${removedIds.length} deleted menu(s) from DB`);
+      await db.menu.deleteMany({
+        where: { shop: session.shop, id: { in: removedIds } },
+      });
+    }
 
-      // Cache them in database
-      if (apiMenus.length > 0) {
-        logger.debug("[MENUS-LOADER] Starting sync to database", { context: "Menus" });
-        const { ContentSyncService } = await import("../services/content-sync.service");
-        const syncService = new ContentSyncService(admin, session.shop);
-
-        try {
-          await syncService.syncAllMenus();
-          logger.debug("[MENUS-LOADER] Sync completed successfully", { context: "Menus" });
-
-          // Re-fetch from database
-          menus = await db.menu.findMany({
-            where: { shop: session.shop },
-            orderBy: { title: "asc" }
-          });
-          logger.debug("[MENUS-LOADER] Successfully cached and re-fetched menus from database", { context: "Menus", count: menus.length });
-        } catch (syncError: any) {
-          logger.error("[MENUS-LOADER] Sync failed", { context: "Menus", error: syncError.message });
-          logger.debug("[MENUS-LOADER] Falling back to API data", { context: "Menus" });
-          // Use API data as fallback
-          menus = apiMenus;
-        }
-      } else {
-        logger.debug("[MENUS-LOADER] No menus found in API either", { context: "Menus" });
-      }
-    } else {
-      logger.debug("[MENUS-LOADER] Using cached menus - FAST PATH", { context: "Menus", count: menus.length });
+    // Load menus from database
+    let menus: any[] = [];
+    try {
+      menus = await db.menu.findMany({
+        where: { shop: session.shop },
+        orderBy: { title: "asc" },
+      });
+    } catch (dbError: any) {
+      logger.error("[MENUS-LOADER] Failed to load menus from DB", { context: "Menus", error: dbError.message });
     }
 
     return json({

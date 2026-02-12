@@ -274,6 +274,8 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           showThumbnails={!hideItemListImages}
           showCategoryBadge={showItemListCategoryBadge}
           planLimit={finalPlanLimit}
+          onSyncAll={revalidator ? () => revalidator.revalidate() : undefined}
+          isSyncing={revalidator?.state === "loading"}
           t={{
             searchPlaceholder: t.content?.searchPlaceholder,
             paginationOf: t.content?.paginationOf || "of",

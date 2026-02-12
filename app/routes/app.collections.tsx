@@ -37,6 +37,52 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const shopLocales = await getCachedShopLocales(admin, session.shop);
     const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "en";
 
+    // Incremental sync: fetch collection IDs from Shopify, sync only missing ones
+    const { ContentSyncService } = await import("../services/content-sync.service");
+    const syncService = new ContentSyncService(admin, session.shop);
+
+    const collectionsResponse = await admin.graphql(
+      `#graphql
+        query getCollectionIds {
+          collections(first: 250) {
+            edges {
+              node {
+                id
+              }
+            }
+          }
+        }`
+    );
+    const collectionsData = await collectionsResponse.json();
+    const shopifyCollectionIds = new Set<string>(
+      (collectionsData.data?.collections?.edges || []).map((e: any) => e.node.id)
+    );
+
+    const localCollections = await db.collection.findMany({
+      where: { shop: session.shop },
+      select: { id: true },
+    });
+    const localCollectionIds = new Set(localCollections.map(c => c.id));
+
+    // Sync missing collections
+    const missingIds = [...shopifyCollectionIds].filter(id => !localCollectionIds.has(id));
+    if (missingIds.length > 0) {
+      logger.info(`[COLLECTIONS-LOADER] Syncing ${missingIds.length} new collection(s) from Shopify`);
+      await Promise.all(missingIds.map(id => syncService.syncCollection(id)));
+    }
+
+    // Remove deleted collections
+    const removedIds = [...localCollectionIds].filter(id => !shopifyCollectionIds.has(id));
+    if (removedIds.length > 0) {
+      logger.info(`[COLLECTIONS-LOADER] Removing ${removedIds.length} deleted collection(s) from DB`);
+      await db.collection.deleteMany({
+        where: { shop: session.shop, id: { in: removedIds } },
+      });
+      await db.contentTranslation.deleteMany({
+        where: { resourceType: 'Collection', resourceId: { in: removedIds } },
+      });
+    }
+
     // Load collections from database
     const [collections, aiSettings] = await Promise.all([
       db.collection.findMany({
