@@ -41,7 +41,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
 
     // Create return URL (where user is redirected after confirming payment)
-    const returnUrl = `${process.env.SHOPIFY_APP_URL}/app/billing/callback?plan=${plan}`;
+    // Include shop param so authenticate.admin can handle the non-embedded redirect
+    const returnUrl = `${process.env.SHOPIFY_APP_URL}/app/billing/callback?plan=${plan}&shop=${session.shop}`;
 
     const result = await createSubscription(admin, session, plan, returnUrl);
 
