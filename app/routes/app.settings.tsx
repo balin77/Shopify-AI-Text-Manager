@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useFetcher, useNavigate, useSearchParams } from "@remix-run/react";
+import { useLoaderData, useFetcher, useSearchParams, useRevalidator } from "@remix-run/react";
 import {
   Page,
   Card,
@@ -565,7 +565,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 export default function SettingsPage() {
   const { shop, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, localeCount, subscriptionPlan } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
-  const navigate = useNavigate();
+  const revalidator = useRevalidator();
   const [searchParams] = useSearchParams();
   const { t } = useI18n();
   const { showInfoBox } = useInfoBox();
@@ -596,26 +596,6 @@ export default function SettingsPage() {
   // Get available plans for billing
   const availablePlans = getAvailablePlans();
 
-  // Function to safely redirect within Shopify App Bridge context
-  const redirectToApp = (path: string) => {
-    try {
-      // Check if Shopify App Bridge is available (embedded app context)
-      if (typeof window !== 'undefined' && window.shopify) {
-        // Use App Bridge Redirect action
-        const AppBridge = window.shopify;
-        // Trigger navigation using App Bridge
-        AppBridge.navigate(path);
-      } else {
-        // Fallback to standard navigation (for non-embedded or dev mode)
-        window.location.href = path;
-      }
-    } catch (error) {
-      console.error('Redirect error:', error);
-      // Final fallback - use standard navigation
-      window.location.href = path;
-    }
-  };
-
   // Handle plan selection
   const handleSelectPlan = async (plan: BillingPlan) => {
     if (plan === 'free') {
@@ -632,8 +612,9 @@ export default function SettingsPage() {
             throw new Error('Failed to cancel subscription');
           }
 
-          // Redirect to settings page to refresh data
-          redirectToApp('/app/settings?tab=plan');
+          // Revalidate loaders to refresh plan data (avoids hard navigation / white screen)
+          revalidator.revalidate();
+          setPlanLoading(null);
         } catch (err) {
           setPlanError(err instanceof Error ? err.message : t.settings.errorOccurred);
           setPlanLoading(null);
@@ -658,9 +639,10 @@ export default function SettingsPage() {
         throw new Error(data.error || 'Failed to create subscription');
       }
 
-      // In development mode, directly redirect to settings page (no Shopify Billing redirect)
+      // In development mode, revalidate loaders to refresh plan data
       if (data.directUpdate) {
-        redirectToApp('/app/settings?tab=plan');
+        revalidator.revalidate();
+        setPlanLoading(null);
         return;
       }
 
