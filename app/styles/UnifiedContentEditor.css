@@ -420,9 +420,15 @@
   }
 }
 
-/* Always show clear button in field search (Polaris hides it when not focused) */
+/* Field search: always show clear button and suppress focus ring */
 .field-search-always-clear .Polaris-TextField__ClearButton {
   display: flex !important;
   visibility: visible !important;
   opacity: 1 !important;
+}
+
+.field-search-always-clear .Polaris-TextField--focus .Polaris-TextField__Backdrop,
+.field-search-always-clear .Polaris-TextField__Backdrop::after {
+  box-shadow: none !important;
+  border-color: var(--p-color-border) !important;
 }
