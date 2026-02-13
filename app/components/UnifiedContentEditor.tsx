@@ -482,7 +482,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         <BlockStack gap="300">
                           {/* Search */}
                           {onFieldSearch && (
-                            <div onKeyDown={(e) => {
+                            <div style={{ outline: 'none' }} onKeyDown={(e) => {
                               if (e.key === 'Enter') {
                                 e.preventDefault();
                                 onFieldSearch(fieldSearchInput);
