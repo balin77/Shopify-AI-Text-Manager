@@ -51,25 +51,43 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // LAZY LOADING: Only load navigation metadata, not the full content
     const { db } = await import("../db.server");
 
-    // OPTIMIZED: Use groupBy to get unique groups with counts in a single efficient query
-    const groupsWithCounts = await db.themeContent.groupBy({
-      by: ['groupId', 'groupName', 'groupIcon'],
+    // Load groups with translatableContent to count actual translatable fields
+    const allGroupRows = await db.themeContent.findMany({
       where: { shop: session.shop },
-      _count: {
-        groupId: true
+      select: {
+        groupId: true,
+        groupName: true,
+        groupIcon: true,
+        translatableContent: true,
       }
     });
 
+    // Aggregate by groupId, summing translatable field counts from the JSON arrays
+    const groupMap = new Map<string, { groupName: string; groupIcon: string; contentCount: number }>();
+    for (const row of allGroupRows) {
+      const existing = groupMap.get(row.groupId);
+      const fieldCount = Array.isArray(row.translatableContent) ? (row.translatableContent as any[]).length : 0;
+      if (existing) {
+        existing.contentCount += fieldCount;
+      } else {
+        groupMap.set(row.groupId, {
+          groupName: row.groupName,
+          groupIcon: row.groupIcon,
+          contentCount: fieldCount,
+        });
+      }
+    }
+
     // Create lightweight navigation items (sorted alphabetically)
-    const themes = groupsWithCounts
-      .map(group => ({
-        id: `group_${group.groupId}`,
+    const themes = Array.from(groupMap.entries())
+      .map(([groupId, group]) => ({
+        id: `group_${groupId}`,
         title: group.groupName,
         groupName: group.groupName,
         icon: group.groupIcon,
-        groupId: group.groupId,
+        groupId: groupId,
         role: 'THEME_GROUP',
-        contentCount: group._count.groupId,
+        contentCount: group.contentCount,
         // Required for UnifiedContentEditor compatibility
         translatableContent: [], // Will be loaded on demand
         translations: [],
