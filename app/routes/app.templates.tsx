@@ -1096,7 +1096,10 @@ export default function TemplatesPage() {
         });
 
         fetch(`/api/templates/${theme.groupId}?${params}`)
-          .then(response => response.json())
+          .then(response => {
+            if (!response.ok) throw new Error('Failed to load theme data');
+            return response.json();
+          })
           .then(data => {
             setLoadedThemes(prev => ({
               ...prev,
@@ -1145,6 +1148,47 @@ export default function TemplatesPage() {
       }
     }
   }, [loadedThemes, selectedGroupId, themes]);
+
+  // Update editable values when pagination changes (new page of fields loaded)
+  const previousPaginationRef = useRef<{ page: number; search: string } | null>(null);
+  useEffect(() => {
+    if (!selectedGroupId) return;
+    const pag = fieldPagination[selectedGroupId];
+    if (!pag) return;
+
+    const prev = previousPaginationRef.current;
+    const pageChanged = prev && (prev.page !== pag.page || prev.search !== pag.search);
+    previousPaginationRef.current = { page: pag.page, search: pag.search };
+
+    // Only run when page/search actually changed (not on first load - that's handled by item select)
+    if (!pageChanged) return;
+
+    const themeData = loadedThemes[selectedGroupId];
+    if (!themeData?.translatableContent) return;
+
+    const currentLanguage = editor.state.currentLanguage;
+    const newValues: Record<string, string> = {};
+
+    if (currentLanguage === primaryLocale) {
+      // Primary locale: values come from translatableContent
+      themeData.translatableContent.forEach((item: any) => {
+        newValues[item.key] = item.value || "";
+      });
+    } else {
+      // Foreign locale: values come from cached translations
+      const cachedTranslations = loadedTranslations[selectedGroupId]?.[currentLanguage];
+      themeData.translatableContent.forEach((item: any) => {
+        const translation = cachedTranslations?.find((t: any) => t.key === item.key);
+        newValues[item.key] = translation?.value || "";
+      });
+    }
+
+    // Update editable values for the new page's fields
+    Object.entries(newValues).forEach(([key, value]) => {
+      editorHelpersRef.current.setEditableValue(key, value);
+    });
+    editorHelpersRef.current.setOriginalTemplateValues(newValues);
+  }, [fieldPagination, selectedGroupId, loadedThemes, editor.state.currentLanguage, primaryLocale, loadedTranslations]);
 
   // Load translations when language or group changes
   useEffect(() => {

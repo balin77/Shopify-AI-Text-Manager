@@ -1,5 +1,6 @@
 /**
  * API Route: Load theme content details for a specific group
+ * Uses splat route ($) so groupIds containing slashes (e.g. "sections/header-group") work correctly.
  * Used for lazy loading when user clicks on a navigation item
  * Also handles updates to theme translations
  */
@@ -7,14 +8,13 @@
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import { AIService } from "../../src/services/ai.service";
-import { TranslationService } from "../../src/services/translation.service";
 import { TRANSLATE_CONTENT } from "../graphql/content.mutations";
 import { decryptApiKey } from "../utils/encryption.server";
 import { logger } from "~/utils/logger.server";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
-  const { groupId } = params;
+  const groupId = params["*"];
 
   if (!groupId) {
     return json({ error: "groupId is required" }, { status: 400 });
@@ -105,7 +105,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 
 export const action = async ({ request, params }: ActionFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
-  const { groupId } = params;
+  const groupId = params["*"];
 
   if (!groupId) {
     return json({ error: "groupId is required" }, { status: 400 });
@@ -167,8 +167,6 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         const fieldKey = formData.get("fieldKey") as string;
         const currentValue = formData.get("currentValue") as string;
 
-        // Load AI settings from database
-        const { db } = await import("../db.server");
         const settings = await db.aISettings.findUnique({
           where: { shop: session.shop }
         });
@@ -215,8 +213,6 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
           }, { status: 400 });
         }
 
-        // Load AI settings from database
-        const { db } = await import("../db.server");
         const settings = await db.aISettings.findUnique({
           where: { shop: session.shop }
         });
@@ -269,8 +265,6 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
           }
         }
 
-        // Load AI settings from database
-        const { db } = await import("../db.server");
         const settings = await db.aISettings.findUnique({
           where: { shop: session.shop }
         });
