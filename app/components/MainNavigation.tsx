@@ -374,6 +374,7 @@ export function MainNavigation() {
           )}
 
           {/* Navigation Tabs - versteckt auf Mobile */}
+          <div className="desktop-only">
           <InlineStack gap="400" blockAlign="center">
             {tabs.map((tab) => {
               const isActive = location.pathname.startsWith(tab.path);
@@ -449,6 +450,7 @@ export function MainNavigation() {
               return tabContent;
             })}
           </InlineStack>
+          </div>
 
           {/* Loading Indicator - shows for navigation or global loading state */}
           {(showLoadingIndicator || isGlobalLoading) && (
