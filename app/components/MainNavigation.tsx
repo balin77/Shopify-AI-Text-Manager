@@ -522,14 +522,15 @@ export function MainNavigation() {
 
           {/* Plan Buttons - alle Pläne auf Desktop, nur aktiver Plan auf Mobile */}
           <div style={{ marginLeft: "auto" }}>
-            {/* Desktop: alle Pläne als Buttons */}
+            {/* Desktop: alle Pläne als segmented ButtonGroup */}
             <div className="desktop-only">
-              <ButtonGroup>
+              <ButtonGroup variant="segmented">
                 {plans.map((p) => (
                   <Button
                     key={p}
                     onClick={handlePlanNavigation}
                     pressed={p === plan}
+                    size="slim"
                     accessibilityLabel={`Plan: ${PLAN_DISPLAY_NAMES[p]}${p === plan ? " (active)" : ""}`}
                   >
                     {PLAN_DISPLAY_NAMES[p]}
