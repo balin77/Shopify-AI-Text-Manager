@@ -419,3 +419,10 @@
     max-height: none;
   }
 }
+
+/* Always show clear button in field search (Polaris hides it when not focused) */
+.field-search-always-clear .Polaris-TextField__ClearButton {
+  display: flex !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+}

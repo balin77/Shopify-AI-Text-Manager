@@ -472,7 +472,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                 <Card padding="600">
                   <BlockStack gap="500">
                     {/* Field Pagination Header (for templates with many fields) */}
-                    {fieldPagination && fieldPagination.totalCount > fieldPagination.limit && (
+                    {fieldPagination && (fieldPagination.totalCount > fieldPagination.limit || fieldPagination.search) && (
                       <div style={{
                         padding: "0.75rem",
                         backgroundColor: "var(--p-color-bg-surface-secondary)",
@@ -482,7 +482,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         <BlockStack gap="300">
                           {/* Search */}
                           {onFieldSearch && (
-                            <div style={{ outline: 'none' }} onKeyDown={(e) => {
+                            <div className="field-search-always-clear" style={{ outline: 'none' }} onKeyDown={(e) => {
                               if (e.key === 'Enter') {
                                 e.preventDefault();
                                 onFieldSearch(fieldSearchInput);
