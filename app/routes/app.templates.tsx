@@ -62,18 +62,24 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       }
     });
 
-    // Aggregate by groupId, summing translatable field counts from the JSON arrays
-    const groupMap = new Map<string, { groupName: string; groupIcon: string; contentCount: number }>();
+    // Aggregate by groupId, counting unique translatable field keys (deduplicated)
+    const groupMap = new Map<string, { groupName: string; groupIcon: string; uniqueKeys: Set<string> }>();
     for (const row of allGroupRows) {
       const existing = groupMap.get(row.groupId);
-      const fieldCount = Array.isArray(row.translatableContent) ? (row.translatableContent as any[]).length : 0;
+      const items = Array.isArray(row.translatableContent) ? (row.translatableContent as any[]) : [];
       if (existing) {
-        existing.contentCount += fieldCount;
+        for (const item of items) {
+          if (item.key) existing.uniqueKeys.add(item.key);
+        }
       } else {
+        const keys = new Set<string>();
+        for (const item of items) {
+          if (item.key) keys.add(item.key);
+        }
         groupMap.set(row.groupId, {
           groupName: row.groupName,
           groupIcon: row.groupIcon,
-          contentCount: fieldCount,
+          uniqueKeys: keys,
         });
       }
     }
@@ -87,7 +93,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         icon: group.groupIcon,
         groupId: groupId,
         role: 'THEME_GROUP',
-        contentCount: group.contentCount,
+        contentCount: group.uniqueKeys.size,
         // Required for UnifiedContentEditor compatibility
         translatableContent: [], // Will be loaded on demand
         translations: [],
