@@ -32,13 +32,18 @@
 .rate-limit-field input[type="number"]:focus,
 .rate-limit-field .Polaris-TextField__Input:focus {
   outline: none !important;
-  box-shadow: 0 0 0 2px var(--p-color-border-focus, #005bd3) !important;
+  box-shadow: none !important;
 }
 
-/* Remove the blue border completely */
 .rate-limit-field input[type="number"]:focus-visible,
 .rate-limit-field .Polaris-TextField__Input:focus-visible {
   outline: none !important;
+  box-shadow: none !important;
+}
+
+.rate-limit-field .Polaris-TextField:focus-within {
+  outline: none !important;
+  box-shadow: none !important;
 }
 
 /* Fix spinner button position on mobile and ensure they stay within bounds */
