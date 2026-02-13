@@ -1666,6 +1666,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         originalTemplateValuesRef.current = { ...editableValues };
       }
 
+      // Mark this item as recently saved to prevent on-demand sync from re-fetching
+      // stale translations from Shopify (race condition with eventual consistency)
+      if (selectedItemId) {
+        try {
+          sessionStorage.setItem(`translationSaved_${selectedItemId}`, Date.now().toString());
+        } catch {}
+      }
+
       // Revalidate to fetch fresh data from the database after successful save
       // This ensures translations and all changes are reflected in the UI
       // Only revalidate if not already revalidating to prevent AbortError
@@ -2523,7 +2531,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             targetLocale: currentLanguage,
             primaryLocale
           },
-          "allAltTextsTranslate",
+          `allAltTextsTranslate_${currentLanguage}`,
           (result) => {
             // Directly accept translations and auto-save (no suggestion banner)
             if (result.translatedAltTexts) {
@@ -2812,7 +2820,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         targetLocale: currentLanguage,
         primaryLocale
       },
-      "allAltTextsTranslate",
+      `allAltTextsTranslate_${currentLanguage}`,
       (result) => {
         // Directly accept translations and auto-save (no suggestion banner)
         if (result.translatedAltTexts) {

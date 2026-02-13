@@ -773,18 +773,27 @@ function FieldRenderer(props: FieldRendererProps & { state?: any; handlers?: any
     fetcherFormData,
   } = props;
 
-  // AI actions that should block all image AI buttons while running (for ImageGalleryField)
-  const IMAGE_AI_ACTIONS = [
+  // Image AI actions: split into "all locales" vs "per locale" (same pattern as text fields)
+  const IMAGE_ALL_LOCALES_ACTIONS = [
     "generateAltText",
     "translateAltText",
     "translateAltTextToAllLocales",
     "translateAllAltTextsToAllLocales",
+  ];
+  const IMAGE_PER_LOCALE_ACTIONS = [
     "translateAllAltTextsForLocale",
   ];
 
   // Check if an image-related AI action is currently running (used for ImageGalleryField)
+  // Only block for the same item; per-locale actions only block the targeted locale
   const currentAction = fetcherFormData?.get("action");
-  const isImageAIActionRunning = fetcherState !== "idle" && IMAGE_AI_ACTIONS.includes(currentAction as string);
+  const fetcherTargetLocale = fetcherFormData?.get("targetLocale") as string | null;
+  const fetcherItemId = fetcherFormData?.get("itemId") as string | null;
+  const isSameItem = fetcherItemId === selectedItem?.id;
+  const isImageAIActionRunning = fetcherState !== "idle" && isSameItem && (
+    IMAGE_ALL_LOCALES_ACTIONS.includes(currentAction as string) ||
+    (IMAGE_PER_LOCALE_ACTIONS.includes(currentAction as string) && fetcherTargetLocale === currentLanguage)
+  );
 
   // Get locale name for label (localized to app language)
   const { locale: appLocale } = useI18n();
@@ -878,7 +887,9 @@ function FieldRenderer(props: FieldRendererProps & { state?: any; handlers?: any
         onRejectSuggestion={handlers.handleRejectAltTextSuggestion}
         onClearAltText={(imageIndex) => handlers.handleAltTextChange(imageIndex, "")}
         isFieldLoading={(imageIndex) => {
-          const isBulkTranslating = state?.loadingFieldKeys?.has("allAltTextsTranslate") ?? false;
+          // Check both global key (all-locales) and locale-specific key (per-locale)
+          const isBulkTranslating = (state?.loadingFieldKeys?.has("allAltTextsTranslate") ?? false)
+            || (state?.loadingFieldKeys?.has(`allAltTextsTranslate_${currentLanguage}`) ?? false);
           const isBulkGenerating = state?.loadingFieldKeys?.has("allAltTextsGenerate") ?? false;
           if (imageIndex === -1) return isImageAIActionRunning || isBulkTranslating || isBulkGenerating;
           return isImageAIActionRunning || isBulkTranslating || isBulkGenerating || (state?.loadingFieldKeys?.has(`altText_${imageIndex}`) ?? false);
