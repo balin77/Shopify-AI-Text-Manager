@@ -12,13 +12,13 @@ interface SettingsSetupTabProps {
   t: any; // i18n translations
 }
 
-const phaseLabels: Record<string, string> = {
-  products: "Products",
-  collections: "Collections",
-  articles: "Articles",
-  pages: "Pages",
-  policies: "Policies",
-  themes: "Themes",
+const phaseKeys: Record<string, string> = {
+  products: "phaseProducts",
+  collections: "phaseCollections",
+  articles: "phaseArticles",
+  pages: "phasePages",
+  policies: "phasePolicies",
+  themes: "phaseThemes",
 };
 
 const phaseOrder = ["products", "collections", "articles", "pages", "policies", "themes"];
@@ -41,7 +41,7 @@ export function SettingsSetupTab({
   const { syncStatus, syncLoading, syncProgress, startSync } = useSyncProgress();
 
   const handleSetupWebhooks = async () => {
-    setWebhookStatus("Setting up webhooks...");
+    setWebhookStatus(t.settings.settingUpWebhooks || "Setting up webhooks...");
     setWebhookLoading(true);
     setWebhookData(null);
 
@@ -95,16 +95,16 @@ export function SettingsSetupTab({
           </Text>
           <BlockStack gap="200">
             <Text as="p">{t.settings.shop}: {shop}</Text>
-            <Text as="p" fontWeight="semibold">Products & Content:</Text>
+            <Text as="p" fontWeight="semibold">{t.settings.productsAndContent}</Text>
             <Text as="p">{t.settings.productsInDb}: {productCount}</Text>
-            <Text as="p">Collections in DB: {collectionCount}</Text>
-            <Text as="p">Articles in DB: {articleCount}</Text>
+            <Text as="p">{t.settings.collectionsInDb}: {collectionCount}</Text>
+            <Text as="p">{t.settings.articlesInDb}: {articleCount}</Text>
             <div style={{ marginTop: "0.5rem" }}>
-              <Text as="p" fontWeight="semibold">Translations:</Text>
+              <Text as="p" fontWeight="semibold">{t.settings.translationsLabel}</Text>
             </div>
             <Text as="p">{t.settings.translationsInDb}: {translationCount}</Text>
             <div style={{ marginTop: "0.5rem" }}>
-              <Text as="p" fontWeight="semibold">Webhooks:</Text>
+              <Text as="p" fontWeight="semibold">{t.settings.webhooksLabel}</Text>
             </div>
             <Text as="p">{t.settings.webhookEventsReceived}: {webhookCount}</Text>
           </BlockStack>
@@ -142,18 +142,18 @@ export function SettingsSetupTab({
               <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
                 <BlockStack gap="100">
                   {webhookData.webhooks.filter((w: any) => w.topic.includes('PRODUCTS')).length > 0 && (
-                    <Text as="p" fontWeight="semibold">Products: {webhookData.webhooks.filter((w: any) => w.topic.includes('PRODUCTS')).length} webhooks</Text>
+                    <Text as="p" fontWeight="semibold">{t.settings.phaseProducts}: {t.settings.webhooksCount.replace('{count}', webhookData.webhooks.filter((w: any) => w.topic.includes('PRODUCTS')).length)}</Text>
                   )}
                   {webhookData.webhooks.filter((w: any) => w.topic.includes('COLLECTIONS')).length > 0 && (
-                    <Text as="p" fontWeight="semibold">Collections: {webhookData.webhooks.filter((w: any) => w.topic.includes('COLLECTIONS')).length} webhooks</Text>
+                    <Text as="p" fontWeight="semibold">{t.settings.phaseCollections}: {t.settings.webhooksCount.replace('{count}', webhookData.webhooks.filter((w: any) => w.topic.includes('COLLECTIONS')).length)}</Text>
                   )}
                   {webhookData.webhooks.filter((w: any) => w.topic.includes('ARTICLES')).length > 0 && (
-                    <Text as="p" fontWeight="semibold">Articles: {webhookData.webhooks.filter((w: any) => w.topic.includes('ARTICLES')).length} webhooks</Text>
+                    <Text as="p" fontWeight="semibold">{t.settings.phaseArticles}: {t.settings.webhooksCount.replace('{count}', webhookData.webhooks.filter((w: any) => w.topic.includes('ARTICLES')).length)}</Text>
                   )}
                 </BlockStack>
               </div>
               <details>
-                <summary style={{ cursor: "pointer", padding: "0.5rem 0" }}>Show all webhook details</summary>
+                <summary style={{ cursor: "pointer", padding: "0.5rem 0" }}>{t.settings.showWebhookDetails}</summary>
                 <BlockStack gap="100" >
                   {webhookData.webhooks.map((w: any, i: number) => (
                     <Text as="p" key={i} tone="subdued">
@@ -176,21 +176,21 @@ export function SettingsSetupTab({
             {t.settings.syncProductsDescription}
           </Text>
           <Text as="p" tone="subdued">
-            {t.content?.syncDescription || "This will sync all products, collections, and articles from Shopify to the database. Auto-updates via webhooks."}
+            {t.content?.syncDescription || t.settings.syncProductsDescription}
           </Text>
           <Button
             onClick={() => handleSyncProducts(true)}
             loading={syncLoading}
             variant="primary"
           >
-            {t.content?.syncAllContent || "Sync All Content"}
+            {t.content?.syncAllContent || t.settings.syncProducts}
           </Button>
           {syncProgress && (
             <Box padding="400" background="bg-surface-secondary" borderRadius="200">
               <BlockStack gap="400">
                 <InlineStack align="space-between">
                   <Text as="p" variant="bodyMd" fontWeight="semibold">
-                    Syncing Content
+                    {t.settings.syncingContent}
                   </Text>
                   <Text as="p" variant="bodyMd" tone="subdued">
                     {syncProgress.current}%
@@ -210,7 +210,7 @@ export function SettingsSetupTab({
                         fontWeight={isCurrent ? "semibold" : "regular"}
                       >
                         {isCompleted ? "✓ " : isCurrent ? "● " : "○ "}
-                        {phaseLabels[phase]}
+                        {t.settings[phaseKeys[phase]] || phase}
                       </Text>
                     );
                   })}
