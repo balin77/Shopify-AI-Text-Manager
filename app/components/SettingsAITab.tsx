@@ -98,7 +98,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
         setAvailableModels(options);
         // If current model is not in the new list, reset to default
         const modelIds = data.models.map((m: { id: string }) => m.id);
-        if (!modelIds.includes(selectedModel)) {
+        if (selectedModel && !modelIds.includes(selectedModel)) {
           setSelectedModel(data.defaultModel || '');
         }
       } else {
