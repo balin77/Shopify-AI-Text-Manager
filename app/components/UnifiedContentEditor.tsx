@@ -143,16 +143,27 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   const fieldDefinitions = effectiveFieldDefinitions || config.fieldDefinitions;
 
   // AI actions that should block all other AI buttons while running (for global actions like translateAll)
-  const GLOBAL_AI_ACTIONS = [
+  // "All locales" actions block every language; "ForLocale" actions only block the targeted locale
+  const ALL_LOCALES_AI_ACTIONS = [
     "translateAll",
-    "translateAllForLocale",
     "translateAllAltTextsToAllLocales",
+  ];
+  const PER_LOCALE_AI_ACTIONS = [
+    "translateAllForLocale",
     "translateAllAltTextsForLocale",
   ];
 
   // Check if a global AI action is currently running (affects all fields)
+  // Only block buttons for the item that is actually being translated
   const currentAction = fetcherFormData?.get("action");
-  const isGlobalAIActionRunning = fetcherState !== "idle" && GLOBAL_AI_ACTIONS.includes(currentAction as string);
+  const fetcherTargetLocale = fetcherFormData?.get("targetLocale") as string | null;
+  const fetcherItemId = fetcherFormData?.get("itemId") as string | null;
+  const isSameItem = fetcherItemId === state.selectedItemId;
+  const isAllLocalesActionRunning = fetcherState !== "idle" && isSameItem && ALL_LOCALES_AI_ACTIONS.includes(currentAction as string);
+  const isPerLocaleActionRunning = fetcherState !== "idle" && isSameItem
+    && PER_LOCALE_AI_ACTIONS.includes(currentAction as string)
+    && fetcherTargetLocale === state.currentLanguage;
+  const isGlobalAIActionRunning = isAllLocalesActionRunning || isPerLocaleActionRunning;
 
   // Get the set of fields with loading AI actions (for per-field loading states)
   const loadingFieldKeys = state.loadingFieldKeys;
@@ -388,11 +399,11 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                           {/* Primary locale: Translate to ALL foreign languages */}
                           <Button
                             onClick={handlers.handleTranslateAll}
-                            loading={fetcherState !== "idle" && fetcherFormData?.get("action") === "translateAll"}
-                            disabled={fetcherState !== "idle" && fetcherFormData?.get("action") === "translateAll"}
+                            loading={isAllLocalesActionRunning}
+                            disabled={isAllLocalesActionRunning}
                             size="slim"
                           >
-                            {fetcherState !== "idle" && fetcherFormData?.get("action") === "translateAll"
+                            {isAllLocalesActionRunning
                               ? (t.content?.translating || "Translating...")
                               : (t.content?.translateAll || "🌍 Translate All")}
                           </Button>
@@ -418,11 +429,11 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                           {/* Foreign locale: Translate ONLY this locale */}
                           <Button
                             onClick={handlers.handleTranslateAllForLocale}
-                            loading={fetcherState !== "idle" && fetcherFormData?.get("action") === "translateAllForLocale"}
-                            disabled={fetcherState !== "idle" && fetcherFormData?.get("action") === "translateAllForLocale"}
+                            loading={isPerLocaleActionRunning || isAllLocalesActionRunning}
+                            disabled={isPerLocaleActionRunning || isAllLocalesActionRunning}
                             size="slim"
                           >
-                            {fetcherState !== "idle" && fetcherFormData?.get("action") === "translateAllForLocale"
+                            {isPerLocaleActionRunning || isAllLocalesActionRunning
                               ? (t.content?.translating || "Translating...")
                               : (t.content?.translateAll || "🌍 Translate All")}
                           </Button>

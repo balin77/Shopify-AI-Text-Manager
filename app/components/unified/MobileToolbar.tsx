@@ -107,9 +107,15 @@ export function MobileToolbar({
   const closePopover = useCallback(() => setPopoverActive(false), []);
 
   const currentAction = fetcherFormData?.get("action");
+  const fetcherTargetLocale = fetcherFormData?.get("targetLocale") as string | null;
+  const fetcherItemId = fetcherFormData?.get("itemId") as string | null;
+  const isSameItem = fetcherItemId === selectedItem?.id;
+  // "translateAll" targets all locales → always block; "translateAllForLocale" → only block when viewing that locale
+  // Only block for the item that is actually being translated
   const isTranslating =
-    fetcherState !== "idle" &&
-    (currentAction === "translateAll" || currentAction === "translateAllForLocale");
+    fetcherState !== "idle" && isSameItem &&
+    (currentAction === "translateAll" ||
+     (currentAction === "translateAllForLocale" && fetcherTargetLocale === currentLanguage));
   const isSaving = fetcherState !== "idle" && currentAction === "updateContent";
 
   const popoverActivator = (
