@@ -175,7 +175,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         const task = await db.task.create({
           data: {
             shop: session.shop,
-            type: "translationBulk",
+            type: "bulkTranslation",
             status: "pending",
             resourceType: contentType,
             resourceId: itemId,
@@ -1595,7 +1595,7 @@ Image URL: ${image.url}`;
         const task = await db.task.create({
           data: {
             shop: session.shop,
-            type: "translationBulk",
+            type: "bulkTranslation",
             status: "pending",
             resourceType: contentType,
             resourceId: itemId,
@@ -1876,7 +1876,7 @@ Image URL: ${image.url}`;
         const bulkAllTask = await db.task.create({
           data: {
             shop: session.shop,
-            type: "translationBulk",
+            type: "bulkTranslation",
             status: "pending",
             resourceType: contentType,
             resourceId: itemId,

@@ -14,6 +14,21 @@ import {
 } from "~/constants/shopifyFields";
 import { TIMING } from "~/constants/timing";
 
+/**
+ * Returns a localized language name using Intl.DisplayNames.
+ * Falls back to the Shopify-provided name or the locale code.
+ */
+export function getLocalizedLanguageName(localeCode: string, appLocale: string, fallbackName?: string): string {
+  try {
+    const displayNames = new Intl.DisplayNames([appLocale], { type: 'language' });
+    const name = displayNames.of(localeCode);
+    if (name) return name.charAt(0).toUpperCase() + name.slice(1);
+  } catch {
+    // Intl.DisplayNames not supported, fall through
+  }
+  return fallbackName || localeCode;
+}
+
 export interface ContentEditorState {
   editableTitle: string;
   setEditableTitle: (value: string) => void;

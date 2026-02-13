@@ -402,7 +402,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
         const task = await db.task.create({
           data: {
             shop: session.shop,
-            type: "translationBulk",
+            type: "bulkTranslation",
             status: "pending",
             resourceType: "templates",
             resourceId: `group_${groupId}`,
@@ -542,7 +542,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
         const task = await db.task.create({
           data: {
             shop: session.shop,
-            type: "translationBulk",
+            type: "bulkTranslation",
             status: "pending",
             resourceType: "templates",
             resourceId: `group_${groupId}`,

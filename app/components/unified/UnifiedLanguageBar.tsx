@@ -14,7 +14,7 @@
 
 import { useRef } from "react";
 import { Button, InlineStack, ButtonGroup, Tooltip } from "@shopify/polaris";
-import { useLocaleButtonStyle, getLocaleButtonTooltip } from "../../utils/contentEditor.utils";
+import { useLocaleButtonStyle, getLocaleButtonTooltip, getLocalizedLanguageName } from "../../utils/contentEditor.utils";
 import { ReloadButton } from "../ReloadButton";
 import { HelpTooltip } from "../HelpTooltip";
 import { useI18n } from "../../contexts/I18nContext";
@@ -90,7 +90,7 @@ export function UnifiedLanguageBar({
 }: UnifiedLanguageBarProps) {
   const isPrimaryLocale = currentLanguage === primaryLocale;
   const ctrlPressedRef = useRef<Record<string, boolean>>({});
-  const { t: i18n } = useI18n();
+  const { t: i18n, locale: appLocale } = useI18n();
   const tooltipI18n = {
     missingContent: i18n.common.missingContent,
     missingTranslations: i18n.common.missingTranslations,
@@ -146,7 +146,7 @@ export function UnifiedLanguageBar({
           tone: (!isEnabled && !isPrimary ? "critical" as const : undefined),
         };
 
-        const fullLabel = `${locale.name || locale.locale}${locale.primary ? ` (${t.primaryLocaleSuffix || "Primary"})` : ""}`;
+        const fullLabel = `${getLocalizedLanguageName(locale.locale, appLocale, locale.name)}${locale.primary ? ` (${t.primaryLocaleSuffix || "Primary"})` : ""}`;
         const shortLabel = locale.locale.charAt(0).toUpperCase() + locale.locale.slice(1);
 
         const tooltip = getLocaleButtonTooltip(locale, selectedItem, primaryLocale, contentType, isLoadingData, tooltipI18n);
