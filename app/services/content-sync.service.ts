@@ -476,27 +476,33 @@ export class ContentSyncService {
         },
       });
 
-      // Delete old translations
-      await tx.contentTranslation.deleteMany({
-        where: {
-          resourceId: collectionData.id,
-          resourceType: "Collection",
-        },
-      });
-
-      // Insert new translations
-      if (validTranslations.length > 0) {
-        await tx.contentTranslation.createMany({
-          data: validTranslations.map(t => ({
+      // Check if user recently saved translations for this collection
+      const { isTranslationRecentlySaved } = await import("~/utils/translation-save-lock.server");
+      if (isTranslationRecentlySaved(collectionData.id)) {
+        logger.info(`[ContentSync] Skipping translation sync for collection - recently saved by user`, { collectionId: collectionData.id });
+      } else {
+        // Delete old translations
+        await tx.contentTranslation.deleteMany({
+          where: {
             resourceId: collectionData.id,
             resourceType: "Collection",
-            key: t.key,
-            value: t.value,
-            locale: t.locale,
-            digest: t.digest || null,
-          })),
+          },
         });
-        logger.debug(`[ContentSync] ✓ Saved ${validTranslations.length} translations`);
+
+        // Insert new translations
+        if (validTranslations.length > 0) {
+          await tx.contentTranslation.createMany({
+            data: validTranslations.map(t => ({
+              resourceId: collectionData.id,
+              resourceType: "Collection",
+              key: t.key,
+              value: t.value,
+              locale: t.locale,
+              digest: t.digest || null,
+            })),
+          });
+          logger.debug(`[ContentSync] ✓ Saved ${validTranslations.length} translations`);
+        }
       }
     });
 
@@ -557,27 +563,33 @@ export class ContentSyncService {
         },
       });
 
-      // Delete old translations
-      await tx.contentTranslation.deleteMany({
-        where: {
-          resourceId: articleData.id,
-          resourceType: "Article",
-        },
-      });
-
-      // Insert new translations
-      if (validTranslations.length > 0) {
-        await tx.contentTranslation.createMany({
-          data: validTranslations.map(t => ({
+      // Check if user recently saved translations for this article
+      const { isTranslationRecentlySaved } = await import("~/utils/translation-save-lock.server");
+      if (isTranslationRecentlySaved(articleData.id)) {
+        logger.info(`[ContentSync] Skipping translation sync for article - recently saved by user`, { articleId: articleData.id });
+      } else {
+        // Delete old translations
+        await tx.contentTranslation.deleteMany({
+          where: {
             resourceId: articleData.id,
             resourceType: "Article",
-            key: t.key,
-            value: t.value,
-            locale: t.locale,
-            digest: t.digest || null,
-          })),
+          },
         });
-        logger.debug(`[ContentSync] ✓ Saved ${validTranslations.length} translations`);
+
+        // Insert new translations
+        if (validTranslations.length > 0) {
+          await tx.contentTranslation.createMany({
+            data: validTranslations.map(t => ({
+              resourceId: articleData.id,
+              resourceType: "Article",
+              key: t.key,
+              value: t.value,
+              locale: t.locale,
+              digest: t.digest || null,
+            })),
+          });
+          logger.debug(`[ContentSync] ✓ Saved ${validTranslations.length} translations`);
+        }
       }
     });
 

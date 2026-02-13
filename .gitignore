@@ -30,3 +30,6 @@ check-translations.cjs
 
 # Design files (PSD, AI, etc.)
 psd/
+
+# Videos
+Videos/

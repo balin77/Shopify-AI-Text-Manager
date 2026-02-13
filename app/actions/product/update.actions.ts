@@ -767,6 +767,10 @@ async function updateTranslatedProduct(
       }
     });
 
+    // Mark this product as recently saved so webhook syncs don't overwrite
+    const { markTranslationSaved } = await import("~/utils/translation-save-lock.server");
+    markTranslationSaved(productId);
+
     loggers.product("info", "Saved translations to DB (ContentTranslation)", {
       productId,
       locale: params.locale,

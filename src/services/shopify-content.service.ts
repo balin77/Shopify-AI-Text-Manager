@@ -413,6 +413,10 @@ export class ShopifyContentService {
         }
       });
 
+      // Mark this resource as recently saved so webhook syncs don't overwrite
+      const { markTranslationSaved } = await import("~/utils/translation-save-lock.server");
+      markTranslationSaved(resourceId);
+
       return { success: true };
     } else {
       // Update primary locale

@@ -571,12 +571,47 @@ export class ProductSyncService {
         },
       });
 
-      // Delete old relations and create new ones (all within transaction)
-      // IMPORTANT: This deletes ALL existing translations before inserting new ones
-      const deletedTranslations = await tx.contentTranslation.deleteMany({
-        where: { resourceId: productData.id, resourceType: "Product" }
-      });
-      logger.debug(`[ProductSync] Deleted ${deletedTranslations.count} old translations from database`);
+      // Check if user recently saved translations for this product
+      const { isTranslationRecentlySaved } = await import("~/utils/translation-save-lock.server");
+      const skipTranslationSync = isTranslationRecentlySaved(productData.id);
+
+      if (skipTranslationSync) {
+        logger.info(`[ProductSync] Skipping translation sync - recently saved by user`, { productId: productData.id });
+      } else {
+        // Delete old translations and recreate from Shopify
+        const deletedTranslations = await tx.contentTranslation.deleteMany({
+          where: { resourceId: productData.id, resourceType: "Product" }
+        });
+        logger.debug(`[ProductSync] Deleted ${deletedTranslations.count} old translations from database`);
+
+        // Insert translations
+        if (validTranslations.length > 0) {
+          const translationsByLocale = validTranslations.reduce((acc: any, t: any) => {
+            if (!acc[t.locale]) acc[t.locale] = [];
+            acc[t.locale].push(t.key);
+            return acc;
+          }, {});
+
+          logger.debug(`[ProductSync] Saving ${validTranslations.length} translations to database:`);
+          for (const [locale, keys] of Object.entries(translationsByLocale)) {
+            logger.debug(`[ProductSync]   ${locale}: ${(keys as string[]).join(', ')}`);
+          }
+
+          await tx.contentTranslation.createMany({
+            data: validTranslations.map(t => ({
+              resourceId: productData.id,
+              resourceType: "Product",
+              key: t.key,
+              value: t.value,
+              locale: t.locale,
+              digest: t.digest || null,
+            })),
+          });
+          logger.debug(`[ProductSync] ✓ Successfully saved ${validTranslations.length} translations to database`);
+        } else {
+          logger.debug(`[ProductSync] No translations to save`);
+        }
+      }
 
       // DIAGNOSTIC: Log what we're about to save for productType
       logger.debug(`[ProductSync] 🔍 DIAGNOSTIC - About to save product to DB:`, {
@@ -591,35 +626,6 @@ export class ProductSyncService {
       await tx.productImage.deleteMany({ where: { productId: productData.id } });
       await tx.productOption.deleteMany({ where: { productId: productData.id } });
       await tx.productMetafield.deleteMany({ where: { productId: productData.id } });
-
-      // Insert translations
-      if (validTranslations.length > 0) {
-        // Log what we're about to save for debugging
-        const translationsByLocale = validTranslations.reduce((acc: any, t: any) => {
-          if (!acc[t.locale]) acc[t.locale] = [];
-          acc[t.locale].push(t.key);
-          return acc;
-        }, {});
-
-        logger.debug(`[ProductSync] Saving ${validTranslations.length} translations to database:`);
-        for (const [locale, keys] of Object.entries(translationsByLocale)) {
-          logger.debug(`[ProductSync]   ${locale}: ${(keys as string[]).join(', ')}`);
-        }
-
-        await tx.contentTranslation.createMany({
-          data: validTranslations.map(t => ({
-            resourceId: productData.id,
-            resourceType: "Product",
-            key: t.key,
-            value: t.value,
-            locale: t.locale,
-            digest: t.digest || null,
-          })),
-        });
-        logger.debug(`[ProductSync] ✓ Successfully saved ${validTranslations.length} translations to database`);
-      } else {
-        logger.debug(`[ProductSync] No translations to save`);
-      }
 
       // Insert ALL images to database (with mediaId for translation support)
       if (mediaImages.length > 0) {
