@@ -207,7 +207,7 @@ export default function BlogPage() {
   // Initialize unified content editor
   const editor = useUnifiedContentEditor({
     config: BLOGS_CONFIG,
-    items: articles as ContentItem[],
+    items: articles as unknown as ContentItem[],
     shopLocales,
     primaryLocale,
     fetcher,
@@ -236,7 +236,7 @@ export default function BlogPage() {
       <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
         <UnifiedContentEditor
           config={BLOGS_CONFIG}
-          items={articles as ContentItem[]}
+          items={articles as unknown as ContentItem[]}
           shopLocales={shopLocales}
           primaryLocale={primaryLocale}
           editor={editor}

@@ -8,6 +8,7 @@ interface ReloadButtonProps {
   resourceType: "product" | "collection" | "article" | "page" | "policy" | "templates";
   locale: string;
   onReloadComplete?: () => void;
+  onReloadSuccess?: () => void;
   revalidator?: {
     revalidate: () => void;
     state: 'idle' | 'loading';
@@ -19,6 +20,7 @@ export function ReloadButton({
   resourceType,
   locale,
   onReloadComplete,
+  onReloadSuccess,
   revalidator,
 }: ReloadButtonProps) {
   const [isLoading, setIsLoading] = useState(false);
@@ -118,8 +120,11 @@ export function ReloadButton({
         console.log("🔄 [RELOAD-BUTTON] Calling onReloadComplete to refresh frontend data");
         onReloadComplete();
       }
+      if (onReloadSuccess) {
+        onReloadSuccess();
+      }
     }
-  }, [revalidator?.state, waitingForRevalidation, onReloadComplete, revalidator]);
+  }, [revalidator?.state, waitingForRevalidation, onReloadComplete, onReloadSuccess, revalidator]);
 
   const handleReload = () => {
     if (isLoading) {

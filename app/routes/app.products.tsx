@@ -99,8 +99,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
           }`,
         { variables: { first: 250, after: cursor } }
       );
-      const shopifyData = await shopifyResponse.json();
-      const page = shopifyData.data?.products;
+      const shopifyData: any = await shopifyResponse.json();
+      const page: any = shopifyData.data?.products;
       const nodes = page?.edges?.map((e: any) => e.node) || [];
       shopifyProducts.push(...nodes);
       hasNextPage = page?.pageInfo?.hasNextPage ?? false;

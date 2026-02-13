@@ -676,7 +676,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
           const response = await result.response;
           return response.text();
         } catch (error) {
-          logger.warn('[AI-SERVICE] Gemini vision failed, falling back to text-only', { error });
+          loggers.ai('warn', '[AI-SERVICE] Gemini vision failed, falling back to text-only', { error });
           // Fallback to text-only
           const result = await this.gemini.generateContent(prompt);
           const response = await result.response;
@@ -784,7 +784,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       const buffer = Buffer.from(arrayBuffer);
       return buffer.toString('base64');
     } catch (error) {
-      logger.error('[AI-SERVICE] Failed to fetch image', { imageUrl, error });
+      loggers.ai('error', '[AI-SERVICE] Failed to fetch image', { imageUrl, error });
       throw new Error('Failed to fetch image for vision AI');
     }
   }
