@@ -24,6 +24,7 @@ export function SettingsLanguageTab({ settings, fetcher, t, onHasChangesChange }
   const APP_LANGUAGES = [
     { label: t.settings.languages.de, value: "de" },
     { label: t.settings.languages.en, value: "en" },
+    { label: t.settings.languages.es, value: "es" },
   ];
 
   const [appLanguage, setAppLanguage] = useState(settings.appLanguage);
