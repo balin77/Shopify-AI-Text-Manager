@@ -533,3 +533,24 @@ a:focus:not(:focus-visible) {
     page-break-inside: avoid;
   }
 }
+
+/* Global: Remove blue focus ring from all Polaris TextFields and Select inputs */
+.Polaris-TextField__Input:focus {
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+.Polaris-TextField:focus-within {
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+.Polaris-Select__Input:focus {
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+.Polaris-Select:focus-within {
+  outline: none !important;
+  box-shadow: none !important;
+}

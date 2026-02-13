@@ -384,15 +384,6 @@ export function UnifiedItemList({
           display: flex !important;
           align-items: center !important;
         }
-        /* Remove focus outline from search field */
-        .unified-item-list-wrapper .Polaris-TextField__Input:focus {
-          outline: none !important;
-          box-shadow: none !important;
-        }
-        .unified-item-list-wrapper .Polaris-TextField:focus-within {
-          outline: none !important;
-          box-shadow: none !important;
-        }
       ` }} />
       <div className="unified-item-list-wrapper" style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden" }}>
       <Card padding="0">

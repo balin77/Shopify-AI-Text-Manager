@@ -420,20 +420,9 @@
   }
 }
 
-/* Field search: always show clear button and suppress focus ring */
+/* Field search: always show clear button */
 .field-search-always-clear .Polaris-TextField__ClearButton {
   display: flex !important;
   visibility: visible !important;
   opacity: 1 !important;
-}
-
-/* Remove focus outline from field search (same approach as UnifiedItemList) */
-.field-search-always-clear .Polaris-TextField__Input:focus {
-  outline: none !important;
-  box-shadow: none !important;
-}
-
-.field-search-always-clear .Polaris-TextField:focus-within {
-  outline: none !important;
-  box-shadow: none !important;
 }
