@@ -6,6 +6,7 @@
 import { TRANSLATE_CONTENT, UPDATE_PAGE, UPDATE_ARTICLE, UPDATE_SHOP_POLICY, UPDATE_COLLECTION } from "../../app/graphql/content.mutations";
 import { GET_TRANSLATIONS, GET_TRANSLATABLE_CONTENT } from "../../app/graphql/content.queries";
 import { loggers } from '../../app/utils/logger.server';
+import { markTranslationSaved } from '../../app/utils/translation-save-lock.server';
 
 export interface ShopifyAdminClient {
   graphql: (query: string, options?: { variables?: Record<string, any> }) => Promise<Response>;
@@ -414,7 +415,6 @@ export class ShopifyContentService {
       });
 
       // Mark this resource as recently saved so webhook syncs don't overwrite
-      const { markTranslationSaved } = await import("~/utils/translation-save-lock.server");
       markTranslationSaved(resourceId);
 
       return { success: true };

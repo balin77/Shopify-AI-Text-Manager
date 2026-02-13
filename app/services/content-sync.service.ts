@@ -8,6 +8,7 @@
  */
 
 import { logger } from '~/utils/logger.server';
+import { isTranslationRecentlySaved } from '~/utils/translation-save-lock.server';
 
 interface ShopifyGraphQLClient {
   graphql: (query: string, options?: { variables?: any }) => Promise<any>;
@@ -477,7 +478,6 @@ export class ContentSyncService {
       });
 
       // Check if user recently saved translations for this collection
-      const { isTranslationRecentlySaved } = await import("~/utils/translation-save-lock.server");
       if (isTranslationRecentlySaved(collectionData.id)) {
         logger.info(`[ContentSync] Skipping translation sync for collection - recently saved by user`, { collectionId: collectionData.id });
       } else {
@@ -564,7 +564,6 @@ export class ContentSyncService {
       });
 
       // Check if user recently saved translations for this article
-      const { isTranslationRecentlySaved } = await import("~/utils/translation-save-lock.server");
       if (isTranslationRecentlySaved(articleData.id)) {
         logger.info(`[ContentSync] Skipping translation sync for article - recently saved by user`, { articleId: articleData.id });
       } else {

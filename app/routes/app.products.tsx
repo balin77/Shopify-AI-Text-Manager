@@ -516,6 +516,16 @@ export default function ProductsPage() {
     // Skip if we've already synced this product
     if (syncedProductsRef.current.has(selectedProductId)) return;
 
+    // Skip if translations were recently saved by the user (prevents re-fetching stale
+    // data from Shopify after Clear All due to eventual consistency)
+    try {
+      const savedAt = sessionStorage.getItem(`translationSaved_${selectedProductId}`);
+      if (savedAt && Date.now() - parseInt(savedAt) < 60_000) {
+        syncedProductsRef.current.add(selectedProductId);
+        return;
+      }
+    } catch {}
+
     // Check if product has any translations
     const hasTranslations = selectedProduct.translations && selectedProduct.translations.length > 0;
 

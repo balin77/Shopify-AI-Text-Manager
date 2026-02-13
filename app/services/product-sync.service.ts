@@ -6,6 +6,7 @@
  */
 
 import { logger } from '~/utils/logger.server';
+import { isTranslationRecentlySaved } from '~/utils/translation-save-lock.server';
 
 interface ShopifyGraphQLClient {
   graphql: (query: string, options?: { variables?: any }) => Promise<any>;
@@ -572,7 +573,6 @@ export class ProductSyncService {
       });
 
       // Check if user recently saved translations for this product
-      const { isTranslationRecentlySaved } = await import("~/utils/translation-save-lock.server");
       const skipTranslationSync = isTranslationRecentlySaved(productData.id);
 
       if (skipTranslationSync) {

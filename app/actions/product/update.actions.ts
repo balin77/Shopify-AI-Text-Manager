@@ -12,6 +12,7 @@ import { json } from "@remix-run/node";
 import { ShopifyApiGateway } from "~/services/shopify-api-gateway.service";
 import { sanitizeSlug } from "~/utils/slug.utils";
 import { logger, loggers } from "~/utils/logger.server";
+import { markTranslationSaved } from "~/utils/translation-save-lock.server";
 import type { ActionContext } from "./shared/action-context";
 
 interface UpdateProductParams {
@@ -768,7 +769,6 @@ async function updateTranslatedProduct(
     });
 
     // Mark this product as recently saved so webhook syncs don't overwrite
-    const { markTranslationSaved } = await import("~/utils/translation-save-lock.server");
     markTranslationSaved(productId);
 
     loggers.product("info", "Saved translations to DB (ContentTranslation)", {
