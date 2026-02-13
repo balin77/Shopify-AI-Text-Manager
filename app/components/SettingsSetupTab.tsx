@@ -176,14 +176,14 @@ export function SettingsSetupTab({
             {t.settings.syncProductsDescription}
           </Text>
           <Text as="p" tone="subdued">
-            This will sync all products, collections, and articles from Shopify to the database. Auto-updates via webhooks.
+            {t.content?.syncDescription || "This will sync all products, collections, and articles from Shopify to the database. Auto-updates via webhooks."}
           </Text>
           <Button
             onClick={() => handleSyncProducts(true)}
             loading={syncLoading}
             variant="primary"
           >
-            Sync All Content
+            {t.content?.syncAllContent || "Sync All Content"}
           </Button>
           {syncProgress && (
             <Box padding="400" background="bg-surface-secondary" borderRadius="200">

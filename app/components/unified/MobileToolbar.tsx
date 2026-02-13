@@ -63,6 +63,7 @@ interface MobileToolbarProps {
     clearAll?: string;
     save?: string;
     discardChanges?: string;
+    sendImageToAI?: string;
   };
 }
 
@@ -226,7 +227,7 @@ export function MobileToolbar({
                    (contentType === "products" || contentType === "collections" || contentType === "blogs") &&
                    (images.length > 0 || featuredImage?.url) &&
                    onToggleSendImageToAI) ? [{
-                  content: `${sendImageToAI ? '✓' : ''} 📷 Send image to AI`,
+                  content: `${sendImageToAI ? '✓' : ''} ${t.sendImageToAI || "📷 Send image to AI"}`,
                   onAction: () => {
                     onToggleSendImageToAI();
                     closePopover();

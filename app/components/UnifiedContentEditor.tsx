@@ -22,7 +22,8 @@ import { useNavigationHeight } from "../contexts/NavigationHeightContext";
 import { usePlan } from "../contexts/PlanContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { useItemSelector } from "../contexts/ItemSelectorContext";
-import { contentEditorStyles } from "../utils/contentEditor.utils";
+import { contentEditorStyles, getLocalizedLanguageName } from "../utils/contentEditor.utils";
+import { useI18n } from "../contexts/I18nContext";
 import "../styles/UnifiedContentEditor.css";
 import type { ContentEditorConfig, UseContentEditorReturn, FieldDefinition } from "../types/content-editor.types";
 import type { UnifiedItem } from "./unified/UnifiedItemList";
@@ -156,16 +157,30 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   // Get the set of fields with loading AI actions (for per-field loading states)
   const loadingFieldKeys = state.loadingFieldKeys;
 
+  // Translated resource names for the item list
+  const resourceNames = t.content?.resourceNames || {};
+  const translatedResourceName = {
+    singular: resourceNames[config.contentType === "pages" ? "pageSingular" : config.displayNameSingular.toLowerCase()] || config.displayNameSingular,
+    plural: resourceNames[config.contentType] || config.displayName,
+  };
+
   // Transform items to UnifiedItem format (memoized to prevent re-render cascades)
-  const unifiedItems: UnifiedItem[] = useMemo(() => items.map((item) => ({
-    id: item.id,
-    title: config.getPrimaryField ? config.getPrimaryField(item) : item.title,
-    subtitle: config.getSubtitle ? config.getSubtitle(item) : undefined,
-    category: item.blogTitle || item.category,
-    status: item.status,
-    image: item.featuredImage || item.image,
-    ...item,
-  })), [items, config.getPrimaryField, config.getSubtitle]);
+  const unifiedItems: UnifiedItem[] = useMemo(() => items.map((item) => {
+    let subtitle = config.getSubtitle ? config.getSubtitle(item) : undefined;
+    // Translate "translatable fields" for templates
+    if (config.contentType === "templates" && item.contentCount !== undefined) {
+      subtitle = `${item.contentCount || 0} ${t.content?.translatableFields || "translatable fields"}`;
+    }
+    return {
+      id: item.id,
+      title: config.getPrimaryField ? config.getPrimaryField(item) : item.title,
+      subtitle,
+      category: item.blogTitle || item.category,
+      status: item.status,
+      image: item.featuredImage || item.image,
+      ...item,
+    };
+  }), [items, config.getPrimaryField, config.getSubtitle, config.contentType, t]);
 
   // Plan limit configuration
   const maxItems = getMaxProducts(); // This works for all content types
@@ -233,17 +248,14 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
       items: unifiedItems,
       selectedItemId: state.selectedItemId,
       onItemSelect: (itemId: string) => handleItemSelectRef.current(itemId),
-      resourceName: {
-        singular: config.displayNameSingular,
-        plural: config.displayName,
-      },
+      resourceName: translatedResourceName,
       t: {
         searchPlaceholder: t.content?.searchPlaceholder,
         noResults: t.content?.noResults || "No items found",
-        selectItem: t.content?.selectItem || `Select ${config.displayNameSingular}`,
+        selectItem: t.content?.selectItem || `Select ${translatedResourceName.singular}`,
       },
     });
-  }, [unifiedItems, state.selectedItemId, config.displayNameSingular, config.displayName]);
+  }, [unifiedItems, state.selectedItemId, translatedResourceName.singular, translatedResourceName.plural]);
 
   // Cleanup: clear items when component unmounts
   useEffect(() => {
@@ -273,10 +285,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
             items={unifiedItems}
           selectedItemId={state.selectedItemId}
           onItemSelect={handlers.handleItemSelect}
-          resourceName={{
-            singular: config.displayNameSingular,
-            plural: config.displayName,
-          }}
+          resourceName={translatedResourceName}
           renderItem={renderListItem}
           showSearch={true}
           showPagination={true}
@@ -336,6 +345,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                     clearAll: t.content?.clearAll || "Clear All",
                     save: t.content?.save || "Save",
                     discardChanges: t.content?.discardChanges || "Discard",
+                    sendImageToAI: t.content?.sendImageToAI || "📷 Send image to AI",
                   }}
                 />
               </div>
@@ -397,7 +407,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                           {(config.contentType === "products" || config.contentType === "collections" || config.contentType === "blogs") &&
                            (state.images?.length > 0 || state.featuredImage?.url) && (
                             <Checkbox
-                              label="📷 Send image to AI"
+                              label={t.content?.sendImageToAI || "📷 Send image to AI"}
                               checked={state.sendImageToAI}
                               onChange={handlers.handleToggleSendImageToAI}
                             />
@@ -765,11 +775,14 @@ function FieldRenderer(props: FieldRendererProps & { state?: any; handlers?: any
   const currentAction = fetcherFormData?.get("action");
   const isImageAIActionRunning = fetcherState !== "idle" && IMAGE_AI_ACTIONS.includes(currentAction as string);
 
-  // Get locale name for label
-  const localeName = shopLocales.find((l: any) => l.locale === currentLanguage)?.name || currentLanguage;
+  // Get locale name for label (localized to app language)
+  const { locale: appLocale } = useI18n();
+  const localeName = getLocalizedLanguageName(currentLanguage, appLocale, shopLocales.find((l: any) => l.locale === currentLanguage)?.name);
 
-  // Build label
-  const label = `${field.label} (${localeName})`;
+  // Build label (use i18n field label if available, fallback to config label)
+  const fieldLabelMap: Record<string, string> = t.content?.fieldLabels || {};
+  const translatedFieldLabel = fieldLabelMap[field.key] || field.label;
+  const label = `${translatedFieldLabel} (${localeName})`;
 
   // Build help text
   let helpText = "";
