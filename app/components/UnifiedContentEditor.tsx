@@ -120,8 +120,18 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     revalidator,
   } = props;
 
-  // Local state for search input (debounced)
+  // Local state for search input - synced with fieldPagination.search
   const [fieldSearchInput, setFieldSearchInput] = useState(fieldPagination?.search || "");
+
+  // Sync local search input when fieldPagination.search changes externally (e.g. group switch)
+  const prevFieldSearchRef = useRef(fieldPagination?.search || "");
+  useEffect(() => {
+    const serverSearch = fieldPagination?.search || "";
+    if (prevFieldSearchRef.current !== serverSearch) {
+      prevFieldSearchRef.current = serverSearch;
+      setFieldSearchInput(serverSearch);
+    }
+  }, [fieldPagination?.search]);
 
   const { state, handlers, selectedItem, navigationGuard, helpers, effectiveFieldDefinitions } = editor;
   const { getMaxProducts } = usePlan();
@@ -472,16 +482,17 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         <BlockStack gap="300">
                           {/* Search */}
                           {onFieldSearch && (
+                            <div onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                onFieldSearch(fieldSearchInput);
+                              }
+                            }}>
                             <TextField
                               label=""
                               value={fieldSearchInput}
                               onChange={(value) => {
                                 setFieldSearchInput(value);
-                              }}
-                              onBlur={() => {
-                                if (fieldSearchInput !== fieldPagination.search) {
-                                  onFieldSearch(fieldSearchInput);
-                                }
                               }}
                               placeholder={t.content?.searchFields || "Search fields..."}
                               autoComplete="off"
@@ -497,6 +508,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                                 </Button>
                               }
                             />
+                            </div>
                           )}
 
                           {/* Pagination Info & Controls */}
