@@ -8,7 +8,7 @@ import { useItemSelector } from "../contexts/ItemSelectorContext";
 import { useAppNavigation } from "../hooks/useAppNavigation";
 import { MobileMenu } from "./MobileMenu";
 import { UnifiedItemSelectorCompact } from "./unified/UnifiedItemSelectorCompact";
-import { type Plan } from "../config/plans";
+import { type Plan, PLAN_DISPLAY_NAMES } from "../config/plans";
 import { useState, useEffect, useRef } from "react";
 
 export function MainNavigation() {
@@ -520,15 +520,33 @@ export function MainNavigation() {
             </div>
           )}
 
-          {/* Plan Badge - nur aktiver Plan, sichtbar auf Mobile und ganz rechts */}
+          {/* Plan Buttons - alle Pläne auf Desktop, nur aktiver Plan auf Mobile */}
           <div style={{ marginLeft: "auto" }}>
-            <Button
-              onClick={handlePlanNavigation}
-              pressed
-              accessibilityLabel={`Current plan: ${getPlanDisplayName()}`}
-            >
-              {getPlanDisplayName()}
-            </Button>
+            {/* Desktop: alle Pläne als Buttons */}
+            <div className="desktop-only">
+              <ButtonGroup>
+                {plans.map((p) => (
+                  <Button
+                    key={p}
+                    onClick={handlePlanNavigation}
+                    pressed={p === plan}
+                    accessibilityLabel={`Plan: ${PLAN_DISPLAY_NAMES[p]}${p === plan ? " (active)" : ""}`}
+                  >
+                    {PLAN_DISPLAY_NAMES[p]}
+                  </Button>
+                ))}
+              </ButtonGroup>
+            </div>
+            {/* Mobile: nur aktiver Plan */}
+            <div className="mobile-only">
+              <Button
+                onClick={handlePlanNavigation}
+                pressed
+                accessibilityLabel={`Current plan: ${getPlanDisplayName()}`}
+              >
+                {getPlanDisplayName()}
+              </Button>
+            </div>
           </div>
         </div>
       </nav>
