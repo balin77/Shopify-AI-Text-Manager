@@ -427,8 +427,13 @@
   opacity: 1 !important;
 }
 
-.field-search-always-clear .Polaris-TextField--focus .Polaris-TextField__Backdrop,
-.field-search-always-clear .Polaris-TextField__Backdrop::after {
+/* Remove focus outline from field search (same approach as UnifiedItemList) */
+.field-search-always-clear .Polaris-TextField__Input:focus {
+  outline: none !important;
   box-shadow: none !important;
-  border-color: var(--p-color-border) !important;
+}
+
+.field-search-always-clear .Polaris-TextField:focus-within {
+  outline: none !important;
+  box-shadow: none !important;
 }

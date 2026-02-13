@@ -471,8 +471,39 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
               <div className="field-editor-area" style={{ flex: 1, overflowY: "auto", marginTop: "1rem" }}>
                 <Card padding="600">
                   <BlockStack gap="500">
-                    {/* Field Pagination Header (for templates with many fields) */}
-                    {fieldPagination && (fieldPagination.totalCount > fieldPagination.limit || fieldPagination.search) && (
+                    {/* Field Search (always visible when available) */}
+                    {onFieldSearch && (
+                      <div className="field-search-always-clear" style={{ outline: 'none', marginBottom: '0.5rem' }} onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          onFieldSearch(fieldSearchInput);
+                        }
+                      }}>
+                        <TextField
+                          label=""
+                          value={fieldSearchInput}
+                          onChange={(value) => {
+                            setFieldSearchInput(value);
+                          }}
+                          placeholder={t.content?.searchFields || "Search fields..."}
+                          autoComplete="off"
+                          prefix={<Icon source={SearchIcon} />}
+                          clearButton
+                          onClearButtonClick={() => {
+                            setFieldSearchInput("");
+                            onFieldSearch("");
+                          }}
+                          connectedRight={
+                            <Button onClick={() => onFieldSearch(fieldSearchInput)} size="slim">
+                              {t.content?.search || "Search"}
+                            </Button>
+                          }
+                        />
+                      </div>
+                    )}
+
+                    {/* Field Pagination Info (only when needed) */}
+                    {fieldPagination && (fieldPagination.totalPages > 1 || fieldPagination.search) && (
                       <div style={{
                         padding: "0.75rem",
                         backgroundColor: "var(--p-color-bg-surface-secondary)",
@@ -480,37 +511,6 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         marginBottom: "0.5rem"
                       }}>
                         <BlockStack gap="300">
-                          {/* Search */}
-                          {onFieldSearch && (
-                            <div className="field-search-always-clear" style={{ outline: 'none' }} onKeyDown={(e) => {
-                              if (e.key === 'Enter') {
-                                e.preventDefault();
-                                onFieldSearch(fieldSearchInput);
-                              }
-                            }}>
-                            <TextField
-                              label=""
-                              value={fieldSearchInput}
-                              onChange={(value) => {
-                                setFieldSearchInput(value);
-                              }}
-                              placeholder={t.content?.searchFields || "Search fields..."}
-                              autoComplete="off"
-                              prefix={<Icon source={SearchIcon} />}
-                              clearButton
-                              onClearButtonClick={() => {
-                                setFieldSearchInput("");
-                                onFieldSearch("");
-                              }}
-                              connectedRight={
-                                <Button onClick={() => onFieldSearch(fieldSearchInput)} size="slim">
-                                  {t.content?.search || "Search"}
-                                </Button>
-                              }
-                            />
-                            </div>
-                          )}
-
                           {/* Pagination Info & Controls */}
                           <InlineStack align="space-between" blockAlign="center">
                             <Text as="p" variant="bodySm" tone="subdued">
