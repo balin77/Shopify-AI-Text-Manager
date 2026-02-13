@@ -354,10 +354,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       return false; // No original values yet
     }
 
-    // Compare each editable value with the original
-    for (const [key, value] of Object.entries(editableValues)) {
-      const originalValue = originalValues[key] || "";
-      if (value !== originalValue) {
+    // Compare only the current page's fields (originalValues keys) with editable values.
+    // editableValues may contain stale keys from previous pages, so we must iterate
+    // over originalValues to avoid false positives after pagination changes.
+    for (const [key, originalValue] of Object.entries(originalValues)) {
+      const currentValue = editableValues[key] ?? "";
+      if (currentValue !== originalValue) {
         return true;
       }
     }
