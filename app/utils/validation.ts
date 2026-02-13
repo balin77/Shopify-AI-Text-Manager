@@ -60,7 +60,7 @@ export const AISettingsSchema = z.object({
   selectedModel: z.string().max(200).optional().or(z.literal('')),
 
   // App language
-  appLanguage: z.enum(['de', 'en']),
+  appLanguage: z.enum(['de', 'en', 'es']),
 
   // Rate limits - must be positive integers
   hfMaxTokensPerMinute: z.number().int().min(1000).max(10000000).optional(),
