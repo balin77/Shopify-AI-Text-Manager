@@ -6,10 +6,10 @@
 
 ---
 
-## 📊 Overall Progress: 75% Complete
+## 📊 Overall Progress: 80% Complete
 
 ```
-██████████████████████░░░░░░ 75%
+████████████████████████░░░░ 80%
 ```
 
 ---
@@ -142,9 +142,9 @@
 ### 7. App Store Listing Materials 🎨
 
 #### B. Screenshots (REQUIRED)
-- [ ] Create 3-5 screenshots (minimum 3, maximum 5)
-- [ ] Size: 1280x720 oder 1920x1080
-- [ ] Show key features and value proposition
+- [x] Create 3-5 screenshots (minimum 3, maximum 5)
+- [x] Size: 1280x720 oder 1920x1080
+- [x] Show key features and value proposition
 
 **Suggested Screenshots:**
 1. **Dashboard Overview**
@@ -175,10 +175,10 @@
 
 **Estimated Time:** 1 Tag (capture + polish)
 
-#### C. Demo Video (OPTIONAL but recommended)
-- [ ] Create 30-90 second demo video
-- [ ] Show key workflows
-- [ ] No audio required (captions preferred)
+#### C. Demo Video / Screencast (PFLICHT laut Shopify)
+- [x] Screencast erstellen: Onboarding + Kernfunktionen Schritt-fuer-Schritt
+- [x] Auf Englisch ODER mit englischen Untertiteln
+- [x] Zeigt wie App eingerichtet und genutzt wird
 
 **Tools:**
 - Loom for screen recording
@@ -254,12 +254,29 @@ Dedicated support available via [support email]
 
 **Estimated Time:** 30 Minuten
 
-#### D. App Category (REQUIRED)
+#### D. App Category & Tags (REQUIRED)
 - [ ] Select appropriate category
+- [ ] Tags muessen primaere Funktionen widerspiegeln (Kategorie-Definitionen pruefen)
 
 **Recommended:**
 - Primary: **Marketing > Content & SEO**
 - Secondary: **Productivity > Translation**
+
+#### E. Listing-Compliance (Shopify-Pflicht)
+- [x] App-Name in TOML-Datei und Einreichungsformular stimmen ueberein
+- [x] App-Symbol identisch in Dev Dashboard und App-Listing
+- [x] Keine Statistiken/Daten im Listing (keine Begriffe wie "die beste", "die erste", "die einzige")
+- [x] Keine Bewertungen/Testimonials im Listing-Text (nur im offiziellen Review-Bereich)
+- [ ] Keine Shopify-Marken in App-Symbol, Banner oder Screenshots
+- [ ] Keine SEO-Keywords im Untertitel (nur sachliche Beschreibung)
+- [ ] Sprachen-Bereich: Nur Sprachen auflisten, in denen die App-UI verfuegbar ist
+- [ ] Preisinformationen vollstaendig: Trial-Zeitraum, alle Gebuehren, Plan-Details
+- [ ] Preisinfos NICHT in App-Logo oder andere nicht vorgesehene Bereiche
+
+#### F. Test-Zugangsdaten fuer Shopify-Reviewer
+- [x] Gueltige Test-Zugangsdaten fuer Review vorbereiten
+- [x] Zugangsdaten gewaehren vollen Zugriff auf alle App-Funktionen
+- [x] In Testanweisungen dokumentieren und aktuell halten
 
 ---
 
@@ -293,7 +310,51 @@ Dedicated support available via [support email]
 
 ---
 
-### 10. Quality Assurance Checklist ✅
+### 10. Shopify-Pflicht-Anforderungen (aus SHOPIFY_APP_STORE_REQUIREMENTS.md)
+
+#### A. Eingebettetes Erlebnis & App Bridge
+- [x] App Bridge (`app-bridge.js`) eingebunden als erstes Script-Tag (root.tsx:44)
+- [ ] **MANUELL PRUEFEN**: Alle Funktionen vollstaendig im Shopify-Admin eingebettet (keine externen Seiten)
+- [ ] **MANUELL PRUEFEN**: Max-Modal startet NICHT automatisch (nur durch Benutzerinteraktion)
+- [ ] **KRITISCH - CODEFIX NOETIG**: App funktioniert im Chrome Inkognito-Modus
+  - ⚠️ localStorage verwendet in: ReloadButton.tsx, app.content.tsx, app.products.tsx
+  - ⚠️ sessionStorage verwendet in: useAppNavigation.ts (HOCH-KRITISCH: Shop/Host Auth-Params),
+    app._index.tsx, app.tsx (Reload-Loop-Prevention), useUnifiedContentEditor.ts, app.products.tsx
+  - Diese muessen durch URL-Parameter oder Server-Side-State ersetzt werden
+
+#### B. OAuth & Installation
+- [ ] OAuth greift sofort - kein UI-Zugriff vor Authentifizierung
+- [ ] Nach OAuth-Akzeptierung: Weiterleitung zur App-UI
+- [ ] Reinstall-Flow: App funktioniert nahtlos nach Deinstallation + Neuinstallation
+- [ ] Keine manuelle Eingabe von myshopify.com-URL waehrend Installation
+
+#### C. API-Scopes Audit
+- [ ] **CODEFIX NOETIG**: 4 ueberflüssige Scopes entfernen (shopify.app.toml + .env Dateien):
+  - `write_online_store_navigation` - Menus sind read-only, keine Mutation im Code
+  - `write_products` - Produkte werden nur gelesen, Uebersetzungen gehen via write_translations
+  - `write_product_listings` - Keine Mutation im Code
+  - `write_themes` - Theme-Uebersetzungen gehen via write_translations
+- [x] Keine sensiblen Scopes (read_all_orders, write_customer_payment_methods, etc.) angefordert
+
+#### D. Abrechnung
+- [ ] Upgrade/Downgrade ohne Support-Kontakt und ohne Neuinstallation moeglich
+- [ ] Gebuehren erscheinen korrekt im Shopify-Admin unter "Verlauf der Anwendungsgebühren"
+- [ ] Bei Neuinstallation: erneute Gebuehren-Genehmigung wird angefordert
+
+#### E. Datensynchronisation
+- [ ] Uebersetzungsdaten konsistent zwischen Shopify-Admin, App-UI und Datenbank
+- [ ] Keine verwaisten oder inkonsistenten Daten nach Sync-Operationen
+
+#### F. Webfehler
+- [x] ErrorBoundary in root.tsx fuer 404/500 mit benutzerfreundlicher UI implementiert
+- [x] ErrorBoundary in app.tsx fuer App-Layout-Fehler + Manifest-Mismatch-Handling
+- [x] Catch-all Routes fuer Auth (auth.$.tsx) und API (api.templates.$.tsx)
+- [ ] **MANUELL PRUEFEN**: Alle 14 App-Routen durchklicken und auf HTTP-Fehler pruefen
+- [ ] **MANUELL PRUEFEN**: Alle 19 API-Routen auf korrekte Fehlerbehandlung testen
+
+---
+
+### 11. Quality Assurance Checklist
 
 #### Functionality
 - [ ] App installs without errors
@@ -537,18 +598,28 @@ Dedicated support available via [support email]
 - ✅ Contact information updated
 - ✅ App icon created
 
-**What's Needed:**
-- 📸 Screenshots (3-5 required)
-- 📝 App store listing copy
-- 🧪 Beta testing (optional)
-- ⚙️ Final QA
+**What's Needed - Code-Fixes (KRITISCH):**
+- 🔴 localStorage/sessionStorage durch URL-Params/Server-State ersetzen (Inkognito-Pflicht)
+- 🔴 4 ueberflüssige API-Scopes entfernen (write_products, write_themes, write_product_listings, write_online_store_navigation)
 
-**Estimated Time to Submission:** 2-3 weeks
-**Estimated Time to Live:** 5-7 weeks
+**What's Needed - Materialien:**
+- ✅ Screenshots (3-5) - ERLEDIGT
+- ✅ Screencast/Demo-Video - ERLEDIGT
+- ✅ Test-Zugangsdaten fuer Reviewer - ERLEDIGT
+- ✅ App-Name & Symbol Konsistenz - ERLEDIGT
+- ✅ Listing-Compliance (keine Statistiken/Testimonials) - ERLEDIGT
+- 📝 App store listing copy
+
+**What's Needed - Manuelle Tests:**
+- ⚙️ Alle Routen auf Webfehler pruefen
+- ⚙️ Reinstall-Flow testen
+- ⚙️ Upgrade/Downgrade ohne Support testen
+- ⚙️ Inkognito-Modus testen
+
+**Estimated Time to Submission:** 1-2 weeks (Code-Fixes + manuelle Tests)
 
 ---
 
-**You're 75% there! The hard technical work is done.** 🚀
-**Focus now on screenshots and listing content.**
+**Status: ~80% - Code-Fixes (localStorage/Scopes) + manuelle Tests noch noetig.**
 
-Last Updated: 2026-02-04
+Last Updated: 2026-02-14

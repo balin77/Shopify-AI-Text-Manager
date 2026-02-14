@@ -71,19 +71,6 @@ export function ReloadButton({
               newUrl: url.toString(),
             });
 
-            // Also store in localStorage as fallback
-            try {
-              const storageData = {
-                id: resourceId,
-                type: resourceType,
-                timestamp: Date.now()
-              };
-              localStorage.setItem('lastSelectedResource', JSON.stringify(storageData));
-              console.log("💾 [RELOAD-BUTTON] Saved to localStorage:", storageData);
-            } catch (e) {
-              console.warn('[RELOAD-BUTTON] Failed to save to localStorage:', e);
-            }
-
             // Navigate to URL with selected parameter (forces full reload with selection preserved)
             console.log("🌐 [RELOAD-BUTTON] Navigating to:", url.toString());
             window.location.href = url.toString();

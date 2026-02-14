@@ -439,31 +439,6 @@ export default function ProductsPage() {
         const newUrl = `${window.location.pathname}${urlParams.toString() ? '?' + urlParams.toString() : ''}`;
         window.history.replaceState({}, '', newUrl);
       }
-    } else {
-      // Fallback: Check localStorage
-      try {
-        const stored = localStorage.getItem('lastSelectedResource');
-        if (stored) {
-          const parsed = JSON.parse(stored);
-
-          // Only restore if it's recent (within last 10 seconds)
-          if (Date.now() - parsed.timestamp < 10000) {
-            const productExists = products.find((p: any) => p.id === parsed.id);
-            if (productExists) {
-              try {
-                editor.handlers.handleItemSelect(parsed.id);
-              } catch (error) {
-                // Selection restoration failed - non-critical
-              }
-            }
-          }
-
-          // Clean up localStorage
-          localStorage.removeItem('lastSelectedResource');
-        }
-      } catch (e) {
-        // Failed to restore from localStorage - non-critical
-      }
     }
   }, [products, editor.handlers]); // Run when products or editor changes
 

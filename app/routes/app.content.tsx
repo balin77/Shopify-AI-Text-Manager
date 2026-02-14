@@ -140,16 +140,7 @@ export default function ContentHub() {
 
   const [selectedType, setSelectedType] = useState<ContentType | null>(getInitialType());
 
-  // Restore from localStorage only on client-side mount
-  useEffect(() => {
-    const urlType = searchParams.get("type") as ContentType;
-    if (!urlType && typeof window !== "undefined") {
-      const stored = localStorage.getItem("lastContentHubType");
-      if (stored && ["menus", "templates", "metaobjects", "shopMetadata"].includes(stored)) {
-        setSelectedType(stored as ContentType);
-      }
-    }
-  }, []);
+  // No client-side restore needed - type is always determined from URL params
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [currentLanguage, setCurrentLanguage] = useState(primaryLocale);
 
@@ -169,10 +160,6 @@ export default function ContentHub() {
   useEffect(() => {
     const urlType = searchParams.get("type");
     if (!urlType) {
-      // Clear localStorage to prevent auto-selecting menus
-      if (typeof window !== "undefined") {
-        localStorage.removeItem("lastContentHubType");
-      }
       // Always redirect to collections when accessing /app/content without type
       // Preserve Shopify search params (shop, host) for auth
       const search = typeof window !== 'undefined' ? window.location.search : '';
@@ -180,12 +167,9 @@ export default function ContentHub() {
     }
   }, [searchParams, navigate]);
 
-  // Update URL and localStorage when type changes
+  // Update URL when type changes
   useEffect(() => {
     if (selectedType) {
-      if (typeof window !== "undefined") {
-        localStorage.setItem("lastContentHubType", selectedType);
-      }
       const urlType = searchParams.get("type");
       if (urlType !== selectedType) {
         navigate(`?type=${selectedType}`, { replace: true });

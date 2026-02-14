@@ -6,10 +6,13 @@
  *
  * Uses window.location.href for navigation to ensure reliable page loads
  * in the Shopify Admin iframe context.
+ *
+ * NOTE: Does NOT use sessionStorage/localStorage to comply with Shopify's
+ * requirement that embedded apps work without third-party cookies/storage
+ * (e.g. Chrome Incognito mode). Shop/host params are preserved via URL only.
  */
 
-import { useLocation } from "@remix-run/react";
-import { useCallback, useEffect } from "react";
+import { useCallback } from "react";
 
 interface NavigateOptions {
   /** Additional search params to include (will be merged with preserved params) */
@@ -20,32 +23,12 @@ interface NavigateOptions {
  * Custom hook for navigation in Shopify embedded apps
  *
  * Features:
- * - Preserves ALL Shopify session parameters
- * - Stores session params in SessionStorage as fallback
- * - Works reliably in Shopify iframe context
+ * - Preserves ALL Shopify session parameters via URL params
+ * - Works reliably in Shopify iframe context (including Incognito mode)
  *
  * @returns handleNavigate function for navigation
  */
 export function useAppNavigation() {
-  const location = useLocation();
-
-  // Save critical session params to SessionStorage on mount and location change
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-
-    const searchParams = new URLSearchParams(window.location.search);
-    const shop = searchParams.get('shop');
-    const host = searchParams.get('host');
-
-    // Store in SessionStorage if present
-    if (shop) {
-      sessionStorage.setItem('shopify_shop', shop);
-    }
-    if (host) {
-      sessionStorage.setItem('shopify_host', host);
-    }
-  }, [location.search]);
-
   /**
    * Navigate to a path while preserving ALL Shopify session parameters
    *
@@ -73,16 +56,6 @@ export function useAppNavigation() {
     additionalParams.forEach((value, key) => {
       finalParams.set(key, value);
     });
-
-    // 3. Ensure shop and host are present (fallback to SessionStorage)
-    if (!finalParams.has('shop')) {
-      const shop = sessionStorage.getItem('shopify_shop');
-      if (shop) finalParams.set('shop', shop);
-    }
-    if (!finalParams.has('host')) {
-      const host = sessionStorage.getItem('shopify_host');
-      if (host) finalParams.set('host', host);
-    }
 
     // Build final path with params
     const searchString = finalParams.toString();

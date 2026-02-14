@@ -105,24 +105,8 @@ export default function AppIndex() {
   const { syncProgress, syncComplete, syncStats, startSync } = useSyncProgress();
   const [setupStarted, setSetupStarted] = useState(false);
 
-  // Save Shopify params to SessionStorage immediately on mount.
-  // This is the entry point Shopify loads (with shop/host in the URL).
-  // After the client-side redirect to /app/products, these params would be
-  // lost from window.location.search. By saving them here, useAppNavigation
-  // can use them as fallback for subsequent window.location.href navigations.
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const searchParams = new URLSearchParams(window.location.search);
-    const shop = searchParams.get('shop');
-    const host = searchParams.get('host');
-    if (shop) sessionStorage.setItem('shopify_shop', shop);
-    if (host) sessionStorage.setItem('shopify_host', host);
-  }, []);
-
   // If setup is not needed, redirect immediately
-  // IMPORTANT: Preserve Shopify search params (shop, host, etc.) so that
-  // useAppNavigation can store them in SessionStorage for future navigation.
-  // Without these params, window.location.href navigation causes auth failures.
+  // Preserve Shopify search params (shop, host, etc.) in the URL for navigation.
   useEffect(() => {
     if (!needsSetup) {
       const search = typeof window !== 'undefined' ? window.location.search : '';
