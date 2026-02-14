@@ -495,7 +495,7 @@ Allowed formatting changes:
         data: { status: "queued", progress: 10 },
       });
 
-      const allTranslations = await shopifyContentService.translateAllContent({
+      const result = await shopifyContentService.translateAllContent({
         resourceId: itemId,
         resourceType: contentConfig.resourceType as any,
         fields: changedFields,
@@ -508,20 +508,23 @@ Allowed formatting changes:
         sourceLocale,
       });
 
+      const { translations: allTranslations, failedLocales } = result;
+
       await db.task.update({
         where: { id: task.id },
         data: {
-          status: "completed",
+          status: failedLocales.length > 0 ? "completed" : "completed",
           progress: 100,
           completedAt: new Date(),
           result: JSON.stringify({
             success: true,
             locales: Object.keys(allTranslations),
+            failedLocales,
           }),
         },
       });
 
-      return json({ success: true, translations: allTranslations });
+      return json({ success: true, translations: allTranslations, failedLocales });
     } catch (error: any) {
       await db.task.update({
         where: { id: task.id },
@@ -592,7 +595,7 @@ Allowed formatting changes:
       });
 
       // Translate to only ONE specific locale
-      const allTranslations = await shopifyContentService.translateAllContent({
+      const result = await shopifyContentService.translateAllContent({
         resourceId: itemId,
         resourceType: contentConfig.resourceType as any,
         fields: changedFields,
@@ -604,6 +607,8 @@ Allowed formatting changes:
         customInstructions: aiInstructions?.translateInstructions,
         sourceLocale,
       });
+
+      const { translations: allTranslations, failedLocales } = result;
 
       // Extract translations for the target locale
       const translations = allTranslations[targetLocale] || {};
@@ -618,11 +623,12 @@ Allowed formatting changes:
             success: true,
             targetLocale,
             translations,
+            failedLocales,
           }),
         },
       });
 
-      return json({ success: true, translations, targetLocale });
+      return json({ success: true, translations, targetLocale, failedLocales });
     } catch (error: any) {
       await db.task.update({
         where: { id: task.id },
@@ -690,7 +696,7 @@ Allowed formatting changes:
         data: { status: "queued", progress: 10 },
       });
 
-      const allTranslations = await shopifyContentService.translateAllContent({
+      const result = await shopifyContentService.translateAllContent({
         resourceId: itemId,
         resourceType: contentConfig.resourceType as any,
         fields: changedFields,
@@ -702,6 +708,8 @@ Allowed formatting changes:
         customInstructions: aiInstructions?.translateInstructions,
         sourceLocale,
       });
+
+      const { translations: allTranslations, failedLocales } = result;
 
       // Extract just the field value for each locale (frontend expects Record<locale, string>)
       // allTranslations is Record<locale, Record<fieldType, string>>
@@ -724,11 +732,11 @@ Allowed formatting changes:
           status: "completed",
           progress: 100,
           completedAt: new Date(),
-          result: JSON.stringify({ translations: flattenedTranslations, fieldType }),
+          result: JSON.stringify({ translations: flattenedTranslations, fieldType, failedLocales }),
         },
       });
 
-      return json({ success: true, translations: flattenedTranslations, fieldType });
+      return json({ success: true, translations: flattenedTranslations, fieldType, failedLocales });
     } catch (error: any) {
       await db.task.update({
         where: { id: task.id },
@@ -969,7 +977,12 @@ Image URL: ${imageUrl}`;
   // ============================================================================
 
   if (action === "generateAllAltTexts") {
-    const imagesData = JSON.parse(formData.get("imagesData") as string);
+    let imagesData: any[];
+    try {
+      imagesData = JSON.parse(formData.get("imagesData") as string);
+    } catch {
+      return json({ success: false, error: "Invalid imagesData format" }, { status: 400 });
+    }
     const productTitle = formData.get("productTitle") as string;
     const mainLanguage = formData.get("mainLanguage") as string;
     const totalImages = imagesData.length;
@@ -1138,7 +1151,12 @@ Image URL: ${image.url}`;
     const imageIndex = parseInt(formData.get("imageIndex") as string);
     const sourceAltText = formData.get("sourceAltText") as string;
     const targetLocalesStr = formData.get("targetLocales") as string;
-    const targetLocales = JSON.parse(targetLocalesStr);
+    let targetLocales: string[];
+    try {
+      targetLocales = JSON.parse(targetLocalesStr);
+    } catch {
+      return json({ success: false, error: "Invalid targetLocales format" }, { status: 400 });
+    }
 
     // Create task entry
     const task = await db.task.create({

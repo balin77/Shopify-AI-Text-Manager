@@ -1312,9 +1312,27 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         // Mark as loading to reset change detection after bulk translation
         // This ensures hasChanges becomes false after we've updated the translations
         setIsLoadingData(true);
+
+        // Show warning if some locales failed, success if all succeeded
+        const failed = (fetcher.data as any).failedLocales || [];
+        if (failed.length > 0) {
+          const failedList = failed.join(", ");
+          const totalLocales = Object.keys(translations).length + failed.length;
+          const successCount = Object.keys(translations).filter(
+            (l: string) => Object.keys((translations as any)[l] || {}).length > 0
+          ).length;
+          showInfoBox(
+            ((t.content?.translatePartialLocales || "Translation partially completed: {successCount}/{totalCount} language(s) succeeded. Language(s) {failedLocales} failed.") as string)
+              .replace("{successCount}", String(successCount))
+              .replace("{totalCount}", String(totalLocales))
+              .replace("{failedLocales}", failedList),
+            "warning",
+            t.common?.warning || "Warning"
+          );
+        }
       }
     }
-  }, [fetcher.data, currentLanguage, effectiveFieldDefinitions, config.contentType]); // Use selectedItemRef instead of selectedItem
+  }, [fetcher.data, currentLanguage, effectiveFieldDefinitions, config.contentType, showInfoBox, t]); // Use selectedItemRef instead of selectedItem
 
   // Handle "translateAllForLocale" response (translates to ONE specific locale)
   useEffect(() => {
@@ -1392,11 +1410,22 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         // This ensures hasChanges becomes false after we've updated the translations
         setIsLoadingData(true);
 
-        showInfoBox(
-          t.common?.translatedSuccessfully || `Successfully translated to ${targetLocale}`,
-          "success",
-          t.common?.success || "Success"
-        );
+        // Show warning if the locale failed, success otherwise
+        const failed = (fetcher.data as any).failedLocales || [];
+        if (failed.length > 0 && failed.includes(targetLocale)) {
+          showInfoBox(
+            ((t.content?.translateLocaleError || "Translation to {locale} failed. Please try again.") as string)
+              .replace("{locale}", targetLocale),
+            "warning",
+            t.common?.warning || "Warning"
+          );
+        } else {
+          showInfoBox(
+            t.common?.translatedSuccessfully || `Successfully translated to ${targetLocale}`,
+            "success",
+            t.common?.success || "Success"
+          );
+        }
       }
     }
   }, [fetcher.data, currentLanguage, effectiveFieldDefinitions, showInfoBox, t, config.contentType]); // Use selectedItemRef instead of selectedItem

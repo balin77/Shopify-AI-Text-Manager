@@ -401,14 +401,14 @@ export class ShopifyContentService {
           });
         }
 
-        // Delete cleared translations from database
-        for (const key of translationsToDelete) {
+        // Delete cleared translations from database (single batch call)
+        if (translationsToDelete.length > 0) {
           await tx.contentTranslation.deleteMany({
             where: {
               resourceId,
               resourceType,
               locale,
-              key,
+              key: { in: translationsToDelete },
             },
           });
         }
@@ -547,19 +547,15 @@ export class ShopifyContentService {
               foreignLocales,
             });
 
-            // Delete from database
-            for (const key of translationKeysToDelete) {
-              for (const locale of foreignLocales) {
-                await db.contentTranslation.deleteMany({
-                  where: {
-                    resourceId,
-                    resourceType,
-                    key,
-                    locale,
-                  },
-                });
-              }
-            }
+            // Delete from database (single batch call instead of N×M loop)
+            await db.contentTranslation.deleteMany({
+              where: {
+                resourceId,
+                resourceType,
+                key: { in: translationKeysToDelete },
+                locale: { in: foreignLocales },
+              },
+            });
 
             loggers.translation('info', `Deleted translations for fields: ${changedFields.join(', ')}`);
           }
@@ -610,6 +606,7 @@ export class ShopifyContentService {
     }
 
     const allTranslations: Record<string, any> = {};
+    const failedLocales: string[] = [];
 
     // Initialize translations structure
     for (const locale of targetLocales) {
@@ -793,6 +790,7 @@ export class ShopifyContentService {
             }
           } catch (localeError: any) {
             loggers.translation('error', `Fallback failed for ${locale}`, { error: localeError?.message || String(localeError) });
+            if (!failedLocales.includes(locale)) failedLocales.push(locale);
           }
         }
       }
@@ -828,11 +826,15 @@ export class ShopifyContentService {
           }
         } catch (localeError: any) {
           loggers.translation('error', `Failed to translate long fields to ${locale}`, { error: localeError?.message || String(localeError) });
+          if (!failedLocales.includes(locale)) failedLocales.push(locale);
         }
       }
     }
 
-    loggers.translation('info', 'translateAllContent FINAL', { locales: Object.keys(allTranslations) });
-    return allTranslations;
+    if (failedLocales.length > 0) {
+      loggers.translation('warn', `translateAllContent completed with failures`, { failedLocales, successLocales: targetLocales.filter(l => !failedLocales.includes(l)) });
+    }
+    loggers.translation('info', 'translateAllContent FINAL', { locales: Object.keys(allTranslations), failedLocales });
+    return { translations: allTranslations, failedLocales };
   }
 }
