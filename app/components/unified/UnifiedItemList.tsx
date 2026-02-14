@@ -50,6 +50,8 @@ export interface SortOption {
   field: string;
   /** Display label */
   label: string;
+  /** Sort type: "date" for date fields, defaults to "string" */
+  type?: "string" | "date";
 }
 
 type SortDirection = "asc" | "desc";
@@ -167,6 +169,10 @@ export function UnifiedItemList({
       })
     : items;
 
+  // Determine if current sort field is a date type
+  const currentSortOption = sortOptions?.find((opt) => opt.field === sortField);
+  const isDateSort = currentSortOption?.type === "date";
+
   // Sort filtered items
   const sortedItems = [...filteredItems].sort((a, b) => {
     const valA = a[sortField];
@@ -177,8 +183,8 @@ export function UnifiedItemList({
     if (valA == null) return 1;
     if (valB == null) return -1;
 
-    // Date fields
-    if (valA instanceof Date || (typeof valA === "string" && !isNaN(Date.parse(valA)) && sortField.toLowerCase().includes("at"))) {
+    // Date fields (explicit type)
+    if (isDateSort) {
       const dateA = new Date(valA).getTime();
       const dateB = new Date(valB).getTime();
       return sortDirection === "asc" ? dateA - dateB : dateB - dateA;
@@ -439,7 +445,7 @@ export function UnifiedItemList({
               <Text as="h2" variant="headingMd">
                 {resourceName.plural} ({items.length})
               </Text>
-              <InlineStack gap="100" blockAlign="center">
+              <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
                 {sortOptions && sortOptions.length > 0 && (
                   <Popover
                     active={sortPopoverActive}
@@ -457,10 +463,10 @@ export function UnifiedItemList({
                   >
                     <ActionList
                       items={sortOptions.flatMap((opt) => {
-                        const isDateField = opt.field.toLowerCase().includes("at");
+                        const isDate = opt.type === "date";
                         return [
                           {
-                            content: `${opt.label} ${isDateField ? "↑ Oldest" : "(A–Z)"}`,
+                            content: `${opt.label} ${isDate ? "↑ Oldest" : "(A–Z)"}`,
                             active: sortField === opt.field && sortDirection === "asc",
                             onAction: () => {
                               setSortField(opt.field);
@@ -470,7 +476,7 @@ export function UnifiedItemList({
                             },
                           },
                           {
-                            content: `${opt.label} ${isDateField ? "↓ Newest" : "(Z–A)"}`,
+                            content: `${opt.label} ${isDate ? "↓ Newest" : "(Z–A)"}`,
                             active: sortField === opt.field && sortDirection === "desc",
                             onAction: () => {
                               setSortField(opt.field);
@@ -494,7 +500,7 @@ export function UnifiedItemList({
                     size="slim"
                   />
                 )}
-              </InlineStack>
+              </div>
             </InlineStack>
 
             {/* Search */}

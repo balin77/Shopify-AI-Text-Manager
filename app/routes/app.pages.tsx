@@ -186,7 +186,7 @@ export default function PagesPage() {
           revalidator={revalidator}
           sortOptions={[
             { field: "title", label: "Title" },
-            { field: "shopifyUpdatedAt", label: "Last Updated" },
+            { field: "shopifyUpdatedAt", label: "Last Updated", type: "date" },
           ]}
         />
       </div>

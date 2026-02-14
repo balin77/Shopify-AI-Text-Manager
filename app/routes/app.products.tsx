@@ -651,7 +651,7 @@ export default function ProductsPage() {
             { field: "title", label: "Title" },
             { field: "productType", label: "Product Type" },
             { field: "status", label: "Status" },
-            { field: "shopifyUpdatedAt", label: "Last Updated" },
+            { field: "shopifyUpdatedAt", label: "Last Updated", type: "date" },
           ]}
         />
       </div>
