@@ -116,47 +116,52 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     });
     const localProductIds = new Set(localProducts.map(p => p.id));
 
-    // Sync missing products (lightweight: basic data only, no translations)
-    const missingProducts = shopifyProducts.filter((p: any) => !localProductIds.has(p.id));
-    if (missingProducts.length > 0) {
-      logger.info(`[PRODUCTS-LOADER] Syncing ${missingProducts.length} new product(s) from Shopify`);
-      for (const product of missingProducts) {
-        await db.product.upsert({
-          where: { shop_id: { shop: session.shop, id: product.id } },
-          create: {
-            id: product.id, shop: session.shop, title: product.title,
-            descriptionHtml: product.descriptionHtml || "", handle: product.handle,
-            status: product.status, productType: product.productType || null,
-            seoTitle: product.seo?.title || null, seoDescription: product.seo?.description || null,
-            featuredImageUrl: product.featuredImage?.url || null,
-            featuredImageAlt: product.featuredImage?.altText || null,
-            shopifyUpdatedAt: new Date(product.updatedAt), lastSyncedAt: new Date(),
-          },
-          update: {
-            title: product.title, descriptionHtml: product.descriptionHtml || "",
-            handle: product.handle, status: product.status,
-            productType: product.productType || null,
-            seoTitle: product.seo?.title || null, seoDescription: product.seo?.description || null,
-            featuredImageUrl: product.featuredImage?.url || null,
-            featuredImageAlt: product.featuredImage?.altText || null,
-            shopifyUpdatedAt: new Date(product.updatedAt), lastSyncedAt: new Date(),
-          },
-        });
+    // Sync ALL products from Shopify (create new + update existing)
+    // This ensures fields like productType, title, status etc. stay in sync with Shopify
+    const newProductIds = new Set(
+      shopifyProducts.filter((p: any) => !localProductIds.has(p.id)).map((p: any) => p.id)
+    );
 
-        // Save images if plan allows
-        if (planLimits.cacheEnabled.productImages) {
-          const mediaImages = product.media?.edges
-            ?.filter((edge: any) => edge.node.id && edge.node.image?.url)
-            .map((edge: any) => edge.node) || [];
-          if (mediaImages.length > 0) {
-            await db.productImage.deleteMany({ where: { productId: product.id } });
-            await db.productImage.createMany({
-              data: mediaImages.map((media: any, index: number) => ({
-                productId: product.id, url: media.image.url,
-                altText: media.alt || null, mediaId: media.id, position: index,
-              })),
-            });
-          }
+    if (newProductIds.size > 0) {
+      logger.info(`[PRODUCTS-LOADER] Creating ${newProductIds.size} new product(s) from Shopify`);
+    }
+
+    for (const product of shopifyProducts) {
+      await db.product.upsert({
+        where: { shop_id: { shop: session.shop, id: product.id } },
+        create: {
+          id: product.id, shop: session.shop, title: product.title,
+          descriptionHtml: product.descriptionHtml || "", handle: product.handle,
+          status: product.status, productType: product.productType || null,
+          seoTitle: product.seo?.title || null, seoDescription: product.seo?.description || null,
+          featuredImageUrl: product.featuredImage?.url || null,
+          featuredImageAlt: product.featuredImage?.altText || null,
+          shopifyUpdatedAt: new Date(product.updatedAt), lastSyncedAt: new Date(),
+        },
+        update: {
+          title: product.title, descriptionHtml: product.descriptionHtml || "",
+          handle: product.handle, status: product.status,
+          productType: product.productType || null,
+          seoTitle: product.seo?.title || null, seoDescription: product.seo?.description || null,
+          featuredImageUrl: product.featuredImage?.url || null,
+          featuredImageAlt: product.featuredImage?.altText || null,
+          shopifyUpdatedAt: new Date(product.updatedAt), lastSyncedAt: new Date(),
+        },
+      });
+
+      // Save images only for NEW products (existing products keep their images)
+      if (newProductIds.has(product.id) && planLimits.cacheEnabled.productImages) {
+        const mediaImages = product.media?.edges
+          ?.filter((edge: any) => edge.node.id && edge.node.image?.url)
+          .map((edge: any) => edge.node) || [];
+        if (mediaImages.length > 0) {
+          await db.productImage.deleteMany({ where: { productId: product.id } });
+          await db.productImage.createMany({
+            data: mediaImages.map((media: any, index: number) => ({
+              productId: product.id, url: media.image.url,
+              altText: media.alt || null, mediaId: media.id, position: index,
+            })),
+          });
         }
       }
     }
