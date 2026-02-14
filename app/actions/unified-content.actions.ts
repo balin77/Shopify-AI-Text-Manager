@@ -1183,7 +1183,7 @@ Image URL: ${image.url}`;
         data: { status: "running", progress: 50 },
       });
 
-      // Now save the translations to Shopify and DB
+      // Save translations to Shopify first, then DB only on success
       const { ShopifyApiGateway } = await import("~/services/shopify-api-gateway.service");
       const gateway = new ShopifyApiGateway(admin, session.shop);
 
@@ -1198,112 +1198,114 @@ Image URL: ${image.url}`;
       });
 
       const dbImage = dbProduct?.images?.[imageIndex];
+      const failedLocales: string[] = [];
+      const savedLocales: string[] = [];
 
-      if (dbImage?.mediaId) {
-        // First, fetch the translatable content to get the digest
-        const translatableResponse = await gateway.graphql(
-          `#graphql
-            query translatableContent($resourceId: ID!) {
-              translatableResource(resourceId: $resourceId) {
-                resourceId
-                translatableContent {
-                  key
-                  digest
-                  value
+      if (!dbImage?.mediaId) {
+        // No mediaId = cannot save to Shopify, so don't save to DB either
+        logger.warn("[UnifiedContent] No mediaId for image - cannot save alt-text translations to Shopify", {
+          context: "UnifiedContent", imageIndex, productId: itemId,
+        });
+        failedLocales.push(...targetLocales);
+      } else {
+        // Fetch digest once (shared for all locales)
+        let altDigest: string | undefined;
+        try {
+          const translatableResponse = await gateway.graphql(
+            `#graphql
+              query translatableContent($resourceId: ID!) {
+                translatableResource(resourceId: $resourceId) {
+                  resourceId
+                  translatableContent {
+                    key
+                    digest
+                    value
+                  }
                 }
-              }
-            }`,
-          { variables: { resourceId: dbImage.mediaId } }
-        );
+              }`,
+            { variables: { resourceId: dbImage.mediaId } }
+          );
+          const translatableData = await translatableResponse.json();
+          const translatableContent = translatableData.data?.translatableResource?.translatableContent || [];
+          altDigest = translatableContent.find((c: any) => c.key === "alt")?.digest;
+        } catch (err: any) {
+          logger.error("[UnifiedContent] Error fetching translatable content for alt-text", {
+            context: "UnifiedContent", imageIndex, error: err?.message,
+          });
+        }
 
-        const translatableData = await translatableResponse.json();
-        const translatableContent = translatableData.data?.translatableResource?.translatableContent || [];
-        const altDigest = translatableContent.find((c: any) => c.key === "alt")?.digest;
-
-        if (altDigest) {
-          // Save each translation to Shopify
+        if (!altDigest) {
+          logger.warn("[UnifiedContent] No digest for alt-text - cannot save to Shopify", {
+            context: "UnifiedContent", imageIndex, mediaId: dbImage.mediaId,
+          });
+          failedLocales.push(...targetLocales);
+        } else {
+          // Save each locale to Shopify, then DB
           for (const locale of targetLocales) {
             const altText = translatedAltTexts[locale];
             if (!altText) continue;
 
-            await gateway.graphql(
-              `#graphql
-                mutation translateMediaImage($resourceId: ID!, $translations: [TranslationInput!]!) {
-                  translationsRegister(resourceId: $resourceId, translations: $translations) {
-                    userErrors {
-                      field
-                      message
+            let shopifySaved = false;
+            try {
+              const shopifyResult = await gateway.graphql(
+                `#graphql
+                  mutation translateMediaImage($resourceId: ID!, $translations: [TranslationInput!]!) {
+                    translationsRegister(resourceId: $resourceId, translations: $translations) {
+                      userErrors { field message }
+                      translations { locale key value }
                     }
-                    translations {
-                      locale
-                      key
-                      value
-                    }
-                  }
-                }`,
-              {
-                variables: {
-                  resourceId: dbImage.mediaId,
-                  translations: [
-                    {
+                  }`,
+                {
+                  variables: {
+                    resourceId: dbImage.mediaId,
+                    translations: [{
                       key: "alt",
                       value: altText,
                       locale: locale,
                       translatableContentDigest: altDigest,
-                    },
-                  ],
-                },
+                    }],
+                  },
+                }
+              );
+              const shopifyData = await shopifyResult.json();
+              const userErrors = shopifyData.data?.translationsRegister?.userErrors || [];
+              if (userErrors.length === 0) {
+                shopifySaved = true;
+              } else {
+                logger.error("[UnifiedContent] Shopify translationsRegister userErrors for alt-text", {
+                  context: "UnifiedContent", imageIndex, locale, errors: userErrors,
+                });
               }
-            );
-          }
-        }
-      }
-
-      // Save translations to DB
-      // Note: We wrap this in a try-catch because a concurrent product sync
-      // could delete and recreate images, causing a FK constraint violation
-      if (dbImage) {
-        try {
-          for (const locale of targetLocales) {
-            const altText = translatedAltTexts[locale];
-            if (!altText) continue;
-
-            const existing = await db.productImageAltTranslation.findUnique({
-              where: {
-                imageId_locale: {
-                  imageId: dbImage.id,
-                  locale: locale,
-                },
-              },
-            });
-
-            if (existing) {
-              await db.productImageAltTranslation.update({
-                where: { id: existing.id },
-                data: { altText },
-              });
-            } else {
-              await db.productImageAltTranslation.create({
-                data: {
-                  imageId: dbImage.id,
-                  locale: locale,
-                  altText: altText,
-                },
+            } catch (shopifyError: any) {
+              logger.error("[UnifiedContent] Error saving alt-text to Shopify", {
+                context: "UnifiedContent", imageIndex, locale, error: shopifyError?.message,
               });
             }
-          }
-        } catch (dbError: any) {
-          // If the image was deleted by a concurrent sync, log and continue
-          // The translations were still saved to Shopify, they'll be synced on next reload
-          if (dbError.code === 'P2003' || dbError.message?.includes('Foreign key constraint')) {
-            logger.warn('Image was deleted during translation save (concurrent sync)', {
-              context: 'UnifiedContent',
-              imageIndex,
-              productId: itemId,
-              error: dbError.message,
-            });
-          } else {
-            throw dbError; // Re-throw other errors
+
+            // Only save to DB if Shopify succeeded
+            if (shopifySaved) {
+              try {
+                const existing = await db.productImageAltTranslation.findUnique({
+                  where: { imageId_locale: { imageId: dbImage.id, locale } },
+                });
+                if (existing) {
+                  await db.productImageAltTranslation.update({ where: { id: existing.id }, data: { altText } });
+                } else {
+                  await db.productImageAltTranslation.create({ data: { imageId: dbImage.id, locale, altText } });
+                }
+                savedLocales.push(locale);
+              } catch (dbError: any) {
+                if (dbError.code === 'P2003' || dbError.message?.includes('Foreign key constraint')) {
+                  logger.warn("[UnifiedContent] Image deleted during translation save (concurrent sync)", {
+                    context: "UnifiedContent", imageIndex, productId: itemId, error: dbError.message,
+                  });
+                } else {
+                  throw dbError;
+                }
+              }
+            } else {
+              failedLocales.push(locale);
+            }
           }
         }
       }
@@ -1314,7 +1316,7 @@ Image URL: ${image.url}`;
           status: "completed",
           progress: 100,
           completedAt: new Date(),
-          result: JSON.stringify({ translatedAltTexts, imageIndex, targetLocales }),
+          result: JSON.stringify({ translatedAltTexts, imageIndex, targetLocales, savedLocales, failedLocales }),
         },
       });
 
@@ -1323,6 +1325,7 @@ Image URL: ${image.url}`;
         translatedAltTexts,
         imageIndex,
         targetLocales,
+        failedLocales,
       });
     } catch (error: any) {
       await db.task.update({

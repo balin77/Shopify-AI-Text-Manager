@@ -1151,13 +1151,24 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // Handle translated alt-text to all locales response (show success message + revalidate)
   useEffect(() => {
     if (fetcher.data?.success && 'translatedAltTexts' in fetcher.data) {
-      const { targetLocales, imageIndex } = fetcher.data as any;
+      const { targetLocales, imageIndex, failedLocales } = fetcher.data as any;
+      const failed = failedLocales || [];
       debugLog.altText(' Translations to all locales completed for image', imageIndex);
-      showInfoBox(
-        t.content?.altTextTranslatedToAllLocales || `Alt-text for image ${imageIndex + 1} translated to ${targetLocales.length} languages`,
-        "success",
-        t.common?.success || "Success"
-      );
+
+      if (failed.length > 0) {
+        const failedList = failed.join(", ");
+        showInfoBox(
+          `Alt-Text für Bild ${(imageIndex || 0) + 1} teilweise übersetzt. Sprache(n) ${failedList} konnten nicht auf Shopify gespeichert werden. Bitte synchronisiere das Produkt erneut.`,
+          "warning",
+          t.common?.warning || "Warning"
+        );
+      } else {
+        showInfoBox(
+          t.content?.altTextTranslatedToAllLocales || `Alt-text for image ${(imageIndex || 0) + 1} translated to ${targetLocales.length} languages`,
+          "success",
+          t.common?.success || "Success"
+        );
+      }
 
       // Revalidate to fetch fresh data with the new translations
       if (revalidator.state === 'idle') {
@@ -1653,11 +1664,22 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         return;
       }
 
-      showInfoBox(
-        t.common?.changesSaved || "Changes saved successfully!",
-        "success",
-        t.common?.success || "Success"
-      );
+      // Check if any alt-text indices failed to save to Shopify
+      const failedAltTextIndices = (fetcher.data as any).failedAltTextIndices || [];
+      if (failedAltTextIndices.length > 0) {
+        const failedList = failedAltTextIndices.map((i: number) => i + 1).join(", ");
+        showInfoBox(
+          `Änderungen gespeichert, aber Alt-Text für Bild(er) ${failedList} konnte(n) nicht auf Shopify gespeichert werden. Bitte synchronisiere das Produkt erneut.`,
+          "warning",
+          t.common?.warning || "Warning"
+        );
+      } else {
+        showInfoBox(
+          t.common?.changesSaved || "Changes saved successfully!",
+          "success",
+          t.common?.success || "Success"
+        );
+      }
 
       // Update original alt-texts to match current values (so hasChanges becomes false)
       setOriginalAltTexts({ ...imageAltTextsRef.current });
@@ -2206,11 +2228,22 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           (result) => {
             const translatedCount = result.translatedCount || 0;
             const imageCount = result.imageCount || 0;
-            showInfoBox(
-              `Alt-Texte für ${imageCount} Bild(er) in ${translatedCount} Sprache(n) übersetzt`,
-              "success",
-              t.common?.success || "Success"
-            );
+            const failedImages: number[] = result.failedImages || [];
+
+            if (failedImages.length > 0) {
+              const failedList = failedImages.map((i: number) => i + 1).join(", ");
+              showInfoBox(
+                `Alt-Texte für ${imageCount - failedImages.length}/${imageCount} Bild(er) in ${translatedCount} Sprache(n) gespeichert. Bild(er) ${failedList} konnten nicht auf Shopify gespeichert werden. Bitte synchronisiere das Produkt erneut.`,
+                "warning",
+                t.common?.warning || "Warning"
+              );
+            } else {
+              showInfoBox(
+                `Alt-Texte für ${imageCount} Bild(er) in ${translatedCount} Sprache(n) übersetzt`,
+                "success",
+                t.common?.success || "Success"
+              );
+            }
             if (revalidator.state === 'idle') {
               try { revalidator.revalidate(); } catch {}
             }
@@ -2532,16 +2565,33 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           },
           `allAltTextsTranslate_${currentLanguage}`,
           (result) => {
-            // Directly accept translations and auto-save (no suggestion banner)
+            const failedImages: number[] = result.failedImages || [];
+
+            // Only accept translations that were successfully saved to Shopify
             if (result.translatedAltTexts) {
               const translated: Record<number, string> = {};
               Object.entries(result.translatedAltTexts).forEach(([indexStr, text]) => {
-                translated[parseInt(indexStr)] = text as string;
+                const idx = parseInt(indexStr);
+                if (!failedImages.includes(idx)) {
+                  translated[idx] = text as string;
+                }
               });
-              const newAltTexts = { ...imageAltTexts, ...translated };
-              setImageAltTexts(newAltTexts);
-              setOriginalAltTexts(newAltTexts);
-              pendingAltTextAutoSaveRef.current = newAltTexts;
+
+              if (Object.keys(translated).length > 0) {
+                const newAltTexts = { ...imageAltTexts, ...translated };
+                setImageAltTexts(newAltTexts);
+                setOriginalAltTexts(newAltTexts);
+                // No auto-save needed - server already saved to Shopify and DB
+              }
+            }
+
+            if (failedImages.length > 0) {
+              const failedList = failedImages.map((i: number) => i + 1).join(", ");
+              showInfoBox(
+                `Alt-Texte teilweise gespeichert. Bild(er) ${failedList} konnten nicht auf Shopify gespeichert werden. Bitte synchronisiere das Produkt erneut.`,
+                "warning",
+                t.common?.warning || "Warning"
+              );
             }
           }
         );
@@ -2700,15 +2750,26 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       `altText_${imageIndex}`,
       (result) => {
         // Handle success - translations have been saved to Shopify and DB
+        const failedLocales = result.failedLocales || [];
         const translatedCount = result.translatedAltTexts ? Object.keys(result.translatedAltTexts).length : targetLocales.length;
+        const successCount = translatedCount - failedLocales.length;
 
-        showInfoBox(
-          (t.content?.altTextTranslatedToLanguages as string | undefined)
-            ?.replace("{count}", String(translatedCount))
-            || `Alt-text translated to ${translatedCount} language(s)`,
-          "success",
-          t.common?.success || "Success"
-        );
+        if (failedLocales.length > 0) {
+          const failedList = failedLocales.join(", ");
+          showInfoBox(
+            `Alt-Text teilweise übersetzt. Sprache(n) ${failedList} konnten nicht auf Shopify gespeichert werden. Bitte synchronisiere das Produkt erneut.`,
+            "warning",
+            t.common?.warning || "Warning"
+          );
+        } else {
+          showInfoBox(
+            (t.content?.altTextTranslatedToLanguages as string | undefined)
+              ?.replace("{count}", String(successCount))
+              || `Alt-text translated to ${successCount} language(s)`,
+            "success",
+            t.common?.success || "Success"
+          );
+        }
 
         // Revalidate to fetch fresh data from the database
         if (revalidator.state === 'idle') {
@@ -2769,11 +2830,22 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       (result) => {
         const translatedCount = result.translatedCount || 0;
         const imageCount = result.imageCount || 0;
-        showInfoBox(
-          `Alt-Texte für ${imageCount} Bild(er) in ${translatedCount} Sprache(n) übersetzt`,
-          "success",
-          t.common?.success || "Success"
-        );
+        const failedImages: number[] = result.failedImages || [];
+
+        if (failedImages.length > 0) {
+          const failedList = failedImages.map((i: number) => i + 1).join(", ");
+          showInfoBox(
+            `Alt-Texte für ${imageCount - failedImages.length}/${imageCount} Bild(er) in ${translatedCount} Sprache(n) gespeichert. Bild(er) ${failedList} konnten nicht auf Shopify gespeichert werden. Bitte synchronisiere das Produkt erneut.`,
+            "warning",
+            t.common?.warning || "Warning"
+          );
+        } else {
+          showInfoBox(
+            `Alt-Texte für ${imageCount} Bild(er) in ${translatedCount} Sprache(n) übersetzt`,
+            "success",
+            t.common?.success || "Success"
+          );
+        }
 
         if (revalidator.state === 'idle') {
           try {
@@ -2821,18 +2893,33 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       },
       `allAltTextsTranslate_${currentLanguage}`,
       (result) => {
-        // Directly accept translations and auto-save (no suggestion banner)
+        const failedImages: number[] = result.failedImages || [];
+
+        // Only accept translations that were successfully saved to Shopify
         if (result.translatedAltTexts) {
           const translated: Record<number, string> = {};
           Object.entries(result.translatedAltTexts).forEach(([indexStr, text]) => {
-            translated[parseInt(indexStr)] = text as string;
+            const idx = parseInt(indexStr);
+            if (!failedImages.includes(idx)) {
+              translated[idx] = text as string;
+            }
           });
 
-          const newAltTexts = { ...imageAltTexts, ...translated };
-          setImageAltTexts(newAltTexts);
-          setOriginalAltTexts(newAltTexts);
-          // Schedule auto-save
-          pendingAltTextAutoSaveRef.current = newAltTexts;
+          if (Object.keys(translated).length > 0) {
+            const newAltTexts = { ...imageAltTexts, ...translated };
+            setImageAltTexts(newAltTexts);
+            setOriginalAltTexts(newAltTexts);
+            // No auto-save needed - server already saved to Shopify and DB
+          }
+        }
+
+        if (failedImages.length > 0) {
+          const failedList = failedImages.map((i: number) => i + 1).join(", ");
+          showInfoBox(
+            `Alt-Texte teilweise gespeichert. Bild(er) ${failedList} konnten nicht auf Shopify gespeichert werden. Bitte synchronisiere das Produkt erneut.`,
+            "warning",
+            t.common?.warning || "Warning"
+          );
         }
       }
     );

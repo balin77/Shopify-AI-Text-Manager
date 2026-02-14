@@ -171,16 +171,30 @@ export async function handleUpdateProduct(
     const gateway = new ShopifyApiGateway(context.admin, context.session.shop);
 
     // Update alt-texts first (works for both primary and translated locales)
+    let failedAltTextIndices: number[] = [];
     if (params.imageAltTexts && Object.keys(params.imageAltTexts).length > 0) {
-      await updateImageAltTexts(gateway, db, productId, params);
+      const altTextResult = await updateImageAltTexts(gateway, db, productId, params);
+      failedAltTextIndices = altTextResult.failedAltTextIndices;
     }
 
     // Check if this is a translation update or primary locale update
+    let response: Response;
     if (params.locale !== params.primaryLocale) {
-      return await updateTranslatedProduct(gateway, db, productId, params);
+      response = await updateTranslatedProduct(gateway, db, productId, params);
     } else {
-      return await updatePrimaryProduct(gateway, db, productId, params, changedFields, changedAltTextIndices, context.session.shop);
+      response = await updatePrimaryProduct(gateway, db, productId, params, changedFields, changedAltTextIndices, context.session.shop);
     }
+
+    // If alt-text saves failed, merge warning into the response
+    if (failedAltTextIndices.length > 0) {
+      const responseData = await response.json();
+      return json({
+        ...responseData,
+        failedAltTextIndices,
+      }, { status: response.status });
+    }
+
+    return response;
   } catch (error: any) {
     logger.error("Product update failed", {
       context: "UpdateProduct",
@@ -202,13 +216,15 @@ async function updateImageAltTexts(
   db: any,
   productId: string,
   params: UpdateProductParams
-): Promise<void> {
+): Promise<{ failedAltTextIndices: number[] }> {
   loggers.product("info", "Updating image alt-texts", {
     productId,
     locale: params.locale,
     isPrimary: params.locale === params.primaryLocale,
     count: Object.keys(params.imageAltTexts || {}).length,
   });
+
+  const failedAltTextIndices: number[] = [];
 
   // Get product images from Shopify
   const productResponse = await gateway.graphql(
@@ -260,46 +276,12 @@ async function updateImageAltTexts(
     }
 
     if (!mediaImageId) {
-      loggers.product("warn", "No mediaId found for image - skipping Shopify update", {
+      loggers.product("warn", "No mediaId found for image - cannot save to Shopify", {
         index,
         hasDbImage: !!dbImage,
         dbImageMediaId: dbImage?.mediaId,
       });
-      // Still save to DB if we have a dbImage
-      if (dbImage) {
-        try {
-          if (params.locale === params.primaryLocale) {
-            // When altText is empty string, save as null for consistency
-            const altTextToSave = altText === "" ? null : altText;
-            await db.productImage.update({
-              where: { id: dbImage.id },
-              data: {
-                altText: altTextToSave,
-                altTextModifiedAt: new Date(), // Prevent webhook sync from overwriting
-              },
-            });
-          } else {
-            const existing = await db.productImageAltTranslation.findUnique({
-              where: { imageId_locale: { imageId: dbImage.id, locale: params.locale } },
-            });
-            if (existing) {
-              await db.productImageAltTranslation.update({ where: { id: existing.id }, data: { altText } });
-            } else {
-              await db.productImageAltTranslation.create({ data: { imageId: dbImage.id, locale: params.locale, altText } });
-            }
-          }
-          loggers.product("debug", "Saved alt-text to DB only (no Shopify sync)", { index, locale: params.locale });
-        } catch (dbError: any) {
-          // If the image was deleted by a concurrent sync, log and continue
-          if (dbError.code === 'P2025' || dbError.code === 'P2003' || dbError.message?.includes('Foreign key constraint')) {
-            loggers.product("warn", "Image was deleted during alt-text save (concurrent sync)", {
-              index, locale: params.locale, error: dbError.message,
-            });
-          } else {
-            throw dbError;
-          }
-        }
-      }
+      failedAltTextIndices.push(index);
       continue;
     }
 
@@ -311,185 +293,160 @@ async function updateImageAltTexts(
       mediaIdSource: dbImage?.mediaId ? "database" : "shopify-query",
     });
 
+    let shopifySaved = false;
+
     if (params.locale === params.primaryLocale) {
       // PRIMARY LOCALE: Use productUpdateMedia mutation
-      const updateMediaResponse = await gateway.graphql(
-        `#graphql
-          mutation updateMedia($media: [UpdateMediaInput!]!) {
-            productUpdateMedia(media: $media, productId: "${productId}") {
-              media {
-                alt
-                mediaErrors {
-                  code
-                  details
-                  message
-                }
-              }
-              mediaUserErrors {
-                field
-                message
-              }
-              product {
-                id
-              }
-            }
-          }`,
-        {
-          variables: {
-            media: [
-              {
-                id: mediaImageId,
-                // Send empty string to Shopify to clear alt-text (null means "don't change")
-                alt: altText,
-              },
-            ],
-          },
-        }
-      );
-      const updateMediaData = await updateMediaResponse.json();
-      // Log what Shopify returned
-      const returnedAlt = updateMediaData.data?.productUpdateMedia?.media?.[0]?.alt;
-      logger.debug(`[ProductUpdate] [SHOPIFY-RESPONSE] mediaId: ${mediaImageId}, sent alt: "${altText}", returned alt: "${returnedAlt}"`);
-      if (updateMediaData.data?.productUpdateMedia?.mediaUserErrors?.length > 0) {
-        loggers.product("error", "productUpdateMedia errors", {
-          index,
-          errors: updateMediaData.data.productUpdateMedia.mediaUserErrors
-        });
-      }
-      loggers.product("debug", "Updated primary alt-text via productUpdateMedia", { index, sentAlt: altText, returnedAlt });
-    } else {
-      // TRANSLATION: Use translationsRegister mutation with MEDIA_IMAGE resource type (API 2025-10+)
-      // First, fetch the translatable content to get the digest
-      const translatableResponse = await gateway.graphql(
-        `#graphql
-          query translatableContent($resourceId: ID!) {
-            translatableResource(resourceId: $resourceId) {
-              resourceId
-              translatableContent {
-                key
-                digest
-                value
-              }
-            }
-          }`,
-        { variables: { resourceId: mediaImageId } }
-      );
-
-      const translatableData = await translatableResponse.json();
-      const translatableContent = translatableData.data?.translatableResource?.translatableContent || [];
-      const altDigest = translatableContent.find((c: any) => c.key === "alt")?.digest;
-
-      if (altDigest) {
-        // Register the translation
-        const translateResponse = await gateway.graphql(
+      try {
+        const updateMediaResponse = await gateway.graphql(
           `#graphql
-            mutation translateMediaImage($resourceId: ID!, $translations: [TranslationInput!]!) {
-              translationsRegister(resourceId: $resourceId, translations: $translations) {
-                userErrors {
+            mutation updateMedia($media: [UpdateMediaInput!]!) {
+              productUpdateMedia(media: $media, productId: "${productId}") {
+                media {
+                  alt
+                  mediaErrors {
+                    code
+                    details
+                    message
+                  }
+                }
+                mediaUserErrors {
                   field
                   message
                 }
-                translations {
-                  locale
-                  key
-                  value
+                product {
+                  id
                 }
               }
             }`,
           {
             variables: {
-              resourceId: mediaImageId,
-              translations: [
+              media: [
                 {
-                  key: "alt",
-                  value: altText,
-                  locale: params.locale,
-                  translatableContentDigest: altDigest,
+                  id: mediaImageId,
+                  // Send empty string to Shopify to clear alt-text (null means "don't change")
+                  alt: altText,
                 },
               ],
             },
           }
         );
+        const updateMediaData = await updateMediaResponse.json();
+        const mediaUserErrors = updateMediaData.data?.productUpdateMedia?.mediaUserErrors || [];
+        const returnedAlt = updateMediaData.data?.productUpdateMedia?.media?.[0]?.alt;
+        logger.debug(`[ProductUpdate] [SHOPIFY-RESPONSE] mediaId: ${mediaImageId}, sent alt: "${altText}", returned alt: "${returnedAlt}"`);
 
-        const translateData = await translateResponse.json();
-
-        if (translateData.data?.translationsRegister?.userErrors?.length > 0) {
-          loggers.product("error", "Failed to translate alt-text", {
-            index,
-            locale: params.locale,
-            errors: translateData.data.translationsRegister.userErrors,
-          });
+        if (mediaUserErrors.length > 0) {
+          loggers.product("error", "productUpdateMedia errors", { index, errors: mediaUserErrors });
         } else {
-          loggers.product("debug", "Translated alt-text via translationsRegister", {
-            index,
-            locale: params.locale,
-          });
+          shopifySaved = true;
         }
-      } else {
-        loggers.product("warn", "No digest found for alt-text translation", {
-          index,
-          mediaImageId,
-          locale: params.locale,
+        loggers.product("debug", "Updated primary alt-text via productUpdateMedia", { index, sentAlt: altText, returnedAlt, shopifySaved });
+      } catch (err: any) {
+        loggers.product("error", "productUpdateMedia exception", { index, error: err?.message });
+      }
+    } else {
+      // TRANSLATION: Use translationsRegister mutation with MEDIA_IMAGE resource type
+      // First, fetch the translatable content to get the digest
+      let altDigest: string | undefined;
+      try {
+        const translatableResponse = await gateway.graphql(
+          `#graphql
+            query translatableContent($resourceId: ID!) {
+              translatableResource(resourceId: $resourceId) {
+                resourceId
+                translatableContent {
+                  key
+                  digest
+                  value
+                }
+              }
+            }`,
+          { variables: { resourceId: mediaImageId } }
+        );
+
+        const translatableData = await translatableResponse.json();
+        const translatableContent = translatableData.data?.translatableResource?.translatableContent || [];
+        altDigest = translatableContent.find((c: any) => c.key === "alt")?.digest;
+      } catch (err: any) {
+        loggers.product("error", "Error fetching translatable content for alt-text", { index, error: err?.message });
+      }
+
+      if (!altDigest) {
+        loggers.product("warn", "No digest found for alt-text translation - cannot save to Shopify", {
+          index, mediaImageId, locale: params.locale,
         });
+      } else {
+        try {
+          const translateResponse = await gateway.graphql(
+            `#graphql
+              mutation translateMediaImage($resourceId: ID!, $translations: [TranslationInput!]!) {
+                translationsRegister(resourceId: $resourceId, translations: $translations) {
+                  userErrors {
+                    field
+                    message
+                  }
+                  translations {
+                    locale
+                    key
+                    value
+                  }
+                }
+              }`,
+            {
+              variables: {
+                resourceId: mediaImageId,
+                translations: [
+                  {
+                    key: "alt",
+                    value: altText,
+                    locale: params.locale,
+                    translatableContentDigest: altDigest,
+                  },
+                ],
+              },
+            }
+          );
+
+          const translateData = await translateResponse.json();
+          const userErrors = translateData.data?.translationsRegister?.userErrors || [];
+          if (userErrors.length > 0) {
+            loggers.product("error", "Failed to translate alt-text", { index, locale: params.locale, errors: userErrors });
+          } else {
+            shopifySaved = true;
+            loggers.product("debug", "Translated alt-text via translationsRegister", { index, locale: params.locale });
+          }
+        } catch (err: any) {
+          loggers.product("error", "translationsRegister exception for alt-text", { index, locale: params.locale, error: err?.message });
+        }
       }
     }
 
-    // Save to Database (dbImage was already fetched above)
-    if (dbImage) {
+    // Save to Database ONLY if Shopify save succeeded (no mismatch allowed)
+    if (shopifySaved && dbImage) {
       try {
         if (params.locale === params.primaryLocale) {
-          // Primary locale: Update ProductImage table
-          // When altText is empty string, save as null for consistency
           const altTextToSave = altText === "" ? null : altText;
-          logger.debug('[ProductUpdate] SAVING ALT-TEXT TO DATABASE (PRIMARY)');
-          logger.debug(`[ProductUpdate] dbImage.id: ${dbImage.id}`);
-          logger.debug(`[ProductUpdate] altText to save: "${altTextToSave}" (original: "${altText}", isEmpty: ${altText === ""})`);
           await db.productImage.update({
             where: { id: dbImage.id },
             data: {
               altText: altTextToSave,
-              altTextModifiedAt: new Date(), // Prevent webhook sync from overwriting
+              altTextModifiedAt: new Date(),
             },
           });
-          // Verify the save worked
-          const savedImage = await db.productImage.findUnique({
-            where: { id: dbImage.id },
-            select: { altText: true },
-          });
-          logger.debug(`[ProductUpdate] Verified saved altText: "${savedImage?.altText}" (isNull: ${savedImage?.altText === null})`);
           loggers.product("debug", "Updated primary alt-text in DB", { index, altTextSaved: altTextToSave });
         } else {
-          // Translation: Update ProductImageAltTranslation table
           const existing = await db.productImageAltTranslation.findUnique({
-            where: {
-              imageId_locale: {
-                imageId: dbImage.id,
-                locale: params.locale,
-              },
-            },
+            where: { imageId_locale: { imageId: dbImage.id, locale: params.locale } },
           });
-
           if (existing) {
-            await db.productImageAltTranslation.update({
-              where: { id: existing.id },
-              data: { altText },
-            });
+            await db.productImageAltTranslation.update({ where: { id: existing.id }, data: { altText } });
           } else {
-            await db.productImageAltTranslation.create({
-              data: {
-                imageId: dbImage.id,
-                locale: params.locale,
-                altText: altText,
-              },
-            });
+            await db.productImageAltTranslation.create({ data: { imageId: dbImage.id, locale: params.locale, altText } });
           }
-          loggers.product("debug", "Saved alt-text translation in DB", {
-            index,
-            locale: params.locale,
-          });
+          loggers.product("debug", "Saved alt-text translation in DB", { index, locale: params.locale });
         }
       } catch (dbError: any) {
-        // If the image was deleted by a concurrent sync, log and continue
         if (dbError.code === 'P2025' || dbError.code === 'P2003' || dbError.message?.includes('Foreign key constraint')) {
           loggers.product("warn", "Image was deleted during alt-text save (concurrent sync)", {
             index, locale: params.locale, error: dbError.message,
@@ -498,9 +455,12 @@ async function updateImageAltTexts(
           throw dbError;
         }
       }
+    } else if (!shopifySaved) {
+      failedAltTextIndices.push(index);
     }
   }
 
+  return { failedAltTextIndices };
 }
 
 /**
