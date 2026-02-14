@@ -247,6 +247,10 @@ export default function BlogPage() {
           hideItemListStatusBars={true}
           showItemListCategoryBadge={true}
           revalidator={revalidator}
+          sortOptions={[
+            { field: "title", label: "Title" },
+            { field: "shopifyUpdatedAt", label: "Last Updated" },
+          ]}
         />
       </div>
     </div>

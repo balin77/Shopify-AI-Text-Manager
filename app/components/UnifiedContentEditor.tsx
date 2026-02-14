@@ -26,7 +26,7 @@ import { contentEditorStyles, getLocalizedLanguageName } from "../utils/contentE
 import { useI18n } from "../contexts/I18nContext";
 import "../styles/UnifiedContentEditor.css";
 import type { ContentEditorConfig, UseContentEditorReturn, FieldDefinition } from "../types/content-editor.types";
-import type { UnifiedItem } from "./unified/UnifiedItemList";
+import type { UnifiedItem, SortOption } from "./unified/UnifiedItemList";
 
 interface UnifiedContentEditorProps {
   /** Configuration for this content type */
@@ -96,6 +96,9 @@ interface UnifiedContentEditorProps {
 
   /** Optional: Remix revalidator for non-destructive data reload */
   revalidator?: { state: "idle" | "loading"; revalidate: () => void };
+
+  /** Optional: Sort options for the item list */
+  sortOptions?: SortOption[];
 }
 
 export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
@@ -119,6 +122,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     onFieldSearch,
     isFieldsLoading = false,
     revalidator,
+    sortOptions,
   } = props;
 
   // Local state for search input - synced with fieldPagination.search
@@ -306,6 +310,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           planLimit={finalPlanLimit}
           onSyncAll={revalidator ? () => revalidator.revalidate() : undefined}
           isSyncing={revalidator?.state === "loading"}
+          sortOptions={sortOptions}
           t={{
             searchPlaceholder: t.content?.searchPlaceholder,
             paginationOf: t.content?.paginationOf || "of",

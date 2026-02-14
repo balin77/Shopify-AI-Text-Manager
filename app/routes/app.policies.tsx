@@ -227,6 +227,9 @@ export default function PoliciesPage() {
           t={t}
           renderListItem={renderListItem}
           revalidator={revalidator}
+          sortOptions={[
+            { field: "title", label: "Title" },
+          ]}
         />
       </div>
     </div>

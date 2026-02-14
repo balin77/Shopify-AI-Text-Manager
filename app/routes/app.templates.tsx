@@ -1439,6 +1439,9 @@ export default function TemplatesPage() {
           onFieldSearch={handleFieldSearch}
           isFieldsLoading={isLoading}
           revalidator={revalidator}
+          sortOptions={[
+            { field: "title", label: "Title" },
+          ]}
         />
       </div>
     </div>

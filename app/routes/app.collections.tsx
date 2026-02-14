@@ -231,6 +231,10 @@ export default function CollectionsPage() {
           hideItemListImages={false}
           hideItemListStatusBars={true}
           revalidator={revalidator}
+          sortOptions={[
+            { field: "title", label: "Title" },
+            { field: "shopifyUpdatedAt", label: "Last Updated" },
+          ]}
         />
       </div>
     </div>

@@ -12,7 +12,7 @@
  * Used by: Products, Collections, Pages, Blogs, Articles, Policies, etc.
  */
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import {
   Card,
   ResourceList,
@@ -25,8 +25,10 @@ import {
   Icon,
   Banner,
   TextField,
+  Popover,
+  ActionList,
 } from "@shopify/polaris";
-import { SearchIcon, ChevronLeftIcon, ChevronRightIcon, RefreshIcon } from "@shopify/polaris-icons";
+import { SearchIcon, ChevronLeftIcon, ChevronRightIcon, RefreshIcon, SortIcon } from "@shopify/polaris-icons";
 import { Thumbnail } from "@shopify/polaris";
 import { useNavigationHeight } from "../../contexts/NavigationHeightContext";
 
@@ -42,6 +44,15 @@ export interface UnifiedItem {
   };
   [key: string]: any;
 }
+
+export interface SortOption {
+  /** Field key on UnifiedItem to sort by */
+  field: string;
+  /** Display label */
+  label: string;
+}
+
+type SortDirection = "asc" | "desc";
 
 interface UnifiedItemListProps {
   /** Array of items to display */
@@ -95,6 +106,9 @@ interface UnifiedItemListProps {
   /** Optional: Whether sync is in progress */
   isSyncing?: boolean;
 
+  /** Optional: Sort options to show in the sort dropdown */
+  sortOptions?: SortOption[];
+
   /** Translation strings */
   t?: {
     searchPlaceholder?: string;
@@ -121,6 +135,7 @@ export function UnifiedItemList({
   planLimit,
   onSyncAll,
   isSyncing = false,
+  sortOptions,
   t = {},
 }: UnifiedItemListProps) {
   const [searchQuery, setSearchQuery] = useState("");
@@ -128,6 +143,12 @@ export function UnifiedItemList({
   const [hoveredItemId, setHoveredItemId] = useState<string | null>(null);
   const [dynamicItemsPerPage, setDynamicItemsPerPage] = useState(10);
   const [itemHeight, setItemHeight] = useState(56); // Will be calculated dynamically
+  const [sortField, setSortField] = useState<string>("title");
+  const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
+  const [sortPopoverActive, setSortPopoverActive] = useState(false);
+
+  const toggleSortPopover = useCallback(() => setSortPopoverActive((v) => !v), []);
+  const closeSortPopover = useCallback(() => setSortPopoverActive(false), []);
 
   const { getTotalNavHeight } = useNavigationHeight();
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -146,12 +167,36 @@ export function UnifiedItemList({
       })
     : items;
 
+  // Sort filtered items
+  const sortedItems = [...filteredItems].sort((a, b) => {
+    const valA = a[sortField];
+    const valB = b[sortField];
+
+    // Nulls/undefined go to end regardless of direction
+    if (valA == null && valB == null) return 0;
+    if (valA == null) return 1;
+    if (valB == null) return -1;
+
+    // Date fields
+    if (valA instanceof Date || (typeof valA === "string" && !isNaN(Date.parse(valA)) && sortField.toLowerCase().includes("at"))) {
+      const dateA = new Date(valA).getTime();
+      const dateB = new Date(valB).getTime();
+      return sortDirection === "asc" ? dateA - dateB : dateB - dateA;
+    }
+
+    // String comparison
+    const strA = String(valA).toLowerCase();
+    const strB = String(valB).toLowerCase();
+    const cmp = strA.localeCompare(strB);
+    return sortDirection === "asc" ? cmp : -cmp;
+  });
+
   // Pagination
-  const totalPages = Math.ceil(filteredItems.length / itemsPerPage);
+  const totalPages = Math.ceil(sortedItems.length / itemsPerPage);
   const startIndex = (currentPage - 1) * itemsPerPage;
   const paginatedItems = showPagination
-    ? filteredItems.slice(startIndex, startIndex + itemsPerPage)
-    : filteredItems;
+    ? sortedItems.slice(startIndex, startIndex + itemsPerPage)
+    : sortedItems;
 
   // Calculate items per page and item height based on available space
   useEffect(() => {
@@ -394,16 +439,62 @@ export function UnifiedItemList({
               <Text as="h2" variant="headingMd">
                 {resourceName.plural} ({items.length})
               </Text>
-              {onSyncAll && (
-                <Button
-                  icon={RefreshIcon}
-                  variant="plain"
-                  onClick={onSyncAll}
-                  loading={isSyncing}
-                  accessibilityLabel="Sync from Shopify"
-                  size="slim"
-                />
-              )}
+              <InlineStack gap="100" blockAlign="center">
+                {sortOptions && sortOptions.length > 0 && (
+                  <Popover
+                    active={sortPopoverActive}
+                    activator={
+                      <Button
+                        icon={SortIcon}
+                        variant="plain"
+                        onClick={toggleSortPopover}
+                        accessibilityLabel="Sort items"
+                        size="slim"
+                      />
+                    }
+                    onClose={closeSortPopover}
+                    preferredAlignment="right"
+                  >
+                    <ActionList
+                      items={sortOptions.flatMap((opt) => {
+                        const isDateField = opt.field.toLowerCase().includes("at");
+                        return [
+                          {
+                            content: `${opt.label} ${isDateField ? "↑ Oldest" : "(A–Z)"}`,
+                            active: sortField === opt.field && sortDirection === "asc",
+                            onAction: () => {
+                              setSortField(opt.field);
+                              setSortDirection("asc");
+                              setCurrentPage(1);
+                              closeSortPopover();
+                            },
+                          },
+                          {
+                            content: `${opt.label} ${isDateField ? "↓ Newest" : "(Z–A)"}`,
+                            active: sortField === opt.field && sortDirection === "desc",
+                            onAction: () => {
+                              setSortField(opt.field);
+                              setSortDirection("desc");
+                              setCurrentPage(1);
+                              closeSortPopover();
+                            },
+                          },
+                        ];
+                      })}
+                    />
+                  </Popover>
+                )}
+                {onSyncAll && (
+                  <Button
+                    icon={RefreshIcon}
+                    variant="plain"
+                    onClick={onSyncAll}
+                    loading={isSyncing}
+                    accessibilityLabel="Sync from Shopify"
+                    size="slim"
+                  />
+                )}
+              </InlineStack>
             </InlineStack>
 
             {/* Search */}
@@ -488,8 +579,8 @@ export function UnifiedItemList({
           <div ref={paginationRef} style={{ padding: "1rem", borderTop: "1px solid #e1e3e5", flexShrink: 0 }}>
             <InlineStack align="space-between" blockAlign="center">
               <Text as="p" variant="bodySm" tone="subdued">
-                {startIndex + 1}-{Math.min(startIndex + itemsPerPage, filteredItems.length)} {t.paginationOf || "of"}{" "}
-                {filteredItems.length}
+                {startIndex + 1}-{Math.min(startIndex + itemsPerPage, sortedItems.length)} {t.paginationOf || "of"}{" "}
+                {sortedItems.length}
               </Text>
               <InlineStack gap="200">
                 <Button

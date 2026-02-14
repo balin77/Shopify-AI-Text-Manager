@@ -647,6 +647,12 @@ export default function ProductsPage() {
             nextPlan: getNextPlanUpgrade() || undefined,
           }}
           revalidator={revalidator}
+          sortOptions={[
+            { field: "title", label: "Title" },
+            { field: "productType", label: "Product Type" },
+            { field: "status", label: "Status" },
+            { field: "shopifyUpdatedAt", label: "Last Updated" },
+          ]}
         />
       </div>
     </div>
