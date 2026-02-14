@@ -125,6 +125,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // Ref to access imageAltTexts in effects without adding as dependency
   const imageAltTextsRef = useRef<Record<number, string>>({});
   imageAltTextsRef.current = imageAltTexts;
+  // Ref to access originalAltTexts in callbacks without adding as dependency
+  const originalAltTextsRef = useRef<Record<number, string>>({});
+  originalAltTextsRef.current = originalAltTexts;
 
   // Track pending auto-save for alt-texts (set by bulk generation and translation effects)
   const pendingAltTextAutoSaveRef = useRef<Record<number, string> | null>(null);
@@ -917,10 +920,21 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // Add field values - for foreign locales, only send fields that actually changed
     Object.assign(formDataObj, buildFieldsForSave(valuesToSave, locale));
 
-    // Add image alt-texts if there are any changes
+    // Add image alt-texts ONLY if they actually changed (avoid sending unchanged alt-texts
+    // which would trigger unnecessary Shopify API calls that fail when primary alt-text has no digest)
     if (Object.keys(imageAltTexts).length > 0) {
-      formDataObj.imageAltTexts = JSON.stringify(imageAltTexts);
-      debugLog.autoSave(' 🖼️ imageAltTexts being sent:', JSON.stringify(imageAltTexts));
+      const origAltTexts = originalAltTextsRef.current;
+      const changedAltTexts: Record<number, string> = {};
+      for (const [key, value] of Object.entries(imageAltTexts)) {
+        const numKey = Number(key);
+        if (origAltTexts[numKey] !== value) {
+          changedAltTexts[numKey] = value;
+        }
+      }
+      if (Object.keys(changedAltTexts).length > 0) {
+        formDataObj.imageAltTexts = JSON.stringify(changedAltTexts);
+        debugLog.autoSave(' 🖼️ imageAltTexts being sent (changed only):', JSON.stringify(changedAltTexts));
+      }
     }
 
     // If saving primary locale, include changed fields for translation deletion
@@ -1770,10 +1784,21 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // Add field values - for foreign locales, only send fields that actually changed
     Object.assign(formDataObj, buildFieldsForSave(editableValues, currentLanguage));
 
-    // Add image alt-texts if there are any changes
-    if (Object.keys(imageAltTexts).length > 0) {
-      formDataObj.imageAltTexts = JSON.stringify(imageAltTexts);
-      debugLog.save(' 🖼️ imageAltTexts being sent:', JSON.stringify(imageAltTexts));
+    // Add image alt-texts ONLY if they actually changed (avoid sending unchanged alt-texts
+    // which would trigger unnecessary Shopify API calls that fail when primary alt-text has no digest)
+    if (hasAltTextChanges && Object.keys(imageAltTexts).length > 0) {
+      // Filter to only include alt-texts that actually differ from the original
+      const changedAltTexts: Record<number, string> = {};
+      for (const [key, value] of Object.entries(imageAltTexts)) {
+        const numKey = Number(key);
+        if (originalAltTexts[numKey] !== value) {
+          changedAltTexts[numKey] = value;
+        }
+      }
+      if (Object.keys(changedAltTexts).length > 0) {
+        formDataObj.imageAltTexts = JSON.stringify(changedAltTexts);
+        debugLog.save(' 🖼️ imageAltTexts being sent (changed only):', JSON.stringify(changedAltTexts));
+      }
     }
 
     // If saving primary locale, include pre-computed changed fields for server-side translation deletion
