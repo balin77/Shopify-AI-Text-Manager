@@ -346,78 +346,120 @@ async function updateImageAltTexts(
         loggers.product("error", "productUpdateMedia exception", { index, error: err?.message });
       }
     } else {
-      // TRANSLATION: Use translationsRegister mutation with MEDIA_IMAGE resource type
-      // First, fetch the translatable content to get the digest
-      let altDigest: string | undefined;
-      try {
-        const translatableResponse = await gateway.graphql(
-          `#graphql
-            query translatableContent($resourceId: ID!) {
-              translatableResource(resourceId: $resourceId) {
-                resourceId
-                translatableContent {
-                  key
-                  digest
-                  value
-                }
-              }
-            }`,
-          { variables: { resourceId: mediaImageId } }
-        );
+      // TRANSLATION: Handle alt-text translation for foreign locales
+      const altTextValue = (altText as string) || "";
 
-        const translatableData = await translatableResponse.json();
-        const translatableContent = translatableData.data?.translatableResource?.translatableContent || [];
-        altDigest = translatableContent.find((c: any) => c.key === "alt")?.digest;
-      } catch (err: any) {
-        loggers.product("error", "Error fetching translatable content for alt-text", { index, error: err?.message });
-      }
-
-      if (!altDigest) {
-        loggers.product("warn", "No digest found for alt-text translation - cannot save to Shopify", {
-          index, mediaImageId, locale: params.locale,
-        });
-      } else {
+      if (altTextValue.trim() === "") {
+        // EMPTY VALUE: Use translationsRemove to delete the translation from Shopify
+        // (same pattern as regular text fields in updateTranslatedProduct)
         try {
-          const translateResponse = await gateway.graphql(
+          const removeResponse = await gateway.graphql(
             `#graphql
-              mutation translateMediaImage($resourceId: ID!, $translations: [TranslationInput!]!) {
-                translationsRegister(resourceId: $resourceId, translations: $translations) {
+              mutation removeAltTextTranslation($resourceId: ID!, $translationKeys: [String!]!, $locales: [String!]!) {
+                translationsRemove(resourceId: $resourceId, translationKeys: $translationKeys, locales: $locales) {
                   userErrors {
                     field
                     message
                   }
                   translations {
-                    locale
                     key
-                    value
+                    locale
                   }
                 }
               }`,
             {
               variables: {
                 resourceId: mediaImageId,
-                translations: [
-                  {
-                    key: "alt",
-                    value: altText,
-                    locale: params.locale,
-                    translatableContentDigest: altDigest,
-                  },
-                ],
+                translationKeys: ["alt"],
+                locales: [params.locale],
               },
             }
           );
 
-          const translateData = await translateResponse.json();
-          const userErrors = translateData.data?.translationsRegister?.userErrors || [];
+          const removeData = await removeResponse.json();
+          const userErrors = removeData.data?.translationsRemove?.userErrors || [];
           if (userErrors.length > 0) {
-            loggers.product("error", "Failed to translate alt-text", { index, locale: params.locale, errors: userErrors });
+            loggers.product("error", "Failed to remove alt-text translation", { index, locale: params.locale, errors: userErrors });
           } else {
             shopifySaved = true;
-            loggers.product("debug", "Translated alt-text via translationsRegister", { index, locale: params.locale });
+            loggers.product("debug", "Removed alt-text translation via translationsRemove", { index, locale: params.locale });
           }
         } catch (err: any) {
-          loggers.product("error", "translationsRegister exception for alt-text", { index, locale: params.locale, error: err?.message });
+          loggers.product("error", "translationsRemove exception for alt-text", { index, locale: params.locale, error: err?.message });
+        }
+      } else {
+        // NON-EMPTY VALUE: Use translationsRegister (requires digest from primary content)
+        let altDigest: string | undefined;
+        try {
+          const translatableResponse = await gateway.graphql(
+            `#graphql
+              query translatableContent($resourceId: ID!) {
+                translatableResource(resourceId: $resourceId) {
+                  resourceId
+                  translatableContent {
+                    key
+                    digest
+                    value
+                  }
+                }
+              }`,
+            { variables: { resourceId: mediaImageId } }
+          );
+
+          const translatableData = await translatableResponse.json();
+          const translatableContent = translatableData.data?.translatableResource?.translatableContent || [];
+          altDigest = translatableContent.find((c: any) => c.key === "alt")?.digest;
+        } catch (err: any) {
+          loggers.product("error", "Error fetching translatable content for alt-text", { index, error: err?.message });
+        }
+
+        if (!altDigest) {
+          loggers.product("warn", "No digest found for alt-text translation - cannot save to Shopify", {
+            index, mediaImageId, locale: params.locale,
+          });
+        } else {
+          try {
+            const translateResponse = await gateway.graphql(
+              `#graphql
+                mutation translateMediaImage($resourceId: ID!, $translations: [TranslationInput!]!) {
+                  translationsRegister(resourceId: $resourceId, translations: $translations) {
+                    userErrors {
+                      field
+                      message
+                    }
+                    translations {
+                      locale
+                      key
+                      value
+                    }
+                  }
+                }`,
+              {
+                variables: {
+                  resourceId: mediaImageId,
+                  translations: [
+                    {
+                      key: "alt",
+                      value: altTextValue,
+                      locale: params.locale,
+                      translatableContentDigest: altDigest,
+                    },
+                  ],
+                },
+              }
+            );
+
+            const translateData = await translateResponse.json();
+            const userErrors = translateData.data?.translationsRegister?.userErrors || [];
+            if (userErrors.length > 0) {
+              loggers.product("error", "Failed to translate alt-text", { index, locale: params.locale, errors: userErrors });
+            } else {
+              shopifySaved = true;
+              loggers.product("debug", "Translated alt-text via translationsRegister", { index, locale: params.locale });
+            }
+          } catch (err: any) {
+            loggers.product("error", "translationsRegister exception for alt-text", { index, locale: params.locale, error: err?.message });
+          }
         }
       }
     }
@@ -436,15 +478,23 @@ async function updateImageAltTexts(
           });
           loggers.product("debug", "Updated primary alt-text in DB", { index, altTextSaved: altTextToSave });
         } else {
+          const altTextValue = (altText as string) || "";
           const existing = await db.productImageAltTranslation.findUnique({
             where: { imageId_locale: { imageId: dbImage.id, locale: params.locale } },
           });
-          if (existing) {
-            await db.productImageAltTranslation.update({ where: { id: existing.id }, data: { altText } });
+          if (altTextValue.trim() === "") {
+            // Empty value: delete the translation record from DB
+            if (existing) {
+              await db.productImageAltTranslation.delete({ where: { id: existing.id } });
+              loggers.product("debug", "Deleted alt-text translation from DB", { index, locale: params.locale });
+            }
+          } else if (existing) {
+            await db.productImageAltTranslation.update({ where: { id: existing.id }, data: { altText: altTextValue } });
+            loggers.product("debug", "Updated alt-text translation in DB", { index, locale: params.locale });
           } else {
-            await db.productImageAltTranslation.create({ data: { imageId: dbImage.id, locale: params.locale, altText } });
+            await db.productImageAltTranslation.create({ data: { imageId: dbImage.id, locale: params.locale, altText: altTextValue } });
+            loggers.product("debug", "Created alt-text translation in DB", { index, locale: params.locale });
           }
-          loggers.product("debug", "Saved alt-text translation in DB", { index, locale: params.locale });
         }
       } catch (dbError: any) {
         if (dbError.code === 'P2025' || dbError.code === 'P2003' || dbError.message?.includes('Foreign key constraint')) {
