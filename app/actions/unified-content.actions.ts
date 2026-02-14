@@ -7,7 +7,7 @@
 
 import { json } from "@remix-run/node";
 import type { ActionFunctionArgs } from "@remix-run/node";
-import { AIService } from "../../src/services/ai.service";
+import { AIService, type AIProvider } from "../../src/services/ai.service";
 import { TranslationService } from "../../src/services/translation.service";
 import { ShopifyContentService } from "../../src/services/shopify-content.service";
 import { sanitizeSlug } from "../utils/slug.utils";
@@ -44,7 +44,9 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
   }
 
   // Initialize services
-  const provider = aiSettings?.preferredProvider || process.env.AI_PROVIDER || "huggingface";
+  const provider = (aiSettings?.preferredProvider || process.env.AI_PROVIDER || "huggingface") as AIProvider;
+  // Cast aiInstructions to indexable type for dynamic field access
+  const instructions = aiInstructions as Record<string, string | null> | null;
   const serviceConfig = {
     huggingfaceApiKey: decryptApiKey(aiSettings?.huggingfaceApiKey) || undefined,
     geminiApiKey: decryptApiKey(aiSettings?.geminiApiKey) || undefined,
@@ -139,11 +141,11 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
       if (field.type === "text" || field.type === "slug") {
         let prompt = `Create an optimized ${field.label}.`;
 
-        if (aiInstructions?.[formatKey]) {
-          prompt += `\n\nFormat Example:\n${aiInstructions[formatKey]}`;
+        if (instructions?.[formatKey]) {
+          prompt += `\n\nFormat Example:\n${instructions[formatKey]}`;
         }
-        if (aiInstructions?.[instructionsTextKey]) {
-          prompt += `\n\nInstructions:\n${aiInstructions[instructionsTextKey]}`;
+        if (instructions?.[instructionsTextKey]) {
+          prompt += `\n\nInstructions:\n${instructions[instructionsTextKey]}`;
         }
 
         if (field.type === "slug") {
@@ -168,11 +170,11 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
       } else if (field.type === "html" || field.type === "textarea") {
         let prompt = `Create an optimized ${field.label} for: ${contextTitle}`;
 
-        if (aiInstructions?.[formatKey]) {
-          prompt += `\n\nFormat Example:\n${aiInstructions[formatKey]}`;
+        if (instructions?.[formatKey]) {
+          prompt += `\n\nFormat Example:\n${instructions[formatKey]}`;
         }
-        if (aiInstructions?.[instructionsTextKey]) {
-          prompt += `\n\nInstructions:\n${aiInstructions[instructionsTextKey]}`;
+        if (instructions?.[instructionsTextKey]) {
+          prompt += `\n\nInstructions:\n${instructions[instructionsTextKey]}`;
         }
 
         prompt += `\n\nContext:\n${contextDescription || currentValue}\n\nCurrent Content:\n${currentValue}\n\nReturn ONLY the ${field.label}, without explanations. Output the result in ${mainLanguage}.`;
@@ -300,7 +302,7 @@ Allowed formatting changes for handles:
 - Convert umlauts (ä→ae, ö→oe, ü→ue, ß→ss)
 - Remove special characters
 - Remove excessive hyphens`;
-          if (aiInstructions?.[formatKey]) {
+          if (instructions?.[formatKey]) {
             prompt += `\n\nFormat Style Example:\n${aiInstructions[formatKey]}`;
           }
           prompt += `\n\nReturn ONLY the formatted URL slug. Keep the original keywords.`;
@@ -317,7 +319,7 @@ Allowed formatting changes:
 - Adjust capitalization (e.g., Title Case)
 - Remove excessive punctuation
 - Fix spacing issues`;
-          if (aiInstructions?.[formatKey]) {
+          if (instructions?.[formatKey]) {
             prompt += `\n\nFormat Style Example (for structure reference only, do NOT copy the content):\n${aiInstructions[formatKey]}`;
           }
           prompt += `\n\nReturn ONLY the formatted ${field.label}. Keep the original language. Do NOT add new information or rewrite the text. Output the result in ${mainLanguage}.`;
@@ -343,7 +345,7 @@ Allowed formatting changes:
 - Add paragraph breaks with <p> tags
 - Fix spacing and punctuation`;
 
-        if (aiInstructions?.[formatKey]) {
+        if (instructions?.[formatKey]) {
           prompt += `\n\nFormat Style Example (for HTML structure reference only):\n${aiInstructions[formatKey]}`;
         }
 
@@ -425,7 +427,7 @@ Allowed formatting changes:
         changedFields,
         [targetLocale],
         contentConfig.contentType,
-        aiInstructions?.translateInstructions
+        aiInstructions?.translateInstructions || undefined
       );
       const translatedValue = translations[targetLocale]?.[fieldType] || "";
 
@@ -517,7 +519,7 @@ Allowed formatting changes:
         targetLocales: targetLocalesStr ? JSON.parse(targetLocalesStr) : undefined,
         contentType: contentConfig.contentType,
         taskId: task.id,
-        customInstructions: aiInstructions?.translateInstructions,
+        customInstructions: aiInstructions?.translateInstructions || undefined,
         sourceLocale,
       });
 
@@ -618,7 +620,7 @@ Allowed formatting changes:
         targetLocales: [targetLocale],
         contentType: contentConfig.contentType,
         taskId: task.id,
-        customInstructions: aiInstructions?.translateInstructions,
+        customInstructions: aiInstructions?.translateInstructions || undefined,
         sourceLocale,
       });
 
@@ -720,7 +722,7 @@ Allowed formatting changes:
         targetLocales: targetLocalesStr ? JSON.parse(targetLocalesStr) : undefined,
         contentType: contentConfig.contentType,
         taskId: task.id,
-        customInstructions: aiInstructions?.translateInstructions,
+        customInstructions: aiInstructions?.translateInstructions || undefined,
         sourceLocale,
       });
 
@@ -886,11 +888,11 @@ Allowed formatting changes:
       // Use unified content service
       const result = await shopifyContentService.updateContent({
         resourceId: itemId,
-        resourceType: contentConfig.resourceType as "Collection" | "Article" | "ShopPolicy" | "Page" | "Blog",
+        resourceType: contentConfig.resourceType,
         locale,
         primaryLocale,
         updates,
-        db: db as Parameters<typeof shopifyContentService.updateContent>[0]["db"],
+        db,
         shop: session.shop,
         changedFields: locale === primaryLocale ? changedFields : undefined, // Only pass for primary locale
       });

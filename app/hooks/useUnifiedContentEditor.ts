@@ -1815,14 +1815,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       primaryLocale,
     };
 
-    // 🧪 DEBUG MODE: Check for skipShopifySync URL parameter
-    if (typeof window !== 'undefined') {
-      const urlParams = new URLSearchParams(window.location.search);
-      if (urlParams.get('skipShopifySync') === 'true') {
-        formDataObj.skipShopifySync = 'true';
-      }
-    }
-
     // Add field values - for foreign locales, only send fields that actually changed
     Object.assign(formDataObj, buildFieldsForSave(editableValues, currentLanguage));
 

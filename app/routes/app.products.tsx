@@ -489,12 +489,6 @@ export default function ProductsPage() {
   }, [isInitialLoad, products]);
 
   useEffect(() => {
-    // DEBUG MODE: Skip auto-sync if skipShopifySync is enabled
-    const urlParams = new URLSearchParams(window.location.search);
-    if (urlParams.get('skipShopifySync') === 'true') {
-      return;
-    }
-
     // Skip if no product selected or already loading or component unmounted
     if (!selectedProductId || !selectedProduct || isLoadingTranslations || !isMountedRef.current) return;
 

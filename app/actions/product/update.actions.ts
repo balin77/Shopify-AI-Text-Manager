@@ -14,6 +14,8 @@ import { sanitizeSlug } from "~/utils/slug.utils";
 import { logger, loggers } from "~/utils/logger.server";
 import { markTranslationSaved } from "~/utils/translation-save-lock.server";
 import type { ActionContext } from "./shared/action-context";
+import { getFormString, getFormJSON } from "~/utils/form-data.utils";
+import type { PrismaClient } from "@prisma/client";
 
 interface UpdateProductParams {
   locale: string;
@@ -39,25 +41,23 @@ export async function handleUpdateProduct(
   const { db } = await import("~/db.server");
 
   // Parse changedFields if present (for translation deletion when primary locale changes)
-  const changedFieldsStr = formData.get("changedFields") as string;
+  const changedFieldsStr = getFormString(formData, "changedFields");
   const changedFields: string[] = changedFieldsStr ? JSON.parse(changedFieldsStr) : [];
 
   // Parse changedAltTextIndices if present (for alt-text translation deletion when primary locale changes)
-  const changedAltTextIndicesStr = formData.get("changedAltTextIndices") as string;
+  const changedAltTextIndicesStr = getFormString(formData, "changedAltTextIndices");
   const changedAltTextIndices: number[] = changedAltTextIndicesStr ? JSON.parse(changedAltTextIndicesStr) : [];
 
   const params: UpdateProductParams = {
-    locale: formData.get("locale") as string,
-    primaryLocale: formData.get("primaryLocale") as string,
-    title: formData.get("title") as string,
-    descriptionHtml: formData.get("descriptionHtml") as string,
-    handle: formData.get("handle") as string,
-    seoTitle: formData.get("seoTitle") as string,
-    metaDescription: formData.get("metaDescription") as string,
-    productType: formData.get("productType") as string,
-    imageAltTexts: formData.get("imageAltTexts")
-      ? JSON.parse(formData.get("imageAltTexts") as string)
-      : {},
+    locale: getFormString(formData, "locale"),
+    primaryLocale: getFormString(formData, "primaryLocale"),
+    title: getFormString(formData, "title"),
+    descriptionHtml: getFormString(formData, "descriptionHtml"),
+    handle: getFormString(formData, "handle"),
+    seoTitle: getFormString(formData, "seoTitle"),
+    metaDescription: getFormString(formData, "metaDescription"),
+    productType: getFormString(formData, "productType"),
+    imageAltTexts: getFormJSON<Record<number, string>>(formData, "imageAltTexts") || {},
     productId,
   };
 
@@ -68,90 +68,6 @@ export async function handleUpdateProduct(
     primaryLocale: params.primaryLocale,
     hasAltTexts: Object.keys(params.imageAltTexts || {}).length > 0,
   });
-
-  // 🧪 DEBUG MODE: Skip Shopify sync for testing
-  // Add ?skipShopifySync=true to URL to only save to DB without syncing to Shopify
-  const skipShopifySync = formData.get("skipShopifySync") === "true";
-  if (skipShopifySync) {
-    logger.warn("⚠️ [DEBUG MODE] Skipping Shopify sync - only saving to local DB", {
-      context: "UpdateProduct",
-      productId,
-      locale: params.locale,
-    });
-
-    // Only update local DB without Shopify sync
-    try {
-      // Update translations in DB
-      if (params.locale !== params.primaryLocale) {
-        // For translations: Update ContentTranslation table
-        const translationKeys = {
-          title: "translatedBody",
-          description: "body",
-          handle: "handle",
-          seoTitle: "seo_title",
-          metaDescription: "seo_description",
-          productType: "product_type",
-        };
-
-        for (const [fieldKey, translationKey] of Object.entries(translationKeys)) {
-          const value = (params as any)[fieldKey === 'description' ? 'descriptionHtml' : fieldKey];
-          if (value !== undefined && value !== null) {
-            await db.contentTranslation.upsert({
-              where: {
-                resourceId_key_locale: {
-                  resourceId: productId,
-                  locale: params.locale,
-                  key: translationKey,
-                },
-              },
-              update: { value },
-              create: {
-                resourceId: productId,
-                resourceType: "Product",
-                locale: params.locale,
-                key: translationKey,
-                value,
-              },
-            });
-          }
-        }
-      } else {
-        // For primary locale: Update Product table directly
-        const updateData: any = {};
-        if (params.title) updateData.title = params.title;
-        if (params.descriptionHtml !== undefined) updateData.descriptionHtml = params.descriptionHtml;
-        if (params.handle) updateData.handle = params.handle;
-        if (params.seoTitle !== undefined) updateData.seoTitle = params.seoTitle;
-        if (params.metaDescription !== undefined) updateData.seoDescription = params.metaDescription;
-        if (params.productType) {
-          updateData.productType = params.productType;
-        } else if (changedFields.includes('productType')) {
-          updateData.productType = params.productType || null;
-        }
-
-        await db.product.update({
-          where: { id: productId },
-          data: updateData,
-        });
-      }
-
-      logger.info("✅ [DEBUG MODE] Successfully saved to DB (Shopify sync skipped)", {
-        context: "UpdateProduct",
-        productId,
-      });
-
-      return json({
-        success: true,
-        message: "⚠️ DEBUG MODE: Saved to DB only (Shopify sync skipped)",
-      });
-    } catch (error: any) {
-      logger.error("[DEBUG MODE] DB update failed", {
-        context: "UpdateProduct",
-        error: error.message,
-      });
-      return json({ success: false, error: error.message }, { status: 500 });
-    }
-  }
 
   // Sanitize handle
   if (params.handle) {
@@ -195,13 +111,14 @@ export async function handleUpdateProduct(
     }
 
     return response;
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
     logger.error("Product update failed", {
       context: "UpdateProduct",
       productId,
-      error: error.message,
+      error: errorMsg,
     });
-    return json({ success: false, error: error.message }, { status: 500 });
+    return json({ success: false, error: errorMsg }, { status: 500 });
   }
 }
 
@@ -213,7 +130,7 @@ export async function handleUpdateProduct(
  */
 async function updateImageAltTexts(
   gateway: ShopifyApiGateway,
-  db: any,
+  db: PrismaClient,
   productId: string,
   params: UpdateProductParams
 ): Promise<{ failedAltTextIndices: number[] }> {
@@ -250,7 +167,7 @@ async function updateImageAltTexts(
 
   // Filter to only include valid MediaImage nodes (exclude videos, 3D models, etc.)
   const mediaEdges = (productData.data?.product?.media?.edges || [])
-    .filter((edge: any) => edge.node?.id); // Only keep nodes with an id (MediaImage type)
+    .filter((edge: { node?: { id?: string } }) => edge.node?.id); // Only keep nodes with an id (MediaImage type)
 
   // Get DB product images (sorted by position to match UI order)
   const dbProduct = await db.product.findUnique({
@@ -342,12 +259,12 @@ async function updateImageAltTexts(
           shopifySaved = true;
         }
         loggers.product("debug", "Updated primary alt-text via productUpdateMedia", { index, sentAlt: altText, returnedAlt, shopifySaved });
-      } catch (err: any) {
-        loggers.product("error", "productUpdateMedia exception", { index, error: err?.message });
+      } catch (err: unknown) {
+        loggers.product("error", "productUpdateMedia exception", { index, error: err instanceof Error ? err.message : String(err) });
       }
     } else {
       // TRANSLATION: Handle alt-text translation for foreign locales
-      const altTextValue = (altText as string) || "";
+      const altTextValue = String(altText ?? "");
 
       if (altTextValue.trim() === "") {
         // EMPTY VALUE: Use translationsRemove to delete the translation from Shopify
@@ -384,8 +301,8 @@ async function updateImageAltTexts(
             shopifySaved = true;
             loggers.product("debug", "Removed alt-text translation via translationsRemove", { index, locale: params.locale });
           }
-        } catch (err: any) {
-          loggers.product("error", "translationsRemove exception for alt-text", { index, locale: params.locale, error: err?.message });
+        } catch (err: unknown) {
+          loggers.product("error", "translationsRemove exception for alt-text", { index, locale: params.locale, error: err instanceof Error ? err.message : String(err) });
         }
       } else {
         // NON-EMPTY VALUE: Use translationsRegister (requires digest from primary content)
@@ -408,9 +325,9 @@ async function updateImageAltTexts(
 
           const translatableData = await translatableResponse.json();
           const translatableContent = translatableData.data?.translatableResource?.translatableContent || [];
-          altDigest = translatableContent.find((c: any) => c.key === "alt")?.digest;
-        } catch (err: any) {
-          loggers.product("error", "Error fetching translatable content for alt-text", { index, error: err?.message });
+          altDigest = translatableContent.find((c: { key: string; digest?: string }) => c.key === "alt")?.digest;
+        } catch (err: unknown) {
+          loggers.product("error", "Error fetching translatable content for alt-text", { index, error: err instanceof Error ? err.message : String(err) });
         }
 
         if (!altDigest) {
@@ -457,8 +374,8 @@ async function updateImageAltTexts(
               shopifySaved = true;
               loggers.product("debug", "Translated alt-text via translationsRegister", { index, locale: params.locale });
             }
-          } catch (err: any) {
-            loggers.product("error", "translationsRegister exception for alt-text", { index, locale: params.locale, error: err?.message });
+          } catch (err: unknown) {
+            loggers.product("error", "translationsRegister exception for alt-text", { index, locale: params.locale, error: err instanceof Error ? err.message : String(err) });
           }
         }
       }
@@ -478,7 +395,7 @@ async function updateImageAltTexts(
           });
           loggers.product("debug", "Updated primary alt-text in DB", { index, altTextSaved: altTextToSave });
         } else {
-          const altTextValue = (altText as string) || "";
+          const altTextValue = String(altText ?? "");
           const existing = await db.productImageAltTranslation.findUnique({
             where: { imageId_locale: { imageId: dbImage.id, locale: params.locale } },
           });
@@ -496,10 +413,12 @@ async function updateImageAltTexts(
             loggers.product("debug", "Created alt-text translation in DB", { index, locale: params.locale });
           }
         }
-      } catch (dbError: any) {
-        if (dbError.code === 'P2025' || dbError.code === 'P2003' || dbError.message?.includes('Foreign key constraint')) {
+      } catch (dbError: unknown) {
+        const dbErr = dbError instanceof Error ? dbError : new Error(String(dbError));
+        const dbErrCode = (dbError as { code?: string })?.code;
+        if (dbErrCode === 'P2025' || dbErrCode === 'P2003' || dbErr.message?.includes('Foreign key constraint')) {
           loggers.product("warn", "Image was deleted during alt-text save (concurrent sync)", {
-            index, locale: params.locale, error: dbError.message,
+            index, locale: params.locale, error: dbErr.message,
           });
         } else {
           throw dbError;
@@ -518,7 +437,7 @@ async function updateImageAltTexts(
  */
 async function updateTranslatedProduct(
   gateway: ShopifyApiGateway,
-  db: any,
+  db: PrismaClient,
   productId: string,
   params: UpdateProductParams
 ): Promise<Response> {
@@ -551,7 +470,7 @@ async function updateTranslatedProduct(
   loggers.product("debug", "Raw translatableContent from Shopify", {
     productId,
     totalEntries: translatableContent.length,
-    entries: translatableContent.map((item: any) => ({
+    entries: translatableContent.map((item: { key: string; digest?: string; value?: string }) => ({
       key: item.key,
       hasDigest: !!item.digest,
       hasValue: !!item.value,
@@ -571,8 +490,8 @@ async function updateTranslatedProduct(
     productId,
     availableKeys: Object.keys(digestMap),
     missingDigestKeys: translatableContent
-      .filter((item: any) => !item.digest)
-      .map((item: any) => item.key),
+      .filter((item: { key: string; digest?: string }) => !item.digest)
+      .map((item: { key: string }) => item.key),
   });
 
   const translationsInput: Array<{ key: string; value: string; locale: string; translatableContentDigest: string }> = [];
@@ -737,7 +656,8 @@ async function updateTranslatedProduct(
 
   if (product) {
     // Use transaction to ensure all upserts and deletes succeed or fail together
-    await db.$transaction(async (tx: any) => {
+    // @ts-expect-error Prisma interactive transaction types are complex; tx has same model accessors as db
+    await db.$transaction(async (tx: PrismaClient) => {
       // Use upsert to preserve existing translations for other fields
       for (const translation of translationsInput) {
         await tx.contentTranslation.upsert({
@@ -799,7 +719,7 @@ async function updateTranslatedProduct(
  */
 async function updatePrimaryProduct(
   gateway: ShopifyApiGateway,
-  db: any,
+  db: PrismaClient,
   productId: string,
   params: UpdateProductParams,
   changedFields: string[] = [],
@@ -821,7 +741,7 @@ async function updatePrimaryProduct(
 
   // Build mutation input - only include productType if it has a value or was explicitly changed
   // Sending productType: "" to Shopify CLEARS it, so we must omit it when unchanged
-  const mutationInput: any = {
+  const mutationInput: Record<string, unknown> = {
     id: productId,
     title: params.title,
     handle: params.handle,
@@ -882,7 +802,7 @@ async function updatePrimaryProduct(
 
   // Update local database
   try {
-    const updateData: any = {};
+    const updateData: Record<string, string | Date | null> = {};
     if (params.title) updateData.title = params.title;
     if (params.descriptionHtml !== undefined) updateData.descriptionHtml = params.descriptionHtml || null;
     if (params.handle !== undefined) updateData.handle = params.handle || null;
@@ -907,11 +827,11 @@ async function updatePrimaryProduct(
       productId,
       fields: Object.keys(updateData),
     });
-  } catch (dbError: any) {
+  } catch (dbError: unknown) {
     logger.error("Failed to update product in DB", {
       context: "UpdateProduct",
       productId,
-      error: dbError.message,
+      error: dbError instanceof Error ? dbError.message : String(dbError),
     });
     // Don't fail the entire request if DB update fails - Shopify is source of truth
   }
@@ -950,8 +870,8 @@ async function updatePrimaryProduct(
 
         // Filter out the primary locale, only keep published foreign locales
         const foreignLocales = shopLocales
-          .filter((l: any) => !l.primary && l.published)
-          .map((l: any) => l.locale);
+          .filter((l: { locale: string; primary: boolean; published: boolean }) => !l.primary && l.published)
+          .map((l: { locale: string }) => l.locale);
 
         if (foreignLocales.length > 0) {
           loggers.product("info", "Deleting translations for changed fields", {
@@ -1001,7 +921,8 @@ async function updatePrimaryProduct(
           }
 
           // Delete translations from local database (using transaction for consistency)
-          await db.$transaction(async (tx: any) => {
+          // @ts-expect-error Prisma interactive transaction types are complex; tx has same model accessors as db
+    await db.$transaction(async (tx: PrismaClient) => {
             for (const key of translationKeysToDelete) {
               await tx.contentTranslation.deleteMany({
                 where: {
@@ -1021,12 +942,12 @@ async function updatePrimaryProduct(
           });
         }
       }
-    } catch (translationError: any) {
+    } catch (translationError: unknown) {
       logger.error("Failed to delete translations for changed fields", {
         context: "UpdateProduct",
         productId,
         changedFields,
-        error: translationError.message,
+        error: translationError instanceof Error ? translationError.message : String(translationError),
       });
       // Don't fail the request - primary update succeeded
     }
@@ -1051,8 +972,8 @@ async function updatePrimaryProduct(
 
       // Filter out the primary locale, only keep published foreign locales
       const foreignLocales = shopLocales
-        .filter((l: any) => !l.primary && l.published)
-        .map((l: any) => l.locale);
+        .filter((l: { locale: string; primary: boolean; published: boolean }) => !l.primary && l.published)
+        .map((l: { locale: string }) => l.locale);
 
       if (foreignLocales.length > 0) {
         // Get product images from DB to find mediaIds
@@ -1137,7 +1058,8 @@ async function updatePrimaryProduct(
 
           // Delete translations from local database (using transaction for consistency)
           if (imageIdsToDeleteTranslations.length > 0) {
-            await db.$transaction(async (tx: any) => {
+            // @ts-expect-error Prisma interactive transaction types are complex; tx has same model accessors as db
+    await db.$transaction(async (tx: PrismaClient) => {
               for (const imageId of imageIdsToDeleteTranslations) {
                 await tx.productImageAltTranslation.deleteMany({
                   where: {
@@ -1156,12 +1078,12 @@ async function updatePrimaryProduct(
           }
         }
       }
-    } catch (altTextTranslationError: any) {
+    } catch (altTextTranslationError: unknown) {
       logger.error("Failed to delete alt-text translations for changed images", {
         context: "UpdateProduct",
         productId,
         changedAltTextIndices,
-        error: altTextTranslationError.message,
+        error: altTextTranslationError instanceof Error ? altTextTranslationError.message : String(altTextTranslationError),
       });
       // Don't fail the request - primary update succeeded
     }
