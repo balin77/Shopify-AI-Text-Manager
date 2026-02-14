@@ -179,39 +179,29 @@ function isManifestMismatchError(error: unknown): boolean {
   return false;
 }
 
-// Helper to safely reload with loop prevention and session preservation
+// Helper to safely reload with loop prevention and session preservation.
+// Uses URL params instead of sessionStorage to work in Incognito mode.
 function safeReload() {
-  const RELOAD_KEY = 'manifest_reload_timestamp';
-  const RELOAD_COUNT_KEY = 'manifest_reload_count';
-  const lastReload = sessionStorage.getItem(RELOAD_KEY);
-  const reloadCount = parseInt(sessionStorage.getItem(RELOAD_COUNT_KEY) || '0', 10);
   const now = Date.now();
+  const url = new URL(window.location.href);
+
+  // Check previous reload attempts from URL params (survives the reload cycle)
+  const lastReloadParam = url.searchParams.get('_reload');
+  const reloadCountParam = parseInt(url.searchParams.get('_rc') || '0', 10);
 
   // Reset count if last reload was more than 30 seconds ago
-  if (lastReload && now - parseInt(lastReload, 10) > 30000) {
-    sessionStorage.setItem(RELOAD_COUNT_KEY, '0');
-  }
+  const effectiveCount = (lastReloadParam && now - parseInt(lastReloadParam, 10) < 30000)
+    ? reloadCountParam
+    : 0;
 
   // Prevent reload loop: max 2 reloads within 30 seconds
-  if (reloadCount >= 2) {
+  if (effectiveCount >= 2) {
     return false;
   }
 
-  sessionStorage.setItem(RELOAD_KEY, now.toString());
-  sessionStorage.setItem(RELOAD_COUNT_KEY, (reloadCount + 1).toString());
-
-  // Force a cache-busted reload by navigating to current URL with cache-busting param
-  const url = new URL(window.location.href);
+  // Set reload tracking params
   url.searchParams.set('_reload', now.toString());
-
-  // Preserve shop and host params to maintain Shopify session
-  const currentUrl = new URL(window.location.href);
-  if (!url.searchParams.has('shop') && currentUrl.searchParams.has('shop')) {
-    url.searchParams.set('shop', currentUrl.searchParams.get('shop')!);
-  }
-  if (!url.searchParams.has('host') && currentUrl.searchParams.has('host')) {
-    url.searchParams.set('host', currentUrl.searchParams.get('host')!);
-  }
+  url.searchParams.set('_rc', (effectiveCount + 1).toString());
 
   window.location.href = url.toString();
   return true;

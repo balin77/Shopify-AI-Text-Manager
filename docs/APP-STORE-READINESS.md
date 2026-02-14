@@ -6,10 +6,10 @@
 
 ---
 
-## 📊 Overall Progress: 80% Complete
+## 📊 Overall Progress: 90% Complete
 
 ```
-████████████████████████░░░░ 80%
+██████████████████████████░░ 90%
 ```
 
 ---
@@ -316,11 +316,11 @@ Dedicated support available via [support email]
 - [x] App Bridge (`app-bridge.js`) eingebunden als erstes Script-Tag (root.tsx:44)
 - [ ] **MANUELL PRUEFEN**: Alle Funktionen vollstaendig im Shopify-Admin eingebettet (keine externen Seiten)
 - [ ] **MANUELL PRUEFEN**: Max-Modal startet NICHT automatisch (nur durch Benutzerinteraktion)
-- [ ] **KRITISCH - CODEFIX NOETIG**: App funktioniert im Chrome Inkognito-Modus
-  - ⚠️ localStorage verwendet in: ReloadButton.tsx, app.content.tsx, app.products.tsx
-  - ⚠️ sessionStorage verwendet in: useAppNavigation.ts (HOCH-KRITISCH: Shop/Host Auth-Params),
-    app._index.tsx, app.tsx (Reload-Loop-Prevention), useUnifiedContentEditor.ts, app.products.tsx
-  - Diese muessen durch URL-Parameter oder Server-Side-State ersetzt werden
+- [x] **CODEFIX ERLEDIGT**: localStorage/sessionStorage komplett entfernt (2026-02-14)
+  - localStorage entfernt aus: ReloadButton.tsx, app.content.tsx, app.products.tsx
+  - sessionStorage entfernt aus: useAppNavigation.ts, app._index.tsx, app.tsx, useUnifiedContentEditor.ts, app.products.tsx
+  - Ersetzt durch: URL-Parameter (Navigation/Reload-Loop) + In-Memory-Map (Translation-Timing)
+- [ ] **MANUELL PRUEFEN**: App im Chrome Inkognito-Modus testen
 
 #### B. OAuth & Installation
 - [ ] OAuth greift sofort - kein UI-Zugriff vor Authentifizierung
@@ -329,11 +329,9 @@ Dedicated support available via [support email]
 - [ ] Keine manuelle Eingabe von myshopify.com-URL waehrend Installation
 
 #### C. API-Scopes Audit
-- [ ] **CODEFIX NOETIG**: 4 ueberflüssige Scopes entfernen (shopify.app.toml + .env Dateien):
-  - `write_online_store_navigation` - Menus sind read-only, keine Mutation im Code
-  - `write_products` - Produkte werden nur gelesen, Uebersetzungen gehen via write_translations
-  - `write_product_listings` - Keine Mutation im Code
-  - `write_themes` - Theme-Uebersetzungen gehen via write_translations
+- [x] **CODEFIX ERLEDIGT**: 3 ueberflüssige Scopes entfernt aus shopify.app.toml (2026-02-14):
+  - `write_online_store_navigation`, `write_product_listings`, `write_themes`
+  - `write_products` behalten (wird fuer productUpdate/productUpdateMedia in Hauptsprache benoetigt)
 - [x] Keine sensiblen Scopes (read_all_orders, write_customer_payment_methods, etc.) angefordert
 
 #### D. Abrechnung
@@ -598,9 +596,9 @@ Dedicated support available via [support email]
 - ✅ Contact information updated
 - ✅ App icon created
 
-**What's Needed - Code-Fixes (KRITISCH):**
-- 🔴 localStorage/sessionStorage durch URL-Params/Server-State ersetzen (Inkognito-Pflicht)
-- 🔴 4 ueberflüssige API-Scopes entfernen (write_products, write_themes, write_product_listings, write_online_store_navigation)
+**Code-Fixes (ERLEDIGT):**
+- ✅ localStorage/sessionStorage komplett entfernt (Inkognito-kompatibel)
+- ✅ 3 ueberflüssige API-Scopes entfernt (write_products behalten: productUpdate noetig)
 
 **What's Needed - Materialien:**
 - ✅ Screenshots (3-5) - ERLEDIGT
@@ -616,10 +614,10 @@ Dedicated support available via [support email]
 - ⚙️ Upgrade/Downgrade ohne Support testen
 - ⚙️ Inkognito-Modus testen
 
-**Estimated Time to Submission:** 1-2 weeks (Code-Fixes + manuelle Tests)
+**Estimated Time to Submission:** 1 week (manuelle Tests + Listing-Text)
 
 ---
 
-**Status: ~80% - Code-Fixes (localStorage/Scopes) + manuelle Tests noch noetig.**
+**Status: ~90% - Code-Fixes erledigt. Nur noch manuelle Tests + Listing-Text.**
 
 Last Updated: 2026-02-14

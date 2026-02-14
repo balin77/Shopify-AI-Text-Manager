@@ -22,6 +22,7 @@ import type {
   ContentEditorConfig,
 } from "../types/content-editor.types";
 import { debugLog } from "../utils/debug";
+import { recentlySavedItems } from "../utils/translation-timing";
 
 /**
  * Translates server error messages to localized strings
@@ -1669,9 +1670,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // Mark this item as recently saved to prevent on-demand sync from re-fetching
       // stale translations from Shopify (race condition with eventual consistency)
       if (selectedItemId) {
-        try {
-          sessionStorage.setItem(`translationSaved_${selectedItemId}`, Date.now().toString());
-        } catch {}
+        recentlySavedItems.set(selectedItemId, Date.now());
       }
 
       // Revalidate to fetch fresh data from the database after successful save

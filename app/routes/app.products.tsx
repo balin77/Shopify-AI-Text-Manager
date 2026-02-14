@@ -28,6 +28,7 @@ import { useEffect, useState, useRef } from "react";
 import { Spinner, Text } from "@shopify/polaris";
 import type { ContentItem } from "../types/content-editor.types";
 import { logger } from "~/utils/logger.server";
+import { wasRecentlySaved } from "~/utils/translation-timing";
 import { measurePageLoad } from "~/utils/performance.client";
 
 // ============================================================================
@@ -493,13 +494,10 @@ export default function ProductsPage() {
 
     // Skip if translations were recently saved by the user (prevents re-fetching stale
     // data from Shopify after Clear All due to eventual consistency)
-    try {
-      const savedAt = sessionStorage.getItem(`translationSaved_${selectedProductId}`);
-      if (savedAt && Date.now() - parseInt(savedAt) < 60_000) {
-        syncedProductsRef.current.add(selectedProductId);
-        return;
-      }
-    } catch {}
+    if (wasRecentlySaved(selectedProductId)) {
+      syncedProductsRef.current.add(selectedProductId);
+      return;
+    }
 
     // Check if product has any translations
     const hasTranslations = selectedProduct.translations && selectedProduct.translations.length > 0;
