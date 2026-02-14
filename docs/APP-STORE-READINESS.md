@@ -320,7 +320,7 @@ Dedicated support available via [support email]
   - localStorage entfernt aus: ReloadButton.tsx, app.content.tsx, app.products.tsx
   - sessionStorage entfernt aus: useAppNavigation.ts, app._index.tsx, app.tsx, useUnifiedContentEditor.ts, app.products.tsx
   - Ersetzt durch: URL-Parameter (Navigation/Reload-Loop) + In-Memory-Map (Translation-Timing)
-- [ ] **MANUELL PRUEFEN**: App im Chrome Inkognito-Modus testen
+- [x] App funktioniert im Chrome Inkognito-Modus (getestet 2026-02-14)
 
 #### B. OAuth & Installation
 - [ ] OAuth greift sofort - kein UI-Zugriff vor Authentifizierung
@@ -612,7 +612,7 @@ Dedicated support available via [support email]
 - ⚙️ Alle Routen auf Webfehler pruefen
 - ⚙️ Reinstall-Flow testen
 - ⚙️ Upgrade/Downgrade ohne Support testen
-- ⚙️ Inkognito-Modus testen
+- ✅ Inkognito-Modus getestet
 
 **Estimated Time to Submission:** 1 week (manuelle Tests + Listing-Text)
 
