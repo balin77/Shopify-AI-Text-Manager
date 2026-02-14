@@ -1143,13 +1143,17 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       if (failed.length > 0) {
         const failedList = failed.join(", ");
         showInfoBox(
-          `Alt-Text für Bild ${(imageIndex || 0) + 1} teilweise übersetzt. Sprache(n) ${failedList} konnten nicht auf Shopify gespeichert werden. Bitte synchronisiere das Produkt erneut.`,
+          ((t.content?.altTextPartialLocales || "Alt-text for image {imageNumber} partially translated. Language(s) {failedLocales} could not be saved to Shopify. Please sync the product again.") as string)
+            .replace("{imageNumber}", String((imageIndex || 0) + 1))
+            .replace("{failedLocales}", failedList),
           "warning",
           t.common?.warning || "Warning"
         );
       } else {
         showInfoBox(
-          t.content?.altTextTranslatedToAllLocales || `Alt-text for image ${(imageIndex || 0) + 1} translated to ${targetLocales.length} languages`,
+          ((t.content?.altTextTranslatedToAllLocales || "Alt-text for image {imageNumber} translated to {count} language(s)") as string)
+            .replace("{imageNumber}", String((imageIndex || 0) + 1))
+            .replace("{count}", String(targetLocales.length)),
           "success",
           t.common?.success || "Success"
         );
@@ -1639,7 +1643,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       if (failedAltTextIndices.length > 0) {
         const failedList = failedAltTextIndices.map((i: number) => i + 1).join(", ");
         showInfoBox(
-          `Änderungen gespeichert, aber Alt-Text für Bild(er) ${failedList} konnte(n) nicht auf Shopify gespeichert werden. Bitte synchronisiere das Produkt erneut.`,
+          ((t.content?.altTextSavePartialImages || "Changes saved, but alt-text for image(s) {failedImages} could not be saved to Shopify. Please sync the product again.") as string)
+            .replace("{failedImages}", failedList),
           "warning",
           t.common?.warning || "Warning"
         );
@@ -2186,13 +2191,19 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             if (failedImages.length > 0) {
               const failedList = failedImages.map((i: number) => i + 1).join(", ");
               showInfoBox(
-                `Alt-Texte für ${imageCount - failedImages.length}/${imageCount} Bild(er) in ${translatedCount} Sprache(n) gespeichert. Bild(er) ${failedList} konnten nicht auf Shopify gespeichert werden. Bitte synchronisiere das Produkt erneut.`,
+                ((t.content?.altTextTranslateAllPartialImages || "Alt-texts saved for {successCount}/{totalCount} image(s) in {languageCount} language(s). Image(s) {failedImages} could not be saved to Shopify. Please sync the product again.") as string)
+                  .replace("{successCount}", String(imageCount - failedImages.length))
+                  .replace("{totalCount}", String(imageCount))
+                  .replace("{languageCount}", String(translatedCount))
+                  .replace("{failedImages}", failedList),
                 "warning",
                 t.common?.warning || "Warning"
               );
             } else {
               showInfoBox(
-                `Alt-Texte für ${imageCount} Bild(er) in ${translatedCount} Sprache(n) übersetzt`,
+                ((t.content?.altTextTranslateAllSuccess || "Alt-texts for {totalCount} image(s) translated to {languageCount} language(s)") as string)
+                  .replace("{totalCount}", String(imageCount))
+                  .replace("{languageCount}", String(translatedCount)),
                 "success",
                 t.common?.success || "Success"
               );
@@ -2541,7 +2552,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             if (failedImages.length > 0) {
               const failedList = failedImages.map((i: number) => i + 1).join(", ");
               showInfoBox(
-                `Alt-Texte teilweise gespeichert. Bild(er) ${failedList} konnten nicht auf Shopify gespeichert werden. Bitte synchronisiere das Produkt erneut.`,
+                ((t.content?.altTextTranslatePartialImages || "Alt-texts partially saved. Image(s) {failedImages} could not be saved to Shopify. Please sync the product again.") as string)
+                  .replace("{failedImages}", failedList),
                 "warning",
                 t.common?.warning || "Warning"
               );
@@ -2710,15 +2722,16 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         if (failedLocales.length > 0) {
           const failedList = failedLocales.join(", ");
           showInfoBox(
-            `Alt-Text teilweise übersetzt. Sprache(n) ${failedList} konnten nicht auf Shopify gespeichert werden. Bitte synchronisiere das Produkt erneut.`,
+            ((t.content?.altTextPartialLocales || "Alt-text for image {imageNumber} partially translated. Language(s) {failedLocales} could not be saved to Shopify. Please sync the product again.") as string)
+              .replace("{imageNumber}", String(imageIndex + 1))
+              .replace("{failedLocales}", failedList),
             "warning",
             t.common?.warning || "Warning"
           );
         } else {
           showInfoBox(
-            (t.content?.altTextTranslatedToLanguages as string | undefined)
-              ?.replace("{count}", String(successCount))
-              || `Alt-text translated to ${successCount} language(s)`,
+            ((t.content?.altTextTranslatedToLanguages || "Alt-text translated to {count} language(s)") as string)
+              .replace("{count}", String(successCount)),
             "success",
             t.common?.success || "Success"
           );
@@ -2788,13 +2801,19 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         if (failedImages.length > 0) {
           const failedList = failedImages.map((i: number) => i + 1).join(", ");
           showInfoBox(
-            `Alt-Texte für ${imageCount - failedImages.length}/${imageCount} Bild(er) in ${translatedCount} Sprache(n) gespeichert. Bild(er) ${failedList} konnten nicht auf Shopify gespeichert werden. Bitte synchronisiere das Produkt erneut.`,
+            ((t.content?.altTextTranslateAllPartialImages || "Alt-texts saved for {successCount}/{totalCount} image(s) in {languageCount} language(s). Image(s) {failedImages} could not be saved to Shopify. Please sync the product again.") as string)
+              .replace("{successCount}", String(imageCount - failedImages.length))
+              .replace("{totalCount}", String(imageCount))
+              .replace("{languageCount}", String(translatedCount))
+              .replace("{failedImages}", failedList),
             "warning",
             t.common?.warning || "Warning"
           );
         } else {
           showInfoBox(
-            `Alt-Texte für ${imageCount} Bild(er) in ${translatedCount} Sprache(n) übersetzt`,
+            ((t.content?.altTextTranslateAllSuccess || "Alt-texts for {totalCount} image(s) translated to {languageCount} language(s)") as string)
+              .replace("{totalCount}", String(imageCount))
+              .replace("{languageCount}", String(translatedCount)),
             "success",
             t.common?.success || "Success"
           );
@@ -2869,7 +2888,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         if (failedImages.length > 0) {
           const failedList = failedImages.map((i: number) => i + 1).join(", ");
           showInfoBox(
-            `Alt-Texte teilweise gespeichert. Bild(er) ${failedList} konnten nicht auf Shopify gespeichert werden. Bitte synchronisiere das Produkt erneut.`,
+            ((t.content?.altTextTranslatePartialImages || "Alt-texts partially saved. Image(s) {failedImages} could not be saved to Shopify. Please sync the product again.") as string)
+              .replace("{failedImages}", failedList),
             "warning",
             t.common?.warning || "Warning"
           );

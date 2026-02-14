@@ -241,6 +241,14 @@ export const de = {
     },
     // Templates
     translatableFields: "übersetzbare Felder",
+    // Alt-text warnings
+    altTextTranslatedToLanguages: "Alt-Text in {count} Sprache(n) übersetzt",
+    altTextTranslatedToAllLocales: "Alt-Text für Bild {imageNumber} in {count} Sprache(n) übersetzt",
+    altTextPartialLocales: "Alt-Text für Bild {imageNumber} teilweise übersetzt. Sprache(n) {failedLocales} konnten nicht auf Shopify gespeichert werden. Bitte synchronisiere das Produkt erneut.",
+    altTextSavePartialImages: "Änderungen gespeichert, aber Alt-Text für Bild(er) {failedImages} konnte(n) nicht auf Shopify gespeichert werden. Bitte synchronisiere das Produkt erneut.",
+    altTextTranslateAllPartialImages: "Alt-Texte für {successCount}/{totalCount} Bild(er) in {languageCount} Sprache(n) gespeichert. Bild(er) {failedImages} konnten nicht auf Shopify gespeichert werden. Bitte synchronisiere das Produkt erneut.",
+    altTextTranslatePartialImages: "Alt-Texte teilweise gespeichert. Bild(er) {failedImages} konnten nicht auf Shopify gespeichert werden. Bitte synchronisiere das Produkt erneut.",
+    altTextTranslateAllSuccess: "Alt-Texte für {totalCount} Bild(er) in {languageCount} Sprache(n) übersetzt",
     // Setup
     syncAllContent: "Alle Inhalte synchronisieren",
     syncDescription: "Dies synchronisiert alle Produkte, Kollektionen und Artikel von Shopify in die Datenbank. Auto-Updates über Webhooks.",

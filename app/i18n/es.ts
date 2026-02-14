@@ -243,6 +243,14 @@ export const es: Translation = {
     },
     // Templates
     translatableFields: "campos traducibles",
+    // Alt-text warnings
+    altTextTranslatedToLanguages: "Texto alt traducido a {count} idioma(s)",
+    altTextTranslatedToAllLocales: "Texto alt para imagen {imageNumber} traducido a {count} idioma(s)",
+    altTextPartialLocales: "Texto alt para imagen {imageNumber} parcialmente traducido. Idioma(s) {failedLocales} no pudieron guardarse en Shopify. Por favor, sincroniza el producto de nuevo.",
+    altTextSavePartialImages: "Cambios guardados, pero el texto alt para imagen(es) {failedImages} no pudo guardarse en Shopify. Por favor, sincroniza el producto de nuevo.",
+    altTextTranslateAllPartialImages: "Textos alt guardados para {successCount}/{totalCount} imagen(es) en {languageCount} idioma(s). Imagen(es) {failedImages} no pudieron guardarse en Shopify. Por favor, sincroniza el producto de nuevo.",
+    altTextTranslatePartialImages: "Textos alt parcialmente guardados. Imagen(es) {failedImages} no pudieron guardarse en Shopify. Por favor, sincroniza el producto de nuevo.",
+    altTextTranslateAllSuccess: "Textos alt para {totalCount} imagen(es) traducidos a {languageCount} idioma(s)",
     // Setup
     syncAllContent: "Sincronizar todo el contenido",
     syncDescription: "Esto sincronizará todos los productos, colecciones y artículos de Shopify a la base de datos. Auto-actualización mediante webhooks.",
