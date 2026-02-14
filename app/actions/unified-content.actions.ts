@@ -15,25 +15,30 @@ import { decryptApiKey } from "../utils/encryption.server";
 import { getTaskExpirationDate } from "~/config/constants";
 import type { ContentEditorConfig } from "../types/content-editor.types";
 import { logger } from "../utils/logger.server";
+import { getFormString, getFormInt, getFormJSON } from "../utils/form-data.utils";
+import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
+import type { Session } from "@shopify/shopify-api";
+import type { PrismaClient } from "@prisma/client";
+import type { AISettings, AIInstructions } from "@prisma/client";
 
 interface UnifiedContentActionsConfig {
-  admin: any;
-  session: any;
+  admin: AdminApiContext;
+  session: Session;
   formData: FormData;
   contentConfig: ContentEditorConfig;
-  db: any;
-  aiSettings: any;
-  aiInstructions: any;
+  db: PrismaClient;
+  aiSettings: AISettings | null;
+  aiInstructions: AIInstructions | null;
 }
 
 export async function handleUnifiedContentActions(config: UnifiedContentActionsConfig) {
   const { admin, session, formData, contentConfig, db, aiSettings, aiInstructions } = config;
 
-  const action = formData.get("action") as string;
-  const itemId = formData.get("itemId") as string || formData.get("productId") as string;
+  const action = getFormString(formData, "action");
+  const itemId = getFormString(formData, "itemId") || getFormString(formData, "productId");
 
   // Initialize services
-  const provider = (aiSettings?.preferredProvider as any) || process.env.AI_PROVIDER || "huggingface";
+  const provider = aiSettings?.preferredProvider || process.env.AI_PROVIDER || "huggingface";
   const serviceConfig = {
     huggingfaceApiKey: decryptApiKey(aiSettings?.huggingfaceApiKey) || undefined,
     geminiApiKey: decryptApiKey(aiSettings?.geminiApiKey) || undefined,
@@ -58,13 +63,14 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
   // ============================================================================
 
   if (action === "loadTranslations") {
-    const locale = formData.get("locale") as string;
+    const locale = getFormString(formData, "locale");
 
     try {
       const translations = await shopifyContentService.loadTranslations(itemId, locale);
       return json({ success: true, translations, locale });
-    } catch (error: any) {
-      return json({ success: false, error: error.message }, { status: 500 });
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      return json({ success: false, error: msg }, { status: 500 });
     }
   }
 
@@ -73,11 +79,11 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
   // ============================================================================
 
   if (action === "generateAIText") {
-    const fieldType = formData.get("fieldType") as string;
-    const currentValue = formData.get("currentValue") as string;
-    const contextTitle = formData.get("contextTitle") as string;
-    const contextDescription = formData.get("contextDescription") as string;
-    const mainLanguage = formData.get("mainLanguage") as string;
+    const fieldType = getFormString(formData, "fieldType");
+    const currentValue = getFormString(formData, "currentValue");
+    const contextTitle = getFormString(formData, "contextTitle");
+    const contextDescription = getFormString(formData, "contextDescription");
+    const mainLanguage = getFormString(formData, "mainLanguage");
 
     // Create task entry
     const task = await db.task.create({
@@ -186,9 +192,9 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
       });
 
       return json({ success: true, generatedContent, fieldType });
-    } catch (error: any) {
+    } catch (error: unknown) {
       // Update task to failed
-      const errorMessage = (error.message || String(error)).substring(0, 1000);
+      const errorMessage = (error instanceof Error ? error.message : String(error)).substring(0, 1000);
       await db.task.update({
         where: { id: task.id },
         data: {
@@ -197,7 +203,7 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
           error: errorMessage,
         },
       });
-      return json({ success: false, error: error.message }, { status: 500 });
+      return json({ success: false, error: errorMessage }, { status: 500 });
     }
   }
 
@@ -206,11 +212,11 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
   // ============================================================================
 
   if (action === "formatAIText") {
-    const fieldType = formData.get("fieldType") as string;
-    const currentValue = formData.get("currentValue") as string;
-    const contextTitle = formData.get("contextTitle") as string;
-    const contextDescription = formData.get("contextDescription") as string;
-    const mainLanguage = formData.get("mainLanguage") as string;
+    const fieldType = getFormString(formData, "fieldType");
+    const currentValue = getFormString(formData, "currentValue");
+    const contextTitle = getFormString(formData, "contextTitle");
+    const contextDescription = getFormString(formData, "contextDescription");
+    const mainLanguage = getFormString(formData, "mainLanguage");
 
     // Create task entry
     const task = await db.task.create({
@@ -358,9 +364,9 @@ Allowed formatting changes:
       });
 
       return json({ success: true, generatedContent: formattedContent, fieldType });
-    } catch (error: any) {
+    } catch (error: unknown) {
       // Update task to failed
-      const errorMessage = (error.message || String(error)).substring(0, 1000);
+      const errorMessage = (error instanceof Error ? error.message : String(error)).substring(0, 1000);
       await db.task.update({
         where: { id: task.id },
         data: {
@@ -369,7 +375,7 @@ Allowed formatting changes:
           error: errorMessage,
         },
       });
-      return json({ success: false, error: error.message }, { status: 500 });
+      return json({ success: false, error: errorMessage }, { status: 500 });
     }
   }
 
@@ -378,9 +384,9 @@ Allowed formatting changes:
   // ============================================================================
 
   if (action === "translateField") {
-    const fieldType = formData.get("fieldType") as string;
-    const sourceText = formData.get("sourceText") as string;
-    const targetLocale = formData.get("targetLocale") as string;
+    const fieldType = getFormString(formData, "fieldType");
+    const sourceText = getFormString(formData, "sourceText");
+    const targetLocale = getFormString(formData, "targetLocale");
 
     // Create task entry
     const task = await db.task.create({
@@ -401,7 +407,7 @@ Allowed formatting changes:
       // Create translation service with shop and taskId for queue management
       const translationServiceWithTask = new TranslationService(provider, serviceConfig, session.shop, task.id);
 
-      const changedFields: any = {};
+      const changedFields: Record<string, string> = {};
       changedFields[fieldType] = sourceText;
 
       await db.task.update({
@@ -465,7 +471,7 @@ Allowed formatting changes:
     });
 
     try {
-      const changedFields: any = {};
+      const changedFields: Record<string, string> = {};
 
       // Collect all field values
       contentConfig.fieldDefinitions.forEach((field) => {
@@ -564,7 +570,7 @@ Allowed formatting changes:
     });
 
     try {
-      const changedFields: any = {};
+      const changedFields: Record<string, string> = {};
 
       // Collect all field values
       contentConfig.fieldDefinitions.forEach((field) => {
@@ -673,7 +679,7 @@ Allowed formatting changes:
     });
 
     try {
-      const changedFields: any = {};
+      const changedFields: Record<string, string> = {};
       changedFields[fieldType] = sourceText;
 
       if (!sourceText) {
@@ -1099,7 +1105,7 @@ Image URL: ${image.url}`;
     try {
       const translationServiceWithTask = new TranslationService(provider, serviceConfig, session.shop, task.id);
 
-      const changedFields: any = {};
+      const changedFields: Record<string, string> = {};
       changedFields[`altText_${imageIndex}`] = sourceAltText;
 
       await db.task.update({
@@ -1176,7 +1182,7 @@ Image URL: ${image.url}`;
     try {
       const translationServiceWithTask = new TranslationService(provider, serviceConfig, session.shop, task.id);
 
-      const changedFields: any = {};
+      const changedFields: Record<string, string> = {};
       changedFields[`altText_${imageIndex}`] = sourceAltText;
 
       await db.task.update({
