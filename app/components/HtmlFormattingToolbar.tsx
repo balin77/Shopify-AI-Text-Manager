@@ -31,6 +31,7 @@ export function HtmlFormattingToolbar({ onCommand }: HtmlFormattingToolbarProps)
 
   return (
     <div
+      onMouseDown={(e) => e.preventDefault()}
       style={{
         display: "flex",
         gap: "0.25rem",

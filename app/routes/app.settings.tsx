@@ -26,7 +26,7 @@ import { db } from "../db.server";
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { useItemSelector } from "../contexts/ItemSelectorContext";
-import { sanitizeFormatExample } from "../utils/sanitizer";
+import { sanitizeHTML } from "../utils/sanitizer";
 import { AISettingsSchema, AIInstructionsSchema, parseFormData } from "../utils/validation";
 import { toSafeErrorResponse } from "../utils/error-handler";
 import { encryptApiKey, decryptApiKey } from "../utils/encryption.server";
@@ -453,7 +453,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         // Products
         productTitleFormat: data.productTitleFormat || null,
         productTitleInstructions: data.productTitleInstructions || null,
-        productDescriptionFormat: data.productDescriptionFormat ? sanitizeFormatExample(data.productDescriptionFormat) : null,
+        productDescriptionFormat: data.productDescriptionFormat ? sanitizeHTML(data.productDescriptionFormat) : null,
         productDescriptionInstructions: data.productDescriptionInstructions || null,
         productHandleFormat: data.productHandleFormat || null,
         productHandleInstructions: data.productHandleInstructions || null,
@@ -467,7 +467,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         // Collections
         collectionTitleFormat: data.collectionTitleFormat || null,
         collectionTitleInstructions: data.collectionTitleInstructions || null,
-        collectionDescriptionFormat: data.collectionDescriptionFormat ? sanitizeFormatExample(data.collectionDescriptionFormat) : null,
+        collectionDescriptionFormat: data.collectionDescriptionFormat ? sanitizeHTML(data.collectionDescriptionFormat) : null,
         collectionDescriptionInstructions: data.collectionDescriptionInstructions || null,
         collectionHandleFormat: data.collectionHandleFormat || null,
         collectionHandleInstructions: data.collectionHandleInstructions || null,
@@ -479,7 +479,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         // Blogs
         blogTitleFormat: data.blogTitleFormat || null,
         blogTitleInstructions: data.blogTitleInstructions || null,
-        blogDescriptionFormat: data.blogDescriptionFormat ? sanitizeFormatExample(data.blogDescriptionFormat) : null,
+        blogDescriptionFormat: data.blogDescriptionFormat ? sanitizeHTML(data.blogDescriptionFormat) : null,
         blogDescriptionInstructions: data.blogDescriptionInstructions || null,
         blogHandleFormat: data.blogHandleFormat || null,
         blogHandleInstructions: data.blogHandleInstructions || null,
@@ -491,7 +491,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         // Pages
         pageTitleFormat: data.pageTitleFormat || null,
         pageTitleInstructions: data.pageTitleInstructions || null,
-        pageDescriptionFormat: data.pageDescriptionFormat ? sanitizeFormatExample(data.pageDescriptionFormat) : null,
+        pageDescriptionFormat: data.pageDescriptionFormat ? sanitizeHTML(data.pageDescriptionFormat) : null,
         pageDescriptionInstructions: data.pageDescriptionInstructions || null,
         pageHandleFormat: data.pageHandleFormat || null,
         pageHandleInstructions: data.pageHandleInstructions || null,
@@ -501,7 +501,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         pageMetaDescInstructions: data.pageMetaDescInstructions || null,
 
         // Policies
-        policyDescriptionFormat: data.policyDescriptionFormat ? sanitizeFormatExample(data.policyDescriptionFormat) : null,
+        policyDescriptionFormat: data.policyDescriptionFormat ? sanitizeHTML(data.policyDescriptionFormat) : null,
         policyDescriptionInstructions: data.policyDescriptionInstructions || null,
       };
 
