@@ -16,6 +16,7 @@ import { getTaskExpirationDate } from "~/config/constants";
 import type { ContentEditorConfig } from "../types/content-editor.types";
 import { logger } from "../utils/logger.server";
 import { getFormString, getFormInt, getFormJSON } from "../utils/form-data.utils";
+import { isValidShopifyGID } from "../utils/validation";
 import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
 import type { Session } from "@shopify/shopify-api";
 import type { PrismaClient } from "@prisma/client";
@@ -36,6 +37,11 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
 
   const action = getFormString(formData, "action");
   const itemId = getFormString(formData, "itemId") || getFormString(formData, "productId");
+
+  // Validate resource GID before using it in any query
+  if (itemId && !isValidShopifyGID(itemId)) {
+    return json({ success: false, error: "Invalid resource ID format" }, { status: 400 });
+  }
 
   // Initialize services
   const provider = aiSettings?.preferredProvider || process.env.AI_PROVIDER || "huggingface";
@@ -765,9 +771,9 @@ Allowed formatting changes:
   // ============================================================================
 
   if (action === "updateContent") {
-    const locale = formData.get("locale") as string;
-    const primaryLocale = formData.get("primaryLocale") as string;
-    const changedFieldsDebug = formData.get("changedFields") as string;
+    const locale = getFormString(formData, "locale");
+    const primaryLocale = getFormString(formData, "primaryLocale");
+    const changedFieldsDebug = getFormString(formData, "changedFields");
 
     logger.debug('[UnifiedContent] ==================== updateContent received ====================');
     logger.debug('[UnifiedContent] [UNIFIED-ACTION] updateContent received');
@@ -805,15 +811,15 @@ Allowed formatting changes:
         };
 
         contentConfig.fieldDefinitions.forEach((field) => {
-          const value = formData.get(field.key) as string;
+          const value = getFormString(formData, field.key);
           const productFieldName = fieldMapping[field.key] || field.key;
-          if (value !== null) {
+          if (value) {
             productFormData.set(productFieldName, value);
           }
         });
 
         // Pass changedFields for translation deletion when primary locale changes
-        const changedFieldsStr = formData.get("changedFields") as string;
+        const changedFieldsStr = getFormString(formData, "changedFields");
         logger.debug('[UnifiedContent] [UNIFIED-ACTION] Passing changedFields to product handler:', changedFieldsStr);
         if (changedFieldsStr && locale === primaryLocale) {
           productFormData.set("changedFields", changedFieldsStr);
@@ -823,24 +829,17 @@ Allowed formatting changes:
         }
 
         // Pass imageAltTexts if present
-        const imageAltTextsStr = formData.get("imageAltTexts") as string;
+        const imageAltTextsStr = getFormString(formData, "imageAltTexts");
         if (imageAltTextsStr) {
           productFormData.set("imageAltTexts", imageAltTextsStr);
           logger.debug('[UnifiedContent] [UNIFIED-ACTION] imageAltTexts SET in productFormData:', imageAltTextsStr);
         }
 
         // Pass changedAltTextIndices for alt-text translation deletion when primary locale changes
-        const changedAltTextIndicesStr = formData.get("changedAltTextIndices") as string;
+        const changedAltTextIndicesStr = getFormString(formData, "changedAltTextIndices");
         if (changedAltTextIndicesStr && locale === primaryLocale) {
           productFormData.set("changedAltTextIndices", changedAltTextIndicesStr);
           logger.debug('[UnifiedContent] [UNIFIED-ACTION] changedAltTextIndices SET in productFormData:', changedAltTextIndicesStr);
-        }
-
-        // 🧪 DEBUG MODE: Pass skipShopifySync parameter
-        const skipShopifySync = formData.get("skipShopifySync") as string;
-        if (skipShopifySync === "true") {
-          productFormData.set("skipShopifySync", "true");
-          logger.debug('[UnifiedContent] [UNIFIED-ACTION] 🧪 DEBUG MODE: skipShopifySync enabled');
         }
 
         logger.debug('[UnifiedContent] [UNIFIED-ACTION] Calling handleUpdateProduct...');
@@ -848,9 +847,9 @@ Allowed formatting changes:
       }
 
       // For other content types (Collections, Pages, Blogs, Policies), use unified service
-      const updates: any = {};
+      const updates: Record<string, string> = {};
       contentConfig.fieldDefinitions.forEach((field) => {
-        let value = formData.get(field.key) as string;
+        let value = getFormString(formData, field.key);
 
         // Sanitize slug fields
         if (field.type === "slug" && value) {
@@ -865,10 +864,10 @@ Allowed formatting changes:
 
       // Handle featured image alt text for Collections and Blogs
       if (contentConfig.resourceType === "Collection" || contentConfig.resourceType === "Article") {
-        const imageAltTextsStr = formData.get("imageAltTexts") as string;
+        const imageAltTextsStr = getFormString(formData, "imageAltTexts");
         if (imageAltTextsStr) {
           try {
-            const imageAltTexts = JSON.parse(imageAltTextsStr);
+            const imageAltTexts = JSON.parse(imageAltTextsStr) as string[];
             // Featured image alt text is at index 0
             if (imageAltTexts[0] !== undefined) {
               updates.imageAltText = imageAltTexts[0];
@@ -881,17 +880,17 @@ Allowed formatting changes:
       }
 
       // Get changed fields (for translation deletion when saving primary locale)
-      const changedFieldsStr = formData.get("changedFields") as string;
-      const changedFields = changedFieldsStr ? JSON.parse(changedFieldsStr) : undefined;
+      const changedFieldsStr = getFormString(formData, "changedFields");
+      const changedFields: string[] | undefined = changedFieldsStr ? JSON.parse(changedFieldsStr) : undefined;
 
       // Use unified content service
       const result = await shopifyContentService.updateContent({
         resourceId: itemId,
-        resourceType: contentConfig.resourceType,
+        resourceType: contentConfig.resourceType as "Collection" | "Article" | "ShopPolicy" | "Page" | "Blog",
         locale,
         primaryLocale,
         updates,
-        db,
+        db: db as Parameters<typeof shopifyContentService.updateContent>[0]["db"],
         shop: session.shop,
         changedFields: locale === primaryLocale ? changedFields : undefined, // Only pass for primary locale
       });
@@ -915,10 +914,10 @@ Allowed formatting changes:
   // ============================================================================
 
   if (action === "generateAltText") {
-    const imageIndex = parseInt(formData.get("imageIndex") as string);
-    const imageUrl = formData.get("imageUrl") as string;
-    const productTitle = formData.get("productTitle") as string;
-    const mainLanguage = formData.get("mainLanguage") as string;
+    const imageIndex = getFormInt(formData, "imageIndex") ?? 0;
+    const imageUrl = getFormString(formData, "imageUrl");
+    const productTitle = getFormString(formData, "productTitle");
+    const mainLanguage = getFormString(formData, "mainLanguage");
 
     // Create task entry
     const task = await db.task.create({
@@ -989,14 +988,12 @@ Image URL: ${imageUrl}`;
   // ============================================================================
 
   if (action === "generateAllAltTexts") {
-    let imagesData: any[];
-    try {
-      imagesData = JSON.parse(formData.get("imagesData") as string);
-    } catch {
+    const imagesData = getFormJSON<Array<{ url: string }>>(formData, "imagesData");
+    if (!imagesData) {
       return json({ success: false, error: "Invalid imagesData format" }, { status: 400 });
     }
-    const productTitle = formData.get("productTitle") as string;
-    const mainLanguage = formData.get("mainLanguage") as string;
+    const productTitle = getFormString(formData, "productTitle");
+    const mainLanguage = getFormString(formData, "mainLanguage");
     const totalImages = imagesData.length;
 
     // Create task entry
@@ -1090,9 +1087,9 @@ Image URL: ${image.url}`;
   // ============================================================================
 
   if (action === "translateAltText") {
-    const imageIndex = parseInt(formData.get("imageIndex") as string);
-    const sourceAltText = formData.get("sourceAltText") as string;
-    const targetLocale = formData.get("targetLocale") as string;
+    const imageIndex = getFormInt(formData, "imageIndex") ?? 0;
+    const sourceAltText = getFormString(formData, "sourceAltText");
+    const targetLocale = getFormString(formData, "targetLocale");
 
     // Create task entry
     const task = await db.task.create({
@@ -1162,13 +1159,10 @@ Image URL: ${image.url}`;
   // ============================================================================
 
   if (action === "translateAltTextToAllLocales") {
-    const imageIndex = parseInt(formData.get("imageIndex") as string);
-    const sourceAltText = formData.get("sourceAltText") as string;
-    const targetLocalesStr = formData.get("targetLocales") as string;
-    let targetLocales: string[];
-    try {
-      targetLocales = JSON.parse(targetLocalesStr);
-    } catch {
+    const imageIndex = getFormInt(formData, "imageIndex") ?? 0;
+    const sourceAltText = getFormString(formData, "sourceAltText");
+    const targetLocales = getFormJSON<string[]>(formData, "targetLocales");
+    if (!targetLocales) {
       return json({ success: false, error: "Invalid targetLocales format" }, { status: 400 });
     }
 

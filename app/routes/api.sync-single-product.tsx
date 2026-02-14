@@ -3,6 +3,7 @@ import type { ActionFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import { ProductSyncService } from "../services/product-sync.service";
 import { logger } from "~/utils/logger.server";
+import { isValidShopifyGID } from "~/utils/validation";
 
 /**
  * API Route: Sync Single Product
@@ -23,6 +24,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     if (!productId) {
       return json({ error: "Missing productId parameter" }, { status: 400 });
+    }
+
+    if (!isValidShopifyGID(productId)) {
+      return json({ error: "Invalid productId format" }, { status: 400 });
     }
 
     logger.debug("[SYNC-SINGLE-PRODUCT] Syncing product", { context: "SyncSingleProduct", productId });

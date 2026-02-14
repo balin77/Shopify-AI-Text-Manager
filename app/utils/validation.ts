@@ -201,8 +201,9 @@ export function isValidLocale(locale: string): boolean {
 }
 
 /**
- * Validate product/resource GID
+ * Validate Shopify GID format.
+ * Accepts compound resource types like MediaImage, OnlineStorePage, etc.
  */
 export function isValidShopifyGID(gid: string): boolean {
-  return /^gid:\/\/shopify\/[A-Z][a-z]+\/\d+$/.test(gid);
+  return /^gid:\/\/shopify\/[A-Z][a-zA-Z]*\/\d+$/.test(gid);
 }

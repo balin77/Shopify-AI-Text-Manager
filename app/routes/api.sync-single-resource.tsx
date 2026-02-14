@@ -6,6 +6,10 @@ import { ContentSyncService } from "../services/content-sync.service";
 import { BackgroundSyncService } from "../services/background-sync.service";
 import { getPlanLimits } from "../utils/planUtils";
 import { logger } from "~/utils/logger.server";
+import { isValidShopifyGID } from "~/utils/validation";
+
+// Resource types whose resourceId must be a valid Shopify GID
+const GID_RESOURCE_TYPES = new Set(["product", "products", "collection", "collections", "article", "page"]);
 
 export async function action({ request }: ActionFunctionArgs) {
   const { admin, session } = await authenticate.admin(request);
@@ -19,6 +23,14 @@ export async function action({ request }: ActionFunctionArgs) {
     if (!resourceId || !resourceType) {
       return json(
         { success: false, error: "Missing resourceId or resourceType" },
+        { status: 400 }
+      );
+    }
+
+    // Validate GID format for resource types that use Shopify GIDs
+    if (GID_RESOURCE_TYPES.has(resourceType) && resourceId.includes("gid://") && !isValidShopifyGID(resourceId)) {
+      return json(
+        { success: false, error: "Invalid resourceId format" },
         { status: 400 }
       );
     }
