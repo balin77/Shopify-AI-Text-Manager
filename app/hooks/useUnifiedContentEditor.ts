@@ -1653,14 +1653,27 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
               acceptedPrimaryValueRef.current = null;
             }
 
-            showInfoBox(
-              t.common?.fieldTranslatedToLanguages
-                ?.replace("{fieldType}", fieldKey)
-                .replace("{count}", String(Object.keys(translations).length))
-                || `${fieldKey} translated to ${Object.keys(translations).length} language(s)`,
-              "success",
-              t.common?.success || "Success"
-            );
+            const failedFieldLocales = result.failedLocales || [];
+            if (failedFieldLocales.length > 0) {
+              const failedList = failedFieldLocales.join(", ");
+              showInfoBox(
+                ((t.content?.translatePartialLocales || "Translation partially completed: {successCount}/{totalCount} language(s) succeeded. Language(s) {failedLocales} failed.") as string)
+                  .replace("{successCount}", String(Object.keys(translations).length))
+                  .replace("{totalCount}", String(Object.keys(translations).length + failedFieldLocales.length))
+                  .replace("{failedLocales}", failedList),
+                "warning",
+                t.common?.warning || "Warning"
+              );
+            } else {
+              showInfoBox(
+                t.common?.fieldTranslatedToLanguages
+                  ?.replace("{fieldType}", fieldKey)
+                  .replace("{count}", String(Object.keys(translations).length))
+                  || `${fieldKey} translated to ${Object.keys(translations).length} language(s)`,
+                "success",
+                t.common?.success || "Success"
+              );
+            }
 
             // Reset the accept-and-translate flow flag after translations are complete
             setIsAcceptAndTranslateFlow(false);
@@ -2153,14 +2166,27 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             }));
           }
 
-          showInfoBox(
-            t.common?.fieldTranslatedToLanguages
-              ?.replace("{fieldType}", fieldKey)
-              .replace("{count}", String(Object.keys(translations).length))
-              || `${fieldKey} translated to ${Object.keys(translations).length} language(s)`,
-            "success",
-            t.common?.success || "Success"
-          );
+          const failedFieldLocales2 = result.failedLocales || [];
+          if (failedFieldLocales2.length > 0) {
+            const failedList = failedFieldLocales2.join(", ");
+            showInfoBox(
+              ((t.content?.translatePartialLocales || "Translation partially completed: {successCount}/{totalCount} language(s) succeeded. Language(s) {failedLocales} failed.") as string)
+                .replace("{successCount}", String(Object.keys(translations).length))
+                .replace("{totalCount}", String(Object.keys(translations).length + failedFieldLocales2.length))
+                .replace("{failedLocales}", failedList),
+              "warning",
+              t.common?.warning || "Warning"
+            );
+          } else {
+            showInfoBox(
+              t.common?.fieldTranslatedToLanguages
+                ?.replace("{fieldType}", fieldKey)
+                .replace("{count}", String(Object.keys(translations).length))
+                || `${fieldKey} translated to ${Object.keys(translations).length} language(s)`,
+              "success",
+              t.common?.success || "Success"
+            );
+          }
 
           // For templates: Update original value so hasChanges becomes false after translation
           if (config.contentType === 'templates' && translations[currentLanguage]) {

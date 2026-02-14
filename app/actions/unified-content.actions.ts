@@ -433,16 +433,17 @@ Allowed formatting changes:
       });
 
       return json({ success: true, translatedValue, fieldType, targetLocale });
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
       await db.task.update({
         where: { id: task.id },
         data: {
           status: "failed",
           completedAt: new Date(),
-          error: error.message,
+          error: errorMsg,
         },
       });
-      return json({ success: false, error: error.message }, { status: 500 });
+      return json({ success: false, error: errorMsg }, { status: 500 });
     }
   }
 
@@ -451,9 +452,9 @@ Allowed formatting changes:
   // ============================================================================
 
   if (action === "translateAll") {
-    const targetLocalesStr = formData.get("targetLocales") as string;
-    const contextTitle = formData.get("title") as string;
-    const sourceLocale = (formData.get("sourceLocale") as string) || "en";
+    const targetLocalesStr = getFormString(formData, "targetLocales");
+    const contextTitle = getFormString(formData, "title");
+    const sourceLocale = getFormString(formData, "sourceLocale") || "en";
 
     // Create task entry
     const task = await db.task.create({
@@ -475,7 +476,7 @@ Allowed formatting changes:
 
       // Collect all field values
       contentConfig.fieldDefinitions.forEach((field) => {
-        const value = formData.get(field.key) as string;
+        const value = getFormString(formData, field.key);
         if (value) {
           changedFields[field.key] = value;
         }
@@ -503,7 +504,7 @@ Allowed formatting changes:
 
       const result = await shopifyContentService.translateAllContent({
         resourceId: itemId,
-        resourceType: contentConfig.resourceType as any,
+        resourceType: contentConfig.resourceType,
         fields: changedFields,
         translationService: translationServiceWithTask,
         db,
@@ -531,16 +532,17 @@ Allowed formatting changes:
       });
 
       return json({ success: true, translations: allTranslations, failedLocales });
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
       await db.task.update({
         where: { id: task.id },
         data: {
           status: "failed",
           completedAt: new Date(),
-          error: error.message,
+          error: errorMsg,
         },
       });
-      return json({ success: false, error: error.message }, { status: 500 });
+      return json({ success: false, error: errorMsg }, { status: 500 });
     }
   }
 
@@ -549,9 +551,9 @@ Allowed formatting changes:
   // ============================================================================
 
   if (action === "translateAllForLocale") {
-    const targetLocale = formData.get("targetLocale") as string;
-    const contextTitle = formData.get("title") as string;
-    const sourceLocale = (formData.get("sourceLocale") as string) || "en";
+    const targetLocale = getFormString(formData, "targetLocale");
+    const contextTitle = getFormString(formData, "title");
+    const sourceLocale = getFormString(formData, "sourceLocale") || "en";
 
     // Create task entry
     const task = await db.task.create({
@@ -574,7 +576,7 @@ Allowed formatting changes:
 
       // Collect all field values
       contentConfig.fieldDefinitions.forEach((field) => {
-        const value = formData.get(field.key) as string;
+        const value = getFormString(formData, field.key);
         if (value) {
           changedFields[field.key] = value;
         }
@@ -603,7 +605,7 @@ Allowed formatting changes:
       // Translate to only ONE specific locale
       const result = await shopifyContentService.translateAllContent({
         resourceId: itemId,
-        resourceType: contentConfig.resourceType as any,
+        resourceType: contentConfig.resourceType,
         fields: changedFields,
         translationService: translationServiceWithTask,
         db,
@@ -635,16 +637,17 @@ Allowed formatting changes:
       });
 
       return json({ success: true, translations, targetLocale, failedLocales });
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
       await db.task.update({
         where: { id: task.id },
         data: {
           status: "failed",
           completedAt: new Date(),
-          error: error.message,
+          error: errorMsg,
         },
       });
-      return json({ success: false, error: error.message }, { status: 500 });
+      return json({ success: false, error: errorMsg }, { status: 500 });
     }
   }
 
@@ -653,11 +656,11 @@ Allowed formatting changes:
   // ============================================================================
 
   if (action === "translateFieldToAllLocales") {
-    const fieldType = formData.get("fieldType") as string;
-    const sourceText = formData.get("sourceText") as string;
-    const targetLocalesStr = formData.get("targetLocales") as string;
-    const contextTitle = formData.get("contextTitle") as string;
-    const sourceLocale = (formData.get("sourceLocale") as string) || "en";
+    const fieldType = getFormString(formData, "fieldType");
+    const sourceText = getFormString(formData, "sourceText");
+    const targetLocalesStr = getFormString(formData, "targetLocales");
+    const contextTitle = getFormString(formData, "contextTitle");
+    const sourceLocale = getFormString(formData, "sourceLocale") || "en";
 
     logger.debug('[UnifiedContent] [translateFieldToAllLocales] Starting...');
     logger.debug('[UnifiedContent] fieldType:', fieldType);
@@ -704,7 +707,7 @@ Allowed formatting changes:
 
       const result = await shopifyContentService.translateAllContent({
         resourceId: itemId,
-        resourceType: contentConfig.resourceType as any,
+        resourceType: contentConfig.resourceType,
         fields: changedFields,
         translationService: translationServiceWithTask,
         db,
@@ -725,7 +728,7 @@ Allowed formatting changes:
 
       const flattenedTranslations: Record<string, string> = {};
       for (const [locale, fields] of Object.entries(allTranslations)) {
-        const value = (fields as any)[fieldType] || "";
+        const value = (fields as Record<string, string>)[fieldType] || "";
         flattenedTranslations[locale] = value;
         logger.debug(`[UnifiedContent] [translateFieldToAllLocales] Extracted ${locale}.${fieldType} = "${value.substring(0, 50)}..."`);
       }
@@ -743,16 +746,17 @@ Allowed formatting changes:
       });
 
       return json({ success: true, translations: flattenedTranslations, fieldType, failedLocales });
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
       await db.task.update({
         where: { id: task.id },
         data: {
           status: "failed",
           completedAt: new Date(),
-          error: error.message,
+          error: errorMsg,
         },
       });
-      return json({ success: false, error: error.message }, { status: 500 });
+      return json({ success: false, error: errorMsg }, { status: 500 });
     }
   }
 
@@ -883,7 +887,7 @@ Allowed formatting changes:
       // Use unified content service
       const result = await shopifyContentService.updateContent({
         resourceId: itemId,
-        resourceType: contentConfig.resourceType as any,
+        resourceType: contentConfig.resourceType,
         locale,
         primaryLocale,
         updates,
@@ -893,15 +897,16 @@ Allowed formatting changes:
       });
 
       return json(result);
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
       logger.error('Unified content update error', {
         context: 'UnifiedContent',
         action: 'updateContent',
         itemId,
-        error: error.message,
-        stack: error.stack
+        error: errorMsg,
+        stack: error instanceof Error ? error.stack : undefined
       });
-      return json({ success: false, error: error.message }, { status: 500 });
+      return json({ success: false, error: errorMsg }, { status: 500 });
     }
   }
 
@@ -965,16 +970,17 @@ Image URL: ${imageUrl}`;
       });
 
       return json({ success: true, altText, imageIndex });
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
       await db.task.update({
         where: { id: task.id },
         data: {
           status: "failed",
           completedAt: new Date(),
-          error: error.message,
+          error: errorMsg,
         },
       });
-      return json({ success: false, error: error.message }, { status: 500 });
+      return json({ success: false, error: errorMsg }, { status: 500 });
     }
   }
 
@@ -1045,11 +1051,11 @@ Image URL: ${image.url}`;
             where: { id: task.id },
             data: { progress: progressPercent, processed: i + 1 },
           });
-        } catch (error: any) {
+        } catch (error: unknown) {
           logger.error("Failed to generate alt-text for image", {
             context: "UnifiedContent",
             imageIndex: i,
-            error: error.message,
+            error: error instanceof Error ? error.message : String(error),
           });
         }
       }
@@ -1065,16 +1071,17 @@ Image URL: ${image.url}`;
       });
 
       return json({ success: true, generatedAltTexts });
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
       await db.task.update({
         where: { id: task.id },
         data: {
           status: "failed",
           completedAt: new Date(),
-          error: error.message,
+          error: errorMsg,
         },
       });
-      return json({ success: false, error: error.message }, { status: 500 });
+      return json({ success: false, error: errorMsg }, { status: 500 });
     }
   }
 
@@ -1136,16 +1143,17 @@ Image URL: ${image.url}`;
         imageIndex,
         targetLocale,
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
       await db.task.update({
         where: { id: task.id },
         data: {
           status: "failed",
           completedAt: new Date(),
-          error: error.message,
+          error: errorMsg,
         },
       });
-      return json({ success: false, error: error.message }, { status: 500 });
+      return json({ success: false, error: errorMsg }, { status: 500 });
     }
   }
 
@@ -1251,10 +1259,10 @@ Image URL: ${image.url}`;
           );
           const translatableData = await translatableResponse.json();
           const translatableContent = translatableData.data?.translatableResource?.translatableContent || [];
-          altDigest = translatableContent.find((c: any) => c.key === "alt")?.digest;
-        } catch (err: any) {
+          altDigest = translatableContent.find((c: { key: string; digest: string }) => c.key === "alt")?.digest;
+        } catch (err: unknown) {
           logger.error("[UnifiedContent] Error fetching translatable content for alt-text", {
-            context: "UnifiedContent", imageIndex, error: err?.message,
+            context: "UnifiedContent", imageIndex, error: err instanceof Error ? err.message : String(err),
           });
         }
 
@@ -1300,9 +1308,9 @@ Image URL: ${image.url}`;
                   context: "UnifiedContent", imageIndex, locale, errors: userErrors,
                 });
               }
-            } catch (shopifyError: any) {
+            } catch (shopifyError: unknown) {
               logger.error("[UnifiedContent] Error saving alt-text to Shopify", {
-                context: "UnifiedContent", imageIndex, locale, error: shopifyError?.message,
+                context: "UnifiedContent", imageIndex, locale, error: shopifyError instanceof Error ? shopifyError.message : String(shopifyError),
               });
             }
 
@@ -1318,10 +1326,12 @@ Image URL: ${image.url}`;
                   await db.productImageAltTranslation.create({ data: { imageId: dbImage.id, locale, altText } });
                 }
                 savedLocales.push(locale);
-              } catch (dbError: any) {
-                if (dbError.code === 'P2003' || dbError.message?.includes('Foreign key constraint')) {
+              } catch (dbError: unknown) {
+                const dbErr = dbError instanceof Error ? dbError : new Error(String(dbError));
+                const dbErrCode = (dbError as { code?: string })?.code;
+                if (dbErrCode === 'P2003' || dbErr.message?.includes('Foreign key constraint')) {
                   logger.warn("[UnifiedContent] Image deleted during translation save (concurrent sync)", {
-                    context: "UnifiedContent", imageIndex, productId: itemId, error: dbError.message,
+                    context: "UnifiedContent", imageIndex, productId: itemId, error: dbErr.message,
                   });
                 } else {
                   throw dbError;
@@ -1351,16 +1361,17 @@ Image URL: ${image.url}`;
         targetLocales,
         failedLocales,
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
       await db.task.update({
         where: { id: task.id },
         data: {
           status: "failed",
           completedAt: new Date(),
-          error: error.message,
+          error: errorMsg,
         },
       });
-      return json({ success: false, error: error.message }, { status: 500 });
+      return json({ success: false, error: errorMsg }, { status: 500 });
     }
   }
 

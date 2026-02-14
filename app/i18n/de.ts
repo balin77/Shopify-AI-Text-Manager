@@ -245,6 +245,8 @@ export const de = {
     altTextTranslatedToLanguages: "Alt-Text in {count} Sprache(n) übersetzt",
     altTextTranslatedToAllLocales: "Alt-Text für Bild {imageNumber} in {count} Sprache(n) übersetzt",
     altTextPartialLocales: "Alt-Text für Bild {imageNumber} teilweise übersetzt. Sprache(n) {failedLocales} konnten nicht auf Shopify gespeichert werden. Bitte synchronisiere das Produkt erneut.",
+    translatePartialLocales: "Übersetzung teilweise abgeschlossen: {successCount}/{totalCount} Sprache(n) erfolgreich. Sprache(n) {failedLocales} fehlgeschlagen.",
+    translateLocaleError: "Übersetzung nach {locale} fehlgeschlagen. Bitte versuche es erneut.",
     altTextSavePartialImages: "Änderungen gespeichert, aber Alt-Text für Bild(er) {failedImages} konnte(n) nicht auf Shopify gespeichert werden. Bitte synchronisiere das Produkt erneut.",
     altTextTranslateAllPartialImages: "Alt-Texte für {successCount}/{totalCount} Bild(er) in {languageCount} Sprache(n) gespeichert. Bild(er) {failedImages} konnten nicht auf Shopify gespeichert werden. Bitte synchronisiere das Produkt erneut.",
     altTextTranslatePartialImages: "Alt-Texte teilweise gespeichert. Bild(er) {failedImages} konnten nicht auf Shopify gespeichert werden. Bitte synchronisiere das Produkt erneut.",

@@ -247,6 +247,8 @@ export const en: Translation = {
     altTextTranslatedToLanguages: "Alt-text translated to {count} language(s)",
     altTextTranslatedToAllLocales: "Alt-text for image {imageNumber} translated to {count} language(s)",
     altTextPartialLocales: "Alt-text for image {imageNumber} partially translated. Language(s) {failedLocales} could not be saved to Shopify. Please sync the product again.",
+    translatePartialLocales: "Translation partially completed: {successCount}/{totalCount} language(s) succeeded. Language(s) {failedLocales} failed.",
+    translateLocaleError: "Translation to {locale} failed. Please try again.",
     altTextSavePartialImages: "Changes saved, but alt-text for image(s) {failedImages} could not be saved to Shopify. Please sync the product again.",
     altTextTranslateAllPartialImages: "Alt-texts saved for {successCount}/{totalCount} image(s) in {languageCount} language(s). Image(s) {failedImages} could not be saved to Shopify. Please sync the product again.",
     altTextTranslatePartialImages: "Alt-texts partially saved. Image(s) {failedImages} could not be saved to Shopify. Please sync the product again.",
