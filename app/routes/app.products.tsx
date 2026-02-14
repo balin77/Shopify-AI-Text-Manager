@@ -417,9 +417,13 @@ export default function ProductsPage() {
   // If user clicked reload button, restore the previously selected product
   // ============================================================================
 
+  // Ref to access editor.handlers without adding as dependency (unstable reference)
+  const editorHandlersRef = useRef(editor.handlers);
+  editorHandlersRef.current = editor.handlers;
+
   useEffect(() => {
-    // Wait for products to load and editor to be ready
-    if (!isMountedRef.current || !products.length || !editor.handlers || typeof editor.handlers.handleItemSelect !== 'function') {
+    // Wait for products to load
+    if (!isMountedRef.current || !products.length) {
       return;
     }
 
@@ -431,10 +435,10 @@ export default function ProductsPage() {
       // Find the product in the list
       const productExists = products.find((p: any) => p.id === selectedFromUrl);
 
-      if (productExists) {
+      if (productExists && typeof editorHandlersRef.current?.handleItemSelect === 'function') {
         // Restore selection via editor
         try {
-          editor.handlers.handleItemSelect(selectedFromUrl);
+          editorHandlersRef.current.handleItemSelect(selectedFromUrl);
         } catch (error) {
           // Selection restoration failed - non-critical
         }
@@ -446,7 +450,7 @@ export default function ProductsPage() {
         window.history.replaceState({}, '', newUrl);
       }
     }
-  }, [products, editor.handlers]); // Run when products or editor changes
+  }, [products]); // Only run when products load
 
   // ============================================================================
   // ON-DEMAND TRANSLATION LOADING
@@ -540,7 +544,7 @@ export default function ProductsPage() {
         }
       }
     }
-  }, [isLoadingTranslations, translationSyncFetcher.state, translationSyncFetcher.data, revalidator, selectedProduct]);
+  }, [isLoadingTranslations, translationSyncFetcher.state, translationSyncFetcher.data, revalidator.state]);
 
   // Reset ContentNavigation height to 0 (since we don't have ContentTypeNavigation on Products page)
   useEffect(() => {
@@ -569,7 +573,7 @@ export default function ProductsPage() {
         { method: "POST", action: "/api/sync-missing-products" }
       );
     }
-  }, [isSyncing, syncFetcher, showInfoBox, setGlobalLoading, t]);
+  }, [isSyncing, syncFetcher.state, showInfoBox, setGlobalLoading, t]);
 
   // Handle sync completion
   useEffect(() => {

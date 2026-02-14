@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useRef, useCallback, ReactNode } from "react";
+import { createContext, useContext, useState, useRef, useCallback, useMemo, ReactNode } from "react";
 
 export type InfoBoxTone = "success" | "info" | "warning" | "critical";
 
@@ -25,6 +25,9 @@ export function InfoBoxProvider({ children }: { children: ReactNode }) {
   const [globalLoadingMessage, setGlobalLoadingMessage] = useState<string | undefined>();
   const dismissedMessages = useRef<Set<string>>(new Set());
   const autoHideTimer = useRef<NodeJS.Timeout | null>(null);
+  // Ref to access infoBox in hideInfoBox without adding it as a dependency
+  const infoBoxRef = useRef(infoBox);
+  infoBoxRef.current = infoBox;
 
   const showInfoBox = useCallback((message: string, tone: InfoBoxTone = "success", title?: string) => {
     // Create unique ID based on message + tone + timestamp
@@ -54,9 +57,10 @@ export function InfoBoxProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const hideInfoBox = useCallback(() => {
-    if (infoBox) {
+    const currentInfoBox = infoBoxRef.current;
+    if (currentInfoBox) {
       // Mark this message as dismissed
-      const messageKey = `${infoBox.message}-${infoBox.tone}`;
+      const messageKey = `${currentInfoBox.message}-${currentInfoBox.tone}`;
       dismissedMessages.current.add(messageKey);
 
       // Clear dismissed messages after 30 seconds
@@ -72,15 +76,23 @@ export function InfoBoxProvider({ children }: { children: ReactNode }) {
     }
 
     setInfoBox(null);
-  }, [infoBox]);
+  }, []);
 
   const setGlobalLoading = useCallback((loading: boolean, message?: string) => {
     setIsGlobalLoading(loading);
     setGlobalLoadingMessage(loading ? message : undefined);
   }, []);
 
+  const value = useMemo(() => ({
+    infoBox,
+    showInfoBox,
+    hideInfoBox,
+    isGlobalLoading,
+    setGlobalLoading,
+  }), [infoBox, showInfoBox, hideInfoBox, isGlobalLoading, setGlobalLoading]);
+
   return (
-    <InfoBoxContext.Provider value={{ infoBox, showInfoBox, hideInfoBox, isGlobalLoading, setGlobalLoading }}>
+    <InfoBoxContext.Provider value={value}>
       {children}
     </InfoBoxContext.Provider>
   );

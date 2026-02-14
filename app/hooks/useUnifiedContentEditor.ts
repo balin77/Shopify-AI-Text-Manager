@@ -80,9 +80,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const { config, items, shopLocales, primaryLocale, fetcher, showInfoBox, t, onTranslateToAllLocalesComplete } = props;
   const revalidator = useRevalidator();
 
-  // DEBUG: Log hook execution on every render
-  console.log('🎯 [HOOK] useUnifiedContentEditor render - fetcher.state:', fetcher.state, 'has data:', !!fetcher.data);
-
   // ============================================================================
   // FOCUS MANAGEMENT (Accessibility)
   // ============================================================================
@@ -732,15 +729,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // but the submit usually still works, so we just log and ignore the error
   // IMPORTANT: Uses fetcherRef to avoid dependency on fetcher which changes frequently
   const safeSubmit = useCallback((data: Record<string, any>, options?: { method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" }) => {
-    console.log('📤 [safeSubmit] About to submit:', {
-      hasFetcher: !!fetcherRef.current,
-      fetcherExists: fetcherRef.current !== undefined,
-      fetcherState: fetcherRef.current?.state,
-      hasSubmitFn: typeof fetcherRef.current?.submit === 'function',
-      dataKeys: Object.keys(data),
-      options,
-    });
-
     debugLog.submit(' Submitting data:', data);
     debugLog.submit(' Options:', options);
 
@@ -752,14 +740,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     });
 
     try {
-      console.log('🔄 [safeSubmit] Calling fetcher.submit() with FormData...');
       fetcherRef.current.submit(formData, options || { method: "POST" });
-      console.log('✅ [safeSubmit] fetcher.submit() returned, new state:', fetcherRef.current.state);
     } catch (error) {
       console.error('❌ [safeSubmit] Error caught:', error);
       // AbortError can be thrown when Shopify admin interferes, but data is usually saved
       if (error instanceof Error && error.name === 'AbortError') {
-        console.log('⚠️ [safeSubmit] AbortError - ignoring:', error.message);
         debugLog.submit(' AbortError caught (data likely saved):', error.message);
       } else {
         console.error('🔴 [safeSubmit] Non-AbortError - re-throwing:', error);
@@ -1528,25 +1513,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     }
   }, [fetcher.data, primaryLocale, editableValues, effectiveFieldDefinitions]); // Removed selectedItem - use ref instead
 
-  // DEBUG: Log fetcher state on every render to see if it changes
-  console.log('🔍 [FETCHER] Current state on render:', {
-    state: fetcher.state,
-    hasData: !!fetcher.data,
-    data: fetcher.data,
-  });
-
   // Show global InfoBox for success/error messages and revalidate after save
   useEffect(() => {
-    console.log('💾 [SAVE-RESPONSE] useEffect triggered:', {
-      hasFetcherData: !!fetcher.data,
-      fetcherData: fetcher.data,
-      fetcherState: fetcher.state,
-      alreadyProcessed: fetcher.data === processedSaveResponseRef.current,
-    });
-
     // Skip if this response was already processed (prevents duplicate processing on re-renders)
     if (fetcher.data === processedSaveResponseRef.current) {
-      console.log('⏭️ [SAVE-RESPONSE] Already processed, skipping');
       return;
     }
 
@@ -1712,13 +1682,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       isSavePendingRef.current = false;
       const translatedError = translateErrorMessage(fetcher.data.error as string, t);
       showInfoBox(translatedError, "critical", t.common?.error || "Error");
-    } else if (fetcher.data) {
-      console.log('⚠️ [SAVE-RESPONSE] Response does not match save conditions:', {
-        success: fetcher.data.success,
-        hasGeneratedContent: !!(fetcher.data as any).generatedContent,
-        hasTranslatedValue: !!(fetcher.data as any).translatedValue,
-        hasTranslations: !!(fetcher.data as any).translations,
-      });
     }
   }, [fetcher.data, showInfoBox, t, revalidator, safeSubmit, submitAIAction, effectiveFieldDefinitions, currentLanguage, primaryLocale]);
 
@@ -1732,15 +1695,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   };
 
   const handleSave = () => {
-    console.log('💾 [SAVE] handleSave called:', {
-      selectedItemId,
-      hasChanges,
-      currentLanguage,
-      editableValues,
-    });
-
     if (!selectedItemId || !hasChanges) {
-      console.log('⏭️ [SAVE] Skipping save - no item selected or no changes');
       return;
     }
 
@@ -1834,12 +1789,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // data loads after navigation read the correct saved values instead of stale data.
     skipNextDataLoadRef.current = true;
 
-    console.log('📤 [SAVE] Submitting form data:', formDataObj);
     savedLocaleRef.current = currentLanguage; // Track which locale we're saving
     isSavePendingRef.current = true; // Track that a save was initiated
     safeSubmit(formDataObj, { method: "POST" });
     clearPendingNavigation();
-    console.log('✅ [SAVE] Form submitted successfully');
   };
 
   const handleDiscard = () => {

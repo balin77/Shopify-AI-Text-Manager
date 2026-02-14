@@ -5,7 +5,7 @@
  * Content editor pages can register their items here for display in the compact navbar selector.
  */
 
-import { createContext, useContext, useState, useCallback, type ReactNode } from "react";
+import { createContext, useContext, useState, useCallback, useMemo, type ReactNode } from "react";
 import type { UnifiedItem } from "../components/unified/UnifiedItemList";
 
 interface ItemSelectorContextValue {
@@ -81,18 +81,18 @@ export function ItemSelectorProvider({ children }: { children: ReactNode }) {
     setT({});
   }, []);
 
+  const value = useMemo(() => ({
+    items,
+    selectedItemId,
+    onItemSelect,
+    resourceName,
+    t,
+    registerItems,
+    clearItems,
+  }), [items, selectedItemId, onItemSelect, resourceName, t, registerItems, clearItems]);
+
   return (
-    <ItemSelectorContext.Provider
-      value={{
-        items,
-        selectedItemId,
-        onItemSelect,
-        resourceName,
-        t,
-        registerItems,
-        clearItems,
-      }}
-    >
+    <ItemSelectorContext.Provider value={value}>
       {children}
     </ItemSelectorContext.Provider>
   );
