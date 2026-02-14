@@ -2482,6 +2482,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   };
 
   const handleClearAllForLocaleConfirm = () => {
+    if (!selectedItemId || !selectedItem || currentLanguage === primaryLocale) return;
+
     // Force isLoadingData to false to ensure change detection works
     setIsLoadingData(false);
 
@@ -2497,8 +2499,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     setEditableValues(clearedValues);
 
     // Clear image alt texts - set each to "" explicitly so the UI doesn't fall back to original image.altText
+    const clearedAltTexts: Record<number, string> = {};
     if (selectedItem?.images && selectedItem.images.length > 0) {
-      const clearedAltTexts: Record<number, string> = {};
       selectedItem.images.forEach((_: ContentImage, index: number) => {
         clearedAltTexts[index] = "";
       });
@@ -2509,6 +2511,71 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
     // Close modal
     setIsClearAllModalOpen(false);
+
+    // ── Persist the clear: submit save to server so translations are deleted ──
+    // Without this, navigating away and back would reload stale translations from the DB.
+
+    // Build formData with all translated fields set to "" (to trigger server-side deletion)
+    const formDataObj: Record<string, string> = {
+      action: "updateContent",
+      itemId: selectedItemId,
+      locale: currentLanguage,
+      primaryLocale,
+    };
+
+    // Send only fields that had a non-empty translated value (those need deletion)
+    effectiveFieldDefinitions.forEach((field) => {
+      if (fallbackFieldsRef.current.has(field.key)) return; // no translation to delete
+      const originalValue = originalLoadedValuesRef.current[field.key] || "";
+      if (originalValue) {
+        formDataObj[field.key] = "";
+      }
+    });
+
+    // Send alt-texts that had translations
+    const altTextsToDelete: Record<number, string> = {};
+    let hasAltTextsToDelete = false;
+    if (selectedItem?.images) {
+      selectedItem.images.forEach((img: ContentImage, index: number) => {
+        const hasTranslation = img.altTextTranslations?.some(
+          (t: { locale: string }) => t.locale === currentLanguage
+        );
+        if (hasTranslation) {
+          altTextsToDelete[index] = "";
+          hasAltTextsToDelete = true;
+        }
+      });
+    }
+    if (hasAltTextsToDelete) {
+      formDataObj.imageAltTexts = JSON.stringify(altTextsToDelete);
+    }
+
+    // Mutate in-memory item to remove translations for this locale.
+    // This prevents stale translations from reappearing if the user navigates
+    // away and back before revalidation completes.
+    if (selectedItem.translations) {
+      selectedItem.translations = selectedItem.translations.filter(
+        (t: Translation) => t.locale !== currentLanguage
+      );
+    }
+    if (selectedItem.images) {
+      selectedItem.images.forEach((img: ContentImage) => {
+        if (img.altTextTranslations) {
+          img.altTextTranslations = img.altTextTranslations.filter(
+            (t: { locale: string }) => t.locale !== currentLanguage
+          );
+        }
+      });
+    }
+
+    // Update originalLoadedValues so change detection reflects the cleared state
+    originalLoadedValuesRef.current = { ...clearedValues };
+
+    // Submit save and set tracking refs
+    skipNextDataLoadRef.current = true;
+    savedLocaleRef.current = currentLanguage;
+    isSavePendingRef.current = true;
+    safeSubmit(formDataObj, { method: "POST" });
   };
 
   const handleTranslateAllForLocale = () => {
