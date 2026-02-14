@@ -179,6 +179,24 @@ function isManifestMismatchError(error: unknown): boolean {
   return false;
 }
 
+// Helper to check if error is a "Failed to fetch" (session token expiry / network loss)
+function isFailedToFetchError(error: unknown): boolean {
+  if (error instanceof Error) {
+    return error.message === 'Failed to fetch';
+  }
+  if (error instanceof Response) {
+    return false;
+  }
+  // React Router may wrap the error
+  if (typeof error === 'object' && error !== null) {
+    const inner = (error as any).error ?? (error as any).data;
+    if (inner instanceof Error) {
+      return inner.message === 'Failed to fetch';
+    }
+  }
+  return false;
+}
+
 // Helper to safely reload with loop prevention and session preservation.
 // Uses URL params instead of sessionStorage to work in Incognito mode.
 function safeReload() {
@@ -268,6 +286,55 @@ export function ErrorBoundary() {
                 onClick={() => {
                   if (typeof window !== 'undefined') {
                     // Preserve shop and host params when reloading
+                    const url = new URL(window.location.href);
+                    url.searchParams.set('_reload', Date.now().toString());
+                    window.location.href = url.toString();
+                  }
+                }}
+              >
+                {t.errors.reloadPage}
+              </Button>
+            </BlockStack>
+          </Card>
+        </Page>
+      </AppProvider>
+    );
+  }
+
+  // Handle "Failed to fetch" — typically caused by expired App Bridge session token
+  // after the app has been idle for a while. Auto-reload lets App Bridge re-authenticate.
+  if (isFailedToFetchError(error)) {
+    if (typeof window !== 'undefined' && safeReload()) {
+      return (
+        <AppProvider i18n={{}}>
+          <Page>
+            <Card>
+              <BlockStack gap="400" align="center">
+                <Text as="h1" variant="headingLg">{t.errors.sessionError}</Text>
+                <Text as="p" tone="subdued">
+                  {t.errors.sessionErrorDescription}
+                </Text>
+              </BlockStack>
+            </Card>
+          </Page>
+        </AppProvider>
+      );
+    }
+
+    // Reload loop prevention triggered — show manual reload button
+    return (
+      <AppProvider i18n={{}}>
+        <Page>
+          <Card>
+            <BlockStack gap="400" align="center">
+              <Text as="h1" variant="headingLg">{t.errors.sessionError}</Text>
+              <Text as="p" tone="subdued">
+                {t.errors.sessionErrorDescription}
+              </Text>
+              <Button
+                variant="primary"
+                onClick={() => {
+                  if (typeof window !== 'undefined') {
                     const url = new URL(window.location.href);
                     url.searchParams.set('_reload', Date.now().toString());
                     window.location.href = url.toString();
