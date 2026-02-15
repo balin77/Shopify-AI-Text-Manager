@@ -124,7 +124,8 @@ export default function AppIndex() {
         .then(() => {
           startSync(false);
         })
-        .catch(() => {
+        .catch((error) => {
+          console.error('Webhook setup failed, continuing with sync:', error);
           startSync(false);
         });
     }
