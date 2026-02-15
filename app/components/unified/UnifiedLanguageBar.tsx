@@ -18,7 +18,7 @@ import { useLocaleButtonStyle, getLocaleButtonTooltip, getLocalizedLanguageName 
 import { ReloadButton } from "../ReloadButton";
 import { HelpTooltip } from "../HelpTooltip";
 import { useI18n } from "../../contexts/I18nContext";
-import type { ShopLocale, TranslatableItem, ContentType } from "../../types/contentEditor.types";
+import type { ShopLocale, TranslatableItem, ContentType } from "../../types/content-editor.types";
 
 interface UnifiedLanguageBarProps {
   /** Shop locales from Shopify */

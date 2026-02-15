@@ -1,7 +1,7 @@
 import { useRef } from "react";
 import { Button, Tooltip } from "@shopify/polaris";
 import { useLocaleButtonStyle, getLocaleButtonTooltip, getLocalizedLanguageName } from "../utils/contentEditor.utils";
-import type { ShopLocale, TranslatableItem, ContentType } from "../types/contentEditor.types";
+import type { ShopLocale, TranslatableItem, ContentType } from "../types/content-editor.types";
 import { ReloadButton } from "./ReloadButton";
 import { HelpTooltip } from "./HelpTooltip";
 import { useI18n } from "../contexts/I18nContext";

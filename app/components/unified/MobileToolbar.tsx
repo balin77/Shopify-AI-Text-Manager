@@ -17,7 +17,7 @@ import { useLocaleButtonStyle, getLocaleButtonTooltip } from "../../utils/conten
 import { ReloadButton } from "../ReloadButton";
 import { HelpTooltip } from "../HelpTooltip";
 import { useI18n } from "../../contexts/I18nContext";
-import type { ShopLocale, TranslatableItem, ContentType } from "../../types/contentEditor.types";
+import type { ShopLocale, TranslatableItem, ContentType } from "../../types/content-editor.types";
 
 interface MobileToolbarProps {
   shopLocales: ShopLocale[];

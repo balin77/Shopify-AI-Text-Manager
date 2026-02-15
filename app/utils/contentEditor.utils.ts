@@ -4,7 +4,7 @@
  */
 
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
-import type { TranslatableItem, Translation, ContentType, ShopLocale } from "~/types/contentEditor.types";
+import type { TranslatableItem, Translation, ContentType, ShopLocale } from "~/types/content-editor.types";
 import {
   SHOPIFY_TRANSLATION_KEYS,
   CONTENT_TYPE_DESCRIPTION_KEY,
