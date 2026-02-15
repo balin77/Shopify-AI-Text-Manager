@@ -16,7 +16,7 @@ import { getTaskExpirationDate } from "~/config/constants";
 import type { ContentEditorConfig } from "../types/content-editor.types";
 import { logger } from "../utils/logger.server";
 import { getFormString, getFormInt, getFormJSON } from "../utils/form-data.utils";
-import { isValidShopifyGID, safeJsonParse } from "../utils/validation";
+import { isValidShopifyGID, isValidLocale, safeJsonParse } from "../utils/validation";
 import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
 import type { Session } from "@shopify/shopify-api";
 import type { PrismaClient } from "@prisma/client";
@@ -72,6 +72,9 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
 
   if (action === "loadTranslations") {
     const locale = getFormString(formData, "locale");
+    if (!locale || !isValidLocale(locale)) {
+      return json({ success: false, error: "Invalid locale format" }, { status: 400 });
+    }
 
     try {
       const translations = await shopifyContentService.loadTranslations(itemId, locale);
@@ -395,6 +398,9 @@ Allowed formatting changes:
     const fieldType = getFormString(formData, "fieldType");
     const sourceText = getFormString(formData, "sourceText");
     const targetLocale = getFormString(formData, "targetLocale");
+    if (!targetLocale || !isValidLocale(targetLocale)) {
+      return json({ success: false, error: "Invalid target locale format" }, { status: 400 });
+    }
 
     // Create task entry
     const task = await db.task.create({
@@ -463,6 +469,9 @@ Allowed formatting changes:
     const targetLocalesStr = getFormString(formData, "targetLocales");
     const contextTitle = getFormString(formData, "title");
     const sourceLocale = getFormString(formData, "sourceLocale") || "en";
+    if (!isValidLocale(sourceLocale)) {
+      return json({ success: false, error: "Invalid source locale format" }, { status: 400 });
+    }
 
     // Create task entry
     const task = await db.task.create({
@@ -564,6 +573,12 @@ Allowed formatting changes:
     const targetLocale = getFormString(formData, "targetLocale");
     const contextTitle = getFormString(formData, "title");
     const sourceLocale = getFormString(formData, "sourceLocale") || "en";
+    if (!targetLocale || !isValidLocale(targetLocale)) {
+      return json({ success: false, error: "Invalid target locale format" }, { status: 400 });
+    }
+    if (!isValidLocale(sourceLocale)) {
+      return json({ success: false, error: "Invalid source locale format" }, { status: 400 });
+    }
 
     // Create task entry
     const task = await db.task.create({
@@ -673,6 +688,9 @@ Allowed formatting changes:
     const targetLocalesStr = getFormString(formData, "targetLocales");
     const contextTitle = getFormString(formData, "contextTitle");
     const sourceLocale = getFormString(formData, "sourceLocale") || "en";
+    if (!isValidLocale(sourceLocale)) {
+      return json({ success: false, error: "Invalid source locale format" }, { status: 400 });
+    }
 
     logger.debug('[UnifiedContent] [translateFieldToAllLocales] Starting...');
     logger.debug('[UnifiedContent] fieldType:', fieldType);
@@ -1096,6 +1114,9 @@ Image URL: ${image.url}`;
     const imageIndex = getFormInt(formData, "imageIndex") ?? 0;
     const sourceAltText = getFormString(formData, "sourceAltText");
     const targetLocale = getFormString(formData, "targetLocale");
+    if (!targetLocale || !isValidLocale(targetLocale)) {
+      return json({ success: false, error: "Invalid target locale format" }, { status: 400 });
+    }
 
     // Create task entry
     const task = await db.task.create({

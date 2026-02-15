@@ -279,8 +279,9 @@ export function decryptApiKey(encryptedApiKey: string | null | undefined): strin
   const trimmed = encryptedApiKey.trim();
 
   // If it's not encrypted, return as-is (for backwards compatibility during migration)
+  // NOTE: Never log the actual key value here
   if (!isEncrypted(trimmed)) {
-    logger.warn('[Encryption] Warning: API key is not encrypted. Consider running migration.');
+    logger.debug('[Encryption] Unencrypted value detected (API key). Consider running migration.');
     return trimmed;
   }
 
@@ -331,7 +332,7 @@ export function decryptPII(encryptedPII: string | null | undefined): string | nu
 
   // If it's not encrypted, return as-is (for backwards compatibility during migration)
   if (!isEncrypted(trimmed)) {
-    logger.warn('[Encryption] Warning: PII data is not encrypted. Consider running migration.');
+    logger.debug('[Encryption] Unencrypted value detected (PII). Consider running migration.');
     return trimmed;
   }
 
@@ -366,7 +367,7 @@ export function decryptToken(encryptedToken: string | null | undefined): string 
 
   // If it's not encrypted, return as-is (for backwards compatibility during migration)
   if (!isEncrypted(trimmed)) {
-    logger.warn('[Encryption] Warning: OAuth token is not encrypted. Consider running migration.');
+    logger.debug('[Encryption] Unencrypted value detected (token). Consider running migration.');
     return trimmed;
   }
 
@@ -418,7 +419,7 @@ export function decryptPayload(encryptedPayload: string | null | undefined): str
 
   // If it's not encrypted, return as-is (for backwards compatibility during migration)
   if (!isEncrypted(trimmed)) {
-    logger.warn('[Encryption] Warning: Webhook payload is not encrypted. Consider running migration.');
+    logger.debug('[Encryption] Unencrypted value detected (payload). Consider running migration.');
     return trimmed;
   }
 

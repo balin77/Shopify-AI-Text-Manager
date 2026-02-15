@@ -72,7 +72,17 @@ export function AIEditableHTMLField({
   const editorRef = useRef<HTMLDivElement>(null);
   const { executeCommand } = useHtmlFormatting({ editorRef, onChange });
   const isUserTypingRef = useRef(false);
+  const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastEditorElementRef = useRef<HTMLDivElement | null>(null);
+
+  // Cleanup typing timer on unmount
+  useEffect(() => {
+    return () => {
+      if (typingTimerRef.current) {
+        clearTimeout(typingTimerRef.current);
+      }
+    };
+  }, []);
 
   // Initialize content when editor element changes (mode switch) or value changes externally
   useEffect(() => {
@@ -134,8 +144,12 @@ export function AIEditableHTMLField({
     isUserTypingRef.current = true;
     onChange(e.currentTarget.innerHTML);
     // Reset flag after a short delay
-    setTimeout(() => {
+    if (typingTimerRef.current) {
+      clearTimeout(typingTimerRef.current);
+    }
+    typingTimerRef.current = setTimeout(() => {
       isUserTypingRef.current = false;
+      typingTimerRef.current = null;
     }, 0);
   };
 

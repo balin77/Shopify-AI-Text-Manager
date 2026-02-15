@@ -173,6 +173,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         throw new Error(data.errors[0]?.message || "GraphQL error");
       }
 
+      if (!data.data?.products) {
+        logger.error("[SYNC-PRODUCTS] Unexpected GraphQL response: missing products data", { context: "SyncProducts" });
+        throw new Error("Unexpected Shopify response: no products data returned");
+      }
+
       const pageInfo: any = data.data?.products?.pageInfo;
       const products = data.data?.products?.edges?.map((e: any) => e.node) || [];
 

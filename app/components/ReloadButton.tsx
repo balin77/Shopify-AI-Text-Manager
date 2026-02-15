@@ -1,6 +1,6 @@
 import { Button, Tooltip } from "@shopify/polaris";
 import { RefreshIcon } from "@shopify/polaris-icons";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useFetcher } from "@remix-run/react";
 
 interface ReloadButtonProps {
@@ -28,13 +28,15 @@ export function ReloadButton({
   const fetcher = useFetcher();
 
   // Monitor fetcher state
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
     if (fetcher.state === "idle" && fetcher.data && isLoading) {
       const data = fetcher.data as any;
       if (data.success) {
         if (revalidator) {
           // Use revalidation approach (non-destructive)
-          setTimeout(() => {
+          timerRef.current = setTimeout(() => {
             // Cache-bust: Add timestamp to URL to force Remix to reload data
             const url = new URL(window.location.href);
             url.searchParams.set('_reload', Date.now().toString());
@@ -45,7 +47,7 @@ export function ReloadButton({
           }, 1000); // Wait 1 second for DB write to complete
         } else {
           // Fallback to page reload if revalidator not available
-          setTimeout(() => {
+          timerRef.current = setTimeout(() => {
             // Store the selected product ID in URL to restore selection after reload
             const url = new URL(window.location.href);
             url.searchParams.set('selected', resourceId);
@@ -64,6 +66,13 @@ export function ReloadButton({
         alert(`Fehler beim Neuladen: ${data.error || "Unbekannter Fehler"}`);
       }
     }
+
+    return () => {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+    };
   }, [fetcher.state, fetcher.data, isLoading, onReloadComplete, resourceId, resourceType, locale, revalidator]);
 
   // Monitor revalidation state

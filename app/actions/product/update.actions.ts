@@ -49,9 +49,18 @@ export async function handleUpdateProduct(
   const changedAltTextIndicesStr = getFormString(formData, "changedAltTextIndices");
   const changedAltTextIndices: number[] = changedAltTextIndicesStr ? safeJsonParse<number[]>(changedAltTextIndicesStr, []) : [];
 
+  const locale = getFormString(formData, "locale");
+  const primaryLocale = getFormString(formData, "primaryLocale");
+  if (!locale || !isValidLocale(locale)) {
+    return json({ success: false, error: "Invalid locale format" }, { status: 400 });
+  }
+  if (!primaryLocale || !isValidLocale(primaryLocale)) {
+    return json({ success: false, error: "Invalid primary locale format" }, { status: 400 });
+  }
+
   const params: UpdateProductParams = {
-    locale: getFormString(formData, "locale"),
-    primaryLocale: getFormString(formData, "primaryLocale"),
+    locale,
+    primaryLocale,
     title: getFormString(formData, "title"),
     descriptionHtml: getFormString(formData, "descriptionHtml"),
     handle: getFormString(formData, "handle"),
