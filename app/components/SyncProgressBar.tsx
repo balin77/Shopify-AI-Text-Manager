@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { Text, BlockStack, ProgressBar, InlineStack, Box, Banner, Button } from "@shopify/polaris";
 
 export interface SyncProgress {
@@ -71,7 +71,11 @@ export function SyncProgressBar({
   const [syncLoading, setSyncLoading] = useState(false);
   const [syncProgress, setSyncProgress] = useState<SyncProgress | null>(null);
 
+  const isSyncingRef = useRef(false);
+
   const handleSync = useCallback(async (force: boolean = false) => {
+    if (isSyncingRef.current) return;
+    isSyncingRef.current = true;
     setSyncStatus("");
     setSyncLoading(true);
     setSyncProgress({
@@ -172,16 +176,18 @@ export function SyncProgressBar({
       setSyncStatus(`Error: ${error.message}`);
       onError?.(error.message);
     } finally {
+      isSyncingRef.current = false;
       setSyncLoading(false);
     }
   }, [onComplete, onError]);
 
-  // Auto-start sync on mount if requested
+  // Auto-start sync on mount or when forceSync changes
   useEffect(() => {
     if (autoStart) {
       handleSync(forceSync);
     }
-  }, [autoStart, forceSync, handleSync]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoStart, forceSync]);
 
   return (
     <BlockStack gap="400">
