@@ -14,36 +14,6 @@ import { ShopifyApiGateway } from "~/services/shopify-api-gateway.service";
 import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
 import type { PrismaClient } from "@prisma/client";
 
-interface AISettings {
-  id: string;
-  shop: string;
-  preferredProvider: string | null;
-  selectedModel: string | null;
-  huggingfaceApiKey: string | null;
-  geminiApiKey: string | null;
-  claudeApiKey: string | null;
-  openaiApiKey: string | null;
-  grokApiKey: string | null;
-  deepseekApiKey: string | null;
-}
-
-interface AIInstructions {
-  id: string;
-  shop: string;
-  productTitleFormat: string | null;
-  productTitleInstructions: string | null;
-  productDescriptionFormat: string | null;
-  productDescriptionInstructions: string | null;
-  productHandleFormat: string | null;
-  productHandleInstructions: string | null;
-  productSeoTitleFormat: string | null;
-  productSeoTitleInstructions: string | null;
-  productMetaDescFormat: string | null;
-  productMetaDescInstructions: string | null;
-  productAltTextFormat: string | null;
-  productAltTextInstructions: string | null;
-}
-
 interface AIConfig {
   huggingfaceApiKey?: string;
   geminiApiKey?: string;
@@ -59,8 +29,6 @@ export interface ActionContext {
   session: Session;
   shop: string;
   db: PrismaClient;
-  aiSettings: AISettings;
-  aiInstructions: AIInstructions;
   provider: AIProvider;
   config: AIConfig;
   gateway: ShopifyApiGateway;
@@ -205,8 +173,6 @@ export async function prepareActionContext(
     session,
     shop,
     db,
-    aiSettings: aiSettings!,
-    aiInstructions: aiInstructions!,
     provider,
     config,
     gateway,
