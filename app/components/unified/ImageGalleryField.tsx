@@ -134,7 +134,7 @@ export function ImageGalleryField({
     } else if (selectedImageIndex >= images.length) {
       setSelectedImageIndex(0);
     }
-  }, [images?.length]);
+  }, [images, selectedImageIndex]);
 
   // Determine which image to show in preview
   const getPreviewImage = (): ImageData | null => {
