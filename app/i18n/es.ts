@@ -589,6 +589,7 @@ export const es: Translation = {
       pending: "Pendiente",
       running: "En ejecución",
       completed: "Completada",
+      completed_with_errors: "Completada con errores",
       failed: "Fallida",
       cancelled: "Cancelada",
     },

@@ -587,6 +587,7 @@ export const de = {
       pending: "Wartend",
       running: "Läuft",
       completed: "Abgeschlossen",
+      completed_with_errors: "Mit Fehlern abgeschlossen",
       failed: "Fehlgeschlagen",
       cancelled: "Abgebrochen",
     },

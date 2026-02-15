@@ -38,7 +38,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
     // Status filter
     if (statusFilter === "completed") {
-      where.status = "completed";
+      where.status = { in: ["completed", "completed_with_errors"] };
     } else if (statusFilter === "failed") {
       where.status = "failed";
     }
@@ -196,6 +196,7 @@ export default function TasksPage() {
       pending: "info",
       running: "info",
       completed: "success",
+      completed_with_errors: "warning",
       failed: "critical",
       cancelled: "warning",
     };
@@ -350,7 +351,7 @@ export default function TasksPage() {
                                 {t.tasks.cancel}
                               </Button>
                             )}
-                            {(task.status === "completed" || task.status === "failed" || task.status === "cancelled") && (
+                            {(task.status === "completed" || task.status === "completed_with_errors" || task.status === "failed" || task.status === "cancelled") && (
                               <Button
                                 size="slim"
                                 tone="critical"

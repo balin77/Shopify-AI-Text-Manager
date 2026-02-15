@@ -528,7 +528,7 @@ Allowed formatting changes:
       await db.task.update({
         where: { id: task.id },
         data: {
-          status: failedLocales.length > 0 ? "completed" : "completed",
+          status: failedLocales.length > 0 ? "completed_with_errors" : "completed",
           progress: 100,
           completedAt: new Date(),
           result: JSON.stringify({
