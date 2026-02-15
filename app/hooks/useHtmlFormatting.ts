@@ -91,7 +91,21 @@ function unwrapElement(el: HTMLElement): void {
 function toggleInlineTag(range: Range, tagName: string, editor: HTMLElement): void {
   const existing = findAncestor(range.commonAncestorContainer, tagName, editor);
   if (existing) {
+    // Remember children so we can restore selection after unwrap
+    const firstChild = existing.firstChild;
+    const lastChild = existing.lastChild;
     unwrapElement(existing);
+    // Restore selection over the unwrapped content
+    if (firstChild && lastChild) {
+      const sel = window.getSelection();
+      if (sel) {
+        const newRange = document.createRange();
+        newRange.setStartBefore(firstChild);
+        newRange.setEndAfter(lastChild);
+        sel.removeAllRanges();
+        sel.addRange(newRange);
+      }
+    }
     return;
   }
 
@@ -113,17 +127,40 @@ function toggleInlineTag(range: Range, tagName: string, editor: HTMLElement): vo
 function setBlockType(range: Range, tagName: string, editor: HTMLElement): void {
   const block = findClosestBlock(range.startContainer, editor);
   if (block === editor) {
-    // No block parent — wrap content in the target block
+    // No block parent — find the inline content group around the cursor and wrap it
+    let targetNode: Node | null = range.startContainer;
+    while (targetNode && targetNode.parentNode !== editor) {
+      targetNode = targetNode.parentNode;
+    }
+    if (!targetNode) return;
+
+    // Collect consecutive non-block siblings around the cursor
+    let start: Node = targetNode;
+    let end: Node = targetNode;
+    while (start.previousSibling && !(start.previousSibling instanceof HTMLElement && BLOCK_TAGS.has(start.previousSibling.tagName))) {
+      start = start.previousSibling;
+    }
+    while (end.nextSibling && !(end.nextSibling instanceof HTMLElement && BLOCK_TAGS.has(end.nextSibling.tagName))) {
+      end = end.nextSibling;
+    }
+
     const wrapper = document.createElement(tagName);
-    // If editor has direct text/inline content at cursor, wrap it
-    if (range.startContainer === editor || range.startContainer.parentNode === editor) {
-      const contents = range.extractContents();
-      wrapper.appendChild(contents.childNodes.length ? contents : document.createTextNode("\u200B"));
-      range.insertNode(wrapper);
-    } else {
-      const contents = range.extractContents();
-      wrapper.appendChild(contents);
-      range.insertNode(wrapper);
+    editor.insertBefore(wrapper, start);
+    let current: Node | null = start;
+    while (current) {
+      const next: Node | null = current.nextSibling;
+      wrapper.appendChild(current);
+      if (current === end) break;
+      current = next;
+    }
+
+    const sel = window.getSelection();
+    if (sel) {
+      const newRange = document.createRange();
+      newRange.selectNodeContents(wrapper);
+      newRange.collapse(false);
+      sel.removeAllRanges();
+      sel.addRange(newRange);
     }
     return;
   }
