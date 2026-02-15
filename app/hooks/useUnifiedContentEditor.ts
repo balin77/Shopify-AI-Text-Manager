@@ -43,6 +43,9 @@ function translateErrorMessage(errorMessage: string, t: TranslationStrings): str
   const lowerError = errorMessage.toLowerCase();
 
   // Map common error patterns to translation keys
+  if (lowerError.includes("graphql error")) {
+    return errors?.graphqlError || errorMessage;
+  }
   if (lowerError.includes("invalid field type")) {
     return errors?.invalidFieldType || errorMessage;
   }
@@ -769,6 +772,18 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       formData.append(key, String(value));
     });
 
+    // If the fetcher is already in-flight, queue this save instead of aborting the current one.
+    // Remix aborts the previous request when submit() is called concurrently, which loses saves.
+    if (fetcherRef.current.state !== 'idle') {
+      debugLog.submit(' Fetcher busy (state:', fetcherRef.current.state, '), queuing save for locale:', savedLocaleRef.current);
+      saveQueueRef.current.push({
+        formData,
+        options: options || { method: "POST" },
+        savedLocale: savedLocaleRef.current,
+      });
+      return;
+    }
+
     try {
       fetcherRef.current.submit(formData, options || { method: "POST" });
     } catch (error) {
@@ -1043,6 +1058,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
   // Ref to track the locale that was active when the save was initiated
   const savedLocaleRef = useRef<string | null>(null);
+
+  // FIFO queue for saves when the fetcher is already in-flight.
+  // Without this, calling fetcher.submit() while a request is pending causes Remix to
+  // ABORT the in-flight request, losing the first save and corrupting savedLocaleRef.
+  const saveQueueRef = useRef<Array<{
+    formData: FormData;
+    options: { method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" };
+    savedLocale: string | null;
+  }>>([]);
 
   // Ref to skip the next data load (prevents overwriting after save/clear operations)
   const skipNextDataLoadRef = useRef(false);
@@ -1774,6 +1798,32 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       showInfoBox(translatedError, "critical", t.common?.error || "Error");
     }
   }, [fetcher.data, showInfoBox, t, revalidator, safeSubmit, submitAIAction, effectiveFieldDefinitions, currentLanguage, primaryLocale]);
+
+  // Process queued saves when the fetcher becomes idle.
+  // IMPORTANT: This effect MUST run AFTER the response handler effects above,
+  // which read savedLocaleRef.current to process the completed save's response.
+  // React runs effects in definition order, so placing this after ensures the
+  // response handler clears savedLocaleRef before we overwrite it for the next queued save.
+  useEffect(() => {
+    if (fetcher.state === 'idle' && saveQueueRef.current.length > 0) {
+      const next = saveQueueRef.current.shift()!;
+      debugLog.submit(' Processing queued save, locale:', next.savedLocale, ', remaining in queue:', saveQueueRef.current.length);
+
+      // Restore metadata for this queued save
+      savedLocaleRef.current = next.savedLocale;
+      isSavePendingRef.current = true;
+
+      try {
+        fetcherRef.current.submit(next.formData, next.options);
+      } catch (error) {
+        if (error instanceof Error && error.name === 'AbortError') {
+          debugLog.submit(' AbortError on queued save (ignored)');
+        } else {
+          throw error;
+        }
+      }
+    }
+  }, [fetcher.state]);
 
   // ============================================================================
   // EVENT HANDLERS

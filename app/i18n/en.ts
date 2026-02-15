@@ -688,6 +688,7 @@ export const en: Translation = {
     reloadLoopDetected: "Reload loop detected (max attempts reached), showing error UI instead",
 
     // API and Action Errors
+    graphqlError: "A Shopify API error occurred. Please try again.",
     invalidFieldType: "Invalid field type",
     noFieldsToTranslate: "No fields to translate",
     noSourceText: "No source text to translate",

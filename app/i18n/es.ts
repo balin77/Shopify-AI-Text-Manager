@@ -688,6 +688,7 @@ export const es: Translation = {
     reloadLoopDetected: "Bucle de recarga detectado (intentos máximos alcanzados), mostrando UI de error en su lugar",
 
     // API and Action Errors
+    graphqlError: "Se produjo un error en la API de Shopify. Por favor, inténtalo de nuevo.",
     invalidFieldType: "Tipo de campo inválido",
     noFieldsToTranslate: "No hay campos para traducir",
     noSourceText: "No hay texto fuente para traducir",

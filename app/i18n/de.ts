@@ -686,6 +686,7 @@ export const de = {
     reloadLoopDetected: "Ladeschleife erkannt (maximale Versuche erreicht), zeige Fehler-UI statt neuem Reload",
 
     // API and Action Errors
+    graphqlError: "Ein Shopify-API-Fehler ist aufgetreten. Bitte versuchen Sie es erneut.",
     invalidFieldType: "Ungültiger Feldtyp",
     noFieldsToTranslate: "Keine Felder zum Übersetzen vorhanden",
     noSourceText: "Kein Quelltext zum Übersetzen vorhanden",

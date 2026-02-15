@@ -58,6 +58,10 @@ export class ContentService {
   async getShopLocales(): Promise<ShopLocale[]> {
     const response = await this.admin.graphql(GET_SHOP_LOCALES);
     const data = await response.json();
+    const gqlErrors = (data as unknown as { errors?: Array<{ message: string }> }).errors;
+    if (gqlErrors?.length) {
+      throw new Error(`GraphQL error in getShopLocales: ${gqlErrors[0].message}`);
+    }
     return data.data.shopLocales;
   }
 
@@ -66,6 +70,10 @@ export class ContentService {
       variables: { first }
     });
     const data = await response.json();
+    const gqlErrors = (data as unknown as { errors?: Array<{ message: string }> }).errors;
+    if (gqlErrors?.length) {
+      throw new Error(`GraphQL error in getBlogs: ${gqlErrors[0].message}`);
+    }
 
     const blogs = data.data.blogs.edges.map((edge: GraphQLEdge<Record<string, unknown>>) => ({
       ...edge.node,
@@ -83,6 +91,10 @@ export class ContentService {
       variables: { first }
     });
     const data = await response.json();
+    const gqlErrors = (data as unknown as { errors?: Array<{ message: string }> }).errors;
+    if (gqlErrors?.length) {
+      throw new Error(`GraphQL error in getCollections: ${gqlErrors[0].message}`);
+    }
 
     const collections = data.data.collections.edges.map((edge: GraphQLEdge<Record<string, unknown>>) => ({
       ...edge.node,
@@ -97,6 +109,10 @@ export class ContentService {
       variables: { first }
     });
     const data = await response.json();
+    const gqlErrors = (data as unknown as { errors?: Array<{ message: string }> }).errors;
+    if (gqlErrors?.length) {
+      throw new Error(`GraphQL error in getPages: ${gqlErrors[0].message}`);
+    }
 
     const pages = data.data.pages.edges.map((edge: GraphQLEdge<Record<string, unknown>>) => ({
       ...edge.node,

@@ -29,6 +29,9 @@ export class ShopifyContentService {
     });
 
     const data = await response.json();
+    if (data.errors?.length > 0) {
+      throw new Error(`GraphQL error in loadTranslations: ${data.errors[0].message}`);
+    }
     return data.data?.translatableResource?.translations || [];
   }
 
@@ -41,6 +44,9 @@ export class ShopifyContentService {
     });
 
     const data = await response.json();
+    if (data.errors?.length > 0) {
+      throw new Error(`GraphQL error in loadTranslatableContent: ${data.errors[0].message}`);
+    }
     const content = data.data?.translatableResource?.translatableContent || [];
 
     // Create digest map and value map for quick lookup
@@ -79,6 +85,9 @@ export class ShopifyContentService {
 
     const data = await response.json();
 
+    if (data.errors?.length > 0) {
+      throw new Error(`GraphQL error in saveTranslations: ${data.errors[0].message}`);
+    }
     if (data.data?.translationsRegister?.userErrors?.length > 0) {
       throw new Error(data.data.translationsRegister.userErrors[0].message);
     }
@@ -96,6 +105,9 @@ export class ShopifyContentService {
 
     const data = await response.json();
 
+    if (data.errors?.length > 0) {
+      throw new Error(`GraphQL error in updatePage: ${data.errors[0].message}`);
+    }
     if (data.data?.pageUpdate?.userErrors?.length > 0) {
       throw new Error(data.data.pageUpdate.userErrors[0].message);
     }
@@ -113,6 +125,9 @@ export class ShopifyContentService {
 
     const data = await response.json();
 
+    if (data.errors?.length > 0) {
+      throw new Error(`GraphQL error in updateArticle: ${data.errors[0].message}`);
+    }
     if (data.data?.articleUpdate?.userErrors?.length > 0) {
       throw new Error(data.data.articleUpdate.userErrors[0].message);
     }
@@ -135,6 +150,9 @@ export class ShopifyContentService {
 
     const data = await response.json();
 
+    if (data.errors?.length > 0) {
+      throw new Error(`GraphQL error in updateCollection: ${data.errors[0].message}`);
+    }
     if (data.data?.collectionUpdate?.userErrors?.length > 0) {
       throw new Error(data.data.collectionUpdate.userErrors[0].message);
     }
@@ -154,6 +172,9 @@ export class ShopifyContentService {
 
     const data = await response.json();
 
+    if (data.errors?.length > 0) {
+      throw new Error(`GraphQL error in updateShopPolicy: ${data.errors[0].message}`);
+    }
     if (data.data?.shopPolicyUpdate?.userErrors?.length > 0) {
       throw new Error(data.data.shopPolicyUpdate.userErrors[0].message);
     }
@@ -202,6 +223,10 @@ export class ShopifyContentService {
 
     const data = await response.json();
 
+    if (data.errors?.length > 0) {
+      loggers.translation('error', 'GraphQL error in deleteAllTranslationsForKeys', { errors: data.errors });
+      throw new Error(`GraphQL error: ${data.errors[0].message}`);
+    }
     if (data.data?.translationsRemove?.userErrors?.length > 0) {
       loggers.translation('error', 'Error deleting translations', { errors: data.data.translationsRemove.userErrors });
       throw new Error(data.data.translationsRemove.userErrors[0].message);
@@ -228,6 +253,9 @@ export class ShopifyContentService {
     );
 
     const data = await response.json();
+    if (data.errors?.length > 0) {
+      throw new Error(`GraphQL error in loadShopLocales: ${data.errors[0].message}`);
+    }
     const shopLocales = data.data?.shopLocales || [];
     const primaryLocale = shopLocales.find((l: { locale: string; primary: boolean }) => l.primary)?.locale || "en";
 
@@ -261,8 +289,19 @@ export class ShopifyContentService {
       const translationsToDelete: string[] = [];
       const dbOnlyTranslations: Array<{ key: string; value: string; locale: string }> = [];
 
-      // Map field names to Shopify translation keys
-      // Note: ShopPolicy uses 'body' (not 'body_html') as its translatable content key
+      // Map UI field names to Shopify translatable content keys.
+      //
+      // IMPORTANT — Shopify is inconsistent with body field naming:
+      //   Product, Collection, Page, Article → translation key is "body_html"
+      //   ShopPolicy                         → translation key is "body"
+      //
+      // This is a Shopify API inconsistency: the GraphQL *mutation* input for Page
+      // and Article also uses "body", but the *translatable content* key (used in
+      // translationsRegister and returned by translatableContent query) is "body_html".
+      // ShopPolicy is the only resource type where both mutation and translation key
+      // use plain "body".
+      //
+      // See also: docs/SHOPIFY_TRANSLATABLE_CONTENT_TYPES.md
       const bodyKey = resourceType === 'ShopPolicy' ? 'body' : 'body_html';
       const keyMapping: Record<string, string> = {
         title: 'title',
@@ -272,7 +311,7 @@ export class ShopifyContentService {
         seoTitle: 'meta_title',
         metaDescription: 'meta_description',
         productType: 'product_type',
-        summary: 'summary_html',   // Article excerpt/summary
+        summary: 'summary_html',
       };
 
       for (const [field, value] of Object.entries(updates)) {
@@ -518,16 +557,19 @@ export class ShopifyContentService {
 
       // Delete translations for changed fields across ALL foreign locales
       if (changedFields && changedFields.length > 0) {
-        // Map UI field names to Shopify translation keys
+        // Map UI field names to Shopify translation keys.
+        // ShopPolicy uses "body", all other resource types use "body_html".
+        // See comment at line ~293 for full explanation of this Shopify inconsistency.
+        const bodyKey = resourceType === 'ShopPolicy' ? 'body' : 'body_html';
         const keyMapping: Record<string, string> = {
           title: 'title',
-          description: 'body_html',  // Always body_html for all resource types
-          body: 'body_html',         // Always body_html for all resource types
+          description: bodyKey,
+          body: bodyKey,
           handle: 'handle',
           seoTitle: 'meta_title',
           metaDescription: 'meta_description',
           productType: 'product_type',
-          summary: 'summary_html',   // Article excerpt/summary
+          summary: 'summary_html',
         };
 
         const translationKeysToDelete = changedFields
@@ -638,15 +680,18 @@ export class ShopifyContentService {
 
     loggers.translation('debug', 'Using hybrid approach', { shortFields: Object.keys(shortFields), longFields: Object.keys(longFields) });
 
+    // ShopPolicy uses "body", all other resource types use "body_html".
+    // See comment in updateContent() (~line 293) for full explanation of this Shopify inconsistency.
+    const bodyKey = resourceType === 'ShopPolicy' ? 'body' : 'body_html';
     const keyMapping: Record<string, string> = {
       title: 'title',
-      description: 'body_html',
-      body: 'body_html',
+      description: bodyKey,
+      body: bodyKey,
       handle: 'handle',
       seoTitle: 'meta_title',
       metaDescription: 'meta_description',
       productType: 'product_type',
-      summary: 'summary_html',   // Article excerpt/summary
+      summary: 'summary_html',
     };
 
     // Helper function to save translations to Shopify and DB
@@ -705,6 +750,10 @@ export class ShopifyContentService {
         });
 
         const data = await response.json();
+        if (data.errors?.length > 0) {
+          loggers.translation('error', `GraphQL error saving ${field} for ${locale}`, { errors: data.errors });
+          return false;
+        }
         if (data.data?.translationsRegister?.userErrors?.length > 0) {
           // Shopify rejected this specific translation (e.g. duplicate handle across resources).
           // Return false so the caller removes this field from allTranslations — the client

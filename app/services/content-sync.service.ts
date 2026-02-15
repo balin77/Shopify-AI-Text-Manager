@@ -291,6 +291,9 @@ export class ContentSyncService {
     );
 
     const data = await response.json();
+    if (data.errors?.length > 0) {
+      throw new Error(`GraphQL error in fetchCollectionData: ${data.errors[0].message}`);
+    }
     return data.data?.collection || null;
   }
 
@@ -320,6 +323,9 @@ export class ContentSyncService {
     );
 
     const data = await response.json();
+    if (data.errors?.length > 0) {
+      throw new Error(`GraphQL error in fetchArticleData: ${data.errors[0].message}`);
+    }
     const article: ShopifyArticleData | null = data.data?.article || null;
 
     if (!article) return null;
@@ -339,6 +345,9 @@ export class ContentSyncService {
     );
 
     const translatableData = await translatableResponse.json();
+    if (translatableData.errors?.length > 0) {
+      throw new Error(`GraphQL error in fetchArticleData (translatableContent): ${translatableData.errors[0].message}`);
+    }
     const translatableContent: Array<{ key: string; value: string | null }> =
       translatableData.data?.translatableResource?.translatableContent || [];
 
@@ -393,6 +402,9 @@ export class ContentSyncService {
     );
 
     const data = await response.json();
+    if (data.errors?.length > 0) {
+      throw new Error(`GraphQL error in fetchMenuData: ${data.errors[0].message}`);
+    }
     return data.data?.menu || null;
   }
 
@@ -411,6 +423,9 @@ export class ContentSyncService {
     );
 
     const data = await response.json();
+    if (data.errors?.length > 0) {
+      throw new Error(`GraphQL error in fetchShopLocales: ${data.errors[0].message}`);
+    }
     return data.data?.shopLocales || [];
   }
 
@@ -453,6 +468,10 @@ export class ContentSyncService {
       );
 
       const data = await response.json();
+      if (data.errors?.length > 0) {
+        logger.warn(`[ContentSync] GraphQL error fetching translations for ${locale.locale}: ${data.errors[0].message}`);
+        continue;
+      }
       const resource = data.data?.translatableResource;
 
       if (!resource) continue;
@@ -727,6 +746,9 @@ export class ContentSyncService {
     );
 
     const data = await response.json();
+    if (data.errors?.length > 0) {
+      throw new Error(`GraphQL error in syncAllCollections: ${data.errors[0].message}`);
+    }
     let collections: Array<{ id: string }> = data.data?.collections?.edges?.map((e: GraphQLEdge<{ id: string }>) => e.node) || [];
 
     // Apply plan limit if specified
@@ -786,6 +808,9 @@ export class ContentSyncService {
     );
 
     const blogsData = await blogsResponse.json();
+    if (blogsData.errors?.length > 0) {
+      throw new Error(`GraphQL error in syncAllArticles: ${blogsData.errors[0].message}`);
+    }
     const blogs: Array<{ id: string; articles?: { edges: GraphQLEdge<{ id: string }>[] } }> =
       blogsData.data?.blogs?.edges?.map((e: GraphQLEdge<{ id: string; articles?: { edges: GraphQLEdge<{ id: string }>[] } }>) => e.node) || [];
 
@@ -836,6 +861,9 @@ export class ContentSyncService {
     );
 
     const data = await response.json();
+    if (data.errors?.length > 0) {
+      throw new Error(`GraphQL error in syncAllMenus: ${data.errors[0].message}`);
+    }
     const menus: Array<{ id: string }> = data.data?.menus?.edges?.map((e: GraphQLEdge<{ id: string }>) => e.node) || [];
 
     logger.debug(`[ContentSync] Found ${menus.length} menus to sync`);
