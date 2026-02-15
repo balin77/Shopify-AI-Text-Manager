@@ -145,9 +145,30 @@ export class BackgroundSyncService {
       );
 
       const pagesData = await pagesResponse.json();
-      let pages: ShopifyPageData[] = pagesData.data?.pages?.edges?.map((e: { node: ShopifyPageData }) => e.node) || [];
+
+      // Health check: detect API errors or malformed responses
+      if (pagesData.errors || !pagesData.data?.pages) {
+        logger.error('[BackgroundSync] 🔴 Shopify API returned errors for pages query, aborting to prevent data loss', {
+          errors: pagesData.errors,
+          hasData: !!pagesData.data,
+        });
+        throw new Error('Shopify API error during pages sync - aborting to prevent data loss');
+      }
+
+      let pages: ShopifyPageData[] = pagesData.data.pages.edges?.map((e: { node: ShopifyPageData }) => e.node) || [];
 
       logger.debug(`[BackgroundSync] Found ${pages.length} pages from Shopify`);
+
+      // Health check: refuse to wipe local data when Shopify returns empty
+      if (pages.length === 0) {
+        const localPageCount = await db.page.count({ where: { shop: this.shop } });
+        if (localPageCount > 0) {
+          logger.error(`[BackgroundSync] 🔴 ABORTING page sync: Shopify returned 0 pages but ${localPageCount} exist locally. Possible API outage.`);
+          throw new Error(`Shopify returned 0 pages but ${localPageCount} exist locally - aborting to prevent data loss`);
+        }
+        logger.debug(`[BackgroundSync] No pages in Shopify and none locally - nothing to do`);
+        return 0;
+      }
 
       // Apply plan limit if specified
       if (maxCount !== undefined && maxCount > 0 && pages.length > maxCount) {
@@ -155,12 +176,22 @@ export class BackgroundSyncService {
         pages = pages.slice(0, maxCount);
       }
 
-      // 2. AGGRESSIVE CLEANUP: Delete pages that no longer exist in Shopify (using transaction)
+      // 2. Cleanup: Delete pages that no longer exist in Shopify (using transaction)
       const shopifyPageIds = pages.map((p) => p.id);
 
-      if (shopifyPageIds.length > 0) {
+      {
         // Use transaction to ensure both deletes succeed or fail together
         const { deletedPagesCount, deletedTranslationsCount } = await db.$transaction(async (tx) => {
+          // Find stale page IDs for THIS shop before deleting
+          const stalePages = await tx.page.findMany({
+            where: {
+              shop: this.shop,
+              id: { notIn: shopifyPageIds }
+            },
+            select: { id: true }
+          });
+          const stalePageIds = stalePages.map(p => p.id);
+
           const deletedPages = await tx.page.deleteMany({
             where: {
               shop: this.shop,
@@ -168,16 +199,20 @@ export class BackgroundSyncService {
             }
           });
 
-          const deletedTranslations = await tx.contentTranslation.deleteMany({
-            where: {
-              resourceType: "Page",
-              resourceId: { notIn: shopifyPageIds }
-            }
-          });
+          let translationsCount = 0;
+          if (stalePageIds.length > 0) {
+            const deletedTranslations = await tx.contentTranslation.deleteMany({
+              where: {
+                resourceType: "Page",
+                resourceId: { in: stalePageIds }
+              }
+            });
+            translationsCount = deletedTranslations.count;
+          }
 
           return {
             deletedPagesCount: deletedPages.count,
-            deletedTranslationsCount: deletedTranslations.count
+            deletedTranslationsCount: translationsCount
           };
         });
 
@@ -187,22 +222,6 @@ export class BackgroundSyncService {
         if (deletedTranslationsCount > 0) {
           logger.debug(`[BackgroundSync] 🗑️ Deleted ${deletedTranslationsCount} orphaned page translations`);
         }
-      } else {
-        // No pages in Shopify - delete all local pages for this shop (using transaction)
-        const { deletedPagesCount, deletedTranslationsCount } = await db.$transaction(async (tx) => {
-          const deletedPages = await tx.page.deleteMany({
-            where: { shop: this.shop }
-          });
-          const deletedTranslations = await tx.contentTranslation.deleteMany({
-            where: { resourceType: "Page" }
-          });
-          return {
-            deletedPagesCount: deletedPages.count,
-            deletedTranslationsCount: deletedTranslations.count
-          };
-        });
-        logger.debug(`[BackgroundSync] 🗑️ Deleted all pages (${deletedPagesCount}) and translations (${deletedTranslationsCount}) - no pages in Shopify`);
-        return 0;
       }
 
       // 3. Fetch shop locales
@@ -415,16 +434,47 @@ export class BackgroundSyncService {
       );
 
       const policiesData = await policiesResponse.json();
-      const policies: ShopifyPolicyData[] = policiesData.data?.shop?.shopPolicies || [];
+
+      // Health check: detect API errors or malformed responses
+      if (policiesData.errors || !policiesData.data?.shop?.shopPolicies) {
+        logger.error('[BackgroundSync] 🔴 Shopify API returned errors for policies query, aborting to prevent data loss', {
+          errors: policiesData.errors,
+          hasData: !!policiesData.data,
+        });
+        throw new Error('Shopify API error during policies sync - aborting to prevent data loss');
+      }
+
+      const policies: ShopifyPolicyData[] = policiesData.data.shop.shopPolicies;
 
       logger.debug(`[BackgroundSync] Found ${policies.length} policies from Shopify`);
 
-      // 2. AGGRESSIVE CLEANUP: Delete policies that no longer exist in Shopify (using transaction)
+      // Health check: refuse to wipe local data when Shopify returns empty
+      if (policies.length === 0) {
+        const localPolicyCount = await db.shopPolicy.count({ where: { shop: this.shop } });
+        if (localPolicyCount > 0) {
+          logger.error(`[BackgroundSync] 🔴 ABORTING policy sync: Shopify returned 0 policies but ${localPolicyCount} exist locally. Possible API outage.`);
+          throw new Error(`Shopify returned 0 policies but ${localPolicyCount} exist locally - aborting to prevent data loss`);
+        }
+        logger.debug(`[BackgroundSync] No policies in Shopify and none locally - nothing to do`);
+        return 0;
+      }
+
+      // 2. Cleanup: Delete policies that no longer exist in Shopify (using transaction)
       const shopifyPolicyIds = policies.map((p) => p.id);
 
-      if (shopifyPolicyIds.length > 0) {
+      {
         // Use transaction to ensure both deletes succeed or fail together
         const { deletedPoliciesCount, deletedTranslationsCount } = await db.$transaction(async (tx) => {
+          // Find stale policy IDs for THIS shop before deleting
+          const stalePolicies = await tx.shopPolicy.findMany({
+            where: {
+              shop: this.shop,
+              id: { notIn: shopifyPolicyIds }
+            },
+            select: { id: true }
+          });
+          const stalePolicyIds = stalePolicies.map(p => p.id);
+
           const deletedPolicies = await tx.shopPolicy.deleteMany({
             where: {
               shop: this.shop,
@@ -432,16 +482,20 @@ export class BackgroundSyncService {
             }
           });
 
-          const deletedTranslations = await tx.contentTranslation.deleteMany({
-            where: {
-              resourceType: "ShopPolicy",
-              resourceId: { notIn: shopifyPolicyIds }
-            }
-          });
+          let translationsCount = 0;
+          if (stalePolicyIds.length > 0) {
+            const deletedTranslations = await tx.contentTranslation.deleteMany({
+              where: {
+                resourceType: "ShopPolicy",
+                resourceId: { in: stalePolicyIds }
+              }
+            });
+            translationsCount = deletedTranslations.count;
+          }
 
           return {
             deletedPoliciesCount: deletedPolicies.count,
-            deletedTranslationsCount: deletedTranslations.count
+            deletedTranslationsCount: translationsCount
           };
         });
 
@@ -451,22 +505,6 @@ export class BackgroundSyncService {
         if (deletedTranslationsCount > 0) {
           logger.debug(`[BackgroundSync] 🗑️ Deleted ${deletedTranslationsCount} orphaned policy translations`);
         }
-      } else {
-        // No policies in Shopify - delete all local policies for this shop (using transaction)
-        const { deletedPoliciesCount, deletedTranslationsCount } = await db.$transaction(async (tx) => {
-          const deletedPolicies = await tx.shopPolicy.deleteMany({
-            where: { shop: this.shop }
-          });
-          const deletedTranslations = await tx.contentTranslation.deleteMany({
-            where: { resourceType: "ShopPolicy" }
-          });
-          return {
-            deletedPoliciesCount: deletedPolicies.count,
-            deletedTranslationsCount: deletedTranslations.count
-          };
-        });
-        logger.debug(`[BackgroundSync] 🗑️ Deleted all policies (${deletedPoliciesCount}) and translations (${deletedTranslationsCount}) - no policies in Shopify`);
-        return 0;
       }
 
       // 3. Fetch shop locales
@@ -1220,33 +1258,37 @@ export class BackgroundSyncService {
                 existingTranslations.map(t => `${t.key}::${t.locale}`)
               );
 
-              // Upsert translations (update existing, create new)
-              for (const t of allTranslations) {
-                await db.themeTranslation.upsert({
-                  where: {
-                    shop_resourceId_groupId_key_locale: {
-                      shop: this.shop,
-                      resourceId: resource.resourceId,
-                      groupId,
-                      key: t.key,
-                      locale: t.locale,
-                    },
-                  },
-                  create: {
-                    shop: this.shop,
-                    resourceId: resource.resourceId,
-                    groupId,
-                    key: t.key,
-                    value: t.value,
-                    locale: t.locale,
-                    outdated: t.outdated || false,
-                  },
-                  update: {
-                    value: t.value,
-                    outdated: t.outdated || false,
-                    updatedAt: new Date(),
-                  },
-                });
+              // Batch upsert all translations in a single transaction
+              if (allTranslations.length > 0) {
+                await db.$transaction(
+                  allTranslations.map(t =>
+                    db.themeTranslation.upsert({
+                      where: {
+                        shop_resourceId_groupId_key_locale: {
+                          shop: this.shop,
+                          resourceId: resource.resourceId,
+                          groupId,
+                          key: t.key,
+                          locale: t.locale,
+                        },
+                      },
+                      create: {
+                        shop: this.shop,
+                        resourceId: resource.resourceId,
+                        groupId,
+                        key: t.key,
+                        value: t.value,
+                        locale: t.locale,
+                        outdated: t.outdated || false,
+                      },
+                      update: {
+                        value: t.value,
+                        outdated: t.outdated || false,
+                        updatedAt: new Date(),
+                      },
+                    })
+                  )
+                );
               }
 
               // Delete translations that no longer exist in Shopify
@@ -1259,18 +1301,18 @@ export class BackgroundSyncService {
               );
 
               if (keysToDelete.length > 0) {
-                for (const keyLocale of keysToDelete) {
-                  const [key, locale] = keyLocale.split('::');
-                  await db.themeTranslation.deleteMany({
-                    where: {
-                      shop: this.shop,
-                      resourceId: resource.resourceId,
-                      groupId,
-                      key,
-                      locale,
-                    },
-                  });
-                }
+                const parsedKeysToDelete = keysToDelete.map(kl => {
+                  const [key, locale] = kl.split('::');
+                  return { key, locale };
+                });
+                await db.themeTranslation.deleteMany({
+                  where: {
+                    shop: this.shop,
+                    resourceId: resource.resourceId,
+                    groupId,
+                    OR: parsedKeysToDelete.map(({ key, locale }) => ({ key, locale })),
+                  },
+                });
               }
 
               totalGroups++;
@@ -1298,24 +1340,25 @@ export class BackgroundSyncService {
         if (toDelete.length > 0) {
           logger.debug(`[BackgroundSync] 🗑️ Deleting ${toDelete.length} obsolete theme content groups`);
 
-          // Delete in batches
-          for (const item of toDelete) {
-            await db.themeContent.deleteMany({
-              where: {
-                shop: this.shop,
-                resourceId: item.resourceId,
-                groupId: item.groupId
-              }
-            });
+          const deleteConditions = toDelete.map(item => ({
+            resourceId: item.resourceId,
+            groupId: item.groupId,
+          }));
 
-            await db.themeTranslation.deleteMany({
+          await db.$transaction([
+            db.themeTranslation.deleteMany({
               where: {
                 shop: this.shop,
-                resourceId: item.resourceId,
-                groupId: item.groupId
-              }
-            });
-          }
+                OR: deleteConditions,
+              },
+            }),
+            db.themeContent.deleteMany({
+              where: {
+                shop: this.shop,
+                OR: deleteConditions,
+              },
+            }),
+          ]);
 
           logger.debug(`[BackgroundSync] 🗑️ Deleted ${toDelete.length} obsolete theme groups and their translations`);
         }
