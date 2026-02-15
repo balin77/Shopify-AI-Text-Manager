@@ -29,10 +29,10 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     return json({ error: "groupId is required" }, { status: 400 });
   }
 
-  // Parse pagination parameters from URL
+  // Parse and validate pagination parameters from URL
   const url = new URL(request.url);
-  const page = parseInt(url.searchParams.get("page") || "1", 10);
-  const limit = parseInt(url.searchParams.get("limit") || "25", 10);
+  const page = Math.max(1, parseInt(url.searchParams.get("page") || "1", 10) || 1);
+  const limit = Math.min(250, Math.max(1, parseInt(url.searchParams.get("limit") || "25", 10) || 25));
   const search = url.searchParams.get("search") || "";
 
   try {
