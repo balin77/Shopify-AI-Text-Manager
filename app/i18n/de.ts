@@ -91,6 +91,7 @@ export const de = {
       undo: "Rückgängig",
       redo: "Wiederholen",
       clearFormat: "Formatierung entfernen",
+      linkPrompt: "URL eingeben:",
     },
     pagination: {
       of: "von",

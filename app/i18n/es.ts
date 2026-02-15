@@ -93,6 +93,7 @@ export const es: Translation = {
       undo: "Deshacer",
       redo: "Rehacer",
       clearFormat: "Limpiar formato",
+      linkPrompt: "Introducir URL:",
     },
     pagination: {
       of: "de",

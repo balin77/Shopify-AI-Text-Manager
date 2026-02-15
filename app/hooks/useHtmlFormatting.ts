@@ -1,4 +1,5 @@
 import { useCallback, useRef } from "react";
+import { useI18n } from "../contexts/I18nContext";
 
 export type HtmlFormattingCommand =
   | "bold"
@@ -208,6 +209,7 @@ function toggleList(range: Range, listTag: string, editor: HTMLElement): void {
 }
 
 export function useHtmlFormatting({ editorRef, onChange }: UseHtmlFormattingProps) {
+  const { t } = useI18n();
   const historyRef = useRef<{ stack: string[]; index: number }>({
     stack: [],
     index: -1,
@@ -317,11 +319,13 @@ export function useHtmlFormatting({ editorRef, onChange }: UseHtmlFormattingProp
         }
         case "link": {
           if (range && !range.collapsed) {
-            const url = prompt("URL eingeben:");
+            const url = prompt(t.products.formatting.linkPrompt);
             if (url) {
               const contents = range.extractContents();
               const anchor = document.createElement("a");
               anchor.href = url;
+              anchor.target = "_blank";
+              anchor.rel = "noopener";
               anchor.appendChild(contents);
               range.insertNode(anchor);
               const sel = window.getSelection();
