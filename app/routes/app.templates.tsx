@@ -6,7 +6,8 @@
  */
 
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
+import { json, type ActionFunctionArgs } from "@remix-run/node";
+import { createContentLoader } from "~/utils/loader-factory.server";
 import { useLoaderData, useFetcher, useRevalidator } from "@remix-run/react";
 import { Page } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
@@ -17,56 +18,67 @@ import { useUnifiedContentEditor } from "../hooks/useUnifiedContentEditor";
 import { TEMPLATES_CONFIG } from "../config/content-fields.config";
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
-import { AIService } from "../../src/services/ai.service";
+import { AIService, type AIProvider } from "../../src/services/ai.service";
 import { TranslationService } from "../../src/services/translation.service";
 import { decryptApiKey } from "../utils/encryption.server";
 import { getTaskExpirationDate } from "~/config/constants";
+import { getFormString, getFormJSON } from "~/utils/form-data.utils";
+import type { ShopLocale } from "~/types/content-editor.types";
 import { logger } from "~/utils/logger.server";
+
+/** Shape of individual items within ThemeContent.translatableContent JSON array */
+interface TranslatableField {
+  key: string;
+  value?: string;
+  digest?: string;
+}
+
+/** Shape of a cached theme translation record */
+interface ThemeTranslationRecord {
+  key: string;
+  value: string;
+  locale?: string;
+}
+
+/** Shape of a theme navigation item returned by the loader */
+interface ThemeNavItem {
+  id: string;
+  title: string;
+  groupName: string;
+  icon: string;
+  groupId: string;
+  role: string;
+  contentCount: number;
+  translatableContent: TranslatableField[];
+  translations: ThemeTranslationRecord[];
+}
 
 // ============================================================================
 // LOADER - Load navigation metadata (groups list)
 // ============================================================================
 
-export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { admin, session } = await authenticate.admin(request);
+export const loader = createContentLoader({
+  logPrefix: "TEMPLATES",
+  resourceType: null, // Templates use their own ThemeTranslation table
+  itemsKey: "themes",
 
-  try {
-    // Load shopLocales
-    const localesResponse = await admin.graphql(
-      `#graphql
-        query getShopLocales {
-          shopLocales {
-            locale
-            name
-            primary
-            published
-          }
-        }`
-    );
-
-    const localesData = await localesResponse.json();
-    const shopLocales = localesData.data?.shopLocales || [];
-    const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "en";
-
+  async loadData(ctx) {
     // LAZY LOADING: Only load navigation metadata, not the full content
-    const { db } = await import("../db.server");
-
-    // Load groups with translatableContent to count actual translatable fields
-    const allGroupRows = await db.themeContent.findMany({
-      where: { shop: session.shop },
+    const allGroupRows = await ctx.db.themeContent.findMany({
+      where: { shop: ctx.session.shop },
       select: {
         groupId: true,
         groupName: true,
         groupIcon: true,
         translatableContent: true,
-      }
+      },
     });
 
     // Aggregate by groupId, counting unique translatable field keys (deduplicated)
     const groupMap = new Map<string, { groupName: string; groupIcon: string; uniqueKeys: Set<string> }>();
     for (const row of allGroupRows) {
       const existing = groupMap.get(row.groupId);
-      const items = Array.isArray(row.translatableContent) ? (row.translatableContent as any[]) : [];
+      const items = Array.isArray(row.translatableContent) ? (row.translatableContent as TranslatableField[]) : [];
       if (existing) {
         for (const item of items) {
           if (item.key) existing.uniqueKeys.add(item.key);
@@ -92,32 +104,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         groupName: group.groupName,
         icon: group.groupIcon,
         groupId: groupId,
-        role: 'THEME_GROUP',
+        role: "THEME_GROUP",
         contentCount: group.uniqueKeys.size,
-        // Required for UnifiedContentEditor compatibility
-        translatableContent: [], // Will be loaded on demand
-        translations: [],
+        translatableContent: [] as TranslatableField[],
+        translations: [] as ThemeTranslationRecord[],
       }))
       .sort((a, b) => a.title.localeCompare(b.title));
 
-    return json({
-      themes,
-      shop: session.shop,
-      shopLocales,
-      primaryLocale,
-      error: null
-    });
-  } catch (error: any) {
-    logger.error("[TEMPLATES-LOADER] Error", { context: "Templates", error: error.message, stack: error.stack });
-    return json({
-      themes: [],
-      shop: session.shop,
-      shopLocales: [],
-      primaryLocale: "en",
-      error: error.message
-    }, { status: 500 });
-  }
-};
+    return { items: themes, ids: [] };
+  },
+});
 
 // ============================================================================
 // ACTION - Handle content updates
@@ -126,8 +122,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   const formData = await request.formData();
-  const actionType = formData.get("action") as string;
-  const itemId = formData.get("itemId") as string;
+  const actionType = getFormString(formData, "action");
+  const itemId = getFormString(formData, "itemId");
 
   // Extract groupId from itemId (format: group_xxx)
   const groupId = itemId?.replace("group_", "");
@@ -156,7 +152,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   try {
     switch (actionType) {
       case "loadTranslations": {
-        const locale = formData.get("locale") as string;
+        const locale = getFormString(formData, "locale");
 
         const translations = await db.themeTranslation.findMany({
           where: {
@@ -174,9 +170,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
 
       case "generateAIText": {
-        const fieldType = formData.get("fieldType") as string;
-        const currentValue = formData.get("currentValue") as string;
-        const mainLanguage = formData.get("mainLanguage") as string;
+        const fieldType = getFormString(formData, "fieldType");
+        const currentValue = getFormString(formData, "currentValue");
+        const mainLanguage = getFormString(formData, "mainLanguage");
 
         // Create task entry
         const task = await db.task.create({
@@ -205,7 +201,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           });
 
           const aiService = new AIService(
-            settings?.preferredProvider as any || 'huggingface',
+            (settings?.preferredProvider as AIProvider) || 'huggingface',
             {
               huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
               geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
@@ -245,25 +241,26 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
             generatedContent,
             fieldType
           });
-        } catch (error: any) {
+        } catch (error: unknown) {
+          const msg = error instanceof Error ? error.message : String(error);
           // Update task to failed
           await db.task.update({
             where: { id: task.id },
             data: {
               status: "failed",
               completedAt: new Date(),
-              error: (error.message || String(error)).substring(0, 1000),
+              error: msg.substring(0, 1000),
             },
           });
-          return json({ success: false, error: error.message }, { status: 500 });
+          return json({ success: false, error: msg }, { status: 500 });
         }
       }
 
       case "translateField": {
-        const fieldType = formData.get("fieldType") as string;
-        const sourceText = formData.get("sourceText") as string;
-        const targetLocale = formData.get("targetLocale") as string;
-        const primaryLocaleFromForm = formData.get("primaryLocale") as string;
+        const fieldType = getFormString(formData, "fieldType");
+        const sourceText = getFormString(formData, "sourceText");
+        const targetLocale = getFormString(formData, "targetLocale");
+        const primaryLocaleFromForm = getFormString(formData, "primaryLocale");
 
         if (!sourceText) {
           return json({
@@ -302,7 +299,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
           const primaryLocale = primaryLocaleFromForm || "en";
 
           const aiService = new AIService(
-            settings?.preferredProvider as any || 'huggingface',
+            (settings?.preferredProvider as AIProvider) || 'huggingface',
             {
               huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
               geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
@@ -363,25 +360,26 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
             fieldType,
             targetLocale
           });
-        } catch (error: any) {
+        } catch (error: unknown) {
+          const msg = error instanceof Error ? error.message : String(error);
           // Update task to failed
           await db.task.update({
             where: { id: task.id },
             data: {
               status: "failed",
               completedAt: new Date(),
-              error: (error.message || String(error)).substring(0, 1000),
+              error: msg.substring(0, 1000),
             },
           });
-          return json({ success: false, error: error.message }, { status: 500 });
+          return json({ success: false, error: msg }, { status: 500 });
         }
       }
 
       case "translateFieldToAllLocales": {
-        const fieldType = formData.get("fieldType") as string;
-        const sourceText = formData.get("sourceText") as string;
-        const targetLocalesJson = formData.get("targetLocales") as string;
-        const primaryLocaleFromForm = formData.get("primaryLocale") as string;
+        const fieldType = getFormString(formData, "fieldType");
+        const sourceText = getFormString(formData, "sourceText");
+        const targetLocalesJson = getFormString(formData, "targetLocales");
+        const primaryLocaleFromForm = getFormString(formData, "primaryLocale");
 
         if (!sourceText) {
           return json({
@@ -390,7 +388,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
           }, { status: 400 });
         }
 
-        const targetLocales = targetLocalesJson ? JSON.parse(targetLocalesJson) : [];
+        const targetLocales: string[] = targetLocalesJson ? JSON.parse(targetLocalesJson) : [];
         if (targetLocales.length === 0) {
           return json({
             success: false,
@@ -427,7 +425,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
           const primaryLocale = primaryLocaleFromForm || "en";
 
           const aiService = new AIService(
-            settings?.preferredProvider as any || 'huggingface',
+            (settings?.preferredProvider as AIProvider) || 'huggingface',
             {
               huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
               geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
@@ -485,8 +483,8 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
                 where: { id: task.id },
                 data: { progress },
               });
-            } catch (error: any) {
-              logger.error("Error translating field to locale", { context: "Templates", fieldType, locale, error: error?.message });
+            } catch (error: unknown) {
+              logger.error("Error translating field to locale", { context: "Templates", fieldType, locale, error: error instanceof Error ? error.message : String(error) });
               translations[locale] = sourceText; // Fallback to original
             }
           }
@@ -507,31 +505,32 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
             translations,
             fieldType
           });
-        } catch (error: any) {
+        } catch (error: unknown) {
+          const msg = error instanceof Error ? error.message : String(error);
           // Update task to failed
           await db.task.update({
             where: { id: task.id },
             data: {
               status: "failed",
               completedAt: new Date(),
-              error: (error.message || String(error)).substring(0, 1000),
+              error: msg.substring(0, 1000),
             },
           });
-          return json({ success: false, error: error.message }, { status: 500 });
+          return json({ success: false, error: msg }, { status: 500 });
         }
       }
 
       case "translateAll":
       case "translateAllForLocale": {
-        const targetLocalesJson = formData.get("targetLocales") as string;
-        const targetLocale = formData.get("targetLocale") as string;
-        const targetLocales = targetLocalesJson ? JSON.parse(targetLocalesJson) : [targetLocale];
+        const targetLocalesJson = getFormString(formData, "targetLocales");
+        const targetLocale = getFormString(formData, "targetLocale");
+        const targetLocales: string[] = targetLocalesJson ? JSON.parse(targetLocalesJson) : [targetLocale];
 
         // Get all translatable content
-        const allContent = themeGroups.flatMap((group) => group.translatableContent as any[]);
+        const allContent = themeGroups.flatMap((group) => group.translatableContent as TranslatableField[]);
 
         // Deduplicate
-        const uniqueContent = new Map<string, any>();
+        const uniqueContent = new Map<string, TranslatableField>();
         for (const item of allContent) {
           if (!uniqueContent.has(item.key) && item.value) {
             uniqueContent.set(item.key, item);
@@ -564,7 +563,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
           });
 
           const aiService = new AIService(
-            settings?.preferredProvider as any || 'huggingface',
+            (settings?.preferredProvider as AIProvider) || 'huggingface',
             {
               huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
               geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
@@ -577,7 +576,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
             task.id
           );
 
-          const primaryLocale = formData.get("primaryLocale") as string || "en";
+          const primaryLocale = getFormString(formData, "primaryLocale") || "en";
 
           // Translate to all target locales
           const translations: Record<string, Record<string, string>> = {};
@@ -628,9 +627,9 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
                   where: { id: task.id },
                   data: { progress },
                 });
-              } catch (error: any) {
-                logger.error("Error translating field", { context: "Templates", key, locale, error: error?.message });
-                translations[locale][key] = item.value;
+              } catch (error: unknown) {
+                logger.error("Error translating field", { context: "Templates", key, locale, error: error instanceof Error ? error.message : String(error) });
+                translations[locale][key] = item.value || "";
               }
             }
           }
@@ -658,27 +657,27 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
             success: true,
             translations
           });
-        } catch (error: any) {
+        } catch (error: unknown) {
+          const msg = error instanceof Error ? error.message : String(error);
           // Update task to failed
           await db.task.update({
             where: { id: task.id },
             data: {
               status: "failed",
               completedAt: new Date(),
-              error: (error.message || String(error)).substring(0, 1000),
+              error: msg.substring(0, 1000),
             },
           });
-          return json({ success: false, error: error.message }, { status: 500 });
+          return json({ success: false, error: msg }, { status: 500 });
         }
       }
 
       case "updateContent": {
-        const locale = formData.get("locale") as string;
-        const primaryLocale = formData.get("primaryLocale") as string;
+        const locale = getFormString(formData, "locale");
+        const primaryLocale = getFormString(formData, "primaryLocale");
 
         // Parse changedFields if present (for translation deletion when primary locale changes)
-        const changedFieldsStr = formData.get("changedFields") as string;
-        const changedFields: string[] = changedFieldsStr ? JSON.parse(changedFieldsStr) : [];
+        const changedFields: string[] = getFormJSON<string[]>(formData, "changedFields") || [];
 
         // Debug: Log all form data keys
         const allFormDataKeys: string[] = [];
@@ -691,7 +690,6 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
           locale,
           primaryLocale,
           isPrimaryLocale: locale === primaryLocale,
-          changedFieldsStr,
           changedFields
         });
 
@@ -699,13 +697,13 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
         const updatedFields: Record<string, string> = {};
 
         // Get all translatable content keys
-        const allContent = themeGroups.flatMap((group) => group.translatableContent as any[]);
+        const allContent = themeGroups.flatMap((group) => group.translatableContent as TranslatableField[]);
         const uniqueKeys = new Set(allContent.map((item) => item.key));
 
         for (const key of uniqueKeys) {
           const value = formData.get(key);
-          if (value !== null) {
-            updatedFields[key] = value as string;
+          if (typeof value === "string") {
+            updatedFields[key] = value;
           }
         }
 
@@ -716,7 +714,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
         if (locale === primaryLocale) {
           // Update primary locale: Update translatableContent in ThemeContent
           for (const group of themeGroups) {
-            const content = group.translatableContent as any[];
+            const content = group.translatableContent as TranslatableField[];
             let hasChanges = false;
 
             for (const item of content) {
@@ -798,9 +796,11 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
       default:
         return json({ success: false, error: "Unknown action" }, { status: 400 });
     }
-  } catch (error: any) {
-    logger.error("[TEMPLATES-ACTION] Error", { context: "Templates", error: error.message, stack: error.stack });
-    return json({ success: false, error: error.message }, { status: 500 });
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+    const stack = error instanceof Error ? error.stack : undefined;
+    logger.error("[TEMPLATES-ACTION] Error", { context: "Templates", error: msg, stack });
+    return json({ success: false, error: msg }, { status: 500 });
   }
 };
 
@@ -816,11 +816,11 @@ export default function TemplatesPage() {
   const { showInfoBox } = useInfoBox();
 
   // State for lazy-loaded theme data
-  const [loadedThemes, setLoadedThemes] = useState<Record<string, any>>({});
-  const [loadedTranslations, setLoadedTranslations] = useState<Record<string, Record<string, any[]>>>({});
+  const [loadedThemes, setLoadedThemes] = useState<Record<string, { translatableContent?: TranslatableField[]; pagination?: { page: number; limit: number; totalCount: number; totalPages: number } }>>({});
+  const [loadedTranslations, setLoadedTranslations] = useState<Record<string, Record<string, ThemeTranslationRecord[]>>>({});
   const [isLoading, setIsLoading] = useState(false);
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
-  const editorRef = useRef<any>(null);
+  const editorRef = useRef<HTMLDivElement>(null);
 
   // Track previous language and groupId to prevent re-loading values on every render
   const previousLanguageRef = useRef<string | null>(null);
@@ -845,15 +845,15 @@ export default function TemplatesPage() {
 
   // Transform themes to items with loaded content and translations
   const items = useMemo(() => {
-    return themes.map((theme: any) => {
+    return themes.map((theme: ThemeNavItem) => {
       const loadedData = loadedThemes[theme.groupId];
       const themeTranslations = loadedTranslations[theme.groupId] || {};
 
       if (loadedData) {
         // Merge all translations from different locales
-        const allTranslations: any[] = [];
+        const allTranslations: ThemeTranslationRecord[] = [];
         for (const [locale, translations] of Object.entries(themeTranslations)) {
-          for (const translation of translations as any[]) {
+          for (const translation of translations) {
             allTranslations.push({
               key: translation.key,
               value: translation.value,
@@ -874,19 +874,19 @@ export default function TemplatesPage() {
 
   // Preload all foreign language translations for a group (parallel loading)
   const preloadAllTranslations = useCallback(async (groupId: string) => {
-    const foreignLocales = loaderShopLocales.filter((l: any) => !l.primary);
+    const foreignLocales = loaderShopLocales.filter((l: { primary: boolean }) => !l.primary);
     if (foreignLocales.length === 0) return;
 
     // Use ref to check already loaded locales (avoids stale closure)
     const currentLoaded = loadedTranslationsRef.current;
     const localesToLoad = foreignLocales.filter(
-      (l: any) => !currentLoaded[groupId]?.[l.locale]
+      (l: { locale: string }) => !currentLoaded[groupId]?.[l.locale]
     );
     if (localesToLoad.length === 0) return;
 
     // Load all translations in parallel using API route
     const results = await Promise.allSettled(
-      localesToLoad.map(async (locale: any) => {
+      localesToLoad.map(async (locale: { locale: string }) => {
         const formData = new FormData();
         formData.append("action", "loadTranslations");
         formData.append("locale", locale.locale);
@@ -906,7 +906,7 @@ export default function TemplatesPage() {
     );
 
     // Update state with all loaded translations
-    const newTranslations: Record<string, any[]> = {};
+    const newTranslations: Record<string, ThemeTranslationRecord[]> = {};
     results.forEach((result) => {
       if (result.status === "fulfilled" && result.value.translations) {
         newTranslations[result.value.locale] = result.value.translations;
@@ -1026,7 +1026,7 @@ export default function TemplatesPage() {
   // Auto-load first item (data loading only)
   useEffect(() => {
     if (themes.length > 0 && !selectedGroupId) {
-      const firstTheme = themes[0] as any;
+      const firstTheme = themes[0] as ThemeNavItem | undefined;
       if (firstTheme) {
         setSelectedGroupId(firstTheme.groupId);
         loadThemeData(firstTheme.groupId);
@@ -1047,7 +1047,7 @@ export default function TemplatesPage() {
         const localeCache = [...(groupCache[locale] || [])];
 
         // Find and update or add the translation
-        const existingIndex = localeCache.findIndex((t: any) => t.key === fieldKey);
+        const existingIndex = localeCache.findIndex((tr) => tr.key === fieldKey);
         if (existingIndex >= 0) {
           localeCache[existingIndex] = { ...localeCache[existingIndex], value: translatedValue };
         } else {
@@ -1084,7 +1084,7 @@ export default function TemplatesPage() {
 
   // Override item select handler to load data first
   editor.handlers.handleItemSelect = (itemId: string) => {
-    const theme = themes.find((t: any) => t.id === itemId);
+    const theme = themes.find((t: ThemeNavItem) => t.id === itemId);
     if (theme) {
       setSelectedGroupId(theme.groupId);
 
@@ -1147,7 +1147,7 @@ export default function TemplatesPage() {
   const hasSelectedInitialItem = useRef(false);
   useEffect(() => {
     if (themes.length > 0 && selectedGroupId && loadedThemes[selectedGroupId] && !hasSelectedInitialItem.current) {
-      const theme = themes.find((t: any) => t.groupId === selectedGroupId);
+      const theme = themes.find((t: ThemeNavItem) => t.groupId === selectedGroupId);
       if (theme && originalHandleItemSelectRef.current) {
         hasSelectedInitialItem.current = true;
         originalHandleItemSelectRef.current(theme.id);
@@ -1177,14 +1177,14 @@ export default function TemplatesPage() {
 
     if (currentLanguage === primaryLocale) {
       // Primary locale: values come from translatableContent
-      themeData.translatableContent.forEach((item: any) => {
+      themeData.translatableContent.forEach((item: TranslatableField) => {
         newValues[item.key] = item.value || "";
       });
     } else {
       // Foreign locale: values come from cached translations
       const cachedTranslations = loadedTranslations[selectedGroupId]?.[currentLanguage];
-      themeData.translatableContent.forEach((item: any) => {
-        const translation = cachedTranslations?.find((t: any) => t.key === item.key);
+      themeData.translatableContent.forEach((item: TranslatableField) => {
+        const translation = cachedTranslations?.find((tr) => tr.key === item.key);
         newValues[item.key] = translation?.value || "";
       });
     }
@@ -1219,8 +1219,8 @@ export default function TemplatesPage() {
       const themeData = loadedThemes[selectedGroupId];
       if (themeData?.translatableContent) {
         const newValues: Record<string, string> = {};
-        themeData.translatableContent.forEach((item: any) => {
-          const translation = cachedTranslations.find((t: any) => t.key === item.key);
+        themeData.translatableContent.forEach((item: TranslatableField) => {
+          const translation = cachedTranslations.find((tr) => tr.key === item.key);
           const value = translation?.value || "";
           newValues[item.key] = value;
           editorHelpersRef.current.setEditableValue(item.key, value);
@@ -1236,7 +1236,7 @@ export default function TemplatesPage() {
 
   // Handle translation fetcher response
   useEffect(() => {
-    const data = translationFetcher.data as any;
+    const data = translationFetcher.data as { success?: boolean; translations?: ThemeTranslationRecord[]; locale?: string } | undefined;
     if (!data?.success || !data?.translations || !data?.locale) return;
 
     const { translations, locale } = data;
@@ -1257,8 +1257,8 @@ export default function TemplatesPage() {
         if (themeData?.translatableContent) {
           // Build new values object with translations
           const newValues: Record<string, string> = {};
-          themeData.translatableContent.forEach((item: any) => {
-            const translation = translations.find((t: any) => t.key === item.key);
+          themeData.translatableContent.forEach((item: TranslatableField) => {
+            const translation = translations.find((tr) => tr.key === item.key);
             newValues[item.key] = translation?.value || "";
           });
 
@@ -1275,7 +1275,7 @@ export default function TemplatesPage() {
   }, [translationFetcher.data, selectedGroupId, editor.state.currentLanguage, loadedThemes]);
 
   // Track processed save responses to prevent duplicate processing
-  const processedSaveRef = useRef<any>(null);
+  const processedSaveRef = useRef<unknown>(null);
 
   // Update caches after successful save
   useEffect(() => {
@@ -1299,7 +1299,7 @@ export default function TemplatesPage() {
         // PRIMARY LOCALE SAVE: Update loadedThemes and invalidate translation cache
         if (themeData.translatableContent && Array.isArray(themeData.translatableContent)) {
           // Create updated translatableContent with new values
-          const updatedContent = themeData.translatableContent.map((item: any) => {
+          const updatedContent = themeData.translatableContent.map((item: TranslatableField) => {
             if (currentValues[item.key] !== undefined) {
               return { ...item, value: currentValues[item.key] };
             }
@@ -1332,7 +1332,7 @@ export default function TemplatesPage() {
           // Update or add translations for changed keys
           const updatedCache = [...localeCache];
           Object.entries(currentValues).forEach(([key, value]) => {
-            const existingIndex = updatedCache.findIndex((t: any) => t.key === key);
+            const existingIndex = updatedCache.findIndex((tr) => tr.key === key);
             if (existingIndex >= 0) {
               updatedCache[existingIndex] = { ...updatedCache[existingIndex], value };
             } else if (value) {
@@ -1354,7 +1354,7 @@ export default function TemplatesPage() {
   }, [fetcher.data, selectedGroupId, loadedThemes, editor.state.editableValues, editor.state.currentLanguage, primaryLocale]);
 
   // Track processed translation responses to prevent duplicate cache updates
-  const processedTranslationRef = useRef<any>(null);
+  const processedTranslationRef = useRef<unknown>(null);
 
   // Update loadedTranslations cache after translateFieldToAllLocales completes
   useEffect(() => {
@@ -1382,7 +1382,7 @@ export default function TemplatesPage() {
         const localeCache = [...(groupCache[locale] || [])];
 
         // Find and update or add the translation
-        const existingIndex = localeCache.findIndex((t: any) => t.key === fieldType);
+        const existingIndex = localeCache.findIndex((tr) => tr.key === fieldType);
         if (existingIndex >= 0) {
           localeCache[existingIndex] = { ...localeCache[existingIndex], value: translatedValue };
         } else {
@@ -1402,8 +1402,9 @@ export default function TemplatesPage() {
   useEffect(() => {
     if (fetcher.data && typeof fetcher.data === 'object') {
       if ('error' in fetcher.data && !fetcher.data.success) {
+        const errorData = fetcher.data as { error?: string; success: boolean };
         showInfoBox(
-          (fetcher.data as any).error,
+          errorData.error || "Unknown error",
           "critical",
           t.content?.error || "Error"
         );

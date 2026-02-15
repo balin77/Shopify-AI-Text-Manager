@@ -11,7 +11,7 @@
  * - Minimal code (~150 lines vs 779 lines)
  */
 
-import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
+import { type ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher, useRevalidator, useNavigation } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
@@ -30,44 +30,35 @@ import type { ContentItem } from "../types/content-editor.types";
 import { logger } from "~/utils/logger.server";
 import { wasRecentlySaved } from "~/utils/translation-timing";
 import { measurePageLoad } from "~/utils/performance.client";
+import { createContentLoader } from "~/utils/loader-factory.server";
 
 // ============================================================================
-// LOADER - Load data from database
+// LOADER - Paginated upsert sync + load from database
 // ============================================================================
 
-export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { admin, session } = await authenticate.admin(request);
+export const loader = createContentLoader({
+  logPrefix: "PRODUCTS",
+  resourceType: "Product",
+  itemsKey: "products",
+  errorFallback: { plan: "basic", maxProducts: 100, productCount: 0 },
 
-  logger.debug("[PRODUCTS-LOADER] Loading products from DATABASE for shop", { context: "Products", shop: session.shop });
-
-  try {
-    const { db } = await import("../db.server");
+  async loadData(ctx) {
     const { getPlanLimits } = await import("../utils/planUtils");
-    const { loadAISettingsForValidation } = await import("../utils/loader-helpers");
 
     // Load plan settings
-    const settings = await db.aISettings.findUnique({
-      where: { shop: session.shop },
+    const settings = await ctx.db.aISettings.findUnique({
+      where: { shop: ctx.session.shop },
     });
     const plan = (settings?.subscriptionPlan || "free") as "free" | "basic" | "pro" | "max";
     const planLimits = getPlanLimits(plan);
 
-    logger.debug("[PRODUCTS-LOADER] Current plan and limits", { context: "Products", plan, maxProducts: planLimits.maxProducts });
-
-    // 1. Fetch shop locales (with caching)
-    const { getCachedShopLocales } = await import("../utils/shop-locales-cache.server");
-    const shopLocales = await getCachedShopLocales(admin, session.shop);
-    const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "en";
-
-    logger.debug("[PRODUCTS-LOADER] Locales loaded", { context: "Products", primaryLocale, availableLocales: shopLocales.length });
-
-    // 2. Incremental sync: fetch product IDs from Shopify (paginated), sync only missing ones
+    // Paginated fetch from Shopify
     const shopifyProducts: any[] = [];
     let hasNextPage = true;
     let cursor: string | null = null;
 
     while (hasNextPage) {
-      const shopifyResponse = await admin.graphql(
+      const shopifyResponse = await ctx.admin.graphql(
         `#graphql
           query getProductIds($first: Int!, $after: String) {
             products(first: $first, after: $after) {
@@ -98,7 +89,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
               }
             }
           }`,
-        { variables: { first: 250, after: cursor } }
+        { variables: { first: 250, after: cursor } },
       );
       const shopifyData: any = await shopifyResponse.json();
       const page: any = shopifyData.data?.products;
@@ -110,16 +101,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
     const shopifyProductIds = new Set(shopifyProducts.map((p: any) => p.id));
 
-    const localProducts = await db.product.findMany({
-      where: { shop: session.shop },
+    const localProducts = await ctx.db.product.findMany({
+      where: { shop: ctx.session.shop },
       select: { id: true },
     });
-    const localProductIds = new Set(localProducts.map(p => p.id));
+    const localProductIds = new Set(localProducts.map((p: any) => p.id));
 
-    // Sync ALL products from Shopify (create new + update existing)
-    // This ensures fields like productType, title, status etc. stay in sync with Shopify
+    // Upsert ALL products (create new + update existing)
     const newProductIds = new Set(
-      shopifyProducts.filter((p: any) => !localProductIds.has(p.id)).map((p: any) => p.id)
+      shopifyProducts.filter((p: any) => !localProductIds.has(p.id)).map((p: any) => p.id),
     );
 
     if (newProductIds.size > 0) {
@@ -127,10 +117,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     }
 
     for (const product of shopifyProducts) {
-      await db.product.upsert({
-        where: { shop_id: { shop: session.shop, id: product.id } },
+      await ctx.db.product.upsert({
+        where: { shop_id: { shop: ctx.session.shop, id: product.id } },
         create: {
-          id: product.id, shop: session.shop, title: product.title,
+          id: product.id, shop: ctx.session.shop, title: product.title,
           descriptionHtml: product.descriptionHtml || "", handle: product.handle,
           status: product.status, productType: product.productType || null,
           seoTitle: product.seo?.title || null, seoDescription: product.seo?.description || null,
@@ -155,8 +145,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
           ?.filter((edge: any) => edge.node.id && edge.node.image?.url)
           .map((edge: any) => edge.node) || [];
         if (mediaImages.length > 0) {
-          await db.productImage.deleteMany({ where: { productId: product.id } });
-          await db.productImage.createMany({
+          await ctx.db.productImage.deleteMany({ where: { productId: product.id } });
+          await ctx.db.productImage.createMany({
             data: mediaImages.map((media: any, index: number) => ({
               productId: product.id, url: media.image.url,
               altText: media.alt || null, mediaId: media.id, position: index,
@@ -167,103 +157,29 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     }
 
     // Remove deleted products
-    const removedIds = [...localProductIds].filter(id => !shopifyProductIds.has(id));
+    const removedIds = [...localProductIds].filter((id) => !shopifyProductIds.has(id));
     if (removedIds.length > 0) {
       logger.info(`[PRODUCTS-LOADER] Removing ${removedIds.length} deleted product(s) from DB`);
-      await db.productImage.deleteMany({ where: { productId: { in: removedIds } } });
-      await db.product.deleteMany({ where: { shop: session.shop, id: { in: removedIds } } });
-      await db.contentTranslation.deleteMany({
-        where: { resourceType: 'Product', resourceId: { in: removedIds } },
+      await ctx.db.productImage.deleteMany({ where: { productId: { in: removedIds } } });
+      await ctx.db.product.deleteMany({ where: { shop: ctx.session.shop, id: { in: removedIds } } });
+      await ctx.db.contentTranslation.deleteMany({
+        where: { resourceType: "Product", resourceId: { in: removedIds } },
       });
     }
 
-    // 3. Fetch products from DATABASE
-    const [initialDbProducts, aiSettings] = await Promise.all([
-      db.product.findMany({
-        where: {
-          shop: session.shop,
-        },
-        include: {
-          images: planLimits.cacheEnabled.productImages ? {
-            include: {
-              altTextTranslations: true,
-            },
-            orderBy: {
-              position: 'asc', // CRITICAL: Must match order used in save action
-            },
-          } : false, // Don't load images if not cached in free plan
-          // NOTE: Options excluded for now
-        },
-        orderBy: {
-          title: "asc",
-        },
-      }),
-      loadAISettingsForValidation(db, session.shop),
-    ]);
-
-    logger.debug("[PRODUCTS-LOADER] Loaded products from database", { context: "Products", count: initialDbProducts.length });
-
-    // Log sample of productTypes to debug NULL issue
-    const productsWithNullType = initialDbProducts.filter(p => p.productType === null || p.productType === undefined);
-    if (productsWithNullType.length > 0) {
-      logger.warn("[PRODUCTS-LOADER] ⚠️ Products with NULL productType found in DB:", {
-        context: "Products",
-        count: productsWithNullType.length,
-        examples: productsWithNullType.slice(0, 3).map(p => ({
-          id: p.id,
-          title: p.title,
-          productType: p.productType,
-          lastSyncedAt: p.lastSyncedAt,
-        })),
-      });
-    }
-
-    // 3. Fetch translations only for products that belong to this shop
-    const productIds = initialDbProducts.map(p => p.id);
-    const allTranslations = productIds.length > 0
-      ? await db.contentTranslation.findMany({
-          where: {
-            resourceType: 'Product',
-            resourceId: { in: productIds }
-          }
-        })
-      : [];
-
-    logger.debug("[PRODUCTS-LOADER] Loaded translations from database", {
-      context: "Products",
-      totalTranslations: allTranslations.length,
-      uniqueProducts: new Set(allTranslations.map(t => t.resourceId)).size,
+    // Fetch products from DATABASE
+    const dbProducts = await ctx.db.product.findMany({
+      where: { shop: ctx.session.shop },
+      include: {
+        images: planLimits.cacheEnabled.productImages
+          ? { include: { altTextTranslations: true }, orderBy: { position: "asc" } }
+          : false,
+      },
+      orderBy: { title: "asc" },
     });
 
-    // Use initialDbProducts directly - sync is now done via separate API call
-    const dbProducts = initialDbProducts;
-
-    // Group translations by resourceId (unified pattern)
-    const translationsByResource = allTranslations.reduce((acc: Record<string, any[]>, trans) => {
-      if (!acc[trans.resourceId]) {
-        acc[trans.resourceId] = [];
-      }
-      acc[trans.resourceId].push(trans);
-      return acc;
-    }, {});
-
-    // Log products WITHOUT translations
-    const productsWithoutTranslations = dbProducts.filter(p => !translationsByResource[p.id] || translationsByResource[p.id].length === 0);
-    if (productsWithoutTranslations.length > 0) {
-      logger.warn("[PRODUCTS-LOADER] ⚠️ Products without translations found:", {
-        context: "Products",
-        count: productsWithoutTranslations.length,
-        examples: productsWithoutTranslations.slice(0, 3).map(p => ({
-          id: p.id,
-          title: p.title,
-          productType: p.productType,
-          lastSyncedAt: p.lastSyncedAt,
-        })),
-      });
-    }
-
-    // 3. Transform to frontend format (unified pattern)
-    const products = dbProducts.map((p) => ({
+    // Transform to frontend format
+    const products = dbProducts.map((p: any) => ({
       id: p.id,
       title: p.title,
       descriptionHtml: p.descriptionHtml || "",
@@ -274,77 +190,36 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         url: p.featuredImageUrl || "",
         altText: p.featuredImageAlt || undefined,
       },
-      images: p.images ? p.images.map((img: any) => ({
-        url: img.url,
-        altText: img.altText,
-        altTextTranslations: img.altTextTranslations ? img.altTextTranslations.map((t: any) => ({
-          locale: t.locale,
-          altText: t.altText,
-        })) : [],
-      })) : [],
+      images: p.images
+        ? p.images.map((img: any) => ({
+            url: img.url,
+            altText: img.altText,
+            altTextTranslations: img.altTextTranslations
+              ? img.altTextTranslations.map((t: any) => ({ locale: t.locale, altText: t.altText }))
+              : [],
+          }))
+        : [],
       seo: {
         title: p.seoTitle || "",
         description: p.seoDescription || "",
       },
-      // IMPORTANT: Translations loaded from ContentTranslation table (unified)
-      translations: translationsByResource[p.id] || [],
     }));
 
-    logger.debug("[PRODUCTS-LOADER] Total translations loaded", { context: "Products", count: products.reduce((sum, p) => sum + p.translations.length, 0) });
+    return {
+      items: products,
+      ids: dbProducts.map((p: any) => p.id),
+    };
+  },
 
-    // Debug: Log a sample product to see the full data structure
-    if (products.length > 0) {
-      const sampleProduct = products[0];
-      logger.debug("[PRODUCTS-LOADER] Sample product data:", {
-        context: "Products",
-        id: sampleProduct.id,
-        title: sampleProduct.title,
-        productType: sampleProduct.productType === "" ? "EMPTY_STRING" : sampleProduct.productType,
-        productTypeFromDB: dbProducts[0].productType === null ? "NULL_IN_DB" : dbProducts[0].productType,
-        translationCount: sampleProduct.translations.length,
-        hasImages: sampleProduct.images.length > 0,
-      });
-    }
-
-    // Log products with null alt-texts to debug clearing issue
-    const productsWithNullAlt = products.filter((p: any) =>
-      p.images?.some((img: any) => img.altText === null)
-    );
-    if (productsWithNullAlt.length > 0) {
-      logger.debug("[LOADER] Products with null alt-texts found", { context: "Products", count: productsWithNullAlt.length });
-    } else {
-      logger.debug("[LOADER] No products with null alt-texts found", { context: "Products" });
-    }
-
-    return json({
-      products,
-      shop: session.shop,
-      shopLocales,
-      primaryLocale,
-      error: null,
-      plan,
-      maxProducts: planLimits.maxProducts,
-      productCount: dbProducts.length,
-      aiSettings,
-    });
-  } catch (error: any) {
-    logger.error("[PRODUCTS-LOADER] Error", { context: "Products", error: error.message, stack: error.stack });
-    return json(
-      {
-        products: [],
-        shop: session.shop,
-        shopLocales: [],
-        primaryLocale: "en",
-        error: error.message,
-        plan: "basic",
-        maxProducts: 100,
-        productCount: 0,
-        aiSettings: null,
-      },
-      { status: 500 }
-    );
-  }
-};
+  async extraData(ctx) {
+    const { getPlanLimits } = await import("../utils/planUtils");
+    const settings = await ctx.db.aISettings.findUnique({ where: { shop: ctx.session.shop } });
+    const plan = (settings?.subscriptionPlan || "free") as "free" | "basic" | "pro" | "max";
+    const planLimits = getPlanLimits(plan);
+    const productCount = await ctx.db.product.count({ where: { shop: ctx.session.shop } });
+    return { plan, maxProducts: planLimits.maxProducts, productCount };
+  },
+});
 
 // ============================================================================
 // ACTION - Handle all actions via unified handler
@@ -483,7 +358,7 @@ export default function ProductsPage() {
     if (!isInitialLoad && products.length >= 0) {
       measurePageLoad('ProductsPage', {
         productCount: products.length,
-        hasImages: products.some(p => p?.images && p.images.length > 0),
+        hasImages: products.some((p: any) => p?.images && p.images.length > 0),
       });
     }
   }, [isInitialLoad, products]);

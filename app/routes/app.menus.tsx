@@ -6,7 +6,6 @@
  */
 
 import { useState, useEffect, type ReactElement } from "react";
-import { json, type LoaderFunctionArgs } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
 import {
   Page,
@@ -19,118 +18,58 @@ import {
   Banner,
   TextField,
 } from "@shopify/polaris";
-import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
 import { ContentTypeNavigation } from "../components/ContentTypeNavigation";
 import { useI18n } from "../contexts/I18nContext";
 import { useNavigationHeight } from "../contexts/NavigationHeightContext";
 import { CONTENT_MAX_HEIGHT } from "../constants/layout";
-import { logger } from "~/utils/logger.server";
+import { createContentLoader, incrementalSync } from "~/utils/loader-factory.server";
 
-export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { admin, session } = await authenticate.admin(request);
+// ============================================================================
+// LOADER - Incremental sync + load from database (read-only, no translations)
+// ============================================================================
 
-  try {
-    // Load shopLocales
-    const localesResponse = await admin.graphql(
-      `#graphql
-        query getShopLocales {
-          shopLocales {
-            locale
-            name
-            primary
-            published
-          }
-        }`
-    );
+export const loader = createContentLoader({
+  logPrefix: "MENUS",
+  resourceType: null, // Menus don't have translations
+  itemsKey: "menus",
 
-    const localesData = await localesResponse.json();
-    const shopLocales = localesData.data?.shopLocales || [];
-    const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "en";
-
-    // Incremental sync: fetch menu IDs from Shopify, sync only missing ones
-    const { db } = await import("../db.server");
+  async loadData(ctx) {
     const { ContentSyncService } = await import("../services/content-sync.service");
-    const syncService = new ContentSyncService(admin, session.shop);
+    const syncService = new ContentSyncService(ctx.admin, ctx.session.shop);
 
-    const menusResponse = await admin.graphql(
+    // Fetch menu IDs from Shopify
+    const response = await ctx.admin.graphql(
       `#graphql
         query getMenuIds {
           menus(first: 250) {
-            edges {
-              node {
-                id
-              }
-            }
+            edges { node { id } }
           }
-        }`
+        }`,
     );
-    const menusData = await menusResponse.json();
-    const shopifyMenuIds = new Set<string>(
-      (menusData.data?.menus?.edges || []).map((e: any) => e.node.id)
+    const data = await response.json();
+    const shopifyIds = new Set<string>(
+      (data.data?.menus?.edges || []).map((e: any) => e.node.id),
     );
 
-    let localMenus: any[] = [];
-    try {
-      localMenus = await db.menu.findMany({
-        where: { shop: session.shop },
-        select: { id: true },
-      });
-    } catch (dbError: any) {
-      // If table doesn't exist yet, treat as empty
-      if (dbError.code === 'P2021') {
-        logger.debug("[MENUS-LOADER] Menu table does not exist yet", { context: "Menus" });
-      }
-    }
-    const localMenuIds = new Set(localMenus.map(m => m.id));
-
-    // Sync missing menus
-    const missingIds = [...shopifyMenuIds].filter(id => !localMenuIds.has(id));
-    if (missingIds.length > 0) {
-      logger.info(`[MENUS-LOADER] Syncing ${missingIds.length} new menu(s) from Shopify`);
-      for (const id of missingIds) {
-        await syncService.syncMenu(id);
-      }
-    }
-
-    // Remove deleted menus
-    const removedIds = [...localMenuIds].filter(id => !shopifyMenuIds.has(id));
-    if (removedIds.length > 0) {
-      logger.info(`[MENUS-LOADER] Removing ${removedIds.length} deleted menu(s) from DB`);
-      await db.menu.deleteMany({
-        where: { shop: session.shop, id: { in: removedIds } },
-      });
-    }
-
-    // Load menus from database
-    let menus: any[] = [];
-    try {
-      menus = await db.menu.findMany({
-        where: { shop: session.shop },
-        orderBy: { title: "asc" },
-      });
-    } catch (dbError: any) {
-      logger.error("[MENUS-LOADER] Failed to load menus from DB", { context: "Menus", error: dbError.message });
-    }
-
-    return json({
-      menus,
-      shop: session.shop,
-      shopLocales,
-      primaryLocale,
-      error: null
+    // Sync missing + remove deleted
+    await incrementalSync(ctx, {
+      shopifyIds,
+      dbModel: ctx.db.menu,
+      resourceType: "Menu",
+      logPrefix: "MENUS",
+      syncFn: (id) => syncService.syncMenu(id),
     });
-  } catch (error: any) {
-    logger.error("[MENUS-LOADER] Error", { context: "Menus", error: error.message, stack: error.stack });
-    return json({
-      menus: [],
-      shop: session.shop,
-      shopLocales: [],
-      primaryLocale: "en",
-      error: error.message
-    }, { status: 500 });
-  }
-};
+
+    // Load from database
+    const menus = await ctx.db.menu.findMany({
+      where: { shop: ctx.session.shop },
+      orderBy: { title: "asc" },
+    });
+
+    return { items: menus, ids: [] };
+  },
+});
 
 export default function MenusPage() {
   const { menus, shop, shopLocales, primaryLocale, error } = useLoaderData<typeof loader>();

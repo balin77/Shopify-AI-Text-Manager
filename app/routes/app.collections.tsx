@@ -5,7 +5,7 @@
  * Compare to app.collections.old.tsx - we went from ~990 lines to ~130 lines (87% reduction!)
  */
 
-import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
+import { type ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher, useRevalidator } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
@@ -19,137 +19,66 @@ import { useInfoBox } from "../contexts/InfoBoxContext";
 import { useEffect } from "react";
 import type { ContentItem } from "../types/content-editor.types";
 import { measurePageLoad } from "~/utils/performance.client";
-import { logger } from "~/utils/logger.server";
+import { createContentLoader, incrementalSync } from "~/utils/loader-factory.server";
 
 // ============================================================================
-// LOADER - Load data from database
+// LOADER - Incremental sync + load from database
 // ============================================================================
 
-export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { admin, session } = await authenticate.admin(request);
+export const loader = createContentLoader({
+  logPrefix: "COLLECTIONS",
+  resourceType: "Collection",
+  itemsKey: "collections",
 
-  try {
-    const { db } = await import("../db.server");
-    const { loadAISettingsForValidation } = await import("../utils/loader-helpers");
-    const { getCachedShopLocales } = await import("../utils/shop-locales-cache.server");
-
-    // Load shopLocales (with caching)
-    const shopLocales = await getCachedShopLocales(admin, session.shop);
-    const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "en";
-
-    // Incremental sync: fetch collection IDs from Shopify, sync only missing ones
+  async loadData(ctx) {
     const { ContentSyncService } = await import("../services/content-sync.service");
-    const syncService = new ContentSyncService(admin, session.shop);
+    const syncService = new ContentSyncService(ctx.admin, ctx.session.shop);
 
-    const collectionsResponse = await admin.graphql(
+    // Fetch collection IDs from Shopify
+    const response = await ctx.admin.graphql(
       `#graphql
         query getCollectionIds {
           collections(first: 250) {
-            edges {
-              node {
-                id
-              }
-            }
+            edges { node { id } }
           }
-        }`
+        }`,
     );
-    const collectionsData = await collectionsResponse.json();
-    const shopifyCollectionIds = new Set<string>(
-      (collectionsData.data?.collections?.edges || []).map((e: any) => e.node.id)
+    const data = await response.json();
+    const shopifyIds = new Set<string>(
+      (data.data?.collections?.edges || []).map((e: any) => e.node.id),
     );
 
-    const localCollections = await db.collection.findMany({
-      where: { shop: session.shop },
-      select: { id: true },
+    // Sync missing + remove deleted
+    await incrementalSync(ctx, {
+      shopifyIds,
+      dbModel: ctx.db.collection,
+      resourceType: "Collection",
+      logPrefix: "COLLECTIONS",
+      syncFn: (id) => syncService.syncCollection(id),
     });
-    const localCollectionIds = new Set(localCollections.map(c => c.id));
 
-    // Sync missing collections
-    const missingIds = [...shopifyCollectionIds].filter(id => !localCollectionIds.has(id));
-    if (missingIds.length > 0) {
-      logger.info(`[COLLECTIONS-LOADER] Syncing ${missingIds.length} new collection(s) from Shopify`);
-      await Promise.all(missingIds.map(id => syncService.syncCollection(id)));
-    }
-
-    // Remove deleted collections
-    const removedIds = [...localCollectionIds].filter(id => !shopifyCollectionIds.has(id));
-    if (removedIds.length > 0) {
-      logger.info(`[COLLECTIONS-LOADER] Removing ${removedIds.length} deleted collection(s) from DB`);
-      await db.collection.deleteMany({
-        where: { shop: session.shop, id: { in: removedIds } },
-      });
-      await db.contentTranslation.deleteMany({
-        where: { resourceType: 'Collection', resourceId: { in: removedIds } },
-      });
-    }
-
-    // Load collections from database
-    const [collections, aiSettings] = await Promise.all([
-      db.collection.findMany({
-        where: { shop: session.shop },
-        orderBy: { title: 'asc' },
-      }),
-      loadAISettingsForValidation(db, session.shop),
-    ]);
-
-    // Load translations only for this shop's collections
-    const collectionIds = collections.map(c => c.id);
-    const allTranslations = collectionIds.length > 0
-      ? await db.contentTranslation.findMany({
-          where: {
-            resourceType: 'Collection',
-            resourceId: { in: collectionIds }
-          }
-        })
-      : [];
-
-    // Group translations by resourceId
-    const translationsByResource = allTranslations.reduce((acc: Record<string, any[]>, trans) => {
-      if (!acc[trans.resourceId]) {
-        acc[trans.resourceId] = [];
-      }
-      acc[trans.resourceId].push(trans);
-      return acc;
-    }, {});
-
-    // Transform collections
-    const transformedCollections = collections.map(c => ({
-      id: c.id,
-      title: c.title,
-      handle: c.handle,
-      descriptionHtml: c.descriptionHtml,
-      featuredImage: c.imageUrl ? {
-        url: c.imageUrl,
-        altText: c.imageAltText || '',
-      } : undefined,
-      images: [], // Collections only have featured image, no gallery
-      seo: {
-        title: c.seoTitle,
-        description: c.seoDescription,
-      },
-      translations: translationsByResource[c.id] || [],
-    }));
-
-    return json({
-      collections: transformedCollections,
-      shop: session.shop,
-      shopLocales,
-      primaryLocale,
-      error: null,
-      aiSettings,
+    // Load from database
+    const collections = await ctx.db.collection.findMany({
+      where: { shop: ctx.session.shop },
+      orderBy: { title: "asc" },
     });
-  } catch (error: any) {
-    logger.error("[COLLECTIONS-LOADER] Error", { error: error instanceof Error ? error.message : String(error) });
-    return json({
-      collections: [],
-      shop: session.shop,
-      shopLocales: [],
-      primaryLocale: "en",
-      error: error.message,
-      aiSettings: null,
-    }, { status: 500 });
-  }
-};
+
+    return {
+      items: collections.map((c: any) => ({
+        id: c.id,
+        title: c.title,
+        handle: c.handle,
+        descriptionHtml: c.descriptionHtml,
+        featuredImage: c.imageUrl
+          ? { url: c.imageUrl, altText: c.imageAltText || "" }
+          : undefined,
+        images: [],
+        seo: { title: c.seoTitle, description: c.seoDescription },
+      })),
+      ids: collections.map((c: any) => c.id),
+    };
+  },
+});
 
 // ============================================================================
 // ACTION - Handle all actions via unified handler

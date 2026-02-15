@@ -5,7 +5,7 @@
  * Compare to app.pages.old.tsx - we went from ~734 lines to ~150 lines (80% reduction!)
  */
 
-import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
+import { type ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher, useRevalidator } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
@@ -19,90 +19,49 @@ import { useInfoBox } from "../contexts/InfoBoxContext";
 import { useEffect } from "react";
 import type { ContentItem } from "../types/content-editor.types";
 import { measurePageLoad } from "~/utils/performance.client";
-import { logger } from "~/utils/logger.server";
+import { createContentLoader } from "~/utils/loader-factory.server";
 
 // ============================================================================
-// LOADER - Load data from database
+// LOADER - Load pages directly from Shopify (no DB sync)
 // ============================================================================
 
-export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { admin, session } = await authenticate.admin(request);
+export const loader = createContentLoader({
+  logPrefix: "PAGES",
+  resourceType: "Page",
+  itemsKey: "pages",
 
-  try {
-    const { db } = await import("../db.server");
-    const { loadAISettingsForValidation } = await import("../utils/loader-helpers");
-    const { getCachedShopLocales } = await import("../utils/shop-locales-cache.server");
-
-    // Load shopLocales (cached) and pages from Shopify in parallel
-    const [shopLocales, pagesResponse, allTranslations, aiSettings] = await Promise.all([
-      getCachedShopLocales(admin, session.shop),
-      // Load pages directly from Shopify (not from DB)
-      // This reduces database storage for multi-tenant SaaS
-      admin.graphql(
-        `#graphql
-          query getPages {
-            pages(first: 250) {
-              edges {
-                node {
-                  id
-                  title
-                  handle
-                  body
-                }
+  async loadData(ctx) {
+    // Load pages directly from Shopify (not from DB)
+    // This reduces database storage for multi-tenant SaaS
+    const pagesResponse = await ctx.admin.graphql(
+      `#graphql
+        query getPages {
+          pages(first: 250) {
+            edges {
+              node {
+                id
+                title
+                handle
+                body
               }
             }
-          }`
-      ),
-      // Still load translations from DB (needed for performance)
-      db.contentTranslation.findMany({
-        where: { resourceType: 'Page' }
-      }),
-      loadAISettingsForValidation(db, session.shop),
-    ]);
-
-    const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "en";
-
+          }
+        }`,
+    );
     const pagesData = await pagesResponse.json();
     const pages = pagesData.data?.pages?.edges?.map((e: any) => e.node) || [];
 
-    // Group translations by resourceId
-    const translationsByResource = allTranslations.reduce((acc: Record<string, any[]>, trans) => {
-      if (!acc[trans.resourceId]) {
-        acc[trans.resourceId] = [];
-      }
-      acc[trans.resourceId].push(trans);
-      return acc;
-    }, {});
-
-    // Transform pages (data from Shopify, translations from DB)
-    const transformedPages = pages.map((p: any) => ({
-      id: p.id,
-      title: p.title,
-      handle: p.handle,
-      body: p.body,
-      translations: translationsByResource[p.id] || [],
-    }));
-
-    return json({
-      pages: transformedPages,
-      shop: session.shop,
-      shopLocales,
-      primaryLocale,
-      error: null,
-      aiSettings,
-    });
-  } catch (error: any) {
-    logger.error("[PAGES-LOADER] Error", { error: error instanceof Error ? error.message : String(error) });
-    return json({
-      pages: [],
-      shop: session.shop,
-      shopLocales: [],
-      primaryLocale: "en",
-      error: error.message,
-      aiSettings: null,
-    }, { status: 500 });
-  }
-};
+    return {
+      items: pages.map((p: any) => ({
+        id: p.id,
+        title: p.title,
+        handle: p.handle,
+        body: p.body,
+      })),
+      ids: pages.map((p: any) => p.id),
+    };
+  },
+});
 
 // ============================================================================
 // ACTION - Handle all actions via unified handler

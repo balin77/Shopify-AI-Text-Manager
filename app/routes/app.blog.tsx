@@ -5,7 +5,7 @@
  * Compare to app.blog.old.tsx - we went from ~847 lines to ~160 lines (81% reduction!)
  */
 
-import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
+import { type ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher, useRevalidator } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
@@ -19,29 +19,23 @@ import { useInfoBox } from "../contexts/InfoBoxContext";
 import { useEffect } from "react";
 import type { ContentItem } from "../types/content-editor.types";
 import { measurePageLoad } from "~/utils/performance.client";
-import { logger } from "~/utils/logger.server";
+import { createContentLoader, incrementalSync } from "~/utils/loader-factory.server";
 
 // ============================================================================
-// LOADER - Load data from database
+// LOADER - Incremental sync + load from database
 // ============================================================================
 
-export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { admin, session } = await authenticate.admin(request);
+export const loader = createContentLoader({
+  logPrefix: "BLOG",
+  resourceType: "Article",
+  itemsKey: "articles",
 
-  try {
-    const { db } = await import("../db.server");
-    const { loadAISettingsForValidation } = await import("../utils/loader-helpers");
-    const { getCachedShopLocales } = await import("../utils/shop-locales-cache.server");
-
-    // Load shopLocales (with caching)
-    const shopLocales = await getCachedShopLocales(admin, session.shop);
-    const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "en";
-
-    // Incremental sync: fetch article IDs from Shopify, sync only missing ones
+  async loadData(ctx) {
     const { ContentSyncService } = await import("../services/content-sync.service");
-    const syncService = new ContentSyncService(admin, session.shop);
+    const syncService = new ContentSyncService(ctx.admin, ctx.session.shop);
 
-    const blogsResponse = await admin.graphql(
+    // Fetch article IDs from Shopify (nested under blogs)
+    const blogsResponse = await ctx.admin.graphql(
       `#graphql
         query getBlogs {
           blogs(first: 250) {
@@ -49,122 +43,56 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
               node {
                 id
                 articles(first: 250) {
-                  edges {
-                    node {
-                      id
-                    }
-                  }
+                  edges { node { id } }
                 }
               }
             }
           }
-        }`
+        }`,
     );
     const blogsData = await blogsResponse.json();
     const blogs = blogsData.data?.blogs?.edges?.map((e: any) => e.node) || [];
-    const shopifyArticleIds = new Set<string>();
+    const shopifyIds = new Set<string>();
     for (const blog of blogs) {
       for (const edge of blog.articles?.edges || []) {
-        shopifyArticleIds.add(edge.node.id);
+        shopifyIds.add(edge.node.id);
       }
     }
 
-    // Compare with local DB
-    const localArticles = await db.article.findMany({
-      where: { shop: session.shop },
-      select: { id: true },
+    // Sync missing + remove deleted
+    await incrementalSync(ctx, {
+      shopifyIds,
+      dbModel: ctx.db.article,
+      resourceType: "Article",
+      logPrefix: "BLOG",
+      syncFn: (id) => syncService.syncArticle(id),
     });
-    const localArticleIds = new Set(localArticles.map(a => a.id));
 
-    // Sync missing articles (in Shopify but not in DB)
-    const missingIds = [...shopifyArticleIds].filter(id => !localArticleIds.has(id));
-    if (missingIds.length > 0) {
-      logger.info(`[BLOG-LOADER] Syncing ${missingIds.length} new article(s) from Shopify`);
-      await Promise.all(missingIds.map(id => syncService.syncArticle(id)));
-    }
-
-    // Remove deleted articles (in DB but not in Shopify)
-    const removedIds = [...localArticleIds].filter(id => !shopifyArticleIds.has(id));
-    if (removedIds.length > 0) {
-      logger.info(`[BLOG-LOADER] Removing ${removedIds.length} deleted article(s) from DB`);
-      await db.article.deleteMany({
-        where: { shop: session.shop, id: { in: removedIds } },
-      });
-      await db.contentTranslation.deleteMany({
-        where: { resourceType: 'Article', resourceId: { in: removedIds } },
-      });
-    }
-
-    // Load articles from database
-    const [articles, aiSettings] = await Promise.all([
-      db.article.findMany({
-        where: { shop: session.shop },
-        orderBy: { blogTitle: 'asc' },
-      }),
-      loadAISettingsForValidation(db, session.shop),
-    ]);
-
-    // Load translations only for this shop's articles
-    const articleIds = articles.map(a => a.id);
-    const allTranslations = articleIds.length > 0
-      ? await db.contentTranslation.findMany({
-          where: {
-            resourceType: 'Article',
-            resourceId: { in: articleIds }
-          }
-        })
-      : [];
-
-    // Group translations by resourceId
-    const translationsByResource = allTranslations.reduce((acc: Record<string, any[]>, trans) => {
-      if (!acc[trans.resourceId]) {
-        acc[trans.resourceId] = [];
-      }
-      acc[trans.resourceId].push(trans);
-      return acc;
-    }, {});
-
-    // Transform articles
-    const transformedArticles = articles.map(a => ({
-      id: a.id,
-      blogId: a.blogId,
-      blogTitle: a.blogTitle,
-      title: a.title,
-      handle: a.handle,
-      body: a.body,
-      summary: a.summary,
-      featuredImage: a.imageUrl ? {
-        url: a.imageUrl,
-        altText: a.imageAltText || '',
-      } : undefined,
-      images: [], // Blogs only have featured image, no gallery
-      seo: {
-        title: a.seoTitle,
-        description: a.seoDescription,
-      },
-      translations: translationsByResource[a.id] || [],
-    }));
-
-    return json({
-      articles: transformedArticles,
-      shop: session.shop,
-      shopLocales,
-      primaryLocale,
-      error: null,
-      aiSettings,
+    // Load from database
+    const articles = await ctx.db.article.findMany({
+      where: { shop: ctx.session.shop },
+      orderBy: { blogTitle: "asc" },
     });
-  } catch (error: any) {
-    logger.error("[BLOG-LOADER] Error", { error: error instanceof Error ? error.message : String(error) });
-    return json({
-      articles: [],
-      shop: session.shop,
-      shopLocales: [],
-      primaryLocale: "en",
-      error: error.message,
-      aiSettings: null,
-    }, { status: 500 });
-  }
-};
+
+    return {
+      items: articles.map((a: any) => ({
+        id: a.id,
+        blogId: a.blogId,
+        blogTitle: a.blogTitle,
+        title: a.title,
+        handle: a.handle,
+        body: a.body,
+        summary: a.summary,
+        featuredImage: a.imageUrl
+          ? { url: a.imageUrl, altText: a.imageAltText || "" }
+          : undefined,
+        images: [],
+        seo: { title: a.seoTitle, description: a.seoDescription },
+      })),
+      ids: articles.map((a: any) => a.id),
+    };
+  },
+});
 
 // ============================================================================
 // ACTION - Handle all actions via unified handler
