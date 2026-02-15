@@ -100,7 +100,7 @@ export class ContentSyncService {
   /**
    * Sync a single collection with all its translations
    */
-  async syncCollection(collectionId: string): Promise<void> {
+  async syncCollection(collectionId: string, forceSync = false): Promise<void> {
     logger.debug(`[ContentSync] Starting sync for collection: ${collectionId}`);
 
     try {
@@ -125,7 +125,7 @@ export class ContentSyncService {
       logger.debug(`[ContentSync] Fetched ${allTranslations.length} translations`);
 
       // 4. Save to database
-      await this.saveCollectionToDatabase(collectionData, allTranslations);
+      await this.saveCollectionToDatabase(collectionData, allTranslations, forceSync);
 
       logger.debug(`[ContentSync] Successfully synced collection: ${collectionId}`);
     } catch (error) {
@@ -161,7 +161,7 @@ export class ContentSyncService {
   /**
    * Sync a single article with all its translations
    */
-  async syncArticle(articleId: string): Promise<void> {
+  async syncArticle(articleId: string, forceSync = false): Promise<void> {
     logger.debug(`[ContentSync] Starting sync for article: ${articleId}`);
 
     try {
@@ -184,7 +184,7 @@ export class ContentSyncService {
       );
 
       // 4. Save to database
-      await this.saveArticleToDatabase(articleData, allTranslations);
+      await this.saveArticleToDatabase(articleData, allTranslations, forceSync);
 
       logger.debug(`[ContentSync] Successfully synced article: ${articleId}`);
     } catch (error) {
@@ -518,7 +518,7 @@ export class ContentSyncService {
   // SAVE TO DATABASE
   // ============================================
 
-  private async saveCollectionToDatabase(collectionData: ShopifyCollectionData, translations: ResolvedTranslation[]) {
+  private async saveCollectionToDatabase(collectionData: ShopifyCollectionData, translations: ResolvedTranslation[], forceSync = false) {
     const { db } = await import("../db.server");
 
     logger.debug(`[ContentSync] Saving collection to database: ${collectionData.id}`);
@@ -567,7 +567,8 @@ export class ContentSyncService {
       });
 
       // Check if user recently saved translations for this collection
-      if (isTranslationRecentlySaved(collectionData.id)) {
+      // Skip this check on manual reload (forceSync) - user explicitly wants fresh data
+      if (!forceSync && isTranslationRecentlySaved(collectionData.id)) {
         logger.info(`[ContentSync] Skipping translation sync for collection - recently saved by user`, { collectionId: collectionData.id });
       } else {
         // Delete old translations
@@ -598,7 +599,7 @@ export class ContentSyncService {
     logger.debug(`[ContentSync] ✓ Transaction completed successfully for collection ${collectionData.id}`);
   }
 
-  private async saveArticleToDatabase(articleData: ShopifyArticleData, translations: ResolvedTranslation[]) {
+  private async saveArticleToDatabase(articleData: ShopifyArticleData, translations: ResolvedTranslation[], forceSync = false) {
     const { db } = await import("../db.server");
 
     logger.debug(`[ContentSync] Saving article to database: ${articleData.id}`);
@@ -653,7 +654,8 @@ export class ContentSyncService {
       });
 
       // Check if user recently saved translations for this article
-      if (isTranslationRecentlySaved(articleData.id)) {
+      // Skip this check on manual reload (forceSync) - user explicitly wants fresh data
+      if (!forceSync && isTranslationRecentlySaved(articleData.id)) {
         logger.info(`[ContentSync] Skipping translation sync for article - recently saved by user`, { articleId: articleData.id });
       } else {
         // Delete old translations
@@ -899,7 +901,7 @@ export class ContentSyncService {
       ? collectionId
       : `gid://shopify/Collection/${collectionId}`;
 
-    await this.syncCollection(gid);
+    await this.syncCollection(gid, /* forceSync */ true);
 
     const { db } = await import("../db.server");
     const collection = await db.collection.findUnique({
@@ -932,7 +934,7 @@ export class ContentSyncService {
       ? articleId
       : `gid://shopify/Article/${articleId}`;
 
-    await this.syncArticle(gid);
+    await this.syncArticle(gid, /* forceSync */ true);
 
     const { db } = await import("../db.server");
     const article = await db.article.findUnique({

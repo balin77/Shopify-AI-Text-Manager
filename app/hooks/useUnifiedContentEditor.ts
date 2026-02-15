@@ -512,6 +512,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       if (selectedItemId && savedPrimaryValuesRef.current[selectedItemId]) {
         delete savedPrimaryValuesRef.current[selectedItemId];
       }
+
+      // Clear local translation overrides - stale values from Accept & Translate
+      // or previous saves must not override fresh data from Shopify
+      localTranslationsRef.current = {};
+      deletedTranslationKeysRef.current.clear();
     }
 
     // Mark as loading immediately
@@ -1616,31 +1621,37 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         // This was a successful update action for a translation
         // Use the saved locale, not the current viewing language
         debugLog.response(' Updating translation for saved locale:', savedLocale);
-        const existingTranslations = item.translations.filter(
-          (t: Translation) => t.locale !== savedLocale
-        );
 
-        // Add new translations for the saved locale
+        // Update in-memory translations for the saved locale.
+        // Only upsert/remove individual keys — do NOT remove all translations for
+        // the locale, because that drops translations for fields that were never
+        // part of this save (buildFieldsForSave only sends changed fields).
         effectiveFieldDefinitions.forEach((fieldDef) => {
+          if (fieldDef.type === 'image-gallery') return; // images handled separately below
           const value = editableValues[fieldDef.key];
+          const existingIdx = item.translations.findIndex(
+            (t: Translation) => t.key === fieldDef.translationKey && t.locale === savedLocale
+          );
+
           if (value) {
-            existingTranslations.push({
-              key: fieldDef.translationKey,
-              value,
-              locale: savedLocale,
-            });
+            // Upsert: update existing or add new translation
+            const entry = { key: fieldDef.translationKey, value, locale: savedLocale };
+            if (existingIdx >= 0) {
+              item.translations[existingIdx] = entry;
+            } else {
+              item.translations.push(entry);
+            }
 
             // Also store in localTranslationsRef to persist after revalidation
-            // This is especially important for handle field where Shopify may not
-            // return the translation if it's identical to the primary locale
             if (!localTranslationsRef.current[fieldDef.translationKey]) {
               localTranslationsRef.current[fieldDef.translationKey] = {};
             }
             localTranslationsRef.current[fieldDef.translationKey][savedLocale] = value;
+          } else if (value === "" && existingIdx >= 0) {
+            // User cleared this field — remove the translation from memory
+            item.translations.splice(existingIdx, 1);
           }
         });
-
-        item.translations = existingTranslations;
 
         // Update image alt-text translations for foreign locale
         if (item.images && Object.keys(imageAltTextsRef.current).length > 0) {

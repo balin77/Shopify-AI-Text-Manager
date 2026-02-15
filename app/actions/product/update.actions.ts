@@ -14,7 +14,7 @@ import { sanitizeSlug } from "~/utils/slug.utils";
 import { logger, loggers } from "~/utils/logger.server";
 import { markTranslationSaved } from "~/utils/translation-save-lock.server";
 import type { ActionContext } from "./shared/action-context";
-import { getFormString, getFormJSON } from "~/utils/form-data.utils";
+import { getFormString, getFormStringOrNull, getFormJSON } from "~/utils/form-data.utils";
 import { isValidLocale, safeJsonParse } from "~/utils/validation";
 import type { PrismaClient } from "@prisma/client";
 
@@ -58,15 +58,20 @@ export async function handleUpdateProduct(
     return json({ success: false, error: "Invalid primary locale format" }, { status: 400 });
   }
 
+  // Use getFormStringOrNull so that fields NOT sent by the client are `null`
+  // (meaning "not changed — leave as is") rather than `""` (meaning "user
+  // intentionally cleared this field — delete translation").
+  // buildFieldsForSave on the client only sends changed fields, so any field
+  // absent from the form data must NOT be treated as a deletion.
   const params: UpdateProductParams = {
     locale,
     primaryLocale,
-    title: getFormString(formData, "title"),
-    descriptionHtml: getFormString(formData, "descriptionHtml"),
-    handle: getFormString(formData, "handle"),
-    seoTitle: getFormString(formData, "seoTitle"),
-    metaDescription: getFormString(formData, "metaDescription"),
-    productType: getFormString(formData, "productType"),
+    title: getFormStringOrNull(formData, "title") ?? undefined,
+    descriptionHtml: getFormStringOrNull(formData, "descriptionHtml") ?? undefined,
+    handle: getFormStringOrNull(formData, "handle") ?? undefined,
+    seoTitle: getFormStringOrNull(formData, "seoTitle") ?? undefined,
+    metaDescription: getFormStringOrNull(formData, "metaDescription") ?? undefined,
+    productType: getFormStringOrNull(formData, "productType") ?? undefined,
     imageAltTexts: getFormJSON<Record<number, string>>(formData, "imageAltTexts") || {},
     productId,
   };

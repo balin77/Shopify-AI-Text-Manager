@@ -106,7 +106,7 @@ export class ProductSyncService {
   /**
    * Sync a single product with all its translations
    */
-  async syncProduct(productId: string): Promise<void> {
+  async syncProduct(productId: string, forceSync = false): Promise<void> {
     logger.debug(`[ProductSync] Starting sync for product: ${productId}`);
 
     try {
@@ -191,7 +191,7 @@ export class ProductSyncService {
       logger.debug(`[ProductSync] Fetched ${imageAltTranslations.length} image alt-text translations`);
 
       // 5. Save to database
-      await this.saveToDatabase(productData, allTranslations, imageAltTranslations);
+      await this.saveToDatabase(productData, allTranslations, imageAltTranslations, forceSync);
 
       logger.debug(`[ProductSync] Successfully synced product: ${productId}`);
     } catch (error) {
@@ -572,7 +572,8 @@ export class ProductSyncService {
   private async saveToDatabase(
     productData: ShopifyProductData,
     translations: ResolvedTranslation[],
-    imageAltTranslations: Array<{ mediaId: string; locale: string; altText: string }> = []
+    imageAltTranslations: Array<{ mediaId: string; locale: string; altText: string }> = [],
+    forceSync = false
   ) {
     const { db } = await import("../db.server");
 
@@ -659,7 +660,8 @@ export class ProductSyncService {
       });
 
       // Check if user recently saved translations for this product
-      const skipTranslationSync = isTranslationRecentlySaved(productData.id);
+      // Skip this check on manual reload (forceSync) - user explicitly wants fresh data
+      const skipTranslationSync = !forceSync && isTranslationRecentlySaved(productData.id);
 
       if (skipTranslationSync) {
         logger.info(`[ProductSync] Skipping translation sync - recently saved by user`, { productId: productData.id });
@@ -851,8 +853,8 @@ export class ProductSyncService {
       : `gid://shopify/Product/${productId}`;
 
     try {
-      // Sync the product
-      await this.syncProduct(gid);
+      // Sync the product (forceSync=true bypasses save lock for manual reload)
+      await this.syncProduct(gid, /* forceSync */ true);
 
       // Fetch and update the product from database to return fresh data
       const { db } = await import("../db.server");

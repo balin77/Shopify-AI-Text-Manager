@@ -854,12 +854,16 @@ Allowed formatting changes:
           productType: "productType",
         };
 
+        // Only forward fields that were actually sent by the client.
+        // buildFieldsForSave only includes changed fields for foreign locales,
+        // so absent fields mean "not changed" — NOT "clear this field".
+        // Using formData.has() preserves empty strings (user cleared the field)
+        // while skipping fields the client never sent.
         contentConfig.fieldDefinitions.forEach((field) => {
+          if (!formData.has(field.key)) return;
           const value = getFormString(formData, field.key);
           const productFieldName = fieldMapping[field.key] || field.key;
-          if (value) {
-            productFormData.set(productFieldName, value);
-          }
+          productFormData.set(productFieldName, value);
         });
 
         // Pass changedFields for translation deletion when primary locale changes
@@ -894,8 +898,12 @@ Allowed formatting changes:
       }
 
       // For other content types (Collections, Pages, Blogs, Policies), use unified service
+      // Only include fields that were actually sent by the client.
+      // buildFieldsForSave only includes changed fields for foreign locales,
+      // so absent fields mean "not changed" — NOT "clear this field".
       const updates: Record<string, string> = {};
       contentConfig.fieldDefinitions.forEach((field) => {
+        if (!formData.has(field.key)) return;
         let value = getFormString(formData, field.key);
 
         // Sanitize slug fields
