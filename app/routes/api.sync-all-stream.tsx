@@ -5,6 +5,7 @@ import { getPlanLimits, type Plan } from "../utils/planUtils";
 import { ContentSyncService } from "../services/content-sync.service";
 import { BackgroundSyncService } from "../services/background-sync.service";
 import { logger } from "~/utils/logger.server";
+import { getTranslation, DEFAULT_LOCALE, type Locale } from "~/i18n";
 
 /**
  * API Route: Streaming Sync All Content
@@ -65,6 +66,30 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         });
         const plan = (settings?.subscriptionPlan || "free") as Plan;
         const planLimits = getPlanLimits(plan);
+        const appLocale = (settings?.appLanguage || DEFAULT_LOCALE) as Locale;
+        const t = getTranslation(appLocale);
+
+        /** Map a sync phase to its translated outage-protection message */
+        const syncEmptyResponseKey: Record<string, keyof typeof t.errors> = {
+          collections: 'syncEmptyResponseCollections',
+          articles: 'syncEmptyResponseArticles',
+          pages: 'syncEmptyResponsePages',
+          policies: 'syncEmptyResponsePolicies',
+          themes: 'syncEmptyResponseThemes',
+        };
+
+        function getSyncErrorMessage(phase: string, err: { message?: string }): string {
+          const msg = err.message || '';
+          if (msg.includes('aborting to prevent data loss')) {
+            return t.errors[syncEmptyResponseKey[phase]] || t.errors.syncApiError;
+          }
+          if (msg.includes('API error')) {
+            return t.errors.syncApiError;
+          }
+          return t.errors.syncFailed
+            .replace('{phase}', phase.charAt(0).toUpperCase() + phase.slice(1))
+            .replace('{details}', msg);
+        }
 
         const stats = {
           products: 0,
@@ -176,7 +201,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           sendEvent({
             type: 'progress',
             phase: 'collections',
-            message: `Collections sync failed: ${err.message}`,
+            message: getSyncErrorMessage('collections', err),
             current: 100,
             total: 100
           });
@@ -218,7 +243,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           sendEvent({
             type: 'progress',
             phase: 'articles',
-            message: `Articles sync failed: ${err.message}`,
+            message: getSyncErrorMessage('articles', err),
             current: 100,
             total: 100
           });
@@ -260,7 +285,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           sendEvent({
             type: 'progress',
             phase: 'pages',
-            message: `Pages sync failed: ${err.message}`,
+            message: getSyncErrorMessage('pages', err),
             current: 100,
             total: 100
           });
@@ -302,7 +327,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           sendEvent({
             type: 'progress',
             phase: 'policies',
-            message: `Policies sync failed: ${err.message}`,
+            message: getSyncErrorMessage('policies', err),
             current: 100,
             total: 100
           });
@@ -344,7 +369,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           sendEvent({
             type: 'progress',
             phase: 'themes',
-            message: `Themes sync failed: ${err.message}`,
+            message: getSyncErrorMessage('themes', err),
             current: 100,
             total: 100
           });
