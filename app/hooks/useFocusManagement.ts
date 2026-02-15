@@ -220,6 +220,12 @@ export function useKeyboardShortcut(
 ) {
   const { ctrlKey = false, shiftKey = false, altKey = false, metaKey = false, preventDefault = true } = options;
 
+  // Store callback in a ref to avoid re-registering the listener on every render
+  const callbackRef = useRef(callback);
+  useEffect(() => {
+    callbackRef.current = callback;
+  });
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const keyMatch = e.key.toLowerCase() === key.toLowerCase();
@@ -233,7 +239,7 @@ export function useKeyboardShortcut(
         if (preventDefault) {
           e.preventDefault();
         }
-        callback();
+        callbackRef.current();
       }
     };
 
@@ -242,7 +248,7 @@ export function useKeyboardShortcut(
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [key, callback, ctrlKey, shiftKey, altKey, metaKey, preventDefault]);
+  }, [key, ctrlKey, shiftKey, altKey, metaKey, preventDefault]);
 }
 
 /**

@@ -10,10 +10,11 @@ import { InfoBoxProvider } from "../contexts/InfoBoxContext";
 import { PlanProvider } from "../contexts/PlanContext";
 import { NavigationHeightProvider } from "../contexts/NavigationHeightContext";
 import { ItemSelectorProvider } from "../contexts/ItemSelectorContext";
-import { useEffect, useMemo } from "react";
+import { useEffect } from "react";
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { getProviderDisplayName, type AIProvider } from "../utils/api-key-validation";
+import { AppErrorBoundary } from "../components/AppErrorBoundary";
 import type { Locale } from "../i18n";
 import type { Plan } from "../config/plans";
 import { logger } from "~/utils/logger.server";
@@ -148,7 +149,11 @@ function AppContent() {
     }
   }, [aiSettings, t, showInfoBox]);
 
-  return <Outlet />;
+  return (
+    <AppErrorBoundary>
+      <Outlet />
+    </AppErrorBoundary>
+  );
 }
 
 export default function App() {

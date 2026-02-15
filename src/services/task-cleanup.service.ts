@@ -33,12 +33,16 @@ export class TaskCleanupService {
     loggers.queue('info', 'Starting task cleanup service...');
     this.isRunning = true;
 
-    // Run immediately on start
-    this.cleanup();
+    // Run immediately on start (handle rejected promise to avoid unhandled rejection)
+    this.cleanup().catch(err =>
+      loggers.queue('error', 'Unhandled error in initial cleanup', { error: err instanceof Error ? err.message : String(err) })
+    );
 
     // Then run every hour
     this.intervalId = setInterval(() => {
-      this.cleanup();
+      this.cleanup().catch(err =>
+        loggers.queue('error', 'Unhandled error in scheduled cleanup', { error: err instanceof Error ? err.message : String(err) })
+      );
     }, 60 * 60 * 1000); // 1 hour
   }
 

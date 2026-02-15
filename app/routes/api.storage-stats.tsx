@@ -1,7 +1,8 @@
 /**
  * API Route: Storage Statistics
  *
- * Returns the database storage usage per content type in bytes/MB for the current shop
+ * Returns the database storage usage per content type in bytes/MB for the current shop.
+ * Uses PostgreSQL aggregate queries (octet_length) to avoid loading all records into memory.
  */
 
 import type { LoaderFunctionArgs } from '@remix-run/node';
@@ -21,10 +22,9 @@ export interface StorageStats {
   total: number;
 }
 
-// Helper to calculate string byte size (UTF-8)
-function getByteSize(str: string | null | undefined): number {
-  if (!str) return 0;
-  return new TextEncoder().encode(str).length;
+/** Extract a bigint sum result as a JS number */
+function toNum(rows: Array<{ bytes: bigint | null }>): number {
+  return Number(rows[0]?.bytes ?? 0);
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -37,219 +37,170 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   try {
     const shop = session.shop;
 
-    // Calculate storage for Products
-    const products = await db.product.findMany({
-      where: { shop },
-      select: {
-        id: true,
-        title: true,
-        descriptionHtml: true,
-        handle: true,
-        seoTitle: true,
-        seoDescription: true,
-        featuredImageUrl: true,
-        featuredImageAlt: true,
-        images: {
-          select: {
-            url: true,
-            altText: true,
-            mediaId: true,
-            altTextTranslations: {
-              select: { altText: true, locale: true }
-            }
-          }
-        },
-        options: {
-          select: { name: true, values: true }
-        },
-        metafields: {
-          select: { namespace: true, key: true, value: true, type: true }
-        }
-      }
-    });
+    // Run all aggregate queries in parallel — no records loaded into JS memory
+    const [
+      productMain,
+      productImages,
+      productImgTranslations,
+      productOptions,
+      productMetafields,
+      collectionRows,
+      articleRows,
+      pageRows,
+      policyRows,
+      themeContentRows,
+      themeTranslationRows,
+      contentTranslationRows,
+    ] = await Promise.all([
+      // Products: main columns
+      db.$queryRaw<Array<{ bytes: bigint }>>`
+        SELECT COALESCE(SUM(
+          octet_length(COALESCE(title, '')) +
+          octet_length(COALESCE("descriptionHtml", '')) +
+          octet_length(COALESCE(handle, '')) +
+          octet_length(COALESCE("seoTitle", '')) +
+          octet_length(COALESCE("seoDescription", '')) +
+          octet_length(COALESCE("featuredImageUrl", '')) +
+          octet_length(COALESCE("featuredImageAlt", ''))
+        ), 0)::bigint AS bytes
+        FROM "Product" WHERE shop = ${shop}`,
 
-    let productBytes = 0;
-    for (const p of products) {
-      productBytes += getByteSize(p.title);
-      productBytes += getByteSize(p.descriptionHtml);
-      productBytes += getByteSize(p.handle);
-      productBytes += getByteSize(p.seoTitle);
-      productBytes += getByteSize(p.seoDescription);
-      productBytes += getByteSize(p.featuredImageUrl);
-      productBytes += getByteSize(p.featuredImageAlt);
-      for (const img of p.images) {
-        productBytes += getByteSize(img.url);
-        productBytes += getByteSize(img.altText);
-        productBytes += getByteSize(img.mediaId);
-        for (const trans of img.altTextTranslations) {
-          productBytes += getByteSize(trans.altText);
-          productBytes += getByteSize(trans.locale);
-        }
-      }
-      for (const opt of p.options) {
-        productBytes += getByteSize(opt.name);
-        productBytes += getByteSize(opt.values);
-      }
-      for (const mf of p.metafields) {
-        productBytes += getByteSize(mf.namespace);
-        productBytes += getByteSize(mf.key);
-        productBytes += getByteSize(mf.value);
-        productBytes += getByteSize(mf.type);
-      }
-    }
+      // Products: images
+      db.$queryRaw<Array<{ bytes: bigint }>>`
+        SELECT COALESCE(SUM(
+          octet_length(COALESCE(pi.url, '')) +
+          octet_length(COALESCE(pi."altText", '')) +
+          octet_length(COALESCE(pi."mediaId", ''))
+        ), 0)::bigint AS bytes
+        FROM "ProductImage" pi
+        JOIN "Product" p ON p.id = pi."productId"
+        WHERE p.shop = ${shop}`,
 
-    // Calculate storage for Collections
-    const collections = await db.collection.findMany({
-      where: { shop },
-      select: {
-        id: true,
-        title: true,
-        descriptionHtml: true,
-        handle: true,
-        seoTitle: true,
-        seoDescription: true,
-      }
-    });
+      // Products: image alt-text translations
+      db.$queryRaw<Array<{ bytes: bigint }>>`
+        SELECT COALESCE(SUM(
+          octet_length(COALESCE(pat."altText", '')) +
+          octet_length(COALESCE(pat.locale, ''))
+        ), 0)::bigint AS bytes
+        FROM "ProductImageAltTranslation" pat
+        JOIN "ProductImage" pi ON pi.id = pat."imageId"
+        JOIN "Product" p ON p.id = pi."productId"
+        WHERE p.shop = ${shop}`,
 
-    let collectionBytes = 0;
-    for (const c of collections) {
-      collectionBytes += getByteSize(c.title);
-      collectionBytes += getByteSize(c.descriptionHtml);
-      collectionBytes += getByteSize(c.handle);
-      collectionBytes += getByteSize(c.seoTitle);
-      collectionBytes += getByteSize(c.seoDescription);
-    }
+      // Products: options
+      db.$queryRaw<Array<{ bytes: bigint }>>`
+        SELECT COALESCE(SUM(
+          octet_length(COALESCE(po.name, '')) +
+          octet_length(COALESCE(po.values, ''))
+        ), 0)::bigint AS bytes
+        FROM "ProductOption" po
+        JOIN "Product" p ON p.id = po."productId"
+        WHERE p.shop = ${shop}`,
 
-    // Calculate storage for Articles
-    const articles = await db.article.findMany({
-      where: { shop },
-      select: {
-        id: true,
-        title: true,
-        body: true,
-        handle: true,
-        blogTitle: true,
-        seoTitle: true,
-        seoDescription: true,
-      }
-    });
+      // Products: metafields
+      db.$queryRaw<Array<{ bytes: bigint }>>`
+        SELECT COALESCE(SUM(
+          octet_length(COALESCE(pm.namespace, '')) +
+          octet_length(COALESCE(pm.key, '')) +
+          octet_length(COALESCE(pm.value, '')) +
+          octet_length(COALESCE(pm.type, ''))
+        ), 0)::bigint AS bytes
+        FROM "ProductMetafield" pm
+        JOIN "Product" p ON p.id = pm."productId"
+        WHERE p.shop = ${shop}`,
 
-    let articleBytes = 0;
-    for (const a of articles) {
-      articleBytes += getByteSize(a.title);
-      articleBytes += getByteSize(a.body);
-      articleBytes += getByteSize(a.handle);
-      articleBytes += getByteSize(a.blogTitle);
-      articleBytes += getByteSize(a.seoTitle);
-      articleBytes += getByteSize(a.seoDescription);
-    }
+      // Collections
+      db.$queryRaw<Array<{ bytes: bigint }>>`
+        SELECT COALESCE(SUM(
+          octet_length(COALESCE(title, '')) +
+          octet_length(COALESCE("descriptionHtml", '')) +
+          octet_length(COALESCE(handle, '')) +
+          octet_length(COALESCE("seoTitle", '')) +
+          octet_length(COALESCE("seoDescription", ''))
+        ), 0)::bigint AS bytes
+        FROM "Collection" WHERE shop = ${shop}`,
 
-    // Calculate storage for Pages
-    const pages = await db.page.findMany({
-      where: { shop },
-      select: {
-        id: true,
-        title: true,
-        body: true,
-        handle: true,
-      }
-    });
+      // Articles
+      db.$queryRaw<Array<{ bytes: bigint }>>`
+        SELECT COALESCE(SUM(
+          octet_length(COALESCE(title, '')) +
+          octet_length(COALESCE(body, '')) +
+          octet_length(COALESCE(handle, '')) +
+          octet_length(COALESCE("blogTitle", '')) +
+          octet_length(COALESCE("seoTitle", '')) +
+          octet_length(COALESCE("seoDescription", ''))
+        ), 0)::bigint AS bytes
+        FROM "Article" WHERE shop = ${shop}`,
 
-    let pageBytes = 0;
-    for (const p of pages) {
-      pageBytes += getByteSize(p.title);
-      pageBytes += getByteSize(p.body);
-      pageBytes += getByteSize(p.handle);
-    }
+      // Pages
+      db.$queryRaw<Array<{ bytes: bigint }>>`
+        SELECT COALESCE(SUM(
+          octet_length(COALESCE(title, '')) +
+          octet_length(COALESCE(body, '')) +
+          octet_length(COALESCE(handle, ''))
+        ), 0)::bigint AS bytes
+        FROM "Page" WHERE shop = ${shop}`,
 
-    // Calculate storage for Policies
-    const policies = await db.shopPolicy.findMany({
-      where: { shop },
-      select: {
-        id: true,
-        title: true,
-        body: true,
-        type: true,
-        url: true,
-      }
-    });
+      // Policies
+      db.$queryRaw<Array<{ bytes: bigint }>>`
+        SELECT COALESCE(SUM(
+          octet_length(COALESCE(title, '')) +
+          octet_length(COALESCE(body, '')) +
+          octet_length(COALESCE(type, '')) +
+          octet_length(COALESCE(url, ''))
+        ), 0)::bigint AS bytes
+        FROM "ShopPolicy" WHERE shop = ${shop}`,
 
-    let policyBytes = 0;
-    for (const p of policies) {
-      policyBytes += getByteSize(p.title);
-      policyBytes += getByteSize(p.body);
-      policyBytes += getByteSize(p.type);
-      policyBytes += getByteSize(p.url);
-    }
+      // Theme content + theme translatable JSON
+      db.$queryRaw<Array<{ bytes: bigint }>>`
+        SELECT COALESCE(SUM(
+          octet_length(COALESCE("resourceId", '')) +
+          octet_length(COALESCE("resourceType", '')) +
+          octet_length(COALESCE("resourceTypeLabel", '')) +
+          octet_length(COALESCE("groupId", '')) +
+          octet_length(COALESCE("groupName", '')) +
+          octet_length(COALESCE("groupIcon", '')) +
+          octet_length(COALESCE("translatableContent"::text, ''))
+        ), 0)::bigint AS bytes
+        FROM "ThemeContent" WHERE shop = ${shop}`,
 
-    // Calculate storage for Theme Content
-    const themeContent = await db.themeContent.findMany({
-      where: { shop },
-      select: {
-        resourceId: true,
-        resourceType: true,
-        resourceTypeLabel: true,
-        groupId: true,
-        groupName: true,
-        groupIcon: true,
-        translatableContent: true,
-      }
-    });
+      // Theme translations
+      db.$queryRaw<Array<{ bytes: bigint }>>`
+        SELECT COALESCE(SUM(
+          octet_length(COALESCE(key, '')) +
+          octet_length(COALESCE(value, '')) +
+          octet_length(COALESCE(locale, ''))
+        ), 0)::bigint AS bytes
+        FROM "ThemeTranslation" WHERE shop = ${shop}`,
 
-    let themeContentBytes = 0;
-    for (const tc of themeContent) {
-      themeContentBytes += getByteSize(tc.resourceId);
-      themeContentBytes += getByteSize(tc.resourceType);
-      themeContentBytes += getByteSize(tc.resourceTypeLabel);
-      themeContentBytes += getByteSize(tc.groupId);
-      themeContentBytes += getByteSize(tc.groupName);
-      themeContentBytes += getByteSize(tc.groupIcon);
-      themeContentBytes += getByteSize(JSON.stringify(tc.translatableContent));
-    }
+      // Content translations (polymorphic — join through all resource tables)
+      db.$queryRaw<Array<{ bytes: bigint }>>`
+        SELECT COALESCE(SUM(
+          octet_length(COALESCE(ct.key, '')) +
+          octet_length(COALESCE(ct.value, '')) +
+          octet_length(COALESCE(ct.locale, ''))
+        ), 0)::bigint AS bytes
+        FROM "ContentTranslation" ct
+        WHERE EXISTS (SELECT 1 FROM "Product"    r WHERE r.id = ct."resourceId" AND r.shop = ${shop})
+           OR EXISTS (SELECT 1 FROM "Collection" r WHERE r.id = ct."resourceId" AND r.shop = ${shop})
+           OR EXISTS (SELECT 1 FROM "Article"    r WHERE r.id = ct."resourceId" AND r.shop = ${shop})
+           OR EXISTS (SELECT 1 FROM "Page"       r WHERE r.id = ct."resourceId" AND r.shop = ${shop})
+           OR EXISTS (SELECT 1 FROM "ShopPolicy" r WHERE r.id = ct."resourceId" AND r.shop = ${shop})`,
+    ]);
 
-    // Calculate storage for Theme Translations
-    const themeTranslations = await db.themeTranslation.findMany({
-      where: { shop },
-      select: {
-        key: true,
-        value: true,
-        locale: true,
-      }
-    });
+    const productBytes =
+      toNum(productMain) +
+      toNum(productImages) +
+      toNum(productImgTranslations) +
+      toNum(productOptions) +
+      toNum(productMetafields);
 
-    for (const tt of themeTranslations) {
-      themeContentBytes += getByteSize(tt.key);
-      themeContentBytes += getByteSize(tt.value);
-      themeContentBytes += getByteSize(tt.locale);
-    }
-
-    // Calculate storage for Content Translations (all resource types)
-    // OPTIMIZED: Extract IDs from already loaded data instead of re-fetching
-    const allResourceIds = [
-      ...products.map(p => p.id),
-      ...collections.map(c => c.id),
-      ...articles.map(a => a.id),
-      ...pages.map(p => p.id),
-      ...policies.map(p => p.id),
-    ];
-
-    let translationBytes = 0;
-    if (allResourceIds.length > 0) {
-      const contentTranslations = await db.contentTranslation.findMany({
-        where: { resourceId: { in: allResourceIds } },
-        select: {
-          key: true,
-          value: true,
-          locale: true,
-        }
-      });
-
-      for (const ct of contentTranslations) {
-        translationBytes += getByteSize(ct.key);
-        translationBytes += getByteSize(ct.value);
-        translationBytes += getByteSize(ct.locale);
-      }
-    }
+    const collectionBytes = toNum(collectionRows);
+    const articleBytes = toNum(articleRows);
+    const pageBytes = toNum(pageRows);
+    const policyBytes = toNum(policyRows);
+    const themeContentBytes = toNum(themeContentRows) + toNum(themeTranslationRows);
+    const translationBytes = toNum(contentTranslationRows);
 
     const stats: StorageStats = {
       products: productBytes,
@@ -262,21 +213,22 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       total: productBytes + collectionBytes + articleBytes + pageBytes + policyBytes + themeContentBytes + translationBytes,
     };
 
+    const toMB = (b: number) => Number((b / (1024 * 1024)).toFixed(3));
+
     return json({
       success: true,
       stats,
-      // Also return in MB for convenience
       statsMB: {
-        products: Number((productBytes / (1024 * 1024)).toFixed(3)),
-        collections: Number((collectionBytes / (1024 * 1024)).toFixed(3)),
-        articles: Number((articleBytes / (1024 * 1024)).toFixed(3)),
-        pages: Number((pageBytes / (1024 * 1024)).toFixed(3)),
-        policies: Number((policyBytes / (1024 * 1024)).toFixed(3)),
-        themeContent: Number((themeContentBytes / (1024 * 1024)).toFixed(3)),
-        translations: Number((translationBytes / (1024 * 1024)).toFixed(3)),
-        total: Number(((productBytes + collectionBytes + articleBytes + pageBytes + policyBytes + themeContentBytes + translationBytes) / (1024 * 1024)).toFixed(3)),
+        products: toMB(productBytes),
+        collections: toMB(collectionBytes),
+        articles: toMB(articleBytes),
+        pages: toMB(pageBytes),
+        policies: toMB(policyBytes),
+        themeContent: toMB(themeContentBytes),
+        translations: toMB(translationBytes),
+        total: toMB(stats.total),
       }
-    });
+    }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     logger.error('Error calculating storage stats', { error: error instanceof Error ? error.message : String(error) });
     return json(

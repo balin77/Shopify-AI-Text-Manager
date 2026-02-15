@@ -77,6 +77,49 @@ export function verifyShopifyWebhook(
   return verified;
 }
 
+/** Maximum allowed age for a webhook (5 minutes) */
+const WEBHOOK_TIMESTAMP_TOLERANCE_MS = 5 * 60 * 1000;
+
+/**
+ * Check if a webhook timestamp is within the acceptable tolerance.
+ * Rejects webhooks older than WEBHOOK_TIMESTAMP_TOLERANCE_MS to prevent replay attacks.
+ *
+ * @param triggeredAt - Value of the X-Shopify-Triggered-At header (ISO 8601)
+ * @returns true if the timestamp is fresh enough, false otherwise
+ */
+export function isWebhookTimestampValid(triggeredAt: string | null): boolean {
+  if (!triggeredAt) {
+    loggers.webhook("warn", "No X-Shopify-Triggered-At header — skipping timestamp check");
+    // Allow webhooks without timestamp to avoid breaking existing flows,
+    // but log the event for monitoring.
+    return true;
+  }
+
+  const webhookTime = new Date(triggeredAt).getTime();
+  if (Number.isNaN(webhookTime)) {
+    loggers.webhook("warn", "Invalid X-Shopify-Triggered-At value", { triggeredAt });
+    return false;
+  }
+
+  const age = Date.now() - webhookTime;
+  if (age > WEBHOOK_TIMESTAMP_TOLERANCE_MS) {
+    loggers.webhook("warn", "Webhook too old — possible replay attack", {
+      triggeredAt,
+      ageMs: age,
+      toleranceMs: WEBHOOK_TIMESTAMP_TOLERANCE_MS,
+    });
+    return false;
+  }
+
+  // Also reject timestamps significantly in the future (clock skew > 1 min)
+  if (age < -60_000) {
+    loggers.webhook("warn", "Webhook timestamp is in the future", { triggeredAt, ageMs: age });
+    return false;
+  }
+
+  return true;
+}
+
 /**
  * Extract webhook metadata from request headers
  *
@@ -88,12 +131,14 @@ export function extractWebhookHeaders(request: Request): {
   shop: string | null;
   topic: string | null;
   webhookId: string | null;
+  triggeredAt: string | null;
 } {
   return {
     hmac: request.headers.get("X-Shopify-Hmac-Sha256"),
     shop: request.headers.get("X-Shopify-Shop-Domain"),
     topic: request.headers.get("X-Shopify-Topic"),
     webhookId: request.headers.get("X-Shopify-Webhook-Id"),
+    triggeredAt: request.headers.get("X-Shopify-Triggered-At"),
   };
 }
 
@@ -114,11 +159,14 @@ export async function verifyAndParseWebhook<T = any>(
     shop: string | null;
     topic: string | null;
     webhookId: string | null;
+    triggeredAt: string | null;
   };
 }> {
   const metadata = extractWebhookHeaders(request);
   const rawBody = await request.text();
-  const isValid = verifyShopifyWebhook(rawBody, metadata.hmac);
+  const hmacValid = verifyShopifyWebhook(rawBody, metadata.hmac);
+  const timestampValid = isWebhookTimestampValid(metadata.triggeredAt);
+  const isValid = hmacValid && timestampValid;
 
   let body: T | null = null;
   if (isValid && rawBody) {
