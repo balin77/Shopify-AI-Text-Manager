@@ -393,7 +393,7 @@ export const LOGGING_CONFIG = {
  *   - UI gating: UnifiedContentEditor.tsx, AIEditableField.tsx
  *   - Server gating: app.templates.tsx, api.templates.$.tsx
  */
-export const ENABLE_THEME_PRIMARY_EDIT = false;
+export const ENABLE_THEME_PRIMARY_EDIT = true;
 
 // ============================================================================
 // HELPER FUNCTIONS
