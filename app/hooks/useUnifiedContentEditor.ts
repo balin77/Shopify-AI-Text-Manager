@@ -2226,6 +2226,16 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           [fieldKey]: translatedValue,
         }));
 
+        // Clear fallback styling for this field since it now has a real translation
+        if (fallbackFieldsRef.current.has(fieldKey)) {
+          setFallbackFields((prev) => {
+            const newSet = new Set(prev);
+            newSet.delete(fieldKey);
+            return newSet;
+          });
+          fallbackFieldsRef.current.delete(fieldKey);
+        }
+
         // Update item.translations directly so hasChanges becomes false after save
         const item = selectedItemRef.current;
         if (item && field.translationKey) {
