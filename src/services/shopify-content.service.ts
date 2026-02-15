@@ -656,6 +656,7 @@ export class ShopifyContentService {
     const allTranslations: Record<string, Record<string, string>> = {};
     const failedLocales: string[] = [];
     const rejectedFields: Record<string, string[]> = {};
+    const skippedFields: Record<string, string[]> = {};
 
     // Initialize translations structure
     for (const locale of targetLocales) {
@@ -716,6 +717,8 @@ export class ShopifyContentService {
         const sourceHandle = fields['handle'];
         if (sourceHandle && value.trim() === sourceHandle.trim()) {
           loggers.translation('warn', `Skipping handle for locale '${locale}' — same as primary locale handle`);
+          if (!skippedFields[locale]) skippedFields[locale] = [];
+          skippedFields[locale].push(field);
           return false;
         }
       }
@@ -896,7 +899,7 @@ export class ShopifyContentService {
     if (failedLocales.length > 0) {
       loggers.translation('warn', `translateAllContent completed with failures`, { failedLocales, successLocales: targetLocales.filter(l => !failedLocales.includes(l)) });
     }
-    loggers.translation('info', 'translateAllContent FINAL', { locales: Object.keys(allTranslations), failedLocales, rejectedFields });
-    return { translations: allTranslations, failedLocales, rejectedFields };
+    loggers.translation('info', 'translateAllContent FINAL', { locales: Object.keys(allTranslations), failedLocales, rejectedFields, skippedFields });
+    return { translations: allTranslations, failedLocales, rejectedFields, skippedFields };
   }
 }

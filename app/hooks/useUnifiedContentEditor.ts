@@ -1349,12 +1349,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         // This ensures hasChanges becomes false after we've updated the translations
         setIsLoadingData(true);
 
-        // Show warning if some locales failed or fields were rejected, success if all succeeded
+        // Show warning if some locales failed or fields were rejected/skipped, success if all succeeded
         const failed = failedLocales || [];
         const rejected = (fetcher.data as TranslationsResponse).rejectedFields || {};
         const rejectedLocales = Object.keys(rejected);
+        const skipped = (fetcher.data as TranslationsResponse).skippedFields || {};
+        const skippedLocales = Object.keys(skipped);
 
-        if (failed.length > 0 || rejectedLocales.length > 0) {
+        if (failed.length > 0 || rejectedLocales.length > 0 || skippedLocales.length > 0) {
           const messages: string[] = [];
 
           if (failed.length > 0) {
@@ -1377,6 +1379,16 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
               .join("; ");
             messages.push(
               String(t.content?.translateRejectedFields || "Some fields could not be saved to Shopify: {details}. The translated content was generated but Shopify rejected it.")
+                .replace("{details}", details)
+            );
+          }
+
+          if (skippedLocales.length > 0) {
+            const details = skippedLocales
+              .map(locale => `${locale}: ${skipped[locale].join(", ")}`)
+              .join("; ");
+            messages.push(
+              String(t.content?.translateSkippedFields || "Some fields were skipped because the translated value is identical to the primary locale: {details}.")
                 .replace("{details}", details)
             );
           }
@@ -1476,10 +1488,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         // This ensures hasChanges becomes false after we've updated the translations
         setIsLoadingData(true);
 
-        // Show warning if the locale failed or fields were rejected, success otherwise
+        // Show warning if the locale failed or fields were rejected/skipped, success otherwise
         const failed = failedLocales || [];
         const rejected = (fetcher.data as TranslationsResponse).rejectedFields || {};
         const rejectedForLocale = rejected[targetLocale];
+        const skipped = (fetcher.data as TranslationsResponse).skippedFields || {};
+        const skippedForLocale = skipped[targetLocale];
 
         if (failed.length > 0 && failed.includes(targetLocale)) {
           showInfoBox(
@@ -1488,11 +1502,23 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             "warning",
             t.common?.warning || "Warning"
           );
-        } else if (rejectedForLocale && rejectedForLocale.length > 0) {
+        } else if ((rejectedForLocale && rejectedForLocale.length > 0) || (skippedForLocale && skippedForLocale.length > 0)) {
+          const messages: string[] = [];
+          if (rejectedForLocale && rejectedForLocale.length > 0) {
+            messages.push(
+              String(t.content?.translateLocaleRejectedFields || "Translation to {locale} partially completed. Field(s) {fields} could not be saved to Shopify.")
+                .replace("{locale}", targetLocale)
+                .replace("{fields}", rejectedForLocale.join(", "))
+            );
+          }
+          if (skippedForLocale && skippedForLocale.length > 0) {
+            messages.push(
+              String(t.content?.translateSkippedFields || "Some fields were skipped because the translated value is identical to the primary locale: {details}.")
+                .replace("{details}", `${targetLocale}: ${skippedForLocale.join(", ")}`)
+            );
+          }
           showInfoBox(
-            String(t.content?.translateLocaleRejectedFields || "Translation to {locale} partially completed. Field(s) {fields} could not be saved to Shopify.")
-              .replace("{locale}", targetLocale)
-              .replace("{fields}", rejectedForLocale.join(", ")),
+            messages.join(" "),
             "warning",
             t.common?.warning || "Warning"
           );
@@ -1733,8 +1759,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             const failedFieldLocales = (result.failedLocales as string[]) || [];
             const rejected = (result.rejectedFields as Record<string, string[]>) || {};
             const rejectedLocales = Object.keys(rejected);
+            const skipped = (result.skippedFields as Record<string, string[]>) || {};
+            const skippedLocales = Object.keys(skipped);
 
-            if (failedFieldLocales.length > 0 || rejectedLocales.length > 0) {
+            if (failedFieldLocales.length > 0 || rejectedLocales.length > 0 || skippedLocales.length > 0) {
               const messages: string[] = [];
 
               if (failedFieldLocales.length > 0) {
@@ -1753,6 +1781,16 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
                   .join("; ");
                 messages.push(
                   String(t.content?.translateRejectedFields || "Some fields could not be saved to Shopify: {details}. The translated content was generated but Shopify rejected it.")
+                    .replace("{details}", details)
+                );
+              }
+
+              if (skippedLocales.length > 0) {
+                const details = skippedLocales
+                  .map(locale => `${locale}: ${skipped[locale].join(", ")}`)
+                  .join("; ");
+                messages.push(
+                  String(t.content?.translateSkippedFields || "Some fields were skipped because the translated value is identical to the primary locale: {details}.")
                     .replace("{details}", details)
                 );
               }
@@ -2285,8 +2323,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           const failedFieldLocales2 = (result.failedLocales as string[]) || [];
           const rejected2 = (result.rejectedFields as Record<string, string[]>) || {};
           const rejectedLocales2 = Object.keys(rejected2);
+          const skipped2 = (result.skippedFields as Record<string, string[]>) || {};
+          const skippedLocales2 = Object.keys(skipped2);
 
-          if (failedFieldLocales2.length > 0 || rejectedLocales2.length > 0) {
+          if (failedFieldLocales2.length > 0 || rejectedLocales2.length > 0 || skippedLocales2.length > 0) {
             const messages: string[] = [];
 
             if (failedFieldLocales2.length > 0) {
@@ -2305,6 +2345,16 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
                 .join("; ");
               messages.push(
                 String(t.content?.translateRejectedFields || "Some fields could not be saved to Shopify: {details}. The translated content was generated but Shopify rejected it.")
+                  .replace("{details}", details)
+              );
+            }
+
+            if (skippedLocales2.length > 0) {
+              const details = skippedLocales2
+                .map(locale => `${locale}: ${skipped2[locale].join(", ")}`)
+                .join("; ");
+              messages.push(
+                String(t.content?.translateSkippedFields || "Some fields were skipped because the translated value is identical to the primary locale: {details}.")
                   .replace("{details}", details)
               );
             }

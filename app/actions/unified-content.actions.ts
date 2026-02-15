@@ -523,7 +523,7 @@ Allowed formatting changes:
         sourceLocale,
       });
 
-      const { translations: allTranslations, failedLocales, rejectedFields } = result;
+      const { translations: allTranslations, failedLocales, rejectedFields, skippedFields } = result;
 
       await db.task.update({
         where: { id: task.id },
@@ -536,11 +536,12 @@ Allowed formatting changes:
             locales: Object.keys(allTranslations),
             failedLocales,
             rejectedFields,
+            skippedFields,
           }),
         },
       });
 
-      return json({ success: true, translations: allTranslations, failedLocales, rejectedFields });
+      return json({ success: true, translations: allTranslations, failedLocales, rejectedFields, skippedFields });
     } catch (error: unknown) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       await db.task.update({
@@ -625,7 +626,7 @@ Allowed formatting changes:
         sourceLocale,
       });
 
-      const { translations: allTranslations, failedLocales, rejectedFields } = result;
+      const { translations: allTranslations, failedLocales, rejectedFields, skippedFields } = result;
 
       // Extract translations for the target locale
       const translations = allTranslations[targetLocale] || {};
@@ -642,11 +643,12 @@ Allowed formatting changes:
             translations,
             failedLocales,
             rejectedFields,
+            skippedFields,
           }),
         },
       });
 
-      return json({ success: true, translations, targetLocale, failedLocales, rejectedFields });
+      return json({ success: true, translations, targetLocale, failedLocales, rejectedFields, skippedFields });
     } catch (error: unknown) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       await db.task.update({
@@ -728,7 +730,7 @@ Allowed formatting changes:
         sourceLocale,
       });
 
-      const { translations: allTranslations, failedLocales, rejectedFields } = result;
+      const { translations: allTranslations, failedLocales, rejectedFields, skippedFields } = result;
 
       // Extract just the field value for each locale (frontend expects Record<locale, string>)
       // allTranslations is Record<locale, Record<fieldType, string>>
@@ -751,11 +753,11 @@ Allowed formatting changes:
           status: "completed",
           progress: 100,
           completedAt: new Date(),
-          result: JSON.stringify({ translations: flattenedTranslations, fieldType, failedLocales, rejectedFields }),
+          result: JSON.stringify({ translations: flattenedTranslations, fieldType, failedLocales, rejectedFields, skippedFields }),
         },
       });
 
-      return json({ success: true, translations: flattenedTranslations, fieldType, failedLocales, rejectedFields });
+      return json({ success: true, translations: flattenedTranslations, fieldType, failedLocales, rejectedFields, skippedFields });
     } catch (error: unknown) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       await db.task.update({
