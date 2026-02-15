@@ -311,6 +311,7 @@ ContentPilot AI wird die führende KI-gestützte Content-Management-Lösung für
 - [App Store Readiness Checklist](APP-STORE-READINESS.md)
 - [Billing System Documentation](BILLING_SYSTEM.md)
 - [Security Documentation](SECURITY_IMPROVEMENTS.md)
+- [Technical Debt & Future Improvements](TECHNICAL_DEBT.md)
 - [Shopify App Store Requirements](https://shopify.dev/docs/apps/store/requirements)
 - [Shopify Partner Dashboard](https://partners.shopify.com/)
 
