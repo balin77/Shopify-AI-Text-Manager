@@ -11,6 +11,7 @@ import { AIService, type AIProvider } from "../../src/services/ai.service";
 import { TRANSLATE_CONTENT } from "../graphql/content.mutations";
 import { decryptApiKey } from "../utils/encryption.server";
 import { getFormString, getFormJSON } from "~/utils/form-data.utils";
+import { safeJsonParse } from "~/utils/validation";
 import { logger } from "~/utils/logger.server";
 
 /** Shape of individual items within ThemeContent.translatableContent JSON array */
@@ -317,11 +318,11 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
         const locale = formData.get("locale") as string;
         const primaryLocale = formData.get("primaryLocale") as string;
         const updatedFieldsJson = formData.get("updatedFields") as string;
-        const updatedFields = JSON.parse(updatedFieldsJson);
+        const updatedFields = safeJsonParse<Record<string, string>>(updatedFieldsJson, {});
 
         // Parse changedFields if present (for translation deletion when primary locale changes)
         const changedFieldsStr = formData.get("changedFields") as string;
-        const changedFields: string[] = changedFieldsStr ? JSON.parse(changedFieldsStr) : [];
+        const changedFields = changedFieldsStr ? safeJsonParse<string[]>(changedFieldsStr, []) : [];
 
         // STEP 1: Register translations with Shopify FIRST
         const translationInputs = Object.entries(updatedFields).map(([key, value]) => ({

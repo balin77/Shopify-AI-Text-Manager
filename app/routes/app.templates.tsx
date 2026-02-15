@@ -23,6 +23,7 @@ import { TranslationService } from "../../src/services/translation.service";
 import { decryptApiKey } from "../utils/encryption.server";
 import { getTaskExpirationDate } from "~/config/constants";
 import { getFormString, getFormJSON } from "~/utils/form-data.utils";
+import { safeJsonParse } from "~/utils/validation";
 import type { ShopLocale } from "~/types/content-editor.types";
 import { logger } from "~/utils/logger.server";
 
@@ -388,7 +389,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
           }, { status: 400 });
         }
 
-        const targetLocales: string[] = targetLocalesJson ? JSON.parse(targetLocalesJson) : [];
+        const targetLocales = targetLocalesJson ? safeJsonParse<string[]>(targetLocalesJson, []) : [];
         if (targetLocales.length === 0) {
           return json({
             success: false,
@@ -441,6 +442,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
           // Translate the field to all target locales
           const translations: Record<string, string> = {};
           const totalLocales = targetLocales.length;
+          const pendingUpserts: Array<{ locale: string; value: string }> = [];
 
           for (let i = 0; i < targetLocales.length; i++) {
             const locale = targetLocales[i];
@@ -451,31 +453,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
                 locale
               );
               translations[locale] = translatedValue;
-
-              // Auto-save each translation
-              await db.themeTranslation.upsert({
-                where: {
-                  shop_resourceId_groupId_key_locale: {
-                    shop: session.shop,
-                    resourceId: resourceId,
-                    groupId: groupId,
-                    key: fieldType,
-                    locale: locale
-                  }
-                },
-                update: {
-                  value: translatedValue,
-                  updatedAt: new Date()
-                },
-                create: {
-                  shop: session.shop,
-                  groupId: groupId,
-                  resourceId: resourceId,
-                  locale: locale,
-                  key: fieldType,
-                  value: translatedValue
-                }
-              });
+              pendingUpserts.push({ locale, value: translatedValue });
 
               // Update progress
               const progress = Math.round(10 + ((i + 1) / totalLocales) * 80);
@@ -487,6 +465,37 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
               logger.error("Error translating field to locale", { context: "Templates", fieldType, locale, error: error instanceof Error ? error.message : String(error) });
               translations[locale] = sourceText; // Fallback to original
             }
+          }
+
+          // Batch save all translations in a single transaction
+          if (pendingUpserts.length > 0) {
+            await db.$transaction(
+              pendingUpserts.map(({ locale, value }) =>
+                db.themeTranslation.upsert({
+                  where: {
+                    shop_resourceId_groupId_key_locale: {
+                      shop: session.shop,
+                      resourceId: resourceId,
+                      groupId: groupId,
+                      key: fieldType,
+                      locale: locale
+                    }
+                  },
+                  update: {
+                    value: value,
+                    updatedAt: new Date()
+                  },
+                  create: {
+                    shop: session.shop,
+                    groupId: groupId,
+                    resourceId: resourceId,
+                    locale: locale,
+                    key: fieldType,
+                    value: value
+                  }
+                })
+              )
+            );
           }
 
           // Update task to completed
@@ -524,7 +533,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
       case "translateAllForLocale": {
         const targetLocalesJson = getFormString(formData, "targetLocales");
         const targetLocale = getFormString(formData, "targetLocale");
-        const targetLocales: string[] = targetLocalesJson ? JSON.parse(targetLocalesJson) : [targetLocale];
+        const targetLocales = targetLocalesJson ? safeJsonParse<string[]>(targetLocalesJson, [targetLocale]) : [targetLocale];
 
         // Get all translatable content
         const allContent = themeGroups.flatMap((group) => (group.translatableContent as unknown) as TranslatableField[]);
@@ -582,6 +591,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
           const translations: Record<string, Record<string, string>> = {};
           const totalItems = targetLocales.length * uniqueContent.size;
           let completedItems = 0;
+          const pendingUpserts: Array<{ key: string; locale: string; value: string }> = [];
 
           for (const locale of targetLocales) {
             translations[locale] = {};
@@ -594,31 +604,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
                   locale
                 );
                 translations[locale][key] = translated;
-
-                // Save translation to database
-                await db.themeTranslation.upsert({
-                  where: {
-                    shop_resourceId_groupId_key_locale: {
-                      shop: session.shop,
-                      resourceId: resourceId,
-                      groupId: groupId,
-                      key: key,
-                      locale: locale
-                    }
-                  },
-                  update: {
-                    value: translated,
-                    updatedAt: new Date()
-                  },
-                  create: {
-                    shop: session.shop,
-                    groupId: groupId,
-                    resourceId: resourceId,
-                    locale: locale,
-                    key: key,
-                    value: translated
-                  }
-                });
+                pendingUpserts.push({ key, locale, value: translated });
 
                 // Update progress
                 completedItems++;
@@ -632,6 +618,37 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
                 translations[locale][key] = item.value || "";
               }
             }
+          }
+
+          // Batch save all translations in a single transaction
+          if (pendingUpserts.length > 0) {
+            await db.$transaction(
+              pendingUpserts.map(({ key, locale, value }) =>
+                db.themeTranslation.upsert({
+                  where: {
+                    shop_resourceId_groupId_key_locale: {
+                      shop: session.shop,
+                      resourceId: resourceId,
+                      groupId: groupId,
+                      key: key,
+                      locale: locale
+                    }
+                  },
+                  update: {
+                    value: value,
+                    updatedAt: new Date()
+                  },
+                  create: {
+                    shop: session.shop,
+                    groupId: groupId,
+                    resourceId: resourceId,
+                    locale: locale,
+                    key: key,
+                    value: value
+                  }
+                })
+              )
+            );
           }
 
           // Update task to completed
@@ -763,31 +780,36 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
             logger.debug("[TEMPLATES] No changedFields to delete translations for", { context: "Templates" });
           }
         } else {
-          // Update translation: Use ThemeTranslation table
-          for (const [key, value] of Object.entries(updatedFields)) {
-            await db.themeTranslation.upsert({
-              where: {
-                shop_resourceId_groupId_key_locale: {
-                  shop: session.shop,
-                  resourceId: resourceId,
-                  groupId: groupId,
-                  key: key,
-                  locale: locale
-                }
-              },
-              update: {
-                value: value,
-                updatedAt: new Date()
-              },
-              create: {
-                shop: session.shop,
-                groupId: groupId,
-                resourceId: resourceId,
-                locale: locale,
-                key: key,
-                value: value
-              }
-            });
+          // Update translations: batch upsert in a single transaction
+          const entries = Object.entries(updatedFields);
+          if (entries.length > 0) {
+            await db.$transaction(
+              entries.map(([key, value]) =>
+                db.themeTranslation.upsert({
+                  where: {
+                    shop_resourceId_groupId_key_locale: {
+                      shop: session.shop,
+                      resourceId: resourceId,
+                      groupId: groupId,
+                      key: key,
+                      locale: locale
+                    }
+                  },
+                  update: {
+                    value: value,
+                    updatedAt: new Date()
+                  },
+                  create: {
+                    shop: session.shop,
+                    groupId: groupId,
+                    resourceId: resourceId,
+                    locale: locale,
+                    key: key,
+                    value: value
+                  }
+                })
+              )
+            );
           }
         }
 

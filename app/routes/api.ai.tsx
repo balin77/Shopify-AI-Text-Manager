@@ -15,6 +15,7 @@ import { sanitizeSlug } from "../utils/slug.utils";
 import { PRODUCTS_CONFIG, COLLECTIONS_CONFIG, BLOGS_CONFIG, PAGES_CONFIG, POLICIES_CONFIG } from "../config/content-fields.config";
 import type { ContentEditorConfig } from "../types/content-editor.types";
 import { getFormString, getFormJSON } from "~/utils/form-data.utils";
+import { safeJsonParse } from "~/utils/validation";
 
 // Map contentType to its config for looking up field definitions
 const CONTENT_CONFIGS: Record<string, ContentEditorConfig> = {
@@ -197,7 +198,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           return json({ success: false, error: "No source text available" }, { status: 400 });
         }
 
-        const targetLocales = targetLocalesJson ? JSON.parse(targetLocalesJson) : [];
+        const targetLocales = targetLocalesJson ? safeJsonParse<string[]>(targetLocalesJson, []) : [];
         if (targetLocales.length === 0) {
           return json({ success: false, error: "No target locales specified" }, { status: 400 });
         }
@@ -1413,7 +1414,7 @@ Image URL: ${imageUrl}`;
           return json({ success: false, error: "No images data provided" }, { status: 400 });
         }
 
-        const imagesData: Array<{ url: string }> = JSON.parse(imagesDataJson);
+        const imagesData = safeJsonParse<Array<{ url: string }>>(imagesDataJson, []);
         const totalImages = imagesData.length;
 
         if (totalImages === 0) {
@@ -1624,7 +1625,7 @@ Image URL: ${image.url}`;
           return json({ success: false, error: "No source alt-text available" }, { status: 400 });
         }
 
-        const targetLocales = targetLocalesJson ? JSON.parse(targetLocalesJson) : [];
+        const targetLocales = targetLocalesJson ? safeJsonParse<string[]>(targetLocalesJson, []) : [];
         if (targetLocales.length === 0) {
           return json({ success: false, error: "No target locales specified" }, { status: 400 });
         }
@@ -1870,8 +1871,8 @@ Image URL: ${image.url}`;
           return json({ success: false, error: "No alt-text data provided" }, { status: 400 });
         }
 
-        const altTextsData: Record<string, string> = JSON.parse(altTextsDataJson);
-        const targetLocales: string[] = targetLocalesJson ? JSON.parse(targetLocalesJson) : [];
+        const altTextsData = safeJsonParse<Record<string, string>>(altTextsDataJson, {});
+        const targetLocales = targetLocalesJson ? safeJsonParse<string[]>(targetLocalesJson, []) : [];
         const imageIndices = Object.keys(altTextsData).map(Number);
 
         if (targetLocales.length === 0 || imageIndices.length === 0) {
@@ -2123,7 +2124,7 @@ Image URL: ${image.url}`;
           return json({ success: false, error: "No alt-text data provided" }, { status: 400 });
         }
 
-        const altTextsData: Record<string, string> = JSON.parse(altTextsDataJson);
+        const altTextsData = safeJsonParse<Record<string, string>>(altTextsDataJson, {});
         const imageIndices = Object.keys(altTextsData).map(Number);
 
         if (!targetLocale || imageIndices.length === 0) {
