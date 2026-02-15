@@ -258,6 +258,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
           const translations: Record<string, string> = {};
           const aiResponses: Array<{ locale: string; response: string }> = [];
+          const rejectedFields: Record<string, string[]> = {};
           const totalLocales = targetLocales.length;
 
           // For templates: Load themeContent ONCE before the loop to avoid race conditions
@@ -364,43 +365,70 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                       translatableContentDigest: digest
                     }];
 
-                    await admin.graphql(TRANSLATE_CONTENT, {
+                    const templateResponse = await admin.graphql(TRANSLATE_CONTENT, {
                       variables: {
                         resourceId: templateResourceId,
                         translations: translationInput
                       }
                     });
 
-                    // Save to local database
-                    await db.themeTranslation.upsert({
-                      where: {
-                        shop_resourceId_groupId_key_locale: {
-                          shop: session.shop,
-                          resourceId: templateResourceId,
-                          groupId: templateGroupId,
-                          key: fieldType,
-                          locale: locale
-                        }
-                      },
-                      update: {
-                        value: translatedValue,
-                        updatedAt: new Date()
-                      },
-                      create: {
-                        shop: session.shop,
-                        groupId: templateGroupId,
-                        resourceId: templateResourceId,
-                        locale: locale,
-                        key: fieldType,
-                        value: translatedValue
-                      }
-                    });
+                    const templateData = await templateResponse.json() as ShopifyGraphQLResponse;
+                    let templateRejected = false;
 
-                    logger.debug("[API-AI] Batch: Saved template translation", {
-                      context: "AI",
-                      locale,
-                      fieldType
-                    });
+                    if (templateData.errors && templateData.errors.length > 0) {
+                      logger.error("[API-AI] Batch: GraphQL error saving template translation", {
+                        context: "AI",
+                        errors: templateData.errors,
+                        locale,
+                        fieldType
+                      });
+                      if (!rejectedFields[locale]) rejectedFields[locale] = [];
+                      rejectedFields[locale].push(fieldType);
+                      templateRejected = true;
+                    } else if ((templateData.data?.translationsRegister?.userErrors?.length ?? 0) > 0) {
+                      logger.error("[API-AI] Batch: Shopify rejected template translation", {
+                        context: "AI",
+                        errors: templateData.data?.translationsRegister?.userErrors,
+                        locale,
+                        fieldType
+                      });
+                      if (!rejectedFields[locale]) rejectedFields[locale] = [];
+                      rejectedFields[locale].push(fieldType);
+                      templateRejected = true;
+                    }
+
+                    if (!templateRejected) {
+                      // Only save to local database when Shopify accepted
+                      await db.themeTranslation.upsert({
+                        where: {
+                          shop_resourceId_groupId_key_locale: {
+                            shop: session.shop,
+                            resourceId: templateResourceId,
+                            groupId: templateGroupId,
+                            key: fieldType,
+                            locale: locale
+                          }
+                        },
+                        update: {
+                          value: translatedValue,
+                          updatedAt: new Date()
+                        },
+                        create: {
+                          shop: session.shop,
+                          groupId: templateGroupId,
+                          resourceId: templateResourceId,
+                          locale: locale,
+                          key: fieldType,
+                          value: translatedValue
+                        }
+                      });
+
+                      logger.debug("[API-AI] Batch: Saved template translation", {
+                        context: "AI",
+                        locale,
+                        fieldType
+                      });
+                    }
                   } catch (shopifyError: unknown) {
                     logger.error("[API-AI] Batch: Error saving template to Shopify", {
                       context: "AI",
@@ -451,44 +479,71 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                       translatableContentDigest: digest
                     }];
 
-                    await admin.graphql(TRANSLATE_CONTENT, {
+                    const shopifyResponse = await admin.graphql(TRANSLATE_CONTENT, {
                       variables: {
                         resourceId: itemId,
                         translations: translationInput
                       }
                     });
 
-                    // Also save to local DB so revalidation picks it up immediately
-                    const resourceTypeMap: Record<string, string> = {
-                      products: "Product", collections: "Collection",
-                      pages: "Page", blogs: "Article", policies: "ShopPolicy",
-                    };
-                    await db.contentTranslation.upsert({
-                      where: {
-                        resourceId_key_locale: {
-                          resourceId: itemId,
-                          key: shopifyKey,
-                          locale,
-                        },
-                      },
-                      update: { value: translatedValue, digest, resourceType: resourceTypeMap[contentType] || "Product" },
-                      create: {
-                        resourceId: itemId,
-                        resourceType: resourceTypeMap[contentType] || "Product",
-                        key: shopifyKey,
-                        value: translatedValue,
-                        locale,
-                        digest,
-                      },
-                    });
+                    const shopifyData = await shopifyResponse.json() as ShopifyGraphQLResponse;
+                    let shopifyRejected = false;
 
-                    logger.debug("[API-AI] Batch: Saved translation to Shopify + DB", {
-                      context: "AI",
-                      resourceId: itemId,
-                      fieldType,
-                      shopifyKey,
-                      locale
-                    });
+                    if (shopifyData.errors && shopifyData.errors.length > 0) {
+                      logger.error("[API-AI] Batch: GraphQL error saving translation", {
+                        context: "AI",
+                        errors: shopifyData.errors,
+                        locale,
+                        shopifyKey
+                      });
+                      if (!rejectedFields[locale]) rejectedFields[locale] = [];
+                      rejectedFields[locale].push(fieldType);
+                      shopifyRejected = true;
+                    } else if ((shopifyData.data?.translationsRegister?.userErrors?.length ?? 0) > 0) {
+                      logger.error("[API-AI] Batch: Shopify rejected translation", {
+                        context: "AI",
+                        errors: shopifyData.data?.translationsRegister?.userErrors,
+                        locale,
+                        shopifyKey
+                      });
+                      if (!rejectedFields[locale]) rejectedFields[locale] = [];
+                      rejectedFields[locale].push(fieldType);
+                      shopifyRejected = true;
+                    }
+
+                    if (!shopifyRejected) {
+                      // Only save to local DB when Shopify actually accepted
+                      const resourceTypeMap: Record<string, string> = {
+                        products: "Product", collections: "Collection",
+                        pages: "Page", blogs: "Article", policies: "ShopPolicy",
+                      };
+                      await db.contentTranslation.upsert({
+                        where: {
+                          resourceId_key_locale: {
+                            resourceId: itemId,
+                            key: shopifyKey,
+                            locale,
+                          },
+                        },
+                        update: { value: translatedValue, digest, resourceType: resourceTypeMap[contentType] || "Product" },
+                        create: {
+                          resourceId: itemId,
+                          resourceType: resourceTypeMap[contentType] || "Product",
+                          key: shopifyKey,
+                          value: translatedValue,
+                          locale,
+                          digest,
+                        },
+                      });
+
+                      logger.debug("[API-AI] Batch: Saved translation to Shopify + DB", {
+                        context: "AI",
+                        resourceId: itemId,
+                        fieldType,
+                        shopifyKey,
+                        locale
+                      });
+                    }
                   } catch (shopifyError: unknown) {
                     logger.error("[API-AI] Batch: Error sending to Shopify", {
                       context: "AI",
@@ -611,6 +666,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                   });
 
                   // Check for top-level GraphQL errors
+                  let seqTemplateRejected = false;
                   if (data.errors && data.errors.length > 0) {
                     logger.error("[API-AI] Shopify GraphQL errors", {
                       context: "AI",
@@ -619,6 +675,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                       fieldType,
                       resourceId: templateResourceId
                     });
+                    if (!rejectedFields[locale]) rejectedFields[locale] = [];
+                    rejectedFields[locale].push(fieldType);
+                    seqTemplateRejected = true;
                   } else if ((data.data?.translationsRegister?.userErrors?.length ?? 0) > 0) {
                     logger.error("[API-AI] Shopify translation userErrors", {
                       context: "AI",
@@ -626,6 +685,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                       locale,
                       fieldType
                     });
+                    if (!rejectedFields[locale]) rejectedFields[locale] = [];
+                    rejectedFields[locale].push(fieldType);
+                    seqTemplateRejected = true;
                   } else if ((data.data?.translationsRegister?.translations?.length ?? 0) > 0) {
                     logger.info("[API-AI] SUCCESS - Translation saved to Shopify", {
                       context: "AI",
@@ -643,6 +705,50 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                       fullResponse: JSON.stringify(data)
                     });
                   }
+
+                  // Only save to local database when Shopify accepted
+                  if (!seqTemplateRejected) {
+                    try {
+                      await db.themeTranslation.upsert({
+                        where: {
+                          shop_resourceId_groupId_key_locale: {
+                            shop: session.shop,
+                            resourceId: templateResourceId,
+                            groupId: templateGroupId,
+                            key: fieldType,
+                            locale: locale
+                          }
+                        },
+                        update: {
+                          value: translatedValue,
+                          updatedAt: new Date()
+                        },
+                        create: {
+                          shop: session.shop,
+                          groupId: templateGroupId,
+                          resourceId: templateResourceId,
+                          locale: locale,
+                          key: fieldType,
+                          value: translatedValue
+                        }
+                      });
+
+                      logger.info("[API-AI] Saved template translation to DB", {
+                        context: "AI",
+                        groupId: templateGroupId,
+                        fieldType,
+                        locale
+                      });
+                    } catch (dbError: unknown) {
+                      logger.error("[API-AI] Error saving to DB", {
+                        context: "AI",
+                        error: errorMessage(dbError),
+                        groupId: templateGroupId,
+                        fieldType,
+                        locale
+                      });
+                    }
+                  }
                 } catch (shopifyError: unknown) {
                   logger.error("[API-AI] Exception sending to Shopify", {
                     context: "AI",
@@ -651,48 +757,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                     locale,
                     fieldType,
                     resourceId: templateResourceId
-                  });
-                }
-
-                // STEP 2: Save to local database
-                try {
-                  await db.themeTranslation.upsert({
-                    where: {
-                      shop_resourceId_groupId_key_locale: {
-                        shop: session.shop,
-                        resourceId: templateResourceId,
-                        groupId: templateGroupId,
-                        key: fieldType,
-                        locale: locale
-                      }
-                    },
-                    update: {
-                      value: translatedValue,
-                      updatedAt: new Date()
-                    },
-                    create: {
-                      shop: session.shop,
-                      groupId: templateGroupId,
-                      resourceId: templateResourceId,
-                      locale: locale,
-                      key: fieldType,
-                      value: translatedValue
-                    }
-                  });
-
-                  logger.info("[API-AI] Saved template translation to DB", {
-                    context: "AI",
-                    groupId: templateGroupId,
-                    fieldType,
-                    locale
-                  });
-                } catch (dbError: unknown) {
-                  logger.error("[API-AI] Error saving to DB", {
-                    context: "AI",
-                    error: errorMessage(dbError),
-                    groupId: templateGroupId,
-                    fieldType,
-                    locale
                   });
                 }
               }
@@ -747,18 +811,34 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                     }
                   });
 
-                  const data = await response.json();
+                  const data = await response.json() as ShopifyGraphQLResponse;
+                  let seqRejected = false;
 
-                  if (data.data?.translationsRegister?.userErrors?.length > 0) {
-                    logger.error("[API-AI] Shopify translation error for " + contentType, {
+                  if (data.errors && data.errors.length > 0) {
+                    logger.error("[API-AI] GraphQL error saving translation for " + contentType, {
                       context: "AI",
-                      errors: data.data.translationsRegister.userErrors,
+                      errors: data.errors,
+                      locale,
+                      shopifyKey
+                    });
+                    if (!rejectedFields[locale]) rejectedFields[locale] = [];
+                    rejectedFields[locale].push(fieldType);
+                    seqRejected = true;
+                  } else if ((data.data?.translationsRegister?.userErrors?.length ?? 0) > 0) {
+                    logger.error("[API-AI] Shopify rejected translation for " + contentType, {
+                      context: "AI",
+                      errors: data.data?.translationsRegister?.userErrors,
                       locale,
                       fieldType,
                       shopifyKey
                     });
-                  } else {
-                    // Also save to local DB so revalidation picks it up immediately
+                    if (!rejectedFields[locale]) rejectedFields[locale] = [];
+                    rejectedFields[locale].push(fieldType);
+                    seqRejected = true;
+                  }
+
+                  if (!seqRejected) {
+                    // Only save to local DB when Shopify accepted
                     const resourceTypeMap: Record<string, string> = {
                       products: "Product", collections: "Collection",
                       pages: "Page", blogs: "Article", policies: "ShopPolicy",
@@ -830,10 +910,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             },
           });
 
+          if (Object.keys(rejectedFields).length > 0) {
+            logger.warn("[API-AI] translateFieldToAllLocales completed with rejected fields", {
+              context: "AI",
+              fieldType,
+              rejectedFields
+            });
+          }
+
           return json({
             success: true,
             translations,
-            fieldType
+            fieldType,
+            rejectedFields
           });
         } catch (error: unknown) {
           // Update task to failed
