@@ -66,12 +66,12 @@ interface ThemeNavItem {
  * Returns null for keys that can't be mapped (group.json, bar, settings, etc.)
  */
 function keyToFilename(key: string): string | null {
-  // section.page.{name}.json.* → templates/page.{name}.json
-  const pageMatch = key.match(/^section\.page\.([^.]+)\.json\./);
-  if (pageMatch) return `templates/page.${pageMatch[1]}.json`;
+  // section.page.{name}.json.* → templates/page.{name}.json (name can contain dots)
+  const pageMatch = key.match(/^section\.(page\..+?)\.json\./);
+  if (pageMatch) return `templates/${pageMatch[1]}.json`;
 
-  // section.{name}.json.* → templates/{name}.json
-  const sectionMatch = key.match(/^section\.([^.]+)\.json\./);
+  // section.{name}.json.* → templates/{name}.json (name can contain dots, e.g. "product.stoffwaren-anna")
+  const sectionMatch = key.match(/^section\.(.+?)\.json\./);
   if (sectionMatch) return `templates/${sectionMatch[1]}.json`;
 
   // collections.json.* → templates/list-collections.json (Shopify's default name)
