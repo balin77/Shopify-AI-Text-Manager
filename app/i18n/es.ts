@@ -252,6 +252,7 @@ export const es: Translation = {
     translateAllSuccess: "Traducido exitosamente a {count} idioma(s).",
     translateLocaleError: "La traducción a {locale} falló. Por favor, inténtalo de nuevo.",
     translateLocaleRejectedFields: "Traducción a {locale} parcialmente completada. Campo(s) {fields} no pudieron guardarse en Shopify.",
+    translateSkippedFields: "Algunos campos fueron omitidos porque el valor traducido es idéntico al idioma principal: {details}.",
     altTextSavePartialImages: "Cambios guardados, pero el texto alt para imagen(es) {failedImages} no pudo guardarse en Shopify. Por favor, sincroniza el producto de nuevo.",
     altTextTranslateAllPartialImages: "Textos alt guardados para {successCount}/{totalCount} imagen(es) en {languageCount} idioma(s). Imagen(es) {failedImages} no pudieron guardarse en Shopify. Por favor, sincroniza el producto de nuevo.",
     altTextTranslatePartialImages: "Textos alt parcialmente guardados. Imagen(es) {failedImages} no pudieron guardarse en Shopify. Por favor, sincroniza el producto de nuevo.",
