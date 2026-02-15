@@ -1,7 +1,7 @@
 # Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
 
 name = "ContentPilot AI"
-client_id = "REPLACE_WITH_NEW_CLIENT_ID"
+client_id = "9e5abc8c0e9e03ed24d4a2a2b1174c88"
 application_url = "https://contentpilotai.up.railway.app"
 embedded = true
 
@@ -17,10 +17,6 @@ redirect_urls = [
 
 [webhooks]
 api_version = "2025-10"
-
-[[webhooks.subscriptions]]
-topics = [ "articles/create", "articles/update", "articles/delete" ]
-uri = "/webhooks/articles"
 
 [[webhooks.subscriptions]]
 compliance_topics = [ "customers/data_request", "customers/redact", "shop/redact" ]
