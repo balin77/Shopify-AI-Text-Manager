@@ -367,12 +367,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                 if (contentType === 'templates' && templateGroupId) {
                   // Use the correct resourceId for this specific field key
                   const fieldResourceId = templateKeyToResourceId.get(fieldType) || templateResourceId;
+                  let batchShopifyAccepted = false;
+
                   if (!fieldResourceId) {
                     logger.error("[API-AI] Batch: No resourceId found for template field", {
                       context: "AI",
                       fieldType,
                       locale
                     });
+                    if (!rejectedFields[locale]) rejectedFields[locale] = [];
+                    rejectedFields[locale].push(fieldType);
                   } else {
                   try {
                     const digestResponse = await admin.graphql(`
@@ -420,7 +424,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                     });
 
                     const templateData = await templateResponse.json() as ShopifyGraphQLResponse;
-                    let templateRejected = false;
 
                     if (templateData.errors && templateData.errors.length > 0) {
                       logger.error("[API-AI] Batch: GraphQL error saving template translation", {
@@ -431,7 +434,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                       });
                       if (!rejectedFields[locale]) rejectedFields[locale] = [];
                       rejectedFields[locale].push(fieldType);
-                      templateRejected = true;
                     } else if ((templateData.data?.translationsRegister?.userErrors?.length ?? 0) > 0) {
                       logger.error("[API-AI] Batch: Shopify rejected template translation", {
                         context: "AI",
@@ -441,11 +443,25 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                       });
                       if (!rejectedFields[locale]) rejectedFields[locale] = [];
                       rejectedFields[locale].push(fieldType);
-                      templateRejected = true;
+                    } else {
+                      batchShopifyAccepted = true;
                     }
+                    } // end if digest
+                  } catch (shopifyError: unknown) {
+                    logger.error("[API-AI] Batch: Error saving template to Shopify", {
+                      context: "AI",
+                      error: errorMessage(shopifyError),
+                      locale,
+                      fieldType
+                    });
+                    if (!rejectedFields[locale]) rejectedFields[locale] = [];
+                    rejectedFields[locale].push(fieldType);
+                  }
+                  } // end if fieldResourceId
 
-                    if (!templateRejected) {
-                      // Only save to local database when Shopify accepted
+                  // Only save to local DB when Shopify accepted
+                  if (batchShopifyAccepted && fieldResourceId) {
+                    try {
                       await db.themeTranslation.upsert({
                         where: {
                           shop_resourceId_groupId_key_locale: {
@@ -469,24 +485,21 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                           value: translatedValue
                         }
                       });
-
                       logger.debug("[API-AI] Batch: Saved template translation", {
                         context: "AI",
                         locale,
                         fieldType,
                         resourceId: fieldResourceId
                       });
+                    } catch (dbError: unknown) {
+                      logger.error("[API-AI] Batch: Error saving to DB", {
+                        context: "AI",
+                        error: errorMessage(dbError),
+                        locale,
+                        fieldType
+                      });
                     }
-                    } // end if digest
-                  } catch (shopifyError: unknown) {
-                    logger.error("[API-AI] Batch: Error saving template to Shopify", {
-                      context: "AI",
-                      error: errorMessage(shopifyError),
-                      locale,
-                      fieldType
-                    });
                   }
-                  } // end if fieldResourceId
                 }
                 // Save to Shopify for products, collections, pages, etc.
                 else if (itemId && (contentType === 'products' || contentType === 'collections' || contentType === 'pages' || contentType === 'blogs' || contentType === 'policies')) {
@@ -653,14 +666,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
               if (contentType === 'templates' && templateGroupId) {
                 // Use the correct resourceId for this specific field key
                 const fieldResourceId = templateKeyToResourceId.get(fieldType) || templateResourceId;
+                let seqShopifyAccepted = false;
+
                 if (!fieldResourceId) {
                   logger.error("[API-AI] No resourceId found for template field", {
                     context: "AI",
                     fieldType,
                     locale
                   });
+                  if (!rejectedFields[locale]) rejectedFields[locale] = [];
+                  rejectedFields[locale].push(fieldType);
                 } else {
-                // STEP 1: Fetch the digest from Shopify using the correct resource
                 try {
                   const digestResponse = await admin.graphql(`
                     query getTranslatableContent($resourceId: ID!) {
@@ -681,14 +697,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                   const fieldContent = translatableContent.find((c: TranslatableContentItem) => c.key === fieldType);
                   const digest = fieldContent?.digest || "";
 
-                  logger.info("[API-AI] Fetched digest for field", {
-                    context: "AI",
-                    resourceId: fieldResourceId,
-                    fieldType,
-                    digest: digest ? `${digest.substring(0, 20)}...` : "(empty)",
-                    totalFields: translatableContent.length
-                  });
-
                   if (!digest) {
                     logger.warn("[API-AI] No digest for template field — skipping Shopify save", {
                       context: "AI",
@@ -700,21 +708,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                     if (!rejectedFields[locale]) rejectedFields[locale] = [];
                     rejectedFields[locale].push(fieldType);
                   } else {
-                  // STEP 2: Send to Shopify with the digest
                   const translationInput = [{
                     key: fieldType,
                     value: translatedValue,
                     locale: locale,
                     translatableContentDigest: digest
                   }];
-
-                  logger.info("[API-AI] Calling Shopify translationsRegister", {
-                    context: "AI",
-                    resourceId: fieldResourceId,
-                    fieldType,
-                    locale,
-                    hasDigest: true
-                  });
 
                   const response = await admin.graphql(TRANSLATE_CONTENT, {
                     variables: {
@@ -725,8 +724,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
                   const data = await response.json() as ShopifyGraphQLResponse;
 
-                  // Check for top-level GraphQL errors
-                  let seqTemplateRejected = false;
                   if (data.errors && data.errors.length > 0) {
                     logger.error("[API-AI] Shopify GraphQL errors", {
                       context: "AI",
@@ -737,7 +734,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                     });
                     if (!rejectedFields[locale]) rejectedFields[locale] = [];
                     rejectedFields[locale].push(fieldType);
-                    seqTemplateRejected = true;
                   } else if ((data.data?.translationsRegister?.userErrors?.length ?? 0) > 0) {
                     logger.error("[API-AI] Shopify translation userErrors", {
                       context: "AI",
@@ -747,67 +743,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                     });
                     if (!rejectedFields[locale]) rejectedFields[locale] = [];
                     rejectedFields[locale].push(fieldType);
-                    seqTemplateRejected = true;
-                  } else if ((data.data?.translationsRegister?.translations?.length ?? 0) > 0) {
+                  } else {
+                    seqShopifyAccepted = true;
                     logger.info("[API-AI] SUCCESS - Translation saved to Shopify", {
                       context: "AI",
                       resourceId: fieldResourceId,
                       fieldType,
-                      locale,
-                      savedTranslations: data.data?.translationsRegister?.translations
+                      locale
                     });
-                  } else {
-                    logger.warn("[API-AI] Shopify returned no errors but also no translations", {
-                      context: "AI",
-                      resourceId: fieldResourceId,
-                      fieldType,
-                      locale,
-                      fullResponse: JSON.stringify(data)
-                    });
-                  }
-
-                  // Only save to local database when Shopify accepted
-                  if (!seqTemplateRejected) {
-                    try {
-                      await db.themeTranslation.upsert({
-                        where: {
-                          shop_resourceId_groupId_key_locale: {
-                            shop: session.shop,
-                            resourceId: fieldResourceId,
-                            groupId: templateGroupId,
-                            key: fieldType,
-                            locale: locale
-                          }
-                        },
-                        update: {
-                          value: translatedValue,
-                          updatedAt: new Date()
-                        },
-                        create: {
-                          shop: session.shop,
-                          groupId: templateGroupId,
-                          resourceId: fieldResourceId,
-                          locale: locale,
-                          key: fieldType,
-                          value: translatedValue
-                        }
-                      });
-
-                      logger.info("[API-AI] Saved template translation to DB", {
-                        context: "AI",
-                        groupId: templateGroupId,
-                        fieldType,
-                        locale
-                      });
-                    } catch (dbError: unknown) {
-                      logger.error("[API-AI] Error saving to DB", {
-                        context: "AI",
-                        error: errorMessage(dbError),
-                        groupId: templateGroupId,
-                        fieldType,
-                        locale
-                      });
-                    }
                   }
                   } // end if digest
                 } catch (shopifyError: unknown) {
@@ -819,8 +762,53 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                     fieldType,
                     resourceId: fieldResourceId
                   });
+                  if (!rejectedFields[locale]) rejectedFields[locale] = [];
+                  rejectedFields[locale].push(fieldType);
                 }
                 } // end if fieldResourceId
+
+                // Only save to local DB when Shopify accepted
+                if (seqShopifyAccepted && fieldResourceId) {
+                  try {
+                    await db.themeTranslation.upsert({
+                      where: {
+                        shop_resourceId_groupId_key_locale: {
+                          shop: session.shop,
+                          resourceId: fieldResourceId,
+                          groupId: templateGroupId,
+                          key: fieldType,
+                          locale: locale
+                        }
+                      },
+                      update: {
+                        value: translatedValue,
+                        updatedAt: new Date()
+                      },
+                      create: {
+                        shop: session.shop,
+                        groupId: templateGroupId,
+                        resourceId: fieldResourceId,
+                        locale: locale,
+                        key: fieldType,
+                        value: translatedValue
+                      }
+                    });
+                    logger.info("[API-AI] Saved template translation to DB", {
+                      context: "AI",
+                      groupId: templateGroupId,
+                      fieldType,
+                      locale
+                    });
+                  } catch (dbError: unknown) {
+                    logger.error("[API-AI] Error saving to DB", {
+                      context: "AI",
+                      error: errorMessage(dbError),
+                      groupId: templateGroupId,
+                      fieldType,
+                      locale
+                    });
+                  }
+                }
               }
               // For products and other content types: Send to Shopify
               else if (itemId && (contentType === 'products' || contentType === 'collections' || contentType === 'pages' || contentType === 'blogs' || contentType === 'policies')) {
