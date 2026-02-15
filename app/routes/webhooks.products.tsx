@@ -50,7 +50,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     });
 
     // 3. Parse payload
-    const payload = JSON.parse(rawBody);
+    let payload: { id: string | number };
+    try {
+      payload = JSON.parse(rawBody);
+    } catch {
+      logger.error('Invalid JSON in webhook payload', { context: 'Webhook', shop, topic });
+      return json({ error: "Invalid payload" }, { status: 400 });
+    }
     const productId = `gid://shopify/Product/${payload.id}`;
 
     logger.debug('Webhook payload parsed', {

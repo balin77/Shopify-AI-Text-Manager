@@ -15,6 +15,7 @@ import { logger, loggers } from "~/utils/logger.server";
 import { markTranslationSaved } from "~/utils/translation-save-lock.server";
 import type { ActionContext } from "./shared/action-context";
 import { getFormString, getFormJSON } from "~/utils/form-data.utils";
+import { safeJsonParse } from "~/utils/validation";
 import type { PrismaClient } from "@prisma/client";
 
 interface UpdateProductParams {
@@ -42,11 +43,11 @@ export async function handleUpdateProduct(
 
   // Parse changedFields if present (for translation deletion when primary locale changes)
   const changedFieldsStr = getFormString(formData, "changedFields");
-  const changedFields: string[] = changedFieldsStr ? JSON.parse(changedFieldsStr) : [];
+  const changedFields: string[] = changedFieldsStr ? safeJsonParse<string[]>(changedFieldsStr, []) : [];
 
   // Parse changedAltTextIndices if present (for alt-text translation deletion when primary locale changes)
   const changedAltTextIndicesStr = getFormString(formData, "changedAltTextIndices");
-  const changedAltTextIndices: number[] = changedAltTextIndicesStr ? JSON.parse(changedAltTextIndicesStr) : [];
+  const changedAltTextIndices: number[] = changedAltTextIndicesStr ? safeJsonParse<number[]>(changedAltTextIndicesStr, []) : [];
 
   const params: UpdateProductParams = {
     locale: getFormString(formData, "locale"),

@@ -16,7 +16,7 @@ import { getTaskExpirationDate } from "~/config/constants";
 import type { ContentEditorConfig } from "../types/content-editor.types";
 import { logger } from "../utils/logger.server";
 import { getFormString, getFormInt, getFormJSON } from "../utils/form-data.utils";
-import { isValidShopifyGID } from "../utils/validation";
+import { isValidShopifyGID, safeJsonParse } from "../utils/validation";
 import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
 import type { Session } from "@shopify/shopify-api";
 import type { PrismaClient } from "@prisma/client";
@@ -516,7 +516,7 @@ Allowed formatting changes:
         fields: changedFields,
         translationService: translationServiceWithTask,
         db,
-        targetLocales: targetLocalesStr ? JSON.parse(targetLocalesStr) : undefined,
+        targetLocales: targetLocalesStr ? safeJsonParse<string[]>(targetLocalesStr, []) : undefined,
         contentType: contentConfig.contentType,
         taskId: task.id,
         customInstructions: aiInstructions?.translateInstructions || undefined,
@@ -719,7 +719,7 @@ Allowed formatting changes:
         fields: changedFields,
         translationService: translationServiceWithTask,
         db,
-        targetLocales: targetLocalesStr ? JSON.parse(targetLocalesStr) : undefined,
+        targetLocales: targetLocalesStr ? safeJsonParse<string[]>(targetLocalesStr, []) : undefined,
         contentType: contentConfig.contentType,
         taskId: task.id,
         customInstructions: aiInstructions?.translateInstructions || undefined,
@@ -883,7 +883,7 @@ Allowed formatting changes:
 
       // Get changed fields (for translation deletion when saving primary locale)
       const changedFieldsStr = getFormString(formData, "changedFields");
-      const changedFields: string[] | undefined = changedFieldsStr ? JSON.parse(changedFieldsStr) : undefined;
+      const changedFields: string[] | undefined = changedFieldsStr ? safeJsonParse<string[]>(changedFieldsStr, []) : undefined;
 
       // Use unified content service
       const result = await shopifyContentService.updateContent({

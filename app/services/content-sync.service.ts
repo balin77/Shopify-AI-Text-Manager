@@ -765,7 +765,11 @@ export class ContentSyncService {
       if (onProgress) {
         onProgress(index, collections.length, `Syncing collection ${index}/${collections.length}`);
       }
-      await this.syncCollection(collection.id);
+      try {
+        await this.syncCollection(collection.id);
+      } catch (error) {
+        logger.error(`[ContentSync] Failed to sync collection ${collection.id}, continuing with next`, { error });
+      }
     }
 
     return collections.length;
@@ -835,7 +839,11 @@ export class ContentSyncService {
       if (onProgress) {
         onProgress(index, allArticles.length, `Syncing article ${index}/${allArticles.length}`);
       }
-      await this.syncArticle(article.id);
+      try {
+        await this.syncArticle(article.id);
+      } catch (error) {
+        logger.error(`[ContentSync] Failed to sync article ${article.id}, continuing with next`, { error });
+      }
     }
 
     return allArticles.length;
@@ -869,7 +877,11 @@ export class ContentSyncService {
     logger.debug(`[ContentSync] Found ${menus.length} menus to sync`);
 
     for (const menu of menus) {
-      await this.syncMenu(menu.id);
+      try {
+        await this.syncMenu(menu.id);
+      } catch (error) {
+        logger.error(`[ContentSync] Failed to sync menu ${menu.id}, continuing with next`, { error });
+      }
     }
 
     return menus.length;

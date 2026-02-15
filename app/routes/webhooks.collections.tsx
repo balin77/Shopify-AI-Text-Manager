@@ -40,7 +40,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     logger.debug("[WEBHOOK] Signature verified", { context: "Webhook" });
 
     // 3. Parse payload
-    const payload = JSON.parse(rawBody);
+    let payload: { id: string | number };
+    try {
+      payload = JSON.parse(rawBody);
+    } catch {
+      logger.error('Invalid JSON in webhook payload', { context: 'Webhook', shop, topic });
+      return json({ error: "Invalid payload" }, { status: 400 });
+    }
     const collectionId = `gid://shopify/Collection/${payload.id}`;
 
     logger.debug("[WEBHOOK] Collection ID", { context: "Webhook", collectionId });
