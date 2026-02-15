@@ -12,7 +12,7 @@ Shopify supports **31+ translatable resource types** through the `TranslatableRe
 
 | Resource Type | Description | Translatable Fields |
 |--------------|-------------|-------------------|
-| **ARTICLE** | Blog posts/articles | title, body, handle, meta_title, meta_description |
+| **ARTICLE** | Blog posts/articles | title, body_html, summary_html, handle, meta_title, meta_description |
 | **ARTICLE_IMAGE** | Blog article images | alt text |
 | **BLOG** | Blog collections/categories | title, metadata |
 | **PAGE** | Store pages | title, body_html, handle |
