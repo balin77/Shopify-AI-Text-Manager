@@ -1731,13 +1731,34 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             }
 
             const failedFieldLocales = (result.failedLocales as string[]) || [];
-            if (failedFieldLocales.length > 0) {
-              const failedList = failedFieldLocales.join(", ");
+            const rejected = (result.rejectedFields as Record<string, string[]>) || {};
+            const rejectedLocales = Object.keys(rejected);
+
+            if (failedFieldLocales.length > 0 || rejectedLocales.length > 0) {
+              const messages: string[] = [];
+
+              if (failedFieldLocales.length > 0) {
+                const failedList = failedFieldLocales.join(", ");
+                messages.push(
+                  String(t.content?.translatePartialLocales || "Translation partially completed: {successCount}/{totalCount} language(s) succeeded. Language(s) {failedLocales} failed.")
+                    .replace("{successCount}", String(Object.keys(translations).length))
+                    .replace("{totalCount}", String(Object.keys(translations).length + failedFieldLocales.length))
+                    .replace("{failedLocales}", failedList)
+                );
+              }
+
+              if (rejectedLocales.length > 0) {
+                const details = rejectedLocales
+                  .map(locale => `${locale}: ${rejected[locale].join(", ")}`)
+                  .join("; ");
+                messages.push(
+                  String(t.content?.translateRejectedFields || "Some fields could not be saved to Shopify: {details}. The translated content was generated but Shopify rejected it.")
+                    .replace("{details}", details)
+                );
+              }
+
               showInfoBox(
-                String(t.content?.translatePartialLocales || "Translation partially completed: {successCount}/{totalCount} language(s) succeeded. Language(s) {failedLocales} failed.")
-                  .replace("{successCount}", String(Object.keys(translations).length))
-                  .replace("{totalCount}", String(Object.keys(translations).length + failedFieldLocales.length))
-                  .replace("{failedLocales}", failedList),
+                messages.join(" "),
                 "warning",
                 t.common?.warning || "Warning"
               );
@@ -2262,13 +2283,34 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           }
 
           const failedFieldLocales2 = (result.failedLocales as string[]) || [];
-          if (failedFieldLocales2.length > 0) {
-            const failedList = failedFieldLocales2.join(", ");
+          const rejected2 = (result.rejectedFields as Record<string, string[]>) || {};
+          const rejectedLocales2 = Object.keys(rejected2);
+
+          if (failedFieldLocales2.length > 0 || rejectedLocales2.length > 0) {
+            const messages: string[] = [];
+
+            if (failedFieldLocales2.length > 0) {
+              const failedList = failedFieldLocales2.join(", ");
+              messages.push(
+                String(t.content?.translatePartialLocales || "Translation partially completed: {successCount}/{totalCount} language(s) succeeded. Language(s) {failedLocales} failed.")
+                  .replace("{successCount}", String(Object.keys(translations).length))
+                  .replace("{totalCount}", String(Object.keys(translations).length + failedFieldLocales2.length))
+                  .replace("{failedLocales}", failedList)
+              );
+            }
+
+            if (rejectedLocales2.length > 0) {
+              const details = rejectedLocales2
+                .map(locale => `${locale}: ${rejected2[locale].join(", ")}`)
+                .join("; ");
+              messages.push(
+                String(t.content?.translateRejectedFields || "Some fields could not be saved to Shopify: {details}. The translated content was generated but Shopify rejected it.")
+                  .replace("{details}", details)
+              );
+            }
+
             showInfoBox(
-              String(t.content?.translatePartialLocales || "Translation partially completed: {successCount}/{totalCount} language(s) succeeded. Language(s) {failedLocales} failed.")
-                .replace("{successCount}", String(Object.keys(translations).length))
-                .replace("{totalCount}", String(Object.keys(translations).length + failedFieldLocales2.length))
-                .replace("{failedLocales}", failedList),
+              messages.join(" "),
               "warning",
               t.common?.warning || "Warning"
             );
