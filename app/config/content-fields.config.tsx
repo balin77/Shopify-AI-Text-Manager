@@ -230,7 +230,7 @@ export const BLOGS_CONFIG: ContentEditorConfig = {
     {
       key: "summary",
       type: "html",
-      label: "Auszug",
+      label: "Excerpt",
       translationKey: "summary_html",
       supportsAI: true,
       supportsFormatting: true,
