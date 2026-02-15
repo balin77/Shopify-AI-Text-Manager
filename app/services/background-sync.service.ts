@@ -825,19 +825,20 @@ export class BackgroundSyncService {
       },
     });
 
-    // Update translations
+    // Delete all existing translations for this group, then re-create from Shopify
+    // (mirrors the product sync pattern: ensures translations removed in Shopify
+    // don't remain as stale "ghost" entries in the local DB)
+    await db.themeTranslation.deleteMany({
+      where: {
+        shop: this.shop,
+        groupId: groupId,
+      },
+    });
+
+    // Re-create translations from Shopify
     for (const t of allTranslations) {
-      await db.themeTranslation.upsert({
-        where: {
-          shop_resourceId_groupId_key_locale: {
-            shop: this.shop,
-            resourceId: resourceId,
-            groupId: groupId,
-            key: t.key,
-            locale: t.locale,
-          },
-        },
-        create: {
+      await db.themeTranslation.create({
+        data: {
           shop: this.shop,
           resourceId: resourceId,
           groupId: groupId,
@@ -845,11 +846,6 @@ export class BackgroundSyncService {
           value: t.value,
           locale: t.locale,
           outdated: t.outdated || false,
-        },
-        update: {
-          value: t.value,
-          outdated: t.outdated || false,
-          updatedAt: new Date(),
         },
       });
     }
