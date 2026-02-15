@@ -28,6 +28,8 @@ interface AIEditableFieldProps {
   disableGeneration?: boolean;
   /** If true, the value is a fallback from primary locale (shown in gray) */
   isFallbackValue?: boolean;
+  /** If true, the field is read-only (disabled). Used when primary locale template editing is not enabled. */
+  readOnly?: boolean;
   onGenerateAI?: () => void;
   onFormatAI?: () => void;
   onTranslate?: () => void;
@@ -59,6 +61,7 @@ export function AIEditableField({
   hasFieldMissingTranslations,
   disableGeneration = false,
   isFallbackValue = false,
+  readOnly = false,
   onGenerateAI,
   onFormatAI,
   onTranslate,
@@ -126,6 +129,7 @@ export function AIEditableField({
           }
           value={value}
           onChange={onChange}
+          disabled={readOnly}
           autoComplete="off"
           multiline={multiline}
           maxLength={maxLength}

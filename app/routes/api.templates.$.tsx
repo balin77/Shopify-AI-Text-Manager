@@ -324,36 +324,39 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
         const changedFieldsStr = formData.get("changedFields") as string;
         const changedFields = changedFieldsStr ? safeJsonParse<string[]>(changedFieldsStr, []) : [];
 
-        // STEP 1: Register translations with Shopify FIRST
-        const translationInputs = Object.entries(updatedFields).map(([key, value]) => ({
-          key,
-          value: value as string,
-          locale,
-          translatableContentDigest: ""
-        }));
+        // STEP 1: Register translations with Shopify (only for foreign locales)
+        // Shopify's translationsRegister does NOT accept the shop's primary locale
+        if (locale !== primaryLocale) {
+          const translationInputs = Object.entries(updatedFields).map(([key, value]) => ({
+            key,
+            value: value as string,
+            locale,
+            translatableContentDigest: ""
+          }));
 
-        if (translationInputs.length > 0) {
-          const response = await admin.graphql(TRANSLATE_CONTENT, {
-            variables: {
-              resourceId,
-              translations: translationInputs
+          if (translationInputs.length > 0) {
+            const response = await admin.graphql(TRANSLATE_CONTENT, {
+              variables: {
+                resourceId,
+                translations: translationInputs
+              }
+            });
+
+            const data = await response.json();
+
+            // Check for errors from Shopify
+            if (data.data?.translationsRegister?.userErrors?.length > 0) {
+              const errors = data.data.translationsRegister.userErrors;
+              logger.error("Shopify translation errors", { context: "Templates", errors });
+              return json({
+                success: false,
+                error: `Shopify error: ${errors[0].message}`
+              }, { status: 500 });
             }
-          });
-
-          const data = await response.json();
-
-          // Check for errors from Shopify
-          if (data.data?.translationsRegister?.userErrors?.length > 0) {
-            const errors = data.data.translationsRegister.userErrors;
-            logger.error("Shopify translation errors", { context: "Templates", errors });
-            return json({
-              success: false,
-              error: `Shopify error: ${errors[0].message}`
-            }, { status: 500 });
           }
         }
 
-        // STEP 2: Only update database if Shopify succeeded
+        // STEP 2: Update local database
         if (locale === primaryLocale) {
           // Update primary locale: Update translatableContent in ThemeContent
           for (const group of themeGroups) {

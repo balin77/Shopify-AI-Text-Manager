@@ -361,6 +361,41 @@ export const LOGGING_CONFIG = {
 } as const;
 
 // ============================================================================
+// FEATURE FLAGS
+// ============================================================================
+
+/**
+ * TEMPLATE PRIMARY LOCALE EDITING
+ *
+ * Controls whether users can edit theme template content in the shop's primary locale.
+ * Shopify's `translationsRegister` API only works for foreign/secondary locales.
+ * Updating primary locale theme content requires `themeFilesUpsert`, which needs
+ * a "Protected Scope Exemption" from Shopify.
+ *
+ * When `false` (default):
+ *   - Template fields are read-only in the primary locale
+ *   - AI buttons (Improve, Generate, Format, Translate) are hidden
+ *   - Save/Discard buttons are hidden for primary locale templates
+ *   - Server rejects primary locale template save requests
+ *
+ * When `true`:
+ *   - Full editing is enabled for primary locale templates
+ *   - Server uses `themeFilesUpsert` to push changes to Shopify
+ *
+ * HOW TO ENABLE:
+ *   1. Submit "Protected Scope Exemption" request via Shopify Partner Dashboard
+ *   2. Add `write_themes` to scopes in shopify.app.toml
+ *   3. Set this flag to `true`
+ *   4. Reinstall the app to acquire the new scope
+ *
+ * Related code:
+ *   - GraphQL mutation: UPSERT_THEME_FILES in app/graphql/content.mutations.ts
+ *   - UI gating: UnifiedContentEditor.tsx, AIEditableField.tsx
+ *   - Server gating: app.templates.tsx, api.templates.$.tsx
+ */
+export const ENABLE_THEME_PRIMARY_EDIT = false;
+
+// ============================================================================
 // HELPER FUNCTIONS
 // ============================================================================
 

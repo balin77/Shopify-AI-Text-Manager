@@ -24,6 +24,7 @@ import { useInfoBox } from "../contexts/InfoBoxContext";
 import { useItemSelector } from "../contexts/ItemSelectorContext";
 import { contentEditorStyles, getLocalizedLanguageName } from "../utils/contentEditor.utils";
 import { useI18n } from "../contexts/I18nContext";
+import { ENABLE_THEME_PRIMARY_EDIT } from "../config/constants";
 import "../styles/UnifiedContentEditor.css";
 import type { ContentEditorConfig, UseContentEditorReturn, FieldDefinition } from "../types/content-editor.types";
 import type { UnifiedItem, SortOption } from "./unified/UnifiedItemList";
@@ -398,8 +399,14 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   <Card padding="400">
                   <InlineStack align="space-between" blockAlign="center">
                     {/* Left: Translate All + Clear All Buttons */}
+                    {/* Hidden for templates in primary locale when themeFilesUpsert is not enabled */}
                     <InlineStack gap="200">
                       {state.currentLanguage === primaryLocale ? (
+                        config.contentType === 'templates' && !ENABLE_THEME_PRIMARY_EDIT ? (
+                          <Text as="p" variant="bodySm" tone="subdued">
+                            {t.content?.templatePrimaryReadOnly || "Primary locale is read-only for templates"}
+                          </Text>
+                        ) : (
                         <>
                           {/* Primary locale: Translate to ALL foreign languages */}
                           <Button
@@ -429,6 +436,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                             />
                           )}
                         </>
+                        )
                       ) : (
                         <>
                           {/* Foreign locale: Translate ONLY this locale */}
@@ -581,41 +589,49 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                     )}
 
                     {/* Dynamic Fields */}
-                    {!isFieldsLoading && fieldDefinitions.map((field) => (
-                      <FieldRenderer
-                        key={field.key}
-                        field={field}
-                        value={helpers.getEditableValue(field.key)}
-                        onChange={(value) => handlers.handleValueChange(field.key, value)}
-                        suggestion={state.aiSuggestions[field.key]}
-                        isPrimaryLocale={state.currentLanguage === primaryLocale}
-                        isTranslated={helpers.isFieldTranslated(field.key)}
-                        isLoading={isGlobalAIActionRunning || loadingFieldKeys.has(field.key)}
-                        isDataLoading={!state.isInitialDataReady}
-                        sourceTextAvailable={!!getSourceText(selectedItem, field.key, primaryLocale)}
-                        disableGeneration={config.contentType === 'templates'}
-                        isFallbackValue={state.fallbackFields?.has(field.key) || false}
-                        onGenerateAI={field.supportsAI !== false ? () => handlers.handleGenerateAI(field.key) : undefined}
-                        onFormatAI={field.supportsFormatting !== false ? () => handlers.handleFormatAI(field.key) : undefined}
-                        onTranslate={field.supportsTranslation !== false ? () => handlers.handleTranslateField(field.key) : undefined}
-                        onTranslateToAllLocales={field.supportsTranslation !== false ? () => handlers.handleTranslateFieldToAllLocales(field.key) : undefined}
-                        onAcceptSuggestion={() => handlers.handleAcceptSuggestion(field.key)}
-                        onAcceptAndTranslate={() => handlers.handleAcceptAndTranslate(field.key)}
-                        onRejectSuggestion={() => handlers.handleRejectSuggestion(field.key)}
-                        onClear={field.key === "title" && state.currentLanguage === primaryLocale ? undefined : () => handlers.handleClearField(field.key)}
-                        htmlMode={state.htmlModes[field.key] || "rendered"}
-                        onToggleHtmlMode={() => handlers.handleToggleHtmlMode(field.key)}
-                        shopLocales={shopLocales}
-                        currentLanguage={state.currentLanguage}
-                        primaryLocale={primaryLocale}
-                        selectedItem={selectedItem}
-                        t={t}
-                        state={state}
-                        handlers={handlers}
-                        fetcherState={fetcherState}
-                        fetcherFormData={fetcherFormData}
-                      />
-                    ))}
+                    {!isFieldsLoading && (() => {
+                      // Template primary locale: read-only when themeFilesUpsert is not enabled
+                      const isTemplatePrimaryReadOnly = config.contentType === 'templates'
+                        && state.currentLanguage === primaryLocale
+                        && !ENABLE_THEME_PRIMARY_EDIT;
+
+                      return fieldDefinitions.map((field) => (
+                        <FieldRenderer
+                          key={field.key}
+                          field={field}
+                          value={helpers.getEditableValue(field.key)}
+                          onChange={(value) => handlers.handleValueChange(field.key, value)}
+                          suggestion={state.aiSuggestions[field.key]}
+                          isPrimaryLocale={state.currentLanguage === primaryLocale}
+                          isTranslated={helpers.isFieldTranslated(field.key)}
+                          isLoading={isGlobalAIActionRunning || loadingFieldKeys.has(field.key)}
+                          isDataLoading={!state.isInitialDataReady}
+                          sourceTextAvailable={!!getSourceText(selectedItem, field.key, primaryLocale)}
+                          disableGeneration={config.contentType === 'templates'}
+                          isFallbackValue={state.fallbackFields?.has(field.key) || false}
+                          readOnly={isTemplatePrimaryReadOnly}
+                          onGenerateAI={isTemplatePrimaryReadOnly ? undefined : (field.supportsAI !== false ? () => handlers.handleGenerateAI(field.key) : undefined)}
+                          onFormatAI={isTemplatePrimaryReadOnly ? undefined : (field.supportsFormatting !== false ? () => handlers.handleFormatAI(field.key) : undefined)}
+                          onTranslate={isTemplatePrimaryReadOnly ? undefined : (field.supportsTranslation !== false ? () => handlers.handleTranslateField(field.key) : undefined)}
+                          onTranslateToAllLocales={isTemplatePrimaryReadOnly ? undefined : (field.supportsTranslation !== false ? () => handlers.handleTranslateFieldToAllLocales(field.key) : undefined)}
+                          onAcceptSuggestion={() => handlers.handleAcceptSuggestion(field.key)}
+                          onAcceptAndTranslate={() => handlers.handleAcceptAndTranslate(field.key)}
+                          onRejectSuggestion={() => handlers.handleRejectSuggestion(field.key)}
+                          onClear={isTemplatePrimaryReadOnly ? undefined : (field.key === "title" && state.currentLanguage === primaryLocale ? undefined : () => handlers.handleClearField(field.key))}
+                          htmlMode={state.htmlModes[field.key] || "rendered"}
+                          onToggleHtmlMode={() => handlers.handleToggleHtmlMode(field.key)}
+                          shopLocales={shopLocales}
+                          currentLanguage={state.currentLanguage}
+                          primaryLocale={primaryLocale}
+                          selectedItem={selectedItem}
+                          t={t}
+                          state={state}
+                          handlers={handlers}
+                          fetcherState={fetcherState}
+                          fetcherFormData={fetcherFormData}
+                        />
+                      ));
+                    })()}
 
                     {/* Bottom Pagination (for easier navigation after scrolling) */}
                     {fieldPagination && fieldPagination.totalPages > 1 && onFieldPageChange && !isFieldsLoading && (
@@ -727,6 +743,8 @@ interface FieldRendererProps {
   disableGeneration?: boolean;
   /** If true, the value is a fallback from primary locale (shown in gray) */
   isFallbackValue?: boolean;
+  /** If true, the field is read-only (disabled). Used when primary locale template editing is not enabled. */
+  readOnly?: boolean;
   onGenerateAI?: () => void;
   onFormatAI?: () => void;
   onTranslate?: () => void;
@@ -757,6 +775,7 @@ function FieldRenderer(props: FieldRendererProps & { state?: any; handlers?: any
     sourceTextAvailable,
     disableGeneration,
     isFallbackValue,
+    readOnly,
     onGenerateAI,
     onFormatAI,
     onTranslate,
@@ -947,6 +966,7 @@ function FieldRenderer(props: FieldRendererProps & { state?: any; handlers?: any
         isDataLoading={isDataLoading}
         sourceTextAvailable={sourceTextAvailable}
         disableGeneration={disableGeneration}
+        readOnly={readOnly}
         onGenerateAI={field.supportsAI !== false && isPrimaryLocale ? onGenerateAI : undefined}
         onFormatAI={field.supportsFormatting !== false && isPrimaryLocale ? onFormatAI : undefined}
         onTranslate={field.supportsTranslation !== false ? onTranslate : undefined}
@@ -978,6 +998,7 @@ function FieldRenderer(props: FieldRendererProps & { state?: any; handlers?: any
       sourceTextAvailable={sourceTextAvailable}
       disableGeneration={disableGeneration}
       isFallbackValue={isFallbackValue}
+      readOnly={readOnly}
       onGenerateAI={field.supportsAI !== false && isPrimaryLocale ? onGenerateAI : undefined}
       onFormatAI={field.supportsFormatting !== false && isPrimaryLocale ? onFormatAI : undefined}
       onTranslate={field.supportsTranslation !== false ? onTranslate : undefined}

@@ -88,3 +88,33 @@ export const UPDATE_SHOP_POLICY = `#graphql
     }
   }
 `;
+
+/**
+ * THEME FILES UPSERT — Update theme files for primary locale content
+ *
+ * This mutation creates or updates theme files directly on the Shopify theme.
+ * It is the ONLY way to update primary locale theme content via API, since
+ * `translationsRegister` rejects the shop's primary locale.
+ *
+ * REQUIREMENTS:
+ *   - `write_themes` scope (add to shopify.app.toml)
+ *   - Shopify "Protected Scope Exemption" approval
+ *   - ENABLE_THEME_PRIMARY_EDIT = true (in app/config/constants.ts)
+ *
+ * NOTE: This mutation is INTENTIONALLY prepared but NOT yet active.
+ *       Do NOT remove it — it will be activated once the exemption is granted.
+ *       See ENABLE_THEME_PRIMARY_EDIT in app/config/constants.ts for details.
+ */
+export const UPSERT_THEME_FILES = `#graphql
+  mutation upsertThemeFiles($themeId: ID!, $files: [OnlineStoreThemeFilesUpsertFileInput!]!) {
+    themeFilesUpsert(themeId: $themeId, files: $files) {
+      upsertedThemeFiles {
+        filename
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;

@@ -21,7 +21,7 @@ import { useInfoBox } from "../contexts/InfoBoxContext";
 import { AIService, type AIProvider, toValidProvider } from "../../src/services/ai.service";
 import { TranslationService } from "../../src/services/translation.service";
 import { decryptApiKey } from "../utils/encryption.server";
-import { getTaskExpirationDate } from "~/config/constants";
+import { getTaskExpirationDate, ENABLE_THEME_PRIMARY_EDIT } from "~/config/constants";
 import { getFormString, getFormJSON } from "~/utils/form-data.utils";
 import { safeJsonParse } from "~/utils/validation";
 import type { ShopLocale } from "~/types/content-editor.types";
@@ -853,6 +853,29 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
 
         // STEP 2: Update local database
         if (locale === primaryLocale) {
+          // Guard: Primary locale editing requires ENABLE_THEME_PRIMARY_EDIT flag
+          // This is a server-side safety net; the UI should already prevent this
+          if (!ENABLE_THEME_PRIMARY_EDIT) {
+            logger.warn("[TEMPLATES] Primary locale save rejected - ENABLE_THEME_PRIMARY_EDIT is false", {
+              context: "Templates",
+              locale,
+              fieldCount: Object.keys(updatedFields).length,
+            });
+            return json({
+              success: false,
+              error: "Primary locale editing for templates requires write_themes scope (not yet enabled)"
+            }, { status: 403 });
+          }
+
+          // TODO: When ENABLE_THEME_PRIMARY_EDIT is true, use themeFilesUpsert mutation
+          // (UPSERT_THEME_FILES from graphql/content.mutations.ts) to push changes to Shopify.
+          // This requires:
+          //   1. Mapping translation keys to theme file paths (e.g., "section.product.json.main.heading" → "sections/product.json")
+          //   2. Reading the current file content from Shopify
+          //   3. Updating the specific JSON values
+          //   4. Writing the file back via themeFilesUpsert
+          // For now, only the local DB update below is performed.
+
           // Update primary locale: Update translatableContent in ThemeContent
           for (const group of themeGroups) {
             const content = (group.translatableContent as unknown) as TranslatableField[];

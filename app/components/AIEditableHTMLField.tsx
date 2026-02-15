@@ -30,6 +30,8 @@ interface AIEditableHTMLFieldProps {
   disableGeneration?: boolean;
   /** If true, the value is a fallback from primary locale (shown in gray) */
   isFallbackValue?: boolean;
+  /** If true, the field is read-only (disabled). Used when primary locale template editing is not enabled. */
+  readOnly?: boolean;
   onGenerateAI?: () => void;
   onFormatAI?: () => void;
   onTranslate?: () => void;
@@ -59,6 +61,7 @@ export function AIEditableHTMLField({
   hasFieldMissingTranslations,
   disableGeneration = false,
   isFallbackValue = false,
+  readOnly = false,
   onGenerateAI,
   onFormatAI,
   onTranslate,
@@ -226,6 +229,7 @@ export function AIEditableHTMLField({
         <textarea
           value={value}
           onChange={(e) => onChange(e.target.value)}
+          disabled={readOnly}
           style={{
             width: "100%",
             minHeight: "200px",
@@ -235,12 +239,13 @@ export function AIEditableHTMLField({
             fontFamily: "monospace",
             fontSize: "14px",
             marginTop: "0.5rem",
+            ...(readOnly ? { opacity: 0.6, cursor: "not-allowed" } : {}),
           }}
         />
       ) : (
         <div
           ref={editorRef}
-          contentEditable
+          contentEditable={!readOnly}
           onInput={handleInput}
           suppressContentEditableWarning
           style={{
