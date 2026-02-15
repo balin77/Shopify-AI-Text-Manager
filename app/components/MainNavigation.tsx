@@ -27,9 +27,9 @@ export function MainNavigation() {
   const [showLoadingIndicator, setShowLoadingIndicator] = useState(false);
   const navRef = useRef<HTMLDivElement>(null);
   const [navHeight, setNavHeight] = useState(73);
-  const pollIntervalRef = useRef(10000); // Start with 10 seconds, use ref to persist across renders
+  const pollIntervalRef = useRef(2000); // Start with 2 seconds, use ref to persist across renders
   const errorCountRef = useRef(0); // Track consecutive errors
-  const completedTasksPollIntervalRef = useRef(10000); // Separate interval for completed tasks polling
+  const completedTasksPollIntervalRef = useRef(2000); // Separate interval for completed tasks polling
   const completedTasksErrorCountRef = useRef(0); // Track consecutive errors for completed tasks
   const notifiedTaskIds = useRef<Set<string>>(new Set()); // Track which tasks we've already notified about
   const isMountedRef = useRef(true); // Track if component is mounted to prevent state updates after unmount
@@ -190,7 +190,7 @@ export function MainNavigation() {
         errorCountRef.current = 0;
 
         // Gradually reduce interval back to 10 seconds
-        const newInterval = Math.max(pollIntervalRef.current / 2, 10000);
+        const newInterval = Math.max(pollIntervalRef.current / 2, 2000);
         if (newInterval !== pollIntervalRef.current) {
           console.log(`✅ [MainNavigation] Running tasks connection restored. Reducing poll interval to ${newInterval}ms`);
           pollIntervalRef.current = newInterval;
@@ -225,7 +225,7 @@ export function MainNavigation() {
         completedTasksErrorCountRef.current = 0;
 
         // Gradually reduce interval back to 10 seconds
-        const newInterval = Math.max(completedTasksPollIntervalRef.current / 2, 10000);
+        const newInterval = Math.max(completedTasksPollIntervalRef.current / 2, 2000);
         if (newInterval !== completedTasksPollIntervalRef.current) {
           console.log(`✅ [MainNavigation] Completed tasks connection restored. Reducing poll interval to ${newInterval}ms`);
           completedTasksPollIntervalRef.current = newInterval;
