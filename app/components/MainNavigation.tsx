@@ -142,7 +142,7 @@ export function MainNavigation() {
 
       if (task.type === "bulkTranslation") {
         if (task.fieldType === "all") {
-          message = t.tasks?.translationCompleted || `Translation completed for "${resourceTitle}"`;
+          message = t.tasks?.translationCompleted?.replace("{title}", resourceTitle) || `Translation completed for "${resourceTitle}"`;
         } else {
           const rawFieldType = task.fieldType || "field";
           // Resolve raw template keys (contain dots/colons) to human-readable labels
@@ -160,7 +160,7 @@ export function MainNavigation() {
         message = t.tasks?.generationCompleted?.replace("{field}", fieldName).replace("{title}", resourceTitle)
           || `AI generation completed for ${fieldName} in "${resourceTitle}"`;
       } else {
-        message = t.tasks?.taskCompleted || `Task completed for "${resourceTitle}"`;
+        message = t.tasks?.taskCompleted?.replace("{title}", resourceTitle) || `Task completed for "${resourceTitle}"`;
       }
 
       if (isMountedRef.current) {
