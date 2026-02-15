@@ -402,11 +402,6 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                     {/* Hidden for templates in primary locale when themeFilesUpsert is not enabled */}
                     <InlineStack gap="200">
                       {state.currentLanguage === primaryLocale ? (
-                        config.contentType === 'templates' && !ENABLE_THEME_PRIMARY_EDIT ? (
-                          <Text as="p" variant="bodySm" tone="subdued">
-                            {t.content?.templatePrimaryReadOnly || "Primary locale is read-only for templates"}
-                          </Text>
-                        ) : (
                         <>
                           {/* Primary locale: Translate to ALL foreign languages */}
                           <Button
@@ -419,13 +414,16 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                               ? (t.content?.translating || "Translating...")
                               : (t.content?.translateAll || "🌍 Translate All")}
                           </Button>
-                          <Button
-                            onClick={handlers.handleClearAllClick}
-                            size="slim"
-                            tone="critical"
-                          >
-                            🗑️ {t.content?.clearAll || "Clear All"}
-                          </Button>
+                          {/* Clear All: hidden for templates when primary edit is not enabled */}
+                          {!(config.contentType === 'templates' && !ENABLE_THEME_PRIMARY_EDIT) && (
+                            <Button
+                              onClick={handlers.handleClearAllClick}
+                              size="slim"
+                              tone="critical"
+                            >
+                              🗑️ {t.content?.clearAll || "Clear All"}
+                            </Button>
+                          )}
                           {/* Send Image to AI checkbox - only in main language for products/collections/blogs with images */}
                           {(config.contentType === "products" || config.contentType === "collections" || config.contentType === "blogs") &&
                            (state.images?.length > 0 || state.featuredImage?.url) && (
@@ -436,7 +434,6 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                             />
                           )}
                         </>
-                        )
                       ) : (
                         <>
                           {/* Foreign locale: Translate ONLY this locale */}
@@ -612,8 +609,8 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                           readOnly={isTemplatePrimaryReadOnly}
                           onGenerateAI={isTemplatePrimaryReadOnly ? undefined : (field.supportsAI !== false ? () => handlers.handleGenerateAI(field.key) : undefined)}
                           onFormatAI={isTemplatePrimaryReadOnly ? undefined : (field.supportsFormatting !== false ? () => handlers.handleFormatAI(field.key) : undefined)}
-                          onTranslate={isTemplatePrimaryReadOnly ? undefined : (field.supportsTranslation !== false ? () => handlers.handleTranslateField(field.key) : undefined)}
-                          onTranslateToAllLocales={isTemplatePrimaryReadOnly ? undefined : (field.supportsTranslation !== false ? () => handlers.handleTranslateFieldToAllLocales(field.key) : undefined)}
+                          onTranslate={field.supportsTranslation !== false ? () => handlers.handleTranslateField(field.key) : undefined}
+                          onTranslateToAllLocales={field.supportsTranslation !== false ? () => handlers.handleTranslateFieldToAllLocales(field.key) : undefined}
                           onAcceptSuggestion={() => handlers.handleAcceptSuggestion(field.key)}
                           onAcceptAndTranslate={() => handlers.handleAcceptAndTranslate(field.key)}
                           onRejectSuggestion={() => handlers.handleRejectSuggestion(field.key)}

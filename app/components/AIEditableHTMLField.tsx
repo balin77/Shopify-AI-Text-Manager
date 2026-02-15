@@ -219,7 +219,7 @@ export function AIEditableHTMLField({
         </InlineStack>
       </InlineStack>
 
-      {mode === "rendered" && (
+      {mode === "rendered" && !readOnly && (
         <div style={{ marginTop: "0.5rem" }}>
           <HtmlFormattingToolbar onCommand={handleFormatText} />
         </div>
@@ -253,9 +253,10 @@ export function AIEditableHTMLField({
             minHeight: "200px",
             padding: "12px",
             border: "1px solid #c9cccf",
-            borderTop: mode === "rendered" ? "none" : "1px solid #c9cccf",
-            borderRadius: mode === "rendered" ? "0 0 8px 8px" : "8px",
+            borderTop: mode === "rendered" && !readOnly ? "none" : "1px solid #c9cccf",
+            borderRadius: mode === "rendered" && !readOnly ? "0 0 8px 8px" : "8px",
             lineHeight: "1.6",
+            ...(readOnly ? { opacity: 0.6, cursor: "not-allowed", userSelect: "text" as const } : {}),
           }}
           className="description-editor"
         />
