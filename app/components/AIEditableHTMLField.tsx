@@ -197,7 +197,7 @@ export function AIEditableHTMLField({
     <div className={`ai-editable-html-field ${getBackgroundClass()}`}>
       <InlineStack align="space-between" blockAlign="center">
         <InlineStack gap="100" blockAlign="center">
-          <Text as="p" variant="bodyMd" fontWeight="bold">
+          <Text as="p" variant="bodyMd" fontWeight="bold" tone={readOnly ? "subdued" : undefined}>
             {label}
           </Text>
           {helpKey && <HelpTooltip helpKey={helpKey} />}
