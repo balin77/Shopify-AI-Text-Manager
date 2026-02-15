@@ -274,23 +274,37 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           const rejectedFields: Record<string, string[]> = {};
           const totalLocales = targetLocales.length;
 
-          // For templates: Load themeContent ONCE before the loop to avoid race conditions
+          // For templates: Load ALL themeContent rows for the group to map keys to correct resource IDs.
+          // A template group can span multiple Shopify resources (e.g. a JSON template + metaobjects),
+          // so each field key must be saved against its own resource ID.
           let templateGroupId: string | null = null;
           let templateResourceId: string | null = null;
+          const templateKeyToResourceId = new Map<string, string>();
           if (contentType === 'templates' && itemId) {
             templateGroupId = itemId.replace("group_", "");
-            const themeContent = await db.themeContent.findFirst({
+            const themeContentRows = await db.themeContent.findMany({
               where: {
                 shop: session.shop,
                 groupId: templateGroupId
               }
             });
-            if (themeContent) {
-              templateResourceId = themeContent.resourceId;
+            if (themeContentRows.length > 0) {
+              templateResourceId = themeContentRows[0].resourceId;
+              // Build key → resourceId map from all rows
+              for (const row of themeContentRows) {
+                const items = (row.translatableContent as unknown) as Array<{ key: string; value?: string; digest?: string }>;
+                if (Array.isArray(items)) {
+                  for (const item of items) {
+                    templateKeyToResourceId.set(item.key, row.resourceId);
+                  }
+                }
+              }
               logger.info("[API-AI] Found themeContent for templates", {
                 context: "AI",
                 groupId: templateGroupId,
-                resourceId: templateResourceId
+                resourceCount: themeContentRows.length,
+                keyCount: templateKeyToResourceId.size,
+                defaultResourceId: templateResourceId
               });
             } else {
               logger.error("[API-AI] No themeContent found - translations will NOT be saved!", {
@@ -350,7 +364,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                 aiResponses.push({ locale, response: translatedValue });
 
                 // Save to Shopify for templates
-                if (contentType === 'templates' && templateResourceId && templateGroupId) {
+                if (contentType === 'templates' && templateGroupId) {
+                  // Use the correct resourceId for this specific field key
+                  const fieldResourceId = templateKeyToResourceId.get(fieldType) || templateResourceId;
+                  if (!fieldResourceId) {
+                    logger.error("[API-AI] Batch: No resourceId found for template field", {
+                      context: "AI",
+                      fieldType,
+                      locale
+                    });
+                  } else {
                   try {
                     const digestResponse = await admin.graphql(`
                       query getTranslatableContent($resourceId: ID!) {
@@ -363,7 +386,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                         }
                       }
                     `, {
-                      variables: { resourceId: templateResourceId }
+                      variables: { resourceId: fieldResourceId }
                     });
 
                     const digestData = await digestResponse.json() as ShopifyGraphQLResponse;
@@ -371,6 +394,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                     const fieldContent = translatableContent.find((c: TranslatableContentItem) => c.key === fieldType);
                     const digest = fieldContent?.digest || "";
 
+                    if (!digest) {
+                      logger.warn("[API-AI] Batch: No digest for template field — skipping Shopify save", {
+                        context: "AI",
+                        fieldType,
+                        locale,
+                        resourceId: fieldResourceId,
+                        availableKeys: translatableContent.map((c: TranslatableContentItem) => c.key).slice(0, 10)
+                      });
+                      if (!rejectedFields[locale]) rejectedFields[locale] = [];
+                      rejectedFields[locale].push(fieldType);
+                    } else {
                     const translationInput = [{
                       key: fieldType,
                       value: translatedValue,
@@ -380,7 +414,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
                     const templateResponse = await admin.graphql(TRANSLATE_CONTENT, {
                       variables: {
-                        resourceId: templateResourceId,
+                        resourceId: fieldResourceId,
                         translations: translationInput
                       }
                     });
@@ -416,7 +450,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                         where: {
                           shop_resourceId_groupId_key_locale: {
                             shop: session.shop,
-                            resourceId: templateResourceId,
+                            resourceId: fieldResourceId,
                             groupId: templateGroupId,
                             key: fieldType,
                             locale: locale
@@ -429,7 +463,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                         create: {
                           shop: session.shop,
                           groupId: templateGroupId,
-                          resourceId: templateResourceId,
+                          resourceId: fieldResourceId,
                           locale: locale,
                           key: fieldType,
                           value: translatedValue
@@ -439,9 +473,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                       logger.debug("[API-AI] Batch: Saved template translation", {
                         context: "AI",
                         locale,
-                        fieldType
+                        fieldType,
+                        resourceId: fieldResourceId
                       });
                     }
+                    } // end if digest
                   } catch (shopifyError: unknown) {
                     logger.error("[API-AI] Batch: Error saving template to Shopify", {
                       context: "AI",
@@ -450,6 +486,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                       fieldType
                     });
                   }
+                  } // end if fieldResourceId
                 }
                 // Save to Shopify for products, collections, pages, etc.
                 else if (itemId && (contentType === 'products' || contentType === 'collections' || contentType === 'pages' || contentType === 'blogs' || contentType === 'policies')) {
@@ -613,8 +650,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
               aiResponses.push({ locale, response: translatedValue });
 
               // For templates: Send to Shopify AND save to database
-              if (contentType === 'templates' && templateResourceId && templateGroupId) {
-                // STEP 1: Fetch the digest from Shopify first
+              if (contentType === 'templates' && templateGroupId) {
+                // Use the correct resourceId for this specific field key
+                const fieldResourceId = templateKeyToResourceId.get(fieldType) || templateResourceId;
+                if (!fieldResourceId) {
+                  logger.error("[API-AI] No resourceId found for template field", {
+                    context: "AI",
+                    fieldType,
+                    locale
+                  });
+                } else {
+                // STEP 1: Fetch the digest from Shopify using the correct resource
                 try {
                   const digestResponse = await admin.graphql(`
                     query getTranslatableContent($resourceId: ID!) {
@@ -627,7 +673,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                       }
                     }
                   `, {
-                    variables: { resourceId: templateResourceId }
+                    variables: { resourceId: fieldResourceId }
                   });
 
                   const digestData = await digestResponse.json() as ShopifyGraphQLResponse;
@@ -637,12 +683,23 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
                   logger.info("[API-AI] Fetched digest for field", {
                     context: "AI",
-                    resourceId: templateResourceId,
+                    resourceId: fieldResourceId,
                     fieldType,
                     digest: digest ? `${digest.substring(0, 20)}...` : "(empty)",
                     totalFields: translatableContent.length
                   });
 
+                  if (!digest) {
+                    logger.warn("[API-AI] No digest for template field — skipping Shopify save", {
+                      context: "AI",
+                      fieldType,
+                      locale,
+                      resourceId: fieldResourceId,
+                      availableKeys: translatableContent.map((c: TranslatableContentItem) => c.key).slice(0, 10)
+                    });
+                    if (!rejectedFields[locale]) rejectedFields[locale] = [];
+                    rejectedFields[locale].push(fieldType);
+                  } else {
                   // STEP 2: Send to Shopify with the digest
                   const translationInput = [{
                     key: fieldType,
@@ -653,30 +710,20 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
                   logger.info("[API-AI] Calling Shopify translationsRegister", {
                     context: "AI",
-                    resourceId: templateResourceId,
+                    resourceId: fieldResourceId,
                     fieldType,
                     locale,
-                    hasDigest: !!digest
+                    hasDigest: true
                   });
 
                   const response = await admin.graphql(TRANSLATE_CONTENT, {
                     variables: {
-                      resourceId: templateResourceId,
+                      resourceId: fieldResourceId,
                       translations: translationInput
                     }
                   });
 
                   const data = await response.json() as ShopifyGraphQLResponse;
-
-                  // Log FULL response for debugging
-                  logger.info("[API-AI] Shopify response received", {
-                    context: "AI",
-                    locale,
-                    fieldType,
-                    hasData: !!data.data,
-                    hasErrors: !!data.errors,
-                    fullResponse: JSON.stringify(data).substring(0, 1000)
-                  });
 
                   // Check for top-level GraphQL errors
                   let seqTemplateRejected = false;
@@ -686,7 +733,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                       errors: data.errors,
                       locale,
                       fieldType,
-                      resourceId: templateResourceId
+                      resourceId: fieldResourceId
                     });
                     if (!rejectedFields[locale]) rejectedFields[locale] = [];
                     rejectedFields[locale].push(fieldType);
@@ -704,7 +751,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                   } else if ((data.data?.translationsRegister?.translations?.length ?? 0) > 0) {
                     logger.info("[API-AI] SUCCESS - Translation saved to Shopify", {
                       context: "AI",
-                      resourceId: templateResourceId,
+                      resourceId: fieldResourceId,
                       fieldType,
                       locale,
                       savedTranslations: data.data?.translationsRegister?.translations
@@ -712,7 +759,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                   } else {
                     logger.warn("[API-AI] Shopify returned no errors but also no translations", {
                       context: "AI",
-                      resourceId: templateResourceId,
+                      resourceId: fieldResourceId,
                       fieldType,
                       locale,
                       fullResponse: JSON.stringify(data)
@@ -726,7 +773,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                         where: {
                           shop_resourceId_groupId_key_locale: {
                             shop: session.shop,
-                            resourceId: templateResourceId,
+                            resourceId: fieldResourceId,
                             groupId: templateGroupId,
                             key: fieldType,
                             locale: locale
@@ -739,7 +786,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                         create: {
                           shop: session.shop,
                           groupId: templateGroupId,
-                          resourceId: templateResourceId,
+                          resourceId: fieldResourceId,
                           locale: locale,
                           key: fieldType,
                           value: translatedValue
@@ -762,6 +809,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                       });
                     }
                   }
+                  } // end if digest
                 } catch (shopifyError: unknown) {
                   logger.error("[API-AI] Exception sending to Shopify", {
                     context: "AI",
@@ -769,9 +817,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                     stack: errorStack(shopifyError)?.substring(0, 500),
                     locale,
                     fieldType,
-                    resourceId: templateResourceId
+                    resourceId: fieldResourceId
                   });
                 }
+                } // end if fieldResourceId
               }
               // For products and other content types: Send to Shopify
               else if (itemId && (contentType === 'products' || contentType === 'collections' || contentType === 'pages' || contentType === 'blogs' || contentType === 'policies')) {

@@ -152,6 +152,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const firstGroup = themeGroups[0];
   const resourceId = firstGroup.resourceId;
 
+  // Build key → resourceId map: each field key belongs to a specific Shopify resource
+  // (a template group can span multiple resources, e.g. JSON template + metaobjects)
+  const keyToResourceId = new Map<string, string>();
+  for (const group of themeGroups) {
+    const items = (group.translatableContent as unknown) as TranslatableField[];
+    if (Array.isArray(items)) {
+      for (const item of items) {
+        keyToResourceId.set(item.key, group.resourceId);
+      }
+    }
+  }
+
   try {
     switch (actionType) {
       case "loadTranslations": {
@@ -323,12 +335,13 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
             targetLocale
           );
 
-          // Auto-save the translation
+          // Auto-save the translation (use correct resourceId for this field)
+          const fieldResId = keyToResourceId.get(fieldType) || resourceId;
           await db.themeTranslation.upsert({
             where: {
               shop_resourceId_groupId_key_locale: {
                 shop: session.shop,
-                resourceId: resourceId,
+                resourceId: fieldResId,
                 groupId: groupId,
                 key: fieldType,
                 locale: targetLocale
@@ -341,7 +354,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
             create: {
               shop: session.shop,
               groupId: groupId,
-              resourceId: resourceId,
+              resourceId: fieldResId,
               locale: targetLocale,
               key: fieldType,
               value: translatedValue
@@ -472,7 +485,8 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
             }
           }
 
-          // Batch save all translations in a single transaction
+          // Batch save all translations in a single transaction (use correct resourceId for the field)
+          const fieldResId2 = keyToResourceId.get(fieldType) || resourceId;
           if (pendingUpserts.length > 0) {
             await db.$transaction(
               pendingUpserts.map(({ locale, value }) =>
@@ -480,7 +494,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
                   where: {
                     shop_resourceId_groupId_key_locale: {
                       shop: session.shop,
-                      resourceId: resourceId,
+                      resourceId: fieldResId2,
                       groupId: groupId,
                       key: fieldType,
                       locale: locale
@@ -493,7 +507,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
                   create: {
                     shop: session.shop,
                     groupId: groupId,
-                    resourceId: resourceId,
+                    resourceId: fieldResId2,
                     locale: locale,
                     key: fieldType,
                     value: value
@@ -596,7 +610,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
           const translations: Record<string, Record<string, string>> = {};
           const totalItems = targetLocales.length * uniqueContent.size;
           let completedItems = 0;
-          const pendingUpserts: Array<{ key: string; locale: string; value: string }> = [];
+          const pendingUpserts: Array<{ key: string; locale: string; value: string; resId: string }> = [];
 
           for (const locale of targetLocales) {
             translations[locale] = {};
@@ -609,7 +623,8 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
                   locale
                 );
                 translations[locale][key] = translated;
-                pendingUpserts.push({ key, locale, value: translated });
+                const fieldResId = keyToResourceId.get(key) || resourceId;
+                pendingUpserts.push({ key, locale, value: translated, resId: fieldResId });
 
                 // Update progress
                 completedItems++;
@@ -628,12 +643,12 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
           // Batch save all translations in a single transaction
           if (pendingUpserts.length > 0) {
             await db.$transaction(
-              pendingUpserts.map(({ key, locale, value }) =>
+              pendingUpserts.map(({ key, locale, value, resId }) =>
                 db.themeTranslation.upsert({
                   where: {
                     shop_resourceId_groupId_key_locale: {
                       shop: session.shop,
-                      resourceId: resourceId,
+                      resourceId: resId,
                       groupId: groupId,
                       key: key,
                       locale: locale
@@ -646,7 +661,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
                   create: {
                     shop: session.shop,
                     groupId: groupId,
-                    resourceId: resourceId,
+                    resourceId: resId,
                     locale: locale,
                     key: key,
                     value: value
@@ -764,26 +779,51 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
             }
           }
 
-          const translationInputs = Object.entries(updatedFields).map(([key, value]) => ({
-            key,
-            value,
-            locale,
-            translatableContentDigest: digestMap.get(key) || ""
-          }));
+          // Group translations by resource ID — each key may belong to a different resource
+          const translationsByResource = new Map<string, Array<{ key: string; value: string; locale: string; translatableContentDigest: string }>>();
+          const skippedKeys: string[] = [];
 
-          if (translationInputs.length > 0) {
+          for (const [key, value] of Object.entries(updatedFields)) {
+            const digest = digestMap.get(key) || "";
+            const fieldResId = keyToResourceId.get(key) || resourceId;
+
+            if (!digest) {
+              logger.warn("[TEMPLATES] No digest for key — skipping Shopify save", {
+                context: "Templates",
+                key,
+                locale,
+                resourceId: fieldResId
+              });
+              skippedKeys.push(key);
+              continue;
+            }
+
+            if (!translationsByResource.has(fieldResId)) {
+              translationsByResource.set(fieldResId, []);
+            }
+            translationsByResource.get(fieldResId)!.push({
+              key,
+              value,
+              locale,
+              translatableContentDigest: digest
+            });
+          }
+
+          // Send one translationsRegister call per resource ID
+          for (const [resId, translationInputs] of translationsByResource) {
+            if (translationInputs.length === 0) continue;
+
             logger.info("[TEMPLATES] Sending translations to Shopify", {
               context: "Templates",
-              resourceId,
+              resourceId: resId,
               locale,
               fieldCount: translationInputs.length,
               sampleKeys: translationInputs.slice(0, 3).map(t => t.key),
-              hasDigests: translationInputs.filter(t => t.translatableContentDigest).length,
             });
 
             const response = await admin.graphql(TRANSLATE_CONTENT, {
               variables: {
-                resourceId,
+                resourceId: resId,
                 translations: translationInputs
               }
             });
@@ -795,20 +835,19 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
               logger.error("[TEMPLATES] Shopify translation errors", {
                 context: "Templates",
                 errors,
-                resourceId,
+                resourceId: resId,
                 locale
               });
-              return json({
-                success: false,
-                error: `Shopify error: ${errors[0].message}`
-              }, { status: 500 });
+              // Don't hard-fail — continue saving other resources and the local DB
+              skippedKeys.push(...translationInputs.map(t => t.key));
+            } else {
+              logger.info("[TEMPLATES] Shopify translations registered successfully", {
+                context: "Templates",
+                locale,
+                resourceId: resId,
+                fieldCount: translationInputs.length
+              });
             }
-
-            logger.info("[TEMPLATES] Shopify translations registered successfully", {
-              context: "Templates",
-              locale,
-              fieldCount: translationInputs.length
-            });
           }
         }
 
@@ -865,16 +904,17 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
             logger.debug("[TEMPLATES] No changedFields to delete translations for", { context: "Templates" });
           }
         } else {
-          // Update translations: batch upsert in a single transaction
+          // Update translations: batch upsert in a single transaction (use correct resourceId per key)
           const entries = Object.entries(updatedFields);
           if (entries.length > 0) {
             await db.$transaction(
-              entries.map(([key, value]) =>
-                db.themeTranslation.upsert({
+              entries.map(([key, value]) => {
+                const keyResId = keyToResourceId.get(key) || resourceId;
+                return db.themeTranslation.upsert({
                   where: {
                     shop_resourceId_groupId_key_locale: {
                       shop: session.shop,
-                      resourceId: resourceId,
+                      resourceId: keyResId,
                       groupId: groupId,
                       key: key,
                       locale: locale
@@ -887,13 +927,13 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
                   create: {
                     shop: session.shop,
                     groupId: groupId,
-                    resourceId: resourceId,
+                    resourceId: keyResId,
                     locale: locale,
                     key: key,
                     value: value
                   }
-                })
-              )
+                });
+              })
             );
           }
         }
