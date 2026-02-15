@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useRef } from "react";
 
 export type HtmlFormattingCommand =
   | "bold"
@@ -25,95 +25,348 @@ interface UseHtmlFormattingProps {
   onChange: (html: string) => void;
 }
 
+const INLINE_TAG_MAP: Partial<Record<HtmlFormattingCommand, string>> = {
+  bold: "STRONG",
+  italic: "EM",
+  underline: "U",
+  strikethrough: "S",
+};
+
+const BLOCK_TAG_MAP: Partial<Record<HtmlFormattingCommand, string>> = {
+  h1: "H1",
+  h2: "H2",
+  h3: "H3",
+  p: "P",
+  blockquote: "BLOCKQUOTE",
+  code: "PRE",
+};
+
+const BLOCK_TAGS = new Set([
+  "P", "DIV", "H1", "H2", "H3", "H4", "H5", "H6",
+  "BLOCKQUOTE", "PRE", "UL", "OL", "LI",
+]);
+
+const MAX_HISTORY = 50;
+
+function getSelectionInEditor(editor: HTMLElement): Range | null {
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) return null;
+  const range = sel.getRangeAt(0);
+  if (!editor.contains(range.commonAncestorContainer)) return null;
+  return range;
+}
+
+function findAncestor(node: Node, tagName: string, boundary: HTMLElement): HTMLElement | null {
+  let current: Node | null = node;
+  while (current && current !== boundary) {
+    if (current instanceof HTMLElement && current.tagName === tagName) {
+      return current;
+    }
+    current = current.parentNode;
+  }
+  return null;
+}
+
+function findClosestBlock(node: Node, boundary: HTMLElement): HTMLElement {
+  let current: Node | null = node;
+  while (current && current !== boundary) {
+    if (current instanceof HTMLElement && BLOCK_TAGS.has(current.tagName)) {
+      return current;
+    }
+    current = current.parentNode;
+  }
+  return boundary;
+}
+
+function unwrapElement(el: HTMLElement): void {
+  const parent = el.parentNode;
+  if (!parent) return;
+  while (el.firstChild) {
+    parent.insertBefore(el.firstChild, el);
+  }
+  parent.removeChild(el);
+}
+
+function toggleInlineTag(range: Range, tagName: string, editor: HTMLElement): void {
+  const existing = findAncestor(range.commonAncestorContainer, tagName, editor);
+  if (existing) {
+    unwrapElement(existing);
+    return;
+  }
+
+  const contents = range.extractContents();
+  const wrapper = document.createElement(tagName);
+  wrapper.appendChild(contents);
+  range.insertNode(wrapper);
+
+  // Restore selection around the wrapped content
+  const sel = window.getSelection();
+  if (sel) {
+    const newRange = document.createRange();
+    newRange.selectNodeContents(wrapper);
+    sel.removeAllRanges();
+    sel.addRange(newRange);
+  }
+}
+
+function setBlockType(range: Range, tagName: string, editor: HTMLElement): void {
+  const block = findClosestBlock(range.startContainer, editor);
+  if (block === editor) {
+    // No block parent — wrap content in the target block
+    const wrapper = document.createElement(tagName);
+    // If editor has direct text/inline content at cursor, wrap it
+    if (range.startContainer === editor || range.startContainer.parentNode === editor) {
+      const contents = range.extractContents();
+      wrapper.appendChild(contents.childNodes.length ? contents : document.createTextNode("\u200B"));
+      range.insertNode(wrapper);
+    } else {
+      const contents = range.extractContents();
+      wrapper.appendChild(contents);
+      range.insertNode(wrapper);
+    }
+    return;
+  }
+
+  // Toggle: if already the target type, revert to <p>
+  const targetTag = block.tagName === tagName ? "P" : tagName;
+
+  const replacement = document.createElement(targetTag);
+  while (block.firstChild) {
+    replacement.appendChild(block.firstChild);
+  }
+  block.parentNode!.replaceChild(replacement, block);
+
+  // Place cursor inside the new block
+  const sel = window.getSelection();
+  if (sel) {
+    const newRange = document.createRange();
+    newRange.selectNodeContents(replacement);
+    newRange.collapse(false);
+    sel.removeAllRanges();
+    sel.addRange(newRange);
+  }
+}
+
+function toggleList(range: Range, listTag: string, editor: HTMLElement): void {
+  const existingList = findAncestor(range.commonAncestorContainer, listTag, editor);
+  if (existingList) {
+    // Unwrap: convert each <li> back to a <p>
+    const parent = existingList.parentNode!;
+    const items = Array.from(existingList.querySelectorAll("li"));
+    for (const li of items) {
+      const p = document.createElement("p");
+      while (li.firstChild) {
+        p.appendChild(li.firstChild);
+      }
+      parent.insertBefore(p, existingList);
+    }
+    parent.removeChild(existingList);
+    return;
+  }
+
+  // Check if we're in the opposite list type and should convert
+  const otherTag = listTag === "UL" ? "OL" : "UL";
+  const otherList = findAncestor(range.commonAncestorContainer, otherTag, editor);
+  if (otherList) {
+    const replacement = document.createElement(listTag);
+    while (otherList.firstChild) {
+      replacement.appendChild(otherList.firstChild);
+    }
+    otherList.parentNode!.replaceChild(replacement, otherList);
+    return;
+  }
+
+  // Wrap the current block in a new list
+  const block = findClosestBlock(range.startContainer, editor);
+  const list = document.createElement(listTag);
+  const li = document.createElement("li");
+
+  if (block === editor) {
+    // Wrap current selection contents
+    const contents = range.extractContents();
+    li.appendChild(contents.childNodes.length ? contents : document.createTextNode("\u200B"));
+  } else {
+    while (block.firstChild) {
+      li.appendChild(block.firstChild);
+    }
+    block.parentNode!.replaceChild(list, block);
+  }
+  list.appendChild(li);
+  if (!list.parentNode) {
+    range.insertNode(list);
+  }
+
+  // Place cursor inside the list item
+  const sel = window.getSelection();
+  if (sel) {
+    const newRange = document.createRange();
+    newRange.selectNodeContents(li);
+    newRange.collapse(false);
+    sel.removeAllRanges();
+    sel.addRange(newRange);
+  }
+}
+
 export function useHtmlFormatting({ editorRef, onChange }: UseHtmlFormattingProps) {
+  const historyRef = useRef<{ stack: string[]; index: number }>({
+    stack: [],
+    index: -1,
+  });
+
+  const pushHistory = useCallback(() => {
+    if (!editorRef.current) return;
+    const html = editorRef.current.innerHTML;
+    const history = historyRef.current;
+
+    // Truncate any redo entries beyond current position
+    history.stack = history.stack.slice(0, history.index + 1);
+    history.stack.push(html);
+
+    // Cap the stack size
+    if (history.stack.length > MAX_HISTORY) {
+      history.stack = history.stack.slice(history.stack.length - MAX_HISTORY);
+    }
+    history.index = history.stack.length - 1;
+  }, [editorRef]);
+
   const executeCommand = useCallback(
     (command: HtmlFormattingCommand) => {
-      if (!editorRef.current) return;
+      const editor = editorRef.current;
+      if (!editor) return;
 
-      editorRef.current.focus();
+      editor.focus();
 
+      // Undo/redo don't need to push history themselves
+      if (command === "undo") {
+        const history = historyRef.current;
+        if (history.index < 0) return;
+        // Save current state if we're at the latest position and haven't saved yet
+        if (history.index === history.stack.length - 1) {
+          const current = editor.innerHTML;
+          if (history.stack[history.index] !== current) {
+            history.stack.push(current);
+            history.index = history.stack.length - 1;
+          }
+        }
+        if (history.index > 0) {
+          history.index--;
+          editor.innerHTML = history.stack[history.index];
+          onChange(editor.innerHTML);
+        }
+        return;
+      }
+
+      if (command === "redo") {
+        const history = historyRef.current;
+        if (history.index < history.stack.length - 1) {
+          history.index++;
+          editor.innerHTML = history.stack[history.index];
+          onChange(editor.innerHTML);
+        }
+        return;
+      }
+
+      // Push current state onto history before making changes
+      pushHistory();
+
+      const range = getSelectionInEditor(editor);
+
+      // --- Inline formatting ---
+      const inlineTag = INLINE_TAG_MAP[command];
+      if (inlineTag && range) {
+        if (!range.collapsed) {
+          toggleInlineTag(range, inlineTag, editor);
+        }
+        onChange(editor.innerHTML);
+        return;
+      }
+
+      // --- Block formatting ---
+      const blockTag = BLOCK_TAG_MAP[command];
+      if (blockTag && range) {
+        setBlockType(range, blockTag, editor);
+        onChange(editor.innerHTML);
+        return;
+      }
+
+      // --- Lists ---
+      if ((command === "ul" || command === "ol") && range) {
+        toggleList(range, command.toUpperCase(), editor);
+        onChange(editor.innerHTML);
+        return;
+      }
+
+      // --- Special operations ---
       switch (command) {
-        case "bold":
-          document.execCommand("bold", false);
-          break;
-        case "italic":
-          document.execCommand("italic", false);
-          break;
-        case "underline":
-          document.execCommand("underline", false);
-          break;
-        case "strikethrough":
-          document.execCommand("strikeThrough", false);
-          break;
-        case "h1":
-          document.execCommand("formatBlock", false, "<h1>");
-          break;
-        case "h2":
-          document.execCommand("formatBlock", false, "<h2>");
-          break;
-        case "h3":
-          document.execCommand("formatBlock", false, "<h3>");
-          break;
-        case "p":
-          document.execCommand("formatBlock", false, "<p>");
-          break;
-        case "ul":
-          document.execCommand("insertUnorderedList", false);
-          break;
-        case "ol":
-          document.execCommand("insertOrderedList", false);
-          break;
-        case "br":
-          document.execCommand("insertHTML", false, "<br>");
-          break;
-        case "blockquote":
-          document.execCommand("formatBlock", false, "<blockquote>");
-          break;
-        case "code":
-          document.execCommand("formatBlock", false, "<pre>");
-          break;
-        case "link":
-          const url = prompt("URL eingeben:");
-          if (url) {
-            document.execCommand("createLink", false, url);
+        case "br": {
+          if (range) {
+            range.deleteContents();
+            const br = document.createElement("br");
+            range.insertNode(br);
+            // Move cursor after the <br>
+            const sel = window.getSelection();
+            if (sel) {
+              const newRange = document.createRange();
+              newRange.setStartAfter(br);
+              newRange.collapse(true);
+              sel.removeAllRanges();
+              sel.addRange(newRange);
+            }
           }
           break;
-        case "unlink":
-          document.execCommand("unlink", false);
+        }
+        case "link": {
+          if (range && !range.collapsed) {
+            const url = prompt("URL eingeben:");
+            if (url) {
+              const contents = range.extractContents();
+              const anchor = document.createElement("a");
+              anchor.href = url;
+              anchor.appendChild(contents);
+              range.insertNode(anchor);
+              const sel = window.getSelection();
+              if (sel) {
+                const newRange = document.createRange();
+                newRange.selectNodeContents(anchor);
+                sel.removeAllRanges();
+                sel.addRange(newRange);
+              }
+            }
+          }
           break;
-        case "undo":
-          document.execCommand("undo", false);
+        }
+        case "unlink": {
+          if (range) {
+            const anchor = findAncestor(range.commonAncestorContainer, "A", editor);
+            if (anchor) {
+              unwrapElement(anchor);
+            }
+          }
           break;
-        case "redo":
-          document.execCommand("redo", false);
-          break;
+        }
         case "removeFormat": {
           const selection = window.getSelection();
           const hasSelection =
             selection &&
             !selection.isCollapsed &&
-            editorRef.current.contains(selection.anchorNode);
+            editor.contains(selection.anchorNode);
 
-          if (hasSelection) {
-            // Strip formatting from selected text only
+          if (hasSelection && range) {
             const plainText = selection.toString();
-            // First remove inline formatting
-            document.execCommand("removeFormat", false);
-            // Then replace with plain text to also remove block-level formatting
-            document.execCommand("insertText", false, plainText);
+            range.deleteContents();
+            range.insertNode(document.createTextNode(plainText));
           } else {
-            // No selection: strip ALL formatting from entire field
-            const plainText = editorRef.current.textContent || "";
-            editorRef.current.textContent = plainText;
+            const plainText = editor.textContent || "";
+            editor.textContent = plainText;
           }
           break;
         }
       }
 
-      onChange(editorRef.current.innerHTML);
+      onChange(editor.innerHTML);
     },
-    [editorRef, onChange]
+    [editorRef, onChange, pushHistory]
   );
 
-  return { executeCommand };
+  return { executeCommand, pushHistory };
 }
