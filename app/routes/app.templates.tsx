@@ -26,6 +26,7 @@ import { getFormString, getFormJSON } from "~/utils/form-data.utils";
 import { safeJsonParse } from "~/utils/validation";
 import type { ShopLocale } from "~/types/content-editor.types";
 import { logger } from "~/utils/logger.server";
+import { extractReadableName } from "~/utils/templates-field-factory";
 
 /** Shape of individual items within ThemeContent.translatableContent JSON array */
 interface TranslatableField {
@@ -174,6 +175,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         const fieldType = getFormString(formData, "fieldType");
         const currentValue = getFormString(formData, "currentValue");
         const mainLanguage = getFormString(formData, "mainLanguage");
+        const fieldLabel = extractReadableName(fieldType);
 
         // Create task entry
         const task = await db.task.create({
@@ -184,7 +186,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             resourceType: "templates",
             resourceId: `group_${groupId}`,
             resourceTitle: firstGroup.groupName,
-            fieldType,
+            fieldType: fieldLabel,
             progress: 0,
             expiresAt: getTaskExpirationDate(),
           },
@@ -262,6 +264,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
         const sourceText = getFormString(formData, "sourceText");
         const targetLocale = getFormString(formData, "targetLocale");
         const primaryLocaleFromForm = getFormString(formData, "primaryLocale");
+        const translateFieldLabel = extractReadableName(fieldType);
 
         if (!sourceText) {
           return json({
@@ -279,7 +282,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
             resourceType: "templates",
             resourceId: `group_${groupId}`,
             resourceTitle: firstGroup.groupName,
-            fieldType,
+            fieldType: translateFieldLabel,
             targetLocale,
             progress: 0,
             expiresAt: getTaskExpirationDate(),
@@ -381,6 +384,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
         const sourceText = getFormString(formData, "sourceText");
         const targetLocalesJson = getFormString(formData, "targetLocales");
         const primaryLocaleFromForm = getFormString(formData, "primaryLocale");
+        const translateAllFieldLabel = extractReadableName(fieldType);
 
         if (!sourceText) {
           return json({
@@ -406,7 +410,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
             resourceType: "templates",
             resourceId: `group_${groupId}`,
             resourceTitle: firstGroup.groupName,
-            fieldType,
+            fieldType: translateAllFieldLabel,
             progress: 0,
             expiresAt: getTaskExpirationDate(),
           },
@@ -717,6 +721,13 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
         const allContent = themeGroups.flatMap((group) => (group.translatableContent as unknown) as TranslatableField[]);
         const uniqueKeys = new Set(allContent.map((item) => item.key));
 
+        // Count form data field entries (exclude metadata keys)
+        const metadataKeys = new Set(["action", "itemId", "locale", "primaryLocale", "changedFields", "imageAltTexts", "changedAltTextIndices", "contentType"]);
+        let formFieldCount = 0;
+        formData.forEach((_value, key) => {
+          if (!metadataKeys.has(key)) formFieldCount++;
+        });
+
         for (const key of uniqueKeys) {
           const value = formData.get(key);
           if (typeof value === "string") {
@@ -724,7 +735,21 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
           }
         }
 
+        logger.info("[TEMPLATES] Update content - field matching", {
+          context: "Templates",
+          dbUniqueKeys: uniqueKeys.size,
+          formFieldEntries: formFieldCount,
+          matchedFields: Object.keys(updatedFields).length,
+          locale,
+          isPrimaryLocale: locale === primaryLocale,
+        });
+
         if (Object.keys(updatedFields).length === 0) {
+          logger.warn("[TEMPLATES] Update content - NO fields matched! Save is a no-op.", {
+            context: "Templates",
+            sampleDbKeys: Array.from(uniqueKeys).slice(0, 3),
+            sampleFormKeys: allFormDataKeys.filter(k => !metadataKeys.has(k)).slice(0, 3),
+          });
           return json({ success: true }); // No changes
         }
 
