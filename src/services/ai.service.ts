@@ -778,14 +778,18 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
    * Fetch image from URL and convert to base64 (for Gemini)
    */
   private async fetchImageAsBase64(imageUrl: string): Promise<string> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30_000);
     try {
-      const response = await fetch(imageUrl);
+      const response = await fetch(imageUrl, { signal: controller.signal });
       const arrayBuffer = await response.arrayBuffer();
       const buffer = Buffer.from(arrayBuffer);
       return buffer.toString('base64');
     } catch (error) {
       loggers.ai('error', '[AI-SERVICE] Failed to fetch image', { imageUrl, error });
       throw new Error('Failed to fetch image for vision AI');
+    } finally {
+      clearTimeout(timeout);
     }
   }
 
