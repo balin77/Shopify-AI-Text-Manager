@@ -527,7 +527,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
         const targetLocales: string[] = targetLocalesJson ? JSON.parse(targetLocalesJson) : [targetLocale];
 
         // Get all translatable content
-        const allContent = themeGroups.flatMap((group) => group.translatableContent as TranslatableField[]);
+        const allContent = themeGroups.flatMap((group) => (group.translatableContent as unknown) as TranslatableField[]);
 
         // Deduplicate
         const uniqueContent = new Map<string, TranslatableField>();
@@ -589,7 +589,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
             for (const [key, item] of uniqueContent.entries()) {
               try {
                 const translated = await aiService.translateContent(
-                  item.value,
+                  item.value || "",
                   primaryLocale,
                   locale
                 );
@@ -697,7 +697,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
         const updatedFields: Record<string, string> = {};
 
         // Get all translatable content keys
-        const allContent = themeGroups.flatMap((group) => group.translatableContent as TranslatableField[]);
+        const allContent = themeGroups.flatMap((group) => (group.translatableContent as unknown) as TranslatableField[]);
         const uniqueKeys = new Set(allContent.map((item) => item.key));
 
         for (const key of uniqueKeys) {
@@ -714,7 +714,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
         if (locale === primaryLocale) {
           // Update primary locale: Update translatableContent in ThemeContent
           for (const group of themeGroups) {
-            const content = group.translatableContent as TranslatableField[];
+            const content = (group.translatableContent as unknown) as TranslatableField[];
             let hasChanges = false;
 
             for (const item of content) {
@@ -734,7 +734,8 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
                   }
                 },
                 data: {
-                  translatableContent: content,
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Prisma JSON column
+                  translatableContent: content as any,
                   lastSyncedAt: new Date()
                 }
               });
@@ -874,19 +875,19 @@ export default function TemplatesPage() {
 
   // Preload all foreign language translations for a group (parallel loading)
   const preloadAllTranslations = useCallback(async (groupId: string) => {
-    const foreignLocales = loaderShopLocales.filter((l: { primary: boolean }) => !l.primary);
+    const foreignLocales = loaderShopLocales.filter((l): l is NonNullable<typeof l> => l != null && !l.primary);
     if (foreignLocales.length === 0) return;
 
     // Use ref to check already loaded locales (avoids stale closure)
     const currentLoaded = loadedTranslationsRef.current;
     const localesToLoad = foreignLocales.filter(
-      (l: { locale: string }) => !currentLoaded[groupId]?.[l.locale]
+      (l) => !currentLoaded[groupId]?.[l.locale]
     );
     if (localesToLoad.length === 0) return;
 
     // Load all translations in parallel using API route
     const results = await Promise.allSettled(
-      localesToLoad.map(async (locale: { locale: string }) => {
+      localesToLoad.map(async (locale) => {
         const formData = new FormData();
         formData.append("action", "loadTranslations");
         formData.append("locale", locale.locale);

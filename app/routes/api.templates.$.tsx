@@ -7,10 +7,18 @@
 
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
-import { AIService } from "../../src/services/ai.service";
+import { AIService, type AIProvider } from "../../src/services/ai.service";
 import { TRANSLATE_CONTENT } from "../graphql/content.mutations";
 import { decryptApiKey } from "../utils/encryption.server";
+import { getFormString, getFormJSON } from "~/utils/form-data.utils";
 import { logger } from "~/utils/logger.server";
+
+/** Shape of individual items within ThemeContent.translatableContent JSON array */
+interface TranslatableField {
+  key: string;
+  value?: string;
+  digest?: string;
+}
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -43,10 +51,10 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     }
 
     // Merge all translatable content from all resources in this group
-    const allContent = themeGroups.flatMap((group) => group.translatableContent as any[]);
+    const allContent = themeGroups.flatMap((group) => (group.translatableContent as unknown) as TranslatableField[]);
 
     // DEDUPLICATION: Remove duplicate keys (same key can appear in multiple resources)
-    const uniqueContent = new Map<string, any>();
+    const uniqueContent = new Map<string, TranslatableField>();
     for (const item of allContent) {
       if (!uniqueContent.has(item.key)) {
         uniqueContent.set(item.key, item);
@@ -97,9 +105,11 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     logger.debug("[API-TEMPLATES-LOADER] Loaded resources with translatable fields", { context: "Templates", resourceCount: themeGroups.length, fieldsCount: allContent.length, groupId });
 
     return json({ theme: themeData });
-  } catch (error: any) {
-    logger.error("[API-TEMPLATES] Error loading group", { context: "Templates", groupId, error: error.message, stack: error.stack });
-    return json({ error: error.message }, { status: 500 });
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+    const stack = error instanceof Error ? error.stack : undefined;
+    logger.error("[API-TEMPLATES] Error loading group", { context: "Templates", groupId, error: msg, stack });
+    return json({ error: msg }, { status: 500 });
   }
 };
 
@@ -113,7 +123,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
   try {
     const formData = await request.formData();
-    const actionType = formData.get("action") as string;
+    const actionType = getFormString(formData, "action");
 
     const { db } = await import("../db.server");
 
@@ -134,7 +144,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
     switch (actionType) {
       case "loadTranslations": {
-        const locale = formData.get("locale") as string;
+        const locale = getFormString(formData, "locale");
 
         logger.debug("[API-TEMPLATES-ACTION] Loading translations", { context: "Templates", shop: session.shop, groupId, locale });
 
@@ -164,15 +174,15 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       }
 
       case "generateAIText": {
-        const fieldKey = formData.get("fieldKey") as string;
-        const currentValue = formData.get("currentValue") as string;
+        const fieldKey = getFormString(formData, "fieldKey");
+        const currentValue = getFormString(formData, "currentValue");
 
         const settings = await db.aISettings.findUnique({
           where: { shop: session.shop }
         });
 
         const aiService = new AIService(
-          settings?.preferredProvider as any || 'huggingface',
+          (settings?.preferredProvider as AIProvider) || 'huggingface',
           {
             huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
             geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
@@ -201,10 +211,10 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
       }
 
       case "translateField": {
-        const fieldKey = formData.get("fieldKey") as string;
-        const sourceText = formData.get("sourceText") as string;
-        const targetLocale = formData.get("targetLocale") as string;
-        const primaryLocale = formData.get("primaryLocale") as string;
+        const fieldKey = getFormString(formData, "fieldKey");
+        const sourceText = getFormString(formData, "sourceText");
+        const targetLocale = getFormString(formData, "targetLocale");
+        const primaryLocale = getFormString(formData, "primaryLocale");
 
         if (!sourceText) {
           return json({
@@ -218,7 +228,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
         });
 
         const aiService = new AIService(
-          settings?.preferredProvider as any || 'huggingface',
+          (settings?.preferredProvider as AIProvider) || 'huggingface',
           {
             huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
             geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,

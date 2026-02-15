@@ -20,6 +20,14 @@ import type {
   ContentImage,
   TranslatableContentItem,
   ContentEditorConfig,
+  TranslationStrings,
+  FetcherData,
+  GeneratedContentResponse,
+  TranslatedValueResponse,
+  TranslationsResponse,
+  AltTextResponse,
+  TranslatedAltTextResponse,
+  TranslatedAltTextsResponse,
 } from "../types/content-editor.types";
 import { debugLog } from "../utils/debug";
 import { recentlySavedItems } from "../utils/translation-timing";
@@ -28,47 +36,48 @@ import { recentlySavedItems } from "../utils/translation-timing";
  * Translates server error messages to localized strings
  * Maps technical error messages from server to i18n translation keys
  */
-function translateErrorMessage(errorMessage: string, t: any): string {
-  if (!errorMessage) return t.errors?.unknownError || "Unknown error";
+function translateErrorMessage(errorMessage: string, t: TranslationStrings): string {
+  const errors = t.errors as Record<string, string> | undefined;
+  if (!errorMessage) return errors?.unknownError || "Unknown error";
 
   const lowerError = errorMessage.toLowerCase();
 
   // Map common error patterns to translation keys
   if (lowerError.includes("invalid field type")) {
-    return t.errors?.invalidFieldType || errorMessage;
+    return errors?.invalidFieldType || errorMessage;
   }
   if (lowerError.includes("no fields to translate")) {
-    return t.errors?.noFieldsToTranslate || errorMessage;
+    return errors?.noFieldsToTranslate || errorMessage;
   }
   if (lowerError.includes("no source text")) {
-    return t.errors?.noSourceText || errorMessage;
+    return errors?.noSourceText || errorMessage;
   }
   if (lowerError.includes("unknown action")) {
-    return t.errors?.unknownAction || errorMessage;
+    return errors?.unknownAction || errorMessage;
   }
   if (lowerError.includes("invalid url slug") || lowerError.includes("invalid handle") || lowerError.includes("alphanumeric character")) {
-    return t.errors?.invalidUrlSlug || errorMessage;
+    return errors?.invalidUrlSlug || errorMessage;
   }
   if (lowerError.includes("network") || lowerError.includes("fetch")) {
-    return t.errors?.networkError || errorMessage;
+    return errors?.networkError || errorMessage;
   }
   if (lowerError.includes("quota") || lowerError.includes("limit exceeded")) {
-    return t.errors?.quotaExceeded || errorMessage;
+    return errors?.quotaExceeded || errorMessage;
   }
   if (lowerError.includes("rate limit") || lowerError.includes("too many requests")) {
-    return t.errors?.rateLimitExceeded || errorMessage;
+    return errors?.rateLimitExceeded || errorMessage;
   }
   if (lowerError.includes("translation") && lowerError.includes("failed")) {
-    return t.errors?.translationFailed || errorMessage;
+    return errors?.translationFailed || errorMessage;
   }
   if (lowerError.includes("generation") && lowerError.includes("failed")) {
-    return t.errors?.generationFailed || errorMessage;
+    return errors?.generationFailed || errorMessage;
   }
   if (lowerError.includes("save") && lowerError.includes("failed")) {
-    return t.errors?.saveFailed || errorMessage;
+    return errors?.saveFailed || errorMessage;
   }
   if (lowerError.includes("load") && lowerError.includes("failed")) {
-    return t.errors?.loadFailed || errorMessage;
+    return errors?.loadFailed || errorMessage;
   }
 
   // If no specific translation found, return the original error message
@@ -114,7 +123,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // On-demand images loading (for products - images are loaded from Shopify API)
   const [onDemandImages, setOnDemandImages] = useState<ContentImage[]>([]);
   const [isLoadingImages, setIsLoadingImages] = useState(false);
-  const imageFetcher = useFetcher<{ success: boolean; images: any[]; error?: string }>();
+  const imageFetcher = useFetcher<{ success: boolean; images: Array<{ url: string; altText?: string }>; error?: string }>();
   const loadedImagesForProductRef = useRef<string | null>(null);
 
   // Alt-text state for images (indexed by image position)
@@ -298,7 +307,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       }
 
       if (imageFetcher.data.success && imageFetcher.data.images) {
-        const images: ContentImage[] = imageFetcher.data.images.map((img: any) => ({
+        const images: ContentImage[] = imageFetcher.data.images.map((img) => ({
           url: img.url,
           altText: img.altText,
           altTextTranslations: [],
@@ -339,7 +348,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     isLoadingData ? null : (config.contentType !== 'templates' ? (selectedItem || null) : null), // Skip for templates
     currentLanguage,
     primaryLocale,
-    editableValues as any,
+    editableValues,
     config.contentType,
     fallbackFields
   );
@@ -760,9 +769,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // Submit AI action using fetch API directly to allow parallel requests
   // This enables multiple AI actions to run simultaneously on different fields
   const submitAIAction = useCallback(async (
-    data: Record<string, any>,
+    data: Record<string, string>,
     fieldKey: string,
-    onSuccess?: (result: any) => void,
+    onSuccess?: (result: Record<string, unknown>) => void,
     onError?: (error: string) => void
   ) => {
     // Add field to loading state
@@ -985,10 +994,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // Handle AI generation response
   useEffect(() => {
     if (fetcher.data?.success && 'generatedContent' in fetcher.data) {
-      const fieldType = (fetcher.data as any).fieldType;
+      const { fieldType, generatedContent } = fetcher.data as GeneratedContentResponse;
       setAiSuggestions((prev) => ({
         ...prev,
-        [fieldType]: (fetcher.data as any).generatedContent,
+        [fieldType]: generatedContent,
       }));
     }
   }, [fetcher.data]);
@@ -1012,7 +1021,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   } | null>(null);
 
   // Ref to track the last fetcher.data object (to detect actual data changes vs dependency re-runs)
-  const lastFetcherDataRef = useRef<any>(null);
+  const lastFetcherDataRef = useRef<FetcherData | null>(null);
 
   // Ref to track the locale that was active when the save was initiated
   const savedLocaleRef = useRef<string | null>(null);
@@ -1030,7 +1039,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const processedTranslateFieldRef = useRef<string | null>(null);
 
   // Ref to track processed save responses (prevents duplicate InfoBox/revalidation on re-renders)
-  const processedSaveResponseRef = useRef<any>(null);
+  const processedSaveResponseRef = useRef<FetcherData | null>(null);
 
   // Ref to track whether a save operation is actually pending (prevents false "saved" messages on revalidation)
   const isSavePendingRef = useRef(false);
@@ -1039,7 +1048,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // Auto-save immediately after receiving translation
   useEffect(() => {
     if (fetcher.data?.success && 'translatedValue' in fetcher.data) {
-      const { fieldType, translatedValue, targetLocale } = fetcher.data as any;
+      const { fieldType, translatedValue, targetLocale } = fetcher.data as TranslatedValueResponse;
 
       // Create a unique key for this response to prevent duplicate processing
       const responseKey = `translateField-${fieldType}-${targetLocale}-${translatedValue?.substring(0, 20)}`;
@@ -1119,7 +1128,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // Handle single alt-text generation (show as suggestion)
   useEffect(() => {
     if (fetcher.data?.success && 'altText' in fetcher.data && 'imageIndex' in fetcher.data) {
-      const { altText, imageIndex } = fetcher.data as any;
+      const { altText, imageIndex } = fetcher.data as AltTextResponse;
       setAltTextSuggestions(prev => ({
         ...prev,
         [imageIndex]: altText
@@ -1130,7 +1139,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // Handle translated alt-text response (auto-save)
   useEffect(() => {
     if (fetcher.data?.success && 'translatedAltText' in fetcher.data) {
-      const { translatedAltText, imageIndex } = fetcher.data as any;
+      const { translatedAltText, imageIndex } = fetcher.data as TranslatedAltTextResponse;
       debugLog.altText(' Setting translated alt-text for image', imageIndex, ':', translatedAltText);
 
       // Merge with existing alt-texts
@@ -1150,14 +1159,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // Handle translated alt-text to all locales response (show success message + revalidate)
   useEffect(() => {
     if (fetcher.data?.success && 'translatedAltTexts' in fetcher.data) {
-      const { targetLocales, imageIndex, failedLocales } = fetcher.data as any;
+      const { targetLocales, imageIndex, failedLocales } = fetcher.data as TranslatedAltTextsResponse;
       const failed = failedLocales || [];
       debugLog.altText(' Translations to all locales completed for image', imageIndex);
 
       if (failed.length > 0) {
         const failedList = failed.join(", ");
         showInfoBox(
-          ((t.content?.altTextPartialLocales || "Alt-text for image {imageNumber} partially translated. Language(s) {failedLocales} could not be saved to Shopify. Please sync the product again.") as string)
+          String(t.content?.altTextPartialLocales || "Alt-text for image {imageNumber} partially translated. Language(s) {failedLocales} could not be saved to Shopify. Please sync the product again.")
             .replace("{imageNumber}", String((imageIndex || 0) + 1))
             .replace("{failedLocales}", failedList),
           "warning",
@@ -1165,7 +1174,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         );
       } else {
         showInfoBox(
-          ((t.content?.altTextTranslatedToAllLocales || "Alt-text for image {imageNumber} translated to {count} language(s)") as string)
+          String(t.content?.altTextTranslatedToAllLocales || "Alt-text for image {imageNumber} translated to {count} language(s)")
             .replace("{imageNumber}", String((imageIndex || 0) + 1))
             .replace("{count}", String(targetLocales.length)),
           "success",
@@ -1240,7 +1249,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       !('fieldType' in fetcher.data) &&
       !('targetLocale' in fetcher.data)
     ) {
-      const translations = (fetcher.data as any).translations;
+      const { translations, failedLocales } = fetcher.data as TranslationsResponse;
       const item = selectedItemRef.current;
       if (item) {
         // Clear all deleted keys since we're translating all fields
@@ -1249,12 +1258,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           deletedTranslationKeysRef.current.clear();
         }
 
-        for (const [locale, fields] of Object.entries(translations as any)) {
+        for (const [locale, fields] of Object.entries(translations)) {
+          const fieldMap = fields as Record<string, string>;
           const newTranslations: Translation[] = [];
 
           // Map fields to translations
           effectiveFieldDefinitions.forEach((fieldDef) => {
-            const value = (fields as any)[fieldDef.key];
+            const value = fieldMap[fieldDef.key];
             if (value) {
               newTranslations.push({
                 key: fieldDef.translationKey,
@@ -1275,9 +1285,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             const updatedValues = { ...editableValues };
             const translatedKeys: string[] = [];
             effectiveFieldDefinitions.forEach((fieldDef) => {
-              const value = (fields as any)[fieldDef.key];
+              const value = fieldMap[fieldDef.key];
               if (value) {
-                updatedValues[fieldDef.key] = value;
+                updatedValues[fieldDef.key] = String(value);
                 translatedKeys.push(fieldDef.key);
               }
             });
@@ -1314,15 +1324,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         setIsLoadingData(true);
 
         // Show warning if some locales failed, success if all succeeded
-        const failed = (fetcher.data as any).failedLocales || [];
+        const failed = failedLocales || [];
         if (failed.length > 0) {
           const failedList = failed.join(", ");
           const totalLocales = Object.keys(translations).length + failed.length;
           const successCount = Object.keys(translations).filter(
-            (l: string) => Object.keys((translations as any)[l] || {}).length > 0
+            (l: string) => Object.keys((translations as Record<string, Record<string, string>>)[l] || {}).length > 0
           ).length;
           showInfoBox(
-            ((t.content?.translatePartialLocales || "Translation partially completed: {successCount}/{totalCount} language(s) succeeded. Language(s) {failedLocales} failed.") as string)
+            String(t.content?.translatePartialLocales || "Translation partially completed: {successCount}/{totalCount} language(s) succeeded. Language(s) {failedLocales} failed.")
               .replace("{successCount}", String(successCount))
               .replace("{totalCount}", String(totalLocales))
               .replace("{failedLocales}", failedList),
@@ -1342,7 +1352,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       'targetLocale' in fetcher.data &&
       !('fieldType' in fetcher.data)
     ) {
-      const { translations, targetLocale } = fetcher.data as any;
+      const { targetLocale, failedLocales } = fetcher.data as TranslationsResponse & { targetLocale: string };
+      const translations = (fetcher.data as TranslationsResponse).translations as Record<string, string>;
       const item = selectedItemRef.current;
       if (item) {
         // Clear all deleted keys since we're translating all fields for this locale
@@ -1411,10 +1422,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         setIsLoadingData(true);
 
         // Show warning if the locale failed, success otherwise
-        const failed = (fetcher.data as any).failedLocales || [];
+        const failed = failedLocales || [];
         if (failed.length > 0 && failed.includes(targetLocale)) {
           showInfoBox(
-            ((t.content?.translateLocaleError || "Translation to {locale} failed. Please try again.") as string)
+            String(t.content?.translateLocaleError || "Translation to {locale} failed. Please try again.")
               .replace("{locale}", targetLocale),
             "warning",
             t.common?.warning || "Warning"
@@ -1574,9 +1585,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
     if (
       fetcher.data?.success &&
-      !(fetcher.data as any).generatedContent &&
-      !(fetcher.data as any).translatedValue &&
-      !(fetcher.data as any).translations // Skip revalidate for bulk operations, they handle it differently
+      !('generatedContent' in fetcher.data) &&
+      !('translatedValue' in fetcher.data) &&
+      !('translations' in fetcher.data) // Skip revalidate for bulk operations, they handle it differently
     ) {
       // Mark this response as processed and clear save pending flag
       processedSaveResponseRef.current = fetcher.data;
@@ -1603,7 +1614,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           fieldKey,
           (result) => {
             // Handle success - update translations
-            const translations = result.translations;
+            const translations = result.translations as Record<string, string>;
             const field = effectiveFieldDefinitions.find((f) => f.key === fieldKey);
             const shopifyKey = field?.translationKey;
             const item = selectedItemRef.current;
@@ -1653,11 +1664,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
               acceptedPrimaryValueRef.current = null;
             }
 
-            const failedFieldLocales = result.failedLocales || [];
+            const failedFieldLocales = (result.failedLocales as string[]) || [];
             if (failedFieldLocales.length > 0) {
               const failedList = failedFieldLocales.join(", ");
               showInfoBox(
-                ((t.content?.translatePartialLocales || "Translation partially completed: {successCount}/{totalCount} language(s) succeeded. Language(s) {failedLocales} failed.") as string)
+                String(t.content?.translatePartialLocales || "Translation partially completed: {successCount}/{totalCount} language(s) succeeded. Language(s) {failedLocales} failed.")
                   .replace("{successCount}", String(Object.keys(translations).length))
                   .replace("{totalCount}", String(Object.keys(translations).length + failedFieldLocales.length))
                   .replace("{failedLocales}", failedList),
@@ -1695,11 +1706,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       }
 
       // Check if any alt-text indices failed to save to Shopify
-      const failedAltTextIndices = (fetcher.data as any).failedAltTextIndices || [];
+      const failedAltTextIndices = fetcher.data.failedAltTextIndices || [];
       if (failedAltTextIndices.length > 0) {
         const failedList = failedAltTextIndices.map((i: number) => i + 1).join(", ");
         showInfoBox(
-          ((t.content?.altTextSavePartialImages || "Changes saved, but alt-text for image(s) {failedImages} could not be saved to Shopify. Please sync the product again.") as string)
+          String(t.content?.altTextSavePartialImages || "Changes saved, but alt-text for image(s) {failedImages} could not be saved to Shopify. Please sync the product again.")
             .replace("{failedImages}", failedList),
           "warning",
           t.common?.warning || "Warning"
@@ -1741,7 +1752,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // Also mark error responses as processed
       processedSaveResponseRef.current = fetcher.data;
       isSavePendingRef.current = false;
-      const translatedError = translateErrorMessage(fetcher.data.error as string, t);
+      const translatedError = translateErrorMessage(String(fetcher.data.error || ""), t);
       showInfoBox(translatedError, "critical", t.common?.error || "Error");
     }
   }, [fetcher.data, showInfoBox, t, revalidator, safeSubmit, submitAIAction, effectiveFieldDefinitions, currentLanguage, primaryLocale]);
@@ -1927,7 +1938,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         // Handle success - set AI suggestion for this field
         setAiSuggestions((prev) => ({
           ...prev,
-          [fieldKey]: result.generatedContent,
+          [fieldKey]: result.generatedContent as string,
         }));
       }
     );
@@ -1979,10 +1990,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       },
       fieldKey,
       (result) => {
-        // Handle success - set AI suggestion for this field
+        // Handle success - set AI suggestion for format
         setAiSuggestions((prev) => ({
           ...prev,
-          [fieldKey]: result.generatedContent,
+          [fieldKey]: result.generatedContent as string,
         }));
       }
     );
@@ -2018,7 +2029,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       fieldKey,
       (result) => {
         // Handle success - update the field with translated value
-        const translatedValue = result.translatedValue;
+        const translatedValue = result.translatedValue as string;
 
         // Clear deleted key for this field since we now have a new translation
         if (field.translationKey && deletedTranslationKeysRef.current.has(field.translationKey)) {
@@ -2117,7 +2128,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       fieldKey,
       (result) => {
         // Handle success - translations is Record<locale, translatedText>
-        const translations = result.translations;
+        const translations = result.translations as Record<string, string>;
         const shopifyKey = field.translationKey;
         const item = selectedItemRef.current;
 
@@ -2128,7 +2139,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           }
 
           // Update item translations for all locales
-          for (const [locale, translatedValue] of Object.entries(translations as Record<string, string>)) {
+          for (const [locale, translatedValue] of Object.entries(translations)) {
             // Remove existing translation for this key and locale
             item.translations = item.translations.filter(
               (t: Translation) => !(t.locale === locale && t.key === shopifyKey)
@@ -2158,11 +2169,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             }));
           }
 
-          const failedFieldLocales2 = result.failedLocales || [];
+          const failedFieldLocales2 = (result.failedLocales as string[]) || [];
           if (failedFieldLocales2.length > 0) {
             const failedList = failedFieldLocales2.join(", ");
             showInfoBox(
-              ((t.content?.translatePartialLocales || "Translation partially completed: {successCount}/{totalCount} language(s) succeeded. Language(s) {failedLocales} failed.") as string)
+              String(t.content?.translatePartialLocales || "Translation partially completed: {successCount}/{totalCount} language(s) succeeded. Language(s) {failedLocales} failed.")
                 .replace("{successCount}", String(Object.keys(translations).length))
                 .replace("{totalCount}", String(Object.keys(translations).length + failedFieldLocales2.length))
                 .replace("{failedLocales}", failedList),
@@ -2256,14 +2267,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           },
           "allAltTextsTranslate",
           (result) => {
-            const translatedCount = result.translatedCount || 0;
-            const imageCount = result.imageCount || 0;
-            const failedImages: number[] = result.failedImages || [];
+            const translatedCount = (result.translatedCount as number) || 0;
+            const imageCount = (result.imageCount as number) || 0;
+            const failedImages: number[] = (result.failedImages as number[]) || [];
 
             if (failedImages.length > 0) {
               const failedList = failedImages.map((i: number) => i + 1).join(", ");
               showInfoBox(
-                ((t.content?.altTextTranslateAllPartialImages || "Alt-texts saved for {successCount}/{totalCount} image(s) in {languageCount} language(s). Image(s) {failedImages} could not be saved to Shopify. Please sync the product again.") as string)
+                String(t.content?.altTextTranslateAllPartialImages || "Alt-texts saved for {successCount}/{totalCount} image(s) in {languageCount} language(s). Image(s) {failedImages} could not be saved to Shopify. Please sync the product again.")
                   .replace("{successCount}", String(imageCount - failedImages.length))
                   .replace("{totalCount}", String(imageCount))
                   .replace("{languageCount}", String(translatedCount))
@@ -2273,7 +2284,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
               );
             } else {
               showInfoBox(
-                ((t.content?.altTextTranslateAllSuccess || "Alt-texts for {totalCount} image(s) translated to {languageCount} language(s)") as string)
+                String(t.content?.altTextTranslateAllSuccess || "Alt-texts for {totalCount} image(s) translated to {languageCount} language(s)")
                   .replace("{totalCount}", String(imageCount))
                   .replace("{languageCount}", String(translatedCount)),
                 "success",
@@ -2668,15 +2679,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           },
           `allAltTextsTranslate_${currentLanguage}`,
           (result) => {
-            const failedImages: number[] = result.failedImages || [];
+            const failedImages: number[] = (result.failedImages as number[]) || [];
 
             // Only accept translations that were successfully saved to Shopify
             if (result.translatedAltTexts) {
               const translated: Record<number, string> = {};
-              Object.entries(result.translatedAltTexts).forEach(([indexStr, text]) => {
+              Object.entries(result.translatedAltTexts as Record<string, string>).forEach(([indexStr, text]) => {
                 const idx = parseInt(indexStr);
                 if (!failedImages.includes(idx)) {
-                  translated[idx] = text as string;
+                  translated[idx] = String(text);
                 }
               });
 
@@ -2691,7 +2702,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             if (failedImages.length > 0) {
               const failedList = failedImages.map((i: number) => i + 1).join(", ");
               showInfoBox(
-                ((t.content?.altTextTranslatePartialImages || "Alt-texts partially saved. Image(s) {failedImages} could not be saved to Shopify. Please sync the product again.") as string)
+                String(t.content?.altTextTranslatePartialImages || "Alt-texts partially saved. Image(s) {failedImages} could not be saved to Shopify. Please sync the product again.")
                   .replace("{failedImages}", failedList),
                 "warning",
                 t.common?.warning || "Warning"
@@ -2738,7 +2749,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         if (result.altText) {
           setAltTextSuggestions((prev) => ({
             ...prev,
-            [imageIndex]: result.altText,
+            [imageIndex]: result.altText as string,
           }));
         }
       }
@@ -2808,7 +2819,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         if (result.translatedAltText) {
           setAltTextSuggestions((prev) => ({
             ...prev,
-            [imageIndex]: result.translatedAltText,
+            [imageIndex]: result.translatedAltText as string,
           }));
         }
       }
@@ -2854,14 +2865,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       `altText_${imageIndex}`,
       (result) => {
         // Handle success - translations have been saved to Shopify and DB
-        const failedLocales = result.failedLocales || [];
-        const translatedCount = result.translatedAltTexts ? Object.keys(result.translatedAltTexts).length : targetLocales.length;
+        const failedLocales = (result.failedLocales as string[]) || [];
+        const translatedAltTexts = result.translatedAltTexts as Record<string, string> | undefined;
+        const translatedCount = translatedAltTexts ? Object.keys(translatedAltTexts).length : targetLocales.length;
         const successCount = translatedCount - failedLocales.length;
 
         if (failedLocales.length > 0) {
           const failedList = failedLocales.join(", ");
           showInfoBox(
-            ((t.content?.altTextPartialLocales || "Alt-text for image {imageNumber} partially translated. Language(s) {failedLocales} could not be saved to Shopify. Please sync the product again.") as string)
+            String(t.content?.altTextPartialLocales || "Alt-text for image {imageNumber} partially translated. Language(s) {failedLocales} could not be saved to Shopify. Please sync the product again.")
               .replace("{imageNumber}", String(imageIndex + 1))
               .replace("{failedLocales}", failedList),
             "warning",
@@ -2869,7 +2881,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           );
         } else {
           showInfoBox(
-            ((t.content?.altTextTranslatedToLanguages || "Alt-text translated to {count} language(s)") as string)
+            String(t.content?.altTextTranslatedToLanguages || "Alt-text translated to {count} language(s)")
               .replace("{count}", String(successCount)),
             "success",
             t.common?.success || "Success"
@@ -2933,14 +2945,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       },
       "allAltTextsTranslate",
       (result) => {
-        const translatedCount = result.translatedCount || 0;
-        const imageCount = result.imageCount || 0;
-        const failedImages: number[] = result.failedImages || [];
+        const translatedCount = (result.translatedCount as number) || 0;
+        const imageCount = (result.imageCount as number) || 0;
+        const failedImages: number[] = (result.failedImages as number[]) || [];
 
         if (failedImages.length > 0) {
           const failedList = failedImages.map((i: number) => i + 1).join(", ");
           showInfoBox(
-            ((t.content?.altTextTranslateAllPartialImages || "Alt-texts saved for {successCount}/{totalCount} image(s) in {languageCount} language(s). Image(s) {failedImages} could not be saved to Shopify. Please sync the product again.") as string)
+            String(t.content?.altTextTranslateAllPartialImages || "Alt-texts saved for {successCount}/{totalCount} image(s) in {languageCount} language(s). Image(s) {failedImages} could not be saved to Shopify. Please sync the product again.")
               .replace("{successCount}", String(imageCount - failedImages.length))
               .replace("{totalCount}", String(imageCount))
               .replace("{languageCount}", String(translatedCount))
@@ -2950,7 +2962,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           );
         } else {
           showInfoBox(
-            ((t.content?.altTextTranslateAllSuccess || "Alt-texts for {totalCount} image(s) translated to {languageCount} language(s)") as string)
+            String(t.content?.altTextTranslateAllSuccess || "Alt-texts for {totalCount} image(s) translated to {languageCount} language(s)")
               .replace("{totalCount}", String(imageCount))
               .replace("{languageCount}", String(translatedCount)),
             "success",
@@ -3004,15 +3016,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       },
       `allAltTextsTranslate_${currentLanguage}`,
       (result) => {
-        const failedImages: number[] = result.failedImages || [];
+        const failedImages: number[] = (result.failedImages as number[]) || [];
 
         // Only accept translations that were successfully saved to Shopify
         if (result.translatedAltTexts) {
           const translated: Record<number, string> = {};
-          Object.entries(result.translatedAltTexts).forEach(([indexStr, text]) => {
+          Object.entries(result.translatedAltTexts as Record<string, string>).forEach(([indexStr, text]) => {
             const idx = parseInt(indexStr);
             if (!failedImages.includes(idx)) {
-              translated[idx] = text as string;
+              translated[idx] = String(text);
             }
           });
 
@@ -3027,7 +3039,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         if (failedImages.length > 0) {
           const failedList = failedImages.map((i: number) => i + 1).join(", ");
           showInfoBox(
-            ((t.content?.altTextTranslatePartialImages || "Alt-texts partially saved. Image(s) {failedImages} could not be saved to Shopify. Please sync the product again.") as string)
+            String(t.content?.altTextTranslatePartialImages || "Alt-texts partially saved. Image(s) {failedImages} could not be saved to Shopify. Please sync the product again.")
               .replace("{failedImages}", failedList),
             "warning",
             t.common?.warning || "Warning"

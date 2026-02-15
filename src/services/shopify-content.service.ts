@@ -7,9 +7,10 @@ import { TRANSLATE_CONTENT, UPDATE_PAGE, UPDATE_ARTICLE, UPDATE_SHOP_POLICY, UPD
 import { GET_TRANSLATIONS, GET_TRANSLATABLE_CONTENT } from "../../app/graphql/content.queries";
 import { loggers } from '../../app/utils/logger.server';
 import { markTranslationSaved } from '../../app/utils/translation-save-lock.server';
+import type { PrismaClient } from "@prisma/client";
 
 export interface ShopifyAdminClient {
-  graphql: (query: string, options?: { variables?: Record<string, any> }) => Promise<Response>;
+  graphql: (query: string, options?: { variables?: Record<string, unknown> }) => Promise<Response>;
 }
 
 export class ShopifyContentService {
@@ -45,13 +46,13 @@ export class ShopifyContentService {
     // Create digest map and value map for quick lookup
     const digestMap: Record<string, string> = {};
     const valueMap: Record<string, string> = {};
-    content.forEach((item: any) => {
+    content.forEach((item: { key: string; digest: string; value?: string }) => {
       digestMap[item.key] = item.digest;
       if (item.value) valueMap[item.key] = item.value;
     });
 
     // Diagnostic: log all returned keys with digest presence
-    loggers.translation('debug', `Resource ${resourceId} - returned ${content.length} translatable fields`, { fields: content.map((c: any) => `${c.key}=${c.digest ? 'HAS_DIGEST' : 'NO_DIGEST'}(val=${c.value ? c.value.substring(0, 30) : 'EMPTY'})`) });
+    loggers.translation('debug', `Resource ${resourceId} - returned ${content.length} translatable fields`, { fields: content.map((c: { key: string; digest?: string; value?: string }) => `${c.key}=${c.digest ? 'HAS_DIGEST' : 'NO_DIGEST'}(val=${c.value ? c.value.substring(0, 30) : 'EMPTY'})`) });
 
     return { digestMap, valueMap };
   }
@@ -228,7 +229,7 @@ export class ShopifyContentService {
 
     const data = await response.json();
     const shopLocales = data.data?.shopLocales || [];
-    const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "en";
+    const primaryLocale = shopLocales.find((l: { locale: string; primary: boolean }) => l.primary)?.locale || "en";
 
     return { shopLocales, primaryLocale };
   }
@@ -240,11 +241,11 @@ export class ShopifyContentService {
    */
   async updateContent(params: {
     resourceId: string;
-    resourceType: 'Page' | 'Article' | 'ShopPolicy' | 'Collection';
+    resourceType: string;
     locale: string;
     primaryLocale: string;
     updates: Record<string, string>;
-    db: any;
+    db: PrismaClient;
     shop: string;
     policyType?: string;
     changedFields?: string[]; // Fields that changed in primary locale - their translations will be deleted
@@ -348,7 +349,8 @@ export class ShopifyContentService {
       }
 
       // Update database using transaction for consistency
-      await db.$transaction(async (tx: any) => {
+      // @ts-expect-error Prisma interactive transaction types
+      await db.$transaction(async (tx: PrismaClient) => {
         // Upsert translations saved to Shopify
         for (const translation of translationsInput) {
           await tx.contentTranslation.upsert({
@@ -536,8 +538,8 @@ export class ShopifyContentService {
           // Get all foreign locales
           const { shopLocales } = await this.loadShopLocales();
           const foreignLocales = shopLocales
-            .filter((l: any) => !l.primary && l.published)
-            .map((l: any) => l.locale);
+            .filter((l: { locale: string; primary: boolean; published: boolean }) => !l.primary && l.published)
+            .map((l: { locale: string }) => l.locale);
 
           if (foreignLocales.length > 0) {
             // Delete from Shopify
@@ -574,10 +576,13 @@ export class ShopifyContentService {
    */
   async translateAllContent(params: {
     resourceId: string;
-    resourceType: 'Page' | 'Article' | 'ShopPolicy' | 'Collection';
+    resourceType: string;
     fields: Record<string, string>;
-    translationService: any;
-    db: any;
+    translationService: {
+      translateProduct: (fields: Record<string, string>, locales: string[], contentType?: string, instructions?: string) => Promise<Record<string, Record<string, string>>>;
+      translateShortFieldsBatch?: (fields: Record<string, string>, sourceLocale: string, targetLocales: string[], contentType?: string, instructions?: string) => Promise<Record<string, Record<string, string>>>;
+    };
+    db: PrismaClient;
     targetLocales?: string[];
     contentType?: string;
     taskId?: string;
@@ -590,7 +595,7 @@ export class ShopifyContentService {
     const { digestMap } = await this.loadTranslatableContent(resourceId);
     loggers.translation('debug', `translateAllContent resourceType: ${resourceType}`);
     loggers.translation('debug', 'translateAllContent fields received', { fields: Object.keys(fields) });
-    loggers.translation('debug', 'translateAllContent fields values', { values: Object.entries(fields).map(([k, v]) => `${k}=${v ? (v as string).substring(0, 50) + '...' : 'EMPTY'}`) });
+    loggers.translation('debug', 'translateAllContent fields values', { values: Object.entries(fields).map(([k, v]) => `${k}=${v ? v.substring(0, 50) + '...' : 'EMPTY'}`) });
     loggers.translation('debug', `translateAllContent digestMap keys for ${resourceId}`, { keys: Object.keys(digestMap) });
     loggers.translation('debug', 'translateAllContent has summary_html digest', { hasSummaryHtmlDigest: !!digestMap['summary_html'] });
 
@@ -601,11 +606,11 @@ export class ShopifyContentService {
     } else {
       const { shopLocales } = await this.loadShopLocales();
       targetLocales = shopLocales
-        .filter((l: any) => !l.primary && l.published)
-        .map((l: any) => l.locale);
+        .filter((l: { locale: string; primary: boolean; published: boolean }) => !l.primary && l.published)
+        .map((l: { locale: string }) => l.locale);
     }
 
-    const allTranslations: Record<string, any> = {};
+    const allTranslations: Record<string, Record<string, string>> = {};
     const failedLocales: string[] = [];
 
     // Initialize translations structure
@@ -745,7 +750,7 @@ export class ShopifyContentService {
       try {
         loggers.translation('debug', `Batch translating short fields to ${targetLocales.length} locales`, { shortFields: Object.keys(shortFields) });
 
-        const batchResult = await translationService.translateShortFieldsBatch(
+        const batchResult = await translationService.translateShortFieldsBatch!(
           shortFields,
           sourceLocale,
           targetLocales,
@@ -761,7 +766,7 @@ export class ShopifyContentService {
 
           for (const [field, value] of Object.entries(localeTranslations)) {
             if (value) {
-              const saved = await saveTranslation(locale, field, value as string);
+              const saved = await saveTranslation(locale, field, String(value));
               if (saved) {
                 allTranslations[locale][field] = value;
               }
@@ -770,8 +775,8 @@ export class ShopifyContentService {
         }
 
         loggers.translation('debug', 'Batch short fields completed');
-      } catch (batchError: any) {
-        loggers.translation('error', 'Batch short fields failed', { error: batchError?.message || String(batchError) });
+      } catch (batchError: unknown) {
+        loggers.translation('error', 'Batch short fields failed', { error: batchError instanceof Error ? batchError.message : String(batchError) });
         // Fallback: translate short fields sequentially
         loggers.translation('warn', 'Falling back to sequential for short fields...');
         for (const locale of targetLocales) {
@@ -781,15 +786,15 @@ export class ShopifyContentService {
             if (translatedFields) {
               for (const [field, value] of Object.entries(translatedFields)) {
                 if (value) {
-                  const saved = await saveTranslation(locale, field, value as string);
+                  const saved = await saveTranslation(locale, field, String(value));
                   if (saved) {
                     allTranslations[locale][field] = value;
                   }
                 }
               }
             }
-          } catch (localeError: any) {
-            loggers.translation('error', `Fallback failed for ${locale}`, { error: localeError?.message || String(localeError) });
+          } catch (localeError: unknown) {
+            loggers.translation('error', `Fallback failed for ${locale}`, { error: localeError instanceof Error ? localeError.message : String(localeError) });
             if (!failedLocales.includes(locale)) failedLocales.push(locale);
           }
         }
@@ -812,7 +817,7 @@ export class ShopifyContentService {
                 if (typeof value === 'string') {
                   stringValue = value;
                 } else if (typeof value === 'object' && value !== null) {
-                  stringValue = (value as any).value || JSON.stringify(value);
+                  stringValue = (value as { value?: string }).value || JSON.stringify(value);
                 } else {
                   stringValue = String(value);
                 }
@@ -824,8 +829,8 @@ export class ShopifyContentService {
               }
             }
           }
-        } catch (localeError: any) {
-          loggers.translation('error', `Failed to translate long fields to ${locale}`, { error: localeError?.message || String(localeError) });
+        } catch (localeError: unknown) {
+          loggers.translation('error', `Failed to translate long fields to ${locale}`, { error: localeError instanceof Error ? localeError.message : String(localeError) });
           if (!failedLocales.includes(locale)) failedLocales.push(locale);
         }
       }

@@ -9,7 +9,71 @@ import { ShopifyApiGateway } from './shopify-api-gateway.service';
 import { logger } from '~/utils/logger.server';
 
 interface ShopifyGraphQLClient {
-  graphql: (query: string, options?: { variables?: any }) => Promise<any>;
+  graphql: (query: string, options?: { variables?: Record<string, unknown> }) => Promise<Response>;
+}
+
+/** Locale info returned by shopLocales query */
+interface ShopLocale {
+  locale: string;
+  name?: string;
+  primary: boolean;
+  published: boolean;
+}
+
+/** A single translatable content item from Shopify */
+interface TranslatableContentItem {
+  key: string;
+  value: string | null;
+  digest: string | null;
+  locale: string;
+}
+
+/** A single translation from Shopify */
+interface ShopifyTranslation {
+  key: string;
+  value: string;
+  locale: string;
+  outdated?: boolean;
+}
+
+/** Resolved translation with digest and resource type */
+interface ResolvedTranslation {
+  key: string;
+  value: string;
+  locale: string;
+  digest?: string | null;
+  resourceType: string;
+}
+
+/** Page data from Shopify GraphQL */
+interface ShopifyPageData {
+  id: string;
+  title: string;
+  handle: string;
+  body: string | null;
+  updatedAt: string;
+}
+
+/** Policy data from Shopify GraphQL */
+interface ShopifyPolicyData {
+  id: string;
+  type: string;
+  title: string;
+  body: string | null;
+  url: string | null;
+}
+
+/** Theme translatable content item with group metadata */
+interface ThemeContentItem extends TranslatableContentItem {
+  _groupId: string;
+  _groupName: string;
+  _groupIcon: string;
+}
+
+/** Theme translatable resource from Shopify */
+interface ThemeResource {
+  resourceId: string;
+  translatableContent: TranslatableContentItem[];
 }
 
 export interface SyncStats {
@@ -81,7 +145,7 @@ export class BackgroundSyncService {
       );
 
       const pagesData = await pagesResponse.json();
-      let pages = pagesData.data?.pages?.edges?.map((e: any) => e.node) || [];
+      let pages: ShopifyPageData[] = pagesData.data?.pages?.edges?.map((e: { node: ShopifyPageData }) => e.node) || [];
 
       logger.debug(`[BackgroundSync] Found ${pages.length} pages from Shopify`);
 
@@ -92,7 +156,7 @@ export class BackgroundSyncService {
       }
 
       // 2. AGGRESSIVE CLEANUP: Delete pages that no longer exist in Shopify (using transaction)
-      const shopifyPageIds = pages.map((p: any) => p.id);
+      const shopifyPageIds = pages.map((p) => p.id);
 
       if (shopifyPageIds.length > 0) {
         // Use transaction to ensure both deletes succeed or fail together
@@ -143,7 +207,7 @@ export class BackgroundSyncService {
 
       // 3. Fetch shop locales
       const locales = await this.fetchShopLocales();
-      const nonPrimaryLocales = locales.filter((l: any) => !l.primary);
+      const nonPrimaryLocales = locales.filter((l) => !l.primary);
 
       // 4. Sync each page
       let pageIndex = 0;
@@ -157,7 +221,7 @@ export class BackgroundSyncService {
 
       logger.debug(`[BackgroundSync] ✓ Successfully synced ${pages.length} pages`);
       return pages.length;
-    } catch (error: any) {
+    } catch (error: unknown) {
       logger.error('[BackgroundSync] Error syncing pages:', error);
       throw error;
     }
@@ -166,7 +230,7 @@ export class BackgroundSyncService {
   /**
    * Sync a single page by ID (public method for manual reload)
    */
-  async syncSinglePage(pageId: string): Promise<any> {
+  async syncSinglePage(pageId: string): Promise<Record<string, unknown>> {
     const gid = pageId.startsWith("gid://")
       ? pageId
       : `gid://shopify/OnlineStorePage/${pageId}`;
@@ -191,7 +255,7 @@ export class BackgroundSyncService {
     );
 
     const pageDataResponse = await pageResponse.json();
-    const pageData = pageDataResponse.data?.page;
+    const pageData: ShopifyPageData | undefined = pageDataResponse.data?.page;
 
     if (!pageData) {
       throw new Error(`Page ${gid} not found in Shopify`);
@@ -199,7 +263,7 @@ export class BackgroundSyncService {
 
     // Fetch locales
     const locales = await this.fetchShopLocales();
-    const nonPrimaryLocales = locales.filter((l: any) => !l.primary);
+    const nonPrimaryLocales = locales.filter((l) => !l.primary);
 
     // Sync the page
     await this.syncSinglePageInternal(pageData, nonPrimaryLocales);
@@ -231,7 +295,7 @@ export class BackgroundSyncService {
    * Sync a single page with translations (internal method)
    * Uses a transaction to ensure data consistency
    */
-  private async syncSinglePageInternal(pageData: any, nonPrimaryLocales: any[]): Promise<void> {
+  private async syncSinglePageInternal(pageData: ShopifyPageData, nonPrimaryLocales: ShopLocale[]): Promise<void> {
     const { db } = await import("../db.server");
 
     // Fetch translations for all non-primary locales (outside transaction - API calls)
@@ -242,7 +306,7 @@ export class BackgroundSyncService {
     );
 
     // Prepare current keys for cleanup
-    const currentKeys = allTranslations.map((t: any) => ({ key: t.key, locale: t.locale }));
+    const currentKeys = allTranslations.map((t) => ({ key: t.key, locale: t.locale }));
 
     // Use transaction to ensure all-or-nothing data consistency
     await db.$transaction(async (tx) => {
@@ -351,12 +415,12 @@ export class BackgroundSyncService {
       );
 
       const policiesData = await policiesResponse.json();
-      const policies = policiesData.data?.shop?.shopPolicies || [];
+      const policies: ShopifyPolicyData[] = policiesData.data?.shop?.shopPolicies || [];
 
       logger.debug(`[BackgroundSync] Found ${policies.length} policies from Shopify`);
 
       // 2. AGGRESSIVE CLEANUP: Delete policies that no longer exist in Shopify (using transaction)
-      const shopifyPolicyIds = policies.map((p: any) => p.id);
+      const shopifyPolicyIds = policies.map((p) => p.id);
 
       if (shopifyPolicyIds.length > 0) {
         // Use transaction to ensure both deletes succeed or fail together
@@ -407,7 +471,7 @@ export class BackgroundSyncService {
 
       // 3. Fetch shop locales
       const locales = await this.fetchShopLocales();
-      const nonPrimaryLocales = locales.filter((l: any) => !l.primary);
+      const nonPrimaryLocales = locales.filter((l) => !l.primary);
 
       // 4. Sync each policy
       let policyIndex = 0;
@@ -421,7 +485,7 @@ export class BackgroundSyncService {
 
       logger.debug(`[BackgroundSync] ✓ Successfully synced ${policies.length} policies`);
       return policies.length;
-    } catch (error: any) {
+    } catch (error: unknown) {
       logger.error('[BackgroundSync] Error syncing policies:', error);
       throw error;
     }
@@ -430,7 +494,7 @@ export class BackgroundSyncService {
   /**
    * Sync a single policy by ID or type (public method for manual reload)
    */
-  async syncSinglePolicy(policyIdOrType: string): Promise<any> {
+  async syncSinglePolicy(policyIdOrType: string): Promise<Record<string, unknown>> {
     // Policy can be identified by GID or by type (e.g., "PRIVACY_POLICY")
     const isType = !policyIdOrType.startsWith("gid://");
 
@@ -455,12 +519,12 @@ export class BackgroundSyncService {
     );
 
     const policiesData = await policiesResponse.json();
-    const policies = policiesData.data?.shop?.shopPolicies || [];
+    const policies: ShopifyPolicyData[] = policiesData.data?.shop?.shopPolicies || [];
 
     // Find the policy
     const policyData = isType
-      ? policies.find((p: any) => p.type === policyIdOrType)
-      : policies.find((p: any) => p.id === policyIdOrType);
+      ? policies.find((p) => p.type === policyIdOrType)
+      : policies.find((p) => p.id === policyIdOrType);
 
     if (!policyData) {
       throw new Error(`Policy ${policyIdOrType} not found in Shopify`);
@@ -468,7 +532,7 @@ export class BackgroundSyncService {
 
     // Fetch locales
     const locales = await this.fetchShopLocales();
-    const nonPrimaryLocales = locales.filter((l: any) => !l.primary);
+    const nonPrimaryLocales = locales.filter((l) => !l.primary);
 
     // Sync the policy
     await this.syncSinglePolicyInternal(policyData, nonPrimaryLocales);
@@ -500,7 +564,7 @@ export class BackgroundSyncService {
    * Sync a single policy with translations (internal method)
    * Uses a transaction to ensure data consistency
    */
-  private async syncSinglePolicyInternal(policyData: any, nonPrimaryLocales: any[]): Promise<void> {
+  private async syncSinglePolicyInternal(policyData: ShopifyPolicyData, nonPrimaryLocales: ShopLocale[]): Promise<void> {
     const { db } = await import("../db.server");
 
     // Fetch translations for all non-primary locales (outside transaction - API calls)
@@ -511,7 +575,7 @@ export class BackgroundSyncService {
     );
 
     // Prepare current keys for cleanup
-    const currentKeys = allTranslations.map((t: any) => ({ key: t.key, locale: t.locale }));
+    const currentKeys = allTranslations.map((t) => ({ key: t.key, locale: t.locale }));
 
     // Use transaction to ensure all-or-nothing data consistency
     await db.$transaction(async (tx) => {
@@ -597,7 +661,7 @@ export class BackgroundSyncService {
   /**
    * Sync a single theme group by groupId (public method for manual reload)
    */
-  async syncSingleThemeGroup(groupId: string): Promise<any> {
+  async syncSingleThemeGroup(groupId: string): Promise<Record<string, unknown>> {
     logger.debug(`[BackgroundSync] Syncing single theme group: ${groupId}`);
 
     const { db } = await import("../db.server");
@@ -618,7 +682,7 @@ export class BackgroundSyncService {
 
     // Get shop locales
     const locales = await this.fetchShopLocales();
-    const nonPrimaryLocales = locales.filter((l: any) => !l.primary);
+    const nonPrimaryLocales = locales.filter((l) => !l.primary);
 
     // Fetch fresh translatable content from Shopify
     const translatableResponse = await this.gateway.graphql(
@@ -650,17 +714,17 @@ export class BackgroundSyncService {
     }
 
     // Filter content that belongs to this group
-    const allContent = resource.translatableContent || [];
-    const groupContent = allContent.filter((item: any) => {
+    const allContent: TranslatableContentItem[] = resource.translatableContent || [];
+    const groupContent = allContent.filter((item) => {
       // Match items that were originally in this group
-      const existingKeys = (existingThemeContent.translatableContent as any[]).map(c => c.key);
+      const existingKeys = ((existingThemeContent.translatableContent as unknown) as TranslatableContentItem[]).map(c => c.key);
       return existingKeys.includes(item.key);
     });
 
     logger.debug(`[BackgroundSync] Found ${groupContent.length} translatable fields for group ${groupId}`);
 
     // Fetch translations for all non-primary locales
-    const allTranslations: any[] = [];
+    const allTranslations: ShopifyTranslation[] = [];
 
     for (const locale of nonPrimaryLocales) {
       try {
@@ -682,15 +746,16 @@ export class BackgroundSyncService {
         const translationsData = await translationsResponse.json();
 
         if (!translationsData.errors) {
-          const translations = translationsData.data?.translatableResource?.translations || [];
+          const translations: ShopifyTranslation[] = translationsData.data?.translatableResource?.translations || [];
           // Filter translations that belong to this group
-          const groupTranslations = translations.filter((t: any) =>
-            groupContent.some((c: any) => c.key === t.key)
+          const groupTranslations = translations.filter((t) =>
+            groupContent.some((c) => c.key === t.key)
           );
           allTranslations.push(...groupTranslations);
         }
-      } catch (error: any) {
-        logger.error(`[BackgroundSync] Error fetching translations for locale ${locale.locale}`, { error: error.message });
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        logger.error(`[BackgroundSync] Error fetching translations for locale ${locale.locale}`, { error: message });
       }
     }
 
@@ -706,7 +771,8 @@ export class BackgroundSyncService {
         },
       },
       data: {
-        translatableContent: groupContent,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Prisma JSON column accepts any JSON-serializable value
+        translatableContent: groupContent as any,
         lastSyncedAt: new Date(),
       },
     });
@@ -805,7 +871,7 @@ export class BackgroundSyncService {
 
       // Get shop locales
       const locales = await this.fetchShopLocales();
-      const nonPrimaryLocales = locales.filter((l: any) => !l.primary);
+      const nonPrimaryLocales = locales.filter((l) => !l.primary);
 
       let totalGroups = 0;
 
@@ -813,7 +879,7 @@ export class BackgroundSyncService {
       const syncedCombinations = new Set<string>();
 
       // Track fetched translations to avoid duplicate API calls
-      const translationCache = new Map<string, any[]>();
+      const translationCache = new Map<string, ShopifyTranslation[]>();
 
       // Fetch resources for each working resource type
       let resourceTypeIndex = 0;
@@ -832,7 +898,7 @@ export class BackgroundSyncService {
           // Implement pagination to handle large datasets
           let hasNextPage = true;
           let cursor: string | null = null;
-          const allResourcesForType: any[] = [];
+          const allResourcesForType: ThemeResource[] = [];
           let pageNumber = 0;
 
           while (hasNextPage) {
@@ -879,7 +945,7 @@ export class BackgroundSyncService {
             const pageInfo = translatableData.data?.translatableResources?.pageInfo;
             const edges = translatableData.data?.translatableResources?.edges || [];
 
-            allResourcesForType.push(...edges.map((edge: any) => edge.node));
+            allResourcesForType.push(...edges.map((edge: { node: ThemeResource }) => edge.node));
 
             hasNextPage = pageInfo?.hasNextPage || false;
             cursor = pageInfo?.endCursor || null;
@@ -916,8 +982,8 @@ export class BackgroundSyncService {
               continue;
             }
             // Group translatable content by key patterns
-            const contentByGroup: Record<string, any[]> = {};
-            const unmatchedContent: any[] = [];
+            const contentByGroup: Record<string, ThemeContentItem[]> = {};
+            const unmatchedContent: TranslatableContentItem[] = [];
 
             for (const item of resource.translatableContent || []) {
               let matched = false;
@@ -955,7 +1021,7 @@ export class BackgroundSyncService {
 
             // Group unmatched content by prefix
             if (unmatchedContent.length > 0) {
-              const unmatchedByPrefix: Record<string, any[]> = {};
+              const unmatchedByPrefix: Record<string, TranslatableContentItem[]> = {};
 
               for (const item of unmatchedContent) {
                 let prefix = 'other';
@@ -1012,11 +1078,11 @@ export class BackgroundSyncService {
               const groupIcon = firstItem._groupIcon;
 
               // Deduplicate translations for this group
-              const allTranslations = [];
+              const allTranslations: ShopifyTranslation[] = [];
               const seenKeys = new Set<string>(); // Track seen key-locale combinations
 
               // Check cache first to avoid duplicate API calls
-              const cacheKey = `${resource.resourceId}::${nonPrimaryLocales.map((l: any) => l.locale).join(',')}`;
+              const cacheKey = `${resource.resourceId}::${nonPrimaryLocales.map((l) => l.locale).join(',')}`;
               let resourceTranslations = translationCache.get(cacheKey);
 
               if (!resourceTranslations) {
@@ -1066,7 +1132,7 @@ export class BackgroundSyncService {
                       continue;
                     }
 
-                    const translations = translationsData.data?.translatableResource?.translations || [];
+                    const translations: ShopifyTranslation[] = translationsData.data?.translatableResource?.translations || [];
 
                     if (translations.length > 0) {
                       logger.debug(`[BackgroundSync-Themes]   ✅ Locale ${locale.locale}: ${translations.length} translations fetched`);
@@ -1075,8 +1141,9 @@ export class BackgroundSyncService {
                       logger.debug(`[BackgroundSync-Themes]   ⚠️  Locale ${locale.locale}: NO translations found (might be empty in Shopify)`);
                     }
 
-                  } catch (error: any) {
-                    logger.error(`[BackgroundSync-Themes]   ❌ Exception fetching locale ${locale.locale}:`, error.message || error);
+                  } catch (error: unknown) {
+                    const message = error instanceof Error ? error.message : String(error);
+                    logger.error(`[BackgroundSync-Themes]   ❌ Exception fetching locale ${locale.locale}:`, message);
                   }
                 }
 
@@ -1124,7 +1191,8 @@ export class BackgroundSyncService {
                   groupId,
                   groupName,
                   groupIcon,
-                  translatableContent: items,
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Prisma JSON column
+                  translatableContent: items as any,
                   lastSyncedAt: new Date(),
                 },
                 update: {
@@ -1132,7 +1200,8 @@ export class BackgroundSyncService {
                   resourceTypeLabel: resourceTypeConfig.label,
                   groupName,
                   groupIcon,
-                  translatableContent: items,
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Prisma JSON column
+                  translatableContent: items as any,
                   lastSyncedAt: new Date(),
                 },
               });
@@ -1182,7 +1251,7 @@ export class BackgroundSyncService {
 
               // Delete translations that no longer exist in Shopify
               const currentKeys = new Set(
-                allTranslations.map((t: any) => `${t.key}::${t.locale}`)
+                allTranslations.map((t) => `${t.key}::${t.locale}`)
               );
 
               const keysToDelete = Array.from(existingKeys).filter(
@@ -1264,7 +1333,7 @@ export class BackgroundSyncService {
       logger.debug(`[BackgroundSync] Database stats: ${finalStats} ThemeContent, ${finalTranslationStats} ThemeTranslations`);
 
       return totalGroups;
-    } catch (error: any) {
+    } catch (error: unknown) {
       logger.error('[BackgroundSync] Error syncing themes:', error);
       throw error;
     }
@@ -1274,7 +1343,7 @@ export class BackgroundSyncService {
   // HELPER METHODS
   // ============================================
 
-  private async fetchShopLocales() {
+  private async fetchShopLocales(): Promise<ShopLocale[]> {
     const response = await this.gateway.graphql(
       `#graphql
         query getShopLocales {
@@ -1298,8 +1367,8 @@ export class BackgroundSyncService {
    * If a field has no translation in Shopify, it will NOT be stored in the database.
    * This prevents the primary language text from appearing as a "translation".
    */
-  private async fetchAllTranslations(resourceId: string, locales: any[], resourceType: string) {
-    const allTranslationsMap = new Map<string, any>(); // Deduplicate using key::locale
+  private async fetchAllTranslations(resourceId: string, locales: ShopLocale[], resourceType: string): Promise<ResolvedTranslation[]> {
+    const allTranslationsMap = new Map<string, ResolvedTranslation>(); // Deduplicate using key::locale
 
     for (const locale of locales) {
       if (!locale.published) {
@@ -1405,7 +1474,7 @@ export class BackgroundSyncService {
       logger.debug(`[BackgroundSync]   Pages: ${pages}, Policies: ${policies}, Themes: ${themes}`);
 
       return stats;
-    } catch (error: any) {
+    } catch (error: unknown) {
       logger.error('[BackgroundSync] Full sync failed:', error);
       throw error;
     }

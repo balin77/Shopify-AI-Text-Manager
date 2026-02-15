@@ -70,6 +70,8 @@ export interface TranslatableContentItem {
 export interface FetcherDataBase {
   success: boolean;
   error?: string;
+  failedLocales?: string[];
+  failedAltTextIndices?: number[];
 }
 
 export interface GeneratedContentResponse extends FetcherDataBase {

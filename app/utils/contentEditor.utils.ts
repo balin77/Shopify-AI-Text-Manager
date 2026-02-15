@@ -4,7 +4,7 @@
  */
 
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
-import type { TranslatableItem, ContentType, ShopLocale } from "~/types/contentEditor.types";
+import type { TranslatableItem, Translation, ContentType, ShopLocale } from "~/types/contentEditor.types";
 import {
   SHOPIFY_TRANSLATION_KEYS,
   CONTENT_TYPE_DESCRIPTION_KEY,
@@ -65,13 +65,17 @@ function getFieldValue(item: TranslatableItem | null, fieldPath: string): string
   if (!item) return '';
 
   const parts = fieldPath.split('.');
-  let value: any = item;
+  let value: unknown = item;
 
   for (const part of parts) {
-    value = value?.[part];
-    if (value === undefined || value === null) {
+    if (value === null || value === undefined || typeof value !== 'object') {
       return '';
     }
+    value = (value as Record<string, unknown>)[part];
+  }
+
+  if (value === undefined || value === null) {
+    return '';
   }
 
   return typeof value === 'string' ? value : '';
@@ -346,10 +350,10 @@ export function useChangeTracking(
       seoTitle: getOriginalValue(SHOPIFY_TRANSLATION_KEYS.META_TITLE, item.seo?.title || ""),
       metaDescription: getOriginalValue(SHOPIFY_TRANSLATION_KEYS.META_DESCRIPTION, item.seo?.description || ""),
       productType: contentType === 'products'
-        ? getOriginalValue(SHOPIFY_TRANSLATION_KEYS.PRODUCT_TYPE, (item as any).productType || "")
+        ? getOriginalValue(SHOPIFY_TRANSLATION_KEYS.PRODUCT_TYPE, item.productType || "")
         : "",
       summary: contentType === 'pages'
-        ? getOriginalValue(SHOPIFY_TRANSLATION_KEYS.SUMMARY, (item as any).summary || "")
+        ? getOriginalValue(SHOPIFY_TRANSLATION_KEYS.SUMMARY, item.summary || "")
         : "",
     };
   }, [contentType, currentLanguage, primaryLocale]);
@@ -549,7 +553,7 @@ export function hasPrimaryContentMissing(
 
   // Templates have dynamic fields in translatableContent
   if (contentType === 'templates') {
-    const translatableContent = (selectedItem as any).translatableContent;
+    const translatableContent = selectedItem.translatableContent;
     if (!translatableContent || !Array.isArray(translatableContent) || translatableContent.length === 0) {
       return false; // No content to check
     }
@@ -579,7 +583,7 @@ export function hasLocaleMissingTranslations(
 
   // Templates have dynamic fields in translatableContent
   if (contentType === 'templates') {
-    const translatableContent = (selectedItem as any).translatableContent;
+    const translatableContent = selectedItem.translatableContent;
     if (!translatableContent || !Array.isArray(translatableContent) || translatableContent.length === 0) {
       return false; // No content to check
     }
@@ -595,7 +599,7 @@ export function hasLocaleMissingTranslations(
       }
       // Check if translation exists for this locale
       const translation = translations.find(
-        (t: any) => t.key === item.key && t.locale === locale
+        (t: Translation) => t.key === item.key && t.locale === locale
       );
       return !translation || isFieldEmpty(translation.value);
     });
@@ -630,12 +634,12 @@ export function getMissingPrimaryFields(
   if (!selectedItem) return [];
 
   if (contentType === 'templates') {
-    const translatableContent = (selectedItem as any).translatableContent;
+    const translatableContent = selectedItem.translatableContent;
     if (!translatableContent || !Array.isArray(translatableContent) || translatableContent.length === 0) {
       return [];
     }
     return translatableContent
-      .filter((item: any) => item != null)
+      .filter((item): item is { key: string; value: string } => item != null)
       .filter((item: { key: string; value: string }) => isFieldEmpty(item.value))
       .map((item: { key: string; value: string }) => item.key);
   }
@@ -659,17 +663,17 @@ export function getMissingLocaleTranslationFields(
   if (!selectedItem || locale === primaryLocale) return [];
 
   if (contentType === 'templates') {
-    const translatableContent = (selectedItem as any).translatableContent;
+    const translatableContent = selectedItem.translatableContent;
     if (!translatableContent || !Array.isArray(translatableContent) || translatableContent.length === 0) {
       return [];
     }
     const translations = selectedItem.translations || [];
     return translatableContent
-      .filter((item: any) => item != null)
+      .filter((item): item is { key: string; value: string } => item != null)
       .filter((item: { key: string; value: string }) => {
         if (isFieldEmpty(item.value)) return false;
         const translation = translations.find(
-          (t: any) => t.key === item.key && t.locale === locale
+          (t: Translation) => t.key === item.key && t.locale === locale
         );
         return !translation || isFieldEmpty(translation.value);
       })

@@ -11,6 +11,8 @@ import type { Session } from "@shopify/shopify-api";
 import { AIService, type AIProvider } from "../../../../src/services/ai.service";
 import { TranslationService } from "../../../../src/services/translation.service";
 import { ShopifyApiGateway } from "~/services/shopify-api-gateway.service";
+import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
+import type { PrismaClient } from "@prisma/client";
 
 interface AISettings {
   id: string;
@@ -53,10 +55,10 @@ interface AIConfig {
 }
 
 export interface ActionContext {
-  admin: any;
+  admin: AdminApiContext;
   session: Session;
   shop: string;
-  db: any;
+  db: PrismaClient;
   aiSettings: AISettings;
   aiInstructions: AIInstructions;
   provider: AIProvider;
@@ -68,7 +70,7 @@ export interface ActionContext {
  * Prepares shared context for all product actions
  */
 export async function prepareActionContext(
-  admin: any,
+  admin: AdminApiContext,
   session: Session
 ): Promise<ActionContext> {
   const { db } = await import("~/db.server");

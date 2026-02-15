@@ -15,10 +15,47 @@ import {
   GET_THEME_TRANSLATIONS
 } from "../graphql/content.queries";
 
+/** Locale info returned by shopLocales query */
+interface ShopLocale {
+  locale: string;
+  name?: string;
+  primary: boolean;
+  published: boolean;
+}
+
+/** GraphQL edge wrapper */
+interface GraphQLEdge<T> {
+  node: T;
+}
+
+/** Translatable content item from Shopify */
+interface TranslatableContentItem {
+  key: string;
+  value: string | null;
+  digest: string | null;
+  locale: string;
+}
+
+/** Theme translatable content item with group metadata */
+interface ThemeContentItem extends TranslatableContentItem {
+  _groupId: string;
+  _groupName: string;
+  _groupIcon: string;
+}
+
+/** Theme resource type test result */
+interface ThemeResourceTestResult {
+  status: string;
+  error?: string;
+  resourceCount?: number;
+  contentCount?: number;
+  hasContent?: boolean;
+}
+
 export class ContentService {
   constructor(private admin: AdminApiContext) {}
 
-  async getShopLocales() {
+  async getShopLocales(): Promise<ShopLocale[]> {
     const response = await this.admin.graphql(GET_SHOP_LOCALES);
     const data = await response.json();
     return data.data.shopLocales;
@@ -30,9 +67,9 @@ export class ContentService {
     });
     const data = await response.json();
 
-    const blogs = data.data.blogs.edges.map((edge: any) => ({
+    const blogs = data.data.blogs.edges.map((edge: GraphQLEdge<Record<string, unknown>>) => ({
       ...edge.node,
-      articles: edge.node.articles.edges.map((a: any) => ({
+      articles: (edge.node.articles as { edges: GraphQLEdge<Record<string, unknown>>[] }).edges.map((a: GraphQLEdge<Record<string, unknown>>) => ({
         ...a.node,
         translations: []
       }))
@@ -47,7 +84,7 @@ export class ContentService {
     });
     const data = await response.json();
 
-    const collections = data.data.collections.edges.map((edge: any) => ({
+    const collections = data.data.collections.edges.map((edge: GraphQLEdge<Record<string, unknown>>) => ({
       ...edge.node,
       translations: []
     }));
@@ -61,7 +98,7 @@ export class ContentService {
     });
     const data = await response.json();
 
-    const pages = data.data.pages.edges.map((edge: any) => ({
+    const pages = data.data.pages.edges.map((edge: GraphQLEdge<Record<string, unknown>>) => ({
       ...edge.node,
       translations: []
     }));
@@ -76,7 +113,7 @@ export class ContentService {
 
       logger.debug('Shop policies API response', { context: 'ContentService', data });
 
-      const policies = data.data?.shop?.shopPolicies?.map((policy: any) => ({
+      const policies = data.data?.shop?.shopPolicies?.map((policy: Record<string, unknown>) => ({
         ...policy,
         translations: []
       })) || [];
@@ -95,7 +132,7 @@ export class ContentService {
       const data = await response.json();
 
       const shop = data.data.shop;
-      shop.metafields = shop.metafields?.edges?.map((edge: any) => ({
+      shop.metafields = shop.metafields?.edges?.map((edge: GraphQLEdge<Record<string, unknown>>) => ({
         ...edge.node,
         translations: []
       })) || [];
@@ -117,7 +154,7 @@ export class ContentService {
       });
       const data = await response.json();
 
-      const menus = data.data?.menus?.edges?.map((edge: any) => ({
+      const menus = data.data?.menus?.edges?.map((edge: GraphQLEdge<Record<string, unknown>>) => ({
         ...edge.node,
         translations: [] // Menus cannot be translated via API
       })) || [];
@@ -145,8 +182,8 @@ export class ContentService {
 
       // First get shop locales to know which languages to fetch
       const shopLocales = await this.getShopLocales();
-      const locales = shopLocales.filter((l: any) => !l.primary).map((l: any) => l.locale);
-      console.log(`[MENUS] Shop locales:`, shopLocales.map((l: any) => `${l.name} (${l.locale}${l.primary ? ' - PRIMARY' : ''})`));
+      const locales = shopLocales.filter((l: ShopLocale) => !l.primary).map((l: ShopLocale) => l.locale);
+      console.log(`[MENUS] Shop locales:`, shopLocales.map((l: ShopLocale) => `${l.name} (${l.locale}${l.primary ? ' - PRIMARY' : ''})`));
       console.log(`[MENUS] Non-primary locales to fetch translations for:`, locales);
 
       const response = await this.admin.graphql(GET_MENUS, {
@@ -166,15 +203,15 @@ export class ContentService {
         console.log(`[MENU] Items count: ${menu.items?.length || 0}`);
 
         // Log menu items structure recursively
-        const logMenuItems = (items: any[], level: number = 0) => {
+        const logMenuItems = (items: Record<string, unknown>[], level: number = 0) => {
           for (const item of items || []) {
             const indent = '  '.repeat(level);
             console.log(`${indent}└─ "${item.title}" (${item.id})`);
             console.log(`${indent}   URL: ${item.url}`);
             console.log(`${indent}   Type: ${item.type}`);
-            if (item.items && item.items.length > 0) {
-              console.log(`${indent}   Sub-items: ${item.items.length}`);
-              logMenuItems(item.items, level + 1);
+            if (item.items && (item.items as Record<string, unknown>[]).length > 0) {
+              console.log(`${indent}   Sub-items: ${(item.items as Record<string, unknown>[]).length}`);
+              logMenuItems(item.items as Record<string, unknown>[], level + 1);
             }
           }
         };
@@ -222,7 +259,7 @@ export class ContentService {
             console.log(`  [TRANSLATABLE-${locale}] Found ${translations.length} translations`);
 
             if (translations.length > 0) {
-              translations.forEach((t: any) => {
+              translations.forEach((t: { key: string; value: string; outdated: boolean }) => {
                 console.log(`    - key: "${t.key}", value: "${t.value}", outdated: ${t.outdated}`);
               });
             }
@@ -265,7 +302,7 @@ export class ContentService {
             console.log(`  [MENU-TRANS-${locale}] Found ${translations.length} translations`);
 
             if (translations.length > 0) {
-              translations.forEach((t: any) => {
+              translations.forEach((t: { key: string; value: string; outdated: boolean }) => {
                 console.log(`    - key: "${t.key}", value: "${t.value}", outdated: ${t.outdated}`);
               });
             }
@@ -284,7 +321,7 @@ export class ContentService {
         console.log(`[MENU] Total translations collected: ${allTranslations.length}`);
         if (allTranslations.length > 0) {
           console.log('[MENU] All translations:');
-          allTranslations.forEach((t: any) => {
+          allTranslations.forEach((t: { locale: string; key: string; value: string }) => {
             console.log(`  - [${t.locale}] ${t.key} = "${t.value}"`);
           });
         }
@@ -318,7 +355,7 @@ export class ContentService {
 
     logger.debug('Testing all theme resource types', { context: 'ContentService' });
 
-    const results: Record<string, any> = {};
+    const results: Record<string, ThemeResourceTestResult> = {};
 
     for (const resourceType of THEME_RESOURCE_TYPES) {
       logger.debug('Testing resource type', { context: 'ContentService', resourceType });
@@ -346,35 +383,41 @@ export class ContentService {
           variables: { first: 10, resourceType }
         });
 
-        const data: any = await response.json();
+        const data = await response.json();
 
-        if (data.errors) {
-          logger.warn('Theme resource type error', { context: 'ContentService', resourceType, error: data.errors[0].message });
-          results[resourceType] = { status: 'ERROR', error: data.errors[0].message };
+        if ((data as Record<string, unknown>).errors) {
+          const errors = (data as Record<string, unknown>).errors as Array<{ message: string }>;
+          logger.warn('Theme resource type error', { context: 'ContentService', resourceType, error: errors[0].message });
+          results[resourceType] = { status: 'ERROR', error: errors[0].message };
           continue;
         }
 
-        const resources = data.data?.translatableResources?.edges || [];
-        const totalContent = resources.reduce((sum: number, r: any) => sum + (r.node.translatableContent?.length || 0), 0);
+        const resources = (data as Record<string, unknown>).data
+          ? ((data as Record<string, unknown>).data as Record<string, unknown>)?.translatableResources
+            ? (((data as Record<string, unknown>).data as Record<string, unknown>).translatableResources as Record<string, unknown>)?.edges as Array<{ node: { translatableContent?: TranslatableContentItem[] } }> || []
+            : []
+          : [];
+        const totalContent = (resources as Array<{ node: { translatableContent?: TranslatableContentItem[] } }>).reduce((sum: number, r) => sum + (r.node.translatableContent?.length || 0), 0);
 
         logger.debug('Theme resource type success', {
           context: 'ContentService',
           resourceType,
-          resourceCount: resources.length,
+          resourceCount: (resources as Array<unknown>).length,
           contentCount: totalContent,
-          sampleKeys: resources.length > 0 && totalContent > 0 ? resources[0].node.translatableContent.slice(0, 3).map((c: any) => c.key) : []
+          sampleKeys: (resources as Array<{ node: { translatableContent?: TranslatableContentItem[] } }>).length > 0 && totalContent > 0 ? (resources as Array<{ node: { translatableContent: TranslatableContentItem[] } }>)[0].node.translatableContent.slice(0, 3).map((c) => c.key) : []
         });
 
         results[resourceType] = {
           status: 'SUCCESS',
-          resourceCount: resources.length,
+          resourceCount: (resources as Array<unknown>).length,
           contentCount: totalContent,
           hasContent: totalContent > 0
         };
 
-      } catch (error: any) {
-        logger.error('Theme resource type exception', { context: 'ContentService', resourceType, error: error.message });
-        results[resourceType] = { status: 'EXCEPTION', error: error.message };
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        logger.error('Theme resource type exception', { context: 'ContentService', resourceType, error: message });
+        results[resourceType] = { status: 'EXCEPTION', error: message };
       }
     }
 
@@ -447,11 +490,22 @@ export class ContentService {
 
       // Get shop locales to know which languages to fetch translations for
       const shopLocales = await this.getShopLocales();
-      const nonPrimaryLocales = shopLocales.filter((l: any) => !l.primary).map((l: any) => l.locale);
+      const nonPrimaryLocales = shopLocales.filter((l) => !l.primary).map((l) => l.locale);
       logger.debug('Non-primary locales for themes', { context: 'ContentService', locales: nonPrimaryLocales });
 
       // Collect all theme resources
-      const allThemeResources = [];
+      const allThemeResources: Array<{
+        id: string;
+        title: string;
+        name: string;
+        role: string;
+        resourceType: string;
+        resourceTypeLabel: string;
+        translatableContent: TranslatableContentItem[];
+        contentByGroup: Record<string, ThemeContentItem[]>;
+        contentCount: number;
+        keyPatterns: typeof KEY_PATTERNS;
+      }> = [];
 
       // Fetch resources for each working resource type
       for (const resourceTypeConfig of WORKING_RESOURCE_TYPES) {
@@ -461,15 +515,21 @@ export class ContentService {
           const translatableResponse = await this.admin.graphql(GET_THEME_TRANSLATABLE_RESOURCES, {
             variables: { first: safeLimit, resourceType: resourceTypeConfig.type }
           });
-          const translatableData: any = await translatableResponse.json();
+          const translatableData = await translatableResponse.json();
 
-          if (translatableData.errors) {
-            logger.error('Error loading theme resource type', { context: 'ContentService', type: resourceTypeConfig.type, error: translatableData.errors[0].message });
+          if ((translatableData as Record<string, unknown>).errors) {
+            const errors = (translatableData as Record<string, unknown>).errors as Array<{ message: string }>;
+            logger.error('Error loading theme resource type', { context: 'ContentService', type: resourceTypeConfig.type, error: errors[0].message });
             continue;
           }
 
-          const resources = translatableData.data?.translatableResources?.edges?.map((edge: any) => edge.node) || [];
-          const totalContent = resources.reduce((sum: number, r: any) => sum + (r.translatableContent?.length || 0), 0);
+          const resources: Array<{ resourceId: string; translatableContent: TranslatableContentItem[] }> =
+            (translatableData as Record<string, unknown>).data
+              ? (((translatableData as Record<string, unknown>).data as Record<string, unknown>)?.translatableResources as Record<string, unknown>)?.edges
+                ? ((((translatableData as Record<string, unknown>).data as Record<string, unknown>).translatableResources as Record<string, unknown>).edges as GraphQLEdge<{ resourceId: string; translatableContent: TranslatableContentItem[] }>[]).map((edge) => edge.node)
+                : []
+              : [];
+          const totalContent = resources.reduce((sum: number, r) => sum + (r.translatableContent?.length || 0), 0);
 
           logger.debug('Theme resource loaded', { context: 'ContentService', label: resourceTypeConfig.label, resources: resources.length, fields: totalContent });
 
@@ -492,7 +552,7 @@ export class ContentService {
               if (resource.translatableContent.length > 0) {
                 logger.debug('Sample translatable content', {
                   context: 'ContentService',
-                  samples: resource.translatableContent.slice(0, 3).map((c: any) => ({
+                  samples: resource.translatableContent.slice(0, 3).map((c) => ({
                     key: c.key,
                     value: c.value?.substring(0, 50)
                   }))
@@ -501,8 +561,8 @@ export class ContentService {
             }
 
             // Group translatable content by key patterns
-            const contentByGroup: Record<string, any[]> = {};
-            const unmatchedContent: any[] = [];
+            const contentByGroup: Record<string, ThemeContentItem[]> = {};
+            const unmatchedContent: TranslatableContentItem[] = [];
 
             for (const item of resource.translatableContent || []) {
               let matched = false;
@@ -544,7 +604,7 @@ export class ContentService {
               logger.debug('Found unmatched items', { context: 'ContentService', count: unmatchedContent.length, sampleKeys: unmatchedContent.slice(0, 10).map(c => c.key) });
 
               // Group unmatched content by their top-level prefix
-              const unmatchedByPrefix: Record<string, any[]> = {};
+              const unmatchedByPrefix: Record<string, TranslatableContentItem[]> = {};
 
               for (const item of unmatchedContent) {
                 // Extract the first meaningful part of the key
@@ -636,7 +696,16 @@ export class ContentService {
       }
 
       // Consolidate all groups across all resources
-      const consolidatedGroups: Record<string, any> = {};
+      const consolidatedGroups: Record<string, {
+        id: string;
+        title: string;
+        name: string;
+        icon: string;
+        groupId: string;
+        role: string;
+        translatableContent: ThemeContentItem[];
+        contentCount: number;
+      }> = {};
 
       for (const resource of allThemeResources) {
         for (const [groupId, items] of Object.entries(resource.contentByGroup)) {
@@ -686,8 +755,8 @@ export class ContentService {
 
       // Check for GraphQL errors (like access denied)
       if ('errors' in data && data.errors && Array.isArray(data.errors) && data.errors.length > 0) {
-        const errors = data.errors as any[];
-        const accessDeniedError = errors.find((err: any) =>
+        const errors = data.errors as Array<{ message: string }>;
+        const accessDeniedError = errors.find((err) =>
           err.message?.includes('Access denied') || err.message?.includes('metaobjectDefinitions')
         );
 
@@ -699,11 +768,12 @@ export class ContentService {
         throw new Error(errors[0].message);
       }
 
-      const definitions = data.data?.metaobjectDefinitions?.edges?.map((edge: any) => edge.node) || [];
+      const definitions = data.data?.metaobjectDefinitions?.edges?.map((edge: GraphQLEdge<Record<string, unknown>>) => edge.node) || [];
       return definitions;
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
       // Gracefully handle permission errors
-      if (error.message?.includes('Access denied') || error.message?.includes('metaobjectDefinitions')) {
+      if (message?.includes('Access denied') || message?.includes('metaobjectDefinitions')) {
         logger.warn('Metaobjects access denied - feature requires additional Shopify permissions', { context: 'ContentService' });
         return [];
       }
@@ -722,7 +792,7 @@ export class ContentService {
       }
 
       // Then fetch metaobjects for each type
-      const allMetaobjects = [];
+      const allMetaobjects: Array<Record<string, unknown>> = [];
 
       for (const definition of definitions) {
         try {
@@ -731,7 +801,7 @@ export class ContentService {
           });
           const data = await response.json();
 
-          const metaobjects = data.data?.metaobjects?.edges?.map((edge: any) => ({
+          const metaobjects = data.data?.metaobjects?.edges?.map((edge: GraphQLEdge<Record<string, unknown>>) => ({
             ...edge.node,
             definitionName: definition.name,
             translations: []
@@ -763,7 +833,7 @@ export class ContentService {
       this.getMetaobjects()
     ]);
 
-    const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "en";
+    const primaryLocale = shopLocales.find((l) => l.primary)?.locale || "en";
 
     return {
       shopLocales,

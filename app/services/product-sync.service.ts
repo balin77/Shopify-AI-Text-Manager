@@ -9,7 +9,92 @@ import { logger } from '~/utils/logger.server';
 import { isTranslationRecentlySaved } from '~/utils/translation-save-lock.server';
 
 interface ShopifyGraphQLClient {
-  graphql: (query: string, options?: { variables?: any }) => Promise<any>;
+  graphql: (query: string, options?: { variables?: Record<string, unknown> }) => Promise<Response>;
+}
+
+/** Locale info returned by shopLocales query */
+interface ShopLocale {
+  locale: string;
+  name?: string;
+  primary: boolean;
+  published: boolean;
+}
+
+/** GraphQL edge wrapper */
+interface GraphQLEdge<T> {
+  node: T;
+}
+
+/** A single translation from Shopify */
+interface ShopifyTranslation {
+  key: string;
+  value: string;
+  locale: string;
+}
+
+/** Resolved translation with digest */
+interface ResolvedTranslation {
+  key: string;
+  value: string;
+  locale: string;
+  digest?: string;
+}
+
+/** GraphQL error shape */
+interface GraphQLError {
+  message: string;
+}
+
+/** Product media image from Shopify */
+interface ShopifyMediaImage {
+  id: string;
+  alt: string | null;
+  image: {
+    url: string;
+  };
+}
+
+/** Product option from Shopify */
+interface ShopifyProductOption {
+  id: string;
+  name: string;
+  position: number;
+  values: string[];
+}
+
+/** Product metafield from Shopify */
+interface ShopifyMetafield {
+  id: string;
+  namespace: string;
+  key: string;
+  value: string;
+  type: string;
+}
+
+/** Product data from Shopify GraphQL */
+interface ShopifyProductData {
+  id: string;
+  title: string;
+  descriptionHtml: string | null;
+  handle: string;
+  status: string;
+  productType: string | null;
+  updatedAt: string;
+  seo: {
+    title: string | null;
+    description: string | null;
+  } | null;
+  featuredImage: {
+    url: string;
+    altText: string | null;
+  } | null;
+  media: {
+    edges: GraphQLEdge<ShopifyMediaImage>[];
+  } | null;
+  options: ShopifyProductOption[] | null;
+  metafields: {
+    edges: GraphQLEdge<ShopifyMetafield>[];
+  } | null;
 }
 
 export class ProductSyncService {
@@ -62,7 +147,7 @@ export class ProductSyncService {
       logger.debug(`[ProductSync] Found ${locales.length} locales`);
 
       // 3. Fetch translations for all non-primary locales
-      const foreignLocales = locales.filter((l: any) => !l.primary);
+      const foreignLocales = locales.filter((l) => !l.primary);
       const translationResult = await this.fetchAllTranslations(
         productId,
         foreignLocales,
@@ -72,14 +157,14 @@ export class ProductSyncService {
       const allTranslations = translationResult.translations;
 
       // CRITICAL: Check if translation fetch was successful
-      const publishedLocales = foreignLocales.filter((l: any) => l.published);
+      const publishedLocales = foreignLocales.filter((l) => l.published);
       const expectedTranslations = publishedLocales.length > 0;
 
       if (expectedTranslations && allTranslations.length === 0) {
         logger.error(`[ProductSync] 🔴 CRITICAL: No translations fetched for product with ${publishedLocales.length} published locales!`, {
           productId,
           title: productData.title,
-          publishedLocales: publishedLocales.map((l: any) => l.locale).join(', '),
+          publishedLocales: publishedLocales.map((l) => l.locale).join(', '),
           hadErrors: translationResult.hadErrors,
           errorCount: translationResult.errorCount,
         });
@@ -101,7 +186,7 @@ export class ProductSyncService {
       // 4. Fetch image alt-text translations (API 2025-10+)
       const imageAltTranslations = await this.fetchImageAltTextTranslations(
         productData,
-        locales.filter((l: any) => !l.primary && l.published)
+        locales.filter((l) => !l.primary && l.published)
       );
       logger.debug(`[ProductSync] Fetched ${imageAltTranslations.length} image alt-text translations`);
 
@@ -122,15 +207,15 @@ export class ProductSyncService {
    * Performance: 5 images × 3 locales = 3 API calls (instead of 15)
    */
   private async fetchImageAltTextTranslations(
-    productData: any,
-    locales: any[]
+    productData: ShopifyProductData,
+    locales: ShopLocale[]
   ): Promise<Array<{ mediaId: string; locale: string; altText: string }>> {
     const altTranslations: Array<{ mediaId: string; locale: string; altText: string }> = [];
 
     // Get all media images from product
     const mediaImages = productData.media?.edges
-      ?.filter((edge: any) => edge.node.id) // Filter out non-MediaImage types
-      .map((edge: any) => edge.node) || [];
+      ?.filter((edge) => edge.node.id) // Filter out non-MediaImage types
+      .map((edge) => edge.node) || [];
 
     if (mediaImages.length === 0) {
       logger.debug(`[ProductSync] No media images found for alt-text translations`);
@@ -138,7 +223,7 @@ export class ProductSyncService {
     }
 
     // Collect all MediaImage IDs for bulk query
-    const mediaIds = mediaImages.map((m: any) => m.id);
+    const mediaIds = mediaImages.map((m) => m.id);
 
     logger.debug(`[ProductSync] Fetching alt-text translations for ${mediaIds.length} images using BULK query`);
 
@@ -175,9 +260,9 @@ export class ProductSyncService {
         let foundCount = 0;
         for (const edge of resources) {
           const resourceId = edge.node.resourceId;
-          const translations = edge.node.translations || [];
+          const translations: Array<{ key: string; value: string }> = edge.node.translations || [];
 
-          const altTranslation = translations.find((t: any) => t.key === "alt");
+          const altTranslation = translations.find((t) => t.key === "alt");
           if (altTranslation?.value) {
             altTranslations.push({
               mediaId: resourceId,
@@ -204,7 +289,7 @@ export class ProductSyncService {
    * Fetch product data from Shopify
    * Uses media query instead of images to get MediaImage IDs for translations (API 2025-10+)
    */
-  private async fetchProductData(productId: string) {
+  private async fetchProductData(productId: string): Promise<ShopifyProductData | null> {
     const response = await this.admin.graphql(
       `#graphql
         query getProduct($id: ID!) {
@@ -269,7 +354,7 @@ export class ProductSyncService {
       });
 
       // Distinguish between "not found" errors and other errors
-      const notFoundError = data.errors.some((e: any) =>
+      const notFoundError = (data.errors as GraphQLError[]).some((e) =>
         e.message?.toLowerCase().includes('not found') ||
         e.message?.toLowerCase().includes('does not exist') ||
         e.message?.toLowerCase().includes('could not find')
@@ -281,11 +366,11 @@ export class ProductSyncService {
       }
 
       // For other errors (rate limiting, permissions, etc.), throw to retry
-      throw new Error(`GraphQL error: ${data.errors[0].message}`);
+      throw new Error(`GraphQL error: ${(data.errors as GraphQLError[])[0].message}`);
     }
 
     // Check if product data is present
-    const product = data.data?.product;
+    const product: ShopifyProductData | undefined = data.data?.product;
 
     if (!product) {
       logger.warn(`[ProductSync] Product data is null (but no GraphQL errors): ${productId}`);
@@ -307,7 +392,7 @@ export class ProductSyncService {
   /**
    * Fetch all shop locales
    */
-  private async fetchShopLocales() {
+  private async fetchShopLocales(): Promise<ShopLocale[]> {
     const response = await this.admin.graphql(
       `#graphql
         query getShopLocales {
@@ -327,10 +412,10 @@ export class ProductSyncService {
       logger.error(`[ProductSync] GraphQL errors fetching shop locales:`, {
         errors: data.errors,
       });
-      throw new Error(`Failed to fetch shop locales: ${data.errors[0].message}`);
+      throw new Error(`Failed to fetch shop locales: ${(data.errors as GraphQLError[])[0].message}`);
     }
 
-    const locales = data.data?.shopLocales || [];
+    const locales: ShopLocale[] = data.data?.shopLocales || [];
 
     if (locales.length === 0) {
       logger.warn(`[ProductSync] No shop locales found - this might indicate an API issue`);
@@ -348,12 +433,12 @@ export class ProductSyncService {
    *
    * Returns: { translations, hadErrors, errorCount }
    */
-  private async fetchAllTranslations(productId: string, locales: any[], productData: any): Promise<{
-    translations: any[];
+  private async fetchAllTranslations(productId: string, locales: ShopLocale[], productData: ShopifyProductData): Promise<{
+    translations: ResolvedTranslation[];
     hadErrors: boolean;
     errorCount: number;
   }> {
-    const allTranslations = [];
+    const allTranslations: ResolvedTranslation[] = [];
     const digestMap = new Map<string, string>();
     const errors: string[] = [];
     const skipped: string[] = [];
@@ -399,7 +484,7 @@ export class ProductSyncService {
             productId,
             locale: locale.locale,
           });
-          errors.push(`${locale.locale}: ${data.errors[0].message}`);
+          errors.push(`${locale.locale}: ${(data.errors as GraphQLError[])[0].message}`);
           // Continue with other locales instead of failing completely
           continue;
         }
@@ -415,7 +500,7 @@ export class ProductSyncService {
         // Build digest map from translatableContent (for reference only)
         if (resource.translatableContent) {
           logger.debug(`[ProductSync] Available translatable keys for ${locale.locale}:`,
-            resource.translatableContent.map((c: any) => c.key).join(', '));
+            resource.translatableContent.map((c: { key: string }) => c.key).join(', '));
 
           for (const content of resource.translatableContent) {
             // Store digest for future updates - but DO NOT store as translation
@@ -427,7 +512,7 @@ export class ProductSyncService {
         // DO NOT save translatableContent values - those are the source language text
         if (resource.translations && resource.translations.length > 0) {
           logger.debug(`[ProductSync] Actual translations for ${locale.locale}:`,
-            resource.translations.map((t: any) => t.key).join(', '));
+            resource.translations.map((t: ShopifyTranslation) => t.key).join(', '));
 
           for (const translation of resource.translations) {
             allTranslations.push({
@@ -442,14 +527,15 @@ export class ProductSyncService {
         } else {
           logger.debug(`[ProductSync] No translations found for ${locale.locale} - nothing to save`);
         }
-      } catch (error: any) {
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
         // Log error but continue with other locales (graceful degradation)
         logger.error(`[ProductSync] Error fetching translations for locale ${locale.locale}:`, {
-          error: error.message,
+          error: message,
           productId,
           locale: locale.locale,
         });
-        errors.push(`${locale.locale}: ${error.message}`);
+        errors.push(`${locale.locale}: ${message}`);
         // Continue to next locale
       }
     }
@@ -484,8 +570,8 @@ export class ProductSyncService {
    * Uses a transaction to ensure data consistency
    */
   private async saveToDatabase(
-    productData: any,
-    translations: any[],
+    productData: ShopifyProductData,
+    translations: ResolvedTranslation[],
     imageAltTranslations: Array<{ mediaId: string; locale: string; altText: string }> = []
   ) {
     const { db } = await import("../db.server");
@@ -528,9 +614,9 @@ export class ProductSyncService {
       logger.debug(`[ProductSync] Skipping ${skippedCount} translations with null/undefined values`);
     }
 
-    const mediaImages = productData.media?.edges
-      ?.filter((edge: any) => edge.node.id && edge.node.image?.url)
-      .map((edge: any) => edge.node) || [];
+    const mediaImages: ShopifyMediaImage[] = productData.media?.edges
+      ?.filter((edge) => edge.node.id && edge.node.image?.url)
+      .map((edge) => edge.node) || [];
 
     // Use transaction to ensure all-or-nothing data consistency
     await db.$transaction(async (tx) => {
@@ -586,7 +672,7 @@ export class ProductSyncService {
 
         // Insert translations
         if (validTranslations.length > 0) {
-          const translationsByLocale = validTranslations.reduce((acc: any, t: any) => {
+          const translationsByLocale = validTranslations.reduce((acc: Record<string, string[]>, t) => {
             if (!acc[t.locale]) acc[t.locale] = [];
             acc[t.locale].push(t.key);
             return acc;
@@ -594,7 +680,7 @@ export class ProductSyncService {
 
           logger.debug(`[ProductSync] Saving ${validTranslations.length} translations to database:`);
           for (const [locale, keys] of Object.entries(translationsByLocale)) {
-            logger.debug(`[ProductSync]   ${locale}: ${(keys as string[]).join(', ')}`);
+            logger.debug(`[ProductSync]   ${locale}: ${keys.join(', ')}`);
           }
 
           await tx.contentTranslation.createMany({
@@ -631,13 +717,13 @@ export class ProductSyncService {
       if (mediaImages.length > 0) {
         // Log what Shopify returned for alt-texts
         logger.debug(`[ProductSync] [SYNC] Syncing ${mediaImages.length} images from Shopify 🔵🔵🔵`);
-        mediaImages.forEach((media: any, index: number) => {
+        mediaImages.forEach((media, index) => {
           logger.debug(`[ProductSync] [SYNC] Image ${index}: mediaId=${media.id}, alt="${media.alt}" (isNull: ${media.alt === null}, isEmpty: ${media.alt === ""})`);
         });
 
         // Create images with mediaId for translation support
         const createdImages = await Promise.all(
-          mediaImages.map(async (media: any, index: number) => {
+          mediaImages.map(async (media, index) => {
             // Check if this image's alt-text was recently modified by user
             const wasRecentlyModified = preservedAltTexts.has(media.id);
             const altTextToSave = wasRecentlyModified
@@ -700,7 +786,7 @@ export class ProductSyncService {
       // Insert options
       if (productData.options && productData.options.length > 0) {
         await tx.productOption.createMany({
-          data: productData.options.map((opt: any) => ({
+          data: productData.options.map((opt) => ({
             id: opt.id,
             productId: productData.id,
             name: opt.name,
@@ -712,10 +798,10 @@ export class ProductSyncService {
       }
 
       // Insert metafields
-      const metafields = productData.metafields?.edges?.map((edge: any) => edge.node) || [];
+      const metafields: ShopifyMetafield[] = productData.metafields?.edges?.map((edge) => edge.node) || [];
       if (metafields.length > 0) {
         await tx.productMetafield.createMany({
-          data: metafields.map((mf: any) => ({
+          data: metafields.map((mf) => ({
             id: mf.id,
             productId: productData.id,
             namespace: mf.namespace,
@@ -756,7 +842,7 @@ export class ProductSyncService {
    * @param productId - Shopify product ID (can be numeric or GID format)
    * @param includeAllImages - If true, sync all images. If false, only featured image
    */
-  async syncSingleProduct(productId: string, includeAllImages: boolean = true): Promise<any> {
+  async syncSingleProduct(productId: string, includeAllImages: boolean = true): Promise<Record<string, unknown> | null> {
     logger.debug(`[ProductSync] Manual sync for product: ${productId} (images: ${includeAllImages ? "all" : "featured only"})`);
 
     // Convert to GID format if numeric

@@ -11,7 +11,76 @@ import { logger } from '~/utils/logger.server';
 import { isTranslationRecentlySaved } from '~/utils/translation-save-lock.server';
 
 interface ShopifyGraphQLClient {
-  graphql: (query: string, options?: { variables?: any }) => Promise<any>;
+  graphql: (query: string, options?: { variables?: Record<string, unknown> }) => Promise<Response>;
+}
+
+/** Locale info returned by shopLocales query */
+interface ShopLocale {
+  locale: string;
+  name?: string;
+  primary: boolean;
+  published: boolean;
+}
+
+/** GraphQL edge wrapper */
+interface GraphQLEdge<T> {
+  node: T;
+}
+
+/** Resolved translation with digest and resource type */
+interface ResolvedTranslation {
+  key: string;
+  value: string;
+  locale: string;
+  digest?: string | null;
+  resourceType: string;
+}
+
+/** Collection data from Shopify GraphQL */
+interface ShopifyCollectionData {
+  id: string;
+  title: string;
+  handle: string;
+  descriptionHtml: string | null;
+  updatedAt: string;
+  image: {
+    url: string;
+    altText: string | null;
+  } | null;
+  seo: {
+    title: string | null;
+    description: string | null;
+  } | null;
+}
+
+/** Article data from Shopify GraphQL */
+interface ShopifyArticleData {
+  id: string;
+  title: string;
+  handle: string;
+  body: string | null;
+  summary: string | null;
+  updatedAt: string;
+  image: {
+    url: string;
+    altText: string | null;
+  } | null;
+  blog: {
+    id: string;
+    title: string;
+  } | null;
+  seo?: {
+    title: string | null;
+    description: string | null;
+  };
+}
+
+/** Menu data from Shopify GraphQL */
+interface ShopifyMenuData {
+  id: string;
+  title: string;
+  handle: string;
+  items: unknown[];
 }
 
 export interface ProgressCallback {
@@ -50,7 +119,7 @@ export class ContentSyncService {
       // 3. Fetch translations for all non-primary locales
       const allTranslations = await this.fetchAllTranslations(
         collectionId,
-        locales.filter((l: any) => !l.primary),
+        locales.filter((l) => !l.primary),
         "Collection"
       );
       logger.debug(`[ContentSync] Fetched ${allTranslations.length} translations`);
@@ -110,7 +179,7 @@ export class ContentSyncService {
       // 3. Fetch translations
       const allTranslations = await this.fetchAllTranslations(
         articleId,
-        locales.filter((l: any) => !l.primary),
+        locales.filter((l) => !l.primary),
         "Article"
       );
 
@@ -198,7 +267,7 @@ export class ContentSyncService {
   // FETCH DATA FROM SHOPIFY
   // ============================================
 
-  private async fetchCollectionData(collectionId: string) {
+  private async fetchCollectionData(collectionId: string): Promise<ShopifyCollectionData | null> {
     const response = await this.admin.graphql(
       `#graphql
         query getCollection($id: ID!) {
@@ -225,7 +294,7 @@ export class ContentSyncService {
     return data.data?.collection || null;
   }
 
-  private async fetchArticleData(articleId: string) {
+  private async fetchArticleData(articleId: string): Promise<ShopifyArticleData | null> {
     // Fetch article basic data
     const response = await this.admin.graphql(
       `#graphql
@@ -251,7 +320,7 @@ export class ContentSyncService {
     );
 
     const data = await response.json();
-    const article = data.data?.article || null;
+    const article: ShopifyArticleData | null = data.data?.article || null;
 
     if (!article) return null;
 
@@ -270,12 +339,13 @@ export class ContentSyncService {
     );
 
     const translatableData = await translatableResponse.json();
-    const translatableContent = translatableData.data?.translatableResource?.translatableContent || [];
+    const translatableContent: Array<{ key: string; value: string | null }> =
+      translatableData.data?.translatableResource?.translatableContent || [];
 
     // Extract SEO fields from translatableContent
     // Article translatableContent keys: title, body_html, summary_html, meta_title, meta_description
-    const seoTitle = translatableContent.find((c: any) => c.key === 'meta_title')?.value || null;
-    const seoDescription = translatableContent.find((c: any) => c.key === 'meta_description')?.value || null;
+    const seoTitle = translatableContent.find((c) => c.key === 'meta_title')?.value || null;
+    const seoDescription = translatableContent.find((c) => c.key === 'meta_description')?.value || null;
 
     article.seo = {
       title: seoTitle,
@@ -285,7 +355,7 @@ export class ContentSyncService {
     return article;
   }
 
-  private async fetchMenuData(menuId: string) {
+  private async fetchMenuData(menuId: string): Promise<ShopifyMenuData | null> {
     const response = await this.admin.graphql(
       `#graphql
         query getMenu($id: ID!) {
@@ -327,7 +397,7 @@ export class ContentSyncService {
   }
 
 
-  private async fetchShopLocales() {
+  private async fetchShopLocales(): Promise<ShopLocale[]> {
     const response = await this.admin.graphql(
       `#graphql
         query getShopLocales {
@@ -351,8 +421,8 @@ export class ContentSyncService {
    * If a field has no translation in Shopify, it will NOT be stored in the database.
    * This prevents the primary language text from appearing as a "translation".
    */
-  private async fetchAllTranslations(resourceId: string, locales: any[], resourceType: string) {
-    const allTranslationsMap = new Map<string, any>(); // Deduplicate using key::locale
+  private async fetchAllTranslations(resourceId: string, locales: ShopLocale[], resourceType: string): Promise<ResolvedTranslation[]> {
+    const allTranslationsMap = new Map<string, ResolvedTranslation>(); // Deduplicate using key::locale
 
     for (const locale of locales) {
       if (!locale.published) {
@@ -401,7 +471,7 @@ export class ContentSyncService {
       // DO NOT save translatableContent values - those are the source language text
       if (resource.translations && resource.translations.length > 0) {
         logger.debug(`[ContentSync] Actual translations for ${locale.locale}:`,
-          resource.translations.map((t: any) => t.key).join(', '));
+          resource.translations.map((t: { key: string }) => t.key).join(', '));
 
         for (const translation of resource.translations) {
           const uniqueKey = `${translation.key}::${translation.locale}`;
@@ -429,7 +499,7 @@ export class ContentSyncService {
   // SAVE TO DATABASE
   // ============================================
 
-  private async saveCollectionToDatabase(collectionData: any, translations: any[]) {
+  private async saveCollectionToDatabase(collectionData: ShopifyCollectionData, translations: ResolvedTranslation[]) {
     const { db } = await import("../db.server");
 
     logger.debug(`[ContentSync] Saving collection to database: ${collectionData.id}`);
@@ -509,7 +579,7 @@ export class ContentSyncService {
     logger.debug(`[ContentSync] ✓ Transaction completed successfully for collection ${collectionData.id}`);
   }
 
-  private async saveArticleToDatabase(articleData: any, translations: any[]) {
+  private async saveArticleToDatabase(articleData: ShopifyArticleData, translations: ResolvedTranslation[]) {
     const { db } = await import("../db.server");
 
     logger.debug(`[ContentSync] Saving article to database: ${articleData.id}`);
@@ -595,7 +665,7 @@ export class ContentSyncService {
     logger.debug(`[ContentSync] ✓ Transaction completed successfully for article ${articleData.id}`);
   }
 
-  private async saveMenuToDatabase(menuData: any) {
+  private async saveMenuToDatabase(menuData: ShopifyMenuData) {
     const { db } = await import("../db.server");
 
     logger.debug(`[ContentSync] Saving menu to database: ${menuData.id}`);
@@ -613,13 +683,15 @@ export class ContentSyncService {
         shop: this.shop,
         title: menuData.title,
         handle: menuData.handle,
-        items: menuData.items || [],
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Prisma JSON column
+        items: (menuData.items || []) as any,
         lastSyncedAt: new Date(),
       },
       update: {
         title: menuData.title,
         handle: menuData.handle,
-        items: menuData.items || [],
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Prisma JSON column
+        items: (menuData.items || []) as any,
         lastSyncedAt: new Date(),
       },
     });
@@ -655,7 +727,7 @@ export class ContentSyncService {
     );
 
     const data = await response.json();
-    let collections = data.data?.collections?.edges?.map((e: any) => e.node) || [];
+    let collections: Array<{ id: string }> = data.data?.collections?.edges?.map((e: GraphQLEdge<{ id: string }>) => e.node) || [];
 
     // Apply plan limit if specified
     if (maxCount !== undefined && maxCount > 0 && collections.length > maxCount) {
@@ -714,12 +786,13 @@ export class ContentSyncService {
     );
 
     const blogsData = await blogsResponse.json();
-    const blogs = blogsData.data?.blogs?.edges?.map((e: any) => e.node) || [];
+    const blogs: Array<{ id: string; articles?: { edges: GraphQLEdge<{ id: string }>[] } }> =
+      blogsData.data?.blogs?.edges?.map((e: GraphQLEdge<{ id: string; articles?: { edges: GraphQLEdge<{ id: string }>[] } }>) => e.node) || [];
 
     // Collect all articles
-    let allArticles: any[] = [];
+    let allArticles: Array<{ id: string }> = [];
     for (const blog of blogs) {
-      const articles = blog.articles?.edges?.map((e: any) => e.node) || [];
+      const articles: Array<{ id: string }> = blog.articles?.edges?.map((e: GraphQLEdge<{ id: string }>) => e.node) || [];
       allArticles.push(...articles);
     }
 
@@ -763,7 +836,7 @@ export class ContentSyncService {
     );
 
     const data = await response.json();
-    const menus = data.data?.menus?.edges?.map((e: any) => e.node) || [];
+    const menus: Array<{ id: string }> = data.data?.menus?.edges?.map((e: GraphQLEdge<{ id: string }>) => e.node) || [];
 
     logger.debug(`[ContentSync] Found ${menus.length} menus to sync`);
 
@@ -781,7 +854,7 @@ export class ContentSyncService {
   /**
    * Sync a single collection (wrapper for manual reload)
    */
-  async syncSingleCollection(collectionId: string): Promise<any> {
+  async syncSingleCollection(collectionId: string): Promise<Record<string, unknown>> {
     const gid = collectionId.startsWith("gid://")
       ? collectionId
       : `gid://shopify/Collection/${collectionId}`;
@@ -814,7 +887,7 @@ export class ContentSyncService {
   /**
    * Sync a single article (wrapper for manual reload)
    */
-  async syncSingleArticle(articleId: string): Promise<any> {
+  async syncSingleArticle(articleId: string): Promise<Record<string, unknown>> {
     const gid = articleId.startsWith("gid://")
       ? articleId
       : `gid://shopify/Article/${articleId}`;

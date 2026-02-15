@@ -24,6 +24,13 @@ import { ContentService } from "../services/content.service";
 import { CONTENT_MAX_HEIGHT } from "../constants/layout";
 import { logger } from "~/utils/logger.server";
 
+interface MetaobjectItem {
+  id: string;
+  displayName?: string;
+  definitionName?: string;
+  fields?: Array<{ key: string; value: unknown }>;
+}
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
 
@@ -43,7 +50,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
     const localesData = await localesResponse.json();
     const shopLocales = localesData.data?.shopLocales || [];
-    const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "en";
+    const primaryLocale = shopLocales.find((l: { primary: boolean }) => l.primary)?.locale || "en";
 
     // Load metaobjects
     const contentService = new ContentService(admin);
@@ -56,14 +63,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       primaryLocale,
       error: null
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error("[METAOBJECTS-LOADER] Error", { error: error instanceof Error ? error.message : String(error) });
     return json({
       metaobjects: [],
       shop: session.shop,
       shopLocales: [],
       primaryLocale: "en",
-      error: error.message
+      error: error instanceof Error ? error.message : String(error)
     }, { status: 500 });
   }
 };
@@ -74,7 +81,7 @@ export default function MetaobjectsPage() {
   const { mainNavHeight } = useNavigationHeight();
 
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
-  const selectedItem = metaobjects.find((item: any) => item.id === selectedItemId);
+  const selectedItem = (metaobjects as unknown as MetaobjectItem[]).find((item) => item.id === selectedItemId);
 
   return (
     <Page fullWidth>
@@ -180,7 +187,7 @@ export default function MetaobjectsPage() {
                       <Text as="h4" variant="headingSm">
                         Fields ({selectedItem.fields.length})
                       </Text>
-                      {selectedItem.fields.map((field: any, index: number) => (
+                      {selectedItem.fields.map((field, index) => (
                         <BlockStack key={index} gap="100">
                           <Text as="p" variant="bodyMd" fontWeight="semibold">
                             {field.key}

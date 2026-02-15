@@ -303,7 +303,7 @@ Allowed formatting changes for handles:
 - Remove special characters
 - Remove excessive hyphens`;
           if (instructions?.[formatKey]) {
-            prompt += `\n\nFormat Style Example:\n${aiInstructions[formatKey]}`;
+            prompt += `\n\nFormat Style Example:\n${instructions![formatKey]}`;
           }
           prompt += `\n\nReturn ONLY the formatted URL slug. Keep the original keywords.`;
         } else {
@@ -320,7 +320,7 @@ Allowed formatting changes:
 - Remove excessive punctuation
 - Fix spacing issues`;
           if (instructions?.[formatKey]) {
-            prompt += `\n\nFormat Style Example (for structure reference only, do NOT copy the content):\n${aiInstructions[formatKey]}`;
+            prompt += `\n\nFormat Style Example (for structure reference only, do NOT copy the content):\n${instructions![formatKey]}`;
           }
           prompt += `\n\nReturn ONLY the formatted ${field.label}. Keep the original language. Do NOT add new information or rewrite the text. Output the result in ${mainLanguage}.`;
         }
@@ -346,7 +346,7 @@ Allowed formatting changes:
 - Fix spacing and punctuation`;
 
         if (instructions?.[formatKey]) {
-          prompt += `\n\nFormat Style Example (for HTML structure reference only):\n${aiInstructions[formatKey]}`;
+          prompt += `\n\nFormat Style Example (for HTML structure reference only):\n${instructions![formatKey]}`;
         }
 
         prompt += `\n\nReturn ONLY the formatted HTML ${field.label}. Keep the original language and all original content. Do NOT add new sentences or rewrite existing ones. Output the result in ${mainLanguage}.`;

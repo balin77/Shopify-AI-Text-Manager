@@ -23,6 +23,8 @@ export interface TranslatableItem {
   handle?: string | null;
   seo?: SEO | null;
   translations?: Translation[];
+  productType?: string | null;
+  translatableContent?: Array<{ key: string; value: string }>;
 }
 
 export interface ShopifyCollection extends TranslatableItem {

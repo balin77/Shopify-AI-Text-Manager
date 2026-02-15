@@ -6,7 +6,7 @@
 
 import { json, type ActionFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
-import { AIService } from "../../src/services/ai.service";
+import { AIService, type AIProvider } from "../../src/services/ai.service";
 import { decryptApiKey } from "../utils/encryption.server";
 import { getTaskExpirationDate } from "~/config/constants";
 import { logger } from "~/utils/logger.server";
@@ -14,6 +14,7 @@ import { TRANSLATE_CONTENT } from "../graphql/content.mutations";
 import { sanitizeSlug } from "../utils/slug.utils";
 import { PRODUCTS_CONFIG, COLLECTIONS_CONFIG, BLOGS_CONFIG, PAGES_CONFIG, POLICIES_CONFIG } from "../config/content-fields.config";
 import type { ContentEditorConfig } from "../types/content-editor.types";
+import { getFormString, getFormJSON } from "~/utils/form-data.utils";
 
 // Map contentType to its config for looking up field definitions
 const CONTENT_CONFIGS: Record<string, ContentEditorConfig> = {
@@ -25,14 +26,51 @@ const CONTENT_CONFIGS: Record<string, ContentEditorConfig> = {
 };
 
 
+/** Shape of a single item from Shopify's translatableContent array. */
+interface TranslatableContentItem {
+  key: string;
+  digest: string;
+  value?: string;
+}
+
+/** Shape of a Shopify GraphQL response with potential data/errors. */
+interface ShopifyGraphQLResponse {
+  data?: {
+    translatableResource?: {
+      resourceId: string;
+      translatableContent: TranslatableContentItem[];
+    };
+    translationsRegister?: {
+      userErrors: Array<{ field?: string; message: string }>;
+      translations: Array<{ locale: string; key: string; value: string }>;
+    };
+  };
+  errors?: Array<{ message: string }>;
+}
+
+/** Safely extract an error message from an unknown thrown value. */
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/** Safely extract an error stack from an unknown thrown value. */
+function errorStack(err: unknown): string | undefined {
+  return err instanceof Error ? err.stack : undefined;
+}
+
+/** Check if an unknown error is a Prisma error with a specific code. */
+function isPrismaError(err: unknown, code: string): boolean {
+  return typeof err === "object" && err !== null && "code" in err && (err as { code: string }).code === code;
+}
+
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
 
   try {
     const formData = await request.formData();
-    const actionType = formData.get("action") as string;
-    const contentType = formData.get("contentType") as string || "unknown";
-    const itemId = formData.get("itemId") as string || "unknown";
+    const actionType = getFormString(formData, "action");
+    const contentType = getFormString(formData, "contentType") || "unknown";
+    const itemId = getFormString(formData, "itemId") || "unknown";
 
     const { db } = await import("../db.server");
 
@@ -43,10 +81,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     switch (actionType) {
       case "translateField": {
-        const fieldType = formData.get("fieldType") as string;
-        const sourceText = formData.get("sourceText") as string;
-        const targetLocale = formData.get("targetLocale") as string;
-        const primaryLocale = formData.get("primaryLocale") as string;
+        const fieldType = getFormString(formData, "fieldType");
+        const sourceText = getFormString(formData, "sourceText");
+        const targetLocale = getFormString(formData, "targetLocale");
+        const primaryLocale = getFormString(formData, "primaryLocale");
 
         if (!sourceText) {
           return json({ success: false, error: "No source text available" }, { status: 400 });
@@ -80,7 +118,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           });
 
           const aiService = new AIService(
-            settings?.preferredProvider as any || 'huggingface',
+            settings?.preferredProvider as AIProvider || 'huggingface',
             {
               huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
               geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
@@ -135,14 +173,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             fieldType,
             targetLocale
           });
-        } catch (error: any) {
+        } catch (error: unknown) {
           // Update task to failed
           await db.task.update({
             where: { id: task.id },
             data: {
               status: "failed",
               completedAt: new Date(),
-              error: (error.message || String(error)).substring(0, 1000),
+              error: errorMessage(error).substring(0, 1000),
             },
           });
           throw error;
@@ -150,10 +188,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
 
       case "translateFieldToAllLocales": {
-        const fieldType = formData.get("fieldType") as string;
-        const sourceText = formData.get("sourceText") as string;
-        const targetLocalesJson = formData.get("targetLocales") as string;
-        const primaryLocale = formData.get("primaryLocale") as string;
+        const fieldType = getFormString(formData, "fieldType");
+        const sourceText = getFormString(formData, "sourceText");
+        const targetLocalesJson = getFormString(formData, "targetLocales");
+        const primaryLocale = getFormString(formData, "primaryLocale");
 
         if (!sourceText) {
           return json({ success: false, error: "No source text available" }, { status: 400 });
@@ -194,7 +232,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           });
 
           const aiService = new AIService(
-            settings?.preferredProvider as any || 'huggingface',
+            settings?.preferredProvider as AIProvider || 'huggingface',
             {
               huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
               geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
@@ -313,9 +351,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                       variables: { resourceId: templateResourceId }
                     });
 
-                    const digestData = await digestResponse.json() as any;
+                    const digestData = await digestResponse.json() as ShopifyGraphQLResponse;
                     const translatableContent = digestData.data?.translatableResource?.translatableContent || [];
-                    const fieldContent = translatableContent.find((c: any) => c.key === fieldType);
+                    const fieldContent = translatableContent.find((c: TranslatableContentItem) => c.key === fieldType);
                     const digest = fieldContent?.digest || "";
 
                     const translationInput = [{
@@ -362,10 +400,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                       locale,
                       fieldType
                     });
-                  } catch (shopifyError: any) {
+                  } catch (shopifyError: unknown) {
                     logger.error("[API-AI] Batch: Error saving template to Shopify", {
                       context: "AI",
-                      error: shopifyError?.message,
+                      error: errorMessage(shopifyError),
                       locale,
                       fieldType
                     });
@@ -402,7 +440,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
                     const digestData = await digestResponse.json();
                     const translatableContent = digestData.data?.translatableResource?.translatableContent || [];
-                    const fieldContent = translatableContent.find((c: any) => c.key === shopifyKey);
+                    const fieldContent = translatableContent.find((c: TranslatableContentItem) => c.key === shopifyKey);
                     const digest = fieldContent?.digest || "";
 
                     const translationInput = [{
@@ -450,10 +488,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                       shopifyKey,
                       locale
                     });
-                  } catch (shopifyError: any) {
+                  } catch (shopifyError: unknown) {
                     logger.error("[API-AI] Batch: Error sending to Shopify", {
                       context: "AI",
-                      error: shopifyError?.message,
+                      error: errorMessage(shopifyError),
                       locale,
                       fieldType
                     });
@@ -470,10 +508,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
               // Progress already updated in loop above
 
-            } catch (batchError: any) {
+            } catch (batchError: unknown) {
               logger.error("[API-AI] Batch translation failed, falling back to sequential", {
                 context: "AI",
-                error: batchError?.message,
+                error: errorMessage(batchError),
                 fieldType
               });
               // Fall through to sequential processing below
@@ -523,9 +561,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                     variables: { resourceId: templateResourceId }
                   });
 
-                  const digestData = await digestResponse.json() as any;
+                  const digestData = await digestResponse.json() as ShopifyGraphQLResponse;
                   const translatableContent = digestData.data?.translatableResource?.translatableContent || [];
-                  const fieldContent = translatableContent.find((c: any) => c.key === fieldType);
+                  const fieldContent = translatableContent.find((c: TranslatableContentItem) => c.key === fieldType);
                   const digest = fieldContent?.digest || "";
 
                   logger.info("[API-AI] Fetched digest for field", {
@@ -559,7 +597,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                     }
                   });
 
-                  const data = await response.json() as any;
+                  const data = await response.json() as ShopifyGraphQLResponse;
 
                   // Log FULL response for debugging
                   logger.info("[API-AI] Shopify response received", {
@@ -580,20 +618,20 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                       fieldType,
                       resourceId: templateResourceId
                     });
-                  } else if (data.data?.translationsRegister?.userErrors?.length > 0) {
+                  } else if ((data.data?.translationsRegister?.userErrors?.length ?? 0) > 0) {
                     logger.error("[API-AI] Shopify translation userErrors", {
                       context: "AI",
-                      errors: data.data.translationsRegister.userErrors,
+                      errors: data.data?.translationsRegister?.userErrors,
                       locale,
                       fieldType
                     });
-                  } else if (data.data?.translationsRegister?.translations?.length > 0) {
+                  } else if ((data.data?.translationsRegister?.translations?.length ?? 0) > 0) {
                     logger.info("[API-AI] SUCCESS - Translation saved to Shopify", {
                       context: "AI",
                       resourceId: templateResourceId,
                       fieldType,
                       locale,
-                      savedTranslations: data.data.translationsRegister.translations
+                      savedTranslations: data.data?.translationsRegister?.translations
                     });
                   } else {
                     logger.warn("[API-AI] Shopify returned no errors but also no translations", {
@@ -604,11 +642,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                       fullResponse: JSON.stringify(data)
                     });
                   }
-                } catch (shopifyError: any) {
+                } catch (shopifyError: unknown) {
                   logger.error("[API-AI] Exception sending to Shopify", {
                     context: "AI",
-                    error: shopifyError?.message,
-                    stack: shopifyError?.stack?.substring(0, 500),
+                    error: errorMessage(shopifyError),
+                    stack: errorStack(shopifyError)?.substring(0, 500),
                     locale,
                     fieldType,
                     resourceId: templateResourceId
@@ -647,10 +685,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                     fieldType,
                     locale
                   });
-                } catch (dbError: any) {
+                } catch (dbError: unknown) {
                   logger.error("[API-AI] Error saving to DB", {
                     context: "AI",
-                    error: dbError?.message,
+                    error: errorMessage(dbError),
                     groupId: templateGroupId,
                     fieldType,
                     locale
@@ -690,7 +728,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
                   const digestData = await digestResponse.json();
                   const translatableContent = digestData.data?.translatableResource?.translatableContent || [];
-                  const fieldContent = translatableContent.find((c: any) => c.key === shopifyKey);
+                  const fieldContent = translatableContent.find((c: TranslatableContentItem) => c.key === shopifyKey);
                   const digest = fieldContent?.digest || "";
 
                   // Now save the translation to Shopify
@@ -751,10 +789,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                       locale
                     });
                   }
-                } catch (shopifyError: any) {
+                } catch (shopifyError: unknown) {
                   logger.error("[API-AI] Error sending to Shopify for " + contentType, {
                     context: "AI",
-                    error: shopifyError?.message,
+                    error: errorMessage(shopifyError),
                     locale,
                     fieldType
                   });
@@ -767,15 +805,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                 where: { id: task.id },
                 data: { progress },
               });
-            } catch (error: any) {
+            } catch (error: unknown) {
               logger.error("[API-AI] Error translating to locale", {
                 context: "AI",
                 fieldType,
                 locale,
-                error: error?.message
+                error: errorMessage(error)
               });
               translations[locale] = sourceText; // Fallback to original
-              aiResponses.push({ locale, response: `ERROR: ${error?.message}` });
+              aiResponses.push({ locale, response: `ERROR: ${errorMessage(error)}` });
             }
           }
           } // End of sequential translation if block
@@ -796,14 +834,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             translations,
             fieldType
           });
-        } catch (error: any) {
+        } catch (error: unknown) {
           // Update task to failed
           await db.task.update({
             where: { id: task.id },
             data: {
               status: "failed",
               completedAt: new Date(),
-              error: (error.message || String(error)).substring(0, 1000),
+              error: errorMessage(error).substring(0, 1000),
             },
           });
           throw error;
@@ -811,9 +849,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
 
       case "formatField": {
-        const fieldType = formData.get("fieldType") as string;
-        const sourceText = formData.get("sourceText") as string;
-        const formatInstruction = formData.get("formatInstruction") as string || "Improve and format this text while keeping the same language";
+        const fieldType = getFormString(formData, "fieldType");
+        const sourceText = getFormString(formData, "sourceText");
+        const formatInstruction = getFormString(formData, "formatInstruction") || "Improve and format this text while keeping the same language";
 
         if (!sourceText) {
           return json({ success: false, error: "No source text available" }, { status: 400 });
@@ -851,7 +889,7 @@ Return only the formatted text, without explanations.`;
           });
 
           const aiService = new AIService(
-            settings?.preferredProvider as any || 'huggingface',
+            settings?.preferredProvider as AIProvider || 'huggingface',
             {
               huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
               geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
@@ -889,14 +927,14 @@ Return only the formatted text, without explanations.`;
             formattedValue,
             fieldType
           });
-        } catch (error: any) {
+        } catch (error: unknown) {
           // Update task to failed
           await db.task.update({
             where: { id: task.id },
             data: {
               status: "failed",
               completedAt: new Date(),
-              error: (error.message || String(error)).substring(0, 1000),
+              error: errorMessage(error).substring(0, 1000),
             },
           });
           throw error;
@@ -904,18 +942,18 @@ Return only the formatted text, without explanations.`;
       }
 
       case "generateAIText": {
-        const fieldType = formData.get("fieldType") as string;
-        const currentValue = formData.get("currentValue") as string;
-        const contextTitle = formData.get("contextTitle") as string || "";
-        const contextDescription = formData.get("contextDescription") as string || "";
-        const mainLanguage = formData.get("mainLanguage") as string || "German";
+        const fieldType = getFormString(formData, "fieldType");
+        const currentValue = getFormString(formData, "currentValue");
+        const contextTitle = getFormString(formData, "contextTitle") || "";
+        const contextDescription = getFormString(formData, "contextDescription") || "";
+        const mainLanguage = getFormString(formData, "mainLanguage") || "German";
         const sendImageToAI = formData.get("sendImageToAI") === "true";
-        const imageUrl = formData.get("imageUrl") as string | undefined;
+        const imageUrl = getFormString(formData, "imageUrl") || undefined;
 
         // Load AI instructions for format guidelines
         const genAiInstructions = await db.aIInstructions.findUnique({
           where: { shop: session.shop },
-        }) as Record<string, any> | null;
+        }) as Record<string, string | null> | null;
 
         // Resolve field definition for aiInstructionsKey
         const genContentConfig = CONTENT_CONFIGS[contentType];
@@ -992,7 +1030,7 @@ Language: ${mainLanguage}`;
           });
 
           const aiService = new AIService(
-            settings?.preferredProvider as any || 'huggingface',
+            settings?.preferredProvider as AIProvider || 'huggingface',
             {
               huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
               geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
@@ -1044,14 +1082,14 @@ Language: ${mainLanguage}`;
             generatedContent,
             fieldType
           });
-        } catch (error: any) {
+        } catch (error: unknown) {
           // Update task to failed
           await db.task.update({
             where: { id: task.id },
             data: {
               status: "failed",
               completedAt: new Date(),
-              error: (error.message || String(error)).substring(0, 1000),
+              error: errorMessage(error).substring(0, 1000),
             },
           });
           throw error;
@@ -1059,13 +1097,13 @@ Language: ${mainLanguage}`;
       }
 
       case "formatAIText": {
-        const fieldType = formData.get("fieldType") as string;
-        const currentValue = formData.get("currentValue") as string;
-        const contextTitle = formData.get("contextTitle") as string || "";
-        const contextDescription = formData.get("contextDescription") as string || "";
-        const mainLanguage = formData.get("mainLanguage") as string || "German";
+        const fieldType = getFormString(formData, "fieldType");
+        const currentValue = getFormString(formData, "currentValue");
+        const contextTitle = getFormString(formData, "contextTitle") || "";
+        const contextDescription = getFormString(formData, "contextDescription") || "";
+        const mainLanguage = getFormString(formData, "mainLanguage") || "German";
         const sendImageToAI = formData.get("sendImageToAI") === "true";
-        const imageUrl = formData.get("imageUrl") as string | undefined;
+        const imageUrl = getFormString(formData, "imageUrl") || undefined;
 
         if (!currentValue) {
           return json({ success: false, error: "No content available to format" }, { status: 400 });
@@ -1075,7 +1113,7 @@ Language: ${mainLanguage}`;
         // Cast to Record for dynamic key access (keys are built from aiInstructionsKey)
         const aiInstructions = await db.aIInstructions.findUnique({
           where: { shop: session.shop },
-        }) as Record<string, any> | null;
+        }) as Record<string, string | null> | null;
 
         // Resolve field definition to get the correct aiInstructionsKey
         const contentConfig = CONTENT_CONFIGS[contentType];
@@ -1192,7 +1230,7 @@ Do NOT:
           });
 
           const aiService = new AIService(
-            settings?.preferredProvider as any || 'huggingface',
+            settings?.preferredProvider as AIProvider || 'huggingface',
             {
               huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
               geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
@@ -1244,14 +1282,14 @@ Do NOT:
             generatedContent: formattedValue,
             fieldType
           });
-        } catch (error: any) {
+        } catch (error: unknown) {
           // Update task to failed
           await db.task.update({
             where: { id: task.id },
             data: {
               status: "failed",
               completedAt: new Date(),
-              error: (error.message || String(error)).substring(0, 1000),
+              error: errorMessage(error).substring(0, 1000),
             },
           });
           throw error;
@@ -1259,10 +1297,10 @@ Do NOT:
       }
 
       case "generateAltText": {
-        const imageIndex = parseInt(formData.get("imageIndex") as string);
-        const imageUrl = formData.get("imageUrl") as string;
-        const productTitle = formData.get("productTitle") as string;
-        const mainLanguage = formData.get("mainLanguage") as string || "German";
+        const imageIndex = parseInt(getFormString(formData, "imageIndex"), 10);
+        const imageUrl = getFormString(formData, "imageUrl");
+        const productTitle = getFormString(formData, "productTitle");
+        const mainLanguage = getFormString(formData, "mainLanguage") || "German";
         const sendImageToAI = formData.get("sendImageToAI") === "true";
 
         if (!imageUrl) {
@@ -1297,7 +1335,7 @@ Do NOT:
           });
 
           const aiService = new AIService(
-            settings?.preferredProvider as any || 'huggingface',
+            settings?.preferredProvider as AIProvider || 'huggingface',
             {
               huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
               geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
@@ -1350,14 +1388,14 @@ Image URL: ${imageUrl}`;
             altText,
             imageIndex
           });
-        } catch (error: any) {
+        } catch (error: unknown) {
           // Update task to failed
           await db.task.update({
             where: { id: task.id },
             data: {
               status: "failed",
               completedAt: new Date(),
-              error: (error.message || String(error)).substring(0, 1000),
+              error: errorMessage(error).substring(0, 1000),
             },
           });
           throw error;
@@ -1365,10 +1403,10 @@ Image URL: ${imageUrl}`;
       }
 
       case "generateAllAltTexts": {
-        const productId = formData.get("productId") as string;
-        const productTitle = formData.get("productTitle") as string;
-        const mainLanguage = formData.get("mainLanguage") as string || "German";
-        const imagesDataJson = formData.get("imagesData") as string;
+        const productId = getFormString(formData, "productId");
+        const productTitle = getFormString(formData, "productTitle");
+        const mainLanguage = getFormString(formData, "mainLanguage") || "German";
+        const imagesDataJson = getFormString(formData, "imagesData");
         const sendImageToAI = formData.get("sendImageToAI") === "true";
 
         if (!imagesDataJson) {
@@ -1411,7 +1449,7 @@ Image URL: ${imageUrl}`;
           });
 
           const bulkAiService = new AIService(
-            settings?.preferredProvider as any || 'huggingface',
+            settings?.preferredProvider as AIProvider || 'huggingface',
             {
               huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
               geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
@@ -1452,11 +1490,11 @@ Image URL: ${image.url}`;
                 where: { id: bulkTask.id },
                 data: { progress: progressPercent, processed: i + 1 },
               });
-            } catch (imgError: any) {
+            } catch (imgError: unknown) {
               logger.error("[API-AI] Failed to generate alt-text for image", {
                 context: "AI",
                 imageIndex: i,
-                error: imgError.message,
+                error: errorMessage(imgError),
               });
             }
           }
@@ -1473,13 +1511,13 @@ Image URL: ${image.url}`;
           });
 
           return json({ success: true, generatedAltTexts });
-        } catch (error: any) {
+        } catch (error: unknown) {
           await db.task.update({
             where: { id: bulkTask.id },
             data: {
               status: "failed",
               completedAt: new Date(),
-              error: (error.message || String(error)).substring(0, 1000),
+              error: errorMessage(error).substring(0, 1000),
             },
           });
           throw error;
@@ -1487,10 +1525,10 @@ Image URL: ${image.url}`;
       }
 
       case "translateAltText": {
-        const imageIndex = parseInt(formData.get("imageIndex") as string);
-        const sourceAltText = formData.get("sourceAltText") as string;
-        const targetLocale = formData.get("targetLocale") as string;
-        const primaryLocale = formData.get("primaryLocale") as string;
+        const imageIndex = parseInt(getFormString(formData, "imageIndex"), 10);
+        const sourceAltText = getFormString(formData, "sourceAltText");
+        const targetLocale = getFormString(formData, "targetLocale");
+        const primaryLocale = getFormString(formData, "primaryLocale");
 
         if (!sourceAltText) {
           return json({ success: false, error: "No source alt-text available" }, { status: 400 });
@@ -1520,7 +1558,7 @@ Image URL: ${image.url}`;
           });
 
           const aiService = new AIService(
-            settings?.preferredProvider as any || 'huggingface',
+            settings?.preferredProvider as AIProvider || 'huggingface',
             {
               huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
               geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
@@ -1561,14 +1599,14 @@ Image URL: ${image.url}`;
             imageIndex,
             targetLocale
           });
-        } catch (error: any) {
+        } catch (error: unknown) {
           // Update task to failed
           await db.task.update({
             where: { id: task.id },
             data: {
               status: "failed",
               completedAt: new Date(),
-              error: (error.message || String(error)).substring(0, 1000),
+              error: errorMessage(error).substring(0, 1000),
             },
           });
           throw error;
@@ -1576,11 +1614,11 @@ Image URL: ${image.url}`;
       }
 
       case "translateAltTextToAllLocales": {
-        const imageIndex = parseInt(formData.get("imageIndex") as string);
-        const sourceAltText = formData.get("sourceAltText") as string;
-        const targetLocalesJson = formData.get("targetLocales") as string;
-        const primaryLocale = formData.get("primaryLocale") as string;
-        const productId = formData.get("productId") as string;
+        const imageIndex = parseInt(getFormString(formData, "imageIndex"), 10);
+        const sourceAltText = getFormString(formData, "sourceAltText");
+        const targetLocalesJson = getFormString(formData, "targetLocales");
+        const primaryLocale = getFormString(formData, "primaryLocale");
+        const productId = getFormString(formData, "productId");
 
         if (!sourceAltText) {
           return json({ success: false, error: "No source alt-text available" }, { status: 400 });
@@ -1614,7 +1652,7 @@ Image URL: ${image.url}`;
           });
 
           const aiService = new AIService(
-            settings?.preferredProvider as any || 'huggingface',
+            settings?.preferredProvider as AIProvider || 'huggingface',
             {
               huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
               geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
@@ -1660,15 +1698,15 @@ Image URL: ${image.url}`;
                 imageIndex,
                 locale
               });
-            } catch (error: any) {
+            } catch (error: unknown) {
               logger.error("[API-AI] Error translating alt-text to locale", {
                 context: "AI",
                 imageIndex,
                 locale,
-                error: error?.message
+                error: errorMessage(error)
               });
               translatedAltTexts[locale] = sourceAltText; // Fallback to original
-              aiResponses.push({ locale, response: `ERROR: ${error?.message}` });
+              aiResponses.push({ locale, response: `ERROR: ${errorMessage(error)}` });
             }
           }
 
@@ -1709,10 +1747,10 @@ Image URL: ${image.url}`;
                 );
                 const translatableData = await translatableResponse.json();
                 const translatableContent = translatableData.data?.translatableResource?.translatableContent || [];
-                altDigest = translatableContent.find((c: any) => c.key === "alt")?.digest;
-              } catch (err: any) {
+                altDigest = translatableContent.find((c: TranslatableContentItem) => c.key === "alt")?.digest;
+              } catch (err: unknown) {
                 logger.error("[API-AI] Error fetching translatable content for alt-text", {
-                  context: "AI", imageIndex, error: err?.message,
+                  context: "AI", imageIndex, error: errorMessage(err),
                 });
               }
 
@@ -1758,9 +1796,9 @@ Image URL: ${image.url}`;
                         context: "AI", locale, errors: userErrors,
                       });
                     }
-                  } catch (shopifyError: any) {
+                  } catch (shopifyError: unknown) {
                     logger.error("[API-AI] Error saving alt-text to Shopify", {
-                      context: "AI", locale, error: shopifyError?.message,
+                      context: "AI", locale, error: errorMessage(shopifyError),
                     });
                   }
 
@@ -1774,10 +1812,10 @@ Image URL: ${image.url}`;
                       } else {
                         await db.productImageAltTranslation.create({ data: { imageId: dbImage.id, locale, altText } });
                       }
-                    } catch (dbError: any) {
-                      if (dbError.code === 'P2003' || dbError.message?.includes('Foreign key constraint')) {
+                    } catch (dbError: unknown) {
+                      if (isPrismaError(dbError, 'P2003') || errorMessage(dbError).includes('Foreign key constraint')) {
                         logger.error("[API-AI] Image deleted during translation save", {
-                          context: "AI", imageIndex, productId, error: dbError.message,
+                          context: "AI", imageIndex, productId, error: errorMessage(dbError),
                         });
                       } else {
                         throw dbError;
@@ -1808,14 +1846,14 @@ Image URL: ${image.url}`;
             targetLocales,
             failedLocales,
           });
-        } catch (error: any) {
+        } catch (error: unknown) {
           // Update task to failed
           await db.task.update({
             where: { id: task.id },
             data: {
               status: "failed",
               completedAt: new Date(),
-              error: (error.message || String(error)).substring(0, 1000),
+              error: errorMessage(error).substring(0, 1000),
             },
           });
           throw error;
@@ -1823,10 +1861,10 @@ Image URL: ${image.url}`;
       }
 
       case "translateAllAltTextsToAllLocales": {
-        const altTextsDataJson = formData.get("altTextsData") as string;
-        const targetLocalesJson = formData.get("targetLocales") as string;
-        const primaryLocale = formData.get("primaryLocale") as string;
-        const productId = formData.get("productId") as string;
+        const altTextsDataJson = getFormString(formData, "altTextsData");
+        const targetLocalesJson = getFormString(formData, "targetLocales");
+        const primaryLocale = getFormString(formData, "primaryLocale");
+        const productId = getFormString(formData, "productId");
 
         if (!altTextsDataJson) {
           return json({ success: false, error: "No alt-text data provided" }, { status: 400 });
@@ -1862,7 +1900,7 @@ Image URL: ${image.url}`;
           });
 
           const aiService = new AIService(
-            settings?.preferredProvider as any || 'huggingface',
+            settings?.preferredProvider as AIProvider || 'huggingface',
             {
               huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
               geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
@@ -1889,12 +1927,12 @@ Image URL: ${image.url}`;
               try {
                 const translatedValue = await aiService.translateContent(sourceAltText, primaryLocale, locale);
                 translatedResults[imgIdx][locale] = translatedValue;
-              } catch (error: any) {
+              } catch (error: unknown) {
                 logger.error("[API-AI] Error translating alt-text for image to locale", {
                   context: "AI",
                   imageIndex: imgIdx,
                   locale,
-                  error: error?.message,
+                  error: errorMessage(error),
                 });
                 translatedResults[imgIdx][locale] = sourceAltText; // Fallback
               }
@@ -1960,10 +1998,10 @@ Image URL: ${image.url}`;
 
                 const translatableData = await translatableResponse.json();
                 const translatableContent = translatableData.data?.translatableResource?.translatableContent || [];
-                altDigest = translatableContent.find((c: any) => c.key === "alt")?.digest;
-              } catch (err: any) {
+                altDigest = translatableContent.find((c: TranslatableContentItem) => c.key === "alt")?.digest;
+              } catch (err: unknown) {
                 logger.error("[API-AI] Error fetching translatable content for image", {
-                  context: "AI", imageIndex: imgIdx, error: err?.message,
+                  context: "AI", imageIndex: imgIdx, error: errorMessage(err),
                 });
               }
 
@@ -2012,9 +2050,9 @@ Image URL: ${image.url}`;
                       context: "AI", imageIndex: imgIdx, locale, errors: userErrors,
                     });
                   }
-                } catch (shopifyError: any) {
+                } catch (shopifyError: unknown) {
                   logger.error("[API-AI] Error saving bulk alt-text to Shopify", {
-                    context: "AI", imageIndex: imgIdx, locale, error: shopifyError?.message,
+                    context: "AI", imageIndex: imgIdx, locale, error: errorMessage(shopifyError),
                   });
                 }
 
@@ -2035,10 +2073,10 @@ Image URL: ${image.url}`;
                       });
                     }
                     savedCount++;
-                  } catch (dbError: any) {
-                    if (dbError.code === 'P2003' || dbError.message?.includes('Foreign key constraint')) {
+                  } catch (dbError: unknown) {
+                    if (isPrismaError(dbError, 'P2003') || errorMessage(dbError).includes('Foreign key constraint')) {
                       logger.error("[API-AI] Image deleted during bulk translation save", {
-                        context: "AI", imageIndex: imgIdx, productId, error: dbError.message,
+                        context: "AI", imageIndex: imgIdx, productId, error: errorMessage(dbError),
                       });
                     } else {
                       throw dbError;
@@ -2067,19 +2105,19 @@ Image URL: ${image.url}`;
             savedCount,
             failedImages,
           });
-        } catch (error: any) {
+        } catch (error: unknown) {
           await db.task.update({
             where: { id: bulkAllTask.id },
-            data: { status: "failed", completedAt: new Date(), error: (error.message || String(error)).substring(0, 1000) },
+            data: { status: "failed", completedAt: new Date(), error: errorMessage(error).substring(0, 1000) },
           });
           throw error;
         }
       }
 
       case "translateAllAltTextsForLocale": {
-        const altTextsDataJson = formData.get("altTextsData") as string;
-        const targetLocale = formData.get("targetLocale") as string;
-        const primaryLocale = formData.get("primaryLocale") as string;
+        const altTextsDataJson = getFormString(formData, "altTextsData");
+        const targetLocale = getFormString(formData, "targetLocale");
+        const primaryLocale = getFormString(formData, "primaryLocale");
 
         if (!altTextsDataJson) {
           return json({ success: false, error: "No alt-text data provided" }, { status: 400 });
@@ -2115,7 +2153,7 @@ Image URL: ${image.url}`;
           });
 
           const aiService = new AIService(
-            settings?.preferredProvider as any || 'huggingface',
+            settings?.preferredProvider as AIProvider || 'huggingface',
             {
               huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
               geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
@@ -2138,9 +2176,9 @@ Image URL: ${image.url}`;
             try {
               const translatedValue = await aiService.translateContent(sourceAltText, primaryLocale, targetLocale);
               translatedAltTexts[imgIdx] = translatedValue;
-            } catch (error: any) {
+            } catch (error: unknown) {
               logger.error("[API-AI] Error translating alt-text for image", {
-                context: "AI", imageIndex: imgIdx, targetLocale, error: error?.message,
+                context: "AI", imageIndex: imgIdx, targetLocale, error: errorMessage(error),
               });
               translatedAltTexts[imgIdx] = sourceAltText; // Fallback
             }
@@ -2153,7 +2191,7 @@ Image URL: ${image.url}`;
           }
 
           // Save translations to Shopify first, then DB only on Shopify success
-          const productId = formData.get("productId") as string;
+          const productId = getFormString(formData, "productId");
           const failedImages: number[] = [];
           let savedCount = 0;
 
@@ -2206,10 +2244,10 @@ Image URL: ${image.url}`;
 
                 const translatableData = await translatableResponse.json();
                 const translatableContent = translatableData.data?.translatableResource?.translatableContent || [];
-                altDigest = translatableContent.find((c: any) => c.key === "alt")?.digest;
-              } catch (err: any) {
+                altDigest = translatableContent.find((c: TranslatableContentItem) => c.key === "alt")?.digest;
+              } catch (err: unknown) {
                 logger.error("[API-AI] Error fetching translatable content for image", {
-                  context: "AI", imageIndex: imgIdx, error: err?.message,
+                  context: "AI", imageIndex: imgIdx, error: errorMessage(err),
                 });
               }
 
@@ -2252,9 +2290,9 @@ Image URL: ${image.url}`;
                     context: "AI", imageIndex: imgIdx, targetLocale, errors: userErrors,
                   });
                 }
-              } catch (shopifyError: any) {
+              } catch (shopifyError: unknown) {
                 logger.error("[API-AI] Error saving alt-text to Shopify for locale", {
-                  context: "AI", imageIndex: imgIdx, targetLocale, error: shopifyError?.message,
+                  context: "AI", imageIndex: imgIdx, targetLocale, error: errorMessage(shopifyError),
                 });
               }
 
@@ -2275,10 +2313,10 @@ Image URL: ${image.url}`;
                     });
                   }
                   savedCount++;
-                } catch (dbError: any) {
-                  if (dbError.code === 'P2003' || dbError.message?.includes('Foreign key constraint')) {
+                } catch (dbError: unknown) {
+                  if (isPrismaError(dbError, 'P2003') || errorMessage(dbError).includes('Foreign key constraint')) {
                     logger.error("[API-AI] Image deleted during alt-text locale save", {
-                      context: "AI", imageIndex: imgIdx, productId, error: dbError.message,
+                      context: "AI", imageIndex: imgIdx, productId, error: errorMessage(dbError),
                     });
                   } else {
                     throw dbError;
@@ -2302,10 +2340,10 @@ Image URL: ${image.url}`;
             savedCount,
             failedImages,
           });
-        } catch (error: any) {
+        } catch (error: unknown) {
           await db.task.update({
             where: { id: localeTask.id },
-            data: { status: "failed", completedAt: new Date(), error: (error.message || String(error)).substring(0, 1000) },
+            data: { status: "failed", completedAt: new Date(), error: errorMessage(error).substring(0, 1000) },
           });
           throw error;
         }
@@ -2314,12 +2352,12 @@ Image URL: ${image.url}`;
       default:
         return json({ success: false, error: `Unknown action: ${actionType}` }, { status: 400 });
     }
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error("[API-AI] Error processing AI request", {
       context: "AI",
-      error: error.message,
-      stack: error.stack
+      error: errorMessage(error),
+      stack: errorStack(error)
     });
-    return json({ success: false, error: error.message }, { status: 500 });
+    return json({ success: false, error: errorMessage(error) }, { status: 500 });
   }
 };
