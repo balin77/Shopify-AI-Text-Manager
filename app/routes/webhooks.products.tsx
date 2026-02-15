@@ -40,7 +40,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     logger.error("[WEBHOOK] Background processing error", {
       context: "Webhook",
       error: err.message,
-      stack: err.stack,
+      ...(process.env.NODE_ENV !== 'production' && { stack: err.stack }),
     });
   });
 
@@ -99,7 +99,7 @@ async function processWebhookAsync(
       productId,
       topic,
       error: error.message,
-      stack: error.stack,
+      ...(process.env.NODE_ENV !== 'production' && { stack: error.stack }),
     });
 
     await db.webhookLog.update({

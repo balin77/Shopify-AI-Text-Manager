@@ -34,7 +34,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     logger.warn("[AUTH.$] No session and no redirect - returning OK", { context: "Auth" });
     return new Response("OK", { status: 200 });
   } catch (error) {
-    logger.error("[AUTH.$] Error", { context: "Auth", error: error instanceof Error ? error.message : String(error), stack: error instanceof Error ? error.stack : undefined });
+    logger.error("[AUTH.$] Error", { context: "Auth", error: error instanceof Error ? error.message : String(error), ...(process.env.NODE_ENV !== 'production' && { stack: error instanceof Error ? error.stack : undefined }) });
     throw error;
   }
 };

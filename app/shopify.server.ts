@@ -8,6 +8,7 @@ import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prism
 import { restResources } from "@shopify/shopify-api/rest/admin/2025-10";
 import prisma from "./db.server";
 import { logger } from "./utils/logger.server";
+import { EncryptedPrismaSessionStorage } from "./utils/encrypted-session-storage.server";
 
 /**
  * Map string API version (e.g., "2025-10") to ApiVersion enum
@@ -72,7 +73,7 @@ const shopify = shopifyApp({
   scopes: scopes,
   appUrl: process.env.SHOPIFY_APP_URL || "https://localhost:3000",
   authPathPrefix: "/auth",
-  sessionStorage: new PrismaSessionStorage(prisma),
+  sessionStorage: new EncryptedPrismaSessionStorage(new PrismaSessionStorage(prisma)),
   distribution: AppDistribution.AppStore,
   restResources: restResources as any,
   hooks: {

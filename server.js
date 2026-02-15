@@ -43,6 +43,8 @@ app.disable("x-powered-by");
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Strict-Transport-Security', 'max-age=63072000; includeSubDomains; preload');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
   next();
 });
 
@@ -75,6 +77,9 @@ app.use((req, res, next) => {
   }
   next();
 });
+
+// AI API rate limiting for direct /api/ai calls
+app.use('/api/ai', aiActionRateLimit);
 
 // General API rate limiting (catch-all for /api routes)
 // Exclude polling endpoints that have their own built-in backoff mechanisms

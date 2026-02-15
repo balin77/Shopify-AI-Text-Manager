@@ -21,7 +21,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     logger.debug("[AUTH.LOGIN] Login completed", { context: "Auth" });
     return json(result);
   } catch (error) {
-    logger.error("[AUTH.LOGIN] Error", { context: "Auth", error: error instanceof Error ? error.message : String(error), stack: error instanceof Error ? error.stack : undefined });
+    logger.error("[AUTH.LOGIN] Error", { context: "Auth", error: error instanceof Error ? error.message : String(error), ...(process.env.NODE_ENV !== 'production' && { stack: error instanceof Error ? error.stack : undefined }) });
     throw error;
   }
 };

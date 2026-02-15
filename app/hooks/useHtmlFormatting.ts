@@ -1,5 +1,6 @@
 import { useCallback, useRef } from "react";
 import { useI18n } from "../contexts/I18nContext";
+import { sanitizeHTML } from "~/utils/sanitizer";
 
 export type HtmlFormattingCommand =
   | "bold"
@@ -289,7 +290,7 @@ export function useHtmlFormatting({ editorRef, onChange }: UseHtmlFormattingProp
         }
         if (history.index > 0) {
           history.index--;
-          editor.innerHTML = history.stack[history.index];
+          editor.innerHTML = sanitizeHTML(history.stack[history.index]);
           onChange(editor.innerHTML);
         }
         return;
@@ -299,7 +300,7 @@ export function useHtmlFormatting({ editorRef, onChange }: UseHtmlFormattingProp
         const history = historyRef.current;
         if (history.index < history.stack.length - 1) {
           history.index++;
-          editor.innerHTML = history.stack[history.index];
+          editor.innerHTML = sanitizeHTML(history.stack[history.index]);
           onChange(editor.innerHTML);
         }
         return;

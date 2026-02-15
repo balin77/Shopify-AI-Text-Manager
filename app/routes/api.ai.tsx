@@ -16,6 +16,7 @@ import { PRODUCTS_CONFIG, COLLECTIONS_CONFIG, BLOGS_CONFIG, PAGES_CONFIG, POLICI
 import type { ContentEditorConfig } from "../types/content-editor.types";
 import { getFormString, getFormJSON } from "~/utils/form-data.utils";
 import { safeJsonParse } from "~/utils/validation";
+import { sanitizePromptInput } from "~/utils/prompt-sanitizer";
 
 // Map contentType to its config for looking up field definitions
 const CONTENT_CONFIGS: Record<string, ContentEditorConfig> = {
@@ -1044,7 +1045,9 @@ Return only the formatted text, without explanations.`;
         const fieldType = getFormString(formData, "fieldType");
         const currentValue = getFormString(formData, "currentValue");
         const contextTitle = getFormString(formData, "contextTitle") || "";
+        const sanitizedContextTitle = sanitizePromptInput(contextTitle, { fieldType: "title" });
         const contextDescription = getFormString(formData, "contextDescription") || "";
+        const sanitizedContextDescription = sanitizePromptInput(contextDescription, { fieldType: "description", allowNewlines: true });
         const mainLanguage = getFormString(formData, "mainLanguage") || "German";
         const sendImageToAI = formData.get("sendImageToAI") === "true";
         const imageUrl = getFormString(formData, "imageUrl") || undefined;
@@ -1069,7 +1072,7 @@ Return only the formatted text, without explanations.`;
         if (genField?.type === "slug") {
           prompt = `Create an optimized URL slug for the following content.
 
-Context - Title: ${contextTitle}
+Context - Title: ${sanitizedContextTitle}
 Current slug: ${currentValue || "(empty)"}
 Language: ${mainLanguage}
 
@@ -1081,7 +1084,7 @@ Requirements:
         } else if (isGenLongContent) {
           prompt = `Create an improved ${genFieldLabel} for the following content.
 
-Context - Title: ${contextTitle}
+Context - Title: ${sanitizedContextTitle}
 Current ${genFieldLabel}: ${currentValue || "(empty)"}
 Language: ${mainLanguage}
 
@@ -1089,8 +1092,8 @@ Use HTML formatting (<h2>, <h3>, <p>, <strong>, <em>, <ul>, <li>) for structure.
         } else {
           prompt = `Create an improved ${genFieldLabel} for the following content.
 
-Context - Title: ${contextTitle}
-Context - Description: ${contextDescription}
+Context - Title: ${sanitizedContextTitle}
+Context - Description: ${sanitizedContextDescription}
 Current ${genFieldLabel}: ${currentValue || "(empty)"}
 Language: ${mainLanguage}`;
         }
@@ -1155,7 +1158,7 @@ Language: ${mainLanguage}`;
           let generatedContent: string;
           const imageUrlToSend = sendImageToAI ? imageUrl : undefined;
           if (isGenLongContent) {
-            generatedContent = await aiService.generateProductDescription(contextTitle, prompt, imageUrlToSend);
+            generatedContent = await aiService.generateProductDescription(sanitizedContextTitle, prompt, imageUrlToSend);
           } else {
             generatedContent = await aiService.generateProductTitle(prompt, imageUrlToSend);
           }
@@ -1199,7 +1202,9 @@ Language: ${mainLanguage}`;
         const fieldType = getFormString(formData, "fieldType");
         const currentValue = getFormString(formData, "currentValue");
         const contextTitle = getFormString(formData, "contextTitle") || "";
+        const sanitizedContextTitle = sanitizePromptInput(contextTitle, { fieldType: "title" });
         const contextDescription = getFormString(formData, "contextDescription") || "";
+        const sanitizedContextDescription = sanitizePromptInput(contextDescription, { fieldType: "description", allowNewlines: true });
         const mainLanguage = getFormString(formData, "mainLanguage") || "German";
         const sendImageToAI = formData.get("sendImageToAI") === "true";
         const imageUrl = getFormString(formData, "imageUrl") || undefined;
@@ -1237,7 +1242,7 @@ Language: ${mainLanguage}`;
 Original Slug:
 ${currentValue}
 
-Context - Title: ${contextTitle}
+Context - Title: ${sanitizedContextTitle}
 
 Allowed formatting changes for handles:
 - Convert to lowercase

@@ -526,6 +526,7 @@ export function MainNavigation() {
                 onClose={closePopover}
                 preferredPosition="below"
                 preferredAlignment="center"
+                zIndexOverride={1100}
                 activator={
                   infoBox ? (
                     <div

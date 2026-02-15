@@ -774,10 +774,61 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     throw new Error('No AI provider configured');
   }
 
+  /** Allowed Shopify CDN hostnames for image fetching. */
+  private static readonly ALLOWED_IMAGE_HOSTS = [
+    'cdn.shopify.com',
+    'cdn.shopifycdn.net',
+  ];
+
+  /**
+   * Validate an image URL to prevent SSRF attacks.
+   * Only HTTPS URLs pointing to whitelisted Shopify CDN domains are allowed.
+   */
+  private validateImageUrl(imageUrl: string): void {
+    let parsed: URL;
+    try {
+      parsed = new URL(imageUrl);
+    } catch {
+      throw new Error('Invalid image URL');
+    }
+
+    // Only allow HTTPS
+    if (parsed.protocol !== 'https:') {
+      throw new Error('Only HTTPS image URLs are allowed');
+    }
+
+    // Whitelist Shopify CDN domains
+    const hostname = parsed.hostname.toLowerCase();
+    if (!AIService.ALLOWED_IMAGE_HOSTS.includes(hostname)) {
+      throw new Error(
+        `Image host not allowed: ${hostname}. Only Shopify CDN domains are permitted.`,
+      );
+    }
+
+    // Block private/internal IP ranges even if hostname somehow resolves to one
+    // (defense-in-depth: covers cases where DNS rebinding or hosts file tricks apply)
+    const ipPatterns = [
+      /^127\./, // loopback
+      /^10\./, // 10.0.0.0/8
+      /^172\.(1[6-9]|2\d|3[01])\./, // 172.16.0.0/12
+      /^192\.168\./, // 192.168.0.0/16
+      /^169\.254\./, // link-local
+      /^0\./, // 0.0.0.0/8
+      /^\[?::1\]?$/, // IPv6 loopback
+      /^\[?fc/, // IPv6 unique-local fc00::/7
+      /^\[?fe80/i, // IPv6 link-local
+    ];
+    if (ipPatterns.some((p) => p.test(hostname))) {
+      throw new Error('Private/internal IP addresses are not allowed');
+    }
+  }
+
   /**
    * Fetch image from URL and convert to base64 (for Gemini)
    */
   private async fetchImageAsBase64(imageUrl: string): Promise<string> {
+    this.validateImageUrl(imageUrl);
+
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 30_000);
     try {

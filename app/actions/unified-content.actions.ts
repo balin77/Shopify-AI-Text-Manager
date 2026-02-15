@@ -17,6 +17,7 @@ import type { ContentEditorConfig } from "../types/content-editor.types";
 import { logger } from "../utils/logger.server";
 import { getFormString, getFormInt, getFormJSON } from "../utils/form-data.utils";
 import { isValidShopifyGID, isValidLocale, safeJsonParse } from "../utils/validation";
+import { sanitizePromptInput } from "../utils/prompt-sanitizer";
 import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
 import type { Session } from "@shopify/shopify-api";
 import type { PrismaClient } from "@prisma/client";
@@ -96,7 +97,9 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
     const fieldType = getFormString(formData, "fieldType");
     const currentValue = getFormString(formData, "currentValue");
     const contextTitle = getFormString(formData, "contextTitle");
+    const sanitizedContextTitle = sanitizePromptInput(contextTitle || "", { fieldType: "title" });
     const contextDescription = getFormString(formData, "contextDescription");
+    const sanitizedContextDescription = sanitizePromptInput(contextDescription || "", { fieldType: "description", allowNewlines: true });
     const mainLanguage = getFormString(formData, "mainLanguage");
 
     // Create task entry
@@ -167,14 +170,14 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
           prompt += `\n- "Kontakt & Impressum" → "kontakt-impressum"`;
         }
 
-        prompt += `\n\nContext:\n${contextDescription || currentValue}\n\nReturn ONLY the ${field.label}, without explanations. Output the result in ${mainLanguage}.`;
+        prompt += `\n\nContext:\n${sanitizedContextDescription || currentValue}\n\nReturn ONLY the ${field.label}, without explanations. Output the result in ${mainLanguage}.`;
         generatedContent = await aiServiceWithTask.generateProductTitle(prompt);
 
         if (field.type === "slug") {
           generatedContent = sanitizeSlug(generatedContent);
         }
       } else if (field.type === "html" || field.type === "textarea") {
-        let prompt = `Create an optimized ${field.label} for: ${contextTitle}`;
+        let prompt = `Create an optimized ${field.label} for: ${sanitizedContextTitle}`;
 
         if (instructions?.[formatKey]) {
           prompt += `\n\nFormat Example:\n${instructions[formatKey]}`;
@@ -183,8 +186,8 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
           prompt += `\n\nInstructions:\n${instructions[instructionsTextKey]}`;
         }
 
-        prompt += `\n\nContext:\n${contextDescription || currentValue}\n\nCurrent Content:\n${currentValue}\n\nReturn ONLY the ${field.label}, without explanations. Output the result in ${mainLanguage}.`;
-        generatedContent = await aiServiceWithTask.generateProductDescription(contextTitle, prompt);
+        prompt += `\n\nContext:\n${sanitizedContextDescription || currentValue}\n\nCurrent Content:\n${currentValue}\n\nReturn ONLY the ${field.label}, without explanations. Output the result in ${mainLanguage}.`;
+        generatedContent = await aiServiceWithTask.generateProductDescription(sanitizedContextTitle, prompt);
       }
 
       // Update task to completed
@@ -233,7 +236,9 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
     const fieldType = getFormString(formData, "fieldType");
     const currentValue = getFormString(formData, "currentValue");
     const contextTitle = getFormString(formData, "contextTitle");
+    const sanitizedContextTitle = sanitizePromptInput(contextTitle || "", { fieldType: "title" });
     const contextDescription = getFormString(formData, "contextDescription");
+    const sanitizedContextDescription = sanitizePromptInput(contextDescription || "", { fieldType: "description", allowNewlines: true });
     const mainLanguage = getFormString(formData, "mainLanguage");
 
     // Create task entry
@@ -959,6 +964,7 @@ Allowed formatting changes:
     const imageIndex = getFormInt(formData, "imageIndex") ?? 0;
     const imageUrl = getFormString(formData, "imageUrl");
     const productTitle = getFormString(formData, "productTitle");
+    const sanitizedProductTitle = sanitizePromptInput(productTitle || "", { fieldType: "title" });
     const mainLanguage = getFormString(formData, "mainLanguage");
 
     // Create task entry
@@ -985,7 +991,7 @@ Allowed formatting changes:
       });
 
       let prompt = `Create an optimized alt text for a product image.
-Product: ${productTitle}
+Product: ${sanitizedProductTitle}
 Image URL: ${imageUrl}`;
 
       if (aiInstructions?.productAltTextFormat) {
@@ -998,7 +1004,7 @@ Image URL: ${imageUrl}`;
 
       prompt += `\n\nReturn ONLY the alt text, without explanations. Output the result in ${mainLanguage}.`;
 
-      const altText = await aiServiceWithTask.generateImageAltText(imageUrl, productTitle, prompt);
+      const altText = await aiServiceWithTask.generateImageAltText(imageUrl, sanitizedProductTitle, prompt);
 
       await db.task.update({
         where: { id: task.id },
@@ -1035,6 +1041,7 @@ Image URL: ${imageUrl}`;
       return json({ success: false, error: "Invalid imagesData format" }, { status: 400 });
     }
     const productTitle = getFormString(formData, "productTitle");
+    const sanitizedProductTitle = sanitizePromptInput(productTitle || "", { fieldType: "title" });
     const mainLanguage = getFormString(formData, "mainLanguage");
     const totalImages = imagesData.length;
 
@@ -1069,7 +1076,7 @@ Image URL: ${imageUrl}`;
         const image = imagesData[i];
         try {
           let prompt = `Create an optimized alt text for a product image.
-Product: ${productTitle}
+Product: ${sanitizedProductTitle}
 Image URL: ${image.url}`;
 
           if (aiInstructions?.productAltTextFormat) {
@@ -1082,7 +1089,7 @@ Image URL: ${image.url}`;
 
           prompt += `\n\nReturn ONLY the alt text, without explanations. Output the result in ${mainLanguage}.`;
 
-          const altText = await aiServiceWithTask.generateImageAltText(image.url, productTitle, prompt);
+          const altText = await aiServiceWithTask.generateImageAltText(image.url, sanitizedProductTitle, prompt);
           generatedAltTexts[i] = altText;
 
           const progressPercent = Math.round(10 + ((i + 1) / totalImages) * 90);
