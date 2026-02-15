@@ -181,14 +181,14 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
 
   // Transform items to UnifiedItem format (memoized to prevent re-render cascades)
   const unifiedItems: UnifiedItem[] = useMemo(() => items.map((item) => {
-    let subtitle = config.getSubtitle ? config.getSubtitle(item) : undefined;
+    let subtitle = config.getSubtitle ? config.getSubtitle(item, t) : undefined;
     // Translate "translatable fields" for templates
     if (config.contentType === "templates" && item.contentCount !== undefined) {
       subtitle = `${item.contentCount || 0} ${t.content?.translatableFields || "translatable fields"}`;
     }
     return {
       id: item.id,
-      title: config.getPrimaryField ? config.getPrimaryField(item) : item.title,
+      title: config.getPrimaryField ? config.getPrimaryField(item, t) : item.title,
       subtitle,
       category: item.blogTitle || item.category,
       status: item.status,

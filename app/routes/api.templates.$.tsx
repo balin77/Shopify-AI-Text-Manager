@@ -26,7 +26,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const groupId = params["*"];
 
   if (!groupId) {
-    return json({ error: "groupId is required" }, { status: 400 });
+    return json({ success: false, error: "groupId is required" }, { status: 400 });
   }
 
   // Parse and validate pagination parameters from URL
@@ -48,7 +48,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     });
 
     if (themeGroups.length === 0) {
-      return json({ error: "Group not found" }, { status: 404 });
+      return json({ success: false, error: "Group not found" }, { status: 404 });
     }
 
     // Merge all translatable content from all resources in this group
@@ -110,7 +110,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     const msg = error instanceof Error ? error.message : String(error);
     const stack = error instanceof Error ? error.stack : undefined;
     logger.error("[API-TEMPLATES] Error loading group", { context: "Templates", groupId, error: msg, stack });
-    return json({ error: msg }, { status: 500 });
+    return json({ success: false, error: "Failed to load theme group." }, { status: 500 });
   }
 };
 
@@ -119,7 +119,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   const groupId = params["*"];
 
   if (!groupId) {
-    return json({ error: "groupId is required" }, { status: 400 });
+    return json({ success: false, error: "groupId is required" }, { status: 400 });
   }
 
   try {
@@ -137,7 +137,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     });
 
     if (themeGroups.length === 0) {
-      return json({ error: "Group not found" }, { status: 404 });
+      return json({ success: false, error: "Group not found" }, { status: 404 });
     }
 
     const firstGroup = themeGroups[0];

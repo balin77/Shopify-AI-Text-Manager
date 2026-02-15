@@ -14,7 +14,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
 
   if (!admin || !session) {
-    return json({ error: 'Unauthorized' }, { status: 401 });
+    return json({ success: false, error: 'Unauthorized' }, { status: 401 });
   }
 
   try {
@@ -38,7 +38,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   } catch (error) {
     logger.error('Error checking billing status', { error: error instanceof Error ? error.message : String(error) });
     return json(
-      { error: error instanceof Error ? error.message : 'Failed to check billing status' },
+      { success: false, error: 'Failed to check billing status.' },
       { status: 500 }
     );
   }

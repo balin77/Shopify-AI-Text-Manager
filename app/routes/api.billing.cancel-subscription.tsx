@@ -25,7 +25,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
 
   if (!admin || !session) {
-    return json({ error: 'Unauthorized' }, { status: 401 });
+    return json({ success: false, error: 'Unauthorized' }, { status: 401 });
   }
 
   try {
@@ -45,7 +45,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const subscription = await getCurrentSubscription(admin);
 
     if (!subscription) {
-      return json({ error: 'No active subscription found' }, { status: 404 });
+      return json({ success: false, error: 'No active subscription found' }, { status: 404 });
     }
 
     // Cancel the subscription via Shopify API (cannot be rolled back)
@@ -76,6 +76,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       logger.error('[Billing] CRITICAL: Shopify subscription cancelled but DB update failed after all retries');
       return json(
         {
+          success: false,
           error: 'Subscription cancelled but database update failed. Please contact support.',
           shopifyCancelled: true,
           dbUpdateFailed: true
@@ -88,7 +89,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   } catch (error) {
     logger.error('Error cancelling subscription', { error: error instanceof Error ? error.message : String(error) });
     return json(
-      { error: error instanceof Error ? error.message : 'Failed to cancel subscription' },
+      { success: false, error: 'Failed to cancel subscription.' },
       { status: 500 }
     );
   }

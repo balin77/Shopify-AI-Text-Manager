@@ -332,8 +332,8 @@ export const POLICIES_CONFIG: ContentEditorConfig = {
   displayNameSingular: "Policy",
   showSeoSidebar: false,
   idPrefix: "ID:",
-  getPrimaryField: (item) => item.title || getPolicyTypeName(item.type),
-  getSubtitle: (item) => getPolicyTypeName(item.type),
+  getPrimaryField: (item, t) => item.title || getPolicyTypeName(item.type, t),
+  getSubtitle: (item, t) => getPolicyTypeName(item.type, t),
 
   fieldDefinitions: [
     {
@@ -380,17 +380,18 @@ export const TEMPLATES_CONFIG: ContentEditorConfig = {
 // UTILITY FUNCTIONS
 // ============================================================================
 
-function getPolicyTypeName(type: string | undefined): string {
+function getPolicyTypeName(type: string | undefined, t?: import("~/i18n/de").Translation): string {
   if (!type) return "";
+  const pt = t?.content?.policyTypes;
   const typeMap: Record<string, string> = {
-    CONTACT_INFORMATION: "Kontaktinformationen",
-    LEGAL_NOTICE: "Impressum",
-    PRIVACY_POLICY: "Datenschutzerklärung",
-    REFUND_POLICY: "Rückerstattungsrichtlinie",
-    SHIPPING_POLICY: "Versandrichtlinie",
-    TERMS_OF_SERVICE: "Nutzungsbedingungen",
-    TERMS_OF_SALE: "Verkaufsbedingungen",
-    SUBSCRIPTION_POLICY: "Abonnementrichtlinie",
+    CONTACT_INFORMATION: pt?.contactInformation || "Contact Information",
+    LEGAL_NOTICE: pt?.legalNotice || "Legal Notice",
+    PRIVACY_POLICY: pt?.privacyPolicy || "Privacy Policy",
+    REFUND_POLICY: pt?.refundPolicy || "Refund Policy",
+    SHIPPING_POLICY: pt?.shippingPolicy || "Shipping Policy",
+    TERMS_OF_SERVICE: pt?.termsOfService || "Terms of Service",
+    TERMS_OF_SALE: pt?.termsOfSale || "Terms of Sale",
+    SUBSCRIPTION_POLICY: pt?.subscriptionPolicy || "Subscription Policy",
   };
   return typeMap[type] || type;
 }

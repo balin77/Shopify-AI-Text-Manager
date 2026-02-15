@@ -31,7 +31,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
 
   if (!session) {
-    return json({ error: 'Unauthorized' }, { status: 401 });
+    return json({ success: false, error: 'Unauthorized' }, { status: 401 });
   }
 
   try {
@@ -232,7 +232,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   } catch (error) {
     logger.error('Error calculating storage stats', { error: error instanceof Error ? error.message : String(error) });
     return json(
-      { error: error instanceof Error ? error.message : 'Failed to calculate storage stats' },
+      { success: false, error: 'Failed to calculate storage stats.' },
       { status: 500 }
     );
   }

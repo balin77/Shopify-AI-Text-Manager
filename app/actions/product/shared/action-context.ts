@@ -8,7 +8,7 @@
 import { logger } from "~/utils/logger.server";
 import { decryptApiKey } from "~/utils/encryption.server";
 import type { Session } from "@shopify/shopify-api";
-import { AIService, type AIProvider } from "../../../../src/services/ai.service";
+import { AIService, type AIProvider, toValidProvider } from "../../../../src/services/ai.service";
 import { TranslationService } from "../../../../src/services/translation.service";
 import { ShopifyApiGateway } from "~/services/shopify-api-gateway.service";
 import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
@@ -138,10 +138,7 @@ export async function prepareActionContext(
   }
 
   // Prepare provider and config
-  const provider: AIProvider =
-    (aiSettings?.preferredProvider as AIProvider) ||
-    (process.env.AI_PROVIDER as AIProvider) ||
-    "huggingface";
+  const provider = toValidProvider(aiSettings?.preferredProvider || process.env.AI_PROVIDER);
 
   const config: AIConfig = {
     huggingfaceApiKey: decryptApiKey(aiSettings?.huggingfaceApiKey) || undefined,

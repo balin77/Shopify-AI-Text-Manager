@@ -23,11 +23,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const productId = formData.get("productId") as string;
 
     if (!productId) {
-      return json({ error: "Missing productId parameter" }, { status: 400 });
+      return json({ success: false, error: "Missing productId parameter" }, { status: 400 });
     }
 
     if (!isValidShopifyGID(productId)) {
-      return json({ error: "Invalid productId format" }, { status: 400 });
+      return json({ success: false, error: "Invalid productId format" }, { status: 400 });
     }
 
     logger.debug("[SYNC-SINGLE-PRODUCT] Syncing product", { context: "SyncSingleProduct", productId });
@@ -74,7 +74,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return json(
       {
         success: false,
-        error: error.message,
+        error: "Failed to sync product.",
       },
       { status: 500 }
     );

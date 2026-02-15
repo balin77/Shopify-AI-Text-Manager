@@ -5,6 +5,7 @@
  */
 
 import type { FetcherWithComponents } from "@remix-run/react";
+import type { Translation as I18nTranslation } from "~/i18n/de";
 
 export type InfoBoxTone = "success" | "info" | "warning" | "critical";
 
@@ -248,11 +249,11 @@ export interface ContentEditorConfig {
   /** Whether to show SEO sidebar */
   showSeoSidebar?: boolean;
 
-  /** Custom primary field getter */
-  getPrimaryField?: (item: TranslatableContentItem) => string | undefined;
+  /** Custom primary field getter (t is optional for i18n support) */
+  getPrimaryField?: (item: TranslatableContentItem, t?: I18nTranslation) => string | undefined;
 
-  /** Custom subtitle field getter (for list items) */
-  getSubtitle?: (item: TranslatableContentItem) => string | undefined;
+  /** Custom subtitle field getter (for list items, t is optional for i18n support) */
+  getSubtitle?: (item: TranslatableContentItem, t?: I18nTranslation) => string | undefined;
 
   /** ID prefix for display */
   idPrefix?: string;

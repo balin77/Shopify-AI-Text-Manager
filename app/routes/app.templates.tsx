@@ -18,7 +18,7 @@ import { useUnifiedContentEditor } from "../hooks/useUnifiedContentEditor";
 import { TEMPLATES_CONFIG } from "../config/content-fields.config";
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
-import { AIService, type AIProvider } from "../../src/services/ai.service";
+import { AIService, type AIProvider, toValidProvider } from "../../src/services/ai.service";
 import { TranslationService } from "../../src/services/translation.service";
 import { decryptApiKey } from "../utils/encryption.server";
 import { getTaskExpirationDate } from "~/config/constants";
@@ -202,7 +202,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           });
 
           const aiService = new AIService(
-            (settings?.preferredProvider as AIProvider) || 'huggingface',
+            toValidProvider(settings?.preferredProvider),
             {
               huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
               geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
@@ -300,7 +300,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
           const primaryLocale = primaryLocaleFromForm || "en";
 
           const aiService = new AIService(
-            (settings?.preferredProvider as AIProvider) || 'huggingface',
+            toValidProvider(settings?.preferredProvider),
             {
               huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
               geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
@@ -426,7 +426,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
           const primaryLocale = primaryLocaleFromForm || "en";
 
           const aiService = new AIService(
-            (settings?.preferredProvider as AIProvider) || 'huggingface',
+            toValidProvider(settings?.preferredProvider),
             {
               huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
               geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
@@ -572,7 +572,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
           });
 
           const aiService = new AIService(
-            (settings?.preferredProvider as AIProvider) || 'huggingface',
+            toValidProvider(settings?.preferredProvider),
             {
               huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
               geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,

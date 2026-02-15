@@ -17,7 +17,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
 
   if (!admin || !session) {
-    return json({ error: 'Unauthorized' }, { status: 401 });
+    return json({ success: false, error: 'Unauthorized' }, { status: 401 });
   }
 
   try {
@@ -25,7 +25,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const { plan } = body as { plan: BillingPlan };
 
     if (!plan || !isPaidPlan(plan)) {
-      return json({ error: 'Invalid plan specified' }, { status: 400 });
+      return json({ success: false, error: 'Invalid plan specified' }, { status: 400 });
     }
 
     // In development mode, directly update the database without Shopify Billing API
@@ -54,7 +54,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   } catch (error) {
     logger.error('Error creating subscription', { error: error instanceof Error ? error.message : String(error) });
     return json(
-      { error: error instanceof Error ? error.message : 'Failed to create subscription' },
+      { success: false, error: 'Failed to create subscription.' },
       { status: 500 }
     );
   }
