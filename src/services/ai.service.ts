@@ -650,6 +650,11 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     }
   }
 
+  /** Re-execute a stored prompt during task recovery (bypasses prompt saving & queuing). */
+  async replayRequest(prompt: string): Promise<string> {
+    return this.executeAIRequest(prompt);
+  }
+
   private async executeAIRequest(prompt: string, imageUrl?: string): Promise<string> {
     if (this.provider === 'huggingface' && this.huggingface) {
       // HuggingFace: text-only (no vision support)
@@ -702,6 +707,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
           }],
         });
         const content = message.content[0];
+        if (!content) throw new Error('Claude returned empty response');
         return content.type === 'text' ? content.text : '';
       } else {
         const message = await this.anthropic.messages.create({
@@ -710,6 +716,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
           messages: [{ role: 'user', content: prompt }],
         });
         const content = message.content[0];
+        if (!content) throw new Error('Claude returned empty response');
         return content.type === 'text' ? content.text : '';
       }
     } else if (this.provider === 'openai' && this.openai) {
@@ -726,6 +733,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
           }],
           max_tokens: 2000,
         });
+        if (!completion.choices[0]) throw new Error('OpenAI returned empty response');
         return completion.choices[0].message.content || '';
       } else {
         const completion = await this.openai.chat.completions.create({
@@ -733,6 +741,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
           messages: [{ role: 'user', content: prompt }],
           max_tokens: 2000,
         });
+        if (!completion.choices[0]) throw new Error('OpenAI returned empty response');
         return completion.choices[0].message.content || '';
       }
     } else if (this.provider === 'grok' && this.grok) {
@@ -750,6 +759,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
           max_tokens: 2000,
           temperature: 0.7,
         });
+        if (!completion.choices[0]) throw new Error('Grok returned empty response');
         return completion.choices[0].message.content || '';
       } else {
         const completion = await this.grok.chat.completions.create({
@@ -758,6 +768,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
           max_tokens: 2000,
           temperature: 0.7,
         });
+        if (!completion.choices[0]) throw new Error('Grok returned empty response');
         return completion.choices[0].message.content || '';
       }
     } else if (this.provider === 'deepseek' && this.deepseek) {
@@ -768,6 +779,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
         max_tokens: 2000,
         temperature: 0.7,
       });
+      if (!completion.choices[0]) throw new Error('DeepSeek returned empty response');
       return completion.choices[0].message.content || '';
     }
 

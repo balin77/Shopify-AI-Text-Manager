@@ -513,9 +513,7 @@ export class AIQueueService {
 
     // Create the execute function that will re-run the AI request
     const execute = async () => {
-      // Use the internal executeAIRequest method via askAI
-      // Since prompt is already saved, we call the method that executes the request
-      return (aiService as any).executeAIRequest(task.prompt);
+      return aiService.replayRequest(task.prompt);
     };
 
     // Enqueue the task (fire and forget - result handling is done by the original caller)

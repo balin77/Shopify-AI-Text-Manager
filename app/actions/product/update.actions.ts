@@ -218,8 +218,8 @@ async function updateImageAltTexts(
       try {
         const updateMediaResponse = await gateway.graphql(
           `#graphql
-            mutation updateMedia($media: [UpdateMediaInput!]!) {
-              productUpdateMedia(media: $media, productId: "${productId}") {
+            mutation updateMedia($media: [UpdateMediaInput!]!, $productId: ID!) {
+              productUpdateMedia(media: $media, productId: $productId) {
                 media {
                   alt
                   mediaErrors {
@@ -239,6 +239,7 @@ async function updateImageAltTexts(
             }`,
           {
             variables: {
+              productId,
               media: [
                 {
                   id: mediaImageId,
@@ -397,21 +398,20 @@ async function updateImageAltTexts(
           loggers.product("debug", "Updated primary alt-text in DB", { index, altTextSaved: altTextToSave });
         } else {
           const altTextValue = String(altText ?? "");
-          const existing = await db.productImageAltTranslation.findUnique({
-            where: { imageId_locale: { imageId: dbImage.id, locale: params.locale } },
-          });
           if (altTextValue.trim() === "") {
             // Empty value: delete the translation record from DB
-            if (existing) {
-              await db.productImageAltTranslation.delete({ where: { id: existing.id } });
-              loggers.product("debug", "Deleted alt-text translation from DB", { index, locale: params.locale });
-            }
-          } else if (existing) {
-            await db.productImageAltTranslation.update({ where: { id: existing.id }, data: { altText: altTextValue } });
-            loggers.product("debug", "Updated alt-text translation in DB", { index, locale: params.locale });
+            await db.productImageAltTranslation.deleteMany({
+              where: { imageId: dbImage.id, locale: params.locale },
+            });
+            loggers.product("debug", "Deleted alt-text translation from DB", { index, locale: params.locale });
           } else {
-            await db.productImageAltTranslation.create({ data: { imageId: dbImage.id, locale: params.locale, altText: altTextValue } });
-            loggers.product("debug", "Created alt-text translation in DB", { index, locale: params.locale });
+            // Atomic upsert to avoid race condition between findUnique + create
+            await db.productImageAltTranslation.upsert({
+              where: { imageId_locale: { imageId: dbImage.id, locale: params.locale } },
+              update: { altText: altTextValue },
+              create: { imageId: dbImage.id, locale: params.locale, altText: altTextValue },
+            });
+            loggers.product("debug", "Upserted alt-text translation in DB", { index, locale: params.locale });
           }
         }
       } catch (dbError: unknown) {

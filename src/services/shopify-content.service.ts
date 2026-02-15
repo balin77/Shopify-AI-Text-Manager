@@ -480,10 +480,10 @@ export class ShopifyContentService {
             resourceId,
             error: retryError instanceof Error ? retryError.message : String(retryError),
           });
-          // Shopify has the data; next sync/reload will reconcile the DB
+          // Shopify has the data but DB is out of sync — report as failure so caller knows
           return {
-            success: true,
-            warning: 'Translation saved to Shopify but local cache update failed. Reload to sync.',
+            success: false,
+            error: 'Translation saved to Shopify but local database update failed. Reload to sync.',
           };
         }
       }
