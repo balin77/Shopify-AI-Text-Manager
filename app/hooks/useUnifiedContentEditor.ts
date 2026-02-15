@@ -1349,21 +1349,50 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         // This ensures hasChanges becomes false after we've updated the translations
         setIsLoadingData(true);
 
-        // Show warning if some locales failed, success if all succeeded
+        // Show warning if some locales failed or fields were rejected, success if all succeeded
         const failed = failedLocales || [];
-        if (failed.length > 0) {
-          const failedList = failed.join(", ");
-          const totalLocales = Object.keys(translations).length + failed.length;
-          const successCount = Object.keys(translations).filter(
-            (l: string) => Object.keys((translations as Record<string, Record<string, string>>)[l] || {}).length > 0
-          ).length;
+        const rejected = (fetcher.data as TranslationsResponse).rejectedFields || {};
+        const rejectedLocales = Object.keys(rejected);
+
+        if (failed.length > 0 || rejectedLocales.length > 0) {
+          const messages: string[] = [];
+
+          if (failed.length > 0) {
+            const failedList = failed.join(", ");
+            const totalLocales = Object.keys(translations).length + failed.length;
+            const successCount = Object.keys(translations).filter(
+              (l: string) => Object.keys((translations as Record<string, Record<string, string>>)[l] || {}).length > 0
+            ).length;
+            messages.push(
+              String(t.content?.translatePartialLocales || "Translation partially completed: {successCount}/{totalCount} language(s) succeeded. Language(s) {failedLocales} failed.")
+                .replace("{successCount}", String(successCount))
+                .replace("{totalCount}", String(totalLocales))
+                .replace("{failedLocales}", failedList)
+            );
+          }
+
+          if (rejectedLocales.length > 0) {
+            const details = rejectedLocales
+              .map(locale => `${locale}: ${rejected[locale].join(", ")}`)
+              .join("; ");
+            messages.push(
+              String(t.content?.translateRejectedFields || "Some fields could not be saved to Shopify: {details}. The translated content was generated but Shopify rejected it.")
+                .replace("{details}", details)
+            );
+          }
+
           showInfoBox(
-            String(t.content?.translatePartialLocales || "Translation partially completed: {successCount}/{totalCount} language(s) succeeded. Language(s) {failedLocales} failed.")
-              .replace("{successCount}", String(successCount))
-              .replace("{totalCount}", String(totalLocales))
-              .replace("{failedLocales}", failedList),
+            messages.join(" "),
             "warning",
             t.common?.warning || "Warning"
+          );
+        } else {
+          const localeCount = Object.keys(translations).length;
+          showInfoBox(
+            String(t.content?.translateAllSuccess || "Successfully translated to {count} language(s).")
+              .replace("{count}", String(localeCount)),
+            "success",
+            t.common?.success || "Success"
           );
         }
       }
@@ -1447,12 +1476,23 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         // This ensures hasChanges becomes false after we've updated the translations
         setIsLoadingData(true);
 
-        // Show warning if the locale failed, success otherwise
+        // Show warning if the locale failed or fields were rejected, success otherwise
         const failed = failedLocales || [];
+        const rejected = (fetcher.data as TranslationsResponse).rejectedFields || {};
+        const rejectedForLocale = rejected[targetLocale];
+
         if (failed.length > 0 && failed.includes(targetLocale)) {
           showInfoBox(
             String(t.content?.translateLocaleError || "Translation to {locale} failed. Please try again.")
               .replace("{locale}", targetLocale),
+            "warning",
+            t.common?.warning || "Warning"
+          );
+        } else if (rejectedForLocale && rejectedForLocale.length > 0) {
+          showInfoBox(
+            String(t.content?.translateLocaleRejectedFields || "Translation to {locale} partially completed. Field(s) {fields} could not be saved to Shopify.")
+              .replace("{locale}", targetLocale)
+              .replace("{fields}", rejectedForLocale.join(", ")),
             "warning",
             t.common?.warning || "Warning"
           );

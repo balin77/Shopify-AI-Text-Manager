@@ -523,7 +523,7 @@ Allowed formatting changes:
         sourceLocale,
       });
 
-      const { translations: allTranslations, failedLocales } = result;
+      const { translations: allTranslations, failedLocales, rejectedFields } = result;
 
       await db.task.update({
         where: { id: task.id },
@@ -535,11 +535,12 @@ Allowed formatting changes:
             success: true,
             locales: Object.keys(allTranslations),
             failedLocales,
+            rejectedFields,
           }),
         },
       });
 
-      return json({ success: true, translations: allTranslations, failedLocales });
+      return json({ success: true, translations: allTranslations, failedLocales, rejectedFields });
     } catch (error: unknown) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       await db.task.update({
@@ -624,7 +625,7 @@ Allowed formatting changes:
         sourceLocale,
       });
 
-      const { translations: allTranslations, failedLocales } = result;
+      const { translations: allTranslations, failedLocales, rejectedFields } = result;
 
       // Extract translations for the target locale
       const translations = allTranslations[targetLocale] || {};
@@ -640,11 +641,12 @@ Allowed formatting changes:
             targetLocale,
             translations,
             failedLocales,
+            rejectedFields,
           }),
         },
       });
 
-      return json({ success: true, translations, targetLocale, failedLocales });
+      return json({ success: true, translations, targetLocale, failedLocales, rejectedFields });
     } catch (error: unknown) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       await db.task.update({

@@ -655,6 +655,7 @@ export class ShopifyContentService {
 
     const allTranslations: Record<string, Record<string, string>> = {};
     const failedLocales: string[] = [];
+    const rejectedFields: Record<string, string[]> = {};
 
     // Initialize translations structure
     for (const locale of targetLocales) {
@@ -753,6 +754,8 @@ export class ShopifyContentService {
         const data = await response.json();
         if (data.errors?.length > 0) {
           loggers.translation('error', `GraphQL error saving ${field} for ${locale}`, { errors: data.errors });
+          if (!rejectedFields[locale]) rejectedFields[locale] = [];
+          rejectedFields[locale].push(field);
           return false;
         }
         if (data.data?.translationsRegister?.userErrors?.length > 0) {
@@ -760,6 +763,8 @@ export class ShopifyContentService {
           // Return false so the caller removes this field from allTranslations — the client
           // should not display or cache a translation that Shopify didn't accept.
           loggers.translation('error', `Shopify rejected ${field} for ${locale}`, { errors: data.data.translationsRegister.userErrors });
+          if (!rejectedFields[locale]) rejectedFields[locale] = [];
+          rejectedFields[locale].push(field);
           return false;
         }
 
@@ -889,7 +894,7 @@ export class ShopifyContentService {
     if (failedLocales.length > 0) {
       loggers.translation('warn', `translateAllContent completed with failures`, { failedLocales, successLocales: targetLocales.filter(l => !failedLocales.includes(l)) });
     }
-    loggers.translation('info', 'translateAllContent FINAL', { locales: Object.keys(allTranslations), failedLocales });
-    return { translations: allTranslations, failedLocales };
+    loggers.translation('info', 'translateAllContent FINAL', { locales: Object.keys(allTranslations), failedLocales, rejectedFields });
+    return { translations: allTranslations, failedLocales, rejectedFields };
   }
 }

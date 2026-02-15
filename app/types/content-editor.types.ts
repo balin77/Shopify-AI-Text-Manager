@@ -71,6 +71,7 @@ export interface FetcherDataBase {
   success: boolean;
   error?: string;
   failedLocales?: string[];
+  rejectedFields?: Record<string, string[]>;
   failedAltTextIndices?: number[];
 }
 
