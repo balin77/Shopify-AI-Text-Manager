@@ -92,6 +92,17 @@ export const loader = createContentLoader({
         { variables: { first: 250, after: cursor } },
       );
       const shopifyData: any = await shopifyResponse.json();
+
+      if (shopifyData.errors) {
+        logger.error("[PRODUCTS-LOADER] GraphQL error fetching products", {
+          context: "PRODUCTS",
+          errors: shopifyData.errors,
+        });
+        throw new Error(
+          `GraphQL error: ${shopifyData.errors.map((e: any) => e.message).join(", ")}`,
+        );
+      }
+
       const page: any = shopifyData.data?.products;
       const nodes = page?.edges?.map((e: any) => e.node) || [];
       shopifyProducts.push(...nodes);
@@ -466,7 +477,10 @@ export default function ProductsPage() {
   // Show loader error
   useEffect(() => {
     if (error && isMountedRef.current) {
-      showInfoBox(error, "critical", t.common?.error || "Error");
+      const message = error.startsWith("GraphQL error")
+        ? (t.errors?.graphqlError || error)
+        : error;
+      showInfoBox(message, "critical", t.common?.error || "Error");
     }
   }, [error, showInfoBox, t]);
 
