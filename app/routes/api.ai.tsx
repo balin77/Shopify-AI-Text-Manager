@@ -17,6 +17,7 @@ import type { ContentEditorConfig } from "../types/content-editor.types";
 import { getFormString, getFormJSON } from "~/utils/form-data.utils";
 import { safeJsonParse } from "~/utils/validation";
 import { sanitizePromptInput } from "~/utils/prompt-sanitizer";
+import { extractReadableName } from "~/utils/templates-field-factory";
 
 // Map contentType to its config for looking up field definitions
 const CONTENT_CONFIGS: Record<string, ContentEditorConfig> = {
@@ -105,6 +106,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         const isSlugField = fieldType === 'handle' || fieldType === 'slug';
 
         // Create task entry (prompt is saved by AI service via savePromptToTask)
+        const taskFieldLabel = contentType === 'templates' ? extractReadableName(fieldType) : fieldType;
         const task = await db.task.create({
           data: {
             shop: session.shop,
@@ -112,8 +114,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             status: "pending",
             resourceType: contentType,
             resourceId: itemId,
-            resourceTitle: fieldType,
-            fieldType,
+            resourceTitle: taskFieldLabel,
+            fieldType: taskFieldLabel,
             targetLocale,
             progress: 0,
             // prompt is saved by AI service via savePromptToTask
@@ -221,6 +223,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         const isShortField = SHORT_FIELDS.includes(fieldType);
 
         // Create task entry (prompts will be saved by AI service via savePromptToTask)
+        const taskFieldLabel2 = contentType === 'templates' ? extractReadableName(fieldType) : fieldType;
         const task = await db.task.create({
           data: {
             shop: session.shop,
@@ -228,8 +231,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             status: "pending",
             resourceType: contentType,
             resourceId: itemId,
-            resourceTitle: fieldType,
-            fieldType,
+            resourceTitle: taskFieldLabel2,
+            fieldType: taskFieldLabel2,
             progress: 0,
             expiresAt: getTaskExpirationDate(),
           },
@@ -966,6 +969,7 @@ ${sourceText}
 Return only the formatted text, without explanations.`;
 
         // Create task entry with prompt
+        const taskFieldLabel3 = contentType === 'templates' ? extractReadableName(fieldType) : fieldType;
         const task = await db.task.create({
           data: {
             shop: session.shop,
@@ -973,8 +977,8 @@ Return only the formatted text, without explanations.`;
             status: "pending",
             resourceType: contentType,
             resourceId: itemId,
-            resourceTitle: fieldType,
-            fieldType,
+            resourceTitle: taskFieldLabel3,
+            fieldType: taskFieldLabel3,
             progress: 0,
             // prompt is saved by AI service via savePromptToTask
             expiresAt: getTaskExpirationDate(),
@@ -1110,6 +1114,7 @@ Language: ${mainLanguage}`;
         prompt += `\n\nIMPORTANT: Return ONLY the generated ${genFieldLabel}, nothing else. No explanations, no options, no labels. Output the result in ${mainLanguage}.`;
 
         // Create task entry (prompt is saved by AI service via savePromptToTask)
+        const taskFieldLabel4 = contentType === 'templates' ? extractReadableName(fieldType) : fieldType;
         const task = await db.task.create({
           data: {
             shop: session.shop,
@@ -1117,8 +1122,8 @@ Language: ${mainLanguage}`;
             status: "pending",
             resourceType: contentType,
             resourceId: itemId,
-            resourceTitle: fieldType,
-            fieldType,
+            resourceTitle: taskFieldLabel4,
+            fieldType: taskFieldLabel4,
             progress: 0,
             expiresAt: getTaskExpirationDate(),
           },
@@ -1312,6 +1317,7 @@ Do NOT:
         }
 
         // Create task entry (prompt is saved by AI service via savePromptToTask)
+        const taskFieldLabel5 = contentType === 'templates' ? extractReadableName(fieldType) : fieldType;
         const task = await db.task.create({
           data: {
             shop: session.shop,
@@ -1319,8 +1325,8 @@ Do NOT:
             status: "pending",
             resourceType: contentType,
             resourceId: itemId,
-            resourceTitle: fieldType,
-            fieldType,
+            resourceTitle: taskFieldLabel5,
+            fieldType: taskFieldLabel5,
             progress: 0,
             expiresAt: getTaskExpirationDate(),
           },

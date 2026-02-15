@@ -177,6 +177,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
   // Track original template values for change detection (templates use dynamic fields)
   const originalTemplateValuesRef = useRef<Record<string, string>>({});
+  // State counter to force templateHasFieldChanges useMemo recalculation when ref updates
+  const [templateValuesVersion, setTemplateValuesVersion] = useState(0);
 
   // Track which fields are showing fallback values (e.g., handle field showing primary locale value)
   // This happens when Shopify doesn't return a translation because it's identical to the primary value
@@ -414,7 +416,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       }
     }
     return false;
-  }, [config.contentType, isLoadingData, selectedItem, editableValues]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- templateValuesVersion forces recalc when ref updates
+  }, [config.contentType, isLoadingData, selectedItem, editableValues, templateValuesVersion]);
 
   // Combined field changes: use template logic for templates, standard for others
   const hasFieldChanges = config.contentType === 'templates' ? templateHasFieldChanges : standardHasFieldChanges;
@@ -663,6 +666,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     if (config.contentType === 'templates') {
       debugLog.dataLoad(' Setting originalTemplateValuesRef:', newValues);
       originalTemplateValuesRef.current = { ...newValues };
+      setTemplateValuesVersion(v => v + 1);
     }
     // IMPORTANT: Only depend on selectedItemId, currentLanguage and dataRefreshTrigger to prevent unnecessary re-runs
   }, [selectedItemId, currentLanguage, primaryLocale, config, dataRefreshTrigger]);
@@ -1363,6 +1367,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             // This prevents the save button from showing false changes after translateAll
             if (config.contentType === 'templates') {
               originalTemplateValuesRef.current = { ...updatedValues };
+              setTemplateValuesVersion(v => v + 1);
             }
           }
         }
@@ -1498,6 +1503,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           // This prevents the save button from showing false changes after translateAllForLocale
           if (config.contentType === 'templates') {
             originalTemplateValuesRef.current = { ...updatedValues };
+            setTemplateValuesVersion(v => v + 1);
           }
         }
 
@@ -1827,6 +1833,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
                 ...originalTemplateValuesRef.current,
                 [fieldKey]: translations[currentLanguage]
               };
+              setTemplateValuesVersion(v => v + 1);
             }
 
             setIsLoadingData(true);
@@ -1868,6 +1875,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // For templates: Update original values to match current values (so hasChanges becomes false)
       if (config.contentType === 'templates') {
         originalTemplateValuesRef.current = { ...editableValues };
+        setTemplateValuesVersion(v => v + 1); // Trigger useMemo recalculation
       }
 
       // Mark this item as recently saved to prevent on-demand sync from re-fetching
@@ -2396,6 +2404,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
               ...originalTemplateValuesRef.current,
               [fieldKey]: translations[currentLanguage]
             };
+            setTemplateValuesVersion(v => v + 1);
           }
 
           // Call callback to update cache if provided
@@ -3473,6 +3482,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     if (config.contentType === 'templates') {
       originalTemplateValuesRef.current = { ...values };
       originalLoadedValuesRef.current = { ...values };
+      setTemplateValuesVersion(v => v + 1);
     }
   };
 
