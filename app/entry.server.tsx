@@ -41,6 +41,15 @@ export default async function handleRequest(
 
   addDocumentResponseHeaders(request, responseHeaders);
 
+  // Security headers
+  responseHeaders.set("X-Content-Type-Options", "nosniff");
+  responseHeaders.set("X-Frame-Options", "SAMEORIGIN");
+  responseHeaders.set("Referrer-Policy", "strict-origin-when-cross-origin");
+  responseHeaders.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  if (process.env.NODE_ENV === "production") {
+    responseHeaders.set("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload");
+  }
+
   return new Promise((resolve, reject) => {
     let shellRendered = false;
     const { pipe, abort } = renderToPipeableStream(

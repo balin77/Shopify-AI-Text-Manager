@@ -33,9 +33,7 @@ export default defineConfig({
   server: {
     port: 3000,
     allowedHosts: [
-      "shopify-ai-text-manager-production.up.railway.app",
-      "shopify-ai-text-manager-development.up.railway.app",
-      ".railway.app", // Allow all Railway domains
+      ".railway.app", // Allow all Railway domains (includes contentpilotai.up.railway.app)
       ".trycloudflare.com", // For local development tunnels
     ],
     // Disable HMR when running on Railway or in production

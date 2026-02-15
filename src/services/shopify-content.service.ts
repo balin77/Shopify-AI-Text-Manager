@@ -76,11 +76,24 @@ export class ShopifyContentService {
     // Fetch digest map first
     const { digestMap } = await this.loadTranslatableContent(resourceId);
 
-    // Add digests to translations
-    const translationsWithDigests = translations.map(t => ({
-      ...t,
-      translatableContentDigest: digestMap[t.key]
-    }));
+    // Add digests to translations, filtering out any without a valid digest
+    const translationsWithDigests = translations
+      .map(t => ({
+        ...t,
+        translatableContentDigest: digestMap[t.key]
+      }))
+      .filter(t => {
+        if (!t.translatableContentDigest) {
+          loggers.translation('warn', `[saveTranslations] No digest for key '${t.key}' — skipping Shopify save for this field`);
+          return false;
+        }
+        return true;
+      });
+
+    if (translationsWithDigests.length === 0) {
+      loggers.translation('warn', '[saveTranslations] No translations with valid digests to save');
+      return [];
+    }
 
     const response = await this.admin.graphql(TRANSLATE_CONTENT, {
       variables: {
@@ -891,7 +904,7 @@ export class ShopifyContentService {
           if (typeof value === 'string') {
             stringValue = value;
           } else if (typeof value === 'object' && value !== null) {
-            stringValue = (value as { value?: string }).value || JSON.stringify(value);
+            stringValue = ('value' in value && typeof value.value === 'string') ? value.value : JSON.stringify(value);
           } else {
             stringValue = String(value);
           }

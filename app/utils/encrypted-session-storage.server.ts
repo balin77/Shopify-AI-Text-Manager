@@ -26,25 +26,19 @@ export class EncryptedPrismaSessionStorage implements SessionStorage {
     const clone = new Session(session.toObject());
 
     if (clone.accessToken) {
-      try {
-        clone.accessToken = encryptToken(clone.accessToken) ?? clone.accessToken;
-      } catch (error) {
-        logger.error(
-          "[EncryptedSessionStorage] Failed to encrypt accessToken, storing unencrypted:",
-          error instanceof Error ? error.message : "Unknown error",
-        );
+      const encrypted = encryptToken(clone.accessToken);
+      if (!encrypted) {
+        throw new Error("[EncryptedSessionStorage] Failed to encrypt accessToken: encryptToken returned null");
       }
+      clone.accessToken = encrypted;
     }
 
     if (clone.refreshToken) {
-      try {
-        clone.refreshToken = encryptToken(clone.refreshToken) ?? clone.refreshToken;
-      } catch (error) {
-        logger.error(
-          "[EncryptedSessionStorage] Failed to encrypt refreshToken, storing unencrypted:",
-          error instanceof Error ? error.message : "Unknown error",
-        );
+      const encrypted = encryptToken(clone.refreshToken);
+      if (!encrypted) {
+        throw new Error("[EncryptedSessionStorage] Failed to encrypt refreshToken: encryptToken returned null");
       }
+      clone.refreshToken = encrypted;
     }
 
     return this.inner.storeSession(clone);

@@ -9,6 +9,7 @@
 import type { Session } from "@shopify/shopify-api";
 import { apiVersion } from "../shopify.server";
 import { logger } from "./logger.server";
+import { isValidShopDomain } from "./validation";
 
 interface ShopifyGraphQLClient {
   graphql: (query: string, options?: { variables?: any }) => Promise<Response>;
@@ -26,6 +27,10 @@ interface ShopifyGraphQLClient {
 export async function createAdminClientFromShop(
   shop: string
 ): Promise<ShopifyGraphQLClient> {
+  if (!isValidShopDomain(shop)) {
+    throw new Error(`Invalid shop domain: ${shop}`);
+  }
+
   const { db } = await import("../db.server");
 
   // Fetch the most recent session for this shop
@@ -72,7 +77,7 @@ function createAdminClient(
   accessToken: string
 ): ShopifyGraphQLClient {
   // Use the API version from config, with fallback
-  const version = apiVersion || "2024-10";
+  const version = apiVersion || "2025-10";
   const graphqlEndpoint = `https://${shop}/admin/api/${version}/graphql.json`;
 
   return {
