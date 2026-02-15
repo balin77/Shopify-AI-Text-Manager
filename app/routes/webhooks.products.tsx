@@ -1,113 +1,50 @@
 import { json } from "@remix-run/node";
 import type { ActionFunctionArgs } from "@remix-run/node";
-import crypto from "crypto";
+import { authenticate } from "~/shopify.server";
+import { logger } from "~/utils/logger.server";
 
 /**
  * Webhook Handler for Shopify Product Events
  *
  * Handles: products/create, products/update, products/delete
  *
- * This route is called by Shopify when products change.
- * It syncs the product data to our local database for fast access.
+ * Uses Shopify's built-in authenticate.webhook() for HMAC verification.
+ * This automatically returns 401 for invalid HMAC signatures.
  */
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { logger } = await import("../utils/logger.server");
-  logger.info('Product webhook received', { context: 'Webhook' });
+  const { topic, shop, payload } = await authenticate.webhook(request);
 
-  try {
-    // 1. Extract webhook headers
-    const hmac = request.headers.get("X-Shopify-Hmac-Sha256");
-    const shop = request.headers.get("X-Shopify-Shop-Domain");
-    const topic = request.headers.get("X-Shopify-Topic");
+  logger.info("[WEBHOOK] Product webhook received", { context: "Webhook", topic, shop });
 
-    logger.debug('Webhook headers', {
-      context: 'Webhook',
+  const productPayload = payload as { id: string | number };
+  const productId = `gid://shopify/Product/${productPayload.id}`;
+
+  logger.debug("[WEBHOOK] Product ID", { context: "Webhook", productId });
+
+  // Log webhook to database (metadata only - payload stored only on error)
+  const { db } = await import("../db.server");
+  const webhookLog = await db.webhookLog.create({
+    data: {
       shop,
-      topic,
-    });
-
-    if (!shop || !topic) {
-      logger.error('Missing required webhook headers', { context: 'Webhook' });
-      return json({ error: "Missing headers" }, { status: 400 });
-    }
-
-    // 2. Verify webhook signature
-    const rawBody = await request.text();
-
-    if (!verifyWebhook(rawBody, hmac)) {
-      logger.error('Invalid webhook signature', {
-        context: 'Webhook',
-        shop,
-        topic,
-      });
-      return json({ error: "Invalid signature" }, { status: 401 });
-    }
-
-    logger.debug('Webhook signature verified', {
-      context: 'Webhook',
-      shop,
-      topic,
-    });
-
-    // 3. Parse payload
-    let payload: { id: string | number };
-    try {
-      payload = JSON.parse(rawBody);
-    } catch {
-      logger.error('Invalid JSON in webhook payload', { context: 'Webhook', shop, topic });
-      return json({ error: "Invalid payload" }, { status: 400 });
-    }
-    const productId = `gid://shopify/Product/${payload.id}`;
-
-    logger.debug('Webhook payload parsed', {
-      context: 'Webhook',
+      topic: topic.toLowerCase().replace("_", "/"),
       productId,
-    });
+      payload: "{}",
+      processed: false,
+    },
+  });
 
-    // 4. Log webhook to database (metadata only - payload stored only on error)
-    // This reduces database storage significantly for multi-tenant SaaS
-    const { db } = await import("../db.server");
-    const webhookLog = await db.webhookLog.create({
-      data: {
-        shop,
-        topic,
-        productId,
-        payload: "{}", // Empty payload - full payload only stored on error
-        processed: false,
-      },
-    });
+  logger.debug("[WEBHOOK] Logged to database", { context: "Webhook", webhookLogId: webhookLog.id });
 
-    logger.debug('Webhook logged to database', {
-      context: 'Webhook',
-      webhookLogId: webhookLog.id,
+  // Process webhook asynchronously (don't block Shopify's response)
+  processWebhookAsync(webhookLog.id, shop, productId, topic).catch((err) => {
+    logger.error("[WEBHOOK] Background processing error", {
+      context: "Webhook",
+      error: err.message,
+      stack: err.stack,
     });
+  });
 
-    // 5. Process webhook asynchronously (don't block Shopify's response)
-    // We respond immediately to Shopify, then process in background
-    processWebhookAsync(webhookLog.id, shop, productId, topic).catch((err) => {
-      logger.error('Background webhook processing error', {
-        context: 'Webhook',
-        error: err.message,
-        stack: err.stack,
-      });
-    });
-
-    // 6. Respond to Shopify immediately
-    logger.info('Webhook accepted, responding to Shopify', {
-      context: 'Webhook',
-      shop,
-      topic,
-      productId,
-    });
-    return json({ received: true }, { status: 200 });
-  } catch (error: any) {
-    logger.error('Webhook processing error', {
-      context: 'Webhook',
-      error: error.message,
-      stack: error.stack,
-    });
-    return json({ error: error.message }, { status: 500 });
-  }
+  return json({ received: true }, { status: 200 });
 };
 
 /**
@@ -119,12 +56,11 @@ async function processWebhookAsync(
   productId: string,
   topic: string
 ) {
-  const { logger } = await import("../utils/logger.server");
   const { webhookRetryService } = await import("../services/webhook-retry.service");
   const { ProductSyncService } = await import("../services/product-sync.service");
 
-  logger.info('Processing webhook asynchronously', {
-    context: 'Webhook',
+  logger.info("[WEBHOOK-ASYNC] Processing webhook", {
+    context: "Webhook",
     logId,
     topic,
     shop,
@@ -134,49 +70,30 @@ async function processWebhookAsync(
   const { db } = await import("../db.server");
 
   try {
-    // 1. Create admin GraphQL client from shop session
     const { createAdminClientFromShop } = await import("../utils/admin-client.server");
     const admin = await createAdminClientFromShop(shop);
 
-    logger.debug('Admin client created', {
-      context: 'Webhook',
-      shop,
-    });
+    logger.debug("[WEBHOOK-ASYNC] Admin client created", { context: "Webhook", shop });
 
-    // 2. Process based on topic
     const syncService = new ProductSyncService(admin, shop);
 
-    if (topic === "products/create" || topic === "products/update") {
-      logger.debug("[WEBHOOK] Product webhook received", { context: "Webhook", topic, productId });
-      logger.info('Syncing product', {
-        context: 'Webhook',
-        productId,
-        topic,
-      });
+    if (topic === "PRODUCTS_CREATE" || topic === "PRODUCTS_UPDATE") {
+      logger.debug("[WEBHOOK-ASYNC] Syncing product", { context: "Webhook", productId, topic });
       await syncService.syncProduct(productId);
-    } else if (topic === "products/delete") {
-      logger.info('Deleting product', {
-        context: 'Webhook',
-        productId,
-      });
+    } else if (topic === "PRODUCTS_DELETE") {
+      logger.info("[WEBHOOK-ASYNC] Deleting product", { context: "Webhook", productId });
       await syncService.deleteProduct(productId);
     }
 
-    // 3. Mark webhook as processed
     await db.webhookLog.update({
       where: { id: logId },
       data: { processed: true },
     });
 
-    logger.info('Webhook processed successfully', {
-      context: 'Webhook',
-      logId,
-      topic,
-      productId,
-    });
+    logger.info("[WEBHOOK-ASYNC] Successfully processed", { context: "Webhook", logId, topic, productId });
   } catch (error: any) {
-    logger.error('Error processing webhook', {
-      context: 'Webhook',
+    logger.error("[WEBHOOK-ASYNC] Error processing webhook", {
+      context: "Webhook",
       logId,
       shop,
       productId,
@@ -185,17 +102,11 @@ async function processWebhookAsync(
       stack: error.stack,
     });
 
-    // Log error to database WITH full payload (for debugging)
-    const { encryptPayload } = await import("../utils/encryption.server");
-    const webhookLogForError = await db.webhookLog.findUnique({ where: { id: logId } });
-
-    // Re-fetch payload from retry service if available, otherwise log error without payload
     await db.webhookLog.update({
       where: { id: logId },
       data: {
         processed: true,
         error: error.message,
-        // Note: Full payload is stored in WebhookRetry table for debugging
       },
     });
 
@@ -209,25 +120,4 @@ async function processWebhookAsync(
 
     throw error;
   }
-}
-
-/**
- * Verify Shopify webhook signature
- */
-function verifyWebhook(rawBody: string, hmac: string | null): boolean {
-  if (!hmac) {
-    return false;
-  }
-
-  const secret = process.env.SHOPIFY_API_SECRET;
-  if (!secret) {
-    return false;
-  }
-
-  const hash = crypto
-    .createHmac("sha256", secret)
-    .update(rawBody, "utf8")
-    .digest("base64");
-
-  return hash === hmac;
 }

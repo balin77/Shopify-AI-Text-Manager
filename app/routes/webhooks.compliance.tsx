@@ -5,12 +5,12 @@
  * customers/redact, shop/redact) to this single endpoint as configured
  * in shopify.app.toml via compliance_topics.
  *
- * This route dispatches to the appropriate GDPR service handler
- * based on the X-Shopify-Topic header.
+ * Uses Shopify's built-in authenticate.webhook() for HMAC verification.
+ * This automatically returns 401 for invalid HMAC signatures.
  */
 
 import type { ActionFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
+import { authenticate } from "~/shopify.server";
 import {
   exportCustomerData,
   redactCustomerData,
@@ -20,110 +20,61 @@ import {
   type GDPRCustomerRedactRequest,
   type GDPRShopRedactRequest,
 } from "../services/gdpr.service";
-import { verifyAndParseWebhook } from "../utils/webhook-verification";
 import { logger } from "~/utils/logger.server";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const topic = request.headers.get("X-Shopify-Topic") || "";
-  logger.debug(`[GDPR] Received compliance webhook: ${topic}`, { context: "GDPR" });
+  // authenticate.webhook() verifies HMAC signature automatically.
+  // Throws 401 Response if signature is invalid.
+  const { topic, shop, payload } = await authenticate.webhook(request);
+
+  logger.debug(`[GDPR] Received compliance webhook: ${topic}`, { context: "GDPR", shop });
 
   try {
     switch (topic) {
-      case "customers/data_request":
-        return await handleCustomerDataRequest(request);
-      case "customers/redact":
-        return await handleCustomerRedact(request);
-      case "shop/redact":
-        return await handleShopRedact(request);
+      case "CUSTOMERS_DATA_REQUEST": {
+        const typedPayload = payload as unknown as GDPRCustomerDataRequest;
+        const exportedData = await exportCustomerData(typedPayload);
+        await logGDPRRequest(
+          shop,
+          "data_request",
+          typedPayload.customer.id,
+          typedPayload.customer.email,
+          exportedData,
+        );
+        break;
+      }
+      case "CUSTOMERS_REDACT": {
+        const typedPayload = payload as unknown as GDPRCustomerRedactRequest;
+        await redactCustomerData(typedPayload);
+        await logGDPRRequest(
+          shop,
+          "customer_redact",
+          typedPayload.customer.id,
+          typedPayload.customer.email,
+        );
+        break;
+      }
+      case "SHOP_REDACT": {
+        const typedPayload = payload as unknown as GDPRShopRedactRequest;
+        logger.warn("[GDPR] Shop redaction - will DELETE ALL DATA", {
+          context: "GDPR",
+          shopDomain: shop,
+        });
+        await redactShopData(typedPayload);
+        await logGDPRRequest(shop, "shop_redact");
+        break;
+      }
       default:
-        logger.error(`[GDPR] Unknown compliance topic: ${topic}`, { context: "GDPR" });
-        return json({ success: false, error: "Unknown topic" }, { status: 400 });
+        logger.warn(`[GDPR] Unhandled compliance topic: ${topic}`, { context: "GDPR" });
     }
   } catch (error) {
     logger.error("[GDPR] Error processing compliance webhook", {
       context: "GDPR",
       topic,
+      shop,
       error: error instanceof Error ? error.message : String(error),
     });
-    return json({ success: false, error: "Internal error" }, { status: 500 });
   }
+
+  return new Response("OK", { status: 200 });
 };
-
-async function handleCustomerDataRequest(request: Request) {
-  const { isValid, body: payload, metadata } =
-    await verifyAndParseWebhook<GDPRCustomerDataRequest>(request);
-
-  if (!isValid) {
-    logger.error("[GDPR] customers/data_request verification failed", { context: "GDPR" });
-    await logGDPRRequest(metadata.shop || "unknown", "data_request", undefined, undefined, undefined, "Invalid HMAC");
-    return json({ success: false, error: "Webhook verification failed" }, { status: 401 });
-  }
-
-  if (!payload) {
-    return json({ success: false, error: "Invalid payload" }, { status: 400 });
-  }
-
-  const exportedData = await exportCustomerData(payload);
-
-  await logGDPRRequest(
-    payload.shop_domain,
-    "data_request",
-    payload.customer.id,
-    payload.customer.email,
-    exportedData,
-  );
-
-  return json({ success: true, message: "Customer data exported successfully" }, { status: 200 });
-}
-
-async function handleCustomerRedact(request: Request) {
-  const { isValid, body: payload, metadata } =
-    await verifyAndParseWebhook<GDPRCustomerRedactRequest>(request);
-
-  if (!isValid) {
-    logger.error("[GDPR] customers/redact verification failed", { context: "GDPR" });
-    await logGDPRRequest(metadata.shop || "unknown", "customer_redact", undefined, undefined, undefined, "Invalid HMAC");
-    return json({ success: false, error: "Webhook verification failed" }, { status: 401 });
-  }
-
-  if (!payload) {
-    return json({ success: false, error: "Invalid payload" }, { status: 400 });
-  }
-
-  await redactCustomerData(payload);
-
-  await logGDPRRequest(
-    payload.shop_domain,
-    "customer_redact",
-    payload.customer.id,
-    payload.customer.email,
-  );
-
-  return json({ success: true, message: "Customer data deleted successfully" }, { status: 200 });
-}
-
-async function handleShopRedact(request: Request) {
-  const { isValid, body: payload, metadata } =
-    await verifyAndParseWebhook<GDPRShopRedactRequest>(request);
-
-  if (!isValid) {
-    logger.error("[GDPR] shop/redact verification failed", { context: "GDPR" });
-    await logGDPRRequest(metadata.shop || "unknown", "shop_redact", undefined, undefined, undefined, "Invalid HMAC");
-    return json({ success: false, error: "Webhook verification failed" }, { status: 401 });
-  }
-
-  if (!payload) {
-    return json({ success: false, error: "Invalid payload" }, { status: 400 });
-  }
-
-  logger.warn("[GDPR] Shop redaction - will DELETE ALL DATA", {
-    context: "GDPR",
-    shopDomain: payload.shop_domain,
-  });
-
-  await redactShopData(payload);
-
-  await logGDPRRequest(payload.shop_domain, "shop_redact");
-
-  return json({ success: true, message: "Shop data deleted successfully" }, { status: 200 });
-}
