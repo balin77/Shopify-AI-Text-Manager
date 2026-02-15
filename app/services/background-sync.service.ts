@@ -51,6 +51,7 @@ interface ShopifyPageData {
   title: string;
   handle: string;
   body: string | null;
+  seo?: { title?: string | null; description?: string | null } | null;
   updatedAt: string;
 }
 
@@ -137,6 +138,10 @@ export class BackgroundSyncService {
                   title
                   handle
                   body
+                  seo {
+                    title
+                    description
+                  }
                   updatedAt
                 }
               }
@@ -267,6 +272,10 @@ export class BackgroundSyncService {
             title
             handle
             body
+            seo {
+              title
+              description
+            }
             updatedAt
           }
         }`,
@@ -343,6 +352,8 @@ export class BackgroundSyncService {
           title: pageData.title,
           body: pageData.body || "",
           handle: pageData.handle,
+          seoTitle: pageData.seo?.title || null,
+          seoDescription: pageData.seo?.description || null,
           shopifyUpdatedAt: new Date(pageData.updatedAt),
           lastSyncedAt: new Date(),
         },
@@ -350,6 +361,8 @@ export class BackgroundSyncService {
           title: pageData.title,
           body: pageData.body || "",
           handle: pageData.handle,
+          seoTitle: pageData.seo?.title || null,
+          seoDescription: pageData.seo?.description || null,
           shopifyUpdatedAt: new Date(pageData.updatedAt),
           lastSyncedAt: new Date(),
         },
@@ -1109,6 +1122,23 @@ export class BackgroundSyncService {
               }
             }
 
+            // Batch-fetch ALL existing theme translations for this resource (avoids N+1 per group)
+            const allExistingTranslations = await db.themeTranslation.findMany({
+              where: {
+                shop: this.shop,
+                resourceId: resource.resourceId,
+              },
+              select: { key: true, locale: true, groupId: true }
+            });
+
+            const existingKeysByGroup = new Map<string, Set<string>>();
+            for (const t of allExistingTranslations) {
+              if (!existingKeysByGroup.has(t.groupId)) {
+                existingKeysByGroup.set(t.groupId, new Set());
+              }
+              existingKeysByGroup.get(t.groupId)!.add(`${t.key}::${t.locale}`);
+            }
+
             // Fetch translations for each group
             for (const [groupId, items] of Object.entries(contentByGroup)) {
               const firstItem = items[0];
@@ -1244,19 +1274,8 @@ export class BackgroundSyncService {
                 },
               });
 
-              // First, get all existing translation keys for this group
-              const existingTranslations = await db.themeTranslation.findMany({
-                where: {
-                  shop: this.shop,
-                  resourceId: resource.resourceId,
-                  groupId,
-                },
-                select: { key: true, locale: true }
-              });
-
-              const existingKeys = new Set(
-                existingTranslations.map(t => `${t.key}::${t.locale}`)
-              );
+              // Use pre-fetched existing keys for this group (batch-loaded above)
+              const existingKeys = existingKeysByGroup.get(groupId) || new Set<string>();
 
               // Batch upsert all translations in a single transaction
               if (allTranslations.length > 0) {
