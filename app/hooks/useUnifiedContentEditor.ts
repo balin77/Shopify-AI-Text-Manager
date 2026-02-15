@@ -824,6 +824,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       const result = await response.json();
 
       if (result.success) {
+        // Notify MainNavigation to immediately refresh the running task count
+        window.dispatchEvent(new CustomEvent('task-count-changed'));
         onSuccess?.(result);
       } else if (result.error) {
         onError?.(result.error);

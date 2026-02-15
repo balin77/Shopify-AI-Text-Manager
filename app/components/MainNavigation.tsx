@@ -69,10 +69,18 @@ export function MainNavigation() {
 
     setupInterval();
 
+    // Listen for task-count-changed events to immediately refresh
+    const handleTaskCountChanged = () => {
+      // Small delay to let the DB write commit before querying
+      setTimeout(fetchTaskCount, 500);
+    };
+    window.addEventListener('task-count-changed', handleTaskCountChanged);
+
     return () => {
       if (interval) {
         clearInterval(interval);
       }
+      window.removeEventListener('task-count-changed', handleTaskCountChanged);
     };
   }, [location.search]); // Re-fetch when search params change (e.g., shop parameter)
 
