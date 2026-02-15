@@ -13,6 +13,7 @@ import {
   FIELD_TO_LABEL_KEY,
 } from "~/constants/shopifyFields";
 import { TIMING } from "~/constants/timing";
+import { extractReadableName } from "~/utils/templates-field-factory";
 
 /**
  * Returns a localized language name using Intl.DisplayNames.
@@ -725,6 +726,9 @@ export function getLocaleButtonTooltip(
 
   const fieldLabels = i18n?.fieldLabels ?? {};
   const labels = missingFields.map(key => {
+    if (contentType === 'templates') {
+      return extractReadableName(key);
+    }
     const labelKey = FIELD_TO_LABEL_KEY[key];
     return (labelKey && fieldLabels[labelKey]) || labelKey || key;
   });
