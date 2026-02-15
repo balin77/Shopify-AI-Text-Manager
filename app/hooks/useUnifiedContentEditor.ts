@@ -1185,6 +1185,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         originalLoadedValuesRef.current = { ...newValues };
       }
 
+      // For templates: Update original values so templateHasFieldChanges becomes false
+      if (config.contentType === 'templates') {
+        originalTemplateValuesRef.current = {
+          ...originalTemplateValuesRef.current,
+          [fieldType]: translatedValue,
+        };
+        setTemplateValuesVersion(v => v + 1);
+      }
+
       // Mark as loading to reset change detection after the save completes
       setIsLoadingData(true);
     }
@@ -2274,7 +2283,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           originalLoadedValuesRef.current = { ...newValues };
         }
 
-        // Mark as loading to reset change detection after the save completes
+        // For templates: Update original values so templateHasFieldChanges becomes false
+        if (config.contentType === 'templates') {
+          originalTemplateValuesRef.current = {
+            ...originalTemplateValuesRef.current,
+            [fieldKey]: translatedValue,
+          };
+          setTemplateValuesVersion(v => v + 1);
+        }
+
         setIsLoadingData(true);
       }
     );
