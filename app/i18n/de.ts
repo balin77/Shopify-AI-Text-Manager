@@ -698,7 +698,22 @@ export const de = {
     generationFailed: "KI-Generierung fehlgeschlagen",
     saveFailed: "Speichern fehlgeschlagen",
     loadFailed: "Laden fehlgeschlagen",
+    noTargetLocales: "Keine Zielsprachen angegeben",
+    noImagesData: "Keine Bilddaten bereitgestellt",
+    noImagesToProcess: "Keine Bilder zum Verarbeiten vorhanden",
+    noSourceAltText: "Kein Quell-Alternativtext vorhanden",
+    noAltTextData: "Keine Alternativtext-Daten bereitgestellt",
+    noTargetLocalesOrImages: "Keine Zielsprachen oder Bilder angegeben",
     unknownError: "Unbekannter Fehler",
+
+    // Sync errors
+    syncApiError: "Synchronisation fehlgeschlagen wegen eines Shopify-API-Fehlers. Ihre lokalen Daten wurden beibehalten.",
+    syncEmptyResponsePages: "Seiten-Sync übersprungen: Shopify lieferte keine Daten (möglicher API-Ausfall). Ihre lokalen Seiten wurden beibehalten.",
+    syncEmptyResponsePolicies: "Richtlinien-Sync übersprungen: Shopify lieferte keine Daten (möglicher API-Ausfall). Ihre lokalen Richtlinien wurden beibehalten.",
+    syncEmptyResponseCollections: "Kollektionen-Sync übersprungen: Shopify lieferte keine Daten (möglicher API-Ausfall). Ihre lokalen Kollektionen wurden beibehalten.",
+    syncEmptyResponseArticles: "Artikel-Sync übersprungen: Shopify lieferte keine Daten (möglicher API-Ausfall). Ihre lokalen Artikel wurden beibehalten.",
+    syncEmptyResponseThemes: "Theme-Sync übersprungen: Shopify lieferte keine Daten (möglicher API-Ausfall). Ihre lokalen Themes wurden beibehalten.",
+    syncFailed: "{phase}-Synchronisation fehlgeschlagen: {details}",
   },
 
   // Help Tooltips

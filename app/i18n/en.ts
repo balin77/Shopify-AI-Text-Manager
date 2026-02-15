@@ -700,7 +700,22 @@ export const en: Translation = {
     generationFailed: "AI generation failed",
     saveFailed: "Save failed",
     loadFailed: "Load failed",
+    noTargetLocales: "No target locales specified",
+    noImagesData: "No images data provided",
+    noImagesToProcess: "No images to process",
+    noSourceAltText: "No source alt-text available",
+    noAltTextData: "No alt-text data provided",
+    noTargetLocalesOrImages: "No target locales or images specified",
     unknownError: "Unknown error",
+
+    // Sync errors
+    syncApiError: "Sync failed due to a Shopify API error. Your local data was preserved.",
+    syncEmptyResponsePages: "Pages sync skipped: Shopify returned no data (possible API outage). Your local pages were preserved.",
+    syncEmptyResponsePolicies: "Policies sync skipped: Shopify returned no data (possible API outage). Your local policies were preserved.",
+    syncEmptyResponseCollections: "Collections sync skipped: Shopify returned no data (possible API outage). Your local collections were preserved.",
+    syncEmptyResponseArticles: "Articles sync skipped: Shopify returned no data (possible API outage). Your local articles were preserved.",
+    syncEmptyResponseThemes: "Themes sync skipped: Shopify returned no data (possible API outage). Your local themes were preserved.",
+    syncFailed: "{phase} sync failed: {details}",
   },
 
   // Help Tooltips

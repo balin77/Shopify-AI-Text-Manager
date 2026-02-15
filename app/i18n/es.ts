@@ -700,7 +700,22 @@ export const es: Translation = {
     generationFailed: "Generación de IA fallida",
     saveFailed: "Guardado fallido",
     loadFailed: "Carga fallida",
+    noTargetLocales: "No se especificaron idiomas de destino",
+    noImagesData: "No se proporcionaron datos de imágenes",
+    noImagesToProcess: "No hay imágenes para procesar",
+    noSourceAltText: "No hay texto alternativo de origen disponible",
+    noAltTextData: "No se proporcionaron datos de texto alternativo",
+    noTargetLocalesOrImages: "No se especificaron idiomas de destino o imágenes",
     unknownError: "Error desconocido",
+
+    // Sync errors
+    syncApiError: "La sincronización falló debido a un error de la API de Shopify. Sus datos locales se conservaron.",
+    syncEmptyResponsePages: "Sincronización de páginas omitida: Shopify no devolvió datos (posible caída de la API). Sus páginas locales se conservaron.",
+    syncEmptyResponsePolicies: "Sincronización de políticas omitida: Shopify no devolvió datos (posible caída de la API). Sus políticas locales se conservaron.",
+    syncEmptyResponseCollections: "Sincronización de colecciones omitida: Shopify no devolvió datos (posible caída de la API). Sus colecciones locales se conservaron.",
+    syncEmptyResponseArticles: "Sincronización de artículos omitida: Shopify no devolvió datos (posible caída de la API). Sus artículos locales se conservaron.",
+    syncEmptyResponseThemes: "Sincronización de temas omitida: Shopify no devolvió datos (posible caída de la API). Sus temas locales se conservaron.",
+    syncFailed: "Sincronización de {phase} fallida: {details}",
   },
 
   // Help Tooltips

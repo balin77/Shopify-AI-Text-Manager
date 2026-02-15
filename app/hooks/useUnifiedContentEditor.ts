@@ -49,8 +49,26 @@ function translateErrorMessage(errorMessage: string, t: TranslationStrings): str
   if (lowerError.includes("no fields to translate")) {
     return errors?.noFieldsToTranslate || errorMessage;
   }
-  if (lowerError.includes("no source text")) {
+  if (lowerError.includes("no source text") && !lowerError.includes("alt")) {
     return errors?.noSourceText || errorMessage;
+  }
+  if (lowerError.includes("no source alt-text") || lowerError.includes("no source alt text")) {
+    return errors?.noSourceAltText || errorMessage;
+  }
+  if (lowerError.includes("no target locale") && lowerError.includes("image")) {
+    return errors?.noTargetLocalesOrImages || errorMessage;
+  }
+  if (lowerError.includes("no target locale")) {
+    return errors?.noTargetLocales || errorMessage;
+  }
+  if (lowerError.includes("no images data") || lowerError.includes("no image data")) {
+    return errors?.noImagesData || errorMessage;
+  }
+  if (lowerError.includes("no images to process")) {
+    return errors?.noImagesToProcess || errorMessage;
+  }
+  if (lowerError.includes("no alt-text data") || lowerError.includes("no alt text data")) {
+    return errors?.noAltTextData || errorMessage;
   }
   if (lowerError.includes("unknown action")) {
     return errors?.unknownAction || errorMessage;
