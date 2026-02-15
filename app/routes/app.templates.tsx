@@ -1069,9 +1069,14 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
                   continue;
                 }
 
+                // Shopify theme files can have leading /* ... */ comments — strip them before parsing
+                const leadingCommentRegex = /^\s*\/\*[\s\S]*?\*\/\s*/;
+                const hasLeadingComment = leadingCommentRegex.test(rawContent);
+                const jsonContent = hasLeadingComment ? rawContent.replace(leadingCommentRegex, "") : rawContent;
+
                 let fileJson: unknown;
                 try {
-                  fileJson = JSON.parse(rawContent);
+                  fileJson = JSON.parse(jsonContent);
                 } catch {
                   logger.error("[TEMPLATES] Failed to parse theme file JSON", {
                     context: "Templates",
@@ -1108,7 +1113,13 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
                 if (replacedKeys.size > 0) {
                   filesToUpsert.push({
                     filename,
-                    body: { type: "TEXT", value: JSON.stringify(fileJson, null, 2) },
+                    body: {
+                      type: "TEXT",
+                      // Preserve the leading comment if the original file had one
+                      value: hasLeadingComment
+                        ? rawContent.match(leadingCommentRegex)![0] + JSON.stringify(fileJson, null, 2)
+                        : JSON.stringify(fileJson, null, 2),
+                    },
                   });
                 }
               }
