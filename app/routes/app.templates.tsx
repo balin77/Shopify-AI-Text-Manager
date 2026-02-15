@@ -1025,32 +1025,58 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
                 variables: { themeId, filenames }
               });
               const filesData = await filesResponse.json();
-              const fileNodes: Array<{ filename: string; body: { content?: string } | null }> =
-                filesData.data?.theme?.files?.nodes || [];
+
+              logger.debug("[TEMPLATES] Raw theme files response", {
+                context: "Templates",
+                hasTheme: !!filesData.data?.theme,
+                hasFiles: !!filesData.data?.theme?.files,
+                nodeCount: filesData.data?.theme?.files?.nodes?.length ?? 0,
+                errors: (filesData as any).errors,
+              });
+
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Shopify response shape varies
+              const fileNodes: any[] = filesData.data?.theme?.files?.nodes || [];
 
               // Process each file: find old values and replace with new values
               const filesToUpsert: Array<{ filename: string; body: { type: string; value: string } }> = [];
               const shopifyErrors: string[] = [];
 
               for (const [filename, keys] of keysByFilename) {
-                const fileNode = fileNodes.find((n) => n.filename === filename);
-                if (!fileNode?.body?.content) {
-                  logger.warn("[TEMPLATES] Theme file not found or empty", {
+                const fileNode = fileNodes.find((n: any) => n.filename === filename);
+
+                // Debug: log the full body structure to understand Shopify's response format
+                logger.debug("[TEMPLATES] Theme file node details", {
+                  context: "Templates",
+                  filename,
+                  found: !!fileNode,
+                  bodyKeys: fileNode?.body ? Object.keys(fileNode.body) : null,
+                  bodyType: typeof fileNode?.body,
+                  contentPreview: typeof fileNode?.body?.content === "string"
+                    ? fileNode.body.content.substring(0, 300)
+                    : `(type: ${typeof fileNode?.body?.content})`,
+                });
+
+                // Try to extract content from the body — handle different shapes
+                const rawContent = fileNode?.body?.content ?? fileNode?.body;
+                if (!rawContent || typeof rawContent !== "string") {
+                  logger.warn("[TEMPLATES] Theme file not found or no text content", {
                     context: "Templates",
                     filename,
                     keys,
+                    rawContentType: typeof rawContent,
                   });
-                  shopifyErrors.push(`File not found: ${filename}`);
+                  shopifyErrors.push(`File not found or not a text file: ${filename}`);
                   continue;
                 }
 
                 let fileJson: unknown;
                 try {
-                  fileJson = JSON.parse(fileNode.body.content);
+                  fileJson = JSON.parse(rawContent);
                 } catch {
                   logger.error("[TEMPLATES] Failed to parse theme file JSON", {
                     context: "Templates",
                     filename,
+                    contentPreview: rawContent.substring(0, 500),
                   });
                   shopifyErrors.push(`Invalid JSON in file: ${filename}`);
                   continue;
