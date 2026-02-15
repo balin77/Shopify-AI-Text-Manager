@@ -239,7 +239,7 @@ export function AIEditableHTMLField({
             fontFamily: "monospace",
             fontSize: "14px",
             marginTop: "0.5rem",
-            ...(readOnly ? { opacity: 0.6, cursor: "not-allowed" } : {}),
+            ...(readOnly ? { opacity: 0.6 } : {}),
           }}
         />
       ) : (
@@ -256,7 +256,7 @@ export function AIEditableHTMLField({
             borderTop: mode === "rendered" && !readOnly ? "none" : "1px solid #c9cccf",
             borderRadius: mode === "rendered" && !readOnly ? "0 0 8px 8px" : "8px",
             lineHeight: "1.6",
-            ...(readOnly ? { opacity: 0.6, cursor: "not-allowed", userSelect: "text" as const } : {}),
+            ...(readOnly ? { opacity: 0.6, userSelect: "text" as const } : {}),
           }}
           className="description-editor"
         />
