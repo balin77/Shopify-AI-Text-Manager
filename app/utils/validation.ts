@@ -189,7 +189,8 @@ export function parseFormData<T>(
 /**
  * Safely parse a JSON string, returning a fallback value on failure.
  */
-export function safeJsonParse<T>(value: string, fallback: T): T {
+export function safeJsonParse<T>(value: string | null | undefined, fallback: T): T {
+  if (value == null) return fallback;
   try {
     return JSON.parse(value) as T;
   } catch {
