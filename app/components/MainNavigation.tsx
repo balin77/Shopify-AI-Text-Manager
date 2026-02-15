@@ -23,6 +23,8 @@ export function MainNavigation() {
   const { setMainNavHeight } = useNavigationHeight();
   const { items, selectedItemId, onItemSelect, resourceName, t: itemSelectorT } = useItemSelector();
   const tasksFetcher = useFetcher<{ count: number }>();
+  const tasksFetcherRef = useRef(tasksFetcher);
+  tasksFetcherRef.current = tasksFetcher;
   const completedTasksFetcher = useFetcher<{ tasks: any[] }>();
   const [showLoadingIndicator, setShowLoadingIndicator] = useState(false);
   const navRef = useRef<HTMLDivElement>(null);
@@ -51,8 +53,9 @@ export function MainNavigation() {
 
     const fetchTaskCount = () => {
       // Only fetch if not already loading to prevent overlapping requests
-      if (tasksFetcher.state === "idle") {
-        tasksFetcher.load(`/api/running-tasks-count?${searchParams.toString()}`);
+      // Use ref to always access latest fetcher state (avoids stale closure)
+      if (tasksFetcherRef.current.state === "idle") {
+        tasksFetcherRef.current.load(`/api/running-tasks-count?${searchParams.toString()}`);
       }
     };
 

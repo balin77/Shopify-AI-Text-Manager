@@ -15,7 +15,7 @@ import { logger, loggers } from "~/utils/logger.server";
 import { markTranslationSaved } from "~/utils/translation-save-lock.server";
 import type { ActionContext } from "./shared/action-context";
 import { getFormString, getFormJSON } from "~/utils/form-data.utils";
-import { safeJsonParse } from "~/utils/validation";
+import { isValidLocale, safeJsonParse } from "~/utils/validation";
 import type { PrismaClient } from "@prisma/client";
 
 interface UpdateProductParams {

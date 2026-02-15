@@ -23,9 +23,13 @@ interface CachedLocales {
 const SHOP_LOCALES_CACHE = new Map<string, CachedLocales>();
 const CACHE_TTL_MS = 60 * 1000; // 60 seconds
 
+// In-flight promise deduplication: concurrent requests for the same shop share one fetch
+const IN_FLIGHT = new Map<string, Promise<ShopLocale[]>>();
+
 /**
  * Get shop locales with caching
- * Returns cached locales if available and not expired, otherwise fetches fresh data
+ * Returns cached locales if available and not expired, otherwise fetches fresh data.
+ * Concurrent requests for the same shop are deduplicated via in-flight promise sharing.
  */
 export async function getCachedShopLocales(
   admin: any,
@@ -40,44 +44,57 @@ export async function getCachedShopLocales(
     return cached.locales;
   }
 
+  // Deduplicate concurrent fetches for the same shop
+  const existing = IN_FLIGHT.get(shop);
+  if (existing) {
+    logger.debug(`[ShopLocalesCache] In-flight dedup for shop: ${shop}`);
+    return existing;
+  }
+
   logger.debug(`[ShopLocalesCache] Cache MISS for shop: ${shop} - fetching from Shopify`);
 
-  // Fetch fresh data from Shopify
-  try {
-    const response = await admin.graphql(`
-      query getShopLocales {
-        shopLocales {
-          locale
-          name
-          primary
-          published
+  const fetchPromise = (async (): Promise<ShopLocale[]> => {
+    try {
+      const response = await admin.graphql(`
+        query getShopLocales {
+          shopLocales {
+            locale
+            name
+            primary
+            published
+          }
         }
+      `);
+
+      const json = await response.json();
+      const locales: ShopLocale[] = json.data?.shopLocales || [];
+
+      // Cache the result
+      SHOP_LOCALES_CACHE.set(shop, {
+        locales,
+        timestamp: Date.now(),
+      });
+
+      logger.info(`[ShopLocalesCache] Cached ${locales.length} locales for shop: ${shop}`);
+      return locales;
+    } catch (error) {
+      logger.error(`[ShopLocalesCache] Error fetching locales for shop: ${shop}`, { error });
+
+      // If we have stale cache, return it as fallback
+      if (cached) {
+        logger.info('[ShopLocalesCache] Returning stale cache as fallback');
+        return cached.locales;
       }
-    `);
 
-    const json = await response.json();
-    const locales: ShopLocale[] = json.data?.shopLocales || [];
-
-    // Cache the result
-    SHOP_LOCALES_CACHE.set(shop, {
-      locales,
-      timestamp: now,
-    });
-
-    logger.info(`[ShopLocalesCache] Cached ${locales.length} locales for shop: ${shop}`);
-    return locales;
-  } catch (error) {
-    logger.error(`[ShopLocalesCache] Error fetching locales for shop: ${shop}`, { error });
-
-    // If we have stale cache, return it as fallback
-    if (cached) {
-      logger.info('[ShopLocalesCache] Returning stale cache as fallback');
-      return cached.locales;
+      // No cache available, return empty array
+      return [];
+    } finally {
+      IN_FLIGHT.delete(shop);
     }
+  })();
 
-    // No cache available, return empty array
-    return [];
-  }
+  IN_FLIGHT.set(shop, fetchPromise);
+  return fetchPromise;
 }
 
 /**

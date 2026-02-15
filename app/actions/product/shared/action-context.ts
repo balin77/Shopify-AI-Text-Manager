@@ -54,45 +54,41 @@ export async function prepareActionContext(
     where: { shop },
   });
 
-  // Load AI instructions (with defaults if not exists)
-  let aiInstructions = await db.aIInstructions.findUnique({
-    where: { shop },
-  });
-
-  // Create or update AI Instructions with defaults if needed
+  // Load or create AI instructions atomically (upsert avoids TOCTOU race condition)
   const { DEFAULT_PRODUCT_INSTRUCTIONS } = await import(
     "~/constants/aiInstructionsDefaults"
   );
 
-  if (!aiInstructions) {
-    logger.info("Creating default AI instructions", {
-      context: "ActionContext",
-      shop,
-    });
+  const defaultData = {
+    productTitleFormat: DEFAULT_PRODUCT_INSTRUCTIONS.titleFormat,
+    productTitleInstructions: DEFAULT_PRODUCT_INSTRUCTIONS.titleInstructions,
+    productDescriptionFormat: DEFAULT_PRODUCT_INSTRUCTIONS.descriptionFormat,
+    productDescriptionInstructions:
+      DEFAULT_PRODUCT_INSTRUCTIONS.descriptionInstructions,
+    productHandleFormat: DEFAULT_PRODUCT_INSTRUCTIONS.handleFormat,
+    productHandleInstructions: DEFAULT_PRODUCT_INSTRUCTIONS.handleInstructions,
+    productSeoTitleFormat: DEFAULT_PRODUCT_INSTRUCTIONS.seoTitleFormat,
+    productSeoTitleInstructions:
+      DEFAULT_PRODUCT_INSTRUCTIONS.seoTitleInstructions,
+    productMetaDescFormat: DEFAULT_PRODUCT_INSTRUCTIONS.metaDescFormat,
+    productMetaDescInstructions:
+      DEFAULT_PRODUCT_INSTRUCTIONS.metaDescInstructions,
+    productAltTextFormat: DEFAULT_PRODUCT_INSTRUCTIONS.altTextFormat,
+    productAltTextInstructions:
+      DEFAULT_PRODUCT_INSTRUCTIONS.altTextInstructions,
+  };
 
-    aiInstructions = await db.aIInstructions.create({
-      data: {
-        shop,
-        productTitleFormat: DEFAULT_PRODUCT_INSTRUCTIONS.titleFormat,
-        productTitleInstructions: DEFAULT_PRODUCT_INSTRUCTIONS.titleInstructions,
-        productDescriptionFormat: DEFAULT_PRODUCT_INSTRUCTIONS.descriptionFormat,
-        productDescriptionInstructions:
-          DEFAULT_PRODUCT_INSTRUCTIONS.descriptionInstructions,
-        productHandleFormat: DEFAULT_PRODUCT_INSTRUCTIONS.handleFormat,
-        productHandleInstructions: DEFAULT_PRODUCT_INSTRUCTIONS.handleInstructions,
-        productSeoTitleFormat: DEFAULT_PRODUCT_INSTRUCTIONS.seoTitleFormat,
-        productSeoTitleInstructions:
-          DEFAULT_PRODUCT_INSTRUCTIONS.seoTitleInstructions,
-        productMetaDescFormat: DEFAULT_PRODUCT_INSTRUCTIONS.metaDescFormat,
-        productMetaDescInstructions:
-          DEFAULT_PRODUCT_INSTRUCTIONS.metaDescInstructions,
-        productAltTextFormat: DEFAULT_PRODUCT_INSTRUCTIONS.altTextFormat,
-        productAltTextInstructions:
-          DEFAULT_PRODUCT_INSTRUCTIONS.altTextInstructions,
-      },
-    });
-  } else if (!aiInstructions.productSeoTitleInstructions) {
-    // Update existing entry with missing fields
+  let aiInstructions = await db.aIInstructions.upsert({
+    where: { shop },
+    create: {
+      shop,
+      ...defaultData,
+    },
+    update: {},
+  });
+
+  // Back-fill missing fields on existing rows
+  if (!aiInstructions.productSeoTitleInstructions) {
     logger.info("Updating AI instructions with defaults", {
       context: "ActionContext",
       shop,
