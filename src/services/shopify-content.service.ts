@@ -732,7 +732,7 @@ export class ShopifyContentService {
           digestMap[translationKey] = digest;
           loggers.translation('debug', `Got digest for '${translationKey}' on retry`);
         } else {
-          loggers.translation('warn', `Still no digest for '${translationKey}' after retry. Shopify may not support translating this field. Saving to DB only.`, { availableKeys: Object.keys(fresh.digestMap).join(', ') });
+          loggers.translation('warn', `Still no digest for '${translationKey}' after retry. Shopify may not support translating this field. Field will NOT be saved.`, { availableKeys: Object.keys(fresh.digestMap).join(', ') });
         }
       }
 
