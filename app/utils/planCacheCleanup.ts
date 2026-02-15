@@ -112,13 +112,13 @@ export async function cleanupCacheForPlan(shop: string, newPlan: Plan): Promise<
 }
 
 /**
- * Delete products over the specified limit (keep oldest products)
+ * Delete products over the specified limit (keep newest products)
  */
 async function deleteProductsOverLimit(shop: string, maxProducts: number): Promise<number> {
-  // Get products sorted by lastSyncedAt (oldest first)
+  // Get products sorted by lastSyncedAt (newest first)
   const products = await db.product.findMany({
     where: { shop },
-    orderBy: { lastSyncedAt: "asc" },
+    orderBy: { lastSyncedAt: "desc" },
     select: { id: true },
   });
 

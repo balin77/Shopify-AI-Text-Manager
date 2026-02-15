@@ -34,7 +34,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
             trialDays: subscription.trialDays,
           }
         : null,
-    });
+    }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     logger.error('Error checking billing status', { error: error instanceof Error ? error.message : String(error) });
     return json(

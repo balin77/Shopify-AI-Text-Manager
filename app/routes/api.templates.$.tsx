@@ -7,7 +7,7 @@
 
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
-import { AIService, type AIProvider } from "../../src/services/ai.service";
+import { AIService, type AIProvider, toValidProvider } from "../../src/services/ai.service";
 import { TRANSLATE_CONTENT } from "../graphql/content.mutations";
 import { decryptApiKey } from "../utils/encryption.server";
 import { getFormString, getFormJSON } from "~/utils/form-data.utils";
@@ -105,7 +105,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 
     logger.debug("[API-TEMPLATES-LOADER] Loaded resources with translatable fields", { context: "Templates", resourceCount: themeGroups.length, fieldsCount: allContent.length, groupId });
 
-    return json({ theme: themeData });
+    return json({ theme: themeData }, { headers: { "Cache-Control": "no-store" } });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : String(error);
     const stack = error instanceof Error ? error.stack : undefined;
@@ -183,7 +183,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         });
 
         const aiService = new AIService(
-          (settings?.preferredProvider as AIProvider) || 'huggingface',
+          toValidProvider(settings?.preferredProvider),
           {
             huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
             geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
@@ -229,7 +229,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
         });
 
         const aiService = new AIService(
-          (settings?.preferredProvider as AIProvider) || 'huggingface',
+          toValidProvider(settings?.preferredProvider),
           {
             huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
             geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,

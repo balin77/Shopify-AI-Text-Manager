@@ -22,7 +22,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const productId = url.searchParams.get("productId");
 
   if (!productId) {
-    return json({ error: "productId is required" }, { status: 400 });
+    return json({ success: false, error: "productId is required" }, { status: 400 });
   }
 
   try {
@@ -55,7 +55,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
     if (data.errors) {
       logger.error("[API:ProductImages] GraphQL error", { context: "ProductImages", errors: data.errors });
-      return json({ error: data.errors[0]?.message || "GraphQL error" }, { status: 500 });
+      return json({ success: false, error: "Failed to load product images from Shopify." }, { status: 500 });
     }
 
     const mediaImages = data.data?.product?.media?.edges
@@ -115,9 +115,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       success: true,
       images: mediaImages,
       count: mediaImages.length,
-    });
+    }, { headers: { "Cache-Control": "no-store" } });
   } catch (error: any) {
     logger.error("[API:ProductImages] Error", { context: "ProductImages", error: error.message, stack: error.stack });
-    return json({ error: error.message }, { status: 500 });
+    return json({ success: false, error: "Failed to load product images." }, { status: 500 });
   }
 };

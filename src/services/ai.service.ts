@@ -3,11 +3,18 @@ import { GoogleGenerativeAI, type GenerativeModel } from '@google/generative-ai'
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import { AIQueueService } from './ai-queue.service';
-import { sanitizePromptInput } from '../../app/utils/prompt-sanitizer';
+import { sanitizePromptInput, isValidFieldType } from '../../app/utils/prompt-sanitizer';
 import { loggers } from '../../app/utils/logger.server';
 import { DEFAULT_MODELS } from '../../app/config/ai-models.config';
 
 export type AIProvider = 'huggingface' | 'gemini' | 'claude' | 'openai' | 'grok' | 'deepseek';
+
+const VALID_PROVIDERS: readonly AIProvider[] = ['huggingface', 'gemini', 'claude', 'openai', 'grok', 'deepseek'];
+
+/** Validate and return a safe AIProvider, falling back to 'huggingface'. */
+export function toValidProvider(value: string | null | undefined): AIProvider {
+  return VALID_PROVIDERS.includes(value as AIProvider) ? (value as AIProvider) : 'huggingface';
+}
 
 export interface AIServiceConfig {
   huggingfaceApiKey?: string;
@@ -231,7 +238,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     for (const [key, value] of Object.entries(fields)) {
       if (shortFieldKeys.includes(key) && value) {
         filteredFields[key] = sanitizePromptInput(value, {
-          fieldType: key as any,
+          fieldType: isValidFieldType(key) ? key : undefined,
           maxLength: key === 'handle' ? 200 : 500,
           allowNewlines: false
         });
@@ -367,7 +374,7 @@ Respond in JSON format:
 
     const sanitizedCurrentValue = currentValue
       ? sanitizePromptInput(currentValue, {
-          fieldType: fieldType as any,
+          fieldType: isValidFieldType(fieldType) ? fieldType : undefined,
           allowNewlines: true
         })
       : '';
@@ -461,7 +468,7 @@ Output the result in ${language}.`;
     const sanitizedFields: Record<string, string> = {};
     for (const [key, value] of Object.entries(fields)) {
       sanitizedFields[key] = sanitizePromptInput(value, {
-        fieldType: key as any,
+        fieldType: isValidFieldType(key) ? key : undefined,
         allowNewlines: key === 'description',
       });
     }

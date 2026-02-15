@@ -6,7 +6,7 @@
 
 import { json, type ActionFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
-import { AIService, type AIProvider } from "../../src/services/ai.service";
+import { AIService, type AIProvider, toValidProvider } from "../../src/services/ai.service";
 import { decryptApiKey } from "../utils/encryption.server";
 import { getTaskExpirationDate } from "~/config/constants";
 import { logger } from "~/utils/logger.server";
@@ -25,6 +25,11 @@ const CONTENT_CONFIGS: Record<string, ContentEditorConfig> = {
   pages: PAGES_CONFIG,
   policies: POLICIES_CONFIG,
 };
+
+const VALID_CONTENT_TYPES = new Set([
+  ...Object.keys(CONTENT_CONFIGS),
+  'templates',
+]);
 
 
 /** Shape of a single item from Shopify's translatableContent array. */
@@ -70,7 +75,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   try {
     const formData = await request.formData();
     const actionType = getFormString(formData, "action");
-    const contentType = getFormString(formData, "contentType") || "unknown";
+    const rawContentType = getFormString(formData, "contentType") || "";
+    if (!VALID_CONTENT_TYPES.has(rawContentType)) {
+      return json({ success: false, error: `Invalid contentType: ${rawContentType}` }, { status: 400 });
+    }
+    const contentType = rawContentType;
     const itemId = getFormString(formData, "itemId") || "unknown";
 
     const { db } = await import("../db.server");
@@ -119,7 +128,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           });
 
           const aiService = new AIService(
-            settings?.preferredProvider as AIProvider || 'huggingface',
+            toValidProvider(settings?.preferredProvider),
             {
               huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
               geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
@@ -233,7 +242,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           });
 
           const aiService = new AIService(
-            settings?.preferredProvider as AIProvider || 'huggingface',
+            toValidProvider(settings?.preferredProvider),
             {
               huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
               geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
@@ -979,7 +988,7 @@ Return only the formatted text, without explanations.`;
           });
 
           const aiService = new AIService(
-            settings?.preferredProvider as AIProvider || 'huggingface',
+            toValidProvider(settings?.preferredProvider),
             {
               huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
               geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
@@ -1120,7 +1129,7 @@ Language: ${mainLanguage}`;
           });
 
           const aiService = new AIService(
-            settings?.preferredProvider as AIProvider || 'huggingface',
+            toValidProvider(settings?.preferredProvider),
             {
               huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
               geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
@@ -1320,7 +1329,7 @@ Do NOT:
           });
 
           const aiService = new AIService(
-            settings?.preferredProvider as AIProvider || 'huggingface',
+            toValidProvider(settings?.preferredProvider),
             {
               huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
               geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
@@ -1425,7 +1434,7 @@ Do NOT:
           });
 
           const aiService = new AIService(
-            settings?.preferredProvider as AIProvider || 'huggingface',
+            toValidProvider(settings?.preferredProvider),
             {
               huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
               geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
@@ -1539,7 +1548,7 @@ Image URL: ${imageUrl}`;
           });
 
           const bulkAiService = new AIService(
-            settings?.preferredProvider as AIProvider || 'huggingface',
+            toValidProvider(settings?.preferredProvider),
             {
               huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
               geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
@@ -1648,7 +1657,7 @@ Image URL: ${image.url}`;
           });
 
           const aiService = new AIService(
-            settings?.preferredProvider as AIProvider || 'huggingface',
+            toValidProvider(settings?.preferredProvider),
             {
               huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
               geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
@@ -1742,7 +1751,7 @@ Image URL: ${image.url}`;
           });
 
           const aiService = new AIService(
-            settings?.preferredProvider as AIProvider || 'huggingface',
+            toValidProvider(settings?.preferredProvider),
             {
               huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
               geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
@@ -1990,7 +1999,7 @@ Image URL: ${image.url}`;
           });
 
           const aiService = new AIService(
-            settings?.preferredProvider as AIProvider || 'huggingface',
+            toValidProvider(settings?.preferredProvider),
             {
               huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
               geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
@@ -2243,7 +2252,7 @@ Image URL: ${image.url}`;
           });
 
           const aiService = new AIService(
-            settings?.preferredProvider as AIProvider || 'huggingface',
+            toValidProvider(settings?.preferredProvider),
             {
               huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
               geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
@@ -2448,6 +2457,6 @@ Image URL: ${image.url}`;
       error: errorMessage(error),
       stack: errorStack(error)
     });
-    return json({ success: false, error: errorMessage(error) }, { status: 500 });
+    return json({ success: false, error: "An internal error occurred while processing the AI request." }, { status: 500 });
   }
 };

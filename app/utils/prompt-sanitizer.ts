@@ -42,6 +42,14 @@ const MAX_INPUT_LENGTH = {
   general: 1000,
 };
 
+export type SanitizeFieldType = keyof typeof MAX_INPUT_LENGTH;
+
+const VALID_FIELD_TYPES = new Set<string>(Object.keys(MAX_INPUT_LENGTH));
+
+export function isValidFieldType(key: string): key is SanitizeFieldType {
+  return VALID_FIELD_TYPES.has(key);
+}
+
 export interface SanitizeOptions {
   maxLength?: number;
   fieldType?: keyof typeof MAX_INPUT_LENGTH;

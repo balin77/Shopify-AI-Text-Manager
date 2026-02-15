@@ -104,7 +104,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // Check cache first
   const cached = getCachedModels(cacheKey);
   if (cached) {
-    return json({ success: true, models: cached, defaultModel, fromCache: true });
+    return json({ success: true, models: cached, defaultModel, fromCache: true }, { headers: { "Cache-Control": "no-store" } });
   }
 
   // Load API key from DB
@@ -122,7 +122,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       defaultModel,
       fromFallback: true,
       reason: 'no_api_key',
-    });
+    }, { headers: { "Cache-Control": "no-store" } });
   }
 
   try {
@@ -166,7 +166,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // Cache the result
     setCachedModels(cacheKey, models);
 
-    return json({ success: true, models, defaultModel });
+    return json({ success: true, models, defaultModel }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     logger.warn('Failed to fetch models from provider API, using fallback', {
       provider,
@@ -179,6 +179,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       defaultModel,
       fromFallback: true,
       reason: 'api_error',
-    });
+    }, { headers: { "Cache-Control": "no-store" } });
   }
 };
