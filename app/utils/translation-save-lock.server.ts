@@ -8,14 +8,21 @@
  * may return stale data, undoing the user's changes.
  */
 
+const EXPIRY_MS = 60_000;
+const MAX_ENTRIES = 500;
+
 const recentSaves = new Map<string, number>();
+
+function evictExpired(): void {
+  const now = Date.now();
+  for (const [id, ts] of recentSaves) {
+    if (now - ts > EXPIRY_MS) recentSaves.delete(id);
+  }
+}
 
 export function markTranslationSaved(resourceId: string): void {
   recentSaves.set(resourceId, Date.now());
-  // Cleanup old entries
-  for (const [id, ts] of recentSaves) {
-    if (Date.now() - ts > 60_000) recentSaves.delete(id);
-  }
+  if (recentSaves.size > MAX_ENTRIES) evictExpired();
 }
 
 export function isTranslationRecentlySaved(
@@ -24,5 +31,7 @@ export function isTranslationRecentlySaved(
 ): boolean {
   const ts = recentSaves.get(resourceId);
   if (!ts) return false;
-  return Date.now() - ts < windowMs;
+  if (Date.now() - ts < windowMs) return true;
+  recentSaves.delete(resourceId);
+  return false;
 }

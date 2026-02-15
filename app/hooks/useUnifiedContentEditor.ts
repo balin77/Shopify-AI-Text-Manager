@@ -30,7 +30,7 @@ import type {
   TranslatedAltTextsResponse,
 } from "../types/content-editor.types";
 import { debugLog } from "../utils/debug";
-import { recentlySavedItems } from "../utils/translation-timing";
+import { markRecentlySaved } from "../utils/translation-timing";
 
 /**
  * Translates server error messages to localized strings
@@ -1776,7 +1776,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // Mark this item as recently saved to prevent on-demand sync from re-fetching
       // stale translations from Shopify (race condition with eventual consistency)
       if (selectedItemId) {
-        recentlySavedItems.set(selectedItemId, Date.now());
+        markRecentlySaved(selectedItemId);
       }
 
       // Revalidate to fetch fresh data from the database after successful save
