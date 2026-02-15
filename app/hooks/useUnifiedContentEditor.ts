@@ -1840,6 +1840,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           "warning",
           t.common?.warning || "Warning"
         );
+      } else if (fetcher.data.warning) {
+        // Server returned success but with a warning (e.g. Shopify saved, DB cache failed)
+        showInfoBox(
+          String(fetcher.data.warning),
+          "warning",
+          t.common?.warning || "Warning"
+        );
       } else {
         showInfoBox(
           t.common?.changesSaved || "Changes saved successfully!",

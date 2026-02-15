@@ -387,76 +387,106 @@ export class ShopifyContentService {
         });
       }
 
-      // Update database using transaction for consistency
-      // @ts-expect-error Prisma interactive transaction types
-      await db.$transaction(async (tx: PrismaClient) => {
-        // Upsert translations saved to Shopify
-        for (const translation of translationsInput) {
-          await tx.contentTranslation.upsert({
-            where: {
-              resourceId_key_locale: {
-                resourceId,
-                key: translation.key,
-                locale: translation.locale,
-              },
-            },
-            update: {
-              value: translation.value,
-              digest: translation.translatableContentDigest || null,
-              resourceType,
-            },
-            create: {
-              resourceId,
-              resourceType,
-              key: translation.key,
-              value: translation.value,
-              locale: translation.locale,
-              digest: translation.translatableContentDigest || null,
-            },
-          });
-        }
-
-        // Upsert DB-only translations (no digest available, not saved to Shopify)
-        for (const translation of dbOnlyTranslations) {
-          await tx.contentTranslation.upsert({
-            where: {
-              resourceId_key_locale: {
-                resourceId,
-                key: translation.key,
-                locale: translation.locale,
-              },
-            },
-            update: {
-              value: translation.value,
-              digest: null,
-              resourceType,
-            },
-            create: {
-              resourceId,
-              resourceType,
-              key: translation.key,
-              value: translation.value,
-              locale: translation.locale,
-              digest: null,
-            },
-          });
-        }
-
-        // Delete cleared translations from database (single batch call)
-        if (translationsToDelete.length > 0) {
-          await tx.contentTranslation.deleteMany({
-            where: {
-              resourceId,
-              resourceType,
-              locale,
-              key: { in: translationsToDelete },
-            },
-          });
-        }
-      });
-
-      // Mark this resource as recently saved so webhook syncs don't overwrite
+      // Mark this resource as recently saved so webhook syncs don't overwrite.
+      // Moved before DB transaction: Shopify is already updated at this point,
+      // so webhook protection must be active even if the DB transaction fails.
       markTranslationSaved(resourceId);
+
+      // Update database using transaction for consistency.
+      // If this fails, Shopify already has the correct state — retry once,
+      // then return a warning so the next sync/reload reconciles.
+      const runDbTransaction = async () => {
+        // @ts-expect-error Prisma interactive transaction types
+        await db.$transaction(async (tx: PrismaClient) => {
+          // Upsert translations saved to Shopify
+          for (const translation of translationsInput) {
+            await tx.contentTranslation.upsert({
+              where: {
+                resourceId_key_locale: {
+                  resourceId,
+                  key: translation.key,
+                  locale: translation.locale,
+                },
+              },
+              update: {
+                value: translation.value,
+                digest: translation.translatableContentDigest || null,
+                resourceType,
+              },
+              create: {
+                resourceId,
+                resourceType,
+                key: translation.key,
+                value: translation.value,
+                locale: translation.locale,
+                digest: translation.translatableContentDigest || null,
+              },
+            });
+          }
+
+          // Upsert DB-only translations (no digest available, not saved to Shopify)
+          for (const translation of dbOnlyTranslations) {
+            await tx.contentTranslation.upsert({
+              where: {
+                resourceId_key_locale: {
+                  resourceId,
+                  key: translation.key,
+                  locale: translation.locale,
+                },
+              },
+              update: {
+                value: translation.value,
+                digest: null,
+                resourceType,
+              },
+              create: {
+                resourceId,
+                resourceType,
+                key: translation.key,
+                value: translation.value,
+                locale: translation.locale,
+                digest: null,
+              },
+            });
+          }
+
+          // Delete cleared translations from database (single batch call)
+          if (translationsToDelete.length > 0) {
+            await tx.contentTranslation.deleteMany({
+              where: {
+                resourceId,
+                resourceType,
+                locale,
+                key: { in: translationsToDelete },
+              },
+            });
+          }
+        });
+      };
+
+      try {
+        await runDbTransaction();
+      } catch (dbError) {
+        loggers.translation('error', `[updateContent] DB transaction failed after Shopify update`, {
+          resourceId, resourceType, locale,
+          error: dbError instanceof Error ? dbError.message : String(dbError),
+        });
+        // Retry once — transient DB issues (locks, timeouts) are common
+        try {
+          await runDbTransaction();
+          loggers.translation('info', `[updateContent] DB transaction succeeded on retry`, { resourceId });
+        } catch (retryError) {
+          loggers.translation('error', `[updateContent] DB transaction failed on retry — Shopify/DB inconsistent`, {
+            resourceId,
+            error: retryError instanceof Error ? retryError.message : String(retryError),
+          });
+          // Shopify has the data; next sync/reload will reconcile the DB
+          return {
+            success: true,
+            warning: 'Translation saved to Shopify but local cache update failed. Reload to sync.',
+          };
+        }
+      }
 
       return { success: true };
     } else {
