@@ -9,6 +9,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useRevalidator, useFetcher } from "@remix-run/react";
 import { useNavigationGuard, useChangeTracking, getTranslatedValue } from "../utils/contentEditor.utils";
 import { useItemFocus } from "./useFocusManagement";
+import { useLatestRef } from "./useLatestRef";
 import type {
   UseContentEditorProps,
   UseContentEditorReturn,
@@ -130,9 +131,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   );
   // Track if we're in the middle of an accept-and-translate flow to prevent immediate deletion
   const [isAcceptAndTranslateFlow, setIsAcceptAndTranslateFlow] = useState(false);
-  // Ref to access isAcceptAndTranslateFlow in memoized callbacks without adding as dependency
-  const isAcceptAndTranslateFlowRef = useRef(false);
-  isAcceptAndTranslateFlowRef.current = isAcceptAndTranslateFlow;
+  const isAcceptAndTranslateFlowRef = useLatestRef(isAcceptAndTranslateFlow);
   // Track if we're currently loading data to prevent false change detection
   // Initialize to true if an item is selected to prevent race condition
   const [isLoadingData, setIsLoadingData] = useState(!!selectedItemId);
@@ -152,12 +151,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const [altTextSuggestions, setAltTextSuggestions] = useState<Record<number, string>>({});
   // Track original alt-texts to detect changes (using state to trigger re-renders)
   const [originalAltTexts, setOriginalAltTexts] = useState<Record<number, string>>({});
-  // Ref to access imageAltTexts in effects without adding as dependency
-  const imageAltTextsRef = useRef<Record<number, string>>({});
-  imageAltTextsRef.current = imageAltTexts;
-  // Ref to access originalAltTexts in callbacks without adding as dependency
-  const originalAltTextsRef = useRef<Record<number, string>>({});
-  originalAltTextsRef.current = originalAltTexts;
+  const imageAltTextsRef = useLatestRef(imageAltTexts);
+  const originalAltTextsRef = useLatestRef(originalAltTexts);
 
   // Track pending auto-save for alt-texts (set by bulk generation and translation effects)
   const pendingAltTextAutoSaveRef = useRef<Record<number, string> | null>(null);
@@ -186,11 +181,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // This happens when Shopify doesn't return a translation because it's identical to the primary value
   const [fallbackFields, setFallbackFields] = useState<Set<string>>(new Set());
 
-  // Ref for fallbackFields to avoid stale closures in callbacks/effects
-  const fallbackFieldsRef = useRef<Set<string>>(new Set());
-  useEffect(() => {
-    fallbackFieldsRef.current = fallbackFields;
-  }, [fallbackFields]);
+  const fallbackFieldsRef = useLatestRef(fallbackFields);
 
   // Track original loaded values for foreign locale change detection during save.
   // Problem: Previously ALL non-fallback fields were sent on every save, even unchanged ones.
@@ -350,9 +341,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     return config.fieldDefinitions;
   }, [config.dynamicFields, config.getFieldDefinitions, config.fieldDefinitions, selectedItem]);
 
-  // Ref to store field definitions to avoid triggering data load effect
-  const effectiveFieldDefinitionsRef = useRef(effectiveFieldDefinitions);
-  effectiveFieldDefinitionsRef.current = effectiveFieldDefinitions;
+  const effectiveFieldDefinitionsRef = useLatestRef(effectiveFieldDefinitions);
 
   // Navigation guard
   const {
@@ -437,10 +426,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // Track previous dataRefreshTrigger to detect manual refreshes
   const prevDataRefreshTriggerRef = useRef<number>(0);
 
-  // Ref to access selectedItem without adding it to effect dependencies
-  // This prevents the effect from re-running when selectedItem reference changes
-  const selectedItemRef = useRef(selectedItem);
-  selectedItemRef.current = selectedItem;
+  const selectedItemRef = useLatestRef(selectedItem);
 
   useEffect(() => {
     const item = selectedItemRef.current;
@@ -1071,11 +1057,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // Ref to skip the next data load (prevents overwriting after save/clear operations)
   const skipNextDataLoadRef = useRef(false);
 
-  // Ref to store current editableValues for use in effects without causing loops
-  const editableValuesRef = useRef(editableValues);
-  useEffect(() => {
-    editableValuesRef.current = editableValues;
-  }, [editableValues]);
+  const editableValuesRef = useLatestRef(editableValues);
 
   // Ref to track processed translateField responses (prevents duplicate processing/infinite loops)
   const processedTranslateFieldRef = useRef<string | null>(null);
