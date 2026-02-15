@@ -437,6 +437,6 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
     }
   } catch (error: any) {
     logger.error("[API-TEMPLATES-ACTION] Error", { context: "Templates", error: error.message, stack: error.stack });
-    return json({ success: false, error: error.message }, { status: 500 });
+    return json({ success: false, error: "Template operation failed" }, { status: 500 });
   }
 };

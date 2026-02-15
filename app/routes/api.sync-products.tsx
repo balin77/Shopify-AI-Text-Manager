@@ -311,7 +311,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       } catch (err: any) {
         logger.error("[SYNC-PRODUCTS] Failed to save product", { context: "SyncProducts", productId: product.id, error: err.message });
         failed++;
-        errors.push(`${product.id}: ${err.message}`);
+        errors.push(`${product.id}: Failed to sync products`);
       }
     }
 
@@ -329,7 +329,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return json(
       {
         success: false,
-        error: error.message,
+        error: "Failed to sync products",
       },
       { status: 500 }
     );

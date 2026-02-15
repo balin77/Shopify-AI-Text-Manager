@@ -687,7 +687,7 @@ export default function SettingsPage() {
   const handleSectionChange = (newSection: "setup" | "ai" | "instructions" | "language" | "plan") => {
     if (hasUnsavedChanges) {
       const message = t.settings?.unsavedChangesMessage ||
-        "Sie haben ungespeicherte Änderungen. Möchten Sie wirklich fortfahren? Ihre Änderungen gehen verloren.";
+        "You have unsaved changes. Do you really want to continue? Your changes will be lost.";
       const confirmed = window.confirm(message);
       if (!confirmed) {
         return;

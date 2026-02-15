@@ -37,7 +37,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const { loadAISettingsForValidation } = await import("../utils/loader-helpers");
 
     // Load shopLocales and policies from Shopify in parallel
-    const [localesResponse, policiesResponse, allTranslations, aiSettings] = await Promise.all([
+    const [localesResponse, policiesResponse, aiSettings] = await Promise.all([
       admin.graphql(
         `#graphql
           query getShopLocales {
@@ -65,10 +65,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
             }
           }`
       ),
-      // Still load translations from DB (needed for performance)
-      db.contentTranslation.findMany({
-        where: { resourceType: 'ShopPolicy' }
-      }),
       loadAISettingsForValidation(db, session.shop),
     ]);
 
@@ -78,6 +74,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
     const policiesData = await policiesResponse.json();
     const policies = policiesData.data?.shop?.shopPolicies || [];
+
+    // Fetch translations scoped to this shop's policy IDs
+    const policyIds = policies.map((p: any) => p.id);
+    const allTranslations = await db.contentTranslation.findMany({
+      where: { resourceType: 'ShopPolicy', resourceId: { in: policyIds } }
+    });
 
     // Group translations by resourceId
     const translationsByResource = allTranslations.reduce((acc: Record<string, any[]>, trans) => {
@@ -107,13 +109,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       aiSettings,
     });
   } catch (error: any) {
+    if (error instanceof Response) throw error;
     logger.error("[POLICIES-LOADER] Error", { error: error instanceof Error ? error.message : String(error) });
     return json({
       policies: [],
       shop: session.shop,
       shopLocales: [],
       primaryLocale: "en",
-      error: error.message,
+      error: "Failed to load policies",
       aiSettings: null,
     }, { status: 500 });
   }

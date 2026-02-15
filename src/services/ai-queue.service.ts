@@ -266,7 +266,19 @@ export class AIQueueService {
   /**
    * Calculate wait time until rate limit allows execution
    */
-  private calculateWaitTime(provider: AIProvider, estimatedTokens: number): number {
+  private calculateWaitTime(provider?: AIProvider, estimatedTokens?: number): number {
+    // If no provider specified, find the minimum wait time across all providers with active windows
+    if (!provider) {
+      let minWait = Infinity;
+      for (const [p, windows] of this.usageWindows.entries()) {
+        if (windows.length > 0) {
+          const wait = this.calculateWaitTime(p, 0);
+          if (wait < minWait) minWait = wait;
+        }
+      }
+      return minWait === Infinity ? 0 : minWait;
+    }
+
     const windows = this.usageWindows.get(provider) || [];
     if (windows.length === 0) return 0;
 
@@ -341,6 +353,10 @@ export class AIQueueService {
 
         if (!next) {
           // No request can be executed right now (rate limited)
+          const waitTime = this.calculateWaitTime();
+          if (waitTime > 0 && this.queues.size > 0) {
+            setTimeout(processNext, waitTime);
+          }
           return;
         }
 

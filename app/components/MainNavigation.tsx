@@ -1,5 +1,6 @@
 import { useLocation, useNavigate, useFetcher, useMatches, useNavigation } from "@remix-run/react";
-import { InlineStack, Text, Banner, ButtonGroup, Button, Tooltip, Spinner } from "@shopify/polaris";
+import { InlineStack, Text, Banner, ButtonGroup, Button, Tooltip, Spinner, Popover, Scrollable, Icon } from "@shopify/polaris";
+import { NotificationIcon } from "@shopify/polaris-icons";
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { usePlan } from "../contexts/PlanContext";
@@ -9,7 +10,9 @@ import { useAppNavigation } from "../hooks/useAppNavigation";
 import { MobileMenu } from "./MobileMenu";
 import { UnifiedItemSelectorCompact } from "./unified/UnifiedItemSelectorCompact";
 import { type Plan, PLAN_DISPLAY_NAMES } from "../config/plans";
-import { useState, useEffect, useRef } from "react";
+import { extractReadableName } from "../utils/templates-field-factory";
+import { useState, useEffect, useRef, useCallback } from "react";
+import type { InfoBoxTone } from "../contexts/InfoBoxContext";
 
 export function MainNavigation() {
   const location = useLocation();
@@ -18,7 +21,8 @@ export function MainNavigation() {
   const matches = useMatches();
   const { handleNavigate } = useAppNavigation();
   const { t } = useI18n();
-  const { infoBox, hideInfoBox, showInfoBox, isGlobalLoading } = useInfoBox();
+  const { infoBox, hideInfoBox, showInfoBox, isGlobalLoading, messageHistory, unreadCount, markAllRead, clearHistory } = useInfoBox();
+  const [popoverActive, setPopoverActive] = useState(false);
   const { plan, getPlanDisplayName, getMaxProducts } = usePlan();
   const { setMainNavHeight } = useNavigationHeight();
   const { items, selectedItemId, onItemSelect, resourceName, t: itemSelectorT } = useItemSelector();
@@ -140,12 +144,19 @@ export function MainNavigation() {
         if (task.fieldType === "all") {
           message = t.tasks?.translationCompleted || `Translation completed for "${resourceTitle}"`;
         } else {
-          const fieldName = task.fieldType || "field";
+          const rawFieldType = task.fieldType || "field";
+          // Resolve raw template keys (contain dots/colons) to human-readable labels
+          const fieldName = (rawFieldType.includes('.') || rawFieldType.includes(':'))
+            ? extractReadableName(rawFieldType)
+            : rawFieldType;
           message = t.tasks?.fieldTranslationCompleted?.replace("{field}", fieldName).replace("{title}", resourceTitle)
             || `Translation completed for ${fieldName} in "${resourceTitle}"`;
         }
       } else if (task.type === "aiGeneration") {
-        const fieldName = task.fieldType || "content";
+        const rawFieldType = task.fieldType || "content";
+        const fieldName = (rawFieldType.includes('.') || rawFieldType.includes(':'))
+          ? extractReadableName(rawFieldType)
+          : rawFieldType;
         message = t.tasks?.generationCompleted?.replace("{field}", fieldName).replace("{title}", resourceTitle)
           || `AI generation completed for ${fieldName} in "${resourceTitle}"`;
       } else {
@@ -300,6 +311,33 @@ export function MainNavigation() {
       window.removeEventListener('resize', updateHeight);
     };
   }, [infoBox, showLoadingIndicator, isGlobalLoading, setMainNavHeight]); // Re-measure when infoBox or loading indicator changes
+
+  const togglePopover = useCallback(() => {
+    setPopoverActive(prev => {
+      if (!prev) markAllRead();
+      return !prev;
+    });
+  }, [markAllRead]);
+
+  const closePopover = useCallback(() => setPopoverActive(false), []);
+
+  const toneColor = (tone: InfoBoxTone) =>
+    tone === "success" ? "#4caf50" :
+    tone === "critical" ? "#f44336" :
+    tone === "warning" ? "#ff9800" :
+    "#2196f3";
+
+  const toneBg = (tone: InfoBoxTone) =>
+    tone === "success" ? "#e8f5e9" :
+    tone === "critical" ? "#ffebee" :
+    tone === "warning" ? "#fff3e0" :
+    "#e3f2fd";
+
+  const formatTime = (date: Date) => {
+    const h = date.getHours().toString().padStart(2, "0");
+    const m = date.getMinutes().toString().padStart(2, "0");
+    return `${h}:${m}`;
+  };
 
   const tabs = [
     { id: "products", label: t.nav.products, path: "/app/products" },
@@ -480,56 +518,168 @@ export function MainNavigation() {
             </div>
           )}
 
-          {/* InfoBox auf gleicher Ebene - schlanke Variante - versteckt auf Mobile */}
-          {infoBox && (
-            <div
-              className="info-box desktop-only"
-              role="status"
-              aria-live="polite"
-              aria-label={`${infoBox.tone === "success" ? "Success" : infoBox.tone === "critical" ? "Error" : infoBox.tone === "warning" ? "Warning" : "Information"} notification`}
-              style={{
-                flex: 1,
-                maxWidth: "600px",
-                display: "flex",
-                alignItems: "center",
-                padding: "0.5rem 1rem",
-                borderRadius: "4px",
-                backgroundColor:
-                  infoBox.tone === "success" ? "#e8f5e9" :
-                  infoBox.tone === "critical" ? "#ffebee" :
-                  infoBox.tone === "warning" ? "#fff3e0" :
-                  "#e3f2fd",
-                border: `1px solid ${
-                  infoBox.tone === "success" ? "#4caf50" :
-                  infoBox.tone === "critical" ? "#f44336" :
-                  infoBox.tone === "warning" ? "#ff9800" :
-                  "#2196f3"
-                }`,
-                fontSize: "14px",
-                gap: "0.5rem"
-              }}
-            >
-              <span style={{ flex: 1, color: "#202223" }}>
-                {infoBox.message}
-              </span>
-              <button
-                onClick={hideInfoBox}
-                style={{
-                  background: "none",
-                  border: "none",
-                  cursor: "pointer",
-                  padding: "0.25rem",
-                  display: "flex",
-                  alignItems: "center",
-                  color: "#202223",
-                  opacity: 0.6,
-                  fontSize: "18px",
-                  lineHeight: 1
-                }}
-                aria-label="Schließen"
+          {/* InfoBox with Popover History - desktop only */}
+          {(infoBox || messageHistory.length > 0) && (
+            <div className="desktop-only" style={{ flex: 1, maxWidth: "600px" }}>
+              <Popover
+                active={popoverActive}
+                onClose={closePopover}
+                preferredPosition="below"
+                preferredAlignment="center"
+                activator={
+                  infoBox ? (
+                    <div
+                      className="info-box"
+                      role="status"
+                      aria-live="polite"
+                      aria-label={`${infoBox.tone === "success" ? "Success" : infoBox.tone === "critical" ? "Error" : infoBox.tone === "warning" ? "Warning" : "Information"} notification`}
+                      onClick={togglePopover}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        padding: "0.5rem 1rem",
+                        borderRadius: "4px",
+                        backgroundColor: toneBg(infoBox.tone),
+                        border: `1px solid ${toneColor(infoBox.tone)}`,
+                        fontSize: "14px",
+                        gap: "0.5rem",
+                        cursor: "pointer",
+                      }}
+                    >
+                      <span style={{ flex: 1, color: "#202223" }}>
+                        {infoBox.message}
+                      </span>
+                      {messageHistory.length > 1 && (
+                        <span style={{
+                          backgroundColor: "#303030",
+                          color: "white",
+                          borderRadius: "10px",
+                          padding: "1px 6px",
+                          fontSize: "11px",
+                          fontWeight: "600",
+                          minWidth: "18px",
+                          textAlign: "center",
+                        }}>
+                          {messageHistory.length}
+                        </span>
+                      )}
+                      <button
+                        onClick={(e) => { e.stopPropagation(); hideInfoBox(); }}
+                        style={{
+                          background: "none",
+                          border: "none",
+                          cursor: "pointer",
+                          padding: "0.25rem",
+                          display: "flex",
+                          alignItems: "center",
+                          color: "#202223",
+                          opacity: 0.6,
+                          fontSize: "18px",
+                          lineHeight: 1,
+                        }}
+                        aria-label="Schließen"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={togglePopover}
+                      style={{
+                        position: "relative",
+                        background: "none",
+                        border: "1px solid #c9cccf",
+                        borderRadius: "8px",
+                        cursor: "pointer",
+                        padding: "6px",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                      }}
+                      aria-label={`${messageHistory.length} Nachrichten`}
+                    >
+                      <Icon source={NotificationIcon} tone="base" />
+                      {unreadCount > 0 && (
+                        <span style={{
+                          position: "absolute",
+                          top: "-4px",
+                          right: "-4px",
+                          backgroundColor: "#f44336",
+                          color: "white",
+                          borderRadius: "10px",
+                          padding: "0 5px",
+                          fontSize: "10px",
+                          fontWeight: "700",
+                          minWidth: "16px",
+                          height: "16px",
+                          lineHeight: "16px",
+                          textAlign: "center",
+                        }}>
+                          {unreadCount}
+                        </span>
+                      )}
+                    </button>
+                  )
+                }
               >
-                ×
-              </button>
+                <div style={{ width: "380px" }}>
+                  <div style={{
+                    padding: "12px 16px",
+                    borderBottom: "1px solid #e1e3e5",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                  }}>
+                    <Text as="span" variant="headingSm">Nachrichten</Text>
+                    {messageHistory.length > 0 && (
+                      <Button
+                        variant="plain"
+                        size="slim"
+                        onClick={() => { clearHistory(); closePopover(); }}
+                      >
+                        Alle löschen
+                      </Button>
+                    )}
+                  </div>
+                  <Scrollable style={{ maxHeight: "300px" }}>
+                    {messageHistory.length === 0 ? (
+                      <div style={{ padding: "24px 16px", textAlign: "center" }}>
+                        <Text as="p" variant="bodySm" tone="subdued">Keine Nachrichten</Text>
+                      </div>
+                    ) : (
+                      messageHistory.map((entry) => (
+                        <div
+                          key={entry.id}
+                          style={{
+                            padding: "10px 16px",
+                            borderBottom: "1px solid #f1f2f3",
+                            display: "flex",
+                            gap: "10px",
+                            alignItems: "flex-start",
+                          }}
+                        >
+                          <span style={{
+                            width: "8px",
+                            height: "8px",
+                            borderRadius: "50%",
+                            backgroundColor: toneColor(entry.tone),
+                            flexShrink: 0,
+                            marginTop: "6px",
+                          }} />
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <Text as="p" variant="bodySm">
+                              {entry.message}
+                            </Text>
+                          </div>
+                          <Text as="span" variant="bodySm" tone="subdued">
+                            {formatTime(entry.timestamp)}
+                          </Text>
+                        </div>
+                      ))
+                    )}
+                  </Scrollable>
+                </div>
+              </Popover>
             </div>
           )}
 

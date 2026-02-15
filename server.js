@@ -81,8 +81,8 @@ app.use((req, res, next) => {
 app.use('/api', (req, res, next) => {
   // Skip rate limiting for these endpoints - they have exponential backoff in the client
   const excludedPaths = [
-    '/api/running-tasks-count',
-    '/api/recently-completed-tasks'
+    '/running-tasks-count',
+    '/recently-completed-tasks'
   ];
 
   if (excludedPaths.includes(req.path)) {
@@ -128,7 +128,7 @@ app.get("/health", async (req, res) => {
     res.status(200).json({ status: "ok", timestamp: new Date().toISOString() });
   } catch (error) {
     console.error("Health check failed:", error.message);
-    res.status(503).json({ status: "not ready", error: error.message });
+    res.status(503).json({ status: "not ready", error: "Service not ready" });
   }
 });
 
@@ -204,9 +204,8 @@ async function gracefulShutdown(signal) {
 
     try {
       // Close Prisma connections
-      const { PrismaClient } = await import("@prisma/client");
-      const prisma = new PrismaClient();
-      await prisma.$disconnect();
+      const { db } = await import("./app/db.server.js");
+      await db.$disconnect();
       console.log('✅ Database connections closed');
     } catch (error) {
       console.error('Error closing database connections:', error);

@@ -187,13 +187,13 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
       subtitle = `${item.contentCount || 0} ${t.content?.translatableFields || "translatable fields"}`;
     }
     return {
+      ...item,
       id: item.id,
       title: config.getPrimaryField ? config.getPrimaryField(item, t) : item.title,
       subtitle,
       category: item.blogTitle || item.category,
       status: item.status,
       image: item.featuredImage || item.image,
-      ...item,
     };
   }), [items, config.getPrimaryField, config.getSubtitle, config.contentType, t]);
 

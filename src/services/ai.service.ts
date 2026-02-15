@@ -9,6 +9,15 @@ import { DEFAULT_MODELS } from '../../app/config/ai-models.config';
 
 export type AIProvider = 'huggingface' | 'gemini' | 'claude' | 'openai' | 'grok' | 'deepseek';
 
+const LOCALE_NAMES: Record<string, string> = {
+  en: 'English', fr: 'French', es: 'Spanish', it: 'Italian',
+  de: 'German', pt: 'Portuguese', nl: 'Dutch', ja: 'Japanese',
+  ko: 'Korean', zh: 'Chinese', ru: 'Russian', ar: 'Arabic',
+  sv: 'Swedish', da: 'Danish', no: 'Norwegian', fi: 'Finnish',
+  pl: 'Polish', cs: 'Czech', tr: 'Turkish', th: 'Thai',
+  vi: 'Vietnamese', id: 'Indonesian', ms: 'Malay', hi: 'Hindi',
+};
+
 const VALID_PROVIDERS: readonly AIProvider[] = ['huggingface', 'gemini', 'claude', 'openai', 'grok', 'deepseek'];
 
 /** Validate and return a safe AIProvider, falling back to 'huggingface'. */
@@ -185,13 +194,7 @@ Return only the translated URL slug, nothing else.`;
       allowNewlines: false
     });
 
-    const localeNames: Record<string, string> = {
-      de: 'German',
-      en: 'English',
-      fr: 'French',
-      es: 'Spanish',
-      it: 'Italian',
-    };
+    const localeNames = LOCALE_NAMES;
 
     const targetLanguages = targetLocales
       .map((loc) => `${localeNames[loc] || loc} (${loc})`)
@@ -249,13 +252,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       return {};
     }
 
-    const localeNames: Record<string, string> = {
-      de: 'German',
-      en: 'English',
-      fr: 'French',
-      es: 'Spanish',
-      it: 'Italian',
-    };
+    const localeNames = LOCALE_NAMES;
 
     const fieldNames: Record<string, string> = {
       title: 'Title',
@@ -311,12 +308,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     const sanitizedTitle = sanitizePromptInput(seoTitle, { fieldType: 'seoTitle' });
     const sanitizedDescription = sanitizePromptInput(metaDescription, { fieldType: 'metaDescription' });
 
-    const localeNames: Record<string, string> = {
-      en: 'English',
-      fr: 'French',
-      es: 'Spanish',
-      it: 'Italian',
-    };
+    const localeNames = LOCALE_NAMES;
 
     const targetLanguages = targetLocales.map((loc) => localeNames[loc] || loc).join(', ');
 
@@ -379,13 +371,7 @@ Respond in JSON format:
         })
       : '';
 
-    const localeNames: Record<string, string> = {
-      de: 'German',
-      en: 'English',
-      fr: 'French',
-      es: 'Spanish',
-      it: 'Italian',
-    };
+    const localeNames = LOCALE_NAMES;
 
     const language = localeNames[sanitizedContext.locale] || 'German';
     const isTitle = fieldType === 'title';
@@ -473,12 +459,7 @@ Output the result in ${language}.`;
       });
     }
 
-    const localeNames: Record<string, string> = {
-      en: 'English',
-      fr: 'French',
-      es: 'Spanish',
-      it: 'Italian',
-    };
+    const localeNames = LOCALE_NAMES;
 
     const fieldNames: Record<string, string> = {
       title: 'Title',
@@ -801,6 +782,9 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     const timeout = setTimeout(() => controller.abort(), 30_000);
     try {
       const response = await fetch(imageUrl, { signal: controller.signal });
+      if (!response.ok) {
+        throw new Error(`Failed to fetch image: HTTP ${response.status}`);
+      }
       const arrayBuffer = await response.arrayBuffer();
       const buffer = Buffer.from(arrayBuffer);
       return buffer.toString('base64');

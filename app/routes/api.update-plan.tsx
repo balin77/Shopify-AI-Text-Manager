@@ -138,7 +138,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return json(
       {
         success: false,
-        error: error instanceof Error ? error.message : "Unknown error",
+        error: "Failed to update plan",
       },
       { status: 500 }
     );

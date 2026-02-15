@@ -1,11 +1,9 @@
-import { useRef } from "react";
 import { Button } from "@shopify/polaris";
 
 interface SaveDiscardButtonsProps {
   hasChanges: boolean;
   onSave: () => void;
   onDiscard: () => void;
-  isLoading?: boolean;
   highlightSaveButton?: boolean;
   saveText?: string;
   discardText?: string;
@@ -31,7 +29,6 @@ export function SaveDiscardButtons({
   hasChanges,
   onSave,
   onDiscard,
-  isLoading = false,
   highlightSaveButton = false,
   saveText = "Save Changes",
   discardText = "Discard",
@@ -39,14 +36,12 @@ export function SaveDiscardButtons({
   fetcherState = "idle",
   fetcherFormData = null,
 }: SaveDiscardButtonsProps) {
-  const saveButtonRef = useRef<HTMLDivElement>(null);
-
   // Determine if currently submitting this specific action
   const isSubmitting = fetcherState !== "idle" &&
     fetcherFormData?.get("action") === action;
 
   return (
-    <div ref={saveButtonRef} style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", flex: 1, minWidth: 0, alignItems: "center" }}>
+    <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", flex: 1, minWidth: 0, alignItems: "center" }}>
       <Button
         onClick={onDiscard}
         disabled={!hasChanges || fetcherState !== "idle"}
@@ -63,7 +58,7 @@ export function SaveDiscardButtons({
         <Button
           variant={hasChanges ? "primary" : undefined}
           onClick={onSave}
-          disabled={!hasChanges}
+          disabled={!hasChanges || fetcherState !== "idle"}
           loading={isSubmitting}
           size="slim"
         >

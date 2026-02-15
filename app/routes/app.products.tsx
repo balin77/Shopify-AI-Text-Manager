@@ -40,7 +40,7 @@ export const loader = createContentLoader({
   logPrefix: "PRODUCTS",
   resourceType: "Product",
   itemsKey: "products",
-  errorFallback: { plan: "basic", maxProducts: 100, productCount: 0 },
+  errorFallback: { plan: "free", maxProducts: 100, productCount: 0 },
 
   async loadData(ctx) {
     const { getPlanLimits } = await import("../utils/planUtils");

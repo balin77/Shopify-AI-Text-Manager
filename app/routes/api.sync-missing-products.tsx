@@ -237,7 +237,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return json(
       {
         success: false,
-        error: error.message,
+        error: "Failed to sync missing products",
       },
       { status: 500 }
     );

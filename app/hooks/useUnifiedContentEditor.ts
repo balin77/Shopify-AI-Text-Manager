@@ -32,6 +32,7 @@ import type {
 } from "../types/content-editor.types";
 import { debugLog } from "../utils/debug";
 import { markRecentlySaved } from "../utils/translation-timing";
+import { extractReadableName } from "../utils/templates-field-factory";
 
 /**
  * Translates server error messages to localized strings
@@ -241,30 +242,47 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     return found;
   }, [items, selectedItemId]);
 
-  // Hybrid image loading:
+  // Hybrid image loading + deep-enough clone:
   // - If images exist in DB -> use them directly (instant)
   // - If no images in DB -> load on-demand from Shopify API (fallback)
+  //
+  // IMPORTANT: We create a deep-enough clone of the item so that in-memory mutations
+  // (translations, field values, image alt-texts) only affect this local copy and do NOT
+  // mutate the parent component's data. This preserves React's immutability principle.
   const selectedItem = useMemo(() => {
     if (!baseSelectedItem) return undefined;
 
-    // Check if DB has images for this product
+    // Deep-enough clone: shallow spread the item, then clone mutable nested structures
+    const cloned: TranslatableContentItem = {
+      ...baseSelectedItem,
+      translations: baseSelectedItem.translations
+        ? baseSelectedItem.translations.map((t: Translation) => ({ ...t }))
+        : [],
+      seo: baseSelectedItem.seo ? { ...baseSelectedItem.seo } : undefined,
+      translatableContent: baseSelectedItem.translatableContent
+        ? baseSelectedItem.translatableContent.map(
+            (c: { key: string; value: string }) => (c ? { ...c } : c)
+          )
+        : undefined,
+    };
+
+    // Clone images with their altTextTranslations
     const hasDbImages = baseSelectedItem.images && baseSelectedItem.images.length > 0;
-
-    // If DB has images, use them directly (instant loading)
     if (hasDbImages) {
-      return baseSelectedItem;
+      cloned.images = baseSelectedItem.images!.map((img: ContentImage) => ({
+        ...img,
+        altTextTranslations: img.altTextTranslations
+          ? img.altTextTranslations.map((t: AltTextTranslation) => ({ ...t }))
+          : [],
+      }));
+    } else if (
+      onDemandImages.length > 0 &&
+      loadedImagesForProductRef.current === selectedItemId
+    ) {
+      cloned.images = onDemandImages;
     }
 
-    // If no DB images but we have on-demand images loaded, use those
-    if (onDemandImages.length > 0 && loadedImagesForProductRef.current === selectedItemId) {
-      return {
-        ...baseSelectedItem,
-        images: onDemandImages,
-      };
-    }
-
-    // No images available yet - return base item (on-demand loading will trigger)
-    return baseSelectedItem;
+    return cloned;
   }, [baseSelectedItem, onDemandImages, selectedItemId]);
 
   // ============================================================================
@@ -342,6 +360,18 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   }, [config.dynamicFields, config.getFieldDefinitions, config.fieldDefinitions, selectedItem]);
 
   const effectiveFieldDefinitionsRef = useLatestRef(effectiveFieldDefinitions);
+
+  // Resolve a raw field key to a human-readable label (for info box messages)
+  const resolveFieldLabel = useCallback((fieldKey: string): string => {
+    // Look up in effective field definitions first
+    const fieldDef = effectiveFieldDefinitions.find(f => f.key === fieldKey);
+    if (fieldDef?.label) return fieldDef.label;
+    // For template-style keys (contain dots or colons), use extractReadableName
+    if (fieldKey.includes('.') || fieldKey.includes(':')) {
+      return extractReadableName(fieldKey);
+    }
+    return fieldKey;
+  }, [effectiveFieldDefinitions]);
 
   // Navigation guard
   const {
@@ -1014,7 +1044,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
   // Handle AI generation response
   useEffect(() => {
-    if (fetcher.data?.success && 'generatedContent' in fetcher.data) {
+    if (fetcher.data?.success && (fetcher.data.actionType === "generateAIText" || fetcher.data.actionType === "formatAIText")) {
       const { fieldType, generatedContent } = fetcher.data as GeneratedContentResponse;
       setAiSuggestions((prev) => ({
         ...prev,
@@ -1073,7 +1103,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // Handle translated field response (single field translation)
   // Auto-save immediately after receiving translation
   useEffect(() => {
-    if (fetcher.data?.success && 'translatedValue' in fetcher.data) {
+    if (fetcher.data?.success && fetcher.data.actionType === "translateField") {
       const { fieldType, translatedValue, targetLocale } = fetcher.data as TranslatedValueResponse;
 
       // Create a unique key for this response to prevent duplicate processing
@@ -1153,7 +1183,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
   // Handle single alt-text generation (show as suggestion)
   useEffect(() => {
-    if (fetcher.data?.success && 'altText' in fetcher.data && 'imageIndex' in fetcher.data) {
+    if (fetcher.data?.success && fetcher.data.actionType === "generateAltText") {
       const { altText, imageIndex } = fetcher.data as AltTextResponse;
       setAltTextSuggestions(prev => ({
         ...prev,
@@ -1164,27 +1194,25 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
   // Handle translated alt-text response (auto-save)
   useEffect(() => {
-    if (fetcher.data?.success && 'translatedAltText' in fetcher.data) {
+    if (fetcher.data?.success && fetcher.data.actionType === "translateAltText") {
       const { translatedAltText, imageIndex } = fetcher.data as TranslatedAltTextResponse;
       debugLog.altText(' Setting translated alt-text for image', imageIndex, ':', translatedAltText);
 
-      // Merge with existing alt-texts
-      const newAltTexts = {
-        ...imageAltTexts,
-        [imageIndex]: translatedAltText
-      };
-
-      setImageAltTexts(newAltTexts);
-      // Set original to match so hasChanges = false after save
-      setOriginalAltTexts(newAltTexts);
-      // Schedule auto-save
-      pendingAltTextAutoSaveRef.current = newAltTexts;
+      // Merge with existing alt-texts using functional form to avoid stale closure
+      setImageAltTexts(prev => {
+        const updated = { ...prev, [imageIndex]: translatedAltText };
+        // Set original to match so hasChanges = false after save
+        setOriginalAltTexts(updated);
+        // Schedule auto-save
+        pendingAltTextAutoSaveRef.current = updated;
+        return updated;
+      });
     }
   }, [fetcher.data]); // Note: imageAltTexts intentionally not in deps to avoid loops
 
   // Handle translated alt-text to all locales response (show success message + revalidate)
   useEffect(() => {
-    if (fetcher.data?.success && 'translatedAltTexts' in fetcher.data) {
+    if (fetcher.data?.success && fetcher.data.actionType === "translateAltTextToAllLocales") {
       const { targetLocales, imageIndex, failedLocales } = fetcher.data as TranslatedAltTextsResponse;
       const failed = failedLocales || [];
       debugLog.altText(' Translations to all locales completed for image', imageIndex);
@@ -1268,13 +1296,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
   // Handle "translateAll" response (translates to ALL enabled locales)
   useEffect(() => {
-    if (
-      fetcher.data?.success &&
-      'translations' in fetcher.data &&
-      !('locale' in fetcher.data) &&
-      !('fieldType' in fetcher.data) &&
-      !('targetLocale' in fetcher.data)
-    ) {
+    if (fetcher.data?.success && fetcher.data.actionType === "translateAll") {
       const { translations, failedLocales } = fetcher.data as TranslationsResponse;
       const item = selectedItemRef.current;
       if (item) {
@@ -1375,7 +1397,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
           if (rejectedLocales.length > 0) {
             const details = rejectedLocales
-              .map(locale => `${locale}: ${rejected[locale].join(", ")}`)
+              .map(locale => `${locale}: ${rejected[locale].map(k => resolveFieldLabel(k)).join(", ")}`)
               .join("; ");
             messages.push(
               String(t.content?.translateRejectedFields || "Some fields could not be saved to Shopify: {details}. The translated content was generated but Shopify rejected it.")
@@ -1385,7 +1407,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
           if (skippedLocales.length > 0) {
             const details = skippedLocales
-              .map(locale => `${locale}: ${skipped[locale].join(", ")}`)
+              .map(locale => `${locale}: ${skipped[locale].map(k => resolveFieldLabel(k)).join(", ")}`)
               .join("; ");
             messages.push(
               String(t.content?.translateSkippedFields || "Some fields were skipped because the translated value is identical to the primary locale: {details}.")
@@ -1413,12 +1435,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
   // Handle "translateAllForLocale" response (translates to ONE specific locale)
   useEffect(() => {
-    if (
-      fetcher.data?.success &&
-      'translations' in fetcher.data &&
-      'targetLocale' in fetcher.data &&
-      !('fieldType' in fetcher.data)
-    ) {
+    if (fetcher.data?.success && fetcher.data.actionType === "translateAllForLocale") {
       const { targetLocale, failedLocales } = fetcher.data as TranslationsResponse & { targetLocale: string };
       const translations = (fetcher.data as TranslationsResponse).translations as Record<string, string>;
       const item = selectedItemRef.current;
@@ -1537,13 +1554,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // IMPORTANT: We track which fetcher.data we've processed to prevent re-running on language change
   useEffect(() => {
     const item = selectedItemRef.current;
-    if (
-      fetcher.data?.success &&
-      !('translations' in fetcher.data) &&
-      !('generatedContent' in fetcher.data) &&
-      !('translatedValue' in fetcher.data) &&
-      item
-    ) {
+    if (fetcher.data?.success && fetcher.data.actionType === "updateContent" && item) {
       // Only process if fetcher.data has actually changed (not just a dependency re-run)
       if (fetcher.data === lastFetcherDataRef.current) {
         debugLog.response(' Skipping - fetcher.data unchanged, only dependencies changed');
@@ -1675,12 +1686,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       return;
     }
 
-    if (
-      fetcher.data?.success &&
-      !('generatedContent' in fetcher.data) &&
-      !('translatedValue' in fetcher.data) &&
-      !('translations' in fetcher.data) // Skip revalidate for bulk operations, they handle it differently
-    ) {
+    if (fetcher.data?.success && fetcher.data.actionType === "updateContent") {
       // Mark this response as processed and clear save pending flag
       processedSaveResponseRef.current = fetcher.data;
       isSavePendingRef.current = false;
@@ -1777,7 +1783,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
               if (rejectedLocales.length > 0) {
                 const details = rejectedLocales
-                  .map(locale => `${locale}: ${rejected[locale].join(", ")}`)
+                  .map(locale => `${locale}: ${rejected[locale].map(k => resolveFieldLabel(k)).join(", ")}`)
                   .join("; ");
                 messages.push(
                   String(t.content?.translateRejectedFields || "Some fields could not be saved to Shopify: {details}. The translated content was generated but Shopify rejected it.")
@@ -1787,7 +1793,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
               if (skippedLocales.length > 0) {
                 const details = skippedLocales
-                  .map(locale => `${locale}: ${skipped[locale].join(", ")}`)
+                  .map(locale => `${locale}: ${skipped[locale].map(k => resolveFieldLabel(k)).join(", ")}`)
                   .join("; ");
                 messages.push(
                   String(t.content?.translateSkippedFields || "Some fields were skipped because the translated value is identical to the primary locale: {details}.")
@@ -1801,11 +1807,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
                 t.common?.warning || "Warning"
               );
             } else {
+              const fieldLabel = resolveFieldLabel(fieldKey);
               showInfoBox(
                 t.common?.fieldTranslatedToLanguages
-                  ?.replace("{fieldType}", fieldKey)
+                  ?.replace("{fieldType}", fieldLabel)
                   .replace("{count}", String(Object.keys(translations).length))
-                  || `${fieldKey} translated to ${Object.keys(translations).length} language(s)`,
+                  || `${fieldLabel} translated to ${Object.keys(translations).length} language(s)`,
                 "success",
                 t.common?.success || "Success"
               );
@@ -2348,7 +2355,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
             if (rejectedLocales2.length > 0) {
               const details = rejectedLocales2
-                .map(locale => `${locale}: ${rejected2[locale].join(", ")}`)
+                .map(locale => `${locale}: ${rejected2[locale].map(k => resolveFieldLabel(k)).join(", ")}`)
                 .join("; ");
               messages.push(
                 String(t.content?.translateRejectedFields || "Some fields could not be saved to Shopify: {details}. The translated content was generated but Shopify rejected it.")
@@ -2358,7 +2365,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
             if (skippedLocales2.length > 0) {
               const details = skippedLocales2
-                .map(locale => `${locale}: ${skipped2[locale].join(", ")}`)
+                .map(locale => `${locale}: ${skipped2[locale].map(k => resolveFieldLabel(k)).join(", ")}`)
                 .join("; ");
               messages.push(
                 String(t.content?.translateSkippedFields || "Some fields were skipped because the translated value is identical to the primary locale: {details}.")
@@ -2372,11 +2379,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
               t.common?.warning || "Warning"
             );
           } else {
+            const fieldLabel2 = resolveFieldLabel(fieldKey);
             showInfoBox(
               t.common?.fieldTranslatedToLanguages
-                ?.replace("{fieldType}", fieldKey)
+                ?.replace("{fieldType}", fieldLabel2)
                 .replace("{count}", String(Object.keys(translations).length))
-                || `${fieldKey} translated to ${Object.keys(translations).length} language(s)`,
+                || `${fieldLabel2} translated to ${Object.keys(translations).length} language(s)`,
               "success",
               t.common?.success || "Success"
             );
@@ -2603,13 +2611,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     performSaveWithValues(newValues, primaryLocale);
   };
 
-  const handleRejectSuggestion = (fieldKey: string) => {
+  const handleRejectSuggestion = useCallback((fieldKey: string) => {
     setAiSuggestions((prev) => {
       const newSuggestions = { ...prev };
       delete newSuggestions[fieldKey];
       return newSuggestions;
     });
-  };
+  }, []);
 
   const handleLanguageChange = (locale: string) => {
     handleNavigationAttempt(() => setCurrentLanguage(locale), hasChanges);
@@ -2634,12 +2642,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     handleNavigationAttempt(() => setSelectedItemId(itemId), hasChanges);
   };
 
-  const handleValueChange = (fieldKey: string, value: string) => {
+  const handleValueChange = useCallback((fieldKey: string, value: string) => {
     // Force isLoadingData to false to ensure change detection works for manual changes
     setIsLoadingData(false);
 
     // If this field was a fallback, remove it from fallback fields since user is editing
-    if (fallbackFields.has(fieldKey)) {
+    if (fallbackFieldsRef.current.has(fieldKey)) {
       setFallbackFields((prev) => {
         const newSet = new Set(prev);
         newSet.delete(fieldKey);
@@ -2653,21 +2661,21 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       ...prev,
       [fieldKey]: value,
     }));
-  };
+  }, [fallbackFieldsRef]);
 
-  const handleToggleHtmlMode = (fieldKey: string) => {
+  const handleToggleHtmlMode = useCallback((fieldKey: string) => {
     setHtmlModes((prev) => ({
       ...prev,
       [fieldKey]: prev[fieldKey] === "html" ? "rendered" : "html",
     }));
-  };
+  }, []);
 
-  const handleClearField = (fieldKey: string) => {
+  const handleClearField = useCallback((fieldKey: string) => {
     // Force isLoadingData to false to ensure change detection works
     setIsLoadingData(false);
 
     // If this field was a fallback, remove it from fallback fields
-    if (fallbackFields.has(fieldKey)) {
+    if (fallbackFieldsRef.current.has(fieldKey)) {
       setFallbackFields((prev) => {
         const newSet = new Set(prev);
         newSet.delete(fieldKey);
@@ -2680,11 +2688,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       ...prev,
       [fieldKey]: "",
     }));
-  };
+  }, [fallbackFieldsRef]);
 
-  const handleClearAllClick = () => {
+  const handleClearAllClick = useCallback(() => {
     setIsClearAllModalOpen(true);
-  };
+  }, []);
 
   const handleClearAllConfirm = () => {
     // Force isLoadingData to false to ensure change detection works
@@ -2722,13 +2730,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     setIsClearAllModalOpen(false);
   };
 
-  const handleClearAllCancel = () => {
+  const handleClearAllCancel = useCallback(() => {
     setIsClearAllModalOpen(false);
-  };
+  }, []);
 
-  const handleClearAllForLocaleClick = () => {
+  const handleClearAllForLocaleClick = useCallback(() => {
     setIsClearAllModalOpen(true);
-  };
+  }, []);
 
   const handleClearAllForLocaleConfirm = () => {
     if (!selectedItemId || !selectedItem || currentLanguage === primaryLocale) return;
@@ -2883,9 +2891,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
               });
 
               if (Object.keys(translated).length > 0) {
-                const newAltTexts = { ...imageAltTexts, ...translated };
-                setImageAltTexts(newAltTexts);
-                setOriginalAltTexts(newAltTexts);
+                setImageAltTexts(prev => {
+                  const updated = { ...prev, ...translated };
+                  setOriginalAltTexts(updated);
+                  return updated;
+                });
                 // No auto-save needed - server already saved to Shopify and DB
               }
             }
@@ -2909,12 +2919,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // ALT-TEXT HANDLERS
   // ============================================================================
 
-  const handleAltTextChange = (imageIndex: number, value: string) => {
+  const handleAltTextChange = useCallback((imageIndex: number, value: string) => {
     setImageAltTexts(prev => ({
       ...prev,
       [imageIndex]: value
     }));
-  };
+  }, []);
 
   const handleGenerateAltText = (imageIndex: number) => {
     if (!selectedItem || !selectedItem.images || !selectedItem.images[imageIndex]) return;
@@ -3220,9 +3230,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           });
 
           if (Object.keys(translated).length > 0) {
-            const newAltTexts = { ...imageAltTexts, ...translated };
-            setImageAltTexts(newAltTexts);
-            setOriginalAltTexts(newAltTexts);
+            setImageAltTexts(prev => {
+              const updated = { ...prev, ...translated };
+              setOriginalAltTexts(updated);
+              return updated;
+            });
             // No auto-save needed - server already saved to Shopify and DB
           }
         }
@@ -3366,21 +3378,21 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     }, { method: "POST" });
   };
 
-  const handleRejectAltTextSuggestion = (imageIndex: number) => {
+  const handleRejectAltTextSuggestion = useCallback((imageIndex: number) => {
     setAltTextSuggestions(prev => {
       const newSuggestions = { ...prev };
       delete newSuggestions[imageIndex];
       return newSuggestions;
     });
-  };
+  }, []);
 
   // ============================================================================
   // SEND IMAGE TO AI HANDLERS
   // ============================================================================
 
-  const handleToggleSendImageToAI = () => {
+  const handleToggleSendImageToAI = useCallback(() => {
     setSendImageToAI(prev => !prev);
-  };
+  }, []);
 
   // Reset alt-text state when product changes
   useEffect(() => {
@@ -3456,9 +3468,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   };
 
   // Helper to update original template values (used after loading translations)
+  // Also syncs originalLoadedValuesRef so buildFieldsForSave uses the correct baseline
   const setOriginalTemplateValues = (values: Record<string, string>) => {
     if (config.contentType === 'templates') {
       originalTemplateValuesRef.current = { ...values };
+      originalLoadedValuesRef.current = { ...values };
     }
   };
 
@@ -3604,10 +3618,11 @@ function getItemFieldValue(item: TranslatableContentItem, fieldKey: string, prim
 }
 
 /**
- * Updates an in-memory item's field values to match the saved editable values.
- * This is a direct mutation of the item object (which lives in the items array from route data).
- * It ensures that when the data load effect reads from the item (e.g., after navigation),
- * it gets the correct saved values instead of stale pre-save data.
+ * Updates the local clone of an item's field values to match the saved editable values.
+ * This mutates the cloned item object (NOT the original props data) so that when the
+ * data load effect reads from the item (e.g., after navigation), it gets the correct
+ * saved values instead of stale pre-save data. The original props data remains unchanged
+ * because selectedItem is always a deep-enough clone created in useMemo.
  */
 function updateItemInMemory(item: TranslatableContentItem, values: Record<string, string>, config: ContentEditorConfig): void {
   // Templates: update translatableContent array

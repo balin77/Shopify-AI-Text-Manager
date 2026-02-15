@@ -60,10 +60,11 @@ export function ReloadButton({
           if (onReloadComplete) {
             onReloadComplete();
           }
+          onReloadSuccess?.();
         }
       } else {
         setIsLoading(false);
-        alert(`Fehler beim Neuladen: ${data.error || "Unbekannter Fehler"}`);
+        alert(`Error reloading: ${data.error || "Unknown error"}`);
       }
     }
 

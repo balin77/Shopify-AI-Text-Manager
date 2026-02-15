@@ -13,20 +13,10 @@ const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 const standardHandler = (req, res) => {
   res.status(429).json({
     error: 'Too many requests, please try again later',
-    retryAfter: Math.ceil((req.rateLimit.resetTime || Date.now()) / 1000),
+    retryAfter: Math.ceil(((req.rateLimit?.resetTime || Date.now()) - Date.now()) / 1000),
   });
 };
 
-/**
- * Skip rate limiting for verified Shopify webhooks
- */
-const skipWebhookVerification = (req) => {
-  if (req.path.startsWith('/webhooks/')) {
-    const hmac = req.headers['x-shopify-hmac-sha256'];
-    return !!hmac;
-  }
-  return false;
-};
 
 /**
  * General API Rate Limit (100 requests per minute)
@@ -63,14 +53,10 @@ const webhookRateLimit = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   handler: standardHandler,
-  skip: skipWebhookVerification,
   message: 'Too many webhook requests',
   keyGenerator: (req) => {
     const shop = req.headers['x-shopify-shop-domain'];
-    if (shop) {
-      return shop;
-    }
-    return ipKeyGenerator(req);
+    return `${ipKeyGenerator(req)}-${shop || 'unknown'}`;
   },
 });
 

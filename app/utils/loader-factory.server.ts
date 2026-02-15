@@ -100,6 +100,7 @@ export function createContentLoader<T extends { id: string }>(
         ...extra,
       });
     } catch (error: any) {
+      if (error instanceof Response) throw error;
       logger.error(`[${config.logPrefix}-LOADER] Error`, {
         context: config.logPrefix,
         error: error instanceof Error ? error.message : String(error),

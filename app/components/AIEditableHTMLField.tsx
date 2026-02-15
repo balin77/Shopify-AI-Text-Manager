@@ -56,7 +56,7 @@ export function AIEditableHTMLField({
   isDataLoading = false,
   sourceTextAvailable = true,
   hasMissingTranslations = false,
-  hasFieldMissingTranslations = false,
+  hasFieldMissingTranslations,
   disableGeneration = false,
   isFallbackValue = false,
   onGenerateAI,
@@ -201,7 +201,7 @@ export function AIEditableHTMLField({
         </InlineStack>
         <InlineStack gap="200">
           <Button size="slim" onClick={onToggleMode}>
-            {mode === "html" ? t.products.preview : t.products.html}
+            {mode === "html" ? t.products?.preview : t.products?.html}
           </Button>
           {onClear && value && (
             <Button
@@ -264,26 +264,26 @@ export function AIEditableHTMLField({
           onAccept={onAcceptSuggestion}
           onDecline={onRejectSuggestion}
           onAcceptAndTranslate={onAcceptAndTranslate}
-          acceptLabel={t.products.accept || "Übernehmen"}
-          declineLabel={t.products.decline || "Ablehnen"}
-          acceptAndTranslateLabel={onAcceptAndTranslate ? (t.products.acceptTranslate || "Übernehmen & Übersetzen") : undefined}
-          titleLabel={t.products.aiSuggestion || "KI-Vorschlag"}
+          acceptLabel={t.products?.accept || "Übernehmen"}
+          declineLabel={t.products?.decline || "Ablehnen"}
+          acceptAndTranslateLabel={onAcceptAndTranslate ? (t.products?.acceptTranslate || "Übernehmen & Übersetzen") : undefined}
+          titleLabel={t.products?.aiSuggestion || "KI-Vorschlag"}
         />
       )}
 
       <div className="ai-field-footer" style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", alignItems: "center", justifyContent: "space-between" }}>
         <div className="ai-field-footer-left" style={{ flex: "0 0 auto" }}>
           <span style={{ fontSize: "0.8125rem", color: "#6d7175" }}>
-            {value.replace(/<[^>]*>/g, "").length} {t.products.characters}
+            {value.replace(/<[^>]*>/g, "").length} {t.products?.characters}
           </span>
         </div>
         <div className="ai-field-footer-right" style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", flex: "1 1 auto", justifyContent: "flex-end" }}>
           {onGenerateAI && (
             <div style={{ flex: "0 0 auto", width: "auto" }}>
-              <Button size="slim" onClick={onGenerateAI} loading={isLoading} disabled={disableGeneration && !value}>
+              <Button size="slim" onClick={onGenerateAI} loading={isLoading} disabled={(disableGeneration && !value) || isLoading}>
                 ✨ {disableGeneration || value
-                  ? (t.products.aiImprove || "Improve with AI")
-                  : (t.products.aiGenerateShort || "Generate with AI")}
+                  ? (t.products?.aiImprove || "Improve with AI")
+                  : (t.products?.aiGenerateShort || "Generate with AI")}
               </Button>
             </div>
           )}
@@ -293,9 +293,9 @@ export function AIEditableHTMLField({
                 size="slim"
                 onClick={onFormatAI}
                 loading={isLoading}
-                disabled={!value}
+                disabled={!value || isLoading}
               >
-                🎨 {t.products.formatWithAI || "Formatieren"}
+                🎨 {t.products?.formatWithAI || "Formatieren"}
               </Button>
             </div>
           )}
@@ -305,9 +305,9 @@ export function AIEditableHTMLField({
                 size="slim"
                 onClick={isPrimaryLocale ? onTranslateToAllLocales : onTranslate}
                 loading={isLoading}
-                disabled={(isPrimaryLocale && !onTranslateToAllLocales) || (!isPrimaryLocale && !sourceTextAvailable)}
+                disabled={(isPrimaryLocale && !onTranslateToAllLocales) || (!isPrimaryLocale && !sourceTextAvailable) || isLoading}
               >
-                🌍 {isPrimaryLocale ? (t.products.translate || "Übersetzen") : t.products.translateFromPrimary}
+                🌍 {isPrimaryLocale ? (t.products?.translate || "Übersetzen") : t.products?.translateFromPrimary}
               </Button>
             </div>
           )}

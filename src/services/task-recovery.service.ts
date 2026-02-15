@@ -220,10 +220,22 @@ export class TaskRecoveryService {
     // Update queue rate limits from settings
     await queue.updateRateLimits(aiSettings);
 
+    // Parse the prompt to extract the actual prompt text
+    // Task prompts may be stored as JSON arrays from batch operations
+    let actualPrompt = task.prompt!;
+    try {
+      const parsed = JSON.parse(task.prompt!);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        actualPrompt = parsed[parsed.length - 1].prompt || task.prompt!;
+      }
+    } catch {
+      // If parsing fails, use the raw prompt as-is
+    }
+
     // Re-enqueue the task (prompt and provider are guaranteed non-null by the check above)
     await queue.enqueueFromTask({
       ...task,
-      prompt: task.prompt!, // Non-null assertion safe due to check on line 144
+      prompt: actualPrompt, // Use parsed prompt instead of raw task.prompt
       provider: task.provider!, // Non-null assertion safe due to check on line 144
     }, serviceConfig);
 

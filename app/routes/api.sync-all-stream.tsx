@@ -40,10 +40,22 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const url = new URL(request.url);
   const force = url.searchParams.get("force") === "true";
 
+  // Capture the request abort signal to stop work on client disconnect
+  const signal = request.signal;
+
   // Create a streaming response
   const stream = new ReadableStream({
     async start(controller) {
       const encoder = new TextEncoder();
+
+      // Track whether the stream has been closed to avoid enqueue-after-close errors
+      let streamClosed = false;
+
+      const onAbort = () => {
+        streamClosed = true;
+        logger.info("[SYNC-STREAM] Client disconnected, aborting sync", { shop });
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
 
       const sendEvent = (data: {
         type: 'progress' | 'complete' | 'error';
@@ -56,7 +68,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         detailTotal?: number;
         detailMessage?: string;
       }) => {
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
+        if (streamClosed) return;
+        try {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
+        } catch {
+          streamClosed = true;
+        }
+      };
+
+      const checkAborted = () => {
+        if (signal.aborted || streamClosed) {
+          throw new DOMException("Client disconnected", "AbortError");
+        }
       };
 
       try {
@@ -103,6 +126,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         // ==========================================
         // PHASE 1: Sync Products
         // ==========================================
+        checkAborted();
         sendEvent({
           type: 'progress',
           phase: 'products',
@@ -124,7 +148,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             });
             stats.products = 0;
           } else {
-            stats.products = await syncProductsWithProgress(admin, shop, planLimits, sendEvent);
+            stats.products = await syncProductsWithProgress(admin, shop, planLimits, sendEvent, signal);
           }
         } else {
           // Force re-sync: delete existing products first
@@ -162,12 +186,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             ]);
           }
 
-          stats.products = await syncProductsWithProgress(admin, shop, planLimits, sendEvent);
+          checkAborted();
+          stats.products = await syncProductsWithProgress(admin, shop, planLimits, sendEvent, signal);
         }
 
         // ==========================================
         // PHASE 2: Sync Collections
         // ==========================================
+        checkAborted();
         sendEvent({
           type: 'progress',
           phase: 'collections',
@@ -179,6 +205,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         try {
           const syncService = new ContentSyncService(admin, shop);
           stats.collections = await syncService.syncAllCollections(planLimits.maxCollections, (current, total, message) => {
+            checkAborted();
             sendEvent({
               type: 'progress',
               phase: 'collections',
@@ -198,6 +225,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             total: 100
           });
         } catch (err: any) {
+          if (err.name === "AbortError") throw err;
           sendEvent({
             type: 'progress',
             phase: 'collections',
@@ -210,6 +238,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         // ==========================================
         // PHASE 3: Sync Articles
         // ==========================================
+        checkAborted();
         sendEvent({
           type: 'progress',
           phase: 'articles',
@@ -221,6 +250,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         try {
           const syncService = new ContentSyncService(admin, shop);
           stats.articles = await syncService.syncAllArticles(planLimits.maxArticles, (current, total, message) => {
+            checkAborted();
             sendEvent({
               type: 'progress',
               phase: 'articles',
@@ -240,6 +270,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             total: 100
           });
         } catch (err: any) {
+          if (err.name === "AbortError") throw err;
           sendEvent({
             type: 'progress',
             phase: 'articles',
@@ -252,6 +283,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         // ==========================================
         // PHASE 4: Sync Pages
         // ==========================================
+        checkAborted();
         sendEvent({
           type: 'progress',
           phase: 'pages',
@@ -263,6 +295,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         try {
           const bgSyncService = new BackgroundSyncService(admin, shop);
           stats.pages = await bgSyncService.syncAllPages(planLimits.maxPages, (current, total, message) => {
+            checkAborted();
             sendEvent({
               type: 'progress',
               phase: 'pages',
@@ -282,6 +315,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             total: 100
           });
         } catch (err: any) {
+          if (err.name === "AbortError") throw err;
           sendEvent({
             type: 'progress',
             phase: 'pages',
@@ -294,6 +328,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         // ==========================================
         // PHASE 5: Sync Policies
         // ==========================================
+        checkAborted();
         sendEvent({
           type: 'progress',
           phase: 'policies',
@@ -305,6 +340,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         try {
           const bgSyncService = new BackgroundSyncService(admin, shop);
           stats.policies = await bgSyncService.syncAllPolicies((current, total, message) => {
+            checkAborted();
             sendEvent({
               type: 'progress',
               phase: 'policies',
@@ -324,6 +360,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             total: 100
           });
         } catch (err: any) {
+          if (err.name === "AbortError") throw err;
           sendEvent({
             type: 'progress',
             phase: 'policies',
@@ -336,6 +373,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         // ==========================================
         // PHASE 6: Sync Themes
         // ==========================================
+        checkAborted();
         sendEvent({
           type: 'progress',
           phase: 'themes',
@@ -347,6 +385,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         try {
           const bgSyncService = new BackgroundSyncService(admin, shop);
           stats.themes = await bgSyncService.syncAllThemes((current, total, message) => {
+            checkAborted();
             sendEvent({
               type: 'progress',
               phase: 'themes',
@@ -366,6 +405,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             total: 100
           });
         } catch (err: any) {
+          if (err.name === "AbortError") throw err;
           sendEvent({
             type: 'progress',
             phase: 'themes',
@@ -386,14 +426,28 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         });
 
       } catch (error: any) {
-        sendEvent({
-          type: 'error',
-          phase: 'error',
-          message: error.message
-        });
+        if (error.name === "AbortError") {
+          logger.info("[SYNC-STREAM] Sync aborted due to client disconnection", { shop });
+        } else {
+          logger.error("[SYNC-STREAM] Sync failed", { error: error.message, shop });
+          sendEvent({
+            type: 'error',
+            phase: 'error',
+            message: "Sync failed"
+          });
+        }
       } finally {
-        controller.close();
+        signal.removeEventListener("abort", onAbort);
+        streamClosed = true;
+        try {
+          controller.close();
+        } catch {
+          // Controller may already be closed
+        }
       }
+    },
+    cancel() {
+      logger.info("[SYNC-STREAM] Stream cancelled by client", { shop });
     },
   });
 
@@ -413,7 +467,8 @@ async function syncProductsWithProgress(
   admin: any,
   shop: string,
   planLimits: any,
-  sendEvent: (data: any) => void
+  sendEvent: (data: any) => void,
+  signal: AbortSignal
 ): Promise<number> {
   const maxToFetch = planLimits.maxProducts === Infinity ? 10000 : planLimits.maxProducts;
   let allProducts: any[] = [];
@@ -430,6 +485,9 @@ async function syncProductsWithProgress(
 
   // Fetch all products
   while (hasNextPage && allProducts.length < maxToFetch) {
+    if (signal.aborted) {
+      throw new DOMException("Client disconnected", "AbortError");
+    }
     const batchSize = Math.min(250, maxToFetch - allProducts.length);
 
     const response: Response = await admin.graphql(
@@ -532,6 +590,10 @@ async function syncProductsWithProgress(
   const total = allProducts.length;
 
   for (const product of allProducts) {
+    if (signal.aborted) {
+      logger.info(`[SYNC-STREAM] Aborting product save after ${synced}/${total} products`, { shop });
+      throw new DOMException("Client disconnected", "AbortError");
+    }
     try {
       await db.$transaction(async (tx) => {
         // Upsert product
@@ -634,6 +696,7 @@ async function syncProductsWithProgress(
         });
       }
     } catch (err: any) {
+      if (err.name === "AbortError") throw err;
       logger.error(`[SYNC-STREAM] Failed to save product ${product.id}`, { error: err.message });
     }
   }

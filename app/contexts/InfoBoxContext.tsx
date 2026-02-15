@@ -9,12 +9,20 @@ export interface InfoBoxState {
   id: string; // Unique ID to track individual messages
 }
 
+export interface InfoBoxHistoryEntry extends InfoBoxState {
+  timestamp: Date;
+}
+
 interface InfoBoxContextType {
   infoBox: InfoBoxState | null;
   showInfoBox: (message: string, tone?: InfoBoxTone, title?: string) => void;
   hideInfoBox: () => void;
   isGlobalLoading: boolean;
   setGlobalLoading: (loading: boolean, message?: string) => void;
+  messageHistory: InfoBoxHistoryEntry[];
+  unreadCount: number;
+  markAllRead: () => void;
+  clearHistory: () => void;
 }
 
 const InfoBoxContext = createContext<InfoBoxContextType | undefined>(undefined);
@@ -23,6 +31,8 @@ export function InfoBoxProvider({ children }: { children: ReactNode }) {
   const [infoBox, setInfoBox] = useState<InfoBoxState | null>(null);
   const [isGlobalLoading, setIsGlobalLoading] = useState(false);
   const [globalLoadingMessage, setGlobalLoadingMessage] = useState<string | undefined>();
+  const [messageHistory, setMessageHistory] = useState<InfoBoxHistoryEntry[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
   const dismissedMessages = useRef<Set<string>>(new Set());
   const autoHideTimer = useRef<NodeJS.Timeout | null>(null);
   // Ref to access infoBox in hideInfoBox without adding it as a dependency
@@ -44,15 +54,20 @@ export function InfoBoxProvider({ children }: { children: ReactNode }) {
       clearTimeout(autoHideTimer.current);
     }
 
+    const entry: InfoBoxHistoryEntry = { message, tone, title, id, timestamp: new Date() };
     setInfoBox({ message, tone, title, id });
 
-    // Auto-hide nach 10 Sekunden bei success oder info (verlängert für bessere Sichtbarkeit)
+    // Add to history and increment unread count
+    setMessageHistory(prev => [entry, ...prev]);
+    setUnreadCount(prev => prev + 1);
+
+    // Auto-hide nach 5 Sekunden bei success oder info
     if (tone === "success" || tone === "info") {
       autoHideTimer.current = setTimeout(() => {
         setInfoBox(null);
         // Clear dismissed messages after hiding
         dismissedMessages.current.clear();
-      }, 10000);
+      }, 5000);
     }
   }, []);
 
@@ -83,13 +98,26 @@ export function InfoBoxProvider({ children }: { children: ReactNode }) {
     setGlobalLoadingMessage(loading ? message : undefined);
   }, []);
 
+  const markAllRead = useCallback(() => {
+    setUnreadCount(0);
+  }, []);
+
+  const clearHistory = useCallback(() => {
+    setMessageHistory([]);
+    setUnreadCount(0);
+  }, []);
+
   const value = useMemo(() => ({
     infoBox,
     showInfoBox,
     hideInfoBox,
     isGlobalLoading,
     setGlobalLoading,
-  }), [infoBox, showInfoBox, hideInfoBox, isGlobalLoading, setGlobalLoading]);
+    messageHistory,
+    unreadCount,
+    markAllRead,
+    clearHistory,
+  }), [infoBox, showInfoBox, hideInfoBox, isGlobalLoading, setGlobalLoading, messageHistory, unreadCount, markAllRead, clearHistory]);
 
   return (
     <InfoBoxContext.Provider value={value}>

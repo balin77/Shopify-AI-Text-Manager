@@ -72,6 +72,13 @@ export function SyncProgressBar({
   const [syncProgress, setSyncProgress] = useState<SyncProgress | null>(null);
 
   const isSyncingRef = useRef(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    return () => {
+      abortControllerRef.current?.abort();
+    };
+  }, []);
 
   const handleSync = useCallback(async (force: boolean = false) => {
     if (isSyncingRef.current) return;
@@ -87,12 +94,14 @@ export function SyncProgressBar({
     });
 
     try {
+      abortControllerRef.current = new AbortController();
       const streamUrl = force ? "/api/sync-all-stream?force=true" : "/api/sync-all-stream";
       const response = await fetch(streamUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
+        signal: abortControllerRef.current.signal,
       });
 
       if (!response.ok) {
@@ -242,7 +251,7 @@ export function SyncProgressBar({
                 );
               })}
             </InlineStack>
-            {syncProgress.detailTotal && syncProgress.detailTotal > 1 && (
+            {syncProgress.detailTotal != null && syncProgress.detailTotal > 1 && (
               <Box paddingBlockStart="200">
                 <BlockStack gap="100">
                   <InlineStack align="space-between">
@@ -288,6 +297,13 @@ export function useSyncProgress() {
   const [syncProgress, setSyncProgress] = useState<SyncProgress | null>(null);
   const [syncComplete, setSyncComplete] = useState(false);
   const [syncStats, setSyncStats] = useState<SyncStats | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    return () => {
+      abortControllerRef.current?.abort();
+    };
+  }, []);
 
   const startSync = useCallback(async (force: boolean = false): Promise<SyncStats | null> => {
     setSyncStatus("");
@@ -303,12 +319,14 @@ export function useSyncProgress() {
     });
 
     try {
+      abortControllerRef.current = new AbortController();
       const streamUrl = force ? "/api/sync-all-stream?force=true" : "/api/sync-all-stream";
       const response = await fetch(streamUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
+        signal: abortControllerRef.current.signal,
       });
 
       if (!response.ok) {

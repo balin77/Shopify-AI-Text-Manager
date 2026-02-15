@@ -68,8 +68,23 @@ export interface TranslatableContentItem {
 // FETCHER RESPONSE TYPES
 // ============================================================================
 
+export type ActionType =
+  | "loadTranslations"
+  | "generateAIText"
+  | "formatAIText"
+  | "translateField"
+  | "translateAll"
+  | "translateAllForLocale"
+  | "translateFieldToAllLocales"
+  | "updateContent"
+  | "generateAltText"
+  | "generateAllAltTexts"
+  | "translateAltText"
+  | "translateAltTextToAllLocales";
+
 export interface FetcherDataBase {
   success: boolean;
+  actionType?: ActionType;
   error?: string;
   failedLocales?: string[];
   rejectedFields?: Record<string, string[]>;

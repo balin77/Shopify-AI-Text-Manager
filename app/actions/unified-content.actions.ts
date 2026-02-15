@@ -7,7 +7,7 @@
 
 import { json } from "@remix-run/node";
 import type { ActionFunctionArgs } from "@remix-run/node";
-import { AIService, type AIProvider } from "../../src/services/ai.service";
+import { AIService, toValidProvider } from "../../src/services/ai.service";
 import { TranslationService } from "../../src/services/translation.service";
 import { ShopifyContentService } from "../../src/services/shopify-content.service";
 import { sanitizeSlug } from "../utils/slug.utils";
@@ -43,8 +43,13 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
     return json({ success: false, error: "Invalid resource ID format" }, { status: 400 });
   }
 
+  const actionsRequiringItemId = ["loadTranslations", "generateAIText", "formatAIText", "translateField", "translateAll", "translateAllForLocale", "translateFieldToAllLocales", "updateContent", "generateAltText", "generateAllAltTexts", "translateAltText", "translateAltTextToAllLocales"];
+  if (actionsRequiringItemId.includes(action) && !itemId) {
+    return json({ success: false, error: "Missing required itemId" }, { status: 400 });
+  }
+
   // Initialize services
-  const provider = (aiSettings?.preferredProvider || process.env.AI_PROVIDER || "huggingface") as AIProvider;
+  const provider = toValidProvider(aiSettings?.preferredProvider || process.env.AI_PROVIDER || "huggingface");
   // Cast aiInstructions to indexable type for dynamic field access
   const instructions = aiInstructions as Record<string, string | null> | null;
   const serviceConfig = {
@@ -62,8 +67,6 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
   const queue = AIQueueService.getInstance();
   await queue.updateRateLimits(aiSettings);
 
-  const aiService = new AIService(provider, serviceConfig);
-  const translationService = new TranslationService(provider, serviceConfig);
   const shopifyContentService = new ShopifyContentService(admin);
 
   // ============================================================================
@@ -78,7 +81,7 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
 
     try {
       const translations = await shopifyContentService.loadTranslations(itemId, locale);
-      return json({ success: true, translations, locale });
+      return json({ actionType: "loadTranslations", success: true, translations, locale });
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : String(error);
       return json({ success: false, error: msg }, { status: 500 });
@@ -202,18 +205,22 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
         },
       });
 
-      return json({ success: true, generatedContent, fieldType });
+      return json({ actionType: "generateAIText", success: true, generatedContent, fieldType });
     } catch (error: unknown) {
       // Update task to failed
       const errorMessage = (error instanceof Error ? error.message : String(error)).substring(0, 1000);
-      await db.task.update({
-        where: { id: task.id },
-        data: {
-          status: "failed",
-          completedAt: new Date(),
-          error: errorMessage,
-        },
-      });
+      try {
+        await db.task.update({
+          where: { id: task.id },
+          data: {
+            status: "failed",
+            completedAt: new Date(),
+            error: errorMessage,
+          },
+        });
+      } catch (updateErr) {
+        console.error("Failed to update task status:", updateErr);
+      }
       return json({ success: false, error: errorMessage }, { status: 500 });
     }
   }
@@ -374,18 +381,22 @@ Allowed formatting changes:
         },
       });
 
-      return json({ success: true, generatedContent: formattedContent, fieldType });
+      return json({ actionType: "formatAIText", success: true, generatedContent: formattedContent, fieldType });
     } catch (error: unknown) {
       // Update task to failed
       const errorMessage = (error instanceof Error ? error.message : String(error)).substring(0, 1000);
-      await db.task.update({
-        where: { id: task.id },
-        data: {
-          status: "failed",
-          completedAt: new Date(),
-          error: errorMessage,
-        },
-      });
+      try {
+        await db.task.update({
+          where: { id: task.id },
+          data: {
+            status: "failed",
+            completedAt: new Date(),
+            error: errorMessage,
+          },
+        });
+      } catch (updateErr) {
+        console.error("Failed to update task status:", updateErr);
+      }
       return json({ success: false, error: errorMessage }, { status: 500 });
     }
   }
@@ -446,17 +457,21 @@ Allowed formatting changes:
         },
       });
 
-      return json({ success: true, translatedValue, fieldType, targetLocale });
+      return json({ actionType: "translateField", success: true, translatedValue, fieldType, targetLocale });
     } catch (error: unknown) {
       const errorMsg = error instanceof Error ? error.message : String(error);
-      await db.task.update({
-        where: { id: task.id },
-        data: {
-          status: "failed",
-          completedAt: new Date(),
-          error: errorMsg,
-        },
-      });
+      try {
+        await db.task.update({
+          where: { id: task.id },
+          data: {
+            status: "failed",
+            completedAt: new Date(),
+            error: errorMsg,
+          },
+        });
+      } catch (updateErr) {
+        console.error("Failed to update task status:", updateErr);
+      }
       return json({ success: false, error: errorMsg }, { status: 500 });
     }
   }
@@ -550,7 +565,7 @@ Allowed formatting changes:
         },
       });
 
-      return json({ success: true, translations: allTranslations, failedLocales, rejectedFields, skippedFields });
+      return json({ actionType: "translateAll", success: true, translations: allTranslations, failedLocales, rejectedFields, skippedFields });
     } catch (error: unknown) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       await db.task.update({
@@ -663,7 +678,7 @@ Allowed formatting changes:
         },
       });
 
-      return json({ success: true, translations, targetLocale, failedLocales, rejectedFields, skippedFields });
+      return json({ actionType: "translateAllForLocale", success: true, translations, targetLocale, failedLocales, rejectedFields, skippedFields });
     } catch (error: unknown) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       await db.task.update({
@@ -775,7 +790,7 @@ Allowed formatting changes:
         },
       });
 
-      return json({ success: true, translations: flattenedTranslations, fieldType, failedLocales, rejectedFields, skippedFields });
+      return json({ actionType: "translateFieldToAllLocales", success: true, translations: flattenedTranslations, fieldType, failedLocales, rejectedFields, skippedFields });
     } catch (error: unknown) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       await db.task.update({
@@ -867,7 +882,10 @@ Allowed formatting changes:
         }
 
         logger.debug('[UnifiedContent] [UNIFIED-ACTION] Calling handleUpdateProduct...');
-        return handleUpdateProduct(context, productFormData, itemId);
+        const productResult = await handleUpdateProduct(context, productFormData, itemId);
+        // Inject actionType into the response for discriminated union matching
+        const productBody = await productResult.json();
+        return json({ ...productBody, actionType: "updateContent" }, { status: productResult.status });
       }
 
       // For other content types (Collections, Pages, Blogs, Policies), use unified service
@@ -919,7 +937,7 @@ Allowed formatting changes:
         changedFields: locale === primaryLocale ? changedFields : undefined, // Only pass for primary locale
       });
 
-      return json(result);
+      return json({ ...result, actionType: "updateContent" });
     } catch (error: unknown) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       logger.error('Unified content update error', {
@@ -992,7 +1010,7 @@ Image URL: ${imageUrl}`;
         },
       });
 
-      return json({ success: true, altText, imageIndex });
+      return json({ actionType: "generateAltText", success: true, altText, imageIndex });
     } catch (error: unknown) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       await db.task.update({
@@ -1091,7 +1109,7 @@ Image URL: ${image.url}`;
         },
       });
 
-      return json({ success: true, generatedAltTexts });
+      return json({ actionType: "generateAllAltTexts", success: true, generatedAltTexts });
     } catch (error: unknown) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       await db.task.update({
@@ -1147,7 +1165,7 @@ Image URL: ${image.url}`;
       const translations = await translationServiceWithTask.translateProduct(
         changedFields,
         [targetLocale],
-        "product"
+        contentConfig.contentType
       );
       const translatedAltText = translations[targetLocale]?.[`altText_${imageIndex}`] || "";
 
@@ -1162,6 +1180,7 @@ Image URL: ${image.url}`;
       });
 
       return json({
+        actionType: "translateAltText",
         success: true,
         translatedAltText,
         imageIndex,
@@ -1222,7 +1241,7 @@ Image URL: ${image.url}`;
       const translations = await translationServiceWithTask.translateProduct(
         changedFields,
         targetLocales,
-        "product"
+        contentConfig.contentType
       );
 
       // Extract translated alt-texts for each locale
@@ -1376,6 +1395,7 @@ Image URL: ${image.url}`;
       });
 
       return json({
+        actionType: "translateAltTextToAllLocales",
         success: true,
         translatedAltTexts,
         imageIndex,

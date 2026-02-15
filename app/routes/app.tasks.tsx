@@ -18,6 +18,7 @@ import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
 import { useI18n } from "../contexts/I18nContext";
 import { getTaskDateRange } from "~/config/constants";
+import { extractReadableName } from "~/utils/templates-field-factory";
 
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -85,10 +86,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       }
     });
   } catch (error: any) {
+    console.error("Failed to load tasks:", error);
     return json({
       tasks: [],
       shop: session.shop,
-      error: error.message,
+      error: "An internal error occurred",
       pagination: { page: 1, pageSize: 20, totalCount: 0, totalPages: 0 },
       filters: { status: "all", hours: 24 }
     }, { status: 500 });
@@ -106,23 +108,25 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   if (action === "cancel") {
     try {
       await db.task.update({
-        where: { id: taskId },
+        where: { id: taskId, shop: session.shop },
         data: { status: "cancelled", completedAt: new Date() },
       });
       return json({ success: true });
     } catch (error: any) {
-      return json({ success: false, error: error.message }, { status: 500 });
+      console.error("Failed to cancel task:", error);
+      return json({ success: false, error: "An internal error occurred" }, { status: 500 });
     }
   }
 
   if (action === "delete") {
     try {
       await db.task.delete({
-        where: { id: taskId },
+        where: { id: taskId, shop: session.shop },
       });
       return json({ success: true });
     } catch (error: any) {
-      return json({ success: false, error: error.message }, { status: 500 });
+      console.error("Failed to delete task:", error);
+      return json({ success: false, error: "An internal error occurred" }, { status: 500 });
     }
   }
 
@@ -403,7 +407,9 @@ export default function TasksPage() {
                       <Text as="p" variant="bodySm" tone="subdued">
                         {t.tasks.fieldType && (t.tasks.fieldType as any)[task.fieldType]
                           ? (t.tasks.fieldType as any)[task.fieldType]
-                          : task.fieldType}
+                          : (task.fieldType.includes('.') || task.fieldType.includes(':'))
+                            ? extractReadableName(task.fieldType)
+                            : task.fieldType}
                         {task.targetLocale && ` → ${task.targetLocale}`}
                       </Text>
                     )}

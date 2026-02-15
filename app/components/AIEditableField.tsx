@@ -56,7 +56,7 @@ export function AIEditableField({
   isDataLoading = false,
   sourceTextAvailable = true,
   hasMissingTranslations = false,
-  hasFieldMissingTranslations = false,
+  hasFieldMissingTranslations,
   disableGeneration = false,
   isFallbackValue = false,
   onGenerateAI,
@@ -142,10 +142,10 @@ export function AIEditableField({
           onAccept={onAcceptSuggestion}
           onDecline={onRejectSuggestion}
           onAcceptAndTranslate={onAcceptAndTranslate}
-          acceptLabel={t.products.accept || "Übernehmen"}
-          declineLabel={t.products.decline || "Ablehnen"}
-          acceptAndTranslateLabel={onAcceptAndTranslate ? (t.products.acceptTranslate || "Übernehmen & Übersetzen") : undefined}
-          titleLabel={t.products.aiSuggestion || "KI-Vorschlag"}
+          acceptLabel={t.products?.accept || "Übernehmen"}
+          declineLabel={t.products?.decline || "Ablehnen"}
+          acceptAndTranslateLabel={onAcceptAndTranslate ? (t.products?.acceptTranslate || "Übernehmen & Übersetzen") : undefined}
+          titleLabel={t.products?.aiSuggestion || "KI-Vorschlag"}
         />
       )}
 
@@ -163,11 +163,11 @@ export function AIEditableField({
               size="slim"
               onClick={onGenerateAI}
               loading={isLoading}
-              disabled={disableGeneration && !value}
+              disabled={(disableGeneration && !value) || isLoading}
             >
               ✨ {disableGeneration || value
-                ? (t.products.aiImprove || "Improve with AI")
-                : (t.products.aiGenerateShort || "Generate with AI")}
+                ? (t.products?.aiImprove || "Improve with AI")
+                : (t.products?.aiGenerateShort || "Generate with AI")}
             </Button>
           )}
           {onFormatAI && (
@@ -175,9 +175,9 @@ export function AIEditableField({
               size="slim"
               onClick={onFormatAI}
               loading={isLoading}
-              disabled={!value}
+              disabled={!value || isLoading}
             >
-              🎨 {t.products.formatWithAI || "Formatieren"}
+              🎨 {t.products?.formatWithAI || "Formatieren"}
             </Button>
           )}
           {(onTranslate || onTranslateToAllLocales) && (
@@ -185,9 +185,9 @@ export function AIEditableField({
               size="slim"
               onClick={isPrimaryLocale ? (onTranslateToAllLocales || onTranslate) : onTranslate}
               loading={isLoading}
-              disabled={isPrimaryLocale ? (!onTranslateToAllLocales && !onTranslate) : !sourceTextAvailable}
+              disabled={(isPrimaryLocale ? (!onTranslateToAllLocales && !onTranslate) : !sourceTextAvailable) || isLoading}
             >
-              🌍 {isPrimaryLocale ? (t.products.translate || "Übersetzen") : t.products.translateFromPrimary}
+              🌍 {isPrimaryLocale ? (t.products?.translate || "Übersetzen") : t.products?.translateFromPrimary}
             </Button>
           )}
         </div>
