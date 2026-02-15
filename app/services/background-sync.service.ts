@@ -51,7 +51,6 @@ interface ShopifyPageData {
   title: string;
   handle: string;
   body: string | null;
-  seo?: { title?: string | null; description?: string | null } | null;
   updatedAt: string;
 }
 
@@ -138,10 +137,6 @@ export class BackgroundSyncService {
                   title
                   handle
                   body
-                  seo {
-                    title
-                    description
-                  }
                   updatedAt
                 }
               }
@@ -206,6 +201,9 @@ export class BackgroundSyncService {
 
           let translationsCount = 0;
           if (stalePageIds.length > 0) {
+            // No shop filter needed: ContentTranslation has no shop column.
+            // stalePageIds are already shop-scoped (from the findMany above),
+            // and Shopify GIDs are globally unique across shops.
             const deletedTranslations = await tx.contentTranslation.deleteMany({
               where: {
                 resourceType: "Page",
@@ -272,10 +270,6 @@ export class BackgroundSyncService {
             title
             handle
             body
-            seo {
-              title
-              description
-            }
             updatedAt
           }
         }`,
@@ -306,6 +300,8 @@ export class BackgroundSyncService {
       },
     });
 
+    // No shop filter needed: ContentTranslation has no shop column;
+    // resourceId (Shopify GID) is globally unique across shops.
     const translations = await db.contentTranslation.findMany({
       where: {
         resourceId: gid,
@@ -352,8 +348,6 @@ export class BackgroundSyncService {
           title: pageData.title,
           body: pageData.body || "",
           handle: pageData.handle,
-          seoTitle: pageData.seo?.title || null,
-          seoDescription: pageData.seo?.description || null,
           shopifyUpdatedAt: new Date(pageData.updatedAt),
           lastSyncedAt: new Date(),
         },
@@ -361,8 +355,6 @@ export class BackgroundSyncService {
           title: pageData.title,
           body: pageData.body || "",
           handle: pageData.handle,
-          seoTitle: pageData.seo?.title || null,
-          seoDescription: pageData.seo?.description || null,
           shopifyUpdatedAt: new Date(pageData.updatedAt),
           lastSyncedAt: new Date(),
         },
@@ -497,6 +489,9 @@ export class BackgroundSyncService {
 
           let translationsCount = 0;
           if (stalePolicyIds.length > 0) {
+            // No shop filter needed: ContentTranslation has no shop column.
+            // stalePolicyIds are already shop-scoped (from the findMany above),
+            // and Shopify GIDs are globally unique across shops.
             const deletedTranslations = await tx.contentTranslation.deleteMany({
               where: {
                 resourceType: "ShopPolicy",
@@ -598,6 +593,8 @@ export class BackgroundSyncService {
       },
     });
 
+    // No shop filter needed: ContentTranslation has no shop column;
+    // resourceId (Shopify GID) is globally unique across shops.
     const translations = await db.contentTranslation.findMany({
       where: {
         resourceId: policyData.id,
