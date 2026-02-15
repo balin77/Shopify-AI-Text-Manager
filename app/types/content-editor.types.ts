@@ -278,6 +278,9 @@ export interface ContentEditorConfig {
 /** @deprecated Use TranslatableContentItem instead */
 export type ContentItem = TranslatableContentItem;
 
+/** @deprecated Use TranslatableContentItem instead */
+export type TranslatableItem = TranslatableContentItem;
+
 export interface EditorState {
   selectedItemId: string | null;
   currentLanguage: string;
