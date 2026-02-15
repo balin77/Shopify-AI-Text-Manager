@@ -29,8 +29,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // Parse query parameters for filtering and pagination
     const url = new URL(request.url);
     const statusFilter = url.searchParams.get("status") || "all"; // all, completed, failed
-    const hoursFilter = parseInt(url.searchParams.get("hours") || "24"); // 1, 6, 12, 24 (max 1 day)
-    const page = parseInt(url.searchParams.get("page") || "1");
+    const hoursFilter = parseInt(url.searchParams.get("hours") || "24", 10); // 1, 6, 12, 24 (max 1 day)
+    const page = parseInt(url.searchParams.get("page") || "1", 10);
     const pageSize = 20;
 
     // Build where clause

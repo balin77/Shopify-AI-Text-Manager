@@ -925,7 +925,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
     const changedIndices: number[] = [];
     for (const [indexStr, currentValue] of Object.entries(imageAltTextsRef.current)) {
-      const index = parseInt(indexStr);
+      const index = parseInt(indexStr, 10);
       const originalValue = item.images[index]?.altText || "";
       // Compare current value with original - if different, it's a change
       if (currentValue !== originalValue) {
@@ -1588,7 +1588,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         // Update image alt-texts for primary locale
         if (item.images && Object.keys(imageAltTextsRef.current).length > 0) {
           for (const [indexStr, altText] of Object.entries(imageAltTextsRef.current)) {
-            const index = parseInt(indexStr);
+            const index = parseInt(indexStr, 10);
             if (item.images[index]) {
               item.images[index].altText = altText;
               debugLog.response(' Updated primary alt-text for image', index);
@@ -1628,7 +1628,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         // Update image alt-text translations for foreign locale
         if (item.images && Object.keys(imageAltTextsRef.current).length > 0) {
           for (const [indexStr, altText] of Object.entries(imageAltTextsRef.current)) {
-            const index = parseInt(indexStr);
+            const index = parseInt(indexStr, 10);
             if (item.images[index]) {
               // Initialize altTextTranslations array if it doesn't exist
               if (!item.images[index].altTextTranslations) {
@@ -2876,7 +2876,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             if (result.translatedAltTexts) {
               const translated: Record<number, string> = {};
               Object.entries(result.translatedAltTexts as Record<string, string>).forEach(([indexStr, text]) => {
-                const idx = parseInt(indexStr);
+                const idx = parseInt(indexStr, 10);
                 if (!failedImages.includes(idx)) {
                   translated[idx] = String(text);
                 }
@@ -3213,7 +3213,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         if (result.translatedAltTexts) {
           const translated: Record<number, string> = {};
           Object.entries(result.translatedAltTexts as Record<string, string>).forEach(([indexStr, text]) => {
-            const idx = parseInt(indexStr);
+            const idx = parseInt(indexStr, 10);
             if (!failedImages.includes(idx)) {
               translated[idx] = String(text);
             }

@@ -182,7 +182,7 @@ async function updateImageAltTexts(
 
   // Update each image with new alt-text
   for (const [indexStr, altText] of Object.entries(params.imageAltTexts || {})) {
-    const index = parseInt(indexStr);
+    const index = parseInt(indexStr, 10);
     const dbImage = dbProduct?.images[index];
 
     // Prefer mediaId from DB (more reliable), fallback to Shopify query by index
