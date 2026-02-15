@@ -27,7 +27,8 @@ import { safeJsonParse } from "~/utils/validation";
 import type { ShopLocale } from "~/types/content-editor.types";
 import { logger } from "~/utils/logger.server";
 import { extractReadableName } from "~/utils/templates-field-factory";
-import { TRANSLATE_CONTENT } from "../graphql/content.mutations";
+import { TRANSLATE_CONTENT, UPSERT_THEME_FILES } from "../graphql/content.mutations";
+import { GET_THEMES, GET_THEME_FILES } from "../graphql/content.queries";
 
 /** Shape of individual items within ThemeContent.translatableContent JSON array */
 interface TranslatableField {
@@ -54,6 +55,94 @@ interface ThemeNavItem {
   contentCount: number;
   translatableContent: TranslatableField[];
   translations: ThemeTranslationRecord[];
+}
+
+// ============================================================================
+// UTILITIES - Key-to-filename mapping and JSON value replacement
+// ============================================================================
+
+/**
+ * Maps a Shopify translation key to a theme filename.
+ * Returns null for keys that can't be mapped (group.json, bar, settings, etc.)
+ */
+function keyToFilename(key: string): string | null {
+  // section.page.{name}.json.* → templates/page.{name}.json
+  const pageMatch = key.match(/^section\.page\.([^.]+)\.json\./);
+  if (pageMatch) return `templates/page.${pageMatch[1]}.json`;
+
+  // section.{name}.json.* → templates/{name}.json
+  const sectionMatch = key.match(/^section\.([^.]+)\.json\./);
+  if (sectionMatch) return `templates/${sectionMatch[1]}.json`;
+
+  // collections.json.* → templates/list-collections.json (Shopify's default name)
+  if (key.startsWith("collections.json.")) return "templates/list-collections.json";
+
+  // Unknown patterns — skip Shopify push
+  return null;
+}
+
+/**
+ * Recursively replaces string values in a JSON object.
+ * Uses old→new value mapping with key hints for disambiguation.
+ *
+ * @returns Set of translation keys that were successfully replaced
+ */
+function replaceValuesInJson(
+  obj: unknown,
+  replacements: Map<string, { oldValue: string; newValue: string; keyHint: string }>,
+  currentPath: string[] = [],
+): Set<string> {
+  const replaced = new Set<string>();
+
+  if (obj === null || obj === undefined || typeof obj !== "object") {
+    return replaced;
+  }
+
+  // Build a reverse lookup: oldValue → [{ translationKey, newValue, keyHint }]
+  const oldValueLookup = new Map<string, Array<{ translationKey: string; newValue: string; keyHint: string }>>();
+  for (const [translationKey, { oldValue, newValue, keyHint }] of replacements) {
+    if (replaced.has(translationKey)) continue; // Already found
+    if (!oldValue) continue; // Skip empty old values
+    const existing = oldValueLookup.get(oldValue) || [];
+    existing.push({ translationKey, newValue, keyHint });
+    oldValueLookup.set(oldValue, existing);
+  }
+
+  const record = obj as Record<string, unknown>;
+  for (const jsonKey of Object.keys(record)) {
+    const value = record[jsonKey];
+
+    if (typeof value === "string" && oldValueLookup.has(value)) {
+      const candidates = oldValueLookup.get(value)!;
+
+      // Try to find a match using key hint (last segment of translation key = JSON property name)
+      let matched = candidates.find((c) => c.keyHint === jsonKey);
+
+      // If no hint match and only one candidate, use it
+      if (!matched && candidates.length === 1) {
+        matched = candidates[0];
+      }
+
+      if (matched) {
+        record[jsonKey] = matched.newValue;
+        replaced.add(matched.translationKey);
+        // Remove from lookup so it's not matched again
+        const remaining = candidates.filter((c) => c.translationKey !== matched!.translationKey);
+        if (remaining.length === 0) {
+          oldValueLookup.delete(value);
+        } else {
+          oldValueLookup.set(value, remaining);
+        }
+      }
+    } else if (typeof value === "object" && value !== null) {
+      const childReplaced = replaceValuesInJson(value, replacements, [...currentPath, jsonKey]);
+      for (const key of childReplaced) {
+        replaced.add(key);
+      }
+    }
+  }
+
+  return replaced;
 }
 
 // ============================================================================
@@ -867,16 +956,196 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
             }, { status: 403 });
           }
 
-          // TODO: When ENABLE_THEME_PRIMARY_EDIT is true, use themeFilesUpsert mutation
-          // (UPSERT_THEME_FILES from graphql/content.mutations.ts) to push changes to Shopify.
-          // This requires:
-          //   1. Mapping translation keys to theme file paths (e.g., "section.product.json.main.heading" → "sections/product.json")
-          //   2. Reading the current file content from Shopify
-          //   3. Updating the specific JSON values
-          //   4. Writing the file back via themeFilesUpsert
-          // For now, only the local DB update below is performed.
+          // STEP 2a: Push primary locale changes to Shopify via themeFilesUpsert
+          {
+            // Build old-value map from translatableContent for changed keys only
+            const oldValueMap = new Map<string, string>();
+            for (const group of themeGroups) {
+              const content = (group.translatableContent as unknown) as TranslatableField[];
+              for (const item of content) {
+                if (updatedFields[item.key] !== undefined && item.value !== undefined) {
+                  oldValueMap.set(item.key, item.value);
+                }
+              }
+            }
 
-          // Update primary locale: Update translatableContent in ThemeContent
+            // Group changed keys by filename
+            const keysByFilename = new Map<string, string[]>();
+            const unmappedKeys: string[] = [];
+            for (const key of Object.keys(updatedFields)) {
+              // Only process keys whose value actually changed
+              if (oldValueMap.get(key) === updatedFields[key]) continue;
+
+              const filename = keyToFilename(key);
+              if (filename) {
+                const existing = keysByFilename.get(filename) || [];
+                existing.push(key);
+                keysByFilename.set(filename, existing);
+              } else {
+                unmappedKeys.push(key);
+              }
+            }
+
+            if (unmappedKeys.length > 0) {
+              logger.warn("[TEMPLATES] Keys could not be mapped to filenames — skipping Shopify push", {
+                context: "Templates",
+                unmappedKeys,
+              });
+            }
+
+            if (keysByFilename.size > 0) {
+              // Get active theme ID
+              const themesResponse = await admin.graphql(GET_THEMES, { variables: { first: 10 } });
+              const themesData = await themesResponse.json();
+              const mainTheme = themesData.data?.themes?.edges?.find(
+                (edge: { node: { role: string } }) => edge.node.role === "MAIN"
+              );
+
+              if (!mainTheme) {
+                logger.error("[TEMPLATES] No MAIN theme found — cannot push primary locale changes", {
+                  context: "Templates",
+                });
+                return json({
+                  success: false,
+                  error: "No active (MAIN) theme found. Cannot save primary locale changes to Shopify."
+                }, { status: 500 });
+              }
+
+              const themeId = mainTheme.node.id;
+              const filenames = Array.from(keysByFilename.keys());
+
+              logger.info("[TEMPLATES] Reading theme files from Shopify", {
+                context: "Templates",
+                themeId,
+                filenames,
+              });
+
+              // Read current files from Shopify
+              const filesResponse = await admin.graphql(GET_THEME_FILES, {
+                variables: { themeId, filenames }
+              });
+              const filesData = await filesResponse.json();
+              const fileNodes: Array<{ filename: string; body: { content?: string } | null }> =
+                filesData.data?.theme?.files?.nodes || [];
+
+              // Process each file: find old values and replace with new values
+              const filesToUpsert: Array<{ filename: string; body: { type: string; value: string } }> = [];
+              const shopifyErrors: string[] = [];
+
+              for (const [filename, keys] of keysByFilename) {
+                const fileNode = fileNodes.find((n) => n.filename === filename);
+                if (!fileNode?.body?.content) {
+                  logger.warn("[TEMPLATES] Theme file not found or empty", {
+                    context: "Templates",
+                    filename,
+                    keys,
+                  });
+                  shopifyErrors.push(`File not found: ${filename}`);
+                  continue;
+                }
+
+                let fileJson: unknown;
+                try {
+                  fileJson = JSON.parse(fileNode.body.content);
+                } catch {
+                  logger.error("[TEMPLATES] Failed to parse theme file JSON", {
+                    context: "Templates",
+                    filename,
+                  });
+                  shopifyErrors.push(`Invalid JSON in file: ${filename}`);
+                  continue;
+                }
+
+                // Build replacements map for this file
+                const replacements = new Map<string, { oldValue: string; newValue: string; keyHint: string }>();
+                for (const key of keys) {
+                  const oldValue = oldValueMap.get(key) || "";
+                  const newValue = updatedFields[key];
+                  // Last segment of the key (after last dot) as hint for JSON property name
+                  const keyParts = key.split(".");
+                  const keyHint = keyParts[keyParts.length - 1];
+                  replacements.set(key, { oldValue, newValue, keyHint });
+                }
+
+                const replacedKeys = replaceValuesInJson(fileJson, replacements);
+
+                logger.info("[TEMPLATES] Value replacement results", {
+                  context: "Templates",
+                  filename,
+                  totalKeys: keys.length,
+                  replacedCount: replacedKeys.size,
+                  replacedKeys: Array.from(replacedKeys),
+                  missedKeys: keys.filter((k) => !replacedKeys.has(k)),
+                });
+
+                // Even if some keys weren't found, still upsert the file with what we could replace
+                if (replacedKeys.size > 0) {
+                  filesToUpsert.push({
+                    filename,
+                    body: { type: "TEXT", value: JSON.stringify(fileJson, null, 2) },
+                  });
+                }
+              }
+
+              // Call themeFilesUpsert for all modified files
+              if (filesToUpsert.length > 0) {
+                logger.info("[TEMPLATES] Pushing changes to Shopify via themeFilesUpsert", {
+                  context: "Templates",
+                  themeId,
+                  fileCount: filesToUpsert.length,
+                  filenames: filesToUpsert.map((f) => f.filename),
+                });
+
+                try {
+                  const upsertResponse = await admin.graphql(UPSERT_THEME_FILES, {
+                    variables: { themeId, files: filesToUpsert }
+                  });
+                  const upsertData = await upsertResponse.json();
+
+                  if (upsertData.data?.themeFilesUpsert?.userErrors?.length > 0) {
+                    const errors = upsertData.data.themeFilesUpsert.userErrors;
+                    logger.error("[TEMPLATES] themeFilesUpsert returned errors", {
+                      context: "Templates",
+                      errors,
+                    });
+                    shopifyErrors.push(...errors.map((e: { message: string }) => e.message));
+                  } else {
+                    logger.info("[TEMPLATES] themeFilesUpsert succeeded", {
+                      context: "Templates",
+                      upsertedFiles: upsertData.data?.themeFilesUpsert?.upsertedThemeFiles?.map(
+                        (f: { filename: string }) => f.filename
+                      ),
+                    });
+                  }
+                } catch (upsertError) {
+                  const msg = upsertError instanceof Error ? upsertError.message : String(upsertError);
+                  logger.error("[TEMPLATES] themeFilesUpsert failed", {
+                    context: "Templates",
+                    error: msg,
+                  });
+                  // Check for permission/scope errors
+                  if (msg.includes("access") || msg.includes("scope") || msg.includes("permission")) {
+                    return json({
+                      success: false,
+                      error: `Shopify rejected the theme update. You may need the Protected Scope Exemption for write_themes. Error: ${msg}`
+                    }, { status: 403 });
+                  }
+                  shopifyErrors.push(msg);
+                }
+              }
+
+              // If there were Shopify errors, return them but still continue with local DB update
+              if (shopifyErrors.length > 0) {
+                logger.warn("[TEMPLATES] Some Shopify errors occurred during primary locale save", {
+                  context: "Templates",
+                  errors: shopifyErrors,
+                });
+                // Don't hard-fail — continue with local DB update below
+              }
+            }
+          }
+
+          // STEP 2b: Update primary locale in local DB (translatableContent in ThemeContent)
           for (const group of themeGroups) {
             const content = (group.translatableContent as unknown) as TranslatableField[];
             let hasChanges = false;

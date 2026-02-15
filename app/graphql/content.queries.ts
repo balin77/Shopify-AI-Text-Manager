@@ -202,6 +202,23 @@ export const GET_THEMES = `#graphql
   }
 `;
 
+export const GET_THEME_FILES = `#graphql
+  query getThemeFiles($themeId: ID!, $filenames: [String!]!) {
+    theme(id: $themeId) {
+      files(filenames: $filenames, first: 250) {
+        nodes {
+          filename
+          body {
+            ... on OnlineStoreThemeFileBodyText {
+              content
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
 export const GET_METAOBJECT_DEFINITIONS = `#graphql
   query getMetaobjectDefinitions($first: Int!) {
     metaobjectDefinitions(first: $first) {
