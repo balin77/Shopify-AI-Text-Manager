@@ -796,6 +796,8 @@ export class ShopifyContentService {
         return true;
       } else {
         loggers.translation('warn', `No digest for '${translationKey}' after retry. Translation NOT saved. Shopify translatableContent does not include this field - is the primary locale value set in Shopify?`);
+        if (!rejectedFields[locale]) rejectedFields[locale] = [];
+        rejectedFields[locale].push(field);
         return false;
       }
     };
