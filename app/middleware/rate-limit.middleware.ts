@@ -91,9 +91,11 @@ export const webhookLimiter = rateLimit({
     return `webhook:${shop}`;
   },
   skip: (req) => {
-    // Skip rate limiting if HMAC verification passes (trusted source)
-    // This is checked in the webhook handler itself
-    return false;
+    // Skip rate limiting for requests that carry a Shopify HMAC header.
+    // The actual HMAC verification happens in the webhook handler;
+    // here we only gate on header presence so legitimate Shopify
+    // webhooks aren't throttled while headerless requests still are.
+    return !!req.headers['x-shopify-hmac-sha256'];
   },
   handler: (req, res) => {
     res.status(429).json({
