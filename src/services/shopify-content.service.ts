@@ -464,6 +464,7 @@ export class ShopifyContentService {
       let updatedResource;
 
       if (resourceType === 'Page') {
+        // Note: Pages do NOT have SEO fields (seoTitle/seoDescription) in Shopify's API — this is by design, not a bug.
         updatedResource = await this.updatePage(resourceId, {
           title: updates.title,
           handle: updates.handle,
