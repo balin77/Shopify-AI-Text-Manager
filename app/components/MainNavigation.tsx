@@ -195,7 +195,6 @@ export function MainNavigation() {
 
       if (newInterval !== pollIntervalRef.current) {
         const errorType = data?.warning ? "Rate limited" : "Error";
-        console.warn(`⚠️ [MainNavigation] Running tasks ${errorType}. Increasing poll interval to ${newInterval}ms`);
         pollIntervalRef.current = newInterval;
       }
     } else if (tasksFetcher.state === "idle" && tasksFetcher.data !== undefined && !data?.error && !data?.warning) {
@@ -206,7 +205,6 @@ export function MainNavigation() {
         // Gradually reduce interval back to 10 seconds
         const newInterval = Math.max(pollIntervalRef.current / 2, 2000);
         if (newInterval !== pollIntervalRef.current) {
-          console.log(`✅ [MainNavigation] Running tasks connection restored. Reducing poll interval to ${newInterval}ms`);
           pollIntervalRef.current = newInterval;
         }
       }
@@ -230,7 +228,6 @@ export function MainNavigation() {
 
       if (newInterval !== completedTasksPollIntervalRef.current) {
         const errorType = data?.warning ? "Rate limited" : "Error";
-        console.warn(`⚠️ [MainNavigation] Completed tasks ${errorType}. Increasing poll interval to ${newInterval}ms`);
         completedTasksPollIntervalRef.current = newInterval;
       }
     } else if (completedTasksFetcher.state === "idle" && completedTasksFetcher.data !== undefined && !data?.error && !data?.warning) {
@@ -241,7 +238,6 @@ export function MainNavigation() {
         // Gradually reduce interval back to 10 seconds
         const newInterval = Math.max(completedTasksPollIntervalRef.current / 2, 2000);
         if (newInterval !== completedTasksPollIntervalRef.current) {
-          console.log(`✅ [MainNavigation] Completed tasks connection restored. Reducing poll interval to ${newInterval}ms`);
           completedTasksPollIntervalRef.current = newInterval;
         }
       }
@@ -347,7 +343,6 @@ export function MainNavigation() {
   ];
 
   const handleClick = (path: string, tabId: string) => {
-    console.log("🖱️ [MainNavigation] Tab clicked:", tabId, "->", path);
     handleNavigate(path);
   };
 
