@@ -271,6 +271,12 @@ export const de = {
     aiInstructions: "KI-Anweisungen",
     appLanguage: "App-Sprache",
     plan: "Plan",
+    feedback: "Feedback",
+    // Feedback Tab
+    feedbackTitle: "Feedback senden",
+    feedbackDescription: "Wir freuen uns über Ihr Feedback! Klicken Sie auf den Button unten, um uns eine E-Mail mit Ihren Anregungen, Wünschen oder Fehlermeldungen zu senden.",
+    feedbackButton: "Feedback per E-Mail senden",
+    feedbackSubject: "ContentPilot Feedback",
     // Plan Tab
     planTitle: "Ihr Abonnement",
     planDescription: "Verwalten Sie Ihren Abonnement-Plan und sehen Sie die enthaltenen Features.",

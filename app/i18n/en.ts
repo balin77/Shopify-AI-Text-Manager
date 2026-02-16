@@ -273,6 +273,12 @@ export const en: Translation = {
     aiInstructions: "AI Instructions",
     appLanguage: "App Language",
     plan: "Plan",
+    feedback: "Feedback",
+    // Feedback Tab
+    feedbackTitle: "Send Feedback",
+    feedbackDescription: "We appreciate your feedback! Click the button below to send us an email with your suggestions, feature requests, or bug reports.",
+    feedbackButton: "Send Feedback via Email",
+    feedbackSubject: "ContentPilot Feedback",
     // Plan Tab
     planTitle: "Your Subscription",
     planDescription: "Manage your subscription plan and view included features.",

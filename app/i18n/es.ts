@@ -273,6 +273,12 @@ export const es: Translation = {
     aiInstructions: "Instrucciones de IA",
     appLanguage: "Idioma de la aplicación",
     plan: "Plan",
+    feedback: "Feedback",
+    // Feedback Tab
+    feedbackTitle: "Enviar comentarios",
+    feedbackDescription: "¡Agradecemos tus comentarios! Haz clic en el botón de abajo para enviarnos un correo electrónico con tus sugerencias, solicitudes de funciones o informes de errores.",
+    feedbackButton: "Enviar comentarios por correo",
+    feedbackSubject: "ContentPilot Feedback",
     // Plan Tab
     planTitle: "Tu suscripción",
     planDescription: "Gestiona tu plan de suscripción y consulta las funciones incluidas.",

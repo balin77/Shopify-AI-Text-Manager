@@ -601,15 +601,15 @@ export default function SettingsPage() {
   const aiInstructionsReadOnly = isFreePlan || isBasicPlan;
 
   // Get initial tab from URL parameter (e.g., ?tab=plan)
-  const getInitialSection = (): "setup" | "ai" | "instructions" | "language" | "plan" => {
+  const getInitialSection = (): "setup" | "ai" | "instructions" | "language" | "plan" | "feedback" => {
     const tabParam = searchParams.get("tab");
-    if (tabParam && ["setup", "ai", "instructions", "language", "plan"].includes(tabParam)) {
-      return tabParam as "setup" | "ai" | "instructions" | "language" | "plan";
+    if (tabParam && ["setup", "ai", "instructions", "language", "plan", "feedback"].includes(tabParam)) {
+      return tabParam as "setup" | "ai" | "instructions" | "language" | "plan" | "feedback";
     }
     return "setup";
   };
 
-  const [selectedSection, setSelectedSection] = useState<"setup" | "ai" | "instructions" | "language" | "plan">(getInitialSection);
+  const [selectedSection, setSelectedSection] = useState<"setup" | "ai" | "instructions" | "language" | "plan" | "feedback">(getInitialSection);
   const [hasAIChanges, setHasAIChanges] = useState(false);
   const [hasLanguageChanges, setHasLanguageChanges] = useState(false);
   const [hasInstructionsChanges, setHasInstructionsChanges] = useState(false);
@@ -684,7 +684,7 @@ export default function SettingsPage() {
   };
 
   // Handle section navigation with unsaved changes warning
-  const handleSectionChange = (newSection: "setup" | "ai" | "instructions" | "language" | "plan") => {
+  const handleSectionChange = (newSection: "setup" | "ai" | "instructions" | "language" | "plan" | "feedback") => {
     if (hasUnsavedChanges) {
       const message = t.settings?.unsavedChangesMessage ||
         "You have unsaved changes. Do you really want to continue? Your changes will be lost.";
@@ -726,6 +726,7 @@ export default function SettingsPage() {
       { id: "instructions", title: t.settings.aiInstructions },
       { id: "language", title: t.settings.appLanguage },
       { id: "plan", title: t.settings.plan },
+      { id: "feedback", title: t.settings.feedback },
     ];
 
     registerItems({
@@ -850,6 +851,25 @@ export default function SettingsPage() {
               >
                 <Text as="p" variant="bodyMd" fontWeight={selectedSection === "plan" ? "semibold" : "regular"}>
                   {t.settings.plan}
+                </Text>
+              </button>
+              <button
+                onClick={() => handleSectionChange("feedback")}
+                style={{
+                  width: "100%",
+                  padding: "1rem",
+                  background: selectedSection === "feedback" ? "#f1f8f5" : "white",
+                  borderTop: "1px solid #e1e3e5",
+                  borderRight: "none",
+                  borderBottom: "none",
+                  borderLeft: selectedSection === "feedback" ? "3px solid #008060" : "3px solid transparent",
+                  textAlign: "left",
+                  cursor: "pointer",
+                  transition: "all 0.2s",
+                }}
+              >
+                <Text as="p" variant="bodyMd" fontWeight={selectedSection === "feedback" ? "semibold" : "regular"}>
+                  {t.settings.feedback}
                 </Text>
               </button>
             </Card>
@@ -1119,6 +1139,29 @@ export default function SettingsPage() {
                     </BlockStack>
                   </Card>
                 </BlockStack>
+              )}
+
+              {/* Feedback */}
+              {selectedSection === "feedback" && (
+                <Card>
+                  <BlockStack gap="400">
+                    <Text as="h2" variant="headingLg">
+                      {t.settings.feedbackTitle}
+                    </Text>
+                    <Text as="p" variant="bodyMd" tone="subdued">
+                      {t.settings.feedbackDescription}
+                    </Text>
+                    <div>
+                      <Button
+                        variant="primary"
+                        url={`mailto:hans.maarhofer@gmail.com?subject=${encodeURIComponent(t.settings.feedbackSubject)}`}
+                        external
+                      >
+                        {t.settings.feedbackButton}
+                      </Button>
+                    </div>
+                  </BlockStack>
+                </Card>
               )}
             </BlockStack>
           </div>
