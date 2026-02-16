@@ -517,6 +517,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // or previous saves must not override fresh data from Shopify
       localTranslationsRef.current = {};
       deletedTranslationKeysRef.current.clear();
+
+      // For templates, skip loading from stale item data after a reload.
+      // The page-level reload effect (app.templates.tsx) fetches fresh data from the API
+      // and updates editable values directly. Reading from item.translatableContent here
+      // would use stale cached data and cause a race condition (stale values overwriting fresh).
+      if (config.contentType === 'templates') {
+        debugLog.dataLoad(' Templates refresh - skip stale data load, page-level effect handles update');
+        return;
+      }
     }
 
     // Mark as loading immediately
@@ -2537,6 +2546,24 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
                 t.common?.success || "Success"
               );
             }
+            // Update UI state with translated alt texts for current language
+            if (result.translatedResults && currentLanguage !== primaryLocale) {
+              const translatedForCurrentLocale: Record<number, string> = {};
+              const results = result.translatedResults as Record<string, Record<string, string>>;
+              for (const [imgIdxStr, localeMap] of Object.entries(results)) {
+                const idx = parseInt(imgIdxStr, 10);
+                if (!failedImages.includes(idx) && localeMap[currentLanguage]) {
+                  translatedForCurrentLocale[idx] = localeMap[currentLanguage];
+                }
+              }
+              if (Object.keys(translatedForCurrentLocale).length > 0) {
+                setImageAltTexts(prev => {
+                  const updated = { ...prev, ...translatedForCurrentLocale };
+                  setOriginalAltTexts(updated);
+                  return updated;
+                });
+              }
+            }
             if (revalidator.state === 'idle') {
               try { revalidator.revalidate(); } catch {}
             }
@@ -3218,6 +3245,24 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           );
         }
 
+        // Update UI state with translated alt texts for current language
+        if (result.translatedResults && currentLanguage !== primaryLocale) {
+          const translatedForCurrentLocale: Record<number, string> = {};
+          const results = result.translatedResults as Record<string, Record<string, string>>;
+          for (const [imgIdxStr, localeMap] of Object.entries(results)) {
+            const idx = parseInt(imgIdxStr, 10);
+            if (!failedImages.includes(idx) && localeMap[currentLanguage]) {
+              translatedForCurrentLocale[idx] = localeMap[currentLanguage];
+            }
+          }
+          if (Object.keys(translatedForCurrentLocale).length > 0) {
+            setImageAltTexts(prev => {
+              const updated = { ...prev, ...translatedForCurrentLocale };
+              setOriginalAltTexts(updated);
+              return updated;
+            });
+          }
+        }
         if (revalidator.state === 'idle') {
           try {
             revalidator.revalidate();
