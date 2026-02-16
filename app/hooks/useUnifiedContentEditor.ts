@@ -404,23 +404,31 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // Template-specific change detection: compare editableValues with originalTemplateValuesRef
   const templateHasFieldChanges = useMemo(() => {
     if (config.contentType !== 'templates' || isLoadingData || !selectedItem) {
+      console.log('[A&T-TRACE] templateHasFieldChanges → false (guard)', { contentType: config.contentType, isLoadingData, hasItem: !!selectedItem });
       return false;
     }
 
     const originalValues = originalTemplateValuesRef.current;
     if (Object.keys(originalValues).length === 0) {
+      console.log('[A&T-TRACE] templateHasFieldChanges → false (no originals)');
       return false; // No original values yet
     }
 
     // Compare only the current page's fields (originalValues keys) with editable values.
     // editableValues may contain stale keys from previous pages, so we must iterate
     // over originalValues to avoid false positives after pagination changes.
+    const diffs: Array<{ key: string; original: string; current: string }> = [];
     for (const [key, originalValue] of Object.entries(originalValues)) {
       const currentValue = editableValues[key] ?? "";
       if (currentValue !== originalValue) {
-        return true;
+        diffs.push({ key, original: originalValue.slice(0, 60), current: currentValue.slice(0, 60) });
       }
     }
+    if (diffs.length > 0) {
+      console.log('[A&T-TRACE] templateHasFieldChanges → TRUE', { diffCount: diffs.length, diffs: diffs.slice(0, 3), templateValuesVersion });
+      return true;
+    }
+    console.log('[A&T-TRACE] templateHasFieldChanges → false (all match)', { fieldCount: Object.keys(originalValues).length, templateValuesVersion });
     return false;
   // eslint-disable-next-line react-hooks/exhaustive-deps -- templateValuesVersion forces recalc when ref updates
   }, [config.contentType, isLoadingData, selectedItem, editableValues, templateValuesVersion]);
@@ -689,6 +697,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // Use longer timeout to ensure React render cycle is complete
       // This prevents the yellow "untranslated" flash on initial load
       const timer = setTimeout(() => {
+        console.log('[A&T-TRACE] isLoadingData → false (timer fired)', {
+          editableKeysCount: Object.keys(editableValues).length,
+          originalKeysCount: Object.keys(originalTemplateValuesRef.current).length,
+        });
         setIsLoadingData(false);
         setIsInitialDataReady(true);
       }, 10);
@@ -1792,6 +1804,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // Reset change detection after successful save
       // This ensures hasChanges becomes false after we've updated selectedItem
 
+      console.log('[A&T-TRACE] Save response handler: setting isLoadingData=true');
       setIsLoadingData(true);
     }
   }, [fetcher.data, primaryLocale, editableValues, effectiveFieldDefinitions]); // Removed selectedItem - use ref instead
@@ -1818,6 +1831,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         const { fieldKey, sourceText, targetLocales, contextTitle, itemId } = pendingTranslationAfterSaveRef.current;
         pendingTranslationAfterSaveRef.current = null;
 
+        console.log('[A&T-TRACE] Save completed → starting translation', {
+          fieldKey,
+          targetLocales,
+          currentLanguage,
+          primaryLocale,
+          isLoadingData,
+          originalTemplateValuePreview: (originalTemplateValuesRef.current[fieldKey] || '').slice(0, 60),
+          editableValuePreview: (editableValues[fieldKey] || '').slice(0, 60),
+        });
         debugLog.acceptAndTranslate(' Save completed, now starting translation');
 
         // Start the translation using submitAIAction for parallel requests
@@ -1838,6 +1860,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             const field = effectiveFieldDefinitions.find((f) => f.key === fieldKey);
             const shopifyKey = field?.translationKey;
             const item = selectedItemRef.current;
+
+            console.log('[A&T-TRACE] Translation callback fired', {
+              fieldKey,
+              translatedLocales: Object.keys(translations),
+              currentLanguage,
+              primaryLocale,
+              hasCurrentLangTranslation: !!translations[currentLanguage],
+              acceptedPrimaryValueRef: acceptedPrimaryValueRef.current,
+            });
 
             if (item && shopifyKey) {
               // Clear this translation key from deleted set since we now have new translations
@@ -1956,6 +1987,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
               // because the early `return` at the end of this block skips the normal
               // post-save update at ~line 1990).
               if (translations[currentLanguage]) {
+                console.log('[A&T-TRACE] Updating originalTemplateValuesRef with TRANSLATION for', fieldKey, '→', translations[currentLanguage].slice(0, 60));
                 originalTemplateValuesRef.current = {
                   ...originalTemplateValuesRef.current,
                   [fieldKey]: translations[currentLanguage]
@@ -1963,11 +1995,20 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
               } else if (currentLanguage === primaryLocale) {
                 // Primary locale: sync all original values with current editableValues
                 // so the save button correctly shows "no changes"
-                originalTemplateValuesRef.current = { ...editableValuesRef.current };
+                const snapshot = { ...editableValuesRef.current };
+                console.log('[A&T-TRACE] Updating originalTemplateValuesRef with EDITABLE VALUES (primary locale)', {
+                  fieldKey,
+                  snapshotValuePreview: (snapshot[fieldKey] || '').slice(0, 60),
+                  snapshotKeys: Object.keys(snapshot).length,
+                });
+                originalTemplateValuesRef.current = snapshot;
+              } else {
+                console.log('[A&T-TRACE] NOT updating originalTemplateValuesRef — no branch matched', { currentLanguage, primaryLocale, hasTranslation: !!translations[currentLanguage] });
               }
               setTemplateValuesVersion(v => v + 1);
             }
 
+            console.log('[A&T-TRACE] Setting isLoadingData=true after translation callback');
             setIsLoadingData(true);
           }
         );
@@ -2011,6 +2052,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
       // For templates: Update original values to match current values (so hasChanges becomes false)
       if (config.contentType === 'templates') {
+        console.log('[A&T-TRACE] NORMAL post-save path: updating originalTemplateValuesRef with editableValues', {
+          editableKeysCount: Object.keys(editableValues).length,
+        });
         originalTemplateValuesRef.current = { ...editableValues };
         setTemplateValuesVersion(v => v + 1); // Trigger useMemo recalculation
       }
@@ -2840,6 +2884,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
     // Skip next data load to prevent revalidation from overwriting user changes
     skipNextDataLoadRef.current = true;
+
+    console.log('[A&T-TRACE] handleAcceptAndTranslate START', {
+      fieldKey,
+      suggestionPreview: suggestion.slice(0, 60),
+      currentLanguage,
+      primaryLocale,
+      originalTemplateKeys: Object.keys(originalTemplateValuesRef.current).length,
+      originalValuePreview: (originalTemplateValuesRef.current[fieldKey] || '').slice(0, 60),
+    });
 
     // Step 2: Save the primary text first
     // After save completes, the useEffect will trigger the translation
