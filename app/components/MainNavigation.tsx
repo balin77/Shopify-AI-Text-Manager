@@ -513,9 +513,9 @@ export function MainNavigation() {
             </div>
           )}
 
-          {/* InfoBox with Popover History - desktop only */}
+          {/* InfoBox with Popover History */}
           {(infoBox || messageHistory.length > 0) && (
-            <div className="desktop-only" style={{ flex: 1, maxWidth: "600px" }}>
+            <div className="nav-infobox-wrapper" style={{ flex: 1, maxWidth: "600px" }}>
               <Popover
                 active={popoverActive}
                 onClose={closePopover}
@@ -523,99 +523,106 @@ export function MainNavigation() {
                 preferredAlignment="center"
                 zIndexOverride={1100}
                 activator={
-                  infoBox ? (
-                    <div
-                      className="info-box"
-                      role="status"
-                      aria-live="polite"
-                      aria-label={`${infoBox.tone === "success" ? "Success" : infoBox.tone === "critical" ? "Error" : infoBox.tone === "warning" ? "Warning" : "Information"} notification`}
-                      onClick={togglePopover}
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        padding: "0.5rem 1rem",
-                        borderRadius: "4px",
-                        backgroundColor: toneBg(infoBox.tone),
-                        border: `1px solid ${toneColor(infoBox.tone)}`,
-                        fontSize: "14px",
-                        gap: "0.5rem",
-                        cursor: "pointer",
-                      }}
-                    >
-                      <span style={{ flex: 1, color: "#202223" }}>
-                        {infoBox.message}
-                      </span>
-                      {messageHistory.length > 1 && (
-                        <span style={{
-                          backgroundColor: "#303030",
-                          color: "white",
-                          borderRadius: "10px",
-                          padding: "1px 6px",
-                          fontSize: "11px",
-                          fontWeight: "600",
-                          minWidth: "18px",
-                          textAlign: "center",
-                        }}>
-                          {messageHistory.length}
-                        </span>
-                      )}
+                  <div>
+                    {/* Desktop: full info banner when active message */}
+                    {infoBox && (
+                      <div className="desktop-only">
+                        <div
+                          className="info-box"
+                          role="status"
+                          aria-live="polite"
+                          aria-label={`${infoBox.tone === "success" ? "Success" : infoBox.tone === "critical" ? "Error" : infoBox.tone === "warning" ? "Warning" : "Information"} notification`}
+                          onClick={togglePopover}
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            padding: "0.5rem 1rem",
+                            borderRadius: "4px",
+                            backgroundColor: toneBg(infoBox.tone),
+                            border: `1px solid ${toneColor(infoBox.tone)}`,
+                            fontSize: "14px",
+                            gap: "0.5rem",
+                            cursor: "pointer",
+                          }}
+                        >
+                          <span style={{ flex: 1, color: "#202223" }}>
+                            {infoBox.message}
+                          </span>
+                          {messageHistory.length > 1 && (
+                            <span style={{
+                              backgroundColor: "#303030",
+                              color: "white",
+                              borderRadius: "10px",
+                              padding: "1px 6px",
+                              fontSize: "11px",
+                              fontWeight: "600",
+                              minWidth: "18px",
+                              textAlign: "center",
+                            }}>
+                              {messageHistory.length}
+                            </span>
+                          )}
+                          <button
+                            onClick={(e) => { e.stopPropagation(); hideInfoBox(); }}
+                            style={{
+                              background: "none",
+                              border: "none",
+                              cursor: "pointer",
+                              padding: "0.25rem",
+                              display: "flex",
+                              alignItems: "center",
+                              color: "#202223",
+                              opacity: 0.6,
+                              fontSize: "18px",
+                              lineHeight: 1,
+                            }}
+                            aria-label="Schließen"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                    {/* Bell icon: always on mobile, only when no active infoBox on desktop */}
+                    <div className={infoBox ? "mobile-only" : undefined}>
                       <button
-                        onClick={(e) => { e.stopPropagation(); hideInfoBox(); }}
+                        onClick={togglePopover}
                         style={{
+                          position: "relative",
                           background: "none",
-                          border: "none",
+                          border: "1px solid #c9cccf",
+                          borderRadius: "8px",
                           cursor: "pointer",
-                          padding: "0.25rem",
+                          padding: "6px",
                           display: "flex",
                           alignItems: "center",
-                          color: "#202223",
-                          opacity: 0.6,
-                          fontSize: "18px",
-                          lineHeight: 1,
+                          justifyContent: "center",
                         }}
-                        aria-label="Schließen"
+                        aria-label={`${messageHistory.length} Nachrichten`}
                       >
-                        ×
+                        <Icon source={NotificationIcon} tone="base" />
+                        {unreadCount > 0 && (
+                          <span style={{
+                            position: "absolute",
+                            top: "-4px",
+                            right: "-4px",
+                            backgroundColor: "#f44336",
+                            color: "white",
+                            borderRadius: "10px",
+                            padding: "0 5px",
+                            fontSize: "10px",
+                            fontWeight: "700",
+                            minWidth: "16px",
+                            height: "16px",
+                            lineHeight: "16px",
+                            textAlign: "center",
+                          }}>
+                            {unreadCount}
+                          </span>
+                        )}
                       </button>
                     </div>
-                  ) : (
-                    <button
-                      onClick={togglePopover}
-                      style={{
-                        position: "relative",
-                        background: "none",
-                        border: "1px solid #c9cccf",
-                        borderRadius: "8px",
-                        cursor: "pointer",
-                        padding: "6px",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                      }}
-                      aria-label={`${messageHistory.length} Nachrichten`}
-                    >
-                      <Icon source={NotificationIcon} tone="base" />
-                      {unreadCount > 0 && (
-                        <span style={{
-                          position: "absolute",
-                          top: "-4px",
-                          right: "-4px",
-                          backgroundColor: "#f44336",
-                          color: "white",
-                          borderRadius: "10px",
-                          padding: "0 5px",
-                          fontSize: "10px",
-                          fontWeight: "700",
-                          minWidth: "16px",
-                          height: "16px",
-                          lineHeight: "16px",
-                          textAlign: "center",
-                        }}>
-                          {unreadCount}
-                        </span>
-                      )}
-                    </button>
-                  )
+                  </div>
                 }
               >
                 <div style={{ width: "380px" }}>

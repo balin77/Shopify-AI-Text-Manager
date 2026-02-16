@@ -51,6 +51,14 @@
   }
 }
 
+/* InfoBox bell icon wrapper: compact on mobile, flex on desktop */
+@media (max-width: 899px) {
+  .nav-infobox-wrapper {
+    flex: 0 0 auto !important;
+    max-width: none !important;
+  }
+}
+
 /* Image Gallery: Keep aspect ratio consistent at all screen sizes */
 .image-preview-large > div {
   padding-bottom: 100% !important; /* Always maintain square aspect ratio */
