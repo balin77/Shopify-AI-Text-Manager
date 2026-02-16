@@ -424,8 +424,40 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
             targetLocale
           );
 
-          // Auto-save the translation (use correct resourceId for this field)
+          // Save to Shopify FIRST — only persist to local DB on success
           const fieldResId = keyToResourceId.get(fieldType) || resourceId;
+          const allContentForSingle = themeGroups.flatMap((group) => (group.translatableContent as unknown) as TranslatableField[]);
+          const singleFieldDigest = allContentForSingle.find(item => item.key === fieldType)?.digest;
+
+          if (!singleFieldDigest) {
+            throw new Error(`No digest available for field "${fieldType}" — cannot save translation to Shopify`);
+          }
+
+          const response = await admin.graphql(TRANSLATE_CONTENT, {
+            variables: {
+              resourceId: fieldResId,
+              translations: [{
+                key: fieldType,
+                value: translatedValue,
+                locale: targetLocale,
+                translatableContentDigest: singleFieldDigest,
+              }],
+            }
+          });
+          const data = await response.json();
+
+          if (data.data?.translationsRegister?.userErrors?.length > 0) {
+            const errors = data.data.translationsRegister.userErrors;
+            throw new Error(`Shopify rejected translation: ${errors[0].message}`);
+          }
+
+          logger.info("[TEMPLATES] translateField: Shopify translation registered", {
+            context: "Templates",
+            fieldType,
+            targetLocale,
+          });
+
+          // Shopify succeeded — now save to local DB
           await db.themeTranslation.upsert({
             where: {
               shop_resourceId_groupId_key_locale: {
@@ -574,9 +606,43 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
             }
           }
 
-          // Batch save all translations in a single transaction (use correct resourceId for the field)
+          // Save to Shopify FIRST — only persist to local DB on success
           const fieldResId2 = keyToResourceId.get(fieldType) || resourceId;
+          const allContentForField = themeGroups.flatMap((group) => (group.translatableContent as unknown) as TranslatableField[]);
+          const fieldDigest = allContentForField.find(item => item.key === fieldType)?.digest;
+
+          if (!fieldDigest) {
+            throw new Error(`No digest available for field "${fieldType}" — cannot save translations to Shopify`);
+          }
+
           if (pendingUpserts.length > 0) {
+            const translationInputs = pendingUpserts.map(({ locale, value }) => ({
+              key: fieldType,
+              value,
+              locale,
+              translatableContentDigest: fieldDigest,
+            }));
+
+            const response = await admin.graphql(TRANSLATE_CONTENT, {
+              variables: {
+                resourceId: fieldResId2,
+                translations: translationInputs,
+              }
+            });
+            const data = await response.json();
+
+            if (data.data?.translationsRegister?.userErrors?.length > 0) {
+              const errors = data.data.translationsRegister.userErrors;
+              throw new Error(`Shopify rejected translations: ${errors[0].message}`);
+            }
+
+            logger.info("[TEMPLATES] translateFieldToAllLocales: Shopify translations registered", {
+              context: "Templates",
+              fieldType,
+              localeCount: translationInputs.length,
+            });
+
+            // Shopify succeeded — now save to local DB
             await db.$transaction(
               pendingUpserts.map(({ locale, value }) =>
                 db.themeTranslation.upsert({
@@ -729,10 +795,103 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
             }
           }
 
-          // Batch save all translations in a single transaction
-          if (pendingUpserts.length > 0) {
+          // Save to Shopify FIRST — only persist to local DB on success
+          // Build digest map from translatableContent
+          const digestMap = new Map<string, string>();
+          for (const item of allContent) {
+            if (item.digest) {
+              digestMap.set(item.key, item.digest);
+            }
+          }
+
+          // Group pending upserts by resourceId+locale for batched Shopify calls
+          const shopifyBatches = new Map<string, { resId: string; locale: string; inputs: Array<{ key: string; value: string; locale: string; translatableContentDigest: string }> }>();
+          const shopifySkippedKeys: string[] = [];
+
+          for (const { key, locale, value, resId } of pendingUpserts) {
+            const digest = digestMap.get(key);
+            if (!digest) {
+              shopifySkippedKeys.push(key);
+              continue;
+            }
+            const batchKey = `${resId}::${locale}`;
+            if (!shopifyBatches.has(batchKey)) {
+              shopifyBatches.set(batchKey, { resId, locale, inputs: [] });
+            }
+            shopifyBatches.get(batchKey)!.inputs.push({
+              key,
+              value,
+              locale,
+              translatableContentDigest: digest,
+            });
+          }
+
+          if (shopifySkippedKeys.length > 0) {
+            logger.warn("[TEMPLATES] translateAll: Skipped keys without digest", {
+              context: "Templates",
+              count: shopifySkippedKeys.length,
+              sampleKeys: shopifySkippedKeys.slice(0, 5),
+            });
+          }
+
+          // Send one translationsRegister call per resourceId+locale combination
+          // Track which upserts succeeded on Shopify so we only save those to DB
+          const successfulUpserts: Array<{ key: string; locale: string; value: string; resId: string }> = [];
+          const failedBatches: string[] = [];
+
+          for (const [, batch] of shopifyBatches) {
+            try {
+              const response = await admin.graphql(TRANSLATE_CONTENT, {
+                variables: {
+                  resourceId: batch.resId,
+                  translations: batch.inputs,
+                }
+              });
+              const data = await response.json();
+
+              if (data.data?.translationsRegister?.userErrors?.length > 0) {
+                const errors = data.data.translationsRegister.userErrors;
+                logger.error("[TEMPLATES] translateAll: Shopify rejected translations", {
+                  context: "Templates",
+                  errors,
+                  resourceId: batch.resId,
+                  locale: batch.locale,
+                });
+                failedBatches.push(`${batch.resId} (${batch.locale}): ${errors[0].message}`);
+              } else {
+                logger.info("[TEMPLATES] translateAll: Shopify translations registered", {
+                  context: "Templates",
+                  resourceId: batch.resId,
+                  locale: batch.locale,
+                  fieldCount: batch.inputs.length,
+                });
+                // Mark these as successful
+                for (const input of batch.inputs) {
+                  const resId = keyToResourceId.get(input.key) || resourceId;
+                  successfulUpserts.push({ key: input.key, locale: input.locale, value: input.value, resId });
+                }
+              }
+            } catch (shopifyError) {
+              const errorMsg = shopifyError instanceof Error ? shopifyError.message : String(shopifyError);
+              logger.error("[TEMPLATES] translateAll: translationsRegister failed", {
+                context: "Templates",
+                error: errorMsg,
+                resourceId: batch.resId,
+                locale: batch.locale,
+              });
+              failedBatches.push(`${batch.resId} (${batch.locale}): ${errorMsg}`);
+            }
+          }
+
+          // If ALL batches failed, throw to abort entirely
+          if (successfulUpserts.length === 0 && pendingUpserts.length > 0) {
+            throw new Error(`Shopify rejected all translations: ${failedBatches.join("; ")}`);
+          }
+
+          // Save only Shopify-successful translations to local DB
+          if (successfulUpserts.length > 0) {
             await db.$transaction(
-              pendingUpserts.map(({ key, locale, value, resId }) =>
+              successfulUpserts.map(({ key, locale, value, resId }) =>
                 db.themeTranslation.upsert({
                   where: {
                     shop_resourceId_groupId_key_locale: {
@@ -886,6 +1045,11 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
           }
         }
 
+        // Track Shopify failures so we only save successful keys to DB
+        const skippedKeys: string[] = [];
+        const failedDeleteKeys: string[] = [];
+        const shopifyErrors: string[] = [];
+
         // STEP 1: Register translations with Shopify (only for foreign locales)
         // Shopify's translationsRegister does NOT accept the shop's primary locale
         if (locale !== primaryLocale) {
@@ -900,7 +1064,6 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
           const translationsByResource = new Map<string, Array<{ key: string; value: string; locale: string; translatableContentDigest: string }>>();
           // Group cleared (empty) translations by resource ID for deletion
           const deletionsByResource = new Map<string, string[]>();
-          const skippedKeys: string[] = [];
 
           for (const [key, value] of Object.entries(updatedFields)) {
             const fieldResId = keyToResourceId.get(key) || resourceId;
@@ -938,6 +1101,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
           }
 
           // Send one translationsRegister call per resource ID
+          const shopifyErrors: string[] = [];
           for (const [resId, translationInputs] of translationsByResource) {
             if (translationInputs.length === 0) continue;
 
@@ -949,36 +1113,48 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
               sampleKeys: translationInputs.slice(0, 3).map(t => t.key),
             });
 
-            const response = await admin.graphql(TRANSLATE_CONTENT, {
-              variables: {
-                resourceId: resId,
-                translations: translationInputs
+            try {
+              const response = await admin.graphql(TRANSLATE_CONTENT, {
+                variables: {
+                  resourceId: resId,
+                  translations: translationInputs
+                }
+              });
+
+              const data = await response.json();
+
+              if (data.data?.translationsRegister?.userErrors?.length > 0) {
+                const errors = data.data.translationsRegister.userErrors;
+                logger.error("[TEMPLATES] Shopify translation errors", {
+                  context: "Templates",
+                  errors,
+                  resourceId: resId,
+                  locale
+                });
+                skippedKeys.push(...translationInputs.map(t => t.key));
+                shopifyErrors.push(errors[0].message);
+              } else {
+                logger.info("[TEMPLATES] Shopify translations registered successfully", {
+                  context: "Templates",
+                  locale,
+                  resourceId: resId,
+                  fieldCount: translationInputs.length
+                });
               }
-            });
-
-            const data = await response.json();
-
-            if (data.data?.translationsRegister?.userErrors?.length > 0) {
-              const errors = data.data.translationsRegister.userErrors;
-              logger.error("[TEMPLATES] Shopify translation errors", {
+            } catch (registerError) {
+              const errorMsg = registerError instanceof Error ? registerError.message : String(registerError);
+              logger.error("[TEMPLATES] translationsRegister failed", {
                 context: "Templates",
-                errors,
+                error: errorMsg,
                 resourceId: resId,
-                locale
               });
-              // Don't hard-fail — continue saving other resources and the local DB
               skippedKeys.push(...translationInputs.map(t => t.key));
-            } else {
-              logger.info("[TEMPLATES] Shopify translations registered successfully", {
-                context: "Templates",
-                locale,
-                resourceId: resId,
-                fieldCount: translationInputs.length
-              });
+              shopifyErrors.push(errorMsg);
             }
           }
 
           // Delete cleared translations from Shopify via translationsRemove
+          const failedDeleteKeys: string[] = [];
           for (const [resId, keysToDelete] of deletionsByResource) {
             if (keysToDelete.length === 0) continue;
 
@@ -1001,11 +1177,13 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
               const removeData = await removeResponse.json();
 
               if (removeData.data?.translationsRemove?.userErrors?.length > 0) {
-                logger.warn("[TEMPLATES] Shopify translationsRemove errors for cleared fields", {
+                logger.error("[TEMPLATES] Shopify translationsRemove errors for cleared fields", {
                   context: "Templates",
                   errors: removeData.data.translationsRemove.userErrors,
                   resourceId: resId,
                 });
+                failedDeleteKeys.push(...keysToDelete);
+                shopifyErrors.push(removeData.data.translationsRemove.userErrors[0].message);
               } else {
                 logger.info("[TEMPLATES] Cleared translations removed from Shopify", {
                   context: "Templates",
@@ -1015,12 +1193,23 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
                 });
               }
             } catch (removeError) {
-              logger.warn("[TEMPLATES] translationsRemove failed for cleared fields (non-fatal)", {
+              const errorMsg = removeError instanceof Error ? removeError.message : String(removeError);
+              logger.error("[TEMPLATES] translationsRemove failed for cleared fields", {
                 context: "Templates",
-                error: removeError instanceof Error ? removeError.message : String(removeError),
+                error: errorMsg,
                 resourceId: resId,
               });
+              failedDeleteKeys.push(...keysToDelete);
+              shopifyErrors.push(errorMsg);
             }
+          }
+
+          // If ALL Shopify operations failed, abort without saving to DB
+          const totalShopifyOps = [...translationsByResource.values()].reduce((n, arr) => n + arr.length, 0)
+            + [...deletionsByResource.values()].reduce((n, arr) => n + arr.length, 0);
+          const totalFailed = skippedKeys.length + failedDeleteKeys.length;
+          if (totalFailed > 0 && totalFailed >= totalShopifyOps) {
+            throw new Error(`Shopify rejected all changes: ${shopifyErrors.join("; ")}`);
           }
         }
 
@@ -1374,12 +1563,19 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
           }
         } else {
           // Update translations: batch upsert non-empty values, delete cleared values
-          const entriesToUpsert = Object.entries(updatedFields).filter(([, value]) => value !== "");
-          const keysToDelete = Object.entries(updatedFields).filter(([, value]) => value === "").map(([key]) => key);
+          // Only save keys that succeeded on Shopify (exclude skippedKeys and failedDeleteKeys)
+          const skippedSet = new Set(skippedKeys);
+          const failedDeleteSet = new Set(failedDeleteKeys);
+
+          const entriesToUpsert = Object.entries(updatedFields)
+            .filter(([key, value]) => value !== "" && !skippedSet.has(key));
+          const keysToDelete = Object.entries(updatedFields)
+            .filter(([key, value]) => value === "" && !failedDeleteSet.has(key))
+            .map(([key]) => key);
 
           const dbOps: any[] = [];
 
-          // Upsert non-empty translations
+          // Upsert non-empty translations (only Shopify-successful)
           for (const [key, value] of entriesToUpsert) {
             const keyResId = keyToResourceId.get(key) || resourceId;
             dbOps.push(db.themeTranslation.upsert({
@@ -1407,7 +1603,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
             }));
           }
 
-          // Delete cleared translations from DB
+          // Delete cleared translations from DB (only Shopify-successful)
           if (keysToDelete.length > 0) {
             dbOps.push(db.themeTranslation.deleteMany({
               where: {
@@ -1421,6 +1617,15 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
 
           if (dbOps.length > 0) {
             await db.$transaction(dbOps);
+          }
+
+          // Return partial error if some keys failed on Shopify
+          if (shopifyErrors.length > 0) {
+            return json({
+              success: false,
+              error: `Some translations could not be saved to Shopify: ${shopifyErrors.join("; ")}`,
+              actionType: "updateContent"
+            }, { status: 500 });
           }
         }
 
