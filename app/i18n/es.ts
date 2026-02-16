@@ -540,6 +540,7 @@ export const es: Translation = {
     noTargetLanguagesSelected: "No hay idiomas de destino seleccionados",
     noTargetLanguagesEnabled: "No hay idiomas de destino habilitados",
     fieldTranslatedToLanguages: "{fieldType} ha sido traducido a {count} idioma(s)",
+    fieldTranslatedAndSaved: "{fieldType} traducido y guardado correctamente",
     // Tooltip for locale buttons
     missingContent: "Contenido faltante:",
     missingTranslations: "Traducciones faltantes:",

@@ -1131,6 +1131,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
   // Ref to track whether a save operation is actually pending (prevents false "saved" messages on revalidation)
   const isSavePendingRef = useRef(false);
+  // Ref to suppress the generic "Changes saved" toast when the save was triggered by a translate action
+  // (the translate callback already shows its own specific toast)
+  const isSaveFromTranslateRef = useRef(false);
 
   // Handle translated field response (single field translation)
   // Auto-save immediately after receiving translation
@@ -1975,6 +1978,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
       // Check if any alt-text indices failed to save to Shopify
       const failedAltTextIndices = fetcher.data.failedAltTextIndices || [];
+      // If this save was triggered by a translate action, the translate callback already
+      // showed its own success toast — only show warnings/errors here, skip the generic "Changes saved".
+      const wasTranslateSave = isSaveFromTranslateRef.current;
+      isSaveFromTranslateRef.current = false;
+
       if (failedAltTextIndices.length > 0) {
         const failedList = failedAltTextIndices.map((i: number) => i + 1).join(", ");
         showInfoBox(
@@ -1990,7 +1998,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           "warning",
           t.common?.warning || "Warning"
         );
-      } else {
+      } else if (!wasTranslateSave) {
         showInfoBox(
           t.common?.changesSaved || "Changes saved successfully!",
           "success",
@@ -2028,6 +2036,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // Also mark error responses as processed
       processedSaveResponseRef.current = fetcher.data;
       isSavePendingRef.current = false;
+      isSaveFromTranslateRef.current = false;
       const translatedError = translateErrorMessage(String(fetcher.data.error || ""), t);
       showInfoBox(translatedError, "critical", t.common?.error || "Error");
     } else if (fetcher.data && !fetcher.data.success && 'errorKey' in fetcher.data && isSavePendingRef.current) {
@@ -2042,6 +2051,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // ──────────────────────────────────────────────────────────────────
       processedSaveResponseRef.current = fetcher.data;
       isSavePendingRef.current = false;
+      isSaveFromTranslateRef.current = false;
 
       const errorKey = String((fetcher.data as { errorKey?: string }).errorKey);
       const errorMessage =
@@ -2427,11 +2437,22 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
           savedLocaleRef.current = targetLocale;
           isSavePendingRef.current = true;
+          isSaveFromTranslateRef.current = true;
           safeSubmit(formDataObj, { method: "POST" });
 
           // Reset the baseline so the just-saved translated field isn't re-sent on the next save.
           originalLoadedValuesRef.current = { ...newValues };
         }
+
+        // Show explicit success toast for the translation
+        const fieldLabel = resolveFieldLabel(fieldKey);
+        showInfoBox(
+          t.common?.fieldTranslatedAndSaved
+            ?.replace("{fieldType}", fieldLabel)
+            || `${fieldLabel} translated and saved successfully`,
+          "success",
+          t.common?.success || "Success"
+        );
 
         // For templates: Update original values so templateHasFieldChanges becomes false
         if (config.contentType === 'templates') {

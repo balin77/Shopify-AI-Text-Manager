@@ -163,6 +163,7 @@ export interface TranslationStrings {
     noTargetLanguagesSelected?: string;
     noTargetLanguagesEnabled?: string;
     fieldTranslatedToLanguages?: string;
+    fieldTranslatedAndSaved?: string;
     translatedSuccessfully?: string;
     [key: string]: TranslationValue;
   };

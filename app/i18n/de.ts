@@ -538,6 +538,7 @@ export const de = {
     noTargetLanguagesSelected: "Keine Zielsprachen ausgewählt",
     noTargetLanguagesEnabled: "Keine Zielsprachen aktiviert",
     fieldTranslatedToLanguages: "{fieldType} wurde in {count} Sprache(n) übersetzt",
+    fieldTranslatedAndSaved: "{fieldType} übersetzt und gespeichert",
     // Tooltip for locale buttons
     missingContent: "Fehlende Inhalte:",
     missingTranslations: "Fehlende Übersetzungen:",
