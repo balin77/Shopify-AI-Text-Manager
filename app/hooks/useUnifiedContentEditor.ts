@@ -1674,6 +1674,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           }
         });
 
+        // Primary locale changes can cause the server to delete stale
+        // foreign translations. Clear local caches so stale values aren't
+        // restored when the user switches to a foreign locale.
+        localTranslationsRef.current = {};
+        deletedTranslationKeysRef.current.clear();
+
         // Update image alt-texts for primary locale
         if (item.images && Object.keys(imageAltTextsRef.current).length > 0) {
           for (const [indexStr, altText] of Object.entries(imageAltTextsRef.current)) {

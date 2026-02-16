@@ -1895,9 +1895,19 @@ export default function TemplatesPage() {
             }
           }));
 
-          // NOTE: Do NOT invalidate translation caches here.
-          // Primary locale saves don't change translations.
-          // The translation cache remains valid after a primary content update.
+          // Primary locale changes can cause the server to delete stale
+          // translations (Shopify removes translations for changed fields).
+          // Invalidate the translation cache so fresh data is loaded when the
+          // user switches to a foreign locale.
+          setLoadedTranslations(prev => {
+            const next = { ...prev };
+            delete next[selectedGroupId];
+            return next;
+          });
+          // Also clear the ref so preloadAllTranslations will re-fetch
+          const clearedRef = { ...loadedTranslationsRef.current };
+          delete clearedRef[selectedGroupId];
+          loadedTranslationsRef.current = clearedRef;
         }
       } else {
         // FOREIGN LOCALE SAVE: Update loadedTranslations cache with new values
