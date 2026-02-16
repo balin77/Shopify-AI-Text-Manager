@@ -111,6 +111,12 @@ function translateErrorMessage(errorMessage: string, t: TranslationStrings): str
 export function useUnifiedContentEditor(props: UseContentEditorProps): UseContentEditorReturn {
   const { config, items, shopLocales, primaryLocale, fetcher, showInfoBox, t, onTranslateToAllLocalesComplete } = props;
   const revalidator = useRevalidator();
+  // IMPORTANT: useRevalidator() returns an unstable reference that changes on
+  // every React Router state change (including Shopify Admin SDK analytics).
+  // Using the object directly in effect deps causes infinite re-renders.
+  // Always use this ref inside effects instead.
+  const revalidatorRef = useRef(revalidator);
+  revalidatorRef.current = revalidator;
 
   // ============================================================================
   // FOCUS MANAGEMENT (Accessibility)
@@ -124,18 +130,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [currentLanguage, setCurrentLanguage] = useState(primaryLocale);
-  const [editableValues, _setEditableValues] = useState<Record<string, string>>({});
-  const setEditableValues: typeof _setEditableValues = useCallback((action) => {
-    _setEditableValues((prev) => {
-      const next = typeof action === 'function' ? action(prev) : action;
-      const prevNonEmpty = Object.values(prev).filter(v => v).length;
-      const nextNonEmpty = Object.values(next).filter(v => v).length;
-      if (prevNonEmpty !== nextNonEmpty || Object.keys(prev).length !== Object.keys(next).length) {
-        console.log('[TRACE] setEditableValues', { prevNonEmpty, nextNonEmpty, prevKeys: Object.keys(prev).length, nextKeys: Object.keys(next).length, stack: new Error().stack?.split('\n').slice(1, 4).map(s => s.trim()) });
-      }
-      return next;
-    });
-  }, []);
+  const [editableValues, setEditableValues] = useState<Record<string, string>>({});
   const [aiSuggestions, setAiSuggestions] = useState<Record<string, string>>({});
   const [htmlModes, setHtmlModes] = useState<Record<string, 'html' | 'rendered'>>({});
   const [enabledLanguages, setEnabledLanguages] = useState<string[]>(
@@ -492,7 +487,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // Don't log on skip to reduce console spam
       return;
     }
-    console.log('[TRACE] dataLoadEffect RUNNING', { itemIdChanged, languageChanged, refreshTriggered, currentLanguage, selectedItemId, dataRefreshTrigger });
+
 
     // Skip data load if flagged (e.g., after save/clear to prevent overwriting user changes)
     // BUT: Never skip when the language changed - a language switch always needs fresh data
@@ -676,8 +671,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // including unchanged ones like handle, which causes "handle already taken" errors.
     originalLoadedValuesRef.current = { ...newValues };
 
-    const nonEmpty = Object.entries(newValues).filter(([, v]) => v).length;
-    console.log('[TRACE] dataLoadEffect → setEditableValues', { total: Object.keys(newValues).length, nonEmpty, lang: currentLanguage, sample: Object.entries(newValues).slice(0, 3) });
     setEditableValues(newValues);
 
     // For templates: Store original values for change detection
@@ -710,7 +703,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // Skip retry mechanism if initial load was already successful
     // This prevents reloading old values when user intentionally clears fields
     if (initialLoadSuccessfulRef.current) return;
-    console.log('[TRACE] retryEffect RUNNING', { initialLoadSuccessful: false, isLoadingData, allEmpty: Object.values(editableValues).every(v => !v || v === "") });
+
 
     const item = selectedItemRef.current;
     if (!item || !selectedItemId || isLoadingData) return;
@@ -751,7 +744,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     }
 
     // If item has data but values are empty, and we haven't exceeded retries, try again
-    console.log('[TRACE] retryEffect check', { itemHasData, retryCount: retryCountRef.current, allValuesEmpty: Object.values(editableValues).every(v => !v || v === "") });
+
     if (itemHasData && retryCountRef.current < MAX_RETRIES) {
       retryCountRef.current += 1;
       debugLog.retry(`Fields empty but item has data. Retry ${retryCountRef.current}/${MAX_RETRIES} in ${RETRY_DELAY_MS}ms`);
@@ -1165,7 +1158,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       };
 
       // Update UI
-      console.log('[TRACE] translateField → setEditableValues', { fieldType, targetLocale, translatedValue: translatedValue?.substring(0, 30) });
+
       setEditableValues(newValues);
 
       // Clear fallback styling for this field since it now has a real translation
@@ -1302,10 +1295,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       skipNextDataLoadRef.current = true;
 
       // Revalidate to fetch fresh data with the new translations
-      if (revalidator.state === 'idle') {
+      if (revalidatorRef.current.state === 'idle') {
         try {
           debugLog.altText(' Triggering revalidation after translate to all locales');
-          revalidator.revalidate();
+          revalidatorRef.current.revalidate();
         } catch (error) {
           debugLog.altText(' Revalidation error (ignored):', error);
         }
@@ -1399,7 +1392,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
           // If we're currently viewing this locale, update the editable fields
           if (currentLanguage === locale) {
-            console.log('[TRACE] translateAll → setEditableValues for locale', locale, { fieldCount: Object.keys(fieldMap).length });
+
             const updatedValues = { ...editableValues };
             const translatedKeys: string[] = [];
             effectiveFieldDefinitions.forEach((fieldDef) => {
@@ -1543,7 +1536,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
         // If we're currently viewing this locale, update the editable fields
         if (currentLanguage === targetLocale) {
-          console.log('[TRACE] translateAllForLocale → setEditableValues for locale', targetLocale, { fieldCount: Object.keys(translations).length });
+
           const updatedValues = { ...editableValues };
           const translatedKeys: string[] = [];
           effectiveFieldDefinitions.forEach((fieldDef) => {
@@ -1647,7 +1640,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       }
 
       debugLog.response(' Processing save response for locale:', savedLocale);
-      console.log('[TRACE] updateContent effect processing', { savedLocale, primaryLocale, editableValuesNonEmpty: Object.entries(editableValues).filter(([,v]) => v).length });
 
       if (savedLocale === primaryLocale) {
         // This was a successful update action for primary locale
@@ -1674,9 +1666,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           }
         });
 
-        // Primary locale changes can cause the server to delete stale
-        // foreign translations. Clear local caches so stale values aren't
-        // restored when the user switches to a foreign locale.
+        // ── IMPORTANT: Clear translation refs after primary save ──────────
+        // When primary content changes, the server deletes stale foreign
+        // translations on Shopify (translations of the old primary text).
+        // We MUST clear these refs here, otherwise the data loading effect
+        // would restore old translations from localTranslationsRef when the
+        // user switches to a foreign locale — making deleted translations
+        // reappear in the UI despite being gone from Shopify.
+        // DO NOT REMOVE these lines without understanding the above.
+        // ─────────────────────────────────────────────────────────────────
         localTranslationsRef.current = {};
         deletedTranslationKeysRef.current.clear();
 
@@ -1721,19 +1719,24 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             }
             localTranslationsRef.current[fieldDef.translationKey][savedLocale] = value;
           } else if (value === "") {
-            // User cleared this field — remove the translation from memory
+            // ── User cleared this translation field ──────────────────────
+            // Remove from item.translations so getTranslatedValue returns "".
             if (existingIdx >= 0) {
               item.translations.splice(existingIdx, 1);
             }
 
-            // Clear stale value from localTranslationsRef so it won't be
-            // restored by the data loading effect on subsequent re-runs
+            // IMPORTANT: Also clear localTranslationsRef. Without this, the
+            // data loading effect reads stale values from localTranslationsRef
+            // (which takes priority over item.translations) and silently
+            // restores the deleted translation in the UI.
             if (localTranslationsRef.current[fieldDef.translationKey]?.[savedLocale]) {
               delete localTranslationsRef.current[fieldDef.translationKey][savedLocale];
             }
 
-            // Track as deleted so the data loading effect skips this key
+            // Mark key as deleted so the data loading effect shows "" even if
+            // item.translations still has a stale entry from revalidation.
             deletedTranslationKeysRef.current.add(fieldDef.translationKey);
+            // ─────────────────────────────────────────────────────────────
           }
         });
 
@@ -1771,7 +1774,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
       // Reset change detection after successful save
       // This ensures hasChanges becomes false after we've updated selectedItem
-      console.log('[TRACE] updateContent effect → setIsLoadingData(true)', { localTranslationsRef: JSON.parse(JSON.stringify(localTranslationsRef.current)), deletedKeys: Array.from(deletedTranslationKeysRef.current) });
+
       setIsLoadingData(true);
     }
   }, [fetcher.data, primaryLocale, editableValues, effectiveFieldDefinitions]); // Removed selectedItem - use ref instead
@@ -1848,7 +1851,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
               // If the current language is one of the translated languages, update editableValues
               if (translations[currentLanguage]) {
-                console.log('[TRACE] acceptAndTranslate callback → setEditableValues', { fieldKey, locale: currentLanguage, value: translations[currentLanguage]?.substring(0, 30) });
+
                 setEditableValues(prev => ({
                   ...prev,
                   [fieldKey]: translations[currentLanguage]
@@ -1984,10 +1987,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // Revalidate to fetch fresh data from the database after successful save
       // This ensures translations and all changes are reflected in the UI
       // Only revalidate if not already revalidating to prevent AbortError
-      console.log('[TRACE] showInfoBox effect → calling revalidator.revalidate()', { revalidatorState: revalidator.state });
-      if (revalidator.state === 'idle') {
+      if (revalidatorRef.current.state === 'idle') {
         try {
-          revalidator.revalidate();
+          revalidatorRef.current.revalidate();
         } catch (error) {
           // Ignore AbortError from Shopify admin interference
           debugLog.revalidate(' Error during revalidation (ignored):', error);
@@ -2019,7 +2021,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       showInfoBox(errorMessage, "critical", (t.content?.error as string) || t.common?.error || "Error");
 
       // Auto-restore empty fields to their original values (discard empty edits)
-      console.log('[TRACE] errorKey auto-restore triggered', { errorKey: (fetcher.data as any).errorKey });
       if (config.contentType === 'templates' && originalTemplateValuesRef.current) {
         setEditableValues(prev => {
           const restored = { ...prev };
@@ -2035,7 +2036,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         });
       }
     }
-  }, [fetcher.data, showInfoBox, t, revalidator, safeSubmit, submitAIAction, effectiveFieldDefinitions, currentLanguage, primaryLocale]);
+  }, [fetcher.data, showInfoBox, t, safeSubmit, submitAIAction, effectiveFieldDefinitions, currentLanguage, primaryLocale]);
 
   // Clear justSubmittedRef when fetcher picks up the request (state leaves 'idle')
   // or when it returns to idle (request completed). This ensures the synchronous
@@ -2571,8 +2572,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           }
 
           // Revalidate to fetch fresh data with the new translations
-          if (revalidator.state === 'idle') {
-            revalidator.revalidate();
+          if (revalidatorRef.current.state === 'idle') {
+            revalidatorRef.current.revalidate();
           }
         }
       }
@@ -2675,8 +2676,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
                 });
               }
             }
-            if (revalidator.state === 'idle') {
-              try { revalidator.revalidate(); } catch {}
+            if (revalidatorRef.current.state === 'idle') {
+              try { revalidatorRef.current.revalidate(); } catch {}
             }
           }
         );
@@ -3275,9 +3276,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         }
 
         // Revalidate to fetch fresh data from the database
-        if (revalidator.state === 'idle') {
+        if (revalidatorRef.current.state === 'idle') {
           try {
-            revalidator.revalidate();
+            revalidatorRef.current.revalidate();
           } catch (error) {
             debugLog.revalidate(' Error during revalidation (ignored):', error);
           }
@@ -3374,9 +3375,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             });
           }
         }
-        if (revalidator.state === 'idle') {
+        if (revalidatorRef.current.state === 'idle') {
           try {
-            revalidator.revalidate();
+            revalidatorRef.current.revalidate();
           } catch (error) {
             debugLog.revalidate(' Error during revalidation (ignored):', error);
           }
@@ -3623,8 +3624,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
     if (currentLanguage === primaryLocale) {
       // Reset to primary locale alt-texts - fallback will use images[i].altText
-      console.log(`[ALT-TEXT-DEBUG] Resetting imageAltTexts to {} for primary locale. images fallback values:`,
-        item.images.map((img: ContentImage, i: number) => `img${i}="${img.altText}"`).join(', '));
       setImageAltTexts({});
       setOriginalAltTexts({});
     } else {

@@ -1759,8 +1759,6 @@ export default function TemplatesPage() {
     }
 
     // Update editable values for the new page's fields
-    const nonEmpty = Object.values(newValues).filter(v => v).length;
-    console.log('[TRACE] paginationChangeEffect → setEditableValue', { total: Object.keys(newValues).length, nonEmpty, lang: editor.state.currentLanguage });
     Object.entries(newValues).forEach(([key, value]) => {
       editorHelpersRef.current.setEditableValue(key, value);
     });
@@ -1796,8 +1794,6 @@ export default function TemplatesPage() {
           newValues[item.key] = value;
           editorHelpersRef.current.setEditableValue(item.key, value);
         });
-        const nonEmpty = Object.values(newValues).filter(v => v).length;
-        console.log('[TRACE] langGroupChangeEffect → setEditableValue (cached)', { total: Object.keys(newValues).length, nonEmpty, lang: currentLanguage, cacheSize: cachedTranslations.length });
         // Update original values so hasChanges is false after language switch
         editorHelpersRef.current.setOriginalTemplateValues(newValues);
       }
@@ -1840,8 +1836,6 @@ export default function TemplatesPage() {
           });
 
           // Update all values at once
-          const nonEmpty = Object.values(newValues).filter(v => v).length;
-          console.log('[TRACE] translationFetcherEffect → setEditableValue', { total: Object.keys(newValues).length, nonEmpty, locale });
           Object.entries(newValues).forEach(([key, value]) => {
             editorHelpersRef.current.setEditableValue(key, value);
           });
@@ -1867,7 +1861,7 @@ export default function TemplatesPage() {
     // Skip if already processed
     if (processedSaveRef.current === fetcher.data) return;
     processedSaveRef.current = fetcher.data;
-    console.log('[TRACE] updateCachesEffect RUNNING', { actionType: (fetcher.data as any).actionType, lang: editor.state.currentLanguage, isPrimary: editor.state.currentLanguage === primaryLocale });
+
 
     const currentLanguage = editor.state.currentLanguage;
     const currentValues = editor.state.editableValues;
@@ -1895,10 +1889,16 @@ export default function TemplatesPage() {
             }
           }));
 
-          // Primary locale changes can cause the server to delete stale
-          // translations (Shopify removes translations for changed fields).
-          // Invalidate the translation cache so fresh data is loaded when the
-          // user switches to a foreign locale.
+          // ── IMPORTANT: Invalidate translation cache after primary save ──
+          // When primary content changes, the server deletes stale foreign
+          // translations on Shopify. The client-side loadedTranslations cache
+          // still holds the old translations. If we don't invalidate here,
+          // switching to a foreign locale would show stale (deleted) values
+          // from the cache instead of loading fresh data from the server.
+          // DO NOT REMOVE this invalidation — it was incorrectly removed
+          // once before and caused a hard-to-debug bug where deleted
+          // translations kept reappearing in the UI.
+          // ───────────────────────────────────────────────────────────────
           setLoadedTranslations(prev => {
             const next = { ...prev };
             delete next[selectedGroupId];
@@ -1915,19 +1915,20 @@ export default function TemplatesPage() {
           const groupCache = prev[selectedGroupId] || {};
           const localeCache = groupCache[currentLanguage] || [];
 
-          // Update, add, or remove translations for changed keys
+          // Update, add, or REMOVE translations for changed keys.
+          // IMPORTANT: Empty values must be removed (splice), not kept with
+          // value "". Otherwise the items memo includes them in allTranslations,
+          // which can cause stale translations to reappear in the UI.
           const updatedCache = [...localeCache];
           Object.entries(currentValues).forEach(([key, value]) => {
             const existingIndex = updatedCache.findIndex((tr) => tr.key === key);
             if (value) {
-              // Non-empty value: upsert
               if (existingIndex >= 0) {
                 updatedCache[existingIndex] = { ...updatedCache[existingIndex], value };
               } else {
                 updatedCache.push({ key, value, locale: currentLanguage });
               }
             } else if (existingIndex >= 0) {
-              // Empty value: remove from cache so it's not restored later
               updatedCache.splice(existingIndex, 1);
             }
           });
@@ -2002,8 +2003,6 @@ export default function TemplatesPage() {
       processedTranslateAllRef.current = fetcher.data;
       // translations shape: { locale: { key: value, ... }, ... }
       const translations = (fetcher.data as { translations: Record<string, Record<string, string>> }).translations;
-      console.log('[TRACE] page translateAll cache update', { locales: Object.keys(translations) });
-
       setLoadedTranslations(prev => {
         const newCache = { ...prev };
         const groupCache = { ...(newCache[selectedGroupId] || {}) };
@@ -2030,8 +2029,6 @@ export default function TemplatesPage() {
       processedTranslateAllRef.current = fetcher.data;
       // translations shape: { key: value, ... }, targetLocale: string
       const { translations, targetLocale } = fetcher.data as { translations: Record<string, string>; targetLocale: string };
-      console.log('[TRACE] page translateAllForLocale cache update', { targetLocale, fieldCount: Object.keys(translations).length });
-
       setLoadedTranslations(prev => {
         const newCache = { ...prev };
         const groupCache = { ...(newCache[selectedGroupId] || {}) };
@@ -2066,8 +2063,6 @@ export default function TemplatesPage() {
 
     // Only act when revalidation transitions from loading → idle
     if (prevState !== 'loading' || revalidator.state !== 'idle') return;
-    console.log('[TRACE] reloadEffect: revalidation loading→idle', { hasReloadParam: new URL(window.location.href).searchParams.has('_reload') });
-
     const groupId = selectedGroupIdRef.current;
     if (!groupId) return;
 
