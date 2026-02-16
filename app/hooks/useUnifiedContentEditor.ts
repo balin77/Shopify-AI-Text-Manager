@@ -124,7 +124,18 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [currentLanguage, setCurrentLanguage] = useState(primaryLocale);
-  const [editableValues, setEditableValues] = useState<Record<string, string>>({});
+  const [editableValues, _setEditableValues] = useState<Record<string, string>>({});
+  const setEditableValues: typeof _setEditableValues = useCallback((action) => {
+    _setEditableValues((prev) => {
+      const next = typeof action === 'function' ? action(prev) : action;
+      const prevNonEmpty = Object.values(prev).filter(v => v).length;
+      const nextNonEmpty = Object.values(next).filter(v => v).length;
+      if (prevNonEmpty !== nextNonEmpty || Object.keys(prev).length !== Object.keys(next).length) {
+        console.log('[TRACE] setEditableValues', { prevNonEmpty, nextNonEmpty, prevKeys: Object.keys(prev).length, nextKeys: Object.keys(next).length, stack: new Error().stack?.split('\n').slice(1, 4).map(s => s.trim()) });
+      }
+      return next;
+    });
+  }, []);
   const [aiSuggestions, setAiSuggestions] = useState<Record<string, string>>({});
   const [htmlModes, setHtmlModes] = useState<Record<string, 'html' | 'rendered'>>({});
   const [enabledLanguages, setEnabledLanguages] = useState<string[]>(
@@ -481,6 +492,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // Don't log on skip to reduce console spam
       return;
     }
+    console.log('[TRACE] dataLoadEffect RUNNING', { itemIdChanged, languageChanged, refreshTriggered, currentLanguage, selectedItemId, dataRefreshTrigger });
 
     // Skip data load if flagged (e.g., after save/clear to prevent overwriting user changes)
     // BUT: Never skip when the language changed - a language switch always needs fresh data
@@ -664,6 +676,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // including unchanged ones like handle, which causes "handle already taken" errors.
     originalLoadedValuesRef.current = { ...newValues };
 
+    const nonEmpty = Object.entries(newValues).filter(([, v]) => v).length;
+    console.log('[TRACE] dataLoadEffect → setEditableValues', { total: Object.keys(newValues).length, nonEmpty, lang: currentLanguage, sample: Object.entries(newValues).slice(0, 3) });
     setEditableValues(newValues);
 
     // For templates: Store original values for change detection
@@ -696,6 +710,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // Skip retry mechanism if initial load was already successful
     // This prevents reloading old values when user intentionally clears fields
     if (initialLoadSuccessfulRef.current) return;
+    console.log('[TRACE] retryEffect RUNNING', { initialLoadSuccessful: false, isLoadingData, allEmpty: Object.values(editableValues).every(v => !v || v === "") });
 
     const item = selectedItemRef.current;
     if (!item || !selectedItemId || isLoadingData) return;
@@ -736,6 +751,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     }
 
     // If item has data but values are empty, and we haven't exceeded retries, try again
+    console.log('[TRACE] retryEffect check', { itemHasData, retryCount: retryCountRef.current, allValuesEmpty: Object.values(editableValues).every(v => !v || v === "") });
     if (itemHasData && retryCountRef.current < MAX_RETRIES) {
       retryCountRef.current += 1;
       debugLog.retry(`Fields empty but item has data. Retry ${retryCountRef.current}/${MAX_RETRIES} in ${RETRY_DELAY_MS}ms`);
@@ -1149,6 +1165,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       };
 
       // Update UI
+      console.log('[TRACE] translateField → setEditableValues', { fieldType, targetLocale, translatedValue: translatedValue?.substring(0, 30) });
       setEditableValues(newValues);
 
       // Clear fallback styling for this field since it now has a real translation
@@ -1382,6 +1399,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
           // If we're currently viewing this locale, update the editable fields
           if (currentLanguage === locale) {
+            console.log('[TRACE] translateAll → setEditableValues for locale', locale, { fieldCount: Object.keys(fieldMap).length });
             const updatedValues = { ...editableValues };
             const translatedKeys: string[] = [];
             effectiveFieldDefinitions.forEach((fieldDef) => {
@@ -1525,6 +1543,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
         // If we're currently viewing this locale, update the editable fields
         if (currentLanguage === targetLocale) {
+          console.log('[TRACE] translateAllForLocale → setEditableValues for locale', targetLocale, { fieldCount: Object.keys(translations).length });
           const updatedValues = { ...editableValues };
           const translatedKeys: string[] = [];
           effectiveFieldDefinitions.forEach((fieldDef) => {
@@ -1628,6 +1647,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       }
 
       debugLog.response(' Processing save response for locale:', savedLocale);
+      console.log('[TRACE] updateContent effect processing', { savedLocale, primaryLocale, editableValuesNonEmpty: Object.entries(editableValues).filter(([,v]) => v).length });
 
       if (savedLocale === primaryLocale) {
         // This was a successful update action for primary locale
@@ -1745,6 +1765,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
       // Reset change detection after successful save
       // This ensures hasChanges becomes false after we've updated selectedItem
+      console.log('[TRACE] updateContent effect → setIsLoadingData(true)', { localTranslationsRef: JSON.parse(JSON.stringify(localTranslationsRef.current)), deletedKeys: Array.from(deletedTranslationKeysRef.current) });
       setIsLoadingData(true);
     }
   }, [fetcher.data, primaryLocale, editableValues, effectiveFieldDefinitions]); // Removed selectedItem - use ref instead
@@ -1821,6 +1842,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
               // If the current language is one of the translated languages, update editableValues
               if (translations[currentLanguage]) {
+                console.log('[TRACE] acceptAndTranslate callback → setEditableValues', { fieldKey, locale: currentLanguage, value: translations[currentLanguage]?.substring(0, 30) });
                 setEditableValues(prev => ({
                   ...prev,
                   [fieldKey]: translations[currentLanguage]
@@ -1956,6 +1978,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // Revalidate to fetch fresh data from the database after successful save
       // This ensures translations and all changes are reflected in the UI
       // Only revalidate if not already revalidating to prevent AbortError
+      console.log('[TRACE] showInfoBox effect → calling revalidator.revalidate()', { revalidatorState: revalidator.state });
       if (revalidator.state === 'idle') {
         try {
           revalidator.revalidate();
@@ -1990,6 +2013,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       showInfoBox(errorMessage, "critical", (t.content?.error as string) || t.common?.error || "Error");
 
       // Auto-restore empty fields to their original values (discard empty edits)
+      console.log('[TRACE] errorKey auto-restore triggered', { errorKey: (fetcher.data as any).errorKey });
       if (config.contentType === 'templates' && originalTemplateValuesRef.current) {
         setEditableValues(prev => {
           const restored = { ...prev };

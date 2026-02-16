@@ -1759,6 +1759,8 @@ export default function TemplatesPage() {
     }
 
     // Update editable values for the new page's fields
+    const nonEmpty = Object.values(newValues).filter(v => v).length;
+    console.log('[TRACE] paginationChangeEffect → setEditableValue', { total: Object.keys(newValues).length, nonEmpty, lang: editor.state.currentLanguage });
     Object.entries(newValues).forEach(([key, value]) => {
       editorHelpersRef.current.setEditableValue(key, value);
     });
@@ -1794,6 +1796,8 @@ export default function TemplatesPage() {
           newValues[item.key] = value;
           editorHelpersRef.current.setEditableValue(item.key, value);
         });
+        const nonEmpty = Object.values(newValues).filter(v => v).length;
+        console.log('[TRACE] langGroupChangeEffect → setEditableValue (cached)', { total: Object.keys(newValues).length, nonEmpty, lang: currentLanguage, cacheSize: cachedTranslations.length });
         // Update original values so hasChanges is false after language switch
         editorHelpersRef.current.setOriginalTemplateValues(newValues);
       }
@@ -1836,6 +1840,8 @@ export default function TemplatesPage() {
           });
 
           // Update all values at once
+          const nonEmpty = Object.values(newValues).filter(v => v).length;
+          console.log('[TRACE] translationFetcherEffect → setEditableValue', { total: Object.keys(newValues).length, nonEmpty, locale });
           Object.entries(newValues).forEach(([key, value]) => {
             editorHelpersRef.current.setEditableValue(key, value);
           });
@@ -1861,6 +1867,7 @@ export default function TemplatesPage() {
     // Skip if already processed
     if (processedSaveRef.current === fetcher.data) return;
     processedSaveRef.current = fetcher.data;
+    console.log('[TRACE] updateCachesEffect RUNNING', { actionType: (fetcher.data as any).actionType, lang: editor.state.currentLanguage, isPrimary: editor.state.currentLanguage === primaryLocale });
 
     const currentLanguage = editor.state.currentLanguage;
     const currentValues = editor.state.editableValues;
@@ -1985,6 +1992,7 @@ export default function TemplatesPage() {
       processedTranslateAllRef.current = fetcher.data;
       // translations shape: { locale: { key: value, ... }, ... }
       const translations = (fetcher.data as { translations: Record<string, Record<string, string>> }).translations;
+      console.log('[TRACE] page translateAll cache update', { locales: Object.keys(translations) });
 
       setLoadedTranslations(prev => {
         const newCache = { ...prev };
@@ -2012,6 +2020,7 @@ export default function TemplatesPage() {
       processedTranslateAllRef.current = fetcher.data;
       // translations shape: { key: value, ... }, targetLocale: string
       const { translations, targetLocale } = fetcher.data as { translations: Record<string, string>; targetLocale: string };
+      console.log('[TRACE] page translateAllForLocale cache update', { targetLocale, fieldCount: Object.keys(translations).length });
 
       setLoadedTranslations(prev => {
         const newCache = { ...prev };
@@ -2047,6 +2056,7 @@ export default function TemplatesPage() {
 
     // Only act when revalidation transitions from loading → idle
     if (prevState !== 'loading' || revalidator.state !== 'idle') return;
+    console.log('[TRACE] reloadEffect: revalidation loading→idle', { hasReloadParam: new URL(window.location.href).searchParams.has('_reload') });
 
     const groupId = selectedGroupIdRef.current;
     if (!groupId) return;
