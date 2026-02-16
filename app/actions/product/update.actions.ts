@@ -410,6 +410,9 @@ async function updateImageAltTexts(
             },
           });
           loggers.product("debug", "Updated primary alt-text in DB", { index, altTextSaved: altTextToSave });
+          // DEBUG: Verify DB was actually updated
+          const verifyImage = await db.productImage.findUnique({ where: { id: dbImage.id }, select: { altText: true } });
+          logger.info(`[ALT-TEXT-DEBUG] DB verify after save: dbImageId=${dbImage.id}, savedAltText="${verifyImage?.altText}", expected="${altTextToSave}"`);
         } else {
           const altTextValue = String(altText ?? "");
           if (altTextValue.trim() === "") {
@@ -441,6 +444,9 @@ async function updateImageAltTexts(
       }
     } else if (!shopifySaved) {
       failedAltTextIndices.push(index);
+      logger.info(`[ALT-TEXT-DEBUG] Shopify save FAILED for image index ${index}, alt="${altText}", locale=${params.locale}`);
+    } else if (!dbImage) {
+      logger.info(`[ALT-TEXT-DEBUG] No dbImage found for index ${index} - DB save skipped`);
     }
   }
 

@@ -3564,7 +3564,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     if (!item || !item.images) return;
 
     if (currentLanguage === primaryLocale) {
-      // Reset to primary locale alt-texts
+      // Reset to primary locale alt-texts - fallback will use images[i].altText
+      console.log(`[ALT-TEXT-DEBUG] Resetting imageAltTexts to {} for primary locale. images fallback values:`,
+        item.images.map((img: ContentImage, i: number) => `img${i}="${img.altText}"`).join(', '));
       setImageAltTexts({});
       setOriginalAltTexts({});
     } else {

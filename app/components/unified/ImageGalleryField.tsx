@@ -437,7 +437,13 @@ export function ImageGalleryField({
       )}
 
       {/* Alt-text input for selected image - only in non-free plans */}
-      {!isFreePlan && images && images.length > 0 && (
+      {!isFreePlan && images && images.length > 0 && (() => {
+        const altFromState = altTexts[selectedImageIndex];
+        const altFromImage = images[selectedImageIndex]?.altText;
+        const resolvedValue = altFromState !== undefined ? altFromState : (isPrimaryLocale ? (altFromImage || "") : "");
+        console.log(`[ALT-TEXT-DEBUG] Display: index=${selectedImageIndex}, altFromState="${altFromState}", altFromImage="${altFromImage}", resolved="${resolvedValue}", isPrimary=${isPrimaryLocale}`);
+        return true;
+      })() && (
         <AIEditableField
           label={`${t.altTextForImage || "Alt-text for image"} ${selectedImageIndex + 1}`}
           value={altTexts[selectedImageIndex] !== undefined
