@@ -1844,6 +1844,16 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         });
         debugLog.acceptAndTranslate(' Save completed, now starting translation');
 
+        // For templates: Update originalTemplateValuesRef IMMEDIATELY after save completes,
+        // before the translation starts. Otherwise isLoadingData flips back to false (10ms timer)
+        // while the translation is still in-flight, and the stale originalTemplateValuesRef
+        // causes templateHasFieldChanges to return true → save button flickers active.
+        if (config.contentType === 'templates') {
+          console.log('[A&T-TRACE] Updating originalTemplateValuesRef EARLY (after save, before translation)');
+          originalTemplateValuesRef.current = { ...editableValuesRef.current };
+          setTemplateValuesVersion(v => v + 1);
+        }
+
         // Start the translation using submitAIAction for parallel requests
         submitAIAction(
           {
