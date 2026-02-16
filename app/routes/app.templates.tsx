@@ -1884,13 +1884,9 @@ export default function TemplatesPage() {
             }
           }));
 
-          // IMPORTANT: Invalidate ALL translation caches for this group
-          // This ensures that deleted translations are not shown from cache
-          setLoadedTranslations(prev => {
-            const newCache = { ...prev };
-            delete newCache[selectedGroupId]; // Remove all cached translations for this group
-            return newCache;
-          });
+          // NOTE: Do NOT invalidate translation caches here.
+          // Primary locale saves don't change translations.
+          // The translation cache remains valid after a primary content update.
         }
       } else {
         // FOREIGN LOCALE SAVE: Update loadedTranslations cache with new values
@@ -2175,8 +2171,8 @@ export default function TemplatesPage() {
     const page = currentPag?.page || 1;
     const search = currentPag?.search || "";
 
-    fetchAndApply(page, search).catch(() => {
-      // Fetch failed - user keeps seeing pre-reload data
+    fetchAndApply(page, search).catch((err) => {
+      console.error('[Templates Reload] fetchAndApply failed:', err);
     });
   }, [revalidator.state, primaryLocale, preloadAllTranslations]);
 

@@ -601,19 +601,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       }
 
       setFallbackFields(newFallbackFields);
-    } else if (config.contentType === 'templates') {
-      // TEMPLATES: Don't load translations here - they are managed by app.templates.tsx
-      // via loadedTranslations cache. Just initialize with empty strings.
-      // The app.templates.tsx effect will set the correct values from cache.
-      debugLog.dataLoad(' Templates foreign locale - skipping, will be set by app.templates.tsx');
-      fieldDefs.forEach((field) => {
-        // Keep existing value if available, otherwise empty
-        newValues[field.key] = editableValues[field.key] || "";
-      });
-      // Don't call setEditableValues here for templates foreign locales
-      // The app.templates.tsx effect handles this
-      setIsLoadingData(false);
-      return;
     } else {
       // Load translated values for non-template content types
       const newFallbackFields = new Set<string>();
