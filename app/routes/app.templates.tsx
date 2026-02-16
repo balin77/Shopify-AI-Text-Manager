@@ -855,7 +855,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
             sampleDbKeys: Array.from(uniqueKeys).slice(0, 3),
             sampleFormKeys: allFormDataKeys.filter(k => !metadataKeys.has(k)).slice(0, 3),
           });
-          return json({ success: true }); // No changes
+          return json({ success: true, actionType: "updateContent" }); // No changes
         }
 
         // STEP 1: Register translations with Shopify (only for foreign locales)
@@ -1267,7 +1267,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
           }
         }
 
-        return json({ success: true });
+        return json({ success: true, actionType: "updateContent" });
       }
 
       default:
