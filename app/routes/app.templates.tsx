@@ -1889,25 +1889,49 @@ export default function TemplatesPage() {
             }
           }));
 
-          // ── IMPORTANT: Invalidate translation cache after primary save ──
+          // ── IMPORTANT: Surgically remove translations for CHANGED keys only ──
           // When primary content changes, the server deletes stale foreign
-          // translations on Shopify. The client-side loadedTranslations cache
-          // still holds the old translations. If we don't invalidate here,
-          // switching to a foreign locale would show stale (deleted) values
-          // from the cache instead of loading fresh data from the server.
-          // DO NOT REMOVE this invalidation — it was incorrectly removed
-          // once before and caused a hard-to-debug bug where deleted
-          // translations kept reappearing in the UI.
-          // ───────────────────────────────────────────────────────────────
-          setLoadedTranslations(prev => {
-            const next = { ...prev };
-            delete next[selectedGroupId];
-            return next;
+          // translations on Shopify — but ONLY for the keys that actually changed.
+          // We must mirror this on the client: remove only those translations from
+          // the cache, keeping unchanged translations intact.
+          // Previously this deleted the ENTIRE group cache, which caused ALL foreign
+          // locale buttons to show "missing" and a flash of empty fields when
+          // switching to a foreign locale.
+          // DO NOT change this to delete the entire group — that causes the bug above.
+          // ───────────────────────────────────────────────────────────────────────
+          const changedKeys = new Set<string>();
+          themeData.translatableContent.forEach((item: TranslatableField) => {
+            if (currentValues[item.key] !== undefined && currentValues[item.key] !== item.value) {
+              changedKeys.add(item.key);
+            }
           });
-          // Also clear the ref so preloadAllTranslations will re-fetch
-          const clearedRef = { ...loadedTranslationsRef.current };
-          delete clearedRef[selectedGroupId];
-          loadedTranslationsRef.current = clearedRef;
+
+          if (changedKeys.size > 0) {
+            setLoadedTranslations(prev => {
+              const groupCache = prev[selectedGroupId];
+              if (!groupCache) return prev;
+
+              const newGroupCache: Record<string, ThemeTranslationRecord[]> = {};
+              for (const [locale, translations] of Object.entries(groupCache)) {
+                newGroupCache[locale] = translations.filter(t => !changedKeys.has(t.key));
+              }
+
+              return { ...prev, [selectedGroupId]: newGroupCache };
+            });
+
+            // Also update the ref so preloadAllTranslations sees the correct state
+            const refGroup = loadedTranslationsRef.current[selectedGroupId];
+            if (refGroup) {
+              const newRefGroup: Record<string, ThemeTranslationRecord[]> = {};
+              for (const [locale, translations] of Object.entries(refGroup)) {
+                newRefGroup[locale] = translations.filter(t => !changedKeys.has(t.key));
+              }
+              loadedTranslationsRef.current = {
+                ...loadedTranslationsRef.current,
+                [selectedGroupId]: newRefGroup,
+              };
+            }
+          }
         }
       } else {
         // FOREIGN LOCALE SAVE: Update loadedTranslations cache with new values

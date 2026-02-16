@@ -1666,16 +1666,26 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           }
         });
 
-        // ── IMPORTANT: Clear translation refs after primary save ──────────
+        // ── IMPORTANT: Clear translation refs for CHANGED fields after primary save ──
         // When primary content changes, the server deletes stale foreign
-        // translations on Shopify (translations of the old primary text).
-        // We MUST clear these refs here, otherwise the data loading effect
-        // would restore old translations from localTranslationsRef when the
-        // user switches to a foreign locale — making deleted translations
-        // reappear in the UI despite being gone from Shopify.
+        // translations on Shopify — but only for the fields that actually changed.
+        // We must clear localTranslationsRef entries for those keys, otherwise the
+        // data loading effect would restore old translations from the ref when the
+        // user switches to a foreign locale — making deleted translations reappear.
+        // We only clear the CHANGED keys (not all) to preserve Accept & Translate
+        // values for unchanged fields. Clearing all caused every foreign locale
+        // button to briefly show "missing" for ALL fields.
         // DO NOT REMOVE these lines without understanding the above.
-        // ─────────────────────────────────────────────────────────────────
-        localTranslationsRef.current = {};
+        // ─────────────────────────────────────────────────────────────────────────
+        effectiveFieldDefinitions.forEach((fieldDef) => {
+          const newValue = editableValues[fieldDef.key] || "";
+          const originalValue = config.contentType === 'templates'
+            ? (originalTemplateValuesRef.current[fieldDef.key] || "")
+            : getItemFieldValue(item, fieldDef.key, primaryLocale, config);
+          if (newValue !== originalValue && localTranslationsRef.current[fieldDef.translationKey]) {
+            delete localTranslationsRef.current[fieldDef.translationKey];
+          }
+        });
         deletedTranslationKeysRef.current.clear();
 
         // Update image alt-texts for primary locale
