@@ -774,6 +774,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
           if (actionType === "translateAllForLocale") {
             return json({
               success: true,
+              actionType: "translateAllForLocale",
               translations: translations[targetLocale] || {},
               targetLocale
             });
@@ -781,6 +782,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
 
           return json({
             success: true,
+            actionType: "translateAll",
             translations
           });
         } catch (error: unknown) {
@@ -856,6 +858,32 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
             sampleFormKeys: allFormDataKeys.filter(k => !metadataKeys.has(k)).slice(0, 3),
           });
           return json({ success: true, actionType: "updateContent" }); // No changes
+        }
+
+        // ─── CRITICAL: Reject empty primary-language fields ───────────────
+        // Shopify permanently removes template fields from its data when the
+        // primary-locale value is saved as empty. Once removed, the field can
+        // NEVER be restored — not through the API and not through the Admin UI.
+        // Therefore we MUST block any save that would set a primary-locale
+        // field to an empty (or whitespace-only) string.
+        // DO NOT remove this check — it protects against irreversible data loss.
+        // ──────────────────────────────────────────────────────────────────
+        if (locale === primaryLocale) {
+          const emptyKeys = Object.entries(updatedFields)
+            .filter(([, value]) => value.trim() === "")
+            .map(([key]) => key);
+
+          if (emptyKeys.length > 0) {
+            logger.warn("[TEMPLATES] Blocked save — empty primary-locale fields detected", {
+              context: "Templates",
+              locale,
+              emptyKeys,
+            });
+            return json({
+              success: false,
+              errorKey: "emptyPrimaryFieldsError",
+            }, { status: 400 });
+          }
         }
 
         // STEP 1: Register translations with Shopify (only for foreign locales)
@@ -1938,6 +1966,69 @@ export default function TemplatesPage() {
     });
   }, [fetcher.data, selectedGroupId]);
 
+  // Update loadedTranslations cache after translateAll (all fields → all locales) completes
+  const processedTranslateAllRef = useRef<unknown>(null);
+  useEffect(() => {
+    if (!fetcher.data || typeof fetcher.data !== 'object') return;
+    if (!('success' in fetcher.data) || !fetcher.data.success) return;
+    if (!('actionType' in fetcher.data)) return;
+    if (processedTranslateAllRef.current === fetcher.data) return;
+
+    if (!selectedGroupId) return;
+
+    if (fetcher.data.actionType === 'translateAll') {
+      processedTranslateAllRef.current = fetcher.data;
+      // translations shape: { locale: { key: value, ... }, ... }
+      const translations = (fetcher.data as { translations: Record<string, Record<string, string>> }).translations;
+
+      setLoadedTranslations(prev => {
+        const newCache = { ...prev };
+        const groupCache = { ...(newCache[selectedGroupId] || {}) };
+
+        for (const [locale, fields] of Object.entries(translations)) {
+          const localeCache = [...(groupCache[locale] || [])];
+
+          for (const [key, value] of Object.entries(fields)) {
+            const existingIndex = localeCache.findIndex((tr) => tr.key === key);
+            if (existingIndex >= 0) {
+              localeCache[existingIndex] = { ...localeCache[existingIndex], value };
+            } else {
+              localeCache.push({ key, value, locale });
+            }
+          }
+
+          groupCache[locale] = localeCache;
+        }
+
+        newCache[selectedGroupId] = groupCache;
+        return newCache;
+      });
+    } else if (fetcher.data.actionType === 'translateAllForLocale') {
+      processedTranslateAllRef.current = fetcher.data;
+      // translations shape: { key: value, ... }, targetLocale: string
+      const { translations, targetLocale } = fetcher.data as { translations: Record<string, string>; targetLocale: string };
+
+      setLoadedTranslations(prev => {
+        const newCache = { ...prev };
+        const groupCache = { ...(newCache[selectedGroupId] || {}) };
+        const localeCache = [...(groupCache[targetLocale] || [])];
+
+        for (const [key, value] of Object.entries(translations)) {
+          const existingIndex = localeCache.findIndex((tr) => tr.key === key);
+          if (existingIndex >= 0) {
+            localeCache[existingIndex] = { ...localeCache[existingIndex], value };
+          } else {
+            localeCache.push({ key, value, locale: targetLocale });
+          }
+        }
+
+        groupCache[targetLocale] = localeCache;
+        newCache[selectedGroupId] = groupCache;
+        return newCache;
+      });
+    }
+  }, [fetcher.data, selectedGroupId]);
+
   // ============================================================================
   // RELOAD: Invalidate caches and re-fetch fresh data after revalidation completes
   // After the ReloadButton syncs from Shopify to DB, we need to re-fetch theme
@@ -1955,16 +2046,33 @@ export default function TemplatesPage() {
     const groupId = selectedGroupIdRef.current;
     if (!groupId) return;
 
-    // Invalidate translation cache so preloadAllTranslations will re-fetch
-    setLoadedTranslations(prev => {
-      const next = { ...prev };
-      delete next[groupId];
-      return next;
-    });
-    // Also update ref immediately so preloadAllTranslations sees cleared cache
-    const clearedRef = { ...loadedTranslationsRef.current };
-    delete clearedRef[groupId];
-    loadedTranslationsRef.current = clearedRef;
+    // Only clear translation cache on explicit reload (ReloadButton).
+    // The ReloadButton adds a _reload URL param before calling revalidate().
+    // After saves/translations, the specific response handlers already update
+    // loadedTranslations correctly — clearing here would wipe those updates.
+    const url = new URL(window.location.href);
+    const isExplicitReload = url.searchParams.has('_reload');
+
+    if (isExplicitReload) {
+      // Clean up the reload marker from the URL
+      url.searchParams.delete('_reload');
+      window.history.replaceState({}, '', url.toString());
+
+      // Invalidate translation cache so preloadAllTranslations will re-fetch
+      setLoadedTranslations(prev => {
+        const next = { ...prev };
+        delete next[groupId];
+        return next;
+      });
+      // Also update ref immediately so preloadAllTranslations sees cleared cache
+      const clearedRef = { ...loadedTranslationsRef.current };
+      delete clearedRef[groupId];
+      loadedTranslationsRef.current = clearedRef;
+    }
+
+    // Only re-fetch full theme data on explicit reload.
+    // After saves/translations, the response handlers already update the caches.
+    if (!isExplicitReload) return;
 
     // Get current pagination to preserve page/search position
     const currentPag = fieldPaginationRef.current[groupId];
@@ -2072,9 +2180,14 @@ export default function TemplatesPage() {
   useEffect(() => {
     if (fetcher.data && typeof fetcher.data === 'object') {
       if ('error' in fetcher.data && !fetcher.data.success) {
-        const errorData = fetcher.data as { error?: string; success: boolean };
+        const errorData = fetcher.data as { error?: string; errorKey?: string; success: boolean };
+        // Resolve i18n error key if present, otherwise fall back to plain error string
+        const errorMessage =
+          (errorData.errorKey && t.content?.[errorData.errorKey as keyof typeof t.content]) ||
+          errorData.error ||
+          "Unknown error";
         showInfoBox(
-          errorData.error || "Unknown error",
+          errorMessage as string,
           "critical",
           t.content?.error || "Error"
         );

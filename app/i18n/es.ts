@@ -189,6 +189,8 @@ export const es: Translation = {
     translating: "Traduciendo...",
     clearAll: "Limpiar todo",
     sendImageToAI: "📷 Enviar imagen a IA",
+    // Primary language empty-field protection
+    emptyPrimaryFieldsError: "Los campos en el idioma principal no deben estar vacíos. Si un campo se guarda vacío, Shopify lo elimina permanentemente y nunca se puede restaurar. Por favor, complete todos los campos antes de guardar.",
     // Clear all modal
     clearAllConfirmTitle: "¿Limpiar todos los campos?",
     clearAllConfirm: "Limpiar todo",
