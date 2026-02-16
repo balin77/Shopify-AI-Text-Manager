@@ -46,8 +46,10 @@ export function InfoBoxProvider({ children }: { children: ReactNode }) {
     // Don't show if this exact message was recently dismissed
     const messageKey = `${message}-${tone}`;
     if (dismissedMessages.current.has(messageKey)) {
+      console.error('[TRANSLATE-DEBUG] showInfoBox SUPPRESSED by dismissedMessages:', { message: message.slice(0, 50), tone });
       return;
     }
+    console.error('[TRANSLATE-DEBUG] showInfoBox CALLED:', { message: message.slice(0, 80), tone, title });
 
     // Clear any existing auto-hide timer
     if (autoHideTimer.current) {
