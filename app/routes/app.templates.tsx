@@ -1611,6 +1611,14 @@ export default function TemplatesPage() {
   const editorHelpersRef = useRef(editor.helpers);
   editorHelpersRef.current = editor.helpers;
 
+  // Refs for reload effect (avoid stale closures and unnecessary re-triggers)
+  const selectedGroupIdRef = useRef(selectedGroupId);
+  selectedGroupIdRef.current = selectedGroupId;
+  const fieldPaginationRef = useRef(fieldPagination);
+  fieldPaginationRef.current = fieldPagination;
+  const editorLanguageRef = useRef(editor.state.currentLanguage);
+  editorLanguageRef.current = editor.state.currentLanguage;
+
   // Store original handler reference before overriding
   const originalHandleItemSelectRef = useRef(editor.handlers.handleItemSelect);
   originalHandleItemSelectRef.current = editor.handlers.handleItemSelect;
@@ -1929,6 +1937,135 @@ export default function TemplatesPage() {
       return newCache;
     });
   }, [fetcher.data, selectedGroupId]);
+
+  // ============================================================================
+  // RELOAD: Invalidate caches and re-fetch fresh data after revalidation completes
+  // After the ReloadButton syncs from Shopify to DB, we need to re-fetch theme
+  // data and translations from the API (which reads from the now-updated DB).
+  // Without this, loadedThemes and loadedTranslations hold stale cached data.
+  // ============================================================================
+  const prevRevalidatorStateRef = useRef(revalidator.state);
+  useEffect(() => {
+    const prevState = prevRevalidatorStateRef.current;
+    prevRevalidatorStateRef.current = revalidator.state;
+
+    // Only act when revalidation transitions from loading → idle
+    if (prevState !== 'loading' || revalidator.state !== 'idle') return;
+
+    const groupId = selectedGroupIdRef.current;
+    if (!groupId) return;
+
+    // Invalidate translation cache so preloadAllTranslations will re-fetch
+    setLoadedTranslations(prev => {
+      const next = { ...prev };
+      delete next[groupId];
+      return next;
+    });
+    // Also update ref immediately so preloadAllTranslations sees cleared cache
+    const clearedRef = { ...loadedTranslationsRef.current };
+    delete clearedRef[groupId];
+    loadedTranslationsRef.current = clearedRef;
+
+    // Get current pagination to preserve page/search position
+    const currentPag = fieldPaginationRef.current[groupId];
+    const page = currentPag?.page || 1;
+    const search = currentPag?.search || "";
+
+    const params = new URLSearchParams({
+      page: String(page),
+      limit: String(DEFAULT_FIELDS_PER_PAGE),
+      ...(search && { search })
+    });
+
+    // Re-fetch fresh theme data from API (reads from now-updated DB)
+    fetch(`/api/templates/${groupId}?${params}`)
+      .then(res => {
+        if (!res.ok) throw new Error('Failed to reload theme data');
+        return res.json();
+      })
+      .then(async (data) => {
+        // Update loadedThemes cache with fresh data
+        setLoadedThemes(prev => ({
+          ...prev,
+          [groupId]: data.theme
+        }));
+
+        // Update pagination metadata
+        if (data.theme?.pagination) {
+          setFieldPagination(prev => ({
+            ...prev,
+            [groupId]: {
+              page: data.theme.pagination.page,
+              limit: data.theme.pagination.limit,
+              totalCount: data.theme.pagination.totalCount,
+              totalPages: data.theme.pagination.totalPages,
+              search: search,
+            }
+          }));
+        }
+
+        // Update editable values with fresh data
+        if (data.theme?.translatableContent) {
+          const currentLanguage = editorLanguageRef.current;
+          const newValues: Record<string, string> = {};
+
+          if (currentLanguage === primaryLocale) {
+            // Primary locale: values from fresh translatableContent
+            data.theme.translatableContent.forEach((item: TranslatableField) => {
+              newValues[item.key] = item.value || "";
+            });
+          } else {
+            // Foreign locale: fetch fresh translations for current language
+            try {
+              const formData = new FormData();
+              formData.append("action", "loadTranslations");
+              formData.append("locale", currentLanguage);
+
+              const transResponse = await fetch(`/api/templates/${groupId}`, {
+                method: "POST",
+                body: formData,
+              });
+
+              if (transResponse.ok) {
+                const transData = await transResponse.json();
+                const translations: ThemeTranslationRecord[] = transData.translations || [];
+
+                // Update translations cache for this locale
+                setLoadedTranslations(prev => ({
+                  ...prev,
+                  [groupId]: {
+                    ...(prev[groupId] || {}),
+                    [currentLanguage]: translations,
+                  }
+                }));
+
+                data.theme.translatableContent.forEach((item: TranslatableField) => {
+                  const translation = translations.find((tr) => tr.key === item.key);
+                  newValues[item.key] = translation?.value || "";
+                });
+              }
+            } catch {
+              // If translation fetch fails, show empty values
+              data.theme.translatableContent.forEach((item: TranslatableField) => {
+                newValues[item.key] = "";
+              });
+            }
+          }
+
+          // Update editable values with fresh data
+          Object.entries(newValues).forEach(([key, value]) => {
+            editorHelpersRef.current.setEditableValue(key, value);
+          });
+          editorHelpersRef.current.setOriginalTemplateValues(newValues);
+        }
+
+        // Preload translations for all other foreign locales in background
+        preloadAllTranslations(groupId);
+      })
+      .catch(() => {
+        // Silent failure - user will see stale data
+      });
+  }, [revalidator.state, primaryLocale, preloadAllTranslations]);
 
   // Handle response messages - NOTE: Success messages are handled by useUnifiedContentEditor hook
   // Only show error messages here to avoid duplicates
