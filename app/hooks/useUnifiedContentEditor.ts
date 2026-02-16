@@ -1930,6 +1930,40 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       isSavePendingRef.current = false;
       const translatedError = translateErrorMessage(String(fetcher.data.error || ""), t);
       showInfoBox(translatedError, "critical", t.common?.error || "Error");
+    } else if (fetcher.data && !fetcher.data.success && 'errorKey' in fetcher.data && isSavePendingRef.current) {
+      // ─── Handle i18n error-key responses (e.g. emptyPrimaryFieldsError) ───
+      // When the server rejects a save with an errorKey, we must:
+      //  1. Show the localised error message
+      //  2. Restore empty fields to their original values so the UI never
+      //     stays in an inconsistent (empty) state after a blocked save.
+      // This auto-discard is critical for templates: Shopify permanently
+      // drops fields whose primary-locale value is saved as empty, so we
+      // revert the UI immediately to prevent accidental data loss.
+      // ──────────────────────────────────────────────────────────────────
+      processedSaveResponseRef.current = fetcher.data;
+      isSavePendingRef.current = false;
+
+      const errorKey = String((fetcher.data as { errorKey?: string }).errorKey);
+      const errorMessage =
+        (t.content as Record<string, string>)?.[errorKey] ||
+        errorKey;
+      showInfoBox(errorMessage, "critical", (t.content?.error as string) || t.common?.error || "Error");
+
+      // Auto-restore empty fields to their original values (discard empty edits)
+      if (config.contentType === 'templates' && originalTemplateValuesRef.current) {
+        setEditableValues(prev => {
+          const restored = { ...prev };
+          let restoredCount = 0;
+          for (const [key, value] of Object.entries(restored)) {
+            if (value.trim() === "" && originalTemplateValuesRef.current[key]) {
+              restored[key] = originalTemplateValuesRef.current[key];
+              restoredCount++;
+            }
+          }
+          debugLog.submit(` Auto-restored ${restoredCount} empty fields to original values`);
+          return restored;
+        });
+      }
     }
   }, [fetcher.data, showInfoBox, t, revalidator, safeSubmit, submitAIAction, effectiveFieldDefinitions, currentLanguage, primaryLocale]);
 

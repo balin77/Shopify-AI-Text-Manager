@@ -2177,17 +2177,14 @@ export default function TemplatesPage() {
 
   // Handle response messages - NOTE: Success messages are handled by useUnifiedContentEditor hook
   // Only show error messages here to avoid duplicates
+  // errorKey responses (e.g. emptyPrimaryFieldsError) are handled by the editor hook
+  // which also auto-restores empty fields — so we skip them here to avoid double InfoBox.
   useEffect(() => {
     if (fetcher.data && typeof fetcher.data === 'object') {
-      if (('error' in fetcher.data || 'errorKey' in fetcher.data) && !fetcher.data.success) {
-        const errorData = fetcher.data as { error?: string; errorKey?: string; success: boolean };
-        // Resolve i18n error key if present, otherwise fall back to plain error string
-        const errorMessage =
-          (errorData.errorKey && t.content?.[errorData.errorKey as keyof typeof t.content]) ||
-          errorData.error ||
-          "Unknown error";
+      if ('error' in fetcher.data && !('errorKey' in fetcher.data) && !fetcher.data.success) {
+        const errorData = fetcher.data as { error?: string; success: boolean };
         showInfoBox(
-          errorMessage as string,
+          errorData.error || "Unknown error",
           "critical",
           t.content?.error || "Error"
         );
