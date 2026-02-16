@@ -1,6 +1,6 @@
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher, useRevalidator, useSearchParams } from "@remix-run/react";
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import {
   Page,
   Card,
@@ -139,6 +139,9 @@ export default function TasksPage() {
   const error = 'error' in loaderData ? loaderData.error : undefined;
   const fetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
+  // Use ref for revalidator to avoid unstable reference in effect deps
+  const revalidatorRef = useRef(revalidator);
+  revalidatorRef.current = revalidator;
   const { t } = useI18n();
   const [searchParams, setSearchParams] = useSearchParams();
   const [expandedTaskIds, setExpandedTaskIds] = useState<Set<string>>(new Set());
@@ -157,12 +160,12 @@ export default function TasksPage() {
 
     if (hasRunningTasks) {
       const interval = setInterval(() => {
-        revalidator.revalidate();
+        revalidatorRef.current.revalidate();
       }, 3000);
 
       return () => clearInterval(interval);
     }
-  }, [tasks, revalidator]);
+  }, [tasks]);
 
   // Handle filter changes
   const handleStatusFilterChange = useCallback((value: string) => {

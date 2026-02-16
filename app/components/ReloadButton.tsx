@@ -27,6 +27,10 @@ export function ReloadButton({
   const [waitingForRevalidation, setWaitingForRevalidation] = useState(false);
   const fetcher = useFetcher();
 
+  // Use ref for revalidator to avoid unstable reference in effect deps
+  const revalidatorRef = useRef(revalidator);
+  revalidatorRef.current = revalidator;
+
   // Monitor fetcher state
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -34,7 +38,7 @@ export function ReloadButton({
     if (fetcher.state === "idle" && fetcher.data && isLoading) {
       const data = fetcher.data as any;
       if (data.success) {
-        if (revalidator) {
+        if (revalidatorRef.current) {
           // Use revalidation approach (non-destructive)
           timerRef.current = setTimeout(() => {
             // Cache-bust: Add timestamp to URL to force Remix to reload data
@@ -43,7 +47,7 @@ export function ReloadButton({
             window.history.replaceState({}, '', url.toString());
 
             setWaitingForRevalidation(true);
-            revalidator.revalidate();
+            revalidatorRef.current?.revalidate();
           }, 1000); // Wait 1 second for DB write to complete
         } else {
           // Fallback to page reload if revalidator not available
@@ -74,14 +78,14 @@ export function ReloadButton({
         timerRef.current = null;
       }
     };
-  }, [fetcher.state, fetcher.data, isLoading, onReloadComplete, resourceId, resourceType, locale, revalidator]);
+  }, [fetcher.state, fetcher.data, isLoading, onReloadComplete, resourceId, resourceType, locale, onReloadSuccess]);
 
   // Monitor revalidation state
   useEffect(() => {
-    if (!waitingForRevalidation || !revalidator) return;
+    if (!waitingForRevalidation || !revalidatorRef.current) return;
 
     // Revalidation completed
-    if (revalidator.state === 'idle') {
+    if (revalidatorRef.current.state === 'idle') {
       setWaitingForRevalidation(false);
       setIsLoading(false);
 
@@ -92,7 +96,7 @@ export function ReloadButton({
         onReloadSuccess();
       }
     }
-  }, [revalidator?.state, waitingForRevalidation, onReloadComplete, onReloadSuccess, revalidator]);
+  }, [revalidator?.state, waitingForRevalidation, onReloadComplete, onReloadSuccess]);
 
   const handleReload = () => {
     if (isLoading) {
