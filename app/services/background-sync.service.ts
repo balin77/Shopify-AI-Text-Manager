@@ -764,120 +764,125 @@ export class BackgroundSyncService {
 
     const { db } = await import("../db.server");
 
-    // Get existing theme content from database to find the resourceId
-    const existingThemeContent = await db.themeContent.findFirst({
+    // A group can span multiple Shopify resources (e.g. two product template
+    // files both contribute keys to the "product" group).  Fetch ALL rows so
+    // every resource is synced — using findFirst would arbitrarily pick one
+    // and leave the others stale / their translations deleted.
+    const existingRows = await db.themeContent.findMany({
       where: {
         shop: this.shop,
         groupId: groupId,
       },
     });
 
-    if (!existingThemeContent) {
+    if (existingRows.length === 0) {
       throw new Error(`Theme group not found: ${groupId}`);
     }
 
-    const resourceId = existingThemeContent.resourceId;
+    const uniqueResourceIds = [...new Set(existingRows.map((r) => r.resourceId))];
+    logger.debug(`[BackgroundSync] Group "${groupId}" spans ${uniqueResourceIds.length} resource(s)`);
 
     // Get shop locales
     const locales = await this.fetchShopLocales();
     const nonPrimaryLocales = locales.filter((l) => !l.primary);
 
-    // Fetch fresh translatable content from Shopify
-    const translatableResponse = await this.gateway.graphql(
-      `#graphql
-        query getThemeTranslatableResource($resourceId: ID!) {
-          translatableResource(resourceId: $resourceId) {
-            resourceId
-            translatableContent {
-              key
-              value
-              digest
-              locale
-            }
-          }
-        }`,
-      { variables: { resourceId } }
-    );
-
-    const translatableData = await translatableResponse.json();
-
-    if (translatableData.errors) {
-      logger.error('[BackgroundSync] GraphQL error', { errors: translatableData.errors });
-      throw new Error(translatableData.errors[0]?.message || "GraphQL error");
-    }
-
-    const resource = translatableData.data?.translatableResource;
-    if (!resource) {
-      throw new Error(`Resource not found in Shopify: ${resourceId}`);
-    }
-
-    // Filter content that belongs to this group using the same pattern-based
-    // grouping logic as the initial sync. This ensures new keys from Shopify
-    // (not yet in the local DB) are correctly included if they match the group.
-    const allContent: TranslatableContentItem[] = resource.translatableContent || [];
-    const groupContent = allContent.filter((item) => {
-      return getGroupIdForKey(item.key) === groupId;
-    });
-
-    logger.debug(`[BackgroundSync] Found ${groupContent.length} translatable fields for group ${groupId}`);
-
-    // Fetch translations for all non-primary locales
+    // Collect translations from ALL resources
     const allTranslations: ShopifyTranslation[] = [];
 
-    for (const locale of nonPrimaryLocales) {
-      try {
-        const translationsResponse = await this.gateway.graphql(
-          `#graphql
-            query getThemeTranslations($resourceId: ID!, $locale: String!) {
-              translatableResource(resourceId: $resourceId) {
-                translations(locale: $locale) {
-                  key
-                  value
-                  locale
-                  outdated
-                }
+    for (const resourceId of uniqueResourceIds) {
+      // Fetch fresh translatable content from Shopify
+      const translatableResponse = await this.gateway.graphql(
+        `#graphql
+          query getThemeTranslatableResource($resourceId: ID!) {
+            translatableResource(resourceId: $resourceId) {
+              resourceId
+              translatableContent {
+                key
+                value
+                digest
+                locale
               }
-            }`,
-          { variables: { resourceId, locale: locale.locale } }
-        );
+            }
+          }`,
+        { variables: { resourceId } }
+      );
 
-        const translationsData = await translationsResponse.json();
+      const translatableData = await translatableResponse.json();
 
-        if (!translationsData.errors) {
-          const translations: ShopifyTranslation[] = translationsData.data?.translatableResource?.translations || [];
-          // Filter translations that belong to this group
-          const groupTranslations = translations.filter((t) =>
-            groupContent.some((c) => c.key === t.key)
+      if (translatableData.errors) {
+        logger.error('[BackgroundSync] GraphQL error for resource', { resourceId, errors: translatableData.errors });
+        continue; // Skip this resource but keep syncing others
+      }
+
+      const resource = translatableData.data?.translatableResource;
+      if (!resource) {
+        logger.warn(`[BackgroundSync] Resource not found in Shopify: ${resourceId}, skipping`);
+        continue;
+      }
+
+      // Filter content that belongs to this group using the same pattern-based
+      // grouping logic as the initial sync.
+      const allContent: TranslatableContentItem[] = resource.translatableContent || [];
+      const groupContent = allContent.filter((item) => {
+        return getGroupIdForKey(item.key) === groupId;
+      });
+
+      logger.debug(`[BackgroundSync] Resource ${resourceId}: ${groupContent.length} fields for group ${groupId}`);
+
+      // Update this resource's ThemeContent row
+      await db.themeContent.update({
+        where: {
+          shop_resourceId_groupId: {
+            shop: this.shop,
+            resourceId: resourceId,
+            groupId: groupId,
+          },
+        },
+        data: {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Prisma JSON column accepts any JSON-serializable value
+          translatableContent: groupContent as any,
+          lastSyncedAt: new Date(),
+        },
+      });
+
+      // Fetch translations for all non-primary locales for this resource
+      for (const locale of nonPrimaryLocales) {
+        try {
+          const translationsResponse = await this.gateway.graphql(
+            `#graphql
+              query getThemeTranslations($resourceId: ID!, $locale: String!) {
+                translatableResource(resourceId: $resourceId) {
+                  translations(locale: $locale) {
+                    key
+                    value
+                    locale
+                    outdated
+                  }
+                }
+              }`,
+            { variables: { resourceId, locale: locale.locale } }
           );
-          allTranslations.push(...groupTranslations);
+
+          const translationsData = await translationsResponse.json();
+
+          if (!translationsData.errors) {
+            const translations: ShopifyTranslation[] = translationsData.data?.translatableResource?.translations || [];
+            // Filter translations that belong to this group
+            const groupTranslations = translations.filter((t) =>
+              groupContent.some((c) => c.key === t.key)
+            );
+            allTranslations.push(...groupTranslations.map((t) => ({ ...t, _resourceId: resourceId })));
+          }
+        } catch (error: unknown) {
+          const message = error instanceof Error ? error.message : String(error);
+          logger.error(`[BackgroundSync] Error fetching translations for locale ${locale.locale}`, { error: message });
         }
-      } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : String(error);
-        logger.error(`[BackgroundSync] Error fetching translations for locale ${locale.locale}`, { error: message });
       }
     }
 
-    logger.debug(`[BackgroundSync] Fetched ${allTranslations.length} translations for group ${groupId}`);
-
-    // Update ThemeContent
-    await db.themeContent.update({
-      where: {
-        shop_resourceId_groupId: {
-          shop: this.shop,
-          resourceId: resourceId,
-          groupId: groupId,
-        },
-      },
-      data: {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Prisma JSON column accepts any JSON-serializable value
-        translatableContent: groupContent as any,
-        lastSyncedAt: new Date(),
-      },
-    });
+    logger.debug(`[BackgroundSync] Fetched ${allTranslations.length} translations across ${uniqueResourceIds.length} resource(s) for group ${groupId}`);
 
     // Delete all existing translations for this group, then re-create from Shopify
-    // (mirrors the product sync pattern: ensures translations removed in Shopify
-    // don't remain as stale "ghost" entries in the local DB)
     await db.themeTranslation.deleteMany({
       where: {
         shop: this.shop,
@@ -885,12 +890,13 @@ export class BackgroundSyncService {
       },
     });
 
-    // Re-create translations from Shopify
+    // Re-create translations from ALL resources
     for (const t of allTranslations) {
+      const resId = (t as any)._resourceId || uniqueResourceIds[0];
       await db.themeTranslation.create({
         data: {
           shop: this.shop,
-          resourceId: resourceId,
+          resourceId: resId,
           groupId: groupId,
           key: t.key,
           value: t.value,
@@ -900,14 +906,11 @@ export class BackgroundSyncService {
       });
     }
 
-    // Return fresh data
-    const updatedThemeContent = await db.themeContent.findUnique({
+    // Return fresh data (merged from all resources)
+    const updatedThemeContent = await db.themeContent.findMany({
       where: {
-        shop_resourceId_groupId: {
-          shop: this.shop,
-          resourceId: resourceId,
-          groupId: groupId,
-        },
+        shop: this.shop,
+        groupId: groupId,
       },
     });
 
@@ -918,10 +921,10 @@ export class BackgroundSyncService {
       },
     });
 
-    logger.debug(`[BackgroundSync] Successfully synced theme group ${groupId}`);
+    logger.debug(`[BackgroundSync] Successfully synced theme group ${groupId} (${updatedThemeContent.length} resource(s), ${updatedTranslations.length} translations)`);
 
     return {
-      ...updatedThemeContent,
+      themeContent: updatedThemeContent,
       translations: updatedTranslations,
     };
   }
