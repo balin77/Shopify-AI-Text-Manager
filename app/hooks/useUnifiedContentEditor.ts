@@ -781,6 +781,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const fetcherRef = useRef(fetcher);
   fetcherRef.current = fetcher;
 
+  // Guard against synchronous double-submit: Remix doesn't update fetcher.state
+  // synchronously after submit(), so two safeSubmit calls in the same tick would
+  // both see state === 'idle' and the second submit would abort the first.
+  const justSubmittedRef = useRef(false);
+
   // Safe submit helper that catches AbortError from Shopify admin interference
   // The AbortError can be thrown when Shopify admin's own requests interfere with ours,
   // but the submit usually still works, so we just log and ignore the error
@@ -796,10 +801,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       formData.append(key, String(value));
     });
 
-    // If the fetcher is already in-flight, queue this save instead of aborting the current one.
+    // If the fetcher is already in-flight OR we just submitted synchronously,
+    // queue this save instead of aborting the current one.
     // Remix aborts the previous request when submit() is called concurrently, which loses saves.
-    if (fetcherRef.current.state !== 'idle') {
-      debugLog.submit(' Fetcher busy (state:', fetcherRef.current.state, '), queuing save for locale:', savedLocaleRef.current);
+    if (fetcherRef.current.state !== 'idle' || justSubmittedRef.current) {
+      debugLog.submit(' Fetcher busy (state:', fetcherRef.current.state, ', justSubmitted:', justSubmittedRef.current, '), queuing save for locale:', savedLocaleRef.current);
       saveQueueRef.current.push({
         formData,
         options: options || { method: "POST" },
@@ -809,9 +815,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     }
 
     try {
+      // Mark as just-submitted so any synchronous safeSubmit calls after this
+      // one will queue instead of aborting this request
+      justSubmittedRef.current = true;
       fetcherRef.current.submit(formData, options || { method: "POST" });
     } catch (error) {
       console.error('❌ [safeSubmit] Error caught:', error);
+      justSubmittedRef.current = false;
       // AbortError can be thrown when Shopify admin interferes, but data is usually saved
       if (error instanceof Error && error.name === 'AbortError') {
         debugLog.submit(' AbortError caught (data likely saved):', error.message);
@@ -1985,6 +1995,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       }
     }
   }, [fetcher.data, showInfoBox, t, revalidator, safeSubmit, submitAIAction, effectiveFieldDefinitions, currentLanguage, primaryLocale]);
+
+  // Clear justSubmittedRef when fetcher picks up the request (state leaves 'idle')
+  // or when it returns to idle (request completed). This ensures the synchronous
+  // double-submit guard in safeSubmit only blocks within the same tick.
+  useEffect(() => {
+    justSubmittedRef.current = false;
+  }, [fetcher.state]);
 
   // Process queued saves when the fetcher becomes idle.
   // IMPORTANT: This effect MUST run AFTER the response handler effects above,
