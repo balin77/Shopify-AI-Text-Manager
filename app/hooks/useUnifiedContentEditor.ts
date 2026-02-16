@@ -3618,6 +3618,22 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     }
   };
 
+  // Atomically replace ALL editable values and original values for templates after a reload.
+  // This avoids race conditions from 25+ individual setEditableValue calls and ensures
+  // editableValues and originalLoadedValuesRef are updated in a single React batch.
+  const reloadTemplateValues = useCallback((values: Record<string, string>) => {
+    if (config.contentType !== 'templates') return;
+    debugLog.dataLoad(' reloadTemplateValues - atomic update with', Object.keys(values).length, 'fields');
+    setEditableValues(values);
+    originalTemplateValuesRef.current = { ...values };
+    originalLoadedValuesRef.current = { ...values };
+    // Mark initial load as successful so retry mechanism doesn't interfere
+    initialLoadSuccessfulRef.current = true;
+    retryCountRef.current = 0;
+    setTemplateValuesVersion(v => v + 1);
+    setIsLoadingData(false);
+  }, [config]);
+
   // Trigger data refresh (called by ReloadButton after revalidation to reload editableValues)
   const triggerDataRefresh = useCallback(() => {
     debugLog.dataLoad(' triggerDataRefresh called - will reload editableValues from fresh data');
@@ -3710,6 +3726,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       getEditableValue,
       setEditableValue,
       setOriginalTemplateValues,
+      reloadTemplateValues,
       triggerDataRefresh,
       isFieldLoading,
     },

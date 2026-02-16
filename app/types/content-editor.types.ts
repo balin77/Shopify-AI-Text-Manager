@@ -410,6 +410,8 @@ export interface UseContentEditorReturn {
     getEditableValue: (fieldKey: string) => string;
     setEditableValue: (fieldKey: string, value: string) => void;
     setOriginalTemplateValues: (values: Record<string, string>) => void;
+    /** Atomically replace all editable + original values for templates (used after reload) */
+    reloadTemplateValues: (values: Record<string, string>) => void;
     /** Trigger a data refresh to reload editableValues from fresh data (used by ReloadButton) */
     triggerDataRefresh: () => void;
     /** Check if a specific field is currently loading */

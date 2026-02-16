@@ -2074,105 +2074,110 @@ export default function TemplatesPage() {
     // After saves/translations, the response handlers already update the caches.
     if (!isExplicitReload) return;
 
-    // Get current pagination to preserve page/search position
+    // Helper: fetch theme data for a given page and update all caches + editable values
+    const fetchAndApply = async (page: number, search: string) => {
+      const params = new URLSearchParams({
+        page: String(page),
+        limit: String(DEFAULT_FIELDS_PER_PAGE),
+        ...(search && { search })
+      });
+
+      const res = await fetch(`/api/templates/${groupId}?${params}`);
+      if (!res.ok) throw new Error('Failed to reload theme data');
+      const data = await res.json();
+
+      // Handle pagination shift: if we requested a page beyond the new total,
+      // fall back to page 1 (e.g., total count decreased after sync)
+      const pagination = data.theme?.pagination;
+      if (pagination && page > 1 && pagination.totalPages > 0 && page > pagination.totalPages) {
+        return fetchAndApply(1, search);
+      }
+
+      // Update loadedThemes cache with fresh data
+      setLoadedThemes(prev => ({
+        ...prev,
+        [groupId]: data.theme
+      }));
+
+      // Update pagination metadata
+      if (pagination) {
+        setFieldPagination(prev => ({
+          ...prev,
+          [groupId]: {
+            page: pagination.page,
+            limit: pagination.limit,
+            totalCount: pagination.totalCount,
+            totalPages: pagination.totalPages,
+            search: search,
+          }
+        }));
+      }
+
+      // Build new editable values from fresh data
+      const translatableContent: TranslatableField[] = data.theme?.translatableContent || [];
+      if (translatableContent.length === 0) return;
+
+      const currentLanguage = editorLanguageRef.current;
+      const newValues: Record<string, string> = {};
+
+      if (currentLanguage === primaryLocale) {
+        // Primary locale: values from fresh translatableContent
+        translatableContent.forEach((item) => {
+          newValues[item.key] = item.value || "";
+        });
+      } else {
+        // Foreign locale: fetch fresh translations for current language
+        const formData = new FormData();
+        formData.append("action", "loadTranslations");
+        formData.append("locale", currentLanguage);
+
+        const transResponse = await fetch(`/api/templates/${groupId}`, {
+          method: "POST",
+          body: formData,
+        });
+
+        if (transResponse.ok) {
+          const transData = await transResponse.json();
+          const translations: ThemeTranslationRecord[] = transData.translations || [];
+
+          // Update translations cache for this locale
+          setLoadedTranslations(prev => ({
+            ...prev,
+            [groupId]: {
+              ...(prev[groupId] || {}),
+              [currentLanguage]: translations,
+            }
+          }));
+
+          translatableContent.forEach((item) => {
+            const translation = translations.find((tr) => tr.key === item.key);
+            newValues[item.key] = translation?.value || "";
+          });
+        } else {
+          // If translation fetch fails, keep fields empty rather than showing stale data
+          translatableContent.forEach((item) => {
+            newValues[item.key] = "";
+          });
+        }
+      }
+
+      // Atomic update: replace ALL editable values and original values in one batch.
+      // This avoids race conditions from individual setEditableValue calls where
+      // other effects (e.g. retry mechanism) could interleave and overwrite values.
+      editorHelpersRef.current.reloadTemplateValues(newValues);
+
+      // Preload translations for all other foreign locales in background
+      preloadAllTranslations(groupId);
+    };
+
+    // Start the reload with current page/search
     const currentPag = fieldPaginationRef.current[groupId];
     const page = currentPag?.page || 1;
     const search = currentPag?.search || "";
 
-    const params = new URLSearchParams({
-      page: String(page),
-      limit: String(DEFAULT_FIELDS_PER_PAGE),
-      ...(search && { search })
+    fetchAndApply(page, search).catch(() => {
+      // Fetch failed - user keeps seeing pre-reload data
     });
-
-    // Re-fetch fresh theme data from API (reads from now-updated DB)
-    fetch(`/api/templates/${groupId}?${params}`)
-      .then(res => {
-        if (!res.ok) throw new Error('Failed to reload theme data');
-        return res.json();
-      })
-      .then(async (data) => {
-        // Update loadedThemes cache with fresh data
-        setLoadedThemes(prev => ({
-          ...prev,
-          [groupId]: data.theme
-        }));
-
-        // Update pagination metadata
-        if (data.theme?.pagination) {
-          setFieldPagination(prev => ({
-            ...prev,
-            [groupId]: {
-              page: data.theme.pagination.page,
-              limit: data.theme.pagination.limit,
-              totalCount: data.theme.pagination.totalCount,
-              totalPages: data.theme.pagination.totalPages,
-              search: search,
-            }
-          }));
-        }
-
-        // Update editable values with fresh data
-        if (data.theme?.translatableContent) {
-          const currentLanguage = editorLanguageRef.current;
-          const newValues: Record<string, string> = {};
-
-          if (currentLanguage === primaryLocale) {
-            // Primary locale: values from fresh translatableContent
-            data.theme.translatableContent.forEach((item: TranslatableField) => {
-              newValues[item.key] = item.value || "";
-            });
-          } else {
-            // Foreign locale: fetch fresh translations for current language
-            try {
-              const formData = new FormData();
-              formData.append("action", "loadTranslations");
-              formData.append("locale", currentLanguage);
-
-              const transResponse = await fetch(`/api/templates/${groupId}`, {
-                method: "POST",
-                body: formData,
-              });
-
-              if (transResponse.ok) {
-                const transData = await transResponse.json();
-                const translations: ThemeTranslationRecord[] = transData.translations || [];
-
-                // Update translations cache for this locale
-                setLoadedTranslations(prev => ({
-                  ...prev,
-                  [groupId]: {
-                    ...(prev[groupId] || {}),
-                    [currentLanguage]: translations,
-                  }
-                }));
-
-                data.theme.translatableContent.forEach((item: TranslatableField) => {
-                  const translation = translations.find((tr) => tr.key === item.key);
-                  newValues[item.key] = translation?.value || "";
-                });
-              }
-            } catch {
-              // If translation fetch fails, show empty values
-              data.theme.translatableContent.forEach((item: TranslatableField) => {
-                newValues[item.key] = "";
-              });
-            }
-          }
-
-          // Update editable values with fresh data
-          Object.entries(newValues).forEach(([key, value]) => {
-            editorHelpersRef.current.setEditableValue(key, value);
-          });
-          editorHelpersRef.current.setOriginalTemplateValues(newValues);
-        }
-
-        // Preload translations for all other foreign locales in background
-        preloadAllTranslations(groupId);
-      })
-      .catch(() => {
-        // Silent failure - user will see stale data
-      });
   }, [revalidator.state, primaryLocale, preloadAllTranslations]);
 
   // Handle response messages - NOTE: Success messages are handled by useUnifiedContentEditor hook

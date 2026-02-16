@@ -76,6 +76,56 @@ interface ThemeResource {
   translatableContent: TranslatableContentItem[];
 }
 
+// ============================================================================
+// Theme key-to-group mapping (shared between initial sync and per-group reload)
+// ============================================================================
+
+interface KeyPatternConfig {
+  pattern: RegExp;
+  name: string;
+  groupId: string;
+  icon: string;
+  extractSubgroup?: boolean;
+}
+
+const THEME_KEY_PATTERNS: KeyPatternConfig[] = [
+  { pattern: /^section\.article\./, name: 'Article', groupId: 'article', icon: '📝' },
+  { pattern: /^section\.collection\./, name: 'Collection', groupId: 'collection', icon: '📂' },
+  { pattern: /^section\.index\./, name: 'Index Page', groupId: 'index', icon: '🏠' },
+  { pattern: /^section\.password\./, name: 'Password Page', groupId: 'password', icon: '🔒' },
+  { pattern: /^section\.product\./, name: 'Product', groupId: 'product', icon: '🛍️' },
+  { pattern: /^section\.page\.([^.]+)\./, name: 'Pages', groupId: 'pages', icon: '📄', extractSubgroup: true },
+  { pattern: /^collections\.json\./, name: 'Collections Template', groupId: 'collections_template', icon: '📋' },
+  { pattern: /^group\.json\./, name: 'Theme Groups', groupId: 'groups', icon: '🎨' },
+  { pattern: /^bar\./, name: 'Announcement Bars', groupId: 'bars', icon: '📢' },
+  { pattern: /^Settings Categories:/, name: 'Settings', groupId: 'settings', icon: '⚙️' },
+];
+
+/** Determine which groupId a translatable key belongs to (same logic as initial sync) */
+function getGroupIdForKey(key: string): string {
+  for (const patternConfig of THEME_KEY_PATTERNS) {
+    const match = key.match(patternConfig.pattern);
+    if (match) {
+      if (patternConfig.extractSubgroup && match[1]) {
+        return `page_${match[1]}`;
+      }
+      return patternConfig.groupId;
+    }
+  }
+  // Unmatched: group by prefix (mirrors initial sync logic)
+  if (key.startsWith('section.')) {
+    const parts = key.split('.');
+    if (parts.length >= 2 && parts[1]) {
+      return `misc_section_${parts[1]}`;
+    }
+  } else if (key.includes('.')) {
+    return `misc_${key.split('.')[0]}`;
+  } else {
+    return `misc_${key.split(/[:\s]/)[0] || 'other'}`;
+  }
+  return 'misc_other';
+}
+
 export interface SyncStats {
   pages: number;
   policies: number;
@@ -761,12 +811,12 @@ export class BackgroundSyncService {
       throw new Error(`Resource not found in Shopify: ${resourceId}`);
     }
 
-    // Filter content that belongs to this group
+    // Filter content that belongs to this group using the same pattern-based
+    // grouping logic as the initial sync. This ensures new keys from Shopify
+    // (not yet in the local DB) are correctly included if they match the group.
     const allContent: TranslatableContentItem[] = resource.translatableContent || [];
     const groupContent = allContent.filter((item) => {
-      // Match items that were originally in this group
-      const existingKeys = ((existingThemeContent.translatableContent as unknown) as TranslatableContentItem[]).map(c => c.key);
-      return existingKeys.includes(item.key);
+      return getGroupIdForKey(item.key) === groupId;
     });
 
     logger.debug(`[BackgroundSync] Found ${groupContent.length} translatable fields for group ${groupId}`);
@@ -899,19 +949,8 @@ export class BackgroundSyncService {
         { type: 'ONLINE_STORE_THEME_SETTINGS_CATEGORY', label: 'Settings Categories' },
       ];
 
-      // Define key patterns to filter and group by (same as ContentService)
-      const KEY_PATTERNS = [
-        { pattern: /^section\.article\./, name: 'Article', groupId: 'article', icon: '📝' },
-        { pattern: /^section\.collection\./, name: 'Collection', groupId: 'collection', icon: '📂' },
-        { pattern: /^section\.index\./, name: 'Index Page', groupId: 'index', icon: '🏠' },
-        { pattern: /^section\.password\./, name: 'Password Page', groupId: 'password', icon: '🔒' },
-        { pattern: /^section\.product\./, name: 'Product', groupId: 'product', icon: '🛍️' },
-        { pattern: /^section\.page\.([^.]+)\./, name: 'Pages', groupId: 'pages', icon: '📄', extractSubgroup: true },
-        { pattern: /^collections\.json\./, name: 'Collections Template', groupId: 'collections_template', icon: '📋' },
-        { pattern: /^group\.json\./, name: 'Theme Groups', groupId: 'groups', icon: '🎨' },
-        { pattern: /^bar\./, name: 'Announcement Bars', groupId: 'bars', icon: '📢' },
-        { pattern: /^Settings Categories:/, name: 'Settings', groupId: 'settings', icon: '⚙️' },
-      ];
+      // Use module-level THEME_KEY_PATTERNS for grouping
+      const KEY_PATTERNS = THEME_KEY_PATTERNS;
 
       // Get shop locales
       const locales = await this.fetchShopLocales();
