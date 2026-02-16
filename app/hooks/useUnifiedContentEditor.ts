@@ -896,9 +896,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         // Notify MainNavigation to immediately refresh the running task count
         window.dispatchEvent(new CustomEvent('task-count-changed'));
         onSuccess?.(result);
-      } else if (result.error) {
-        onError?.(result.error);
-        const translatedError = translateErrorMessage(result.error, t);
+      } else {
+        // Always show error feedback — even if the server omitted the error field
+        const errorMsg = result.error || "Unknown error";
+        onError?.(errorMsg);
+        const translatedError = translateErrorMessage(errorMsg, t);
         showInfoBox(translatedError, "critical", t.common?.error || "Error");
       }
     } catch (error) {
@@ -2554,10 +2556,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       fieldKey,
       (result) => {
         // Handle success - translations is Record<locale, translatedText>
-        const translations = result.translations as Record<string, string>;
+        const translations = result.translations as Record<string, string> || {};
         const shopifyKey = field.translationKey;
         const item = selectedItemRef.current;
+        const translationCount = Object.keys(translations).length;
 
+        // Update in-memory item state (only possible if item is still loaded)
         if (item && shopifyKey) {
           // Clear this translation key from deleted set since we now have new translations
           if (deletedTranslationKeysRef.current.has(shopifyKey)) {
@@ -2594,81 +2598,83 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
               [fieldKey]: translations[currentLanguage]
             }));
           }
+        }
 
-          const failedFieldLocales2 = (result.failedLocales as string[]) || [];
-          const rejected2 = (result.rejectedFields as Record<string, string[]>) || {};
-          const rejectedLocales2 = Object.keys(rejected2);
-          const skipped2 = (result.skippedFields as Record<string, string[]>) || {};
-          const skippedLocales2 = Object.keys(skipped2);
+        // Always show feedback — even if item ref was cleared during the async call.
+        // The translations were saved server-side regardless.
+        const failedFieldLocales2 = (result.failedLocales as string[]) || [];
+        const rejected2 = (result.rejectedFields as Record<string, string[]>) || {};
+        const rejectedLocales2 = Object.keys(rejected2);
+        const skipped2 = (result.skippedFields as Record<string, string[]>) || {};
+        const skippedLocales2 = Object.keys(skipped2);
 
-          if (failedFieldLocales2.length > 0 || rejectedLocales2.length > 0 || skippedLocales2.length > 0) {
-            const messages: string[] = [];
+        if (failedFieldLocales2.length > 0 || rejectedLocales2.length > 0 || skippedLocales2.length > 0) {
+          const messages: string[] = [];
 
-            if (failedFieldLocales2.length > 0) {
-              const failedList = failedFieldLocales2.join(", ");
-              messages.push(
-                String(t.content?.translatePartialLocales || "Translation partially completed: {successCount}/{totalCount} language(s) succeeded. Language(s) {failedLocales} failed.")
-                  .replace("{successCount}", String(Object.keys(translations).length))
-                  .replace("{totalCount}", String(Object.keys(translations).length + failedFieldLocales2.length))
-                  .replace("{failedLocales}", failedList)
-              );
-            }
-
-            if (rejectedLocales2.length > 0) {
-              const details = rejectedLocales2
-                .map(locale => `${locale}: ${rejected2[locale].map(k => resolveFieldLabel(k)).join(", ")}`)
-                .join("; ");
-              messages.push(
-                String(t.content?.translateRejectedFields || "Some fields could not be saved to Shopify: {details}. The translated content was generated but Shopify rejected it.")
-                  .replace("{details}", details)
-              );
-            }
-
-            if (skippedLocales2.length > 0) {
-              const details = skippedLocales2
-                .map(locale => `${locale}: ${skipped2[locale].map(k => resolveFieldLabel(k)).join(", ")}`)
-                .join("; ");
-              messages.push(
-                String(t.content?.translateSkippedFields || "Some fields were skipped because the translated value is identical to the primary locale: {details}.")
-                  .replace("{details}", details)
-              );
-            }
-
-            showInfoBox(
-              messages.join(" "),
-              "warning",
-              t.common?.warning || "Warning"
-            );
-          } else {
-            const fieldLabel2 = resolveFieldLabel(fieldKey);
-            showInfoBox(
-              t.common?.fieldTranslatedToLanguages
-                ?.replace("{fieldType}", fieldLabel2)
-                .replace("{count}", String(Object.keys(translations).length))
-                || `${fieldLabel2} translated to ${Object.keys(translations).length} language(s)`,
-              "success",
-              t.common?.success || "Success"
+          if (failedFieldLocales2.length > 0) {
+            const failedList = failedFieldLocales2.join(", ");
+            messages.push(
+              String(t.content?.translatePartialLocales || "Translation partially completed: {successCount}/{totalCount} language(s) succeeded. Language(s) {failedLocales} failed.")
+                .replace("{successCount}", String(translationCount))
+                .replace("{totalCount}", String(translationCount + failedFieldLocales2.length))
+                .replace("{failedLocales}", failedList)
             );
           }
 
-          // For templates: Update original value so hasChanges becomes false after translation
-          if (config.contentType === 'templates' && translations[currentLanguage]) {
-            originalTemplateValuesRef.current = {
-              ...originalTemplateValuesRef.current,
-              [fieldKey]: translations[currentLanguage]
-            };
-            setTemplateValuesVersion(v => v + 1);
+          if (rejectedLocales2.length > 0) {
+            const details = rejectedLocales2
+              .map(locale => `${locale}: ${rejected2[locale].map(k => resolveFieldLabel(k)).join(", ")}`)
+              .join("; ");
+            messages.push(
+              String(t.content?.translateRejectedFields || "Some fields could not be saved to Shopify: {details}. The translated content was generated but Shopify rejected it.")
+                .replace("{details}", details)
+            );
           }
 
-          // Call callback to update cache if provided
-          if (onTranslateToAllLocalesComplete) {
-            onTranslateToAllLocalesComplete(fieldKey, translations as Record<string, string>);
+          if (skippedLocales2.length > 0) {
+            const details = skippedLocales2
+              .map(locale => `${locale}: ${skipped2[locale].map(k => resolveFieldLabel(k)).join(", ")}`)
+              .join("; ");
+            messages.push(
+              String(t.content?.translateSkippedFields || "Some fields were skipped because the translated value is identical to the primary locale: {details}.")
+                .replace("{details}", details)
+            );
           }
 
-          // Revalidate to fetch fresh data with the new translations
-          if (revalidatorRef.current.state === 'idle') {
-            revalidatorRef.current.revalidate();
-          }
+          showInfoBox(
+            messages.join(" "),
+            "warning",
+            t.common?.warning || "Warning"
+          );
+        } else {
+          const fieldLabel2 = resolveFieldLabel(fieldKey);
+          showInfoBox(
+            t.common?.fieldTranslatedToLanguages
+              ?.replace("{fieldType}", fieldLabel2)
+              .replace("{count}", String(translationCount))
+              || `${fieldLabel2} translated to ${translationCount} language(s)`,
+            "success",
+            t.common?.success || "Success"
+          );
+        }
+
+        // For templates: Update original value so hasChanges becomes false after translation
+        if (config.contentType === 'templates' && translations[currentLanguage]) {
+          originalTemplateValuesRef.current = {
+            ...originalTemplateValuesRef.current,
+            [fieldKey]: translations[currentLanguage]
+          };
+          setTemplateValuesVersion(v => v + 1);
+        }
+
+        // Call callback to update cache if provided
+        if (onTranslateToAllLocalesComplete) {
+          onTranslateToAllLocalesComplete(fieldKey, translations as Record<string, string>);
+        }
+
+        // Revalidate to fetch fresh data with the new translations
+        if (revalidatorRef.current.state === 'idle') {
+          revalidatorRef.current.revalidate();
         }
       }
     );
