@@ -3268,12 +3268,49 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       },
       `altText_${imageIndex}`,
       (result) => {
-        // Handle success - set AI suggestion for this alt-text translation
+        // Handle success - directly apply the translated alt-text (no suggestion box)
         if (result.translatedAltText) {
-          setAltTextSuggestions((prev) => ({
-            ...prev,
-            [imageIndex]: result.translatedAltText as string,
-          }));
+          const translatedAltText = result.translatedAltText as string;
+
+          // Use functional update to avoid stale closure
+          setImageAltTexts(prev => {
+            const newAltTexts = { ...prev, [imageIndex]: translatedAltText };
+
+            // Skip next data load to prevent revalidation from overwriting
+            skipNextDataLoadRef.current = true;
+
+            // Auto-save immediately
+            const itemId = selectedItemRef.current?.id;
+            if (itemId) {
+              const formDataObj: Record<string, string> = {
+                action: "updateContent",
+                itemId,
+                locale: currentLanguage,
+                primaryLocale,
+              };
+              Object.assign(formDataObj, buildFieldsForSave(editableValuesRef.current, currentLanguage));
+              formDataObj.imageAltTexts = JSON.stringify(newAltTexts);
+
+              savedLocaleRef.current = currentLanguage;
+              isSavePendingRef.current = true;
+              isSaveFromTranslateRef.current = true;
+              safeSubmit(formDataObj, { method: "POST" });
+            }
+
+            // Update original alt-texts so hasChanges becomes false
+            setOriginalAltTexts(newAltTexts);
+
+            return newAltTexts;
+          });
+
+          // Show success toast
+          showInfoBox(
+            t.common?.fieldTranslatedAndSaved
+              ?.replace("{fieldType}", "Alt-Text")
+              || "Alt-Text translated and saved successfully",
+            "success",
+            t.common?.success || "Success"
+          );
         }
       }
     );
