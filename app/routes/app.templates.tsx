@@ -24,7 +24,7 @@ import { decryptApiKey } from "../utils/encryption.server";
 import { getTaskExpirationDate, ENABLE_THEME_PRIMARY_EDIT } from "~/config/constants";
 import { getFormString, getFormJSON } from "~/utils/form-data.utils";
 import { safeJsonParse } from "~/utils/validation";
-import type { ShopLocale } from "~/types/content-editor.types";
+import type { FetcherData } from "~/types/content-editor.types";
 import { logger } from "~/utils/logger.server";
 import { extractReadableName } from "~/utils/templates-field-factory";
 import { TRANSLATE_CONTENT, REMOVE_TRANSLATIONS, UPSERT_THEME_FILES } from "../graphql/content.mutations";
@@ -1343,7 +1343,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
 
 export default function TemplatesPage() {
   const { themes, shop, shopLocales: loaderShopLocales, primaryLocale, error } = useLoaderData<typeof loader>();
-  const fetcher = useFetcher<typeof action>();
+  const fetcher = useFetcher<FetcherData>();
   const revalidator = useRevalidator();
   const { t } = useI18n();
   const { showInfoBox } = useInfoBox();
