@@ -2179,7 +2179,7 @@ export default function TemplatesPage() {
   // Only show error messages here to avoid duplicates
   useEffect(() => {
     if (fetcher.data && typeof fetcher.data === 'object') {
-      if ('error' in fetcher.data && !fetcher.data.success) {
+      if (('error' in fetcher.data || 'errorKey' in fetcher.data) && !fetcher.data.success) {
         const errorData = fetcher.data as { error?: string; errorKey?: string; success: boolean };
         // Resolve i18n error key if present, otherwise fall back to plain error string
         const errorMessage =
