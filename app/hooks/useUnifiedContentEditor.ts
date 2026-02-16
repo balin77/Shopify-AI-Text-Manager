@@ -1206,6 +1206,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         };
         Object.assign(formDataObj, buildFieldsForSave(newValues, targetLocale));
 
+        // Ensure the translated field is always included in the save
+        if (translatedValue && translatedValue.trim()) {
+          formDataObj[fieldType] = translatedValue;
+        }
+
         // Track which locale we're saving so the response handler knows
         savedLocaleRef.current = targetLocale;
         isSavePendingRef.current = true;
@@ -2449,6 +2454,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             primaryLocale,
           };
           Object.assign(formDataObj, buildFieldsForSave(newValues, targetLocale));
+
+          // Ensure the translated field is always included in the save.
+          // buildFieldsForSave may filter it out due to stale fallbackFieldsRef
+          // or originalLoadedValuesRef timing issues during async AI callbacks.
+          if (translatedValue && translatedValue.trim()) {
+            formDataObj[fieldKey] = translatedValue;
+          }
 
           savedLocaleRef.current = targetLocale;
           isSavePendingRef.current = true;
