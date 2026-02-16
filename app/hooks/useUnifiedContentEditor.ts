@@ -3003,7 +3003,25 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       ...prev,
       [fieldKey]: "",
     }));
-  }, [fallbackFieldsRef]);
+
+    // Update validation refs so isFieldTranslated / hasLocaleMissingTranslations
+    // reflect the cleared state immediately (yellow highlight + button blinking)
+    if (currentLanguage !== primaryLocale) {
+      const field = effectiveFieldDefinitions.find(f => f.key === fieldKey);
+      if (field) {
+        const tKey = field.translationKey;
+        if (localTranslationsRef.current[tKey]) {
+          delete localTranslationsRef.current[tKey][currentLanguage];
+        }
+        const item = selectedItemRef.current;
+        if (item) {
+          item.translations = item.translations.filter(
+            (t: Translation) => !(t.key === tKey && t.locale === currentLanguage)
+          );
+        }
+      }
+    }
+  }, [fallbackFieldsRef, currentLanguage, primaryLocale, effectiveFieldDefinitions]);
 
   const handleClearAllClick = useCallback(() => {
     setIsClearAllModalOpen(true);
@@ -3029,6 +3047,25 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       }
     });
     setEditableValues(clearedValues);
+
+    // Update validation refs so isFieldTranslated / hasLocaleMissingTranslations
+    // reflect the cleared state immediately (yellow highlight + button blinking)
+    if (currentLanguage !== primaryLocale) {
+      const item = selectedItemRef.current;
+      effectiveFieldDefinitions.forEach((field) => {
+        if (field.key === "title") return; // title was kept
+        const tKey = field.translationKey;
+        if (localTranslationsRef.current[tKey]) {
+          delete localTranslationsRef.current[tKey][currentLanguage];
+        }
+      });
+      if (item) {
+        item.translations = item.translations.filter(
+          (t: Translation) => t.locale !== currentLanguage ||
+            effectiveFieldDefinitions.some(f => f.key === "title" && f.translationKey === t.key)
+        );
+      }
+    }
 
     // Clear image alt texts - set each to "" explicitly so the UI doesn't fall back to original image.altText
     if (selectedItem?.images && selectedItem.images.length > 0) {
@@ -3069,6 +3106,21 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       clearedValues[field.key] = "";
     });
     setEditableValues(clearedValues);
+
+    // Update validation refs so isFieldTranslated / hasLocaleMissingTranslations
+    // reflect the cleared state immediately (yellow highlight + button blinking)
+    const item = selectedItemRef.current;
+    effectiveFieldDefinitions.forEach((field) => {
+      const tKey = field.translationKey;
+      if (localTranslationsRef.current[tKey]) {
+        delete localTranslationsRef.current[tKey][currentLanguage];
+      }
+    });
+    if (item) {
+      item.translations = item.translations.filter(
+        (t: Translation) => t.locale !== currentLanguage
+      );
+    }
 
     // Clear image alt texts - set each to "" explicitly so the UI doesn't fall back to original image.altText
     const clearedAltTexts: Record<number, string> = {};
