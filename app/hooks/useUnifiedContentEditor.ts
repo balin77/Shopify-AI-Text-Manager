@@ -2033,6 +2033,40 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       if (config.contentType === 'templates') {
         originalTemplateValuesRef.current = { ...editableValues };
         setTemplateValuesVersion(v => v + 1); // Trigger useMemo recalculation
+
+        // For foreign locale saves: update localTranslationsRef and in-memory
+        // selectedItem.translations so isFieldTranslated and hasLocaleMissingTranslations
+        // return correct results IMMEDIATELY — without waiting for the
+        // loadedTranslations → items → selectedItem re-render chain.
+        // This ensures buttons blink/stop and fields turn yellow/white right after save.
+        const savedLocale = savedLocaleRef.current;
+        if (savedLocale && savedLocale !== primaryLocale) {
+          const item = selectedItemRef.current;
+          effectiveFieldDefinitions.forEach((field) => {
+            const value = editableValues[field.key];
+            const tKey = field.translationKey;
+
+            // Update localTranslationsRef for isFieldTranslated
+            if (!localTranslationsRef.current[tKey]) {
+              localTranslationsRef.current[tKey] = {};
+            }
+            if (value && value.trim()) {
+              localTranslationsRef.current[tKey][savedLocale] = value;
+            } else {
+              delete localTranslationsRef.current[tKey][savedLocale];
+            }
+
+            // Update in-memory selectedItem.translations for hasLocaleMissingTranslations
+            if (item) {
+              item.translations = item.translations.filter(
+                (t: Translation) => !(t.key === tKey && t.locale === savedLocale)
+              );
+              if (value && value.trim()) {
+                item.translations.push({ key: tKey, value, locale: savedLocale });
+              }
+            }
+          });
+        }
       }
 
       // Mark this item as recently saved to prevent on-demand sync from re-fetching
@@ -2096,6 +2130,23 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       }
     }
   }, [fetcher.data, showInfoBox, t, safeSubmit, submitAIAction, effectiveFieldDefinitions, currentLanguage, primaryLocale]);
+
+  // Catch-all for unhandled fetcher errors (e.g. translateAll / translateAllForLocale failures).
+  // Runs AFTER the save-specific handler above, so save errors that were already processed
+  // (tracked via processedSaveResponseRef) are skipped to avoid double toasts.
+  const processedGenericErrorRef = useRef<unknown>(null);
+  useEffect(() => {
+    if (!fetcher.data || fetcher.data.success) return;
+    if (!('error' in fetcher.data)) return;
+    // Already handled by save-specific or errorKey handler
+    if (fetcher.data === processedSaveResponseRef.current) return;
+    // Already handled by this catch-all
+    if (fetcher.data === processedGenericErrorRef.current) return;
+    processedGenericErrorRef.current = fetcher.data;
+
+    const translatedError = translateErrorMessage(String(fetcher.data.error || ""), t);
+    showInfoBox(translatedError, "critical", t.common?.error || "Error");
+  }, [fetcher.data, showInfoBox, t]);
 
   // Clear justSubmittedRef when fetcher picks up the request (state leaves 'idle')
   // or when it returns to idle (request completed). This ensures the synchronous

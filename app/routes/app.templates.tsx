@@ -2502,22 +2502,8 @@ export default function TemplatesPage() {
     });
   }, [revalidator.state, primaryLocale, preloadAllTranslations]);
 
-  // Handle response messages - NOTE: Success messages are handled by useUnifiedContentEditor hook
-  // Only show error messages here to avoid duplicates
-  // errorKey responses (e.g. emptyPrimaryFieldsError) are handled by the editor hook
-  // which also auto-restores empty fields — so we skip them here to avoid double InfoBox.
-  useEffect(() => {
-    if (fetcher.data && typeof fetcher.data === 'object') {
-      if ('error' in fetcher.data && !('errorKey' in fetcher.data) && !fetcher.data.success) {
-        const errorData = fetcher.data as { error?: string; success: boolean };
-        showInfoBox(
-          errorData.error || "Unknown error",
-          "critical",
-          t.content?.error || "Error"
-        );
-      }
-    }
-  }, [fetcher.data, showInfoBox, t]);
+  // NOTE: All fetcher error handling (save errors, translateAll errors, errorKey responses)
+  // is handled by useUnifiedContentEditor's catch-all error effect. No duplicate handler needed here.
 
   // Show loader error
   useEffect(() => {
