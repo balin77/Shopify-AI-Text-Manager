@@ -27,8 +27,8 @@ import { safeJsonParse } from "~/utils/validation";
 import type { ShopLocale } from "~/types/content-editor.types";
 import { logger } from "~/utils/logger.server";
 import { extractReadableName } from "~/utils/templates-field-factory";
-import { TRANSLATE_CONTENT, UPSERT_THEME_FILES } from "../graphql/content.mutations";
-import { GET_THEMES, GET_THEME_FILES } from "../graphql/content.queries";
+import { TRANSLATE_CONTENT, REMOVE_TRANSLATIONS, UPSERT_THEME_FILES } from "../graphql/content.mutations";
+import { GET_THEMES, GET_THEME_FILES, GET_SHOP_LOCALES } from "../graphql/content.queries";
 
 /** Shape of individual items within ThemeContent.translatableContent JSON array */
 interface TranslatableField {
@@ -1220,6 +1220,62 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
               groupId
             });
 
+            // STEP A: Delete from Shopify via translationsRemove
+            // Group changed keys by resourceId (a template group can span multiple Shopify resources)
+            const changedKeysByResource = new Map<string, string[]>();
+            for (const key of changedFields) {
+              const resId = keyToResourceId.get(key) || resourceId;
+              const existing = changedKeysByResource.get(resId) || [];
+              existing.push(key);
+              changedKeysByResource.set(resId, existing);
+            }
+
+            // Get all foreign locales to delete translations across all of them
+            const localesResponse = await admin.graphql(GET_SHOP_LOCALES);
+            const localesData = await localesResponse.json();
+            const foreignLocales = (localesData.data?.shopLocales || [])
+              .filter((l: { primary: boolean; published: boolean }) => !l.primary && l.published)
+              .map((l: { locale: string }) => l.locale);
+
+            if (foreignLocales.length > 0) {
+              for (const [resId, keys] of changedKeysByResource) {
+                try {
+                  const removeResponse = await admin.graphql(REMOVE_TRANSLATIONS, {
+                    variables: {
+                      resourceId: resId,
+                      translationKeys: keys,
+                      locales: foreignLocales,
+                    }
+                  });
+                  const removeData = await removeResponse.json();
+
+                  if (removeData.data?.translationsRemove?.userErrors?.length > 0) {
+                    logger.warn("[TEMPLATES] Shopify translationsRemove errors (non-fatal)", {
+                      context: "Templates",
+                      errors: removeData.data.translationsRemove.userErrors,
+                      resourceId: resId,
+                      keys,
+                    });
+                  } else {
+                    logger.info("[TEMPLATES] Shopify translations removed", {
+                      context: "Templates",
+                      resourceId: resId,
+                      keyCount: keys.length,
+                      localeCount: foreignLocales.length,
+                    });
+                  }
+                } catch (removeError) {
+                  // Non-fatal: local DB deletion below will still run
+                  logger.warn("[TEMPLATES] translationsRemove failed (non-fatal)", {
+                    context: "Templates",
+                    error: removeError instanceof Error ? removeError.message : String(removeError),
+                    resourceId: resId,
+                  });
+                }
+              }
+            }
+
+            // STEP B: Delete from local DB
             const deleteResult = await db.themeTranslation.deleteMany({
               where: {
                 shop: session.shop,

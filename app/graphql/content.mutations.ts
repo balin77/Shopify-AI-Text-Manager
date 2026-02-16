@@ -16,6 +16,21 @@ export const TRANSLATE_CONTENT = `#graphql
   }
 `;
 
+export const REMOVE_TRANSLATIONS = `#graphql
+  mutation removeTranslations($resourceId: ID!, $translationKeys: [String!]!, $locales: [String!]!) {
+    translationsRemove(resourceId: $resourceId, translationKeys: $translationKeys, locales: $locales) {
+      userErrors {
+        field
+        message
+      }
+      translations {
+        key
+        locale
+      }
+    }
+  }
+`;
+
 export const UPDATE_PAGE = `#graphql
   mutation updatePage($id: ID!, $page: PageUpdateInput!) {
     pageUpdate(id: $id, page: $page) {
