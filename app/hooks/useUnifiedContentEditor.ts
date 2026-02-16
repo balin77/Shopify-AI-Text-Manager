@@ -1694,9 +1694,20 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
               localTranslationsRef.current[fieldDef.translationKey] = {};
             }
             localTranslationsRef.current[fieldDef.translationKey][savedLocale] = value;
-          } else if (value === "" && existingIdx >= 0) {
+          } else if (value === "") {
             // User cleared this field — remove the translation from memory
-            item.translations.splice(existingIdx, 1);
+            if (existingIdx >= 0) {
+              item.translations.splice(existingIdx, 1);
+            }
+
+            // Clear stale value from localTranslationsRef so it won't be
+            // restored by the data loading effect on subsequent re-runs
+            if (localTranslationsRef.current[fieldDef.translationKey]?.[savedLocale]) {
+              delete localTranslationsRef.current[fieldDef.translationKey][savedLocale];
+            }
+
+            // Track as deleted so the data loading effect skips this key
+            deletedTranslationKeysRef.current.add(fieldDef.translationKey);
           }
         });
 

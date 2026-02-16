@@ -1898,15 +1898,20 @@ export default function TemplatesPage() {
           const groupCache = prev[selectedGroupId] || {};
           const localeCache = groupCache[currentLanguage] || [];
 
-          // Update or add translations for changed keys
+          // Update, add, or remove translations for changed keys
           const updatedCache = [...localeCache];
           Object.entries(currentValues).forEach(([key, value]) => {
             const existingIndex = updatedCache.findIndex((tr) => tr.key === key);
-            if (existingIndex >= 0) {
-              updatedCache[existingIndex] = { ...updatedCache[existingIndex], value };
-            } else if (value) {
-              // Only add if there's actually a value
-              updatedCache.push({ key, value, locale: currentLanguage });
+            if (value) {
+              // Non-empty value: upsert
+              if (existingIndex >= 0) {
+                updatedCache[existingIndex] = { ...updatedCache[existingIndex], value };
+              } else {
+                updatedCache.push({ key, value, locale: currentLanguage });
+              }
+            } else if (existingIndex >= 0) {
+              // Empty value: remove from cache so it's not restored later
+              updatedCache.splice(existingIndex, 1);
             }
           });
 
