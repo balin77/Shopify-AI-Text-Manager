@@ -898,11 +898,22 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
 
           // Group translations by resource ID — each key may belong to a different resource
           const translationsByResource = new Map<string, Array<{ key: string; value: string; locale: string; translatableContentDigest: string }>>();
+          // Group cleared (empty) translations by resource ID for deletion
+          const deletionsByResource = new Map<string, string[]>();
           const skippedKeys: string[] = [];
 
           for (const [key, value] of Object.entries(updatedFields)) {
-            const digest = digestMap.get(key) || "";
             const fieldResId = keyToResourceId.get(key) || resourceId;
+
+            // Empty string means user cleared the translation — mark for deletion
+            if (value === "") {
+              const existing = deletionsByResource.get(fieldResId) || [];
+              existing.push(key);
+              deletionsByResource.set(fieldResId, existing);
+              continue;
+            }
+
+            const digest = digestMap.get(key) || "";
 
             if (!digest) {
               logger.warn("[TEMPLATES] No digest for key — skipping Shopify save", {
@@ -963,6 +974,51 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
                 locale,
                 resourceId: resId,
                 fieldCount: translationInputs.length
+              });
+            }
+          }
+
+          // Delete cleared translations from Shopify via translationsRemove
+          for (const [resId, keysToDelete] of deletionsByResource) {
+            if (keysToDelete.length === 0) continue;
+
+            logger.info("[TEMPLATES] Deleting cleared translations from Shopify", {
+              context: "Templates",
+              resourceId: resId,
+              locale,
+              keyCount: keysToDelete.length,
+              sampleKeys: keysToDelete.slice(0, 3),
+            });
+
+            try {
+              const removeResponse = await admin.graphql(REMOVE_TRANSLATIONS, {
+                variables: {
+                  resourceId: resId,
+                  translationKeys: keysToDelete,
+                  locales: [locale],
+                }
+              });
+              const removeData = await removeResponse.json();
+
+              if (removeData.data?.translationsRemove?.userErrors?.length > 0) {
+                logger.warn("[TEMPLATES] Shopify translationsRemove errors for cleared fields", {
+                  context: "Templates",
+                  errors: removeData.data.translationsRemove.userErrors,
+                  resourceId: resId,
+                });
+              } else {
+                logger.info("[TEMPLATES] Cleared translations removed from Shopify", {
+                  context: "Templates",
+                  resourceId: resId,
+                  keyCount: keysToDelete.length,
+                  locale,
+                });
+              }
+            } catch (removeError) {
+              logger.warn("[TEMPLATES] translationsRemove failed for cleared fields (non-fatal)", {
+                context: "Templates",
+                error: removeError instanceof Error ? removeError.message : String(removeError),
+                resourceId: resId,
               });
             }
           }
@@ -1317,37 +1373,54 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
             logger.debug("[TEMPLATES] No changedFields to delete translations for", { context: "Templates" });
           }
         } else {
-          // Update translations: batch upsert in a single transaction (use correct resourceId per key)
-          const entries = Object.entries(updatedFields);
-          if (entries.length > 0) {
-            await db.$transaction(
-              entries.map(([key, value]) => {
-                const keyResId = keyToResourceId.get(key) || resourceId;
-                return db.themeTranslation.upsert({
-                  where: {
-                    shop_resourceId_groupId_key_locale: {
-                      shop: session.shop,
-                      resourceId: keyResId,
-                      groupId: groupId,
-                      key: key,
-                      locale: locale
-                    }
-                  },
-                  update: {
-                    value: value,
-                    updatedAt: new Date()
-                  },
-                  create: {
-                    shop: session.shop,
-                    groupId: groupId,
-                    resourceId: keyResId,
-                    locale: locale,
-                    key: key,
-                    value: value
-                  }
-                });
-              })
-            );
+          // Update translations: batch upsert non-empty values, delete cleared values
+          const entriesToUpsert = Object.entries(updatedFields).filter(([, value]) => value !== "");
+          const keysToDelete = Object.entries(updatedFields).filter(([, value]) => value === "").map(([key]) => key);
+
+          const dbOps: any[] = [];
+
+          // Upsert non-empty translations
+          for (const [key, value] of entriesToUpsert) {
+            const keyResId = keyToResourceId.get(key) || resourceId;
+            dbOps.push(db.themeTranslation.upsert({
+              where: {
+                shop_resourceId_groupId_key_locale: {
+                  shop: session.shop,
+                  resourceId: keyResId,
+                  groupId: groupId,
+                  key: key,
+                  locale: locale
+                }
+              },
+              update: {
+                value: value,
+                updatedAt: new Date()
+              },
+              create: {
+                shop: session.shop,
+                groupId: groupId,
+                resourceId: keyResId,
+                locale: locale,
+                key: key,
+                value: value
+              }
+            }));
+          }
+
+          // Delete cleared translations from DB
+          if (keysToDelete.length > 0) {
+            dbOps.push(db.themeTranslation.deleteMany({
+              where: {
+                shop: session.shop,
+                groupId: groupId,
+                key: { in: keysToDelete },
+                locale: locale
+              }
+            }));
+          }
+
+          if (dbOps.length > 0) {
+            await db.$transaction(dbOps);
           }
         }
 
