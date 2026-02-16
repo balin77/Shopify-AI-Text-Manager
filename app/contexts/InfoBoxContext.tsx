@@ -39,38 +39,59 @@ export function InfoBoxProvider({ children }: { children: ReactNode }) {
   const infoBoxRef = useRef(infoBox);
   infoBoxRef.current = infoBox;
 
-  const showInfoBox = useCallback((message: string, tone: InfoBoxTone = "success", title?: string) => {
-    // Create unique ID based on message + tone + timestamp
-    const id = `${message}-${tone}-${Date.now()}`;
+  // Queue for messages that arrive while a toast is already showing
+  const messageQueue = useRef<Array<{ message: string; tone: InfoBoxTone; title?: string }>>([]);
 
+  // Ref-based functions so setTimeout always calls the latest version
+  const displayToastRef = useRef<(msg: { message: string; tone: InfoBoxTone; title?: string }) => void>(undefined);
+  const processQueueRef = useRef<() => void>(undefined);
+
+  processQueueRef.current = () => {
+    if (messageQueue.current.length > 0) {
+      const next = messageQueue.current.shift()!;
+      displayToastRef.current?.(next);
+    } else {
+      setInfoBox(null);
+      dismissedMessages.current.clear();
+    }
+  };
+
+  displayToastRef.current = (msg) => {
+    const id = `${msg.message}-${msg.tone}-${Date.now()}`;
+    setInfoBox({ message: msg.message, tone: msg.tone, title: msg.title, id });
+
+    if (autoHideTimer.current) clearTimeout(autoHideTimer.current);
+
+    // Auto-hide nach 5 Sekunden bei success oder info, then process queue
+    if (msg.tone === "success" || msg.tone === "info") {
+      autoHideTimer.current = setTimeout(() => {
+        processQueueRef.current?.();
+      }, 5000);
+    }
+  };
+
+  const showInfoBox = useCallback((message: string, tone: InfoBoxTone = "success", title?: string) => {
     // Don't show if this exact message was recently dismissed
     const messageKey = `${message}-${tone}`;
     if (dismissedMessages.current.has(messageKey)) {
-      console.error('[TRANSLATE-DEBUG] showInfoBox SUPPRESSED by dismissedMessages:', { message: message.slice(0, 50), tone });
       return;
     }
-    console.error('[TRANSLATE-DEBUG] showInfoBox CALLED:', { message: message.slice(0, 80), tone, title });
 
-    // Clear any existing auto-hide timer
-    if (autoHideTimer.current) {
-      clearTimeout(autoHideTimer.current);
-    }
-
+    const id = `${message}-${tone}-${Date.now()}`;
     const entry: InfoBoxHistoryEntry = { message, tone, title, id, timestamp: new Date() };
-    setInfoBox({ message, tone, title, id });
 
-    // Add to history and increment unread count
+    // Always add to history and increment unread count
     setMessageHistory(prev => [entry, ...prev]);
     setUnreadCount(prev => prev + 1);
 
-    // Auto-hide nach 5 Sekunden bei success oder info
-    if (tone === "success" || tone === "info") {
-      autoHideTimer.current = setTimeout(() => {
-        setInfoBox(null);
-        // Clear dismissed messages after hiding
-        dismissedMessages.current.clear();
-      }, 5000);
+    // If a toast is currently showing, queue this one instead of replacing it
+    if (infoBoxRef.current) {
+      messageQueue.current.push({ message, tone, title });
+      return;
     }
+
+    // No current toast — show immediately
+    displayToastRef.current?.({ message, tone, title });
   }, []);
 
   const hideInfoBox = useCallback(() => {
@@ -92,7 +113,8 @@ export function InfoBoxProvider({ children }: { children: ReactNode }) {
       autoHideTimer.current = null;
     }
 
-    setInfoBox(null);
+    // Show next queued message instead of just clearing
+    processQueueRef.current?.();
   }, []);
 
   const setGlobalLoading = useCallback((loading: boolean, message?: string) => {

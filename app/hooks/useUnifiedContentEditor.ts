@@ -891,8 +891,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       }
 
       const result = await response.json();
-      console.error('[TRANSLATE-DEBUG] submitAIAction response:', { action: data.action, success: result.success, hasError: !!result.error, fieldKey });
-
       if (result.success) {
         // Notify MainNavigation to immediately refresh the running task count
         window.dispatchEvent(new CustomEvent('task-count-changed'));
@@ -900,13 +898,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       } else {
         // Always show error feedback — even if the server omitted the error field
         const errorMsg = result.error || "Unknown error";
-        console.error('[TRANSLATE-DEBUG] submitAIAction error result:', errorMsg);
         onError?.(errorMsg);
         const translatedError = translateErrorMessage(errorMsg, t);
         showInfoBox(translatedError, "critical", t.common?.error || "Error");
       }
     } catch (error) {
-      console.error('[TRANSLATE-DEBUG] submitAIAction caught error:', error);
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
       onError?.(errorMessage);
       const translatedError = translateErrorMessage(errorMessage, t);
@@ -2528,12 +2524,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   };
 
   const handleTranslateFieldToAllLocales = (fieldKey: string) => {
-    console.error('[TRANSLATE-DEBUG] handleTranslateFieldToAllLocales called', { fieldKey, selectedItemId, hasSelectedItem: !!selectedItem });
     if (!selectedItemId || !selectedItem) return;
 
     // Filter out primary locale and disabled languages
     const targetLocales = enabledLanguages.filter(l => l !== primaryLocale);
-    console.error('[TRANSLATE-DEBUG] targetLocales:', targetLocales);
     if (targetLocales.length === 0) {
       showInfoBox(
         t.common?.noTargetLanguagesSelected || "No target languages selected",
@@ -2558,7 +2552,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
     const contextTitle = getItemFieldValue(selectedItem, 'title', primaryLocale, config) || selectedItem.id || "";
 
-    console.error('[TRANSLATE-DEBUG] Calling submitAIAction for translateFieldToAllLocales');
     submitAIAction(
       {
         action: "translateFieldToAllLocales",
@@ -2571,7 +2564,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       },
       fieldKey,
       (result) => {
-        console.error('[TRANSLATE-DEBUG] onSuccess callback fired', { success: result.success, hasTranslations: !!result.translations, translationKeys: result.translations ? Object.keys(result.translations as Record<string, string>) : 'none' });
         // Handle success - translations is Record<locale, translatedText>
         const translations = result.translations as Record<string, string> || {};
         const shopifyKey = field.translationKey;
@@ -2669,7 +2661,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
               ?.replace("{fieldType}", fieldLabel2)
               .replace("{count}", String(translationCount))
               || `${fieldLabel2} translated to ${translationCount} language(s)`;
-          console.error('[TRANSLATE-DEBUG] Showing success toast:', toastMsg);
           showInfoBox(toastMsg, "success", t.common?.success || "Success");
         }
 
