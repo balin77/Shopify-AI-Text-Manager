@@ -9,6 +9,7 @@
  */
 
 import { logger } from '~/utils/logger.server';
+import { getFullErrorMessage } from '~/utils/error-handler';
 
 interface ShopifyGraphQLClient {
   graphql: (query: string, options?: { variables?: any }) => Promise<any>;
@@ -139,12 +140,17 @@ export class ShopifyApiGateway {
         } else {
           // Other errors - reject after retries
           if (request.retryCount < this.MAX_RETRIES) {
-            logger.warn(`[ShopifyGateway] Request failed, retrying (${request.retryCount + 1}/${this.MAX_RETRIES}):`, error.message);
+            logger.warn(`[ShopifyGateway] Request failed, retrying (${request.retryCount + 1}/${this.MAX_RETRIES}):`, getFullErrorMessage(error));
             request.retryCount++;
             this.requestQueue.unshift(request); // Add back to front of queue
             await this.sleep(this.RETRY_DELAY_MS);
           } else {
-            logger.error(`[ShopifyGateway] Request failed after ${this.MAX_RETRIES} retries:`, error.message);
+            const fullMsg = getFullErrorMessage(error);
+            logger.error(`[ShopifyGateway] Request failed after ${this.MAX_RETRIES} retries:`, fullMsg);
+            // Enrich the error message with cause details before rejecting
+            if (error instanceof Error && fullMsg !== error.message) {
+              error.message = fullMsg;
+            }
             request.reject(error);
           }
         }

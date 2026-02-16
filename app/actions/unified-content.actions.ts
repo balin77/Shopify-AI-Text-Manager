@@ -18,6 +18,7 @@ import { logger } from "../utils/logger.server";
 import { getFormString, getFormInt, getFormJSON } from "../utils/form-data.utils";
 import { isValidShopifyGID, isValidLocale, safeJsonParse } from "../utils/validation";
 import { sanitizePromptInput } from "../utils/prompt-sanitizer";
+import { getFullErrorMessage } from "../utils/error-handler";
 import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
 import type { Session } from "@shopify/shopify-api";
 import type { PrismaClient } from "@prisma/client";
@@ -84,7 +85,7 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
       const translations = await shopifyContentService.loadTranslations(itemId, locale);
       return json({ actionType: "loadTranslations", success: true, translations, locale });
     } catch (error: unknown) {
-      const msg = error instanceof Error ? error.message : String(error);
+      const msg = getFullErrorMessage(error);
       return json({ success: false, error: msg }, { status: 500 });
     }
   }
@@ -211,7 +212,7 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
       return json({ actionType: "generateAIText", success: true, generatedContent, fieldType });
     } catch (error: unknown) {
       // Update task to failed
-      const errorMessage = (error instanceof Error ? error.message : String(error)).substring(0, 1000);
+      const errorMessage = (getFullErrorMessage(error)).substring(0, 1000);
       try {
         await db.task.update({
           where: { id: task.id },
@@ -389,7 +390,7 @@ Allowed formatting changes:
       return json({ actionType: "formatAIText", success: true, generatedContent: formattedContent, fieldType });
     } catch (error: unknown) {
       // Update task to failed
-      const errorMessage = (error instanceof Error ? error.message : String(error)).substring(0, 1000);
+      const errorMessage = (getFullErrorMessage(error)).substring(0, 1000);
       try {
         await db.task.update({
           where: { id: task.id },
@@ -464,7 +465,7 @@ Allowed formatting changes:
 
       return json({ actionType: "translateField", success: true, translatedValue, fieldType, targetLocale });
     } catch (error: unknown) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
+      const errorMsg = getFullErrorMessage(error);
       try {
         await db.task.update({
           where: { id: task.id },
@@ -572,7 +573,7 @@ Allowed formatting changes:
 
       return json({ actionType: "translateAll", success: true, translations: allTranslations, failedLocales, rejectedFields, skippedFields });
     } catch (error: unknown) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
+      const errorMsg = getFullErrorMessage(error);
       await db.task.update({
         where: { id: task.id },
         data: {
@@ -685,7 +686,7 @@ Allowed formatting changes:
 
       return json({ actionType: "translateAllForLocale", success: true, translations, targetLocale, failedLocales, rejectedFields, skippedFields });
     } catch (error: unknown) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
+      const errorMsg = getFullErrorMessage(error);
       await db.task.update({
         where: { id: task.id },
         data: {
@@ -797,7 +798,7 @@ Allowed formatting changes:
 
       return json({ actionType: "translateFieldToAllLocales", success: true, translations: flattenedTranslations, fieldType, failedLocales, rejectedFields, skippedFields });
     } catch (error: unknown) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
+      const errorMsg = getFullErrorMessage(error);
       await db.task.update({
         where: { id: task.id },
         data: {
@@ -952,7 +953,7 @@ Allowed formatting changes:
 
       return json({ ...result, actionType: "updateContent" });
     } catch (error: unknown) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
+      const errorMsg = getFullErrorMessage(error);
       logger.error('Unified content update error', {
         context: 'UnifiedContent',
         action: 'updateContent',
@@ -1026,7 +1027,7 @@ Image URL: ${imageUrl}`;
 
       return json({ actionType: "generateAltText", success: true, altText, imageIndex });
     } catch (error: unknown) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
+      const errorMsg = getFullErrorMessage(error);
       await db.task.update({
         where: { id: task.id },
         data: {
@@ -1109,7 +1110,7 @@ Image URL: ${image.url}`;
           logger.error("Failed to generate alt-text for image", {
             context: "UnifiedContent",
             imageIndex: i,
-            error: error instanceof Error ? error.message : String(error),
+            error: getFullErrorMessage(error),
           });
         }
       }
@@ -1126,7 +1127,7 @@ Image URL: ${image.url}`;
 
       return json({ actionType: "generateAllAltTexts", success: true, generatedAltTexts });
     } catch (error: unknown) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
+      const errorMsg = getFullErrorMessage(error);
       await db.task.update({
         where: { id: task.id },
         data: {
@@ -1202,7 +1203,7 @@ Image URL: ${image.url}`;
         targetLocale,
       });
     } catch (error: unknown) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
+      const errorMsg = getFullErrorMessage(error);
       await db.task.update({
         where: { id: task.id },
         data: {
@@ -1418,7 +1419,7 @@ Image URL: ${image.url}`;
         failedLocales,
       });
     } catch (error: unknown) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
+      const errorMsg = getFullErrorMessage(error);
       await db.task.update({
         where: { id: task.id },
         data: {

@@ -202,6 +202,44 @@ export function createRateLimitError(retryAfter?: number): SafeError {
 }
 
 /**
+ * Extract the full error message including the cause chain.
+ *
+ * Shopify's GraphQL client often loses the underlying network error reason
+ * (e.g. ECONNREFUSED, ENOTFOUND) because it doesn't pass `{ cause }` when
+ * re-throwing. This helper walks the cause chain and appends any extra
+ * information that the top-level `message` is missing.
+ */
+export function getFullErrorMessage(error: unknown): string {
+  if (!(error instanceof Error)) return String(error);
+
+  let msg = error.message;
+
+  // Walk the cause chain and collect additional context
+  let current: unknown = (error as any).cause;
+  const seen = new Set<unknown>([error]);
+  while (current && !seen.has(current)) {
+    seen.add(current);
+    const causeMsg = current instanceof Error ? current.message : String(current);
+    // Only append if the cause message adds new information
+    if (causeMsg && !msg.includes(causeMsg)) {
+      msg = msg.endsWith('reason:') || msg.endsWith('reason: ')
+        ? `${msg} ${causeMsg}`
+        : `${msg} (${causeMsg})`;
+    }
+    current = current instanceof Error ? (current as any).cause : undefined;
+  }
+
+  // Shopify's GraphQL client loses the network error cause, resulting in
+  // messages like "... failed, reason:" with nothing after.  Make this
+  // more helpful for the user.
+  if (/,\s*reason:\s*$/.test(msg)) {
+    msg += ' unknown (network error — check your internet connection or try again)';
+  }
+
+  return msg;
+}
+
+/**
  * Wrap an async function with error handling
  */
 export function withErrorHandling<T extends (...args: any[]) => Promise<any>>(
