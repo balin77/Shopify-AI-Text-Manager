@@ -545,6 +545,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       processedSaveResponseRef.current = null;
       isSavePendingRef.current = false;
       processedTranslateFieldRef.current = null;
+      processedTranslateAltTextAllRef.current = null;
       acceptedPrimaryValueRef.current = null;
       setIsInitialDataReady(false); // Reset data ready flag for new item
       debugLog.dataLoad(' Cleared refs for new item');
@@ -1115,6 +1116,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // Ref to track processed save responses (prevents duplicate InfoBox/revalidation on re-renders)
   const processedSaveResponseRef = useRef<FetcherData | null>(null);
 
+  // Ref to track processed translateAltTextToAllLocales responses (prevents infinite revalidation loop)
+  const processedTranslateAltTextAllRef = useRef<FetcherData | null>(null);
+
   // Ref to track whether a save operation is actually pending (prevents false "saved" messages on revalidation)
   const isSavePendingRef = useRef(false);
 
@@ -1240,9 +1244,20 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // Handle translated alt-text to all locales response (show success message + revalidate)
   useEffect(() => {
     if (fetcher.data?.success && fetcher.data.actionType === "translateAltTextToAllLocales") {
+      // Skip if already processed (prevents infinite loop: revalidator dep change re-triggers this effect)
+      if (fetcher.data === processedTranslateAltTextAllRef.current) {
+        return;
+      }
+      processedTranslateAltTextAllRef.current = fetcher.data;
+
       const { targetLocales, imageIndex, failedLocales } = fetcher.data as TranslatedAltTextsResponse;
       const failed = failedLocales || [];
       debugLog.altText(' Translations to all locales completed for image', imageIndex);
+
+      // Clean up refs left over from the queued safeSubmit (translateAltTextToAllLocales
+      // is not an updateContent action, so the normal save response handler never resets these)
+      isSavePendingRef.current = false;
+      savedLocaleRef.current = null;
 
       if (failed.length > 0) {
         const failedList = failed.join(", ");
@@ -1273,7 +1288,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         }
       }
     }
-  }, [fetcher.data, revalidator]);
+  }, [fetcher.data]);
 
   // Execute pending alt-text auto-save
   useEffect(() => {

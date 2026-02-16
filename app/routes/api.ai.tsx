@@ -2251,6 +2251,7 @@ Image URL: ${image.url}`;
             imageCount: imageIndices.length,
             savedCount,
             failedImages,
+            translatedResults,
           });
         } catch (error: unknown) {
           await db.task.update({
