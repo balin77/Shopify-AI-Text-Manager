@@ -1675,17 +1675,21 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         // We only clear the CHANGED keys (not all) to preserve Accept & Translate
         // values for unchanged fields. Clearing all caused every foreign locale
         // button to briefly show "missing" for ALL fields.
+        //
+        // NOTE: We use deletedTranslationKeysRef (populated BEFORE item mutation
+        // in handleSave/performAutoSave) instead of re-comparing item values here.
+        // The old getItemFieldValue comparison was broken because item properties
+        // were already updated at lines above, so newValue always equalled
+        // originalValue and localTranslationsRef entries were never cleaned up.
+        // This caused stale translated handles (and other fields) to reappear
+        // in foreign locales after a primary-locale change.
         // DO NOT REMOVE these lines without understanding the above.
         // ─────────────────────────────────────────────────────────────────────────
-        effectiveFieldDefinitions.forEach((fieldDef) => {
-          const newValue = editableValues[fieldDef.key] || "";
-          const originalValue = config.contentType === 'templates'
-            ? (originalTemplateValuesRef.current[fieldDef.key] || "")
-            : getItemFieldValue(item, fieldDef.key, primaryLocale, config);
-          if (newValue !== originalValue && localTranslationsRef.current[fieldDef.translationKey]) {
-            delete localTranslationsRef.current[fieldDef.translationKey];
+        for (const deletedKey of deletedTranslationKeysRef.current) {
+          if (localTranslationsRef.current[deletedKey]) {
+            delete localTranslationsRef.current[deletedKey];
           }
-        });
+        }
         deletedTranslationKeysRef.current.clear();
 
         // Update image alt-texts for primary locale
@@ -1868,9 +1872,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
                 }));
               } else if (currentLanguage === primaryLocale && acceptedPrimaryValueRef.current?.fieldKey === fieldKey) {
                 // Restore the accepted primary value (translation response only contains foreign languages)
+                // Capture value BEFORE passing to setState updater — the ref is cleared
+                // synchronously below, but React may execute the updater later in a batch,
+                // at which point the ref would already be null → crash.
+                const acceptedValue = acceptedPrimaryValueRef.current.value;
                 setEditableValues(prev => ({
                   ...prev,
-                  [fieldKey]: acceptedPrimaryValueRef.current!.value
+                  [fieldKey]: acceptedValue
                 }));
               }
 
@@ -1937,12 +1945,23 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             // Reset the accept-and-translate flow flag after translations are complete
             setIsAcceptAndTranslateFlow(false);
 
-            // For templates: Update original value so hasChanges becomes false after translation
-            if (config.contentType === 'templates' && translations[currentLanguage]) {
-              originalTemplateValuesRef.current = {
-                ...originalTemplateValuesRef.current,
-                [fieldKey]: translations[currentLanguage]
-              };
+            // For templates: Update original values so hasChanges becomes false
+            if (config.contentType === 'templates') {
+              // Update with the translated value if we're viewing a foreign locale,
+              // OR with the current editableValues for the primary locale (the accepted
+              // AI suggestion was saved but originalTemplateValuesRef was never updated
+              // because the early `return` at the end of this block skips the normal
+              // post-save update at ~line 1990).
+              if (translations[currentLanguage]) {
+                originalTemplateValuesRef.current = {
+                  ...originalTemplateValuesRef.current,
+                  [fieldKey]: translations[currentLanguage]
+                };
+              } else if (currentLanguage === primaryLocale) {
+                // Primary locale: sync all original values with current editableValues
+                // so the save button correctly shows "no changes"
+                originalTemplateValuesRef.current = { ...editableValuesRef.current };
+              }
               setTemplateValuesVersion(v => v + 1);
             }
 
