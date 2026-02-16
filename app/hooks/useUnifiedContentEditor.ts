@@ -1265,6 +1265,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         );
       }
 
+      // Skip next data load to prevent revalidation from overwriting user changes
+      // (the first skipNextDataLoadRef from handleAcceptAndTranslateAltText may
+      // have been consumed by the updateContent revalidation cycle already)
+      skipNextDataLoadRef.current = true;
+
       // Revalidate to fetch fresh data with the new translations
       if (revalidator.state === 'idle') {
         try {
@@ -3393,6 +3398,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // Update the UI state
     setImageAltTexts(newAltTexts);
 
+    // Immediately update the in-memory item so the fallback display
+    // (images[index]?.altText) shows the correct value even if imageAltTexts
+    // state gets cleared during revalidation cycles.
+    const item = selectedItemRef.current;
+    if (item?.images?.[imageIndex] && currentLanguage === primaryLocale) {
+      item.images[imageIndex].altText = suggestion;
+    }
+
     setAltTextSuggestions(prev => {
       const newSuggestions = { ...prev };
       delete newSuggestions[imageIndex];
@@ -3443,6 +3456,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // Update the UI state
     setImageAltTexts(newAltTexts);
 
+    // Immediately update the in-memory item so the fallback display
+    // (images[index]?.altText) shows the correct value even if imageAltTexts
+    // state gets cleared during revalidation cycles.
+    if (item.images?.[imageIndex]) {
+      item.images[imageIndex].altText = suggestion;
+    }
+
     setAltTextSuggestions(prev => {
       const newSuggestions = { ...prev };
       delete newSuggestions[imageIndex];
@@ -3458,15 +3478,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         t.common?.warning || "Warning"
       );
       // No translations needed, just save the primary text directly
+      skipNextDataLoadRef.current = true;
       const formDataObj: Record<string, string> = {
         action: "updateContent",
         itemId: selectedItemId,
         locale: primaryLocale,
         primaryLocale,
       };
-      effectiveFieldDefinitions.forEach((field) => {
-        formDataObj[field.key] = editableValues[field.key] || "";
-      });
+      Object.assign(formDataObj, buildFieldsForSave(editableValues, primaryLocale));
       formDataObj.imageAltTexts = JSON.stringify(newAltTexts);
       savedLocaleRef.current = primaryLocale;
       isSavePendingRef.current = true;
@@ -3487,9 +3506,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       locale: primaryLocale,
       primaryLocale,
     };
-    effectiveFieldDefinitions.forEach((field) => {
-      formDataObj[field.key] = editableValues[field.key] || "";
-    });
+    Object.assign(formDataObj, buildFieldsForSave(editableValues, primaryLocale));
     formDataObj.imageAltTexts = JSON.stringify(newAltTexts);
     savedLocaleRef.current = primaryLocale;
     isSavePendingRef.current = true;
