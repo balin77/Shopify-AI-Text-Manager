@@ -1804,9 +1804,13 @@ export default function TemplatesPage() {
   }, [editor.state.currentLanguage, selectedGroupId, primaryLocale, loadTranslationsForLocale, loadedTranslations, loadedThemes]);
 
   // Handle translation fetcher response
+  const processedTranslationFetcherRef = useRef<unknown>(null);
   useEffect(() => {
     const data = translationFetcher.data as { success?: boolean; translations?: ThemeTranslationRecord[]; locale?: string } | undefined;
     if (!data?.success || !data?.translations || !data?.locale) return;
+    // Prevent re-processing when deps like loadedThemes change but data hasn't
+    if (processedTranslationFetcherRef.current === translationFetcher.data) return;
+    processedTranslationFetcherRef.current = translationFetcher.data;
 
     const { translations, locale } = data;
 

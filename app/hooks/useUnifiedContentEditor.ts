@@ -546,6 +546,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       isSavePendingRef.current = false;
       processedTranslateFieldRef.current = null;
       processedTranslateAltTextAllRef.current = null;
+      processedTranslateAllRef.current = null;
+      processedTranslateAllForLocaleRef.current = null;
       acceptedPrimaryValueRef.current = null;
       setIsInitialDataReady(false); // Reset data ready flag for new item
       debugLog.dataLoad(' Cleared refs for new item');
@@ -1105,6 +1107,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
   // Ref to track processed translateAltTextToAllLocales responses (prevents infinite revalidation loop)
   const processedTranslateAltTextAllRef = useRef<FetcherData | null>(null);
+  const processedTranslateAllRef = useRef<FetcherData | null>(null);
+  const processedTranslateAllForLocaleRef = useRef<FetcherData | null>(null);
 
   // Ref to track whether a save operation is actually pending (prevents false "saved" messages on revalidation)
   const isSavePendingRef = useRef(false);
@@ -1331,6 +1335,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // Handle "translateAll" response (translates to ALL enabled locales)
   useEffect(() => {
     if (fetcher.data?.success && fetcher.data.actionType === "translateAll") {
+      // Prevent re-processing when effectiveFieldDefinitions change (e.g. after Remix revalidation)
+      if (fetcher.data === processedTranslateAllRef.current) return;
+      processedTranslateAllRef.current = fetcher.data;
+
       const { translations, failedLocales } = fetcher.data as TranslationsResponse;
       const item = selectedItemRef.current;
       if (item) {
@@ -1471,6 +1479,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // Handle "translateAllForLocale" response (translates to ONE specific locale)
   useEffect(() => {
     if (fetcher.data?.success && fetcher.data.actionType === "translateAllForLocale") {
+      // Prevent re-processing when effectiveFieldDefinitions change (e.g. after Remix revalidation)
+      if (fetcher.data === processedTranslateAllForLocaleRef.current) return;
+      processedTranslateAllForLocaleRef.current = fetcher.data;
+
       const { targetLocale, failedLocales } = fetcher.data as TranslationsResponse & { targetLocale: string };
       const translations = (fetcher.data as TranslationsResponse).translations as Record<string, string>;
       const item = selectedItemRef.current;
