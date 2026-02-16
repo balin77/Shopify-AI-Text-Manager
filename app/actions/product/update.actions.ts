@@ -518,13 +518,16 @@ async function updateTranslatedProduct(
   const translationsInput: Array<{ key: string; value: string; locale: string; translatableContentDigest: string }> = [];
   const translationsToDelete: string[] = [];
   const skippedFields: string[] = [];
+  // Translations that have no Shopify digest but should still be saved to the local DB
+  const dbOnlyTranslations: Array<{ key: string; value: string; locale: string }> = [];
 
-  // Helper to add translation - only adds if digest is available (required by Shopify)
+  // Helper to add translation - saves to Shopify if digest available, otherwise DB-only
   const addTranslation = (key: string, value: string) => {
     if (digestMap[key]) {
       translationsInput.push({ key, value, locale: params.locale, translatableContentDigest: digestMap[key] });
     } else {
       skippedFields.push(key);
+      dbOnlyTranslations.push({ key, value, locale: params.locale });
     }
   };
 
@@ -566,13 +569,65 @@ async function updateTranslatedProduct(
     translationsToDelete.push("product_type");
   }
 
+  // Retry: if any fields were skipped due to missing digest, re-fetch translatableContent
+  // (handles race conditions / late availability — mirrors shopify-content.service.ts logic)
   if (skippedFields.length > 0) {
-    loggers.product("warn", "Skipped Shopify save for fields without digest (will save to DB only)", {
+    loggers.product("warn", "Missing digests for fields, re-fetching translatableContent...", {
       productId,
       locale: params.locale,
       skippedFields,
       availableDigestKeys: Object.keys(digestMap),
     });
+
+    const retryResponse = await gateway.graphql(
+      `#graphql
+        query translatableContent($resourceId: ID!) {
+          translatableResource(resourceId: $resourceId) {
+            resourceId
+            translatableContent {
+              key
+              digest
+              value
+            }
+          }
+        }`,
+      { variables: { resourceId: productId } }
+    );
+    const retryData = await retryResponse.json();
+    const retryContent = retryData.data?.translatableResource?.translatableContent || [];
+
+    // Update digest map with freshly fetched digests
+    retryContent.forEach((item: { key: string; digest: string }) => {
+      if (item.digest && !digestMap[item.key]) {
+        digestMap[item.key] = item.digest;
+      }
+    });
+
+    // Move recovered fields from dbOnly → translationsInput
+    const stillSkipped: string[] = [];
+    const recovered: string[] = [];
+    for (let i = dbOnlyTranslations.length - 1; i >= 0; i--) {
+      const t = dbOnlyTranslations[i];
+      if (digestMap[t.key]) {
+        translationsInput.push({ ...t, translatableContentDigest: digestMap[t.key] });
+        dbOnlyTranslations.splice(i, 1);
+        recovered.push(t.key);
+      } else {
+        stillSkipped.push(t.key);
+      }
+    }
+
+    if (recovered.length > 0) {
+      loggers.product("info", "Recovered digests on retry", { productId, recovered });
+    }
+    if (stillSkipped.length > 0) {
+      loggers.product("warn", "Fields still without digest after retry (will save to DB only)", {
+        productId,
+        locale: params.locale,
+        stillSkipped,
+        availableDigestKeys: Object.keys(digestMap),
+      });
+    }
   }
 
   // Save non-empty translations to Shopify
@@ -679,8 +734,8 @@ async function updateTranslatedProduct(
     // Use transaction to ensure all upserts and deletes succeed or fail together
     // @ts-expect-error Prisma interactive transaction types are complex; tx has same model accessors as db
     await db.$transaction(async (tx: PrismaClient) => {
-      // Use upsert to preserve existing translations for other fields
-      for (const translation of translationsInput) {
+      // Save all translations to DB — both Shopify-saved and DB-only (no digest)
+      for (const translation of [...translationsInput, ...dbOnlyTranslations]) {
         await tx.contentTranslation.upsert({
           where: {
             // Unique constraint is: @@unique([resourceId, key, locale])
@@ -725,8 +780,8 @@ async function updateTranslatedProduct(
     loggers.product("info", "Saved translations to DB (ContentTranslation)", {
       productId,
       locale: params.locale,
-      saved: translationsInput.length,
-      skipped: skippedFields.length,
+      savedToShopifyAndDb: translationsInput.length,
+      savedToDbOnly: dbOnlyTranslations.length,
       deleted: translationsToDelete.length,
     });
   }
