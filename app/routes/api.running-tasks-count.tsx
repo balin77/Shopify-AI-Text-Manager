@@ -9,12 +9,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     try {
       const { db } = await import("../db.server");
 
-      // Count only running and pending tasks
+      // Count active tasks (pending → queued → running)
       const runningTaskCount = await db.task.count({
         where: {
           shop: session.shop,
           status: {
-            in: ["pending", "running"],
+            in: ["pending", "queued", "running"],
           },
         },
       });
