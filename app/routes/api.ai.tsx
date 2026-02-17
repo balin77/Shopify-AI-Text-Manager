@@ -2015,37 +2015,29 @@ Image URL: ${image.url}`;
             bulkAllTask.id
           );
 
-          const totalOperations = imageIndices.length * targetLocales.length;
-          let completedOperations = 0;
-          // translatedResults[imageIndex][locale] = translatedText
-          const translatedResults: Record<number, Record<string, string>> = {};
-
-          for (const imgIdx of imageIndices) {
-            const sourceAltText = altTextsData[String(imgIdx)];
-            translatedResults[imgIdx] = {};
-
-            for (const locale of targetLocales) {
-              try {
-                const translatedValue = await aiService.translateContent(sourceAltText, primaryLocale, locale);
-                translatedResults[imgIdx][locale] = translatedValue;
-              } catch (error: unknown) {
-                logger.error("[API-AI] Error translating alt-text for image to locale", {
-                  context: "AI",
-                  imageIndex: imgIdx,
-                  locale,
-                  error: errorMessage(error),
-                });
-                translatedResults[imgIdx][locale] = sourceAltText; // Fallback
+          // Batch translate all alt-texts to all locales in a single AI request
+          let translatedResults: Record<string, Record<string, string>> = {};
+          try {
+            translatedResults = await aiService.translateAltTextsBatch(
+              altTextsData, primaryLocale, targetLocales, contentType
+            );
+          } catch (error: unknown) {
+            logger.error("[API-AI] Error batch-translating alt-texts to all locales", {
+              context: "AI", error: errorMessage(error),
+            });
+            // Fallback: use source texts for all
+            for (const imgIdx of imageIndices) {
+              translatedResults[String(imgIdx)] = {};
+              for (const locale of targetLocales) {
+                translatedResults[String(imgIdx)][locale] = altTextsData[String(imgIdx)];
               }
-
-              completedOperations++;
-              const progress = Math.round(5 + (completedOperations / totalOperations) * 75);
-              await db.task.update({
-                where: { id: bulkAllTask.id },
-                data: { progress },
-              });
             }
           }
+
+          await db.task.update({
+            where: { id: bulkAllTask.id },
+            data: { progress: 80 },
+          });
 
           // Save translations to Shopify first, then DB only on Shopify success
           const failedImages: number[] = [];
@@ -2269,28 +2261,29 @@ Image URL: ${image.url}`;
             localeTask.id
           );
 
+          // Batch translate all alt-texts for this locale in a single AI request
           const translatedAltTexts: Record<number, string> = {};
-
-          for (let i = 0; i < imageIndices.length; i++) {
-            const imgIdx = imageIndices[i];
-            const sourceAltText = altTextsData[String(imgIdx)];
-
-            try {
-              const translatedValue = await aiService.translateContent(sourceAltText, primaryLocale, targetLocale);
-              translatedAltTexts[imgIdx] = translatedValue;
-            } catch (error: unknown) {
-              logger.error("[API-AI] Error translating alt-text for image", {
-                context: "AI", imageIndex: imgIdx, targetLocale, error: errorMessage(error),
-              });
-              translatedAltTexts[imgIdx] = sourceAltText; // Fallback
+          try {
+            const batchResult = await aiService.translateAltTextsBatch(
+              altTextsData, primaryLocale, [targetLocale], contentType
+            );
+            for (const [imgIdx, localeMap] of Object.entries(batchResult)) {
+              translatedAltTexts[Number(imgIdx)] = localeMap[targetLocale] || altTextsData[imgIdx];
             }
-
-            const progress = Math.round(10 + ((i + 1) / imageIndices.length) * 80);
-            await db.task.update({
-              where: { id: localeTask.id },
-              data: { progress },
+          } catch (error: unknown) {
+            logger.error("[API-AI] Error batch-translating alt-texts for locale", {
+              context: "AI", targetLocale, error: errorMessage(error),
             });
+            // Fallback: use source texts
+            for (const imgIdx of imageIndices) {
+              translatedAltTexts[imgIdx] = altTextsData[String(imgIdx)];
+            }
           }
+
+          await db.task.update({
+            where: { id: localeTask.id },
+            data: { progress: 90 },
+          });
 
           // Save translations to Shopify first, then DB only on Shopify success
           const productId = getFormString(formData, "productId");

@@ -153,6 +153,65 @@ Return only the translation, without additional explanations.`;
     return await this.askAI(prompt);
   }
 
+  /**
+   * Translate multiple alt-texts to multiple locales in a single AI request.
+   * Much more efficient than calling translateContent() per image per locale.
+   */
+  async translateAltTextsBatch(
+    altTexts: Record<string, string>,
+    fromLang: string,
+    targetLocales: string[],
+    contentType: string = 'product'
+  ): Promise<Record<string, Record<string, string>>> {
+    const sanitizedAltTexts: Record<string, string> = {};
+    for (const [key, value] of Object.entries(altTexts)) {
+      if (value) {
+        sanitizedAltTexts[key] = sanitizePromptInput(value, {
+          maxLength: 1000,
+          allowNewlines: false
+        });
+      }
+    }
+
+    if (Object.keys(sanitizedAltTexts).length === 0) {
+      return {};
+    }
+
+    const localeNames = LOCALE_NAMES;
+
+    const targetLanguages = targetLocales
+      .map((loc) => `${localeNames[loc] || loc} (${loc})`)
+      .join(', ');
+
+    const altTextsText = Object.entries(sanitizedAltTexts)
+      .map(([key, value]) => `Image ${key}: ${value}`)
+      .join('\n');
+
+    // Build expected JSON structure
+    const jsonStructure: Record<string, Record<string, string>> = {};
+    for (const key of Object.keys(sanitizedAltTexts)) {
+      jsonStructure[key] = {};
+      for (const locale of targetLocales) {
+        jsonStructure[key][locale] = '...';
+      }
+    }
+
+    const prompt = `Translate these ${contentType} image alt-texts from ${localeNames[fromLang] || fromLang} to: ${targetLanguages}.
+
+${altTextsText}
+
+Requirements:
+- Keep translations concise and descriptive
+- Maintain similar character length
+- Preserve any product-specific terminology
+
+Respond in JSON format:
+${JSON.stringify(jsonStructure, null, 2)}`;
+
+    const responseText = await this.askAI(prompt);
+    return this.parseJSONResponse(responseText);
+  }
+
   async translateSlug(
     slug: string,
     fromLang: string,
