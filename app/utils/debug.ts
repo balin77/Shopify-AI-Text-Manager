@@ -56,4 +56,10 @@ export const debugLog = {
 
   /** Translation clearing */
   translationClear: createLogger('TRANSLATION-CLEAR'),
+
+  /** UiDataLoader transitions (resolve, save, translate) */
+  transition: createLogger('TRANSITION'),
+
+  /** UiDataLoader resolve (field value resolution) */
+  resolve: createLogger('RESOLVE'),
 };

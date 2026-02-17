@@ -10,6 +10,7 @@ import { useRevalidator, useFetcher } from "@remix-run/react";
 import { useNavigationGuard, useChangeTracking, getTranslatedValue } from "../utils/contentEditor.utils";
 import { useItemFocus } from "./useFocusManagement";
 import { useLatestRef } from "./useLatestRef";
+import { useUiDataLoader, getItemFieldValue } from "./useUiDataLoader";
 import type {
   UseContentEditorProps,
   UseContentEditorReturn,
@@ -173,18 +174,23 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const MAX_RETRIES = 3;
   const RETRY_DELAY_MS = 300;
 
-  // Track deleted translation keys - these should not be shown even if revalidation brings them back temporarily
-  const deletedTranslationKeysRef = useRef<Set<string>>(new Set());
-
-  // Track locally added translations from Accept & Translate flow
-  // This is needed because item.translations mutations can be lost when items array is recreated
-  // Format: Record<translationKey, Record<locale, value>>
-  const localTranslationsRef = useRef<Record<string, Record<string, string>>>({});
-
-  // Track original template values for change detection (templates use dynamic fields)
-  const originalTemplateValuesRef = useRef<Record<string, string>>({});
-  // State counter to force templateHasFieldChanges useMemo recalculation when ref updates
-  const [templateValuesVersion, setTemplateValuesVersion] = useState(0);
+  // ============================================================================
+  // UI DATA LOADER — Centralized data resolution and cache management
+  // Refs and resolve() logic live in useUiDataLoader. Destructured here for
+  // backward compatibility so existing code doesn't need to change ref names.
+  // ============================================================================
+  const dataLoader = useUiDataLoader({ config, primaryLocale });
+  const {
+    refs: {
+      deletedTranslationKeysRef,
+      localTranslationsRef,
+      savedPrimaryValuesRef,
+      originalLoadedValuesRef,
+      originalTemplateValuesRef,
+    },
+    templateValuesVersion,
+    setTemplateValuesVersion,
+  } = dataLoader;
 
   // Track which fields are showing fallback values (e.g., handle field showing primary locale value)
   // This happens when Shopify doesn't return a translation because it's identical to the primary value
@@ -192,13 +198,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
   const fallbackFieldsRef = useLatestRef(fallbackFields);
 
-  // Track original loaded values for foreign locale change detection during save.
-  // Problem: Previously ALL non-fallback fields were sent on every save, even unchanged ones.
-  // If a handle translation existed (e.g. from translateAll), it was re-sent on every subsequent
-  // save of any field, causing Shopify to reject with "handle already taken".
-  // Solution: Store the values as loaded from the server, then only send fields where the
-  // current value differs from the original. This way unchanged fields like handle are never re-sent.
-  const originalLoadedValuesRef = useRef<Record<string, string>>({});
+  // NOTE: originalLoadedValuesRef now lives in useUiDataLoader (destructured above)
 
   // Track which fields have AI actions currently running (for per-field loading states)
   // This allows multiple AI actions to run in parallel on different fields
@@ -208,12 +208,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // Reset when item or language changes, allowing retry during new load cycles
   const initialLoadSuccessfulRef = useRef(false);
 
-  // Cache of saved primary-locale values per item ID.
-  // After a save, revalidation replaces the items array with new objects, losing any
-  // in-memory mutations. This ref preserves the saved values so the data load effect
-  // can use them instead of potentially stale item data from the server.
-  // Cleared on manual reload (dataRefreshTrigger) or when server data matches.
-  const savedPrimaryValuesRef = useRef<Record<string, Record<string, string>>>({});
+  // NOTE: savedPrimaryValuesRef now lives in useUiDataLoader (destructured above)
 
   // Trigger for forcing data refresh (used by ReloadButton after revalidation)
   // When this counter increments, the data loading effect will re-run
@@ -250,47 +245,39 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     return found;
   }, [items, selectedItemId]);
 
-  // Hybrid image loading + deep-enough clone:
-  // - If images exist in DB -> use them directly (instant)
-  // - If no images in DB -> load on-demand from Shopify API (fallback)
+  // Hybrid image loading + image cloning:
+  // - If images exist in DB -> clone for alt-text mutations
+  // - If no images in DB -> merge on-demand images from Shopify API
   //
-  // IMPORTANT: We create a deep-enough clone of the item so that in-memory mutations
-  // (translations, field values, image alt-texts) only affect this local copy and do NOT
-  // mutate the parent component's data. This preserves React's immutability principle.
+  // Items are now READ-ONLY (Phase 4) — translations, seo, translatableContent are never
+  // mutated. Only image alt-texts are still mutated in-place, so only images need cloning.
   const selectedItem = useMemo(() => {
     if (!baseSelectedItem) return undefined;
 
-    // Deep-enough clone: shallow spread the item, then clone mutable nested structures
-    const cloned: TranslatableContentItem = {
-      ...baseSelectedItem,
-      translations: baseSelectedItem.translations
-        ? baseSelectedItem.translations.map((t: Translation) => ({ ...t }))
-        : [],
-      seo: baseSelectedItem.seo ? { ...baseSelectedItem.seo } : undefined,
-      translatableContent: baseSelectedItem.translatableContent
-        ? baseSelectedItem.translatableContent.map(
-            (c: { key: string; value: string }) => (c ? { ...c } : c)
-          )
-        : undefined,
-    };
-
-    // Clone images with their altTextTranslations
     const hasDbImages = baseSelectedItem.images && baseSelectedItem.images.length > 0;
+
+    // Only create a shallow copy when images need cloning or merging
     if (hasDbImages) {
-      cloned.images = baseSelectedItem.images!.map((img: ContentImage) => ({
-        ...img,
-        altTextTranslations: img.altTextTranslations
-          ? img.altTextTranslations.map((t: AltTextTranslation) => ({ ...t }))
-          : [],
-      }));
-    } else if (
+      return {
+        ...baseSelectedItem,
+        images: baseSelectedItem.images!.map((img: ContentImage) => ({
+          ...img,
+          altTextTranslations: img.altTextTranslations
+            ? img.altTextTranslations.map((t: AltTextTranslation) => ({ ...t }))
+            : [],
+        })),
+      };
+    }
+
+    if (
       onDemandImages.length > 0 &&
       loadedImagesForProductRef.current === selectedItemId
     ) {
-      cloned.images = onDemandImages;
+      return { ...baseSelectedItem, images: onDemandImages };
     }
 
-    return cloned;
+    // No image handling needed — use item directly
+    return baseSelectedItem;
   }, [baseSelectedItem, onDemandImages, selectedItemId]);
 
   // ============================================================================
@@ -493,24 +480,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     }
 
 
-    // Skip data load if flagged (e.g., after save/clear to prevent overwriting user changes)
-    // BUT: Never skip when the language changed - a language switch always needs fresh data
-    // loaded into editableValues for the new language. Without this, switching from a foreign
-    // language to primary after saving leaves stale foreign-language values in editableValues
-    // which mismatch the primary-language originals, causing a false-positive hasChanges.
-    if (skipNextDataLoadRef.current) {
-      skipNextDataLoadRef.current = false;
-      if (!languageChanged) {
-        debugLog.dataLoad(' Skipping data load (skipNextDataLoadRef was set)');
-        // Still update refs so the next real change is detected
-        prevItemIdForDataLoadRef.current = selectedItemId;
-        prevCurrentLanguageRef.current = currentLanguage;
-        prevDataRefreshTriggerRef.current = dataRefreshTrigger;
-        return;
-      }
-      debugLog.dataLoad(' skipNextDataLoadRef was set but language changed - proceeding with data load');
-    }
-
     // Update refs
     prevItemIdForDataLoadRef.current = selectedItemId;
     prevCurrentLanguageRef.current = currentLanguage;
@@ -518,16 +487,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
     if (refreshTriggered) {
       debugLog.dataLoad(' Data refresh triggered by ReloadButton');
-
-      // Clear saved values cache on manual reload - user expects fresh server data
-      if (selectedItemId && savedPrimaryValuesRef.current[selectedItemId]) {
-        delete savedPrimaryValuesRef.current[selectedItemId];
-      }
-
-      // Clear local translation overrides - stale values from Accept & Translate
-      // or previous saves must not override fresh data from Shopify
-      localTranslationsRef.current = {};
-      deletedTranslationKeysRef.current.clear();
+      dataLoader.onRefresh(selectedItemId);
 
       // For templates, skip loading from stale item data after a reload.
       // The page-level reload effect (app.templates.tsx) fetches fresh data from the API
@@ -549,10 +509,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     initialLoadSuccessfulRef.current = false;
     retryCountRef.current = 0;
 
-    // Clear deleted translation keys and processed response refs when switching to a different item
+    // Clear data caches and processed response refs when switching to a different item
     if (itemIdChanged) {
-      deletedTranslationKeysRef.current.clear();
-      localTranslationsRef.current = {};
+      dataLoader.onItemSwitch();
       processedSaveResponseRef.current = null;
       isSavePendingRef.current = false;
       processedTranslateFieldRef.current = null;
@@ -564,111 +523,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       debugLog.dataLoad(' Cleared refs for new item');
     }
 
-    const newValues: Record<string, string> = {};
+    // Resolve all field values via the centralized UiDataLoader
     const fieldDefs = effectiveFieldDefinitionsRef.current;
+    const { values: newValues, fallbackFields: newFallbackFields } = dataLoader.resolveAll(
+      item,
+      currentLanguage,
+      fieldDefs
+    );
 
-    if (currentLanguage === primaryLocale) {
-      // Load primary locale values
-      const newFallbackFields = new Set<string>();
-
-      // Check if we have saved values from a recent save that should override
-      // potentially stale item data (revalidation replaces item objects, losing mutations)
-      const savedOverride = selectedItemId ? savedPrimaryValuesRef.current[selectedItemId] : undefined;
-
-      if (savedOverride) {
-        debugLog.dataLoad(' Using saved primary values override for item:', selectedItemId);
-        fieldDefs.forEach((field) => {
-          newValues[field.key] = savedOverride[field.key] ?? "";
-        });
-
-        // Check if the server data has caught up (matches saved values)
-        const serverCaughtUp = fieldDefs.every((field) => {
-          const serverValue = getItemFieldValue(item, field.key, primaryLocale, config);
-          const savedValue = savedOverride[field.key] ?? "";
-          // For seoTitle, getItemFieldValue falls back to title - compare with that in mind
-          if (field.key === 'seoTitle' && savedValue === "" && serverValue === (item.title || "")) {
-            return true; // Server returns title as fallback, saved is empty - that's expected
-          }
-          return serverValue === savedValue;
-        });
-
-        if (serverCaughtUp) {
-          debugLog.dataLoad(' Server data caught up, clearing saved values override');
-          delete savedPrimaryValuesRef.current[selectedItemId!];
-        }
-      } else {
-        // Normal data load from item
-        fieldDefs.forEach((field) => {
-          newValues[field.key] = getItemFieldValue(item, field.key, primaryLocale, config);
-
-          // Mark seoTitle as fallback if it's using the title as fallback
-          if (field.key === 'seoTitle') {
-            const actualSeoTitle = item.seo?.title;
-            const isUsingFallback = !actualSeoTitle && item.title;
-            if (isUsingFallback) {
-              debugLog.dataLoad(' SEO Title field: using fallback to main title:', item.title);
-              newFallbackFields.add(field.key);
-            }
-          }
-        });
-      }
-
-      setFallbackFields(newFallbackFields);
-    } else {
-      // Load translated values for non-template content types
-      const newFallbackFields = new Set<string>();
-
-      fieldDefs.forEach((field) => {
-        // Check if this translation key was deleted - if so, show empty field
-        if (deletedTranslationKeysRef.current.has(field.translationKey)) {
-          debugLog.dataLoad(' Skipping deleted translation key:', field.translationKey);
-          newValues[field.key] = "";
-          return;
-        }
-
-        // First check local translations ref (from Accept & Translate flow)
-        // This is needed because item.translations mutations can be lost when items array is recreated
-        const localValue = localTranslationsRef.current[field.translationKey]?.[currentLanguage];
-        if (localValue) {
-          debugLog.dataLoad(' Using local translation for', field.translationKey, ':', currentLanguage);
-          newValues[field.key] = localValue;
-          return;
-        }
-
-        const translatedValue = getTranslatedValue(
-          item,
-          field.translationKey,
-          currentLanguage,
-          "",
-          primaryLocale
-        );
-
-        // Special handling for handle field: fallback to primary locale value if no translation
-        // Shopify doesn't return a translation if it's identical to the primary value
-        if (field.key === 'handle' && !translatedValue && item.handle) {
-          debugLog.dataLoad(' Handle field: using fallback to primary locale value:', item.handle);
-          newValues[field.key] = item.handle;
-          newFallbackFields.add(field.key);
-        } else if (field.key === 'seoTitle' && !translatedValue) {
-          // Special handling for seoTitle field: fallback to translated title (or primary if no translation)
-          const translatedTitle = getTranslatedValue(
-            item,
-            "title", // Translation key for title
-            currentLanguage,
-            "",
-            primaryLocale
-          );
-          const fallbackTitle = translatedTitle || item.title || "";
-          debugLog.dataLoad(' SEO Title field: using fallback to title:', fallbackTitle);
-          newValues[field.key] = fallbackTitle;
-          newFallbackFields.add(field.key);
-        } else {
-          newValues[field.key] = translatedValue;
-        }
-      });
-
-      setFallbackFields(newFallbackFields);
-    }
+    setFallbackFields(newFallbackFields);
 
     // Snapshot the loaded values so buildFieldsForSave() can later compare against them.
     // Without this, every save in a foreign locale would re-send ALL fields to Shopify,
@@ -1009,6 +872,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       primaryLocale,
     };
 
+    // Pass policyType for ShopPolicy primary locale updates (required by Shopify API)
+    if (config.resourceType === "ShopPolicy" && selectedItem?.type) {
+      formDataObj.policyType = selectedItem.type;
+    }
+
     // Add field values - for foreign locales, only send fields that actually changed
     Object.assign(formDataObj, buildFieldsForSave(valuesToSave, locale));
 
@@ -1118,8 +986,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     savedLocale: string | null;
   }>>([]);
 
-  // Ref to skip the next data load (prevents overwriting after save/clear operations)
-  const skipNextDataLoadRef = useRef(false);
+  // NOTE: skipNextDataLoadRef was removed in Phase 4 (read-only items).
+  // resolve() now computes correct values purely from ref overlays, so
+  // the data-load effect always produces the right result without skipping.
 
   const editableValuesRef = useLatestRef(editableValues);
 
@@ -1153,51 +1022,43 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       }
       processedTranslateFieldRef.current = responseKey;
 
-      // Clear deleted key for this field since we now have a new translation
       const field = effectiveFieldDefinitions.find(f => f.key === fieldType);
-      if (field?.translationKey && deletedTranslationKeysRef.current.has(field.translationKey)) {
-        deletedTranslationKeysRef.current.delete(field.translationKey);
-      }
 
-      // Build new values with the translation (using ref to avoid dependency)
-      const newValues: Record<string, string> = {
-        ...editableValuesRef.current,
-        [fieldType]: translatedValue,
-      };
-
-      // Update UI
-
-      setEditableValues(newValues);
-
-      // Clear fallback styling for this field since it now has a real translation
-      if (fallbackFieldsRef.current.has(fieldType)) {
-        setFallbackFields((prev) => {
-          const newSet = new Set(prev);
-          newSet.delete(fieldType);
-          return newSet;
-        });
-        fallbackFieldsRef.current.delete(fieldType);
-      }
-
-      // Update item.translations directly so hasChanges becomes false after save
-      const item = selectedItemRef.current;
-      if (item && field?.translationKey) {
-        // Remove existing translation for this key and locale
-        item.translations = item.translations.filter(
-          (t: Translation) => !(t.locale === targetLocale && t.key === field.translationKey)
+      if (field?.translationKey) {
+        // Delegate ref mutations to transition method
+        const result = dataLoader.onTranslateFieldComplete(
+          fieldType,
+          field.translationKey,
+          translatedValue,
+          targetLocale,
+          editableValuesRef.current
         );
-        // Add new translation
-        item.translations.push({
-          key: field.translationKey,
-          value: translatedValue,
-          locale: targetLocale,
-        });
+
+        // Apply UI updates from transition result
+        if (result.updatedValues) {
+          setEditableValues(result.updatedValues);
+        }
+
+        // Clear fallback styling
+        if (result.clearedFallbackKeys.length > 0) {
+          setFallbackFields((prev) => {
+            const newSet = new Set(prev);
+            result.clearedFallbackKeys.forEach((key) => newSet.delete(key));
+            return newSet;
+          });
+          result.clearedFallbackKeys.forEach((key) =>
+            fallbackFieldsRef.current.delete(key)
+          );
+        }
+
+        if (result.shouldMarkLoading) {
+          setIsLoadingData(true);
+        }
       }
 
       // Auto-save the translation immediately
-
-      // Build form data directly here to avoid dependency issues
-      if (selectedItemId) {
+      if (selectedItemId && field) {
+        const newValues = { ...editableValuesRef.current, [fieldType]: translatedValue };
         const formDataObj: Record<string, string> = {
           action: "updateContent",
           itemId: selectedItemId,
@@ -1211,28 +1072,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           formDataObj[fieldType] = translatedValue;
         }
 
-        // Track which locale we're saving so the response handler knows
         savedLocaleRef.current = targetLocale;
         isSavePendingRef.current = true;
         safeSubmit(formDataObj, { method: "POST" });
-
-        // Reset the baseline so the just-saved translated field isn't re-sent on the next save.
-        // Without this, the translated field would still differ from the old originalLoadedValues
-        // and would be included again in every subsequent save.
-        originalLoadedValuesRef.current = { ...newValues };
       }
-
-      // For templates: Update original values so templateHasFieldChanges becomes false
-      if (config.contentType === 'templates') {
-        originalTemplateValuesRef.current = {
-          ...originalTemplateValuesRef.current,
-          [fieldType]: translatedValue,
-        };
-        setTemplateValuesVersion(v => v + 1);
-      }
-
-      // Mark as loading to reset change detection after the save completes
-      setIsLoadingData(true);
     }
   }, [fetcher.data, selectedItemId, primaryLocale, effectiveFieldDefinitions, safeSubmit, buildFieldsForSave]);
 
@@ -1302,11 +1145,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         );
       }
 
-      // Skip next data load to prevent revalidation from overwriting user changes
-      // (the first skipNextDataLoadRef from handleAcceptAndTranslateAltText may
-      // have been consumed by the updateContent revalidation cycle already)
-      skipNextDataLoadRef.current = true;
-
       // Revalidate to fetch fresh data with the new translations
       if (revalidatorRef.current.state === 'idle') {
         try {
@@ -1328,9 +1166,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     pendingAltTextAutoSaveRef.current = null;
 
     debugLog.altText(' Executing auto-save for alt-texts:', pendingAltTexts);
-
-    // Skip next data load to prevent revalidation from overwriting
-    skipNextDataLoadRef.current = true;
 
     // Build form data for save
     const formDataObj: Record<string, string> = {
@@ -1373,80 +1208,37 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       processedTranslateAllRef.current = fetcher.data;
 
       const { translations, failedLocales } = fetcher.data as TranslationsResponse;
-      const item = selectedItemRef.current;
-      if (item) {
-        // Clear all deleted keys since we're translating all fields
-        if (deletedTranslationKeysRef.current.size > 0) {
-          debugLog.translateAll(' Clearing all deleted translation keys:', Array.from(deletedTranslationKeysRef.current));
-          deletedTranslationKeysRef.current.clear();
+      {
+        // Delegate ref mutations to transition method
+        const translationsMap = translations as Record<string, Record<string, string>>;
+        const result = dataLoader.onTranslateAllComplete(
+          translationsMap,
+          effectiveFieldDefinitions,
+          currentLanguage,
+          editableValues
+        );
+
+        // Apply UI updates from transition result
+        if (result.updatedValues) {
+          setEditableValues(result.updatedValues);
         }
 
-        for (const [locale, fields] of Object.entries(translations)) {
-          const fieldMap = fields as Record<string, string>;
-          const newTranslations: Translation[] = [];
-
-          // Map fields to translations
-          effectiveFieldDefinitions.forEach((fieldDef) => {
-            const value = fieldMap[fieldDef.key];
-            if (value) {
-              newTranslations.push({
-                key: fieldDef.translationKey,
-                value,
-                locale,
-              });
-            }
+        if (result.clearedFallbackKeys.length > 0) {
+          setFallbackFields((prev) => {
+            const newSet = new Set(prev);
+            result.clearedFallbackKeys.forEach((key) => newSet.delete(key));
+            return newSet;
           });
-
-          // Store directly in item translations
-          item.translations = [
-            ...item.translations.filter((t: Translation) => t.locale !== locale),
-            ...newTranslations,
-          ];
-
-          // If we're currently viewing this locale, update the editable fields
-          if (currentLanguage === locale) {
-
-            const updatedValues = { ...editableValues };
-            const translatedKeys: string[] = [];
-            effectiveFieldDefinitions.forEach((fieldDef) => {
-              const value = fieldMap[fieldDef.key];
-              if (value) {
-                updatedValues[fieldDef.key] = String(value);
-                translatedKeys.push(fieldDef.key);
-              }
-            });
-            setEditableValues(updatedValues);
-
-            // Reset the baseline to the post-translation values. translateAll/translateAllForLocale
-            // already saved these translations on the server, so they are now the "original" state.
-            // Without this, a subsequent manual save would re-send all translated fields because
-            // they'd still differ from the pre-translation originalLoadedValues.
-            originalLoadedValuesRef.current = { ...updatedValues };
-
-            // Clear fallback styling for fields that now have real translations
-            if (translatedKeys.length > 0) {
-              setFallbackFields((prev) => {
-                const newSet = new Set(prev);
-                translatedKeys.forEach((key) => newSet.delete(key));
-                return newSet;
-              });
-              fallbackFieldsRef.current = new Set(
-                [...fallbackFieldsRef.current].filter((key) => !translatedKeys.includes(key))
-              );
-            }
-
-            // For templates: Update original values so hasChanges becomes false after translation
-            // This prevents the save button from showing false changes after translateAll
-            if (config.contentType === 'templates') {
-              originalTemplateValuesRef.current = { ...updatedValues };
-              setTemplateValuesVersion(v => v + 1);
-            }
-          }
+          fallbackFieldsRef.current = new Set(
+            [...fallbackFieldsRef.current].filter(
+              (key) => !result.clearedFallbackKeys.includes(key)
+            )
+          );
         }
 
-        // Mark as loading to reset change detection after bulk translation
-        // This ensures hasChanges becomes false after we've updated the translations
-        setIsLoadingData(true);
+        if (result.shouldMarkLoading) {
+          setIsLoadingData(true);
+        }
 
         // Show warning if some locales failed or fields were rejected/skipped, success if all succeeded
         const failed = failedLocales || [];
@@ -1519,74 +1311,37 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
       const { targetLocale, failedLocales } = fetcher.data as TranslationsResponse & { targetLocale: string };
       const translations = (fetcher.data as TranslationsResponse).translations as Record<string, string>;
-      const item = selectedItemRef.current;
-      if (item) {
-        // Clear all deleted keys since we're translating all fields for this locale
-        if (deletedTranslationKeysRef.current.size > 0) {
-          debugLog.translateAllForLocale(' Clearing all deleted translation keys:', Array.from(deletedTranslationKeysRef.current));
-          deletedTranslationKeysRef.current.clear();
+      {
+        // Delegate ref mutations to transition method
+        const result = dataLoader.onTranslateAllForLocaleComplete(
+          translations,
+          effectiveFieldDefinitions,
+          targetLocale,
+          currentLanguage,
+          editableValues
+        );
+
+        // Apply UI updates from transition result
+        if (result.updatedValues) {
+          setEditableValues(result.updatedValues);
         }
 
-        const newTranslations: Translation[] = [];
-
-        // Map fields to translations for the specific locale
-        effectiveFieldDefinitions.forEach((fieldDef) => {
-          const value = translations[fieldDef.key];
-          if (value) {
-            newTranslations.push({
-              key: fieldDef.translationKey,
-              value,
-              locale: targetLocale,
-            });
-          }
-        });
-
-        // Store directly in item translations (replace existing for this locale)
-        item.translations = [
-          ...item.translations.filter((t: Translation) => t.locale !== targetLocale),
-          ...newTranslations,
-        ];
-
-        // If we're currently viewing this locale, update the editable fields
-        if (currentLanguage === targetLocale) {
-
-          const updatedValues = { ...editableValues };
-          const translatedKeys: string[] = [];
-          effectiveFieldDefinitions.forEach((fieldDef) => {
-            const value = translations[fieldDef.key];
-            if (value) {
-              updatedValues[fieldDef.key] = value;
-              translatedKeys.push(fieldDef.key);
-            }
+        if (result.clearedFallbackKeys.length > 0) {
+          setFallbackFields((prev) => {
+            const newSet = new Set(prev);
+            result.clearedFallbackKeys.forEach((key) => newSet.delete(key));
+            return newSet;
           });
-          setEditableValues(updatedValues);
-
-          // Update original loaded values since translations were saved on the server
-          originalLoadedValuesRef.current = { ...updatedValues };
-
-          // Clear fallback styling for fields that now have real translations
-          if (translatedKeys.length > 0) {
-            setFallbackFields((prev) => {
-              const newSet = new Set(prev);
-              translatedKeys.forEach((key) => newSet.delete(key));
-              return newSet;
-            });
-            fallbackFieldsRef.current = new Set(
-              [...fallbackFieldsRef.current].filter((key) => !translatedKeys.includes(key))
-            );
-          }
-
-          // For templates: Update original values so hasChanges becomes false after translation
-          // This prevents the save button from showing false changes after translateAllForLocale
-          if (config.contentType === 'templates') {
-            originalTemplateValuesRef.current = { ...updatedValues };
-            setTemplateValuesVersion(v => v + 1);
-          }
+          fallbackFieldsRef.current = new Set(
+            [...fallbackFieldsRef.current].filter(
+              (key) => !result.clearedFallbackKeys.includes(key)
+            )
+          );
         }
 
-        // Mark as loading to reset change detection after bulk translation
-        // This ensures hasChanges becomes false after we've updated the translations
-        setIsLoadingData(true);
+        if (result.shouldMarkLoading) {
+          setIsLoadingData(true);
+        }
 
         // Show warning if the locale failed or fields were rejected/skipped, success otherwise
         const failed = failedLocales || [];
@@ -1654,58 +1409,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
       debugLog.response(' Processing save response for locale:', savedLocale);
 
+      // Delegate ref mutations to transition method
+      const result = dataLoader.onSaveComplete(
+        savedLocale,
+        editableValues,
+        effectiveFieldDefinitions
+      );
+
+      // Image alt-text updates (not managed by dataLoader — separate concern)
       if (savedLocale === primaryLocale) {
-        // This was a successful update action for primary locale
-        // Update the item object directly with new values
-        debugLog.response(' Updating primary locale item values');
-        effectiveFieldDefinitions.forEach((fieldDef) => {
-          const value = editableValues[fieldDef.key];
-
-          // Update based on field mapping
-          if (fieldDef.key === 'title') {
-            item.title = value || '';
-          } else if (fieldDef.key === 'description') {
-            item.descriptionHtml = value || '';
-          } else if (fieldDef.key === 'body') {
-            item.body = value || '';
-          } else if (fieldDef.key === 'handle') {
-            item.handle = value || '';
-          } else if (fieldDef.key === 'seoTitle') {
-            if (!item.seo) item.seo = {};
-            item.seo.title = value || '';
-          } else if (fieldDef.key === 'metaDescription') {
-            if (!item.seo) item.seo = {};
-            item.seo.description = value || '';
-          }
-        });
-
-        // ── IMPORTANT: Clear translation refs for CHANGED fields after primary save ──
-        // When primary content changes, the server deletes stale foreign
-        // translations on Shopify — but only for the fields that actually changed.
-        // We must clear localTranslationsRef entries for those keys, otherwise the
-        // data loading effect would restore old translations from the ref when the
-        // user switches to a foreign locale — making deleted translations reappear.
-        // We only clear the CHANGED keys (not all) to preserve Accept & Translate
-        // values for unchanged fields. Clearing all caused every foreign locale
-        // button to briefly show "missing" for ALL fields.
-        //
-        // NOTE: We use deletedTranslationKeysRef (populated BEFORE item mutation
-        // in handleSave/performAutoSave) instead of re-comparing item values here.
-        // The old getItemFieldValue comparison was broken because item properties
-        // were already updated at lines above, so newValue always equalled
-        // originalValue and localTranslationsRef entries were never cleaned up.
-        // This caused stale translated handles (and other fields) to reappear
-        // in foreign locales after a primary-locale change.
-        // DO NOT REMOVE these lines without understanding the above.
-        // ─────────────────────────────────────────────────────────────────────────
-        for (const deletedKey of deletedTranslationKeysRef.current) {
-          if (localTranslationsRef.current[deletedKey]) {
-            delete localTranslationsRef.current[deletedKey];
-          }
-        }
-        deletedTranslationKeysRef.current.clear();
-
-        // Update image alt-texts for primary locale
         if (item.images && Object.keys(imageAltTextsRef.current).length > 0) {
           for (const [indexStr, altText] of Object.entries(imageAltTextsRef.current)) {
             const index = parseInt(indexStr, 10);
@@ -1716,71 +1428,16 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           }
         }
       } else {
-        // This was a successful update action for a translation
-        // Use the saved locale, not the current viewing language
-        debugLog.response(' Updating translation for saved locale:', savedLocale);
-
-        // Update in-memory translations for the saved locale.
-        // Only upsert/remove individual keys — do NOT remove all translations for
-        // the locale, because that drops translations for fields that were never
-        // part of this save (buildFieldsForSave only sends changed fields).
-        effectiveFieldDefinitions.forEach((fieldDef) => {
-          if (fieldDef.type === 'image-gallery') return; // images handled separately below
-          const value = editableValues[fieldDef.key];
-          const existingIdx = item.translations.findIndex(
-            (t: Translation) => t.key === fieldDef.translationKey && t.locale === savedLocale
-          );
-
-          if (value) {
-            // Upsert: update existing or add new translation
-            const entry = { key: fieldDef.translationKey, value, locale: savedLocale };
-            if (existingIdx >= 0) {
-              item.translations[existingIdx] = entry;
-            } else {
-              item.translations.push(entry);
-            }
-
-            // Also store in localTranslationsRef to persist after revalidation
-            if (!localTranslationsRef.current[fieldDef.translationKey]) {
-              localTranslationsRef.current[fieldDef.translationKey] = {};
-            }
-            localTranslationsRef.current[fieldDef.translationKey][savedLocale] = value;
-          } else if (value === "") {
-            // ── User cleared this translation field ──────────────────────
-            // Remove from item.translations so getTranslatedValue returns "".
-            if (existingIdx >= 0) {
-              item.translations.splice(existingIdx, 1);
-            }
-
-            // IMPORTANT: Also clear localTranslationsRef. Without this, the
-            // data loading effect reads stale values from localTranslationsRef
-            // (which takes priority over item.translations) and silently
-            // restores the deleted translation in the UI.
-            if (localTranslationsRef.current[fieldDef.translationKey]?.[savedLocale]) {
-              delete localTranslationsRef.current[fieldDef.translationKey][savedLocale];
-            }
-
-            // Mark key as deleted so the data loading effect shows "" even if
-            // item.translations still has a stale entry from revalidation.
-            deletedTranslationKeysRef.current.add(fieldDef.translationKey);
-            // ─────────────────────────────────────────────────────────────
-          }
-        });
-
-        // Update image alt-text translations for foreign locale
         if (item.images && Object.keys(imageAltTextsRef.current).length > 0) {
           for (const [indexStr, altText] of Object.entries(imageAltTextsRef.current)) {
             const index = parseInt(indexStr, 10);
             if (item.images[index]) {
-              // Initialize altTextTranslations array if it doesn't exist
               if (!item.images[index].altTextTranslations) {
                 item.images[index].altTextTranslations = [];
               }
-              // Remove existing translation for this locale
               item.images[index].altTextTranslations = item.images[index].altTextTranslations.filter(
                 (t: AltTextTranslation) => t.locale !== savedLocale
               );
-              // Add new translation
               item.images[index].altTextTranslations.push({
                 locale: savedLocale,
                 altText: altText,
@@ -1792,17 +1449,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       }
 
       // Update originalAltTexts immediately after saving to reset change detection
-      // This is critical to make hasAltTextChanges = false after save
       setOriginalAltTexts({ ...imageAltTextsRef.current });
       debugLog.response(' Updated originalAltTexts:', { ...imageAltTextsRef.current });
 
       // Clear the saved locale ref after processing
       savedLocaleRef.current = null;
 
-      // Reset change detection after successful save
-      // This ensures hasChanges becomes false after we've updated selectedItem
-
-      setIsLoadingData(true);
+      if (result.shouldMarkLoading) {
+        setIsLoadingData(true);
+      }
     }
   }, [fetcher.data, primaryLocale, editableValues, effectiveFieldDefinitions]); // Removed selectedItem - use ref instead
 
@@ -1858,32 +1513,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             const shopifyKey = field?.translationKey;
             const item = selectedItemRef.current;
 
-            if (item && shopifyKey) {
-              // Clear this translation key from deleted set since we now have new translations
-              if (deletedTranslationKeysRef.current.has(shopifyKey)) {
-                deletedTranslationKeysRef.current.delete(shopifyKey);
-              }
-
-              // Update item translations for all locales
-              for (const [locale, translatedValue] of Object.entries(translations as Record<string, string>)) {
-                item.translations = item.translations.filter(
-                  (t: Translation) => !(t.locale === locale && t.key === shopifyKey)
-                );
-                item.translations.push({
-                  key: shopifyKey,
-                  value: translatedValue,
-                  locale
-                });
-              }
-
-              // Store translations locally as backup (item.translations mutations can be lost on revalidation)
-              if (!localTranslationsRef.current[shopifyKey]) {
-                localTranslationsRef.current[shopifyKey] = {};
-              }
-              for (const [locale, translatedValue] of Object.entries(translations as Record<string, string>)) {
-                localTranslationsRef.current[shopifyKey][locale] = translatedValue;
-              }
-              debugLog.acceptAndTranslate(' Stored local translations for', shopifyKey, ':', Object.keys(translations));
+            if (shopifyKey) {
+              // Delegate ref mutations to transition method
+              dataLoader.onTranslateFieldToAllLocalesComplete(
+                shopifyKey,
+                translations as Record<string, string>,
+                currentLanguage
+              );
 
               // If the current language is one of the translated languages, update editableValues
               if (translations[currentLanguage]) {
@@ -2034,14 +1670,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         originalTemplateValuesRef.current = { ...editableValues };
         setTemplateValuesVersion(v => v + 1); // Trigger useMemo recalculation
 
-        // For foreign locale saves: update localTranslationsRef and in-memory
-        // selectedItem.translations so isFieldTranslated and hasLocaleMissingTranslations
-        // return correct results IMMEDIATELY — without waiting for the
-        // loadedTranslations → items → selectedItem re-render chain.
-        // This ensures buttons blink/stop and fields turn yellow/white right after save.
+        // For foreign locale saves: update localTranslationsRef so isFieldTranslated
+        // and hasLocaleMissingTranslations return correct results IMMEDIATELY —
+        // without waiting for revalidation. No item mutation needed; resolve()
+        // reads localTranslationsRef with higher priority than item.translations.
         const savedLocale = savedLocaleRef.current;
         if (savedLocale && savedLocale !== primaryLocale) {
-          const item = selectedItemRef.current;
           effectiveFieldDefinitions.forEach((field) => {
             const value = editableValues[field.key];
             const tKey = field.translationKey;
@@ -2054,16 +1688,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
               localTranslationsRef.current[tKey][savedLocale] = value;
             } else {
               delete localTranslationsRef.current[tKey][savedLocale];
-            }
-
-            // Update in-memory selectedItem.translations for hasLocaleMissingTranslations
-            if (item) {
-              item.translations = item.translations.filter(
-                (t: Translation) => !(t.key === tKey && t.locale === savedLocale)
-              );
-              if (value && value.trim()) {
-                item.translations.push({ key: tKey, value, locale: savedLocale });
-              }
             }
           });
         }
@@ -2195,8 +1819,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       return;
     }
 
-    // Compute changed fields BEFORE updateItemInMemory mutates the item,
-    // otherwise getChangedFields compares against already-cleared values and misses changes.
+    // Compute changed fields BEFORE the save submit so getChangedFields
+    // compares against the correct current values.
     let changedFields: string[] = [];
     let changedAltTextIndices: number[] = [];
     if (currentLanguage === primaryLocale) {
@@ -2218,28 +1842,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           // Track deleted translation keys for immediate UI update
           // This ensures that even if revalidation brings back old data, we show empty fields
           deletedTranslationKeysRef.current.add(translationKey);
-
-          // Remove all translations for this field across all locales
-          if (selectedItem.translations) {
-            const beforeCount = selectedItem.translations.length;
-            selectedItem.translations = selectedItem.translations.filter(
-              (t: Translation) => t.key !== translationKey
-            );
-            const afterCount = selectedItem.translations.length;
-
-            if (beforeCount !== afterCount) {
-              debugLog.translationClear(`Cleared translations for field "${field.key}" (key: ${translationKey})`);
-            }
-          }
+          debugLog.translationClear(`Marked translations for field "${field.key}" (key: ${translationKey}) as deleted`);
         }
       });
 
-      // Update in-memory item field values to match what's being saved.
-      updateItemInMemory(selectedItem, editableValues, config);
-
-      // Also cache the saved values in a ref that survives revalidation.
-      // Revalidation replaces the items array with new objects, losing the mutations above.
-      // The data load effect checks this cache and uses it instead of stale server data.
+      // Cache the saved values in a ref that survives revalidation.
+      // resolve() checks savedPrimaryValuesRef first for primary locale.
       savedPrimaryValuesRef.current[selectedItemId] = { ...editableValues };
     }
 
@@ -2249,6 +1857,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       locale: currentLanguage,
       primaryLocale,
     };
+
+    // Pass policyType for ShopPolicy primary locale updates (required by Shopify API)
+    if (config.resourceType === "ShopPolicy" && selectedItem?.type) {
+      formDataObj.policyType = selectedItem.type;
+    }
 
     // Add field values - for foreign locales, only send fields that actually changed
     Object.assign(formDataObj, buildFieldsForSave(editableValues, currentLanguage));
@@ -2284,10 +1897,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     }
 
     // Skip next data load to prevent revalidation from overwriting cleared/saved values.
-    // The in-memory item is also updated above (updateItemInMemory) so that subsequent
-    // data loads after navigation read the correct saved values instead of stale data.
-    skipNextDataLoadRef.current = true;
-
     savedLocaleRef.current = currentLanguage; // Track which locale we're saving
     isSavePendingRef.current = true; // Track that a save was initiated
     safeSubmit(formDataObj, { method: "POST" });
@@ -2454,41 +2063,30 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       (result) => {
         // Handle success - update the field with translated value
         const translatedValue = result.translatedValue as string;
-
-        // Clear deleted key for this field since we now have a new translation
-        if (field.translationKey && deletedTranslationKeysRef.current.has(field.translationKey)) {
-          deletedTranslationKeysRef.current.delete(field.translationKey);
-        }
-
-        // Update UI
-        setEditableValues(prev => ({
-          ...prev,
-          [fieldKey]: translatedValue,
-        }));
-
-        // Clear fallback styling for this field since it now has a real translation
-        if (fallbackFieldsRef.current.has(fieldKey)) {
-          setFallbackFields((prev) => {
-            const newSet = new Set(prev);
-            newSet.delete(fieldKey);
-            return newSet;
-          });
-          fallbackFieldsRef.current.delete(fieldKey);
-        }
-
-        // Update item.translations directly so hasChanges becomes false after save
-        const item = selectedItemRef.current;
-        if (item && field.translationKey) {
-          // Remove existing translation for this key and locale
-          item.translations = item.translations.filter(
-            (t: Translation) => !(t.locale === targetLocale && t.key === field.translationKey)
+        if (field.translationKey) {
+          // Delegate ref mutations to transition method
+          const transResult = dataLoader.onTranslateFieldComplete(
+            fieldKey,
+            field.translationKey,
+            translatedValue,
+            targetLocale,
+            editableValuesRef.current
           );
-          // Add new translation
-          item.translations.push({
-            key: field.translationKey,
-            value: translatedValue,
-            locale: targetLocale,
-          });
+
+          // Apply UI updates
+          if (transResult.updatedValues) {
+            setEditableValues(transResult.updatedValues);
+          }
+          if (transResult.clearedFallbackKeys.length > 0) {
+            setFallbackFields((prev) => {
+              const newSet = new Set(prev);
+              transResult.clearedFallbackKeys.forEach((key) => newSet.delete(key));
+              return newSet;
+            });
+            transResult.clearedFallbackKeys.forEach((key) =>
+              fallbackFieldsRef.current.delete(key)
+            );
+          }
         }
 
         // Auto-save the translation immediately
@@ -2593,35 +2191,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         const item = selectedItemRef.current;
         const translationCount = Object.keys(translations).length;
 
-        // Update in-memory item state (only possible if item is still loaded)
-        if (item && shopifyKey) {
-          // Clear this translation key from deleted set since we now have new translations
-          if (deletedTranslationKeysRef.current.has(shopifyKey)) {
-            deletedTranslationKeysRef.current.delete(shopifyKey);
-          }
-
-          // Update item translations for all locales
-          for (const [locale, translatedValue] of Object.entries(translations)) {
-            // Remove existing translation for this key and locale
-            item.translations = item.translations.filter(
-              (t: Translation) => !(t.locale === locale && t.key === shopifyKey)
-            );
-
-            // Add new translation
-            item.translations.push({
-              key: shopifyKey,
-              value: translatedValue,
-              locale
-            });
-          }
-
-          // Store translations locally as backup
-          if (!localTranslationsRef.current[shopifyKey]) {
-            localTranslationsRef.current[shopifyKey] = {};
-          }
-          for (const [locale, translatedValue] of Object.entries(translations as Record<string, string>)) {
-            localTranslationsRef.current[shopifyKey][locale] = translatedValue;
-          }
+        // Delegate ref mutations to transition method
+        if (shopifyKey) {
+          dataLoader.onTranslateFieldToAllLocalesComplete(
+            shopifyKey,
+            translations,
+            currentLanguage
+          );
 
           // If the current language is one of the translated languages, update editableValues immediately
           if (translations[currentLanguage]) {
@@ -2845,8 +2421,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       return newSuggestions;
     });
 
-    // Skip next data load to prevent revalidation from overwriting user changes
-    skipNextDataLoadRef.current = true;
+
 
     // Auto-save immediately after accepting AI suggestion
     // IMPORTANT: Always save to primary locale since AI suggestions are generated for primary content
@@ -2917,8 +2492,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       value: suggestion
     };
 
-    // Skip next data load to prevent revalidation from overwriting user changes
-    skipNextDataLoadRef.current = true;
+
 
     // Step 2: Save the primary text first
     // After save completes, the useEffect will trigger the translation
@@ -3013,12 +2587,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         if (localTranslationsRef.current[tKey]) {
           delete localTranslationsRef.current[tKey][currentLanguage];
         }
-        const item = selectedItemRef.current;
-        if (item) {
-          item.translations = item.translations.filter(
-            (t: Translation) => !(t.key === tKey && t.locale === currentLanguage)
-          );
-        }
+        // Mark as deleted so resolve() returns empty even if item.translations has old data
+        deletedTranslationKeysRef.current.add(tKey);
       }
     }
   }, [fallbackFieldsRef, currentLanguage, primaryLocale, effectiveFieldDefinitions]);
@@ -3051,20 +2621,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // Update validation refs so isFieldTranslated / hasLocaleMissingTranslations
     // reflect the cleared state immediately (yellow highlight + button blinking)
     if (currentLanguage !== primaryLocale) {
-      const item = selectedItemRef.current;
       effectiveFieldDefinitions.forEach((field) => {
         if (field.key === "title") return; // title was kept
         const tKey = field.translationKey;
         if (localTranslationsRef.current[tKey]) {
           delete localTranslationsRef.current[tKey][currentLanguage];
         }
+        // Mark as deleted so resolve() returns empty even if item.translations has old data
+        deletedTranslationKeysRef.current.add(tKey);
       });
-      if (item) {
-        item.translations = item.translations.filter(
-          (t: Translation) => t.locale !== currentLanguage ||
-            effectiveFieldDefinitions.some(f => f.key === "title" && f.translationKey === t.key)
-        );
-      }
     }
 
     // Clear image alt texts - set each to "" explicitly so the UI doesn't fall back to original image.altText
@@ -3109,18 +2674,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
     // Update validation refs so isFieldTranslated / hasLocaleMissingTranslations
     // reflect the cleared state immediately (yellow highlight + button blinking)
-    const item = selectedItemRef.current;
     effectiveFieldDefinitions.forEach((field) => {
       const tKey = field.translationKey;
       if (localTranslationsRef.current[tKey]) {
         delete localTranslationsRef.current[tKey][currentLanguage];
       }
+      // Mark as deleted so resolve() returns empty even if item.translations has old data
+      deletedTranslationKeysRef.current.add(tKey);
     });
-    if (item) {
-      item.translations = item.translations.filter(
-        (t: Translation) => t.locale !== currentLanguage
-      );
-    }
 
     // Clear image alt texts - set each to "" explicitly so the UI doesn't fall back to original image.altText
     const clearedAltTexts: Record<number, string> = {};
@@ -3174,14 +2735,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       formDataObj.imageAltTexts = JSON.stringify(altTextsToDelete);
     }
 
-    // Mutate in-memory item to remove translations for this locale.
-    // This prevents stale translations from reappearing if the user navigates
-    // away and back before revalidation completes.
-    if (selectedItem.translations) {
-      selectedItem.translations = selectedItem.translations.filter(
-        (t: Translation) => t.locale !== currentLanguage
-      );
-    }
+    // No item.translations mutation needed — deletedTranslationKeysRef (set above)
+    // ensures resolve() returns empty even if item.translations has stale data.
+
     if (selectedItem.images) {
       selectedItem.images.forEach((img: ContentImage) => {
         if (img.altTextTranslations) {
@@ -3196,7 +2752,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     originalLoadedValuesRef.current = { ...clearedValues };
 
     // Submit save and set tracking refs
-    skipNextDataLoadRef.current = true;
+
     savedLocaleRef.current = currentLanguage;
     isSavePendingRef.current = true;
     safeSubmit(formDataObj, { method: "POST" });
@@ -3392,7 +2948,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             const newAltTexts = { ...prev, [imageIndex]: translatedAltText };
 
             // Skip next data load to prevent revalidation from overwriting
-            skipNextDataLoadRef.current = true;
+        
 
             // Auto-save immediately
             const itemId = selectedItemRef.current?.id;
@@ -3701,8 +3257,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       return newSuggestions;
     });
 
-    // Skip next data load to prevent revalidation from overwriting user changes
-    skipNextDataLoadRef.current = true;
+
 
     // Auto-save immediately after accepting AI suggestion
     debugLog.altText('Accepting AI suggestion for image:', imageIndex, 'auto-saving...');
@@ -3767,7 +3322,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         t.common?.warning || "Warning"
       );
       // No translations needed, just save the primary text directly
-      skipNextDataLoadRef.current = true;
+  
       const formDataObj: Record<string, string> = {
         action: "updateContent",
         itemId: selectedItemId,
@@ -3783,8 +3338,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       return;
     }
 
-    // Skip next data load to prevent revalidation from overwriting user changes
-    skipNextDataLoadRef.current = true;
+
 
     debugLog.altText('Saving primary alt-text first, then will translate to all locales');
 
@@ -3864,24 +3418,18 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // HELPER FUNCTIONS
   // ============================================================================
 
-  const getFieldBackgroundColor = (fieldKey: string): string => {
-    const hasTranslation = selectedItem?.translations?.some(
-      (t: Translation) => t.key === effectiveFieldDefinitions.find(f => f.key === fieldKey)?.translationKey && t.locale === currentLanguage
-    );
-
-    if (currentLanguage === primaryLocale) {
-      return "transparent";
-    }
-
-    return hasTranslation ? "#f0f9ff" : "transparent";
-  };
-
   const isFieldTranslated = (fieldKey: string): boolean => {
     if (!selectedItem) return false;
     const field = effectiveFieldDefinitions.find((f) => f.key === fieldKey);
     if (!field) return false;
 
-    // First check localTranslationsRef (from translateFieldToAllLocales)
+    // Phase 4: Check deletedTranslationKeysRef FIRST — if a field was cleared,
+    // it should appear untranslated even if item.translations still has old data.
+    if (deletedTranslationKeysRef.current.has(field.translationKey)) {
+      return false;
+    }
+
+    // Check localTranslationsRef (from translateFieldToAllLocales / saves)
     // This ensures immediate UI feedback before revalidation completes
     const localValue = localTranslationsRef.current[field.translationKey]?.[currentLanguage];
     if (localValue) {
@@ -3891,6 +3439,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     return selectedItem.translations?.some(
       (t: Translation) => t.key === field.translationKey && t.locale === currentLanguage
     );
+  };
+
+  const getFieldBackgroundColor = (fieldKey: string): string => {
+    if (currentLanguage === primaryLocale) {
+      return "transparent";
+    }
+    // Reuse isFieldTranslated which checks all overlay refs correctly
+    return isFieldTranslated(fieldKey) ? "#f0f9ff" : "transparent";
   };
 
   const getEditableValue = (fieldKey: string): string => {
@@ -4037,70 +3593,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 // UTILITY FUNCTIONS
 // ============================================================================
 
-/**
- * Get field value from item based on field key and primary locale
- * Supports both standard content types and templates with dynamic fields
- */
-function getItemFieldValue(item: TranslatableContentItem, fieldKey: string, primaryLocale: string, config?: ContentEditorConfig): string {
-  // Templates: Use custom getter if available or check translatableContent
-  if (config?.getFieldValue) {
-    return config.getFieldValue(item, fieldKey);
-  }
-
-  // Templates: Check translatableContent array
-  if (item?.translatableContent && Array.isArray(item.translatableContent)) {
-    // Filter out null/undefined items to prevent "Cannot read properties of null" errors
-    const content = item.translatableContent.find((c: { key: string; value: string }) => c != null && c.key === fieldKey);
-    return content?.value || "";
-  }
-
-  // Standard content types: Common field mappings
-  const fieldMappings: Record<string, string> = {
-    title: item.title || "",
-    description: item.descriptionHtml || item.body || "",
-    handle: item.handle || "",
-    seoTitle: item.seo?.title || item.title || "", // Fallback to main title if seoTitle is empty
-    metaDescription: item.seo?.description || "",
-    body: item.body || "",
-    summary: item.summary || "",
-    productType: item.productType || "",
-  };
-
-  return fieldMappings[fieldKey] || "";
-}
-
-/**
- * Updates the local clone of an item's field values to match the saved editable values.
- * This mutates the cloned item object (NOT the original props data) so that when the
- * data load effect reads from the item (e.g., after navigation), it gets the correct
- * saved values instead of stale pre-save data. The original props data remains unchanged
- * because selectedItem is always a deep-enough clone created in useMemo.
- */
-function updateItemInMemory(item: TranslatableContentItem, values: Record<string, string>, config: ContentEditorConfig): void {
-  // Templates: update translatableContent array
-  if (config.contentType === 'templates' && item.translatableContent) {
-    item.translatableContent.forEach((content: { key: string; value: string }) => {
-      if (content && values[content.key] !== undefined) {
-        content.value = values[content.key];
-      }
-    });
-    return;
-  }
-
-  // Standard content types: update item properties
-  if (values.title !== undefined) item.title = values.title;
-  if (values.description !== undefined) {
-    item.descriptionHtml = values.description;
-  }
-  if (values.body !== undefined) item.body = values.body;
-  if (values.handle !== undefined) item.handle = values.handle;
-  if (values.productType !== undefined) item.productType = values.productType;
-  if (values.summary !== undefined) item.summary = values.summary;
-  if (values.seoTitle !== undefined || values.metaDescription !== undefined) {
-    item.seo = {
-      ...item.seo,
-      ...(values.seoTitle !== undefined ? { title: values.seoTitle } : {}),
-      ...(values.metaDescription !== undefined ? { description: values.metaDescription } : {}),
-    };
-  }
-}
+// getItemFieldValue is now imported from useUiDataLoader.ts
+// updateItemInMemory was removed in Phase 4 — items are now read-only.
+// Saved values are provided by ref overlays (savedPrimaryValuesRef, localTranslationsRef)
+// that resolve() reads with higher priority than item properties / item.translations.
