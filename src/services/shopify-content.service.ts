@@ -801,72 +801,51 @@ export class ShopifyContentService {
       return { field, translationKey, value, digest };
     };
 
-    // Helper: save all prepared translations for one locale in ONE Shopify API call
-    const saveTranslationsBatch = async (
-      locale: string,
-      prepared: Array<{ field: string; translationKey: string; value: string; digest: string }>
-    ): Promise<Record<string, string>> => {
-      if (prepared.length === 0) return {};
-
-      const translationsInput = prepared.map(p => ({
-        key: p.translationKey,
-        value: p.value,
-        locale,
-        translatableContentDigest: p.digest,
-      }));
-
-      loggers.translation('debug', `Batch saving ${prepared.length} fields for locale ${locale}`, {
-        fields: prepared.map(p => `${p.field}->${p.translationKey}`),
-      });
-
-      try {
-        const response = await this.admin.graphql(TRANSLATE_CONTENT, {
-          variables: { resourceId, translations: translationsInput }
-        });
-
-        const data = await response.json();
-
-        // On batch-level errors, fall back to individual saves
-        if (data.errors?.length > 0 || data.data?.translationsRegister?.userErrors?.length > 0) {
-          const errors = data.errors || data.data?.translationsRegister?.userErrors;
-          loggers.translation('error', `Batch save errors for locale ${locale}, falling back to individual saves`, { errors });
-          return await saveTranslationsIndividually(locale, prepared);
-        }
-
-        loggers.translation('debug', `Batch Shopify save successful for locale ${locale} (${prepared.length} fields)`);
-
-        // Save to DB after successful Shopify batch
-        const saved: Record<string, string> = {};
-        for (const p of prepared) {
-          try {
-            await db.contentTranslation.upsert({
-              where: { resourceId_key_locale: { resourceId, key: p.translationKey, locale } },
-              update: { value: p.value, digest: p.digest, resourceType },
-              create: { resourceId, resourceType, key: p.translationKey, value: p.value, locale, digest: p.digest },
-            });
-          } catch (dbError) {
-            loggers.translation('error', `DB save failed for ${p.field} (${locale}) after Shopify batch`, {
-              error: dbError instanceof Error ? dbError.message : String(dbError),
-            });
-            // Shopify has the translation; next sync will reconcile DB
-          }
-          saved[p.field] = p.value;
-        }
-        return saved;
-      } catch (err) {
-        loggers.translation('error', `Unexpected error in batch save for locale ${locale}, falling back to individual saves`, {
-          error: err instanceof Error ? err.message : String(err),
-        });
-        return await saveTranslationsIndividually(locale, prepared);
-      }
+    // Prepared translation type (includes locale for cross-locale batching)
+    type PreparedTranslation = {
+      locale: string;
+      field: string;
+      translationKey: string;
+      value: string;
+      digest: string;
     };
 
-    // Fallback: save translations one-by-one when batch fails
-    const saveTranslationsIndividually = async (
+    // Helper: chunk an array into groups of `size`
+    const chunkArray = <T>(arr: T[], size: number): T[][] => {
+      const chunks: T[][] = [];
+      for (let i = 0; i < arr.length; i += size) {
+        chunks.push(arr.slice(i, i + size));
+      }
+      return chunks;
+    };
+
+    // Helper: collect prepared translations for a locale (NO Shopify call)
+    const collectLocaleTranslations = async (locale: string, translatedFields: Record<string, any>): Promise<PreparedTranslation[]> => {
+      const prepared: PreparedTranslation[] = [];
+      for (const [field, value] of Object.entries(translatedFields)) {
+        if (value) {
+          let stringValue: string;
+          if (typeof value === 'string') {
+            stringValue = value;
+          } else if (typeof value === 'object' && value !== null) {
+            stringValue = ('value' in value && typeof value.value === 'string') ? value.value : JSON.stringify(value);
+          } else {
+            stringValue = String(value);
+          }
+          const p = await prepareField(locale, field, stringValue);
+          if (p) prepared.push({ ...p, locale });
+        }
+      }
+      return prepared;
+    };
+
+    // Tier 3 fallback: save translations one-by-one (Shopify only, no DB)
+    const saveFieldsIndividually = async (
       locale: string,
-      prepared: Array<{ field: string; translationKey: string; value: string; digest: string }>
-    ): Promise<Record<string, string>> => {
-      const saved: Record<string, string> = {};
+      prepared: PreparedTranslation[]
+    ): Promise<{ saved: PreparedTranslation[]; failed: PreparedTranslation[] }> => {
+      const saved: PreparedTranslation[] = [];
+      const failed: PreparedTranslation[] = [];
       for (const p of prepared) {
         try {
           const response = await this.admin.graphql(TRANSLATE_CONTENT, {
@@ -880,43 +859,121 @@ export class ShopifyContentService {
             loggers.translation('error', `Shopify rejected ${p.field} for ${locale}`, { errors: data.errors || data.data?.translationsRegister?.userErrors });
             if (!rejectedFields[locale]) rejectedFields[locale] = [];
             rejectedFields[locale].push(p.field);
+            failed.push(p);
             continue;
           }
-          await db.contentTranslation.upsert({
-            where: { resourceId_key_locale: { resourceId, key: p.translationKey, locale } },
-            update: { value: p.value, digest: p.digest, resourceType },
-            create: { resourceId, resourceType, key: p.translationKey, value: p.value, locale, digest: p.digest },
-          });
-          saved[p.field] = p.value;
+          saved.push(p);
         } catch (fieldError) {
           loggers.translation('error', `Failed to save ${p.field} for ${locale}`, { error: fieldError instanceof Error ? fieldError.message : String(fieldError) });
           if (!rejectedFields[locale]) rejectedFields[locale] = [];
           rejectedFields[locale].push(p.field);
+          failed.push(p);
         }
       }
-      return saved;
+      return { saved, failed };
     };
 
-    // Helper: prepare and batch-save all translated fields for a locale
-    const saveLocaleTranslations = async (locale: string, translatedFields: Record<string, any>): Promise<void> => {
-      const prepared: Array<{ field: string; translationKey: string; value: string; digest: string }> = [];
-      for (const [field, value] of Object.entries(translatedFields)) {
-        if (value) {
-          let stringValue: string;
-          if (typeof value === 'string') {
-            stringValue = value;
-          } else if (typeof value === 'object' && value !== null) {
-            stringValue = ('value' in value && typeof value.value === 'string') ? value.value : JSON.stringify(value);
-          } else {
-            stringValue = String(value);
+    // Tier 2 fallback: save per-locale batch with smart error handling
+    const savePerLocaleBatch = async (
+      locale: string,
+      prepared: PreparedTranslation[]
+    ): Promise<{ saved: PreparedTranslation[]; failed: PreparedTranslation[] }> => {
+      if (prepared.length === 0) return { saved: [], failed: [] };
+
+      const translationsInput = prepared.map(p => ({
+        key: p.translationKey,
+        value: p.value,
+        locale,
+        translatableContentDigest: p.digest,
+      }));
+
+      loggers.translation('debug', `Per-locale batch saving ${prepared.length} fields for ${locale}`, {
+        fields: prepared.map(p => `${p.field}->${p.translationKey}`),
+      });
+
+      try {
+        const response = await this.admin.graphql(TRANSLATE_CONTENT, {
+          variables: { resourceId, translations: translationsInput }
+        });
+        const data = await response.json();
+
+        // Top-level errors (schema/network) — can't identify individual failures
+        if (data.errors?.length > 0) {
+          loggers.translation('error', `Per-locale batch errors for ${locale}, falling back to individual`, { errors: data.errors });
+          return await saveFieldsIndividually(locale, prepared);
+        }
+
+        const userErrors = data.data?.translationsRegister?.userErrors || [];
+        if (userErrors.length > 0) {
+          // Parse which items in the input array failed via userErrors[].field path
+          const failedIndices = new Set<number>();
+          for (const err of userErrors) {
+            const idx = parseInt(err.field?.[1], 10);
+            if (!isNaN(idx)) failedIndices.add(idx);
           }
-          const p = await prepareField(locale, field, stringValue);
-          if (p) prepared.push(p);
+
+          if (failedIndices.size > 0 && failedIndices.size < prepared.length) {
+            // Partial failure: some succeeded, only retry failed ones individually
+            const succeeded = prepared.filter((_: PreparedTranslation, i: number) => !failedIndices.has(i));
+            const failedItems = prepared.filter((_: PreparedTranslation, i: number) => failedIndices.has(i));
+            loggers.translation('warn', `Partial batch failure for ${locale}: ${succeeded.length} ok, ${failedItems.length} failed`, {
+              failedFields: failedItems.map(p => p.field), errors: userErrors,
+            });
+            const retried = await saveFieldsIndividually(locale, failedItems);
+            return { saved: [...succeeded, ...retried.saved], failed: retried.failed };
+          } else {
+            // All failed or can't parse indices — retry all individually
+            loggers.translation('error', `Per-locale batch all-fail for ${locale}, falling back to individual`, { errors: userErrors });
+            return await saveFieldsIndividually(locale, prepared);
+          }
+        }
+
+        loggers.translation('debug', `Per-locale batch Shopify save successful for ${locale} (${prepared.length} fields)`);
+        return { saved: [...prepared], failed: [] };
+      } catch (err) {
+        loggers.translation('error', `Per-locale batch error for ${locale}, falling back to individual`, {
+          error: err instanceof Error ? err.message : String(err),
+        });
+        return await saveFieldsIndividually(locale, prepared);
+      }
+    };
+
+    // Helper: persist saved translations to DB in a single transaction (with 1 retry)
+    const persistToDb = async (saved: PreparedTranslation[]): Promise<void> => {
+      if (saved.length === 0) return;
+
+      const runDbTransaction = async () => {
+        // @ts-expect-error Prisma interactive transaction types
+        await db.$transaction(async (tx: PrismaClient) => {
+          for (const p of saved) {
+            await tx.contentTranslation.upsert({
+              where: { resourceId_key_locale: { resourceId, key: p.translationKey, locale: p.locale } },
+              update: { value: p.value, digest: p.digest, resourceType },
+              create: { resourceId, resourceType, key: p.translationKey, value: p.value, locale: p.locale, digest: p.digest },
+            });
+          }
+        });
+      };
+
+      try {
+        await runDbTransaction();
+      } catch (dbError) {
+        loggers.translation('error', `DB transaction failed after Shopify save (${saved.length} items)`, {
+          resourceId, error: dbError instanceof Error ? dbError.message : String(dbError),
+        });
+        try {
+          await runDbTransaction();
+          loggers.translation('info', `DB transaction succeeded on retry`, { resourceId });
+        } catch (retryError) {
+          loggers.translation('error', `DB transaction failed on retry — Shopify/DB inconsistent. Next sync will reconcile.`, {
+            resourceId, error: retryError instanceof Error ? retryError.message : String(retryError),
+          });
         }
       }
-      const saved = await saveTranslationsBatch(locale, prepared);
-      Object.assign(allTranslations[locale], saved);
     };
+
+    // Collect all prepared translations across all locales (no Shopify calls yet)
+    const allPrepared: PreparedTranslation[] = [];
 
     // === STEP 1: Batch translate short fields (1 AI request for all locales) ===
     if (hasShortFields && translationService.translateShortFieldsBatch) {
@@ -931,24 +988,24 @@ export class ShopifyContentService {
           customInstructions
         );
 
-        // Batch-save per locale (1 Shopify API call per locale instead of per field)
         for (const locale of targetLocales) {
           const localeTranslations = batchResult[locale];
           if (!localeTranslations) continue;
-          await saveLocaleTranslations(locale, localeTranslations);
+          const prepared = await collectLocaleTranslations(locale, localeTranslations);
+          allPrepared.push(...prepared);
         }
 
         loggers.translation('debug', 'Batch short fields completed');
       } catch (batchError: unknown) {
         loggers.translation('error', 'Batch short fields failed', { error: batchError instanceof Error ? batchError.message : String(batchError) });
-        // Fallback: translate short fields sequentially
         loggers.translation('warn', 'Falling back to sequential for short fields...');
         for (const locale of targetLocales) {
           try {
             const localeTranslations = await translationService.translateProduct(shortFields, [locale], contentType, customInstructions);
             const translatedFields = localeTranslations[locale];
             if (translatedFields) {
-              await saveLocaleTranslations(locale, translatedFields);
+              const prepared = await collectLocaleTranslations(locale, translatedFields);
+              allPrepared.push(...prepared);
             }
           } catch (localeError: unknown) {
             loggers.translation('error', `Fallback failed for ${locale}`, { error: localeError instanceof Error ? localeError.message : String(localeError) });
@@ -967,7 +1024,8 @@ export class ShopifyContentService {
           const translatedFields = localeTranslations[locale];
 
           if (translatedFields) {
-            await saveLocaleTranslations(locale, translatedFields);
+            const prepared = await collectLocaleTranslations(locale, translatedFields);
+            allPrepared.push(...prepared);
           }
         } catch (localeError: unknown) {
           loggers.translation('error', `Failed to translate long fields to ${locale}`, { error: localeError instanceof Error ? localeError.message : String(localeError) });
@@ -975,6 +1033,80 @@ export class ShopifyContentService {
         }
       }
     }
+
+    // === STEP 3: Save all translations to Shopify (3-tier: mega-batch → per-locale → individual) ===
+    if (allPrepared.length > 0) {
+      const MAX_TRANSLATIONS_PER_CALL = 200;
+      const allSaved: PreparedTranslation[] = [];
+
+      // Tier 1: Mega-batch — all locales × fields in as few calls as possible
+      const chunks = chunkArray(allPrepared, MAX_TRANSLATIONS_PER_CALL);
+      let megaBatchFailed = false;
+
+      loggers.translation('debug', `Saving ${allPrepared.length} translations via mega-batch (${chunks.length} chunk(s))`);
+
+      for (const chunk of chunks) {
+        try {
+          const translationsInput = chunk.map(p => ({
+            key: p.translationKey,
+            value: p.value,
+            locale: p.locale,
+            translatableContentDigest: p.digest,
+          }));
+
+          const response = await this.admin.graphql(TRANSLATE_CONTENT, {
+            variables: { resourceId, translations: translationsInput }
+          });
+          const data = await response.json();
+
+          if (data.errors?.length > 0 || data.data?.translationsRegister?.userErrors?.length > 0) {
+            loggers.translation('warn', 'Mega-batch chunk failed, falling back to per-locale batches', {
+              errors: data.errors || data.data?.translationsRegister?.userErrors,
+            });
+            megaBatchFailed = true;
+            break;
+          }
+
+          allSaved.push(...chunk);
+        } catch (err) {
+          loggers.translation('warn', 'Mega-batch chunk threw, falling back to per-locale batches', {
+            error: err instanceof Error ? err.message : String(err),
+          });
+          megaBatchFailed = true;
+          break;
+        }
+      }
+
+      if (megaBatchFailed) {
+        // Tier 2+3: Per-locale batches with smart fallback to individual saves
+        allSaved.length = 0; // Clear partial mega-batch results (idempotent re-send is safe)
+
+        const byLocale = new Map<string, PreparedTranslation[]>();
+        for (const p of allPrepared) {
+          if (!byLocale.has(p.locale)) byLocale.set(p.locale, []);
+          byLocale.get(p.locale)!.push(p);
+        }
+
+        for (const [locale, localePrepared] of byLocale) {
+          const result = await savePerLocaleBatch(locale, localePrepared);
+          allSaved.push(...result.saved);
+        }
+      }
+
+      // Populate allTranslations from saved
+      for (const p of allSaved) {
+        if (!allTranslations[p.locale]) allTranslations[p.locale] = {};
+        allTranslations[p.locale][p.field] = p.value;
+      }
+
+      // Persist all saved translations to DB in one transaction
+      await persistToDb(allSaved);
+
+      loggers.translation('debug', `Shopify+DB save complete: ${allSaved.length}/${allPrepared.length} translations saved`);
+    }
+
+    // Prevent webhook-triggered syncs from overwriting these fresh translations
+    markTranslationSaved(resourceId);
 
     if (failedLocales.length > 0) {
       loggers.translation('warn', `translateAllContent completed with failures`, { failedLocales, successLocales: targetLocales.filter(l => !failedLocales.includes(l)) });

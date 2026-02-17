@@ -315,6 +315,32 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             }
           }
 
+          // Digest cache: fetches translatableContent once per resourceId instead of once per locale
+          const digestCache = new Map<string, Map<string, string>>();
+          const getCachedDigest = async (resId: string, key: string): Promise<string> => {
+            if (!digestCache.has(resId)) {
+              const digestResponse = await admin.graphql(`
+                query getTranslatableContent($resourceId: ID!) {
+                  translatableResource(resourceId: $resourceId) {
+                    resourceId
+                    translatableContent {
+                      key
+                      digest
+                    }
+                  }
+                }
+              `, { variables: { resourceId: resId } });
+              const digestData = await digestResponse.json();
+              const translatableContent = digestData.data?.translatableResource?.translatableContent || [];
+              const map = new Map<string, string>();
+              for (const c of translatableContent as TranslatableContentItem[]) {
+                if (c.digest) map.set(c.key, c.digest);
+              }
+              digestCache.set(resId, map);
+            }
+            return digestCache.get(resId)!.get(key) || "";
+          };
+
           // Use batch translation for short fields (1 AI request for all locales)
           if (isShortField) {
             logger.info("[API-AI] Using BATCH translation for short field", {
@@ -379,24 +405,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                     rejectedFields[locale].push(fieldType);
                   } else {
                   try {
-                    const digestResponse = await admin.graphql(`
-                      query getTranslatableContent($resourceId: ID!) {
-                        translatableResource(resourceId: $resourceId) {
-                          resourceId
-                          translatableContent {
-                            key
-                            digest
-                          }
-                        }
-                      }
-                    `, {
-                      variables: { resourceId: fieldResourceId }
-                    });
-
-                    const digestData = await digestResponse.json() as ShopifyGraphQLResponse;
-                    const translatableContent = digestData.data?.translatableResource?.translatableContent || [];
-                    const fieldContent = translatableContent.find((c: TranslatableContentItem) => c.key === fieldType);
-                    const digest = fieldContent?.digest || "";
+                    const digest = await getCachedDigest(fieldResourceId, fieldType);
 
                     if (!digest) {
                       logger.warn("[API-AI] Batch: No digest for template field — skipping Shopify save", {
@@ -404,7 +413,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                         fieldType,
                         locale,
                         resourceId: fieldResourceId,
-                        availableKeys: translatableContent.map((c: TranslatableContentItem) => c.key).slice(0, 10)
                       });
                       if (!rejectedFields[locale]) rejectedFields[locale] = [];
                       rejectedFields[locale].push(fieldType);
@@ -516,24 +524,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                   const shopifyKey = fieldKeyMap[fieldType] || fieldType;
 
                   try {
-                    const digestResponse = await admin.graphql(`
-                      query getTranslatableContent($resourceId: ID!) {
-                        translatableResource(resourceId: $resourceId) {
-                          resourceId
-                          translatableContent {
-                            key
-                            digest
-                          }
-                        }
-                      }
-                    `, {
-                      variables: { resourceId: itemId }
-                    });
-
-                    const digestData = await digestResponse.json();
-                    const translatableContent = digestData.data?.translatableResource?.translatableContent || [];
-                    const fieldContent = translatableContent.find((c: TranslatableContentItem) => c.key === shopifyKey);
-                    const digest = fieldContent?.digest || "";
+                    const digest = await getCachedDigest(itemId, shopifyKey);
 
                     const translationInput = [{
                       key: shopifyKey,
@@ -678,24 +669,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                   rejectedFields[locale].push(fieldType);
                 } else {
                 try {
-                  const digestResponse = await admin.graphql(`
-                    query getTranslatableContent($resourceId: ID!) {
-                      translatableResource(resourceId: $resourceId) {
-                        resourceId
-                        translatableContent {
-                          key
-                          digest
-                        }
-                      }
-                    }
-                  `, {
-                    variables: { resourceId: fieldResourceId }
-                  });
-
-                  const digestData = await digestResponse.json() as ShopifyGraphQLResponse;
-                  const translatableContent = digestData.data?.translatableResource?.translatableContent || [];
-                  const fieldContent = translatableContent.find((c: TranslatableContentItem) => c.key === fieldType);
-                  const digest = fieldContent?.digest || "";
+                  const digest = await getCachedDigest(fieldResourceId, fieldType);
 
                   if (!digest) {
                     logger.warn("[API-AI] No digest for template field — skipping Shopify save", {
@@ -703,7 +677,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                       fieldType,
                       locale,
                       resourceId: fieldResourceId,
-                      availableKeys: translatableContent.map((c: TranslatableContentItem) => c.key).slice(0, 10)
                     });
                     if (!rejectedFields[locale]) rejectedFields[locale] = [];
                     rejectedFields[locale].push(fieldType);
@@ -826,27 +799,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                 const shopifyKey = fieldKeyMap[fieldType] || fieldType;
 
                 try {
-                  // First, get the digest for this field from Shopify
-                  const digestResponse = await admin.graphql(`
-                    query getTranslatableContent($resourceId: ID!) {
-                      translatableResource(resourceId: $resourceId) {
-                        resourceId
-                        translatableContent {
-                          key
-                          digest
-                        }
-                      }
-                    }
-                  `, {
-                    variables: { resourceId: itemId }
-                  });
+                  const digest = await getCachedDigest(itemId, shopifyKey);
 
-                  const digestData = await digestResponse.json();
-                  const translatableContent = digestData.data?.translatableResource?.translatableContent || [];
-                  const fieldContent = translatableContent.find((c: TranslatableContentItem) => c.key === shopifyKey);
-                  const digest = fieldContent?.digest || "";
-
-                  // Now save the translation to Shopify
                   const translationInput = [{
                     key: shopifyKey,
                     value: translatedValue,
