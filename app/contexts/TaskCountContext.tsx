@@ -1,5 +1,5 @@
-import { createContext, useContext, useEffect, useRef, useCallback, useMemo, type ReactNode } from "react";
-import { useFetcher, useLocation } from "@remix-run/react";
+import { createContext, useContext, useEffect, useRef, useCallback, useMemo, useState, type ReactNode } from "react";
+import { useLocation } from "@remix-run/react";
 
 export interface CompletedTask {
   id: string;
@@ -21,14 +21,9 @@ const TaskCountContext = createContext<TaskCountContextType | undefined>(undefin
 export function TaskCountProvider({ children }: { children: ReactNode }) {
   const location = useLocation();
 
-  // Fetchers for polling
-  const tasksFetcher = useFetcher<{ count: number }>();
-  const tasksFetcherRef = useRef(tasksFetcher);
-  tasksFetcherRef.current = tasksFetcher;
-
-  const completedTasksFetcher = useFetcher<{ tasks: CompletedTask[] }>();
-  const completedTasksFetcherRef = useRef(completedTasksFetcher);
-  completedTasksFetcherRef.current = completedTasksFetcher;
+  // State for polled data
+  const [runningTaskCount, setRunningTaskCount] = useState(0);
+  const [recentlyCompletedTasks, setRecentlyCompletedTasks] = useState<CompletedTask[]>([]);
 
   // Polling state
   const pollIntervalRef = useRef(2000);
@@ -36,39 +31,78 @@ export function TaskCountProvider({ children }: { children: ReactNode }) {
   const completedTasksPollIntervalRef = useRef(2000);
   const completedTasksErrorCountRef = useRef(0);
 
-  // Derive running task count
-  const runningTaskCount = (tasksFetcher.data?.count !== undefined && !isNaN(tasksFetcher.data.count))
-    ? tasksFetcher.data.count
-    : 0;
+  // Inflight guards to prevent double-fetching
+  const tasksInflightRef = useRef(false);
+  const completedInflightRef = useRef(false);
 
-  // Derive recently completed tasks
-  const recentlyCompletedTasks = completedTasksFetcher.data?.tasks ?? [];
+  // Stable fetch helpers — use regular fetch() instead of useFetcher.load()
+  // so that route-matching errors don't bubble to ErrorBoundary and crash the app.
+  const fetchTaskCount = useCallback(async (searchParams: string) => {
+    if (tasksInflightRef.current) return;
+    tasksInflightRef.current = true;
+    try {
+      const response = await fetch(`/api/running-tasks-count?${searchParams}`);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await response.json();
+      setRunningTaskCount(data?.count ?? 0);
+
+      if (data?.error || data?.warning) {
+        errorCountRef.current += 1;
+        pollIntervalRef.current = Math.min(pollIntervalRef.current * 2, 60000);
+      } else if (errorCountRef.current > 0) {
+        errorCountRef.current = 0;
+        pollIntervalRef.current = Math.max(pollIntervalRef.current / 2, 2000);
+      }
+    } catch {
+      errorCountRef.current += 1;
+      pollIntervalRef.current = Math.min(pollIntervalRef.current * 2, 60000);
+    } finally {
+      tasksInflightRef.current = false;
+    }
+  }, []);
+
+  const fetchCompletedTasks = useCallback(async (searchParams: string) => {
+    if (completedInflightRef.current) return;
+    completedInflightRef.current = true;
+    try {
+      const response = await fetch(`/api/recently-completed-tasks?${searchParams}`);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await response.json();
+      setRecentlyCompletedTasks(data?.tasks ?? []);
+
+      if (data?.error || data?.warning) {
+        completedTasksErrorCountRef.current += 1;
+        completedTasksPollIntervalRef.current = Math.min(completedTasksPollIntervalRef.current * 2, 60000);
+      } else if (completedTasksErrorCountRef.current > 0) {
+        completedTasksErrorCountRef.current = 0;
+        completedTasksPollIntervalRef.current = Math.max(completedTasksPollIntervalRef.current / 2, 2000);
+      }
+    } catch {
+      completedTasksErrorCountRef.current += 1;
+      completedTasksPollIntervalRef.current = Math.min(completedTasksPollIntervalRef.current * 2, 60000);
+    } finally {
+      completedInflightRef.current = false;
+    }
+  }, []);
 
   // Refresh function — immediately re-fetches both endpoints
   const refresh = useCallback(() => {
-    const searchParams = new URLSearchParams(location.search);
+    const searchParams = new URLSearchParams(location.search).toString();
     setTimeout(() => {
-      if (tasksFetcherRef.current.state === "idle") {
-        tasksFetcherRef.current.load(`/api/running-tasks-count?${searchParams.toString()}`);
-      }
-      if (completedTasksFetcherRef.current.state === "idle") {
-        completedTasksFetcherRef.current.load(`/api/recently-completed-tasks?${searchParams.toString()}`);
-      }
+      fetchTaskCount(searchParams);
+      fetchCompletedTasks(searchParams);
     }, 500); // Small delay to let DB write commit
-  }, [location.search]);
+  }, [location.search, fetchTaskCount, fetchCompletedTasks]);
 
   // Poll running tasks count using setTimeout chain (respects dynamic backoff)
   useEffect(() => {
-    const searchParams = new URLSearchParams(location.search);
+    const searchParams = new URLSearchParams(location.search).toString();
     let timeoutId: ReturnType<typeof setTimeout>;
     let cancelled = false;
 
     const poll = () => {
       if (cancelled) return;
-      if (tasksFetcherRef.current.state === "idle") {
-        tasksFetcherRef.current.load(`/api/running-tasks-count?${searchParams.toString()}`);
-      }
-      // Schedule next poll using current interval (respects backoff changes)
+      fetchTaskCount(searchParams);
       timeoutId = setTimeout(poll, pollIntervalRef.current);
     };
 
@@ -79,19 +113,17 @@ export function TaskCountProvider({ children }: { children: ReactNode }) {
       cancelled = true;
       clearTimeout(timeoutId);
     };
-  }, [location.search]);
+  }, [location.search, fetchTaskCount]);
 
   // Poll recently completed tasks using setTimeout chain
   useEffect(() => {
-    const searchParams = new URLSearchParams(location.search);
+    const searchParams = new URLSearchParams(location.search).toString();
     let timeoutId: ReturnType<typeof setTimeout>;
     let cancelled = false;
 
     const poll = () => {
       if (cancelled) return;
-      if (completedTasksFetcherRef.current.state === "idle") {
-        completedTasksFetcherRef.current.load(`/api/recently-completed-tasks?${searchParams.toString()}`);
-      }
+      fetchCompletedTasks(searchParams);
       timeoutId = setTimeout(poll, completedTasksPollIntervalRef.current);
     };
 
@@ -101,41 +133,7 @@ export function TaskCountProvider({ children }: { children: ReactNode }) {
       cancelled = true;
       clearTimeout(timeoutId);
     };
-  }, [location.search]);
-
-  // Exponential backoff for running tasks fetcher
-  useEffect(() => {
-    if (tasksFetcher.state !== "idle") return;
-    if (tasksFetcher.data === undefined) return; // Initial state — no response yet
-
-    const data = tasksFetcher.data as any;
-    const hasError = data?.error || data?.warning;
-
-    if (hasError) {
-      errorCountRef.current += 1;
-      pollIntervalRef.current = Math.min(pollIntervalRef.current * 2, 60000);
-    } else if (errorCountRef.current > 0) {
-      errorCountRef.current = 0;
-      pollIntervalRef.current = Math.max(pollIntervalRef.current / 2, 2000);
-    }
-  }, [tasksFetcher.state, tasksFetcher.data]);
-
-  // Exponential backoff for completed tasks fetcher
-  useEffect(() => {
-    if (completedTasksFetcher.state !== "idle") return;
-    if (completedTasksFetcher.data === undefined) return;
-
-    const data = completedTasksFetcher.data as any;
-    const hasError = data?.error || data?.warning;
-
-    if (hasError) {
-      completedTasksErrorCountRef.current += 1;
-      completedTasksPollIntervalRef.current = Math.min(completedTasksPollIntervalRef.current * 2, 60000);
-    } else if (completedTasksErrorCountRef.current > 0) {
-      completedTasksErrorCountRef.current = 0;
-      completedTasksPollIntervalRef.current = Math.max(completedTasksPollIntervalRef.current / 2, 2000);
-    }
-  }, [completedTasksFetcher.state, completedTasksFetcher.data]);
+  }, [location.search, fetchCompletedTasks]);
 
   const value = useMemo(() => ({
     runningTaskCount,
