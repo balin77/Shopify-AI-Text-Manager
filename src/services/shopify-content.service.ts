@@ -137,7 +137,7 @@ export class ShopifyContentService {
   /**
    * Update an article
    */
-  async updateArticle(id: string, article: { title?: string; handle?: string; body?: string }) {
+  async updateArticle(id: string, article: { title?: string; handle?: string; body?: string; summary?: string }) {
     const response = await this.admin.graphql(UPDATE_ARTICLE, {
       variables: { id, article }
     });
@@ -540,6 +540,7 @@ export class ShopifyContentService {
           title: updates.title,
           handle: updates.handle,
           body: updates.body,
+          summary: updates.summary,
         });
 
         // Update database
@@ -551,6 +552,7 @@ export class ShopifyContentService {
             title: updates.title,
             handle: updates.handle,
             body: updates.body,
+            summary: updates.summary,
             seoTitle: updates.seoTitle,
             seoDescription: updates.metaDescription,
             lastSyncedAt: new Date(),

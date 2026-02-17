@@ -939,6 +939,11 @@ Allowed formatting changes:
       const changedFieldsStr = getFormString(formData, "changedFields");
       const changedFields: string[] | undefined = changedFieldsStr ? safeJsonParse<string[]>(changedFieldsStr, []) : undefined;
 
+      // Extract policyType for ShopPolicy primary locale updates
+      const policyType = contentConfig.resourceType === "ShopPolicy"
+        ? getFormString(formData, "policyType") || undefined
+        : undefined;
+
       // Use unified content service
       const result = await shopifyContentService.updateContent({
         resourceId: itemId,
@@ -948,6 +953,7 @@ Allowed formatting changes:
         updates,
         db,
         shop: session.shop,
+        policyType,
         changedFields: locale === primaryLocale ? changedFields : undefined, // Only pass for primary locale
       });
 

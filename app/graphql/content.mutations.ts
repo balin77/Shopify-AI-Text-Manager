@@ -77,6 +77,7 @@ export const UPDATE_ARTICLE = `#graphql
         title
         handle
         body
+        summary
       }
       userErrors {
         field

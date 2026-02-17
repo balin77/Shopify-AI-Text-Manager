@@ -599,6 +599,16 @@ Dedicated support available via [support email]
 **Code-Fixes (ERLEDIGT):**
 - ✅ localStorage/sessionStorage komplett entfernt (Inkognito-kompatibel)
 - ✅ 3 ueberflüssige API-Scopes entfernt (write_products behalten: productUpdate noetig)
+- ✅ Policies: policyType wird jetzt an updateContent uebergeben (Primary-Locale-Body-Save war kaputt)
+- ✅ Articles: summary Feld wird jetzt bei Primary-Locale-Save an Shopify UND DB gespeichert
+
+**Content-Type Code-Audit (2026-02-16):**
+- ✅ Products - Vollstaendig geprueft und funktional
+- ✅ Templates - Vollstaendig geprueft und funktional
+- ✅ Collections - Vollstaendig geprueft und funktional (Sync, Translations, Primary Save)
+- ✅ Pages - Vollstaendig geprueft und funktional (kein DB-Sync by design, Translations OK)
+- ✅ Blogs/Articles - Geprueft, summary-Bug gefixt (Sync, Translations, Primary Save inkl. Summary)
+- ✅ Policies - Geprueft, policyType-Bug gefixt (Translations OK, Primary Save jetzt funktional)
 
 **What's Needed - Materialien:**
 - ✅ Screenshots (3-5) - ERLEDIGT
@@ -618,6 +628,6 @@ Dedicated support available via [support email]
 
 ---
 
-**Status: ~90% - Code-Fixes erledigt. Nur noch manuelle Tests + Listing-Text.**
+**Status: ~92% - Alle Content-Types geprueft und Bugs gefixt. Nur noch manuelle Tests + Listing-Text.**
 
-Last Updated: 2026-02-14
+Last Updated: 2026-02-16
