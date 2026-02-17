@@ -13,22 +13,13 @@ import { logger } from "~/utils/logger.server";
  * Usage: POST /api/setup-webhooks
  */
 export const action = async ({ request }: ActionFunctionArgs) => {
-  logger.debug("[SETUP-WEBHOOKS] Starting webhook setup...", { context: "SetupWebhooks" });
-
   try {
     const { admin, session } = await authenticate.admin(request);
 
-    logger.debug("[SETUP-WEBHOOKS] Setting up webhooks for shop", { context: "SetupWebhooks", shop: session.shop });
-
     const webhookService = new WebhookRegistrationService(admin);
-
-    // Register ALL webhooks (products + content)
     await webhookService.registerAllWebhooks();
 
-    // List registered webhooks
     const webhooks = await webhookService.listWebhooks();
-
-    logger.debug("[SETUP-WEBHOOKS] Setup complete!", { context: "SetupWebhooks", webhookCount: webhooks.length });
 
     return json({
       success: true,

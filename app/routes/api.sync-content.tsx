@@ -20,8 +20,6 @@ import { logger } from "~/utils/logger.server";
  * Available types: collections, articles, pages, policies, themes
  */
 export const action = async ({ request }: ActionFunctionArgs) => {
-  logger.debug("[SYNC-CONTENT] Starting content sync...", { context: "SyncContent" });
-
   try {
     const { admin, session } = await authenticate.admin(request);
 
@@ -30,18 +28,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const typesParam = url.searchParams.get('types');
     const types = typesParam ? typesParam.split(',').map(t => t.trim()) : ['collections', 'articles', 'pages', 'policies', 'themes'];
 
-    logger.debug("[SYNC-CONTENT] Syncing content for shop", { context: "SyncContent", shop: session.shop });
-    logger.debug("[SYNC-CONTENT] Types to sync", { context: "SyncContent", types: types.join(', ') });
-
     // Load plan limits
     const settings = await db.aISettings.findUnique({
       where: { shop: session.shop },
     });
     const plan = (settings?.subscriptionPlan || "free") as Plan;
     const planLimits = getPlanLimits(plan);
-
-    logger.debug("[SYNC-CONTENT] Plan", { context: "SyncContent", plan });
-    logger.debug("[SYNC-CONTENT] Limits", { context: "SyncContent", maxCollections: planLimits.maxCollections, maxArticles: planLimits.maxArticles, maxPages: planLimits.maxPages });
 
     const syncService = new ContentSyncService(admin, session.shop);
     const bgSyncService = new BackgroundSyncService(admin, session.shop);
@@ -111,7 +103,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     const total = Object.values(results).reduce((sum, count) => sum + count, 0);
 
-    logger.debug("[SYNC-CONTENT] Sync complete!", { context: "SyncContent", results, total });
+    logger.info("[SYNC-CONTENT] Complete", { context: "SyncContent", results, total });
 
     return json({
       success: true,

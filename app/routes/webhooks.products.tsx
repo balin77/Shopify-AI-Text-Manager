@@ -14,12 +14,8 @@ import { logger } from "~/utils/logger.server";
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { topic, shop, payload } = await authenticate.webhook(request);
 
-  logger.info("[WEBHOOK] Product webhook received", { context: "Webhook", topic, shop });
-
   const productPayload = payload as { id: string | number };
   const productId = `gid://shopify/Product/${productPayload.id}`;
-
-  logger.debug("[WEBHOOK] Product ID", { context: "Webhook", productId });
 
   // Log webhook to database (metadata only - payload stored only on error)
   const { db } = await import("../db.server");
@@ -32,8 +28,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       processed: false,
     },
   });
-
-  logger.debug("[WEBHOOK] Logged to database", { context: "Webhook", webhookLogId: webhookLog.id });
 
   // Process webhook asynchronously (don't block Shopify's response)
   processWebhookAsync(webhookLog.id, shop, productId, topic).catch((err) => {
@@ -59,29 +53,17 @@ async function processWebhookAsync(
   const { webhookRetryService } = await import("../services/webhook-retry.service");
   const { ProductSyncService } = await import("../services/product-sync.service");
 
-  logger.info("[WEBHOOK-ASYNC] Processing webhook", {
-    context: "Webhook",
-    logId,
-    topic,
-    shop,
-    productId,
-  });
-
   const { db } = await import("../db.server");
 
   try {
     const { createAdminClientFromShop } = await import("../utils/admin-client.server");
     const admin = await createAdminClientFromShop(shop);
 
-    logger.debug("[WEBHOOK-ASYNC] Admin client created", { context: "Webhook", shop });
-
     const syncService = new ProductSyncService(admin, shop);
 
     if (topic === "PRODUCTS_CREATE" || topic === "PRODUCTS_UPDATE") {
-      logger.debug("[WEBHOOK-ASYNC] Syncing product", { context: "Webhook", productId, topic });
       await syncService.syncProduct(productId);
     } else if (topic === "PRODUCTS_DELETE") {
-      logger.info("[WEBHOOK-ASYNC] Deleting product", { context: "Webhook", productId });
       await syncService.deleteProduct(productId);
     }
 
@@ -89,8 +71,6 @@ async function processWebhookAsync(
       where: { id: logId },
       data: { processed: true },
     });
-
-    logger.info("[WEBHOOK-ASYNC] Successfully processed", { context: "Webhook", logId, topic, productId });
   } catch (error: any) {
     logger.error("[WEBHOOK-ASYNC] Error processing webhook", {
       context: "Webhook",

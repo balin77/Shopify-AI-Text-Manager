@@ -23,8 +23,6 @@ import { de, en, es } from "../i18n";
 
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  logger.debug("[APP.TSX LOADER] Start", { context: "App", url: request.url, method: request.method });
-
   const headers = Object.fromEntries(request.headers.entries());
   const url = new URL(request.url);
 
@@ -32,7 +30,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const isPrefetch = headers['sec-purpose'] === 'prefetch' || headers['purpose'] === 'prefetch';
 
   if (isPrefetch) {
-    logger.debug("[APP.TSX LOADER] Prefetch request detected - returning default language", { context: "App" });
     // Return default data for prefetch - no auth needed
     return json({
       appLanguage: "en" as Locale,
@@ -44,18 +41,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // Check if this is a browser reload (F5) - these lose session tokens in embedded apps
   const isBrowserReload = !url.searchParams.has('shop') && !url.searchParams.has('host');
   if (isBrowserReload) {
-    logger.warn("[APP.TSX LOADER] Browser reload detected without shop params - this will cause auth issues in embedded apps", { context: "App" });
+    logger.warn("[APP.TSX LOADER] Browser reload detected without shop params", { context: "App" });
   }
 
   try {
-    logger.debug("[APP.TSX LOADER] Authenticating...", { context: "App" });
     const { session } = await authenticate.admin(request);
-    logger.debug("[APP.TSX LOADER] Authentication successful", { context: "App", shop: session.shop, sessionId: session.id });
 
     // Load app language preference from database
     const { db } = await import("../db.server");
     const { loadAISettingsForValidation } = await import("../utils/loader-helpers");
-    logger.debug("[APP.TSX LOADER] Loading settings from DB...", { context: "App" });
 
     // Run DB queries in parallel for better TTFB performance
     const [settings, aiSettings] = await Promise.all([
@@ -69,11 +63,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       loadAISettingsForValidation(db, session.shop),
     ]);
 
-    logger.debug("[APP.TSX LOADER] Settings loaded", { context: "App", found: !!settings });
-
     const appLanguage = (settings?.appLanguage || "en") as Locale;
     const subscriptionPlan = (settings?.subscriptionPlan || "free") as Plan;
-    logger.debug("[APP.TSX LOADER] App settings", { context: "App", appLanguage, subscriptionPlan });
 
     return json({
       appLanguage,
@@ -85,16 +76,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // Redirects should be re-thrown, not caught as errors
     if (error instanceof Response) {
       const status = error.status;
-      const location = error.headers.get('location');
 
-      // Log redirect for debugging, but don't treat as error
+      // Redirects are normal auth flow, not errors
       if (status >= 300 && status < 400) {
-        logger.debug("[APP.TSX LOADER] Redirect detected", { context: "App", status, location });
         throw error; // Re-throw the redirect to let Remix handle it
       }
     }
 
-    logger.error("[APP.TSX LOADER] Error", { context: "App", error: error instanceof Error ? error.message : String(error), stack: error instanceof Error ? error.stack : undefined });
+    logger.error("[APP.TSX LOADER] Error", { context: "App", error: error instanceof Error ? error.message : String(error) });
 
     // Return default values instead of throwing to prevent blank page
     // This can happen during plan changes when auth session is temporarily invalid

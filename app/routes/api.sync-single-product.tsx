@@ -15,8 +15,6 @@ import { isValidShopifyGID } from "~/utils/validation";
  * Body: { productId: "gid://shopify/Product/123" }
  */
 export const action = async ({ request }: ActionFunctionArgs) => {
-  logger.debug("[SYNC-SINGLE-PRODUCT] Starting single product sync...", { context: "SyncSingleProduct" });
-
   try {
     const { admin, session } = await authenticate.admin(request);
     const formData = await request.formData();
@@ -30,12 +28,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return json({ success: false, error: "Invalid productId format" }, { status: 400 });
     }
 
-    logger.debug("[SYNC-SINGLE-PRODUCT] Syncing product", { context: "SyncSingleProduct", productId });
-
     const syncService = new ProductSyncService(admin, session.shop);
     await syncService.syncProduct(productId);
-
-    logger.debug("[SYNC-SINGLE-PRODUCT] Sync complete!", { context: "SyncSingleProduct" });
 
     // Fetch updated product and translations from database
     const { db } = await import("../db.server");

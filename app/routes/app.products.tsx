@@ -189,13 +189,6 @@ export const loader = createContentLoader({
       orderBy: { title: "asc" },
     });
 
-    // DEBUG: Log alt texts from DB
-    for (const p of dbProducts) {
-      if (p.images && (p.images as any[]).length > 0) {
-        const altTexts = (p.images as any[]).map((img: any, i: number) => `img${i}="${img.altText}"`).join(", ");
-        logger.info(`[ALT-TEXT-DEBUG] Loader DB read: product="${p.title}" -> ${altTexts}`);
-      }
-    }
 
     // Transform to frontend format
     const products = dbProducts.map((p: any) => ({

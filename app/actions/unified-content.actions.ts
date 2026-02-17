@@ -15,6 +15,7 @@ import { decryptApiKey } from "../utils/encryption.server";
 import { getTaskExpirationDate } from "~/config/constants";
 import type { ContentEditorConfig } from "../types/content-editor.types";
 import { logger } from "../utils/logger.server";
+import { ShopifyApiGateway } from "../services/shopify-api-gateway.service";
 import { getFormString, getFormInt, getFormJSON } from "../utils/form-data.utils";
 import { isValidShopifyGID, isValidLocale, safeJsonParse } from "../utils/validation";
 import { sanitizePromptInput } from "../utils/prompt-sanitizer";
@@ -69,7 +70,8 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
   const queue = AIQueueService.getInstance();
   await queue.updateRateLimits(aiSettings);
 
-  const shopifyContentService = new ShopifyContentService(admin);
+  const gateway = new ShopifyApiGateway(admin, session.shop);
+  const shopifyContentService = new ShopifyContentService(gateway as any);
 
   // ============================================================================
   // LOAD TRANSLATIONS
@@ -713,9 +715,7 @@ Allowed formatting changes:
       return json({ success: false, error: "Invalid source locale format" }, { status: 400 });
     }
 
-    logger.debug('[UnifiedContent] [translateFieldToAllLocales] Starting...');
-    logger.debug('[UnifiedContent] fieldType:', fieldType);
-    logger.debug('[UnifiedContent] targetLocales:', targetLocalesStr);
+    logger.debug('[UnifiedContent] translateFieldToAllLocales', { fieldType, targetLocales: targetLocalesStr });
 
     // Create task entry
     const task = await db.task.create({
@@ -774,17 +774,10 @@ Allowed formatting changes:
       // Extract just the field value for each locale (frontend expects Record<locale, string>)
       // allTranslations is Record<locale, Record<fieldType, string>>
       // We need to flatten it to Record<locale, string>
-      logger.debug('[UnifiedContent] [translateFieldToAllLocales] allTranslations from service:', Object.keys(allTranslations));
-      logger.debug('[UnifiedContent] [translateFieldToAllLocales] allTranslations detail:', JSON.stringify(allTranslations, null, 2));
-
       const flattenedTranslations: Record<string, string> = {};
       for (const [locale, fields] of Object.entries(allTranslations)) {
-        const value = (fields as Record<string, string>)[fieldType] || "";
-        flattenedTranslations[locale] = value;
-        logger.debug(`[UnifiedContent] [translateFieldToAllLocales] Extracted ${locale}.${fieldType} = "${value.substring(0, 50)}..."`);
+        flattenedTranslations[locale] = (fields as Record<string, string>)[fieldType] || "";
       }
-
-      logger.debug('[UnifiedContent] [translateFieldToAllLocales] RETURNING locales:', Object.keys(flattenedTranslations));
 
       await db.task.update({
         where: { id: task.id },
@@ -820,14 +813,7 @@ Allowed formatting changes:
     const primaryLocale = getFormString(formData, "primaryLocale");
     const changedFieldsDebug = getFormString(formData, "changedFields");
 
-    logger.debug('[UnifiedContent] ==================== updateContent received ====================');
-    logger.debug('[UnifiedContent] [UNIFIED-ACTION] updateContent received');
-    logger.debug('[UnifiedContent] ResourceType:', contentConfig.resourceType);
-    logger.debug('[UnifiedContent] ItemId:', itemId);
-    logger.debug('[UnifiedContent] Locale:', locale);
-    logger.debug('[UnifiedContent] PrimaryLocale:', primaryLocale);
-    logger.debug('[UnifiedContent] ChangedFields:', changedFieldsDebug);
-    logger.debug('[UnifiedContent] ==================== updateContent received ====================');
+    logger.debug('[UnifiedContent] updateContent', { resourceType: contentConfig.resourceType, itemId, locale, primaryLocale });
 
     try {
       // Special handling for Products - use dedicated product update handler
@@ -869,29 +855,22 @@ Allowed formatting changes:
 
         // Pass changedFields for translation deletion when primary locale changes
         const changedFieldsStr = getFormString(formData, "changedFields");
-        logger.debug('[UnifiedContent] [UNIFIED-ACTION] Passing changedFields to product handler:', changedFieldsStr);
         if (changedFieldsStr && locale === primaryLocale) {
           productFormData.set("changedFields", changedFieldsStr);
-          logger.debug('[UnifiedContent] [UNIFIED-ACTION] changedFields SET in productFormData');
-        } else {
-          logger.debug('[UnifiedContent] [UNIFIED-ACTION] changedFields NOT set (locale !== primaryLocale or empty)');
         }
 
         // Pass imageAltTexts if present
         const imageAltTextsStr = getFormString(formData, "imageAltTexts");
         if (imageAltTextsStr) {
           productFormData.set("imageAltTexts", imageAltTextsStr);
-          logger.debug('[UnifiedContent] [UNIFIED-ACTION] imageAltTexts SET in productFormData:', imageAltTextsStr);
         }
 
         // Pass changedAltTextIndices for alt-text translation deletion when primary locale changes
         const changedAltTextIndicesStr = getFormString(formData, "changedAltTextIndices");
         if (changedAltTextIndicesStr && locale === primaryLocale) {
           productFormData.set("changedAltTextIndices", changedAltTextIndicesStr);
-          logger.debug('[UnifiedContent] [UNIFIED-ACTION] changedAltTextIndices SET in productFormData:', changedAltTextIndicesStr);
         }
 
-        logger.debug('[UnifiedContent] [UNIFIED-ACTION] Calling handleUpdateProduct...');
         const productResult = await handleUpdateProduct(context, productFormData, itemId);
         // Inject actionType into the response for discriminated union matching
         const productBody = await productResult.json();
@@ -927,7 +906,6 @@ Allowed formatting changes:
             // Featured image alt text is at index 0
             if (imageAltTexts[0] !== undefined) {
               updates.imageAltText = imageAltTexts[0];
-              logger.debug('[UnifiedContent] Setting featured image alt text:', imageAltTexts[0]);
             }
           } catch (e) {
             logger.error('Failed to parse imageAltTexts:', e);

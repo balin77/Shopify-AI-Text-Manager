@@ -42,7 +42,6 @@ import { logger } from "~/utils/logger.server";
 import { checkAndSyncSubscription } from "~/services/billing.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  logger.debug("[SETTINGS] Loading settings page for shop", { context: "Settings" });
 
   try {
     const { admin, session } = await authenticate.admin(request);
@@ -150,10 +149,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         policyDescriptionInstructions: DEFAULT_POLICY_INSTRUCTIONS.descriptionInstructions,
       },
     });
-    logger.debug("[SETTINGS] Created AI Instructions with defaults for shop", { context: "Settings", shop: session.shop });
   } else if (!instructions.productSeoTitleInstructions || !instructions.productTitleInstructions || !instructions.formatPreserveInstructions || !instructions.translateInstructions) {
     // Entry exists but some fields are empty - populate with defaults (only once)
-    logger.debug("[SETTINGS] Detected empty AI Instructions, populating defaults", { context: "Settings" });
     instructions = await db.aIInstructions.update({
       where: { shop: session.shop },
       data: {
@@ -212,7 +209,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         policyDescriptionInstructions: instructions.policyDescriptionInstructions || DEFAULT_POLICY_INSTRUCTIONS.descriptionInstructions,
       },
     });
-    logger.debug("[SETTINGS] Updated AI Instructions with defaults for shop", { context: "Settings", shop: session.shop });
   }
 
     // Get counts for App Setup section

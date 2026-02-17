@@ -18,13 +18,9 @@ import { getPlanLimits } from "../utils/planUtils";
 import { logger } from "~/utils/logger.server";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  logger.debug("[INITIAL-SETUP] Starting automatic initial setup...", { context: "InitialSetup" });
-
   try {
     const { admin, session } = await authenticate.admin(request);
     const shop = session.shop;
-
-    logger.debug("[INITIAL-SETUP] Shop", { context: "InitialSetup", shop });
 
     // Check if products already exist (= setup was already done)
     const existingProductCount = await db.product.count({
@@ -32,7 +28,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     });
 
     if (existingProductCount > 0) {
-      logger.debug("[INITIAL-SETUP] Products already exist, skipping setup", { context: "InitialSetup", existingProductCount });
       return json({
         success: true,
         skipped: true,
@@ -45,37 +40,24 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       where: { shop },
     });
 
-    // ========================================
-    // STEP 1: Register Webhooks
-    // ========================================
-    logger.debug("[INITIAL-SETUP] Step 1: Registering webhooks...", { context: "InitialSetup" });
-
+    // Step 1: Register Webhooks
     const webhookService = new WebhookRegistrationService(admin);
 
     try {
       await webhookService.registerAllWebhooks();
-      logger.debug("[INITIAL-SETUP] Webhooks registered successfully", { context: "InitialSetup" });
     } catch (webhookError: any) {
       logger.error("[INITIAL-SETUP] Webhook registration error", { context: "InitialSetup", error: webhookError.message });
       // Continue even if webhook registration fails - products can still be synced
     }
 
-    // ========================================
-    // STEP 2: Fast Product Sync
-    // ========================================
-    logger.debug("[INITIAL-SETUP] Step 2: Running FAST product sync...", { context: "InitialSetup" });
-
+    // Step 2: Fast Product Sync
     const plan = (settings?.subscriptionPlan || "free") as "free" | "basic" | "pro" | "max";
     const planLimits = getPlanLimits(plan);
-
-    logger.debug("[INITIAL-SETUP] Plan and limits", { context: "InitialSetup", plan, maxProducts: planLimits.maxProducts });
 
     let productsSynced = 0;
 
     // FAST: Fetch ALL products in ONE bulk request
     const maxToFetch = planLimits.maxProducts === Infinity ? 250 : planLimits.maxProducts;
-
-    logger.debug("[INITIAL-SETUP] Fetching products from Shopify", { context: "InitialSetup", maxToFetch });
 
     const response = await admin.graphql(
       `#graphql
@@ -121,10 +103,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const data = await response.json();
     const shopifyProducts = data.data?.products?.edges?.map((e: any) => e.node) || [];
 
-    logger.debug("[INITIAL-SETUP] Fetched products from Shopify", { context: "InitialSetup", count: shopifyProducts.length });
-
     if (shopifyProducts.length > 0) {
-      logger.debug("[INITIAL-SETUP] Saving products...", { context: "InitialSetup", count: shopifyProducts.length });
 
       for (const product of shopifyProducts) {
         try {
@@ -188,12 +167,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         }
       }
 
-      logger.debug("[INITIAL-SETUP] Synced products", { context: "InitialSetup", productsSynced });
-    } else {
-      logger.debug("[INITIAL-SETUP] No products found in Shopify", { context: "InitialSetup" });
+      logger.info("[INITIAL-SETUP] Complete", { context: "InitialSetup", shop, productsSynced });
     }
-
-    logger.debug("[INITIAL-SETUP] Setup complete!", { context: "InitialSetup" });
 
     return json({
       success: true,

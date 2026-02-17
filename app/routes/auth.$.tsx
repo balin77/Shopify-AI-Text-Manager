@@ -3,25 +3,16 @@ import { authenticate } from "../shopify.server";
 import { logger } from "~/utils/logger.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  logger.debug("[AUTH.$] Request received", { context: "Auth", url: request.url, method: request.method });
-
   try {
-    logger.debug("[AUTH.$] Authenticating...", { context: "Auth" });
     const authResult = await authenticate.admin(request);
 
     // If we have a redirect, return it
     if ('redirect' in authResult && authResult.redirect) {
-      const redirect = authResult.redirect;
-      if (redirect instanceof Response && 'headers' in redirect) {
-        logger.debug("[AUTH.$] Redirect response", { context: "Auth", location: redirect.headers.get("Location") });
-      }
-      return redirect;
+      return authResult.redirect;
     }
 
     // If we have a session, redirect to the app
     if ('session' in authResult && authResult.session) {
-      const session = authResult.session;
-      logger.debug("[AUTH.$] Session found, redirecting to /app", { context: "Auth", shop: session.shop, sessionId: session.id });
       return new Response(null, {
         status: 302,
         headers: {

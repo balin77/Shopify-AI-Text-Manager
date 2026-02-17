@@ -26,18 +26,11 @@ interface UpdatePlanResponse {
 }
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  logger.debug("[API/UpdatePlan] Request received", { context: "UpdatePlan" });
-
   try {
-    // Authenticate
     const { session, admin } = await authenticate.admin(request);
-    logger.debug("[API/UpdatePlan] Authenticated", { context: "UpdatePlan", shop: session.shop });
 
-    // Parse request body
     const body = (await request.json()) as UpdatePlanRequest;
     const { plan: newPlan } = body;
-
-    logger.debug("[API/UpdatePlan] Requested plan", { context: "UpdatePlan", plan: newPlan });
 
     // Validate plan
     if (!isValidPlan(newPlan)) {
@@ -60,11 +53,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       where: { shop: session.shop },
     });
 
-    logger.debug("[API/UpdatePlan] Current plan and products", { context: "UpdatePlan", currentPlan, productCount: currentProductCount });
-
     // Get current cache stats before cleanup
     const cacheStatsBefore = await getCacheStats(session.shop);
-    logger.debug("[API/UpdatePlan] Cache stats before", { context: "UpdatePlan", cacheStatsBefore });
 
     // Update plan in database
     await db.aISettings.upsert({
@@ -78,26 +68,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       },
     });
 
-    logger.debug("[API/UpdatePlan] Plan updated in database", { context: "UpdatePlan" });
-
     // Determine if we need to sync more products (upgrade scenario)
     const currentPlanLimits = getPlanLimits(currentPlan);
     const newPlanLimits = getPlanLimits(newPlan);
-    const isUpgrade = newPlanLimits.maxProducts > currentPlanLimits.maxProducts;
-
-    // Note: Background sync doesn't work in serverless environments.
-    // The actual sync is triggered by the frontend via /api/sync-missing-products
-    if (isUpgrade) {
-      logger.debug("[API/UpdatePlan] Plan upgrade (products will sync via frontend)", { context: "UpdatePlan", from: currentPlan, to: newPlan });
-    }
 
     // Cleanup cache based on new plan (for downgrades)
-    // This is a "best effort" operation - if cleanup fails, the plan update is still valid
-    logger.debug("[API/UpdatePlan] Starting cache cleanup...", { context: "UpdatePlan" });
     let cleanupStats: Awaited<ReturnType<typeof cleanupCacheForPlan>>;
     try {
       cleanupStats = await cleanupCacheForPlan(session.shop, newPlan);
-      logger.debug("[API/UpdatePlan] Cleanup complete", { context: "UpdatePlan", cleanupStats });
     } catch (cleanupError) {
       logger.warn("[API/UpdatePlan] Cache cleanup failed (plan update still successful)", { context: "UpdatePlan", error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError) });
       // Return default stats if cleanup failed - the plan update was still successful
@@ -117,9 +95,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       };
     }
 
-    // Get cache stats after cleanup
     const cacheStatsAfter = await getCacheStats(session.shop);
-    logger.debug("[API/UpdatePlan] Cache stats after", { context: "UpdatePlan", cacheStatsAfter });
+    logger.info("[API/UpdatePlan] Plan updated", { context: "UpdatePlan", from: currentPlan, to: newPlan, shop: session.shop });
 
     const response: UpdatePlanResponse = {
       success: true,

@@ -18,17 +18,12 @@ import { logger } from "~/utils/logger.server";
  * - force=true: Delete all existing products and re-sync from scratch
  */
 export const action = async ({ request }: ActionFunctionArgs) => {
-  logger.debug("[SYNC-PRODUCTS] Starting FAST bulk product sync...", { context: "SyncProducts" });
-
   try {
     const { admin, session } = await authenticate.admin(request);
     const shop = session.shop;
 
     const url = new URL(request.url);
     const force = url.searchParams.get("force") === "true";
-
-    logger.debug("[SYNC-PRODUCTS] Shop", { context: "SyncProducts", shop });
-    logger.debug("[SYNC-PRODUCTS] Force re-sync", { context: "SyncProducts", force });
 
     // Get settings for plan limits
     const settings = await db.aISettings.findUnique({
@@ -38,8 +33,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const plan = (settings?.subscriptionPlan || "free") as "free" | "basic" | "pro" | "max";
     const planLimits = getPlanLimits(plan);
 
-    logger.debug("[SYNC-PRODUCTS] Plan and limits", { context: "SyncProducts", plan, maxProducts: planLimits.maxProducts });
-
     // Check if products already exist (skip if not force)
     if (!force) {
       const existingCount = await db.product.count({
@@ -47,7 +40,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
 
       if (existingCount > 0) {
-        logger.debug("[SYNC-PRODUCTS] Found existing products, skipping sync", { context: "SyncProducts", existingCount });
         return json({
           success: true,
           message: `Already synced ${existingCount} products. Use ?force=true to re-sync.`,
@@ -59,7 +51,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     // If force, delete all existing products first
     if (force) {
-      logger.debug("[SYNC-PRODUCTS] Force mode: Deleting all existing products...", { context: "SyncProducts" });
 
       // Get product IDs first for cascade deletes
       const existingProducts = await db.product.findMany({
@@ -89,7 +80,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           }),
         ]);
 
-        logger.debug("[SYNC-PRODUCTS] Deleted existing products", { context: "SyncProducts", count: productIds.length });
       }
     }
 
@@ -98,8 +88,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     let allProducts: any[] = [];
     let hasNextPage = true;
     let cursor: string | null = null;
-
-    logger.debug("[SYNC-PRODUCTS] Fetching products from Shopify", { context: "SyncProducts", maxToFetch });
 
     while (hasNextPage && allProducts.length < maxToFetch) {
       const batchSize = Math.min(250, maxToFetch - allProducts.length);
@@ -185,14 +173,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       hasNextPage = pageInfo?.hasNextPage || false;
       cursor = pageInfo?.endCursor || null;
 
-      logger.debug("[SYNC-PRODUCTS] Fetched batch", { context: "SyncProducts", batchSize: products.length, total: allProducts.length });
-
-      if (hasNextPage && allProducts.length < maxToFetch) {
-        logger.debug("[SYNC-PRODUCTS] Fetching next page...", { context: "SyncProducts" });
-      }
     }
-
-    logger.debug("[SYNC-PRODUCTS] Total products fetched", { context: "SyncProducts", total: allProducts.length });
 
     if (allProducts.length === 0) {
       return json({
@@ -206,8 +187,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     let synced = 0;
     let failed = 0;
     const errors: string[] = [];
-
-    logger.debug("[SYNC-PRODUCTS] Saving products to database", { context: "SyncProducts", count: allProducts.length });
 
     for (const product of allProducts) {
       try {
@@ -315,7 +294,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
     }
 
-    logger.debug("[SYNC-PRODUCTS] Sync complete!", { context: "SyncProducts", synced, failed });
+    logger.info("[SYNC-PRODUCTS] Complete", { context: "SyncProducts", synced, failed, total: allProducts.length });
 
     return json({
       success: true,

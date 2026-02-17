@@ -16,8 +16,6 @@ import { getPlanLimits } from "../utils/planUtils";
 import { logger } from "~/utils/logger.server";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  logger.debug("[SYNC-MISSING] Starting FAST sync of missing products...", { context: "SyncMissing" });
-
   try {
     const { admin, session } = await authenticate.admin(request);
 
@@ -27,8 +25,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     });
     const plan = (settings?.subscriptionPlan || "free") as "free" | "basic" | "pro" | "max";
     const planLimits = getPlanLimits(plan);
-
-    logger.debug("[SYNC-MISSING] Shop and plan details", { context: "SyncMissing", shop: session.shop, plan, maxProducts: planLimits.maxProducts });
 
     // Get existing products from database (include productType to detect NULL entries)
     const existingProducts = await db.product.findMany({
@@ -40,12 +36,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       existingProducts.filter(p => p.productType === null).map(p => p.id)
     );
 
-    logger.debug("[SYNC-MISSING] Found existing products in database", { context: "SyncMissing", count: existingProducts.length, nullProductType: productsWithNullType.size });
-
     // Check if we need to sync more products (but always allow repair of NULL productTypes)
     const atPlanLimit = existingProducts.length >= planLimits.maxProducts;
     if (atPlanLimit && productsWithNullType.size === 0) {
-      logger.debug("[SYNC-MISSING] Already at plan limit and no repairs needed", { context: "SyncMissing" });
       return json({
         success: true,
         synced: 0,
@@ -57,8 +50,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     // FAST: Fetch ALL products with their data in ONE bulk request
     const maxToFetch = planLimits.maxProducts === Infinity ? 250 : planLimits.maxProducts;
-
-    logger.debug("[SYNC-MISSING] Fetching products from Shopify (bulk)", { context: "SyncMissing", maxToFetch });
 
     const response = await admin.graphql(
       `#graphql
@@ -104,8 +95,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const data = await response.json();
     const shopifyProducts = data.data?.products?.edges?.map((e: any) => e.node) || [];
 
-    logger.debug("[SYNC-MISSING] Fetched products from Shopify", { context: "SyncMissing", count: shopifyProducts.length });
-
     // Filter to products we don't have OR existing products with NULL productType
     const missingProducts = shopifyProducts.filter((p: any) => !existingIds.has(p.id));
     const productsToRepair = shopifyProducts.filter((p: any) =>
@@ -113,7 +102,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     );
 
     if (missingProducts.length === 0 && productsToRepair.length === 0) {
-      logger.debug("[SYNC-MISSING] No missing products to sync and no NULL productTypes to repair", { context: "SyncMissing" });
       return json({
         success: true,
         synced: 0,
@@ -122,8 +110,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         message: "All products already synced",
       });
     }
-
-    logger.debug("[SYNC-MISSING] Products to process", { context: "SyncMissing", missing: missingProducts.length, toRepair: productsToRepair.length });
 
     // Repair existing products with NULL productType (fast: only update productType)
     let repaired = 0;
@@ -137,10 +123,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       } catch (error: any) {
         logger.error("[SYNC-MISSING] Failed to repair productType", { context: "SyncMissing", productId: product.id, error: error.message });
       }
-    }
-
-    if (repaired > 0) {
-      logger.debug("[SYNC-MISSING] Repaired NULL productTypes", { context: "SyncMissing", repaired });
     }
 
     // Save all products to database
@@ -222,7 +204,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
     }
 
-    logger.debug("[SYNC-MISSING] FAST sync complete", { context: "SyncMissing", synced, failed, repaired });
+    if (synced > 0 || repaired > 0) {
+      logger.info("[SYNC-MISSING] Complete", { context: "SyncMissing", synced, failed, repaired });
+    }
 
     return json({
       success: true,

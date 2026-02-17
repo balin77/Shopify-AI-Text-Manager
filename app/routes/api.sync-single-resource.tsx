@@ -35,7 +35,6 @@ export async function action({ request }: ActionFunctionArgs) {
       );
     }
 
-    logger.debug("[Manual Sync] Starting sync", { context: "ManualSync", resourceType, resourceId, locale });
 
     // Get subscription plan for image limits
     const settings = await db.aISettings.findUnique({
@@ -50,7 +49,6 @@ export async function action({ request }: ActionFunctionArgs) {
     switch (resourceType) {
       case "product":
       case "products": {
-        logger.debug("[RELOAD-BUTTON] Product reload triggered", { context: "ManualSync", resourceId });
         const productSyncService = new ProductSyncService(
           admin,
           session.shop
@@ -62,13 +60,10 @@ export async function action({ request }: ActionFunctionArgs) {
           : resourceId;
 
         // Sync single product with plan-aware image loading
-        logger.debug("[RELOAD-BUTTON] Calling syncSingleProduct", { context: "ManualSync", shopifyId });
         result = await productSyncService.syncSingleProduct(
           shopifyId,
-          planLimits.cacheEnabled.productImages // true for all images, false for featured only
+          planLimits.cacheEnabled.productImages
         );
-
-        logger.debug("[RELOAD-BUTTON] Product synced successfully", { context: "ManualSync", shopifyId, imageMode: planLimits.cacheEnabled.productImages ? "all" : "featured only" });
         break;
       }
 
@@ -84,7 +79,6 @@ export async function action({ request }: ActionFunctionArgs) {
           : resourceId;
 
         result = await contentSyncService.syncSingleCollection(collectionId);
-        logger.debug("[Manual Sync] Collection synced successfully", { context: "ManualSync", collectionId });
         break;
       }
 
@@ -99,7 +93,6 @@ export async function action({ request }: ActionFunctionArgs) {
           : resourceId;
 
         result = await contentSyncService.syncSingleArticle(articleId);
-        logger.debug("[Manual Sync] Article synced successfully", { context: "ManualSync", articleId });
         break;
       }
 
@@ -109,9 +102,7 @@ export async function action({ request }: ActionFunctionArgs) {
           session.shop
         );
 
-        // Pass the full resourceId - syncSinglePage will handle GID conversion
         result = await backgroundSyncService.syncSinglePage(resourceId);
-        logger.debug("[Manual Sync] Page synced successfully", { context: "ManualSync", resourceId });
         break;
       }
 
@@ -121,9 +112,7 @@ export async function action({ request }: ActionFunctionArgs) {
           session.shop
         );
 
-        // Policies use type as identifier (e.g., "PRIVACY_POLICY")
         result = await backgroundSyncService.syncSinglePolicy(resourceId);
-        logger.debug("[Manual Sync] Policy synced successfully", { context: "ManualSync", resourceId });
         break;
       }
 
@@ -133,13 +122,11 @@ export async function action({ request }: ActionFunctionArgs) {
           session.shop
         );
 
-        // Extract groupId from resourceId (format: "group_xxx")
         const groupId = resourceId.startsWith("group_")
           ? resourceId.replace("group_", "")
           : resourceId;
 
         result = await backgroundSyncService.syncSingleThemeGroup(groupId);
-        logger.debug("[Manual Sync] Theme group synced successfully", { context: "ManualSync", groupId });
         break;
       }
 

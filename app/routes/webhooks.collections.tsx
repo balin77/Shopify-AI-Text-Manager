@@ -15,12 +15,8 @@ import { logger } from "~/utils/logger.server";
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { topic, shop, payload } = await authenticate.webhook(request);
 
-  logger.debug("[WEBHOOK] Collection webhook received", { context: "Webhook", topic, shop });
-
   const collectionPayload = payload as { id: string | number };
   const collectionId = `gid://shopify/Collection/${collectionPayload.id}`;
-
-  logger.debug("[WEBHOOK] Collection ID", { context: "Webhook", collectionId });
 
   // Log webhook to database
   const { db } = await import("../db.server");
@@ -33,8 +29,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       processed: false,
     },
   });
-
-  logger.debug("[WEBHOOK] Logged to database", { context: "Webhook", logId: webhookLog.id });
 
   // Process webhook asynchronously (don't block Shopify's response)
   processWebhookAsync(webhookLog.id, shop, collectionId, topic).catch((err) => {
@@ -53,23 +47,17 @@ async function processWebhookAsync(
   collectionId: string,
   topic: string
 ) {
-  logger.debug("[WEBHOOK-ASYNC] Processing webhook", { context: "Webhook", logId, topic });
-
   const { db } = await import("../db.server");
 
   try {
     const { createAdminClientFromShop } = await import("../utils/admin-client.server");
     const admin = await createAdminClientFromShop(shop);
 
-    logger.debug("[WEBHOOK-ASYNC] Created admin client", { context: "Webhook", shop });
-
     const syncService = new ContentSyncService(admin, shop);
 
     if (topic === "COLLECTIONS_CREATE" || topic === "COLLECTIONS_UPDATE") {
-      logger.debug("[WEBHOOK-ASYNC] Syncing collection", { context: "Webhook", collectionId });
       await syncService.syncCollection(collectionId);
     } else if (topic === "COLLECTIONS_DELETE") {
-      logger.debug("[WEBHOOK-ASYNC] Deleting collection", { context: "Webhook", collectionId });
       await syncService.deleteCollection(collectionId);
     }
 
@@ -77,8 +65,6 @@ async function processWebhookAsync(
       where: { id: logId },
       data: { processed: true },
     });
-
-    logger.debug("[WEBHOOK-ASYNC] Successfully processed", { context: "Webhook", logId });
   } catch (error: any) {
     logger.error("[WEBHOOK-ASYNC] Error processing webhook", {
       context: "Webhook",
