@@ -13,6 +13,7 @@ import { Icon } from "@shopify/polaris";
 import { MenuIcon, XIcon, ChevronRightIcon, ChevronDownIcon } from "@shopify/polaris-icons";
 import { useI18n } from "../contexts/I18nContext";
 import { usePlan } from "../contexts/PlanContext";
+import { useTaskCount } from "../contexts/TaskCountContext";
 import { useAppNavigation } from "../hooks/useAppNavigation";
 import type { Plan } from "../config/plans";
 
@@ -23,8 +24,6 @@ interface MobileMenuProps {
   productCount?: number;
   /** Maximum products allowed */
   maxProducts?: number;
-  /** Running task count */
-  runningTaskCount?: number;
   /** Content types for secondary navigation */
   contentTypes?: Array<{
     id: string;
@@ -41,7 +40,6 @@ export function MobileMenu({
   activeTab,
   productCount,
   maxProducts,
-  runningTaskCount,
   contentTypes = [],
   showContentTypes = false,
 }: MobileMenuProps) {
@@ -52,6 +50,7 @@ export function MobileMenu({
   const { handleNavigate } = useAppNavigation();
   const { t } = useI18n();
   const { plan, getPlanDisplayName } = usePlan();
+  const { runningTaskCount } = useTaskCount();
 
   // Auto-expand content submenu when on a content page
   useEffect(() => {

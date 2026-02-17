@@ -1,4 +1,4 @@
-import { useLocation, useNavigate, useFetcher, useMatches, useNavigation } from "@remix-run/react";
+import { useLocation, useNavigate, useMatches, useNavigation } from "@remix-run/react";
 import { InlineStack, Text, Banner, ButtonGroup, Button, Tooltip, Spinner, Popover, Scrollable, Icon } from "@shopify/polaris";
 import { NotificationIcon } from "@shopify/polaris-icons";
 import { useI18n } from "../contexts/I18nContext";
@@ -6,6 +6,7 @@ import { useInfoBox } from "../contexts/InfoBoxContext";
 import { usePlan } from "../contexts/PlanContext";
 import { useNavigationHeight } from "../contexts/NavigationHeightContext";
 import { useItemSelector } from "../contexts/ItemSelectorContext";
+import { useTaskCount } from "../contexts/TaskCountContext";
 import { useAppNavigation } from "../hooks/useAppNavigation";
 import { MobileMenu } from "./MobileMenu";
 import { UnifiedItemSelectorCompact } from "./unified/UnifiedItemSelectorCompact";
@@ -26,117 +27,27 @@ export function MainNavigation() {
   const { plan, getPlanDisplayName, getMaxProducts } = usePlan();
   const { setMainNavHeight } = useNavigationHeight();
   const { items, selectedItemId, onItemSelect, resourceName, t: itemSelectorT } = useItemSelector();
-  const tasksFetcher = useFetcher<{ count: number }>();
-  const tasksFetcherRef = useRef(tasksFetcher);
-  tasksFetcherRef.current = tasksFetcher;
-  const completedTasksFetcher = useFetcher<{ tasks: any[] }>();
+  const { runningTaskCount, recentlyCompletedTasks } = useTaskCount();
   const [showLoadingIndicator, setShowLoadingIndicator] = useState(false);
   const navRef = useRef<HTMLDivElement>(null);
   const [navHeight, setNavHeight] = useState(73);
-  const pollIntervalRef = useRef(2000); // Start with 2 seconds, use ref to persist across renders
-  const errorCountRef = useRef(0); // Track consecutive errors
-  const completedTasksPollIntervalRef = useRef(2000); // Separate interval for completed tasks polling
-  const completedTasksErrorCountRef = useRef(0); // Track consecutive errors for completed tasks
-  const notifiedTaskIds = useRef<Set<string>>(new Set()); // Track which tasks we've already notified about
-  const isMountedRef = useRef(true); // Track if component is mounted to prevent state updates after unmount
+  const notifiedTaskIds = useRef<Set<string>>(new Set());
+  const isMountedRef = useRef(true);
 
   // Get product count from products route loader data
   const productsRouteData = matches.find((match) => match.id === "routes/app.products")?.data as any;
   const productCount = productsRouteData?.productCount;
   const maxProducts = getMaxProducts();
 
-  // Get running task count from dedicated API endpoint (with error handling)
-  const runningTaskCount = (tasksFetcher.data?.count !== undefined && !isNaN(tasksFetcher.data.count))
-    ? tasksFetcher.data.count
-    : 0;
-
-  // Fetch running tasks count with adaptive polling and error handling
+  // Show notifications for newly completed tasks (from context)
   useEffect(() => {
-    const searchParams = new URLSearchParams(location.search);
-    let interval: NodeJS.Timeout;
+    if (!recentlyCompletedTasks.length || !isMountedRef.current) return;
 
-    const fetchTaskCount = () => {
-      // Only fetch if not already loading to prevent overlapping requests
-      // Use ref to always access latest fetcher state (avoids stale closure)
-      if (tasksFetcherRef.current.state === "idle") {
-        tasksFetcherRef.current.load(`/api/running-tasks-count?${searchParams.toString()}`);
-      }
-    };
-
-    // Load initial count
-    fetchTaskCount();
-
-    // Set up interval with current poll interval
-    const setupInterval = () => {
-      if (interval) {
-        clearInterval(interval);
-      }
-      interval = setInterval(fetchTaskCount, pollIntervalRef.current);
-    };
-
-    setupInterval();
-
-    // Listen for task-count-changed events to immediately refresh
-    const handleTaskCountChanged = () => {
-      // Small delay to let the DB write commit before querying
-      setTimeout(fetchTaskCount, 500);
-    };
-    window.addEventListener('task-count-changed', handleTaskCountChanged);
-
-    return () => {
-      if (interval) {
-        clearInterval(interval);
-      }
-      window.removeEventListener('task-count-changed', handleTaskCountChanged);
-    };
-  }, [location.search]); // Re-fetch when search params change (e.g., shop parameter)
-
-  // Poll for recently completed tasks and show notifications with exponential backoff
-  useEffect(() => {
-    const searchParams = new URLSearchParams(location.search);
-    let interval: NodeJS.Timeout;
-
-    const fetchCompletedTasks = () => {
-      // Only fetch if not already loading to prevent overlapping requests
-      if (completedTasksFetcher.state === "idle") {
-        completedTasksFetcher.load(`/api/recently-completed-tasks?${searchParams.toString()}`);
-      }
-    };
-
-    // Load initial
-    fetchCompletedTasks();
-
-    // Set up interval with current poll interval
-    const setupInterval = () => {
-      if (interval) {
-        clearInterval(interval);
-      }
-      interval = setInterval(fetchCompletedTasks, completedTasksPollIntervalRef.current);
-    };
-
-    setupInterval();
-
-    return () => {
-      if (interval) {
-        clearInterval(interval);
-      }
-    };
-  }, [location.search]);
-
-  // Show notifications for newly completed tasks
-  useEffect(() => {
-    if (!completedTasksFetcher.data?.tasks || !isMountedRef.current) return;
-
-    const tasks = completedTasksFetcher.data.tasks;
-
-    for (const task of tasks) {
-      // Skip if we've already notified about this task
+    for (const task of recentlyCompletedTasks) {
       if (notifiedTaskIds.current.has(task.id)) continue;
 
-      // Mark as notified
       notifiedTaskIds.current.add(task.id);
 
-      // Build notification message based on task type
       let message = "";
       const resourceTitle = task.resourceTitle || "";
 
@@ -145,7 +56,6 @@ export function MainNavigation() {
           message = t.tasks?.translationCompleted?.replace("{title}", resourceTitle) || `Translation completed for "${resourceTitle}"`;
         } else {
           const rawFieldType = task.fieldType || "field";
-          // Resolve raw template keys (contain dots/colons) to human-readable labels
           const fieldName = (rawFieldType.includes('.') || rawFieldType.includes(':'))
             ? extractReadableName(rawFieldType)
             : rawFieldType;
@@ -170,79 +80,13 @@ export function MainNavigation() {
 
     // Cleanup old task IDs after 5 minutes
     const cleanupTimeout = setTimeout(() => {
-      for (const task of tasks) {
+      for (const task of recentlyCompletedTasks) {
         notifiedTaskIds.current.delete(task.id);
       }
     }, 300000);
 
     return () => clearTimeout(cleanupTimeout);
-  }, [completedTasksFetcher.data, showInfoBox, t]);
-
-  // Monitor fetcher state and implement exponential backoff on errors for running tasks
-  useEffect(() => {
-    // Check if fetcher encountered an error (including 429, 502, etc.)
-    // Also check for warning flag (rate limited but returned 200)
-    const data = tasksFetcher.data as any;
-    const hasError = tasksFetcher.state === "idle" &&
-      (tasksFetcher.data === undefined || data?.error || data?.warning);
-
-    if (hasError) {
-      // Likely an error occurred or rate limited
-      errorCountRef.current += 1;
-
-      // Exponential backoff: double the interval on each consecutive error, max 60 seconds
-      const newInterval = Math.min(pollIntervalRef.current * 2, 60000);
-
-      if (newInterval !== pollIntervalRef.current) {
-        const errorType = data?.warning ? "Rate limited" : "Error";
-        pollIntervalRef.current = newInterval;
-      }
-    } else if (tasksFetcher.state === "idle" && tasksFetcher.data !== undefined && !data?.error && !data?.warning) {
-      // Successful fetch - reset error count and gradually reduce interval
-      if (errorCountRef.current > 0) {
-        errorCountRef.current = 0;
-
-        // Gradually reduce interval back to 10 seconds
-        const newInterval = Math.max(pollIntervalRef.current / 2, 2000);
-        if (newInterval !== pollIntervalRef.current) {
-          pollIntervalRef.current = newInterval;
-        }
-      }
-    }
-  }, [tasksFetcher.state, tasksFetcher.data]);
-
-  // Monitor completed tasks fetcher and implement exponential backoff on errors
-  useEffect(() => {
-    // Check if fetcher encountered an error (including 429, 502, etc.)
-    // Also check for warning flag (rate limited but returned 200)
-    const data = completedTasksFetcher.data as any;
-    const hasError = completedTasksFetcher.state === "idle" &&
-      (completedTasksFetcher.data === undefined || data?.error || data?.warning);
-
-    if (hasError) {
-      // Likely an error occurred or rate limited
-      completedTasksErrorCountRef.current += 1;
-
-      // Exponential backoff: double the interval on each consecutive error, max 60 seconds
-      const newInterval = Math.min(completedTasksPollIntervalRef.current * 2, 60000);
-
-      if (newInterval !== completedTasksPollIntervalRef.current) {
-        const errorType = data?.warning ? "Rate limited" : "Error";
-        completedTasksPollIntervalRef.current = newInterval;
-      }
-    } else if (completedTasksFetcher.state === "idle" && completedTasksFetcher.data !== undefined && !data?.error && !data?.warning) {
-      // Successful fetch - reset error count and gradually reduce interval
-      if (completedTasksErrorCountRef.current > 0) {
-        completedTasksErrorCountRef.current = 0;
-
-        // Gradually reduce interval back to 10 seconds
-        const newInterval = Math.max(completedTasksPollIntervalRef.current / 2, 2000);
-        if (newInterval !== completedTasksPollIntervalRef.current) {
-          completedTasksPollIntervalRef.current = newInterval;
-        }
-      }
-    }
-  }, [completedTasksFetcher.state, completedTasksFetcher.data]);
+  }, [recentlyCompletedTasks, showInfoBox, t]);
 
   // Track component mount status to prevent state updates after unmount
   useEffect(() => {
@@ -398,7 +242,6 @@ export function MainNavigation() {
               activeTab={tabs.find(tab => location.pathname.startsWith(tab.path))?.id}
               productCount={productCount}
               maxProducts={maxProducts}
-              runningTaskCount={runningTaskCount}
               contentTypes={contentTypes}
               showContentTypes={isOnContentPage}
             />

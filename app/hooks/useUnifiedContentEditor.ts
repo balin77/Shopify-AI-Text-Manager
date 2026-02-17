@@ -34,6 +34,7 @@ import type {
 import { debugLog } from "../utils/debug";
 import { markRecentlySaved } from "../utils/translation-timing";
 import { extractReadableName } from "../utils/templates-field-factory";
+import { useTaskCount } from "../contexts/TaskCountContext";
 
 /**
  * Translates server error messages to localized strings
@@ -111,6 +112,7 @@ function translateErrorMessage(errorMessage: string, t: TranslationStrings): str
 
 export function useUnifiedContentEditor(props: UseContentEditorProps): UseContentEditorReturn {
   const { config, items, shopLocales, primaryLocale, fetcher, showInfoBox, t, onTranslateToAllLocalesComplete } = props;
+  const { refresh: refreshTaskCount } = useTaskCount();
   const revalidator = useRevalidator();
   // IMPORTANT: useRevalidator() returns an unstable reference that changes on
   // every React Router state change (including Shopify Admin SDK analytics).
@@ -747,8 +749,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
       const result = await response.json();
       if (result.success) {
-        // Notify MainNavigation to immediately refresh the running task count
-        window.dispatchEvent(new CustomEvent('task-count-changed'));
+        // Immediately refresh the running task count via context
+        refreshTaskCount();
         onSuccess?.(result);
       } else {
         // Always show error feedback — even if the server omitted the error field

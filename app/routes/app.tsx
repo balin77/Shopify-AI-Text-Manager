@@ -10,6 +10,7 @@ import { InfoBoxProvider } from "../contexts/InfoBoxContext";
 import { PlanProvider } from "../contexts/PlanContext";
 import { NavigationHeightProvider } from "../contexts/NavigationHeightContext";
 import { ItemSelectorProvider } from "../contexts/ItemSelectorContext";
+import { TaskCountProvider } from "../contexts/TaskCountContext";
 import { useEffect } from "react";
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
@@ -164,11 +165,13 @@ export default function App() {
       <I18nProvider locale={appLanguage}>
         <PlanProvider plan={subscriptionPlan}>
           <InfoBoxProvider>
+            <TaskCountProvider>
             <NavigationHeightProvider>
               <ItemSelectorProvider>
                 <AppContent />
               </ItemSelectorProvider>
             </NavigationHeightProvider>
+            </TaskCountProvider>
           </InfoBoxProvider>
         </PlanProvider>
       </I18nProvider>
