@@ -13,6 +13,7 @@
 
 import { type ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher, useRevalidator, useNavigation } from "@remix-run/react";
+import { upsertProductMetafields } from "../db.server";
 import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
 import { ContentTypeNavigation } from "../components/ContentTypeNavigation";
@@ -206,21 +207,9 @@ export const loader = createContentLoader({
         });
       }
 
-      // Sync metafields (always update)
+      // Sync metafields (idempotent upsert — safe under concurrent execution)
       const metafields = product.metafields?.edges?.map((e: any) => e.node) || [];
-      if (metafields.length > 0) {
-        await ctx.db.productMetafield.deleteMany({ where: { productId: product.id } });
-        await ctx.db.productMetafield.createMany({
-          data: metafields.map((mf: any) => ({
-            id: mf.id,
-            productId: product.id,
-            namespace: mf.namespace,
-            key: mf.key,
-            value: mf.value,
-            type: mf.type,
-          })),
-        });
-      }
+      await upsertProductMetafields(ctx.db, product.id, metafields);
     }
 
     // Remove deleted products
@@ -415,6 +404,9 @@ export default function ProductsPage() {
   // IMPORTANT: All hooks must be called before any conditional returns
   const syncedProductsRef = useRef<Set<string>>(new Set());
   const isMountedRef = useRef(true); // Track mount status to prevent state updates after unmount
+  // Track that revalidation was triggered by on-demand translation sync
+  // so we can refresh the editor when fresh data arrives
+  const pendingTranslationSyncRefreshRef = useRef(false);
 
   // Initialize unified content editor - MUST be called before any conditional returns
   const editor = useUnifiedContentEditor({
@@ -564,11 +556,22 @@ export default function ProductsPage() {
       if (translationSyncFetcher.data.success && isMountedRef.current) {
         // Revalidate to fetch fresh data with translations
         if (revalidator.state === "idle") {
+          pendingTranslationSyncRefreshRef.current = true;
           revalidator.revalidate();
         }
       }
     }
   }, [isLoadingTranslations, translationSyncFetcher.state, translationSyncFetcher.data, revalidator.state]);
+
+  // After revalidation from translation sync delivers fresh data, tell the editor
+  // to re-resolve field values. Without this, the data loading effect skips because
+  // selectedItemId/currentLanguage haven't changed, leaving editableValues blank.
+  useEffect(() => {
+    if (pendingTranslationSyncRefreshRef.current) {
+      pendingTranslationSyncRefreshRef.current = false;
+      editor.helpers.triggerDataRefresh();
+    }
+  }, [products]); // eslint-disable-line react-hooks/exhaustive-deps -- intentionally fires when products changes after sync
 
   // Reset ContentNavigation height to 0 (since we don't have ContentTypeNavigation on Products page)
   useEffect(() => {
