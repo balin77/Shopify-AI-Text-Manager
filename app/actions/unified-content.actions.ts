@@ -1463,12 +1463,7 @@ Image URL: ${image.url}`;
 
       // Also load from Shopify for any missing (in parallel, max 10 concurrent)
       const missingIds = resourceIds.filter(id => !translations[id]);
-      logger.info(`[SubResource] DB found ${dbTranslations.length} translations, ${missingIds.length}/${resourceIds.length} IDs missing → fetching from Shopify`, { context: "SubResource" });
-
       if (missingIds.length > 0) {
-        // Log first few IDs being fetched
-        logger.info(`[SubResource] Fetching from Shopify for locale="${locale}", IDs: ${missingIds.slice(0, 5).join(", ")}${missingIds.length > 5 ? ` ... +${missingIds.length - 5} more` : ""}`, { context: "SubResource" });
-
         const batchSize = 10;
         for (let i = 0; i < missingIds.length; i += batchSize) {
           const batch = missingIds.slice(i, i + batchSize);
@@ -1476,24 +1471,16 @@ Image URL: ${image.url}`;
             batch.map(rid => shopifyContentService.loadTranslations(rid, locale))
           );
           results.forEach((result, idx) => {
-            const rid = batch[idx];
             if (result.status === "fulfilled" && result.value) {
-              if (result.value.length > 0) {
-                logger.info(`[SubResource] Shopify returned ${result.value.length} translations for ${rid}: ${JSON.stringify(result.value)}`, { context: "SubResource" });
-              }
+              const rid = batch[idx];
               if (!translations[rid]) translations[rid] = {};
               for (const t of result.value) {
                 translations[rid][t.key] = t.value;
               }
-            } else if (result.status === "rejected") {
-              logger.error(`[SubResource] Shopify fetch FAILED for ${rid}: ${result.reason}`, { context: "SubResource" });
             }
           });
         }
       }
-
-      const translatedCount = Object.keys(translations).filter(k => Object.keys(translations[k]).length > 0).length;
-      logger.info(`[SubResource] Final result: ${translatedCount}/${resourceIds.length} resources have translations`, { context: "SubResource" });
 
       return json({
         actionType: "loadSubResourceTranslations",

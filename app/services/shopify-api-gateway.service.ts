@@ -129,8 +129,8 @@ export class ShopifyApiGateway {
           logger.warn(`[ShopifyGateway] GraphQL error:`, error.message);
         }
 
-        // Success - resolve the promise with the original response
-        request.resolve({ json: async () => data });
+        // Success - resolve the promise with a Response-like object
+        request.resolve({ ok: true, status: 200, json: async () => data });
 
       } catch (error: any) {
         // Check if it's a rate limit error from HTTP status
