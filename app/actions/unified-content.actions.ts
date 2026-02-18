@@ -1464,6 +1464,7 @@ Image URL: ${image.url}`;
       // Also load from Shopify for any missing (in parallel, max 10 concurrent)
       const missingIds = resourceIds.filter(id => !translations[id]);
       if (missingIds.length > 0) {
+        const dbWrites: Array<Promise<any>> = [];
         const batchSize = 10;
         for (let i = 0; i < missingIds.length; i += batchSize) {
           const batch = missingIds.slice(i, i + batchSize);
@@ -1474,11 +1475,26 @@ Image URL: ${image.url}`;
             if (result.status === "fulfilled" && result.value) {
               const rid = batch[idx];
               if (!translations[rid]) translations[rid] = {};
+              // Derive resourceType from GID (e.g. gid://shopify/ProductOption/123 → ProductOption)
+              const gidMatch = rid.match(/gid:\/\/shopify\/(\w+)\//);
+              const resourceType = gidMatch ? gidMatch[1] : "Unknown";
               for (const t of result.value) {
                 translations[rid][t.key] = t.value;
+                // Persist to DB so next navigation finds it via the loader pipeline
+                dbWrites.push(
+                  db.contentTranslation.upsert({
+                    where: { resourceId_key_locale: { resourceId: rid, key: t.key, locale } },
+                    create: { resourceId: rid, resourceType, key: t.key, value: t.value, locale },
+                    update: { value: t.value },
+                  })
+                );
               }
             }
           });
+        }
+        // Fire DB writes in parallel (non-blocking for the response)
+        if (dbWrites.length > 0) {
+          await Promise.allSettled(dbWrites);
         }
       }
 
