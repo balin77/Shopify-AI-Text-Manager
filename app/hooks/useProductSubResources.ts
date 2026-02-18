@@ -2,13 +2,13 @@
  * useProductSubResources - State management for product option & metafield translations
  *
  * Manages:
- * - Loading translations for options, option values, and metafields
+ * - Reading pre-loaded translations from item data (loaded via DB pipeline in loader)
  * - Tracking local edits
  * - Saving changes to Shopify + DB
  * - AI translation per sub-resource
  */
 
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import type { FetcherWithComponents } from "@remix-run/react";
 import type { OptionTranslation } from "../components/unified/OptionsField";
 import type { TranslatableContentItem } from "../types/content-editor.types";
@@ -48,6 +48,51 @@ interface UseProductSubResourcesProps {
   fetcher: FetcherWithComponents<any>;
 }
 
+/**
+ * Helper: Build option + metafield translation state from pre-loaded sub-resource translations.
+ * Reads from `item.subResourceTranslations` which is loaded in the products loader
+ * via the same ContentTranslation DB pipeline as main product translations.
+ */
+function buildTranslationsFromItem(
+  item: TranslatableContentItem | null,
+  locale: string,
+): {
+  optionTranslations: Record<string, OptionTranslation>;
+  metafieldTranslations: Record<string, string>;
+} {
+  const optionTranslations: Record<string, OptionTranslation> = {};
+  const metafieldTranslations: Record<string, string> = {};
+
+  if (!item) return { optionTranslations, metafieldTranslations };
+
+  const subTrans = item.subResourceTranslations || {};
+
+  for (const opt of item.options || []) {
+    // Find translated option name for this locale
+    const optRecords = subTrans[opt.id] || [];
+    const optNameRecord = optRecords.find(t => t.key === "name" && t.locale === locale);
+    const optName = optNameRecord?.value || "";
+
+    // Find translated values for this locale
+    const valueTranslations: string[] = opt.values.map(val => {
+      if (!val.id) return "";
+      const valRecords = subTrans[val.id] || [];
+      const valNameRecord = valRecords.find(t => t.key === "name" && t.locale === locale);
+      return valNameRecord?.value || "";
+    });
+
+    optionTranslations[opt.id] = { name: optName, values: valueTranslations };
+  }
+
+  for (const mf of item.metafields || []) {
+    const mfRecords = subTrans[mf.id] || [];
+    const mfValueRecord = mfRecords.find(t => t.key === "value" && t.locale === locale);
+    metafieldTranslations[mf.id] = mfValueRecord?.value || "";
+  }
+
+  return { optionTranslations, metafieldTranslations };
+}
+
 export function useProductSubResources({
   selectedItem,
   currentLanguage,
@@ -68,32 +113,9 @@ export function useProductSubResources({
   const isPrimaryLocale = currentLanguage === primaryLocale;
   const itemId = selectedItem?.id;
 
-  // Stable sub-resource IDs (only recompute when item ID changes)
-  const subResourceIds = useMemo((): string[] => {
-    if (!selectedItem) return [];
-    const ids: string[] = [];
-
-    // Option GIDs (skip values for linked/metaobject options)
-    for (const opt of selectedItem.options || []) {
-      ids.push(opt.id);
-      if (!opt.isLinked) {
-        for (const val of opt.values) {
-          if (val.id) ids.push(val.id);
-        }
-      }
-    }
-
-    // Metafield GIDs
-    for (const mf of selectedItem.metafields || []) {
-      ids.push(mf.id);
-    }
-
-    return ids;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [itemId]);
-
   // ============================================================================
-  // RESET + LOAD — single effect handles both to avoid ordering issues
+  // LOAD — Read pre-loaded translations from item data (DB pipeline)
+  // No fetcher needed — translations come via the loader, same as main translations
   // ============================================================================
   useEffect(() => {
     const loadKey = `${itemId}::${currentLanguage}`;
@@ -101,80 +123,38 @@ export function useProductSubResources({
     // If loadKey matches what we already loaded, nothing to do
     if (loadedForRef.current === loadKey) return;
 
-    // Reset state first (always, whether we load or not)
-    setOptionTranslations({});
-    setMetafieldTranslations({});
+    // Reset state
     setHasChanges(false);
     setIsTranslating(false);
     setTranslatingOptionId(undefined);
     setTranslatingMetafieldId(undefined);
     setIsLoading(false);
 
-    // Don't load if no item, primary locale, or no sub-resources
-    if (!itemId || isPrimaryLocale || subResourceIds.length === 0) {
-      loadedForRef.current = loadKey;
+    loadedForRef.current = loadKey;
+
+    // Don't load translations for primary locale
+    if (!itemId || isPrimaryLocale) {
+      setOptionTranslations({});
+      setMetafieldTranslations({});
       return;
     }
 
-    // Mark as loading and submit request
-    loadedForRef.current = loadKey;
-    setIsLoading(true);
+    // Read translations from pre-loaded item data (loaded in products loader from DB)
+    const { optionTranslations: opts, metafieldTranslations: mfs } =
+      buildTranslationsFromItem(selectedItem, currentLanguage);
 
-    fetcher.submit(
-      {
-        action: "loadSubResourceTranslations",
-        locale: currentLanguage,
-        resourceIds: JSON.stringify(subResourceIds),
-        itemId,
-      },
-      { method: "POST" }
-    );
-  }, [itemId, currentLanguage, isPrimaryLocale, subResourceIds, fetcher]);
+    setOptionTranslations(opts);
+    setMetafieldTranslations(mfs);
+  }, [itemId, currentLanguage, isPrimaryLocale, selectedItem]);
 
   // ============================================================================
-  // Handle fetcher responses
+  // Handle fetcher responses (translate + save operations)
   // ============================================================================
   useEffect(() => {
     if (fetcher.state !== "idle" || !fetcher.data) return;
 
     const data = fetcher.data as any;
-    if (!data.success) {
-      // Clear loading on error
-      if (data.actionType === "loadSubResourceTranslations") setIsLoading(false);
-      return;
-    }
-
-    if (data.actionType === "loadSubResourceTranslations") {
-      setIsLoading(false);
-      const translations = data.translations as Record<string, Record<string, string>>;
-
-      // Map translations to option + metafield structures
-      const newOptTranslations: Record<string, OptionTranslation> = {};
-      const newMfTranslations: Record<string, string> = {};
-
-      if (selectedItem) {
-        for (const opt of selectedItem.options || []) {
-          const optTrans = translations[opt.id];
-          const optName = optTrans?.name || "";
-
-          const valueTranslations: string[] = opt.values.map(val => {
-            const valTrans = translations[val.id];
-            return valTrans?.name || "";
-          });
-
-          newOptTranslations[opt.id] = { name: optName, values: valueTranslations };
-        }
-
-        for (const mf of selectedItem.metafields || []) {
-          const mfTrans = translations[mf.id];
-          newMfTranslations[mf.id] = mfTrans?.value || "";
-        }
-      }
-
-      setOptionTranslations(newOptTranslations);
-      setMetafieldTranslations(newMfTranslations);
-      setHasChanges(false);
-    }
+    if (!data.success) return;
 
     if (data.actionType === "translateSubResources") {
       setIsTranslating(false);
@@ -416,7 +396,7 @@ export function useProductSubResources({
   }, [hasChanges, isPrimaryLocale, selectedItem, optionTranslations, metafieldTranslations, currentLanguage, fetcher]);
 
   const resetChanges = useCallback(() => {
-    // Reload translations
+    // Force re-read from pre-loaded data on next render
     loadedForRef.current = "";
     setHasChanges(false);
   }, []);

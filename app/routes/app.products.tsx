@@ -247,6 +247,34 @@ export const loader = createContentLoader({
       orderBy: { title: "asc" },
     });
 
+    // Load sub-resource translations (options, option values, metafields) from DB
+    // Uses the same ContentTranslation pipeline as main product translations
+    const allSubResourceIds: string[] = [];
+    for (const p of dbProducts) {
+      for (const opt of (p as any).options || []) {
+        allSubResourceIds.push(opt.id);
+        try {
+          const vals = JSON.parse(opt.values || "[]");
+          for (const v of vals) { if (v.id) allSubResourceIds.push(v.id); }
+        } catch { /* ignore parse errors */ }
+      }
+      for (const mf of (p as any).metafields || []) {
+        allSubResourceIds.push(mf.id);
+      }
+    }
+
+    let subTransByResource: Record<string, any[]> = {};
+    if (allSubResourceIds.length > 0) {
+      const subTrans = await ctx.db.contentTranslation.findMany({
+        where: { resourceId: { in: allSubResourceIds } },
+      });
+      // Group by resourceId
+      subTransByResource = subTrans.reduce((acc: Record<string, any[]>, t: any) => {
+        if (!acc[t.resourceId]) acc[t.resourceId] = [];
+        acc[t.resourceId].push(t);
+        return acc;
+      }, {});
+    }
 
     // Transform to frontend format
     const products = dbProducts.map((p: any) => ({
@@ -290,6 +318,35 @@ export const loader = createContentLoader({
       ).map((mf: any) => ({
         id: mf.id, namespace: mf.namespace, key: mf.key, value: mf.value, type: mf.type,
       })) || [],
+      // Sub-resource translations loaded via same DB pipeline as main translations
+      subResourceTranslations: (() => {
+        const result: Record<string, Array<{ key: string; value: string; locale: string }>> = {};
+        for (const opt of p.options || []) {
+          if (subTransByResource[opt.id]) {
+            result[opt.id] = subTransByResource[opt.id].map((t: any) => ({
+              key: t.key, value: t.value, locale: t.locale,
+            }));
+          }
+          try {
+            const vals = JSON.parse(opt.values || "[]");
+            for (const v of vals) {
+              if (v.id && subTransByResource[v.id]) {
+                result[v.id] = subTransByResource[v.id].map((t: any) => ({
+                  key: t.key, value: t.value, locale: t.locale,
+                }));
+              }
+            }
+          } catch { /* ignore */ }
+        }
+        for (const mf of p.metafields || []) {
+          if (subTransByResource[mf.id]) {
+            result[mf.id] = subTransByResource[mf.id].map((t: any) => ({
+              key: t.key, value: t.value, locale: t.locale,
+            }));
+          }
+        }
+        return result;
+      })(),
     }));
 
     return {

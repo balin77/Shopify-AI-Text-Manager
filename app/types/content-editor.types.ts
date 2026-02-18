@@ -76,6 +76,8 @@ export interface TranslatableContentItem {
     value: string;
     type: string;
   }>;
+  /** Pre-loaded sub-resource translations from DB (options, option values, metafields) */
+  subResourceTranslations?: Record<string, Array<{ key: string; value: string; locale: string }>>;
 }
 
 // ============================================================================
