@@ -134,14 +134,28 @@ export function useProductSubResources({
 
     // Don't load translations for primary locale
     if (!itemId || isPrimaryLocale) {
+      console.log(`[SUB-RESOURCE-HOOK] Skipping load: itemId=${itemId}, isPrimary=${isPrimaryLocale}`);
       setOptionTranslations({});
       setMetafieldTranslations({});
       return;
     }
 
     // Read translations from pre-loaded item data (loaded in products loader from DB)
+    const subTrans = selectedItem?.subResourceTranslations;
+    console.log(`[SUB-RESOURCE-HOOK] Loading for item=${itemId}, locale=${currentLanguage}`);
+    console.log(`[SUB-RESOURCE-HOOK] selectedItem has options=${selectedItem?.options?.length || 0}, metafields=${selectedItem?.metafields?.length || 0}`);
+    console.log(`[SUB-RESOURCE-HOOK] subResourceTranslations keys: [${Object.keys(subTrans || {}).join(", ")}]`);
+    if (subTrans) {
+      for (const [rid, records] of Object.entries(subTrans)) {
+        console.log(`[SUB-RESOURCE-HOOK]   ${rid}: ${records.length} records → ${JSON.stringify(records.slice(0, 3))}`);
+      }
+    }
+
     const { optionTranslations: opts, metafieldTranslations: mfs } =
       buildTranslationsFromItem(selectedItem, currentLanguage);
+
+    console.log(`[SUB-RESOURCE-HOOK] Built optionTranslations:`, JSON.stringify(opts));
+    console.log(`[SUB-RESOURCE-HOOK] Built metafieldTranslations:`, JSON.stringify(mfs));
 
     setOptionTranslations(opts);
     setMetafieldTranslations(mfs);
