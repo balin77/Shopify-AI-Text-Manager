@@ -729,7 +729,6 @@ export class ProductSyncService {
 
       await tx.productImage.deleteMany({ where: { productId: productData.id } });
       await tx.productOption.deleteMany({ where: { productId: productData.id } });
-      await tx.productMetafield.deleteMany({ where: { productId: productData.id } });
 
       // Insert ALL images to database (with mediaId for translation support)
       if (mediaImages.length > 0) {
@@ -815,19 +814,11 @@ export class ProductSyncService {
         logger.debug(`[ProductSync] Saved ${productData.options.length} options`);
       }
 
-      // Insert metafields
+      // Upsert metafields (idempotent — safe under concurrent execution)
       const metafields: ShopifyMetafield[] = productData.metafields?.edges?.map((edge) => edge.node) || [];
+      const { upsertProductMetafields } = await import("../db.server");
+      await upsertProductMetafields(tx, productData.id, metafields);
       if (metafields.length > 0) {
-        await tx.productMetafield.createMany({
-          data: metafields.map((mf) => ({
-            id: mf.id,
-            productId: productData.id,
-            namespace: mf.namespace,
-            key: mf.key,
-            value: mf.value,
-            type: mf.type,
-          })),
-        });
         logger.debug(`[ProductSync] Saved ${metafields.length} metafields`);
       }
     });

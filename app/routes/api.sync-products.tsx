@@ -1,7 +1,7 @@
 import { json } from "@remix-run/node";
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
-import { db } from "../db.server";
+import { db, upsertProductMetafields } from "../db.server";
 import { getPlanLimits } from "../utils/planUtils";
 import { logger } from "~/utils/logger.server";
 
@@ -264,21 +264,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             });
           }
 
-          // Save metafields
+          // Upsert metafields (idempotent — safe under concurrent execution)
           const metafields = product.metafields?.edges?.map((edge: any) => edge.node) || [];
-          if (metafields.length > 0) {
-            await tx.productMetafield.deleteMany({ where: { productId: product.id } });
-            await tx.productMetafield.createMany({
-              data: metafields.map((mf: any) => ({
-                id: mf.id,
-                productId: product.id,
-                namespace: mf.namespace,
-                key: mf.key,
-                value: mf.value,
-                type: mf.type,
-              })),
-            });
-          }
+          await upsertProductMetafields(tx, product.id, metafields);
         });
 
         synced++;
