@@ -458,7 +458,20 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // Track previous dataRefreshTrigger to detect manual refreshes
   const prevDataRefreshTriggerRef = useRef<number>(0);
 
+  // Track previous translation signal to detect lazy-loaded translations
+  const prevTranslationSignalRef = useRef<number>(0);
+
   const selectedItemRef = useLatestRef(selectedItem);
+
+  // Stable signal that changes when translations arrive for the selected item.
+  // When the loader delivers fresh data after lazy-load / revalidation, the
+  // translation count jumps from 0 → N.  The data-loading effect depends on
+  // this so it re-resolves field values automatically.
+  const selectedItemTranslationSignal = useMemo(() => {
+    if (!selectedItemId) return 0;
+    const item = items.find(i => i.id === selectedItemId);
+    return item?.translations?.length ?? 0;
+  }, [items, selectedItemId]);
 
   useEffect(() => {
     const item = selectedItemRef.current;
@@ -471,21 +484,28 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // 1. The item ID actually changed (user selected a different item)
     // 2. The language changed (user switched languages)
     // 3. Data refresh was triggered (e.g., by ReloadButton after revalidation)
+    // 4. Translations arrived for the selected item (lazy-load / revalidation)
     // NOTE: Use separate ref from image loading to avoid race condition
     const itemIdChanged = prevItemIdForDataLoadRef.current !== selectedItemId;
     const languageChanged = prevCurrentLanguageRef.current !== currentLanguage;
     const refreshTriggered = prevDataRefreshTriggerRef.current !== dataRefreshTrigger;
+    const translationsArrived = prevTranslationSignalRef.current !== selectedItemTranslationSignal;
 
-    if (!itemIdChanged && !languageChanged && !refreshTriggered) {
+    if (!itemIdChanged && !languageChanged && !refreshTriggered && !translationsArrived) {
       // Don't log on skip to reduce console spam
       return;
     }
 
 
+    if (translationsArrived && !refreshTriggered && !languageChanged && !itemIdChanged) {
+      debugLog.dataLoad(` Translations arrived for item (${prevTranslationSignalRef.current} → ${selectedItemTranslationSignal}) — re-resolving fields`);
+    }
+
     // Update refs
     prevItemIdForDataLoadRef.current = selectedItemId;
     prevCurrentLanguageRef.current = currentLanguage;
     prevDataRefreshTriggerRef.current = dataRefreshTrigger;
+    prevTranslationSignalRef.current = selectedItemTranslationSignal;
 
     if (refreshTriggered) {
       debugLog.dataLoad(' Data refresh triggered by ReloadButton');
@@ -548,8 +568,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       originalTemplateValuesRef.current = { ...newValues };
       setTemplateValuesVersion(v => v + 1);
     }
-    // IMPORTANT: Only depend on selectedItemId, currentLanguage and dataRefreshTrigger to prevent unnecessary re-runs
-  }, [selectedItemId, currentLanguage, primaryLocale, config, dataRefreshTrigger]);
+    // IMPORTANT: Deps are kept minimal to prevent unnecessary re-runs.
+    // selectedItemTranslationSignal is stable (only changes when translation count changes)
+    // so it won't cause extra re-runs during normal editing.
+  }, [selectedItemId, currentLanguage, primaryLocale, config, dataRefreshTrigger, selectedItemTranslationSignal]);
 
   // Mark loading as complete after editableValues have been updated
   // This is in a separate useEffect to ensure the state update has completed
