@@ -8,7 +8,7 @@
  * - AI translation per sub-resource
  */
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import type { FetcherWithComponents } from "@remix-run/react";
 import type { OptionTranslation } from "../components/unified/OptionsField";
 import type { TranslatableContentItem } from "../types/content-editor.types";
@@ -64,12 +64,12 @@ export function useProductSubResources({
 
   // Track which item+locale combo we've loaded translations for
   const loadedForRef = useRef<string>("");
-  const pendingActionRef = useRef<string>("");
 
   const isPrimaryLocale = currentLanguage === primaryLocale;
+  const itemId = selectedItem?.id;
 
-  // Collect all sub-resource IDs from the selected item
-  const getSubResourceIds = useCallback((): string[] => {
+  // Stable sub-resource IDs (only recompute when item ID changes)
+  const subResourceIds = useMemo((): string[] => {
     if (!selectedItem) return [];
     const ids: string[] = [];
 
@@ -89,39 +89,60 @@ export function useProductSubResources({
     }
 
     return ids;
-  }, [selectedItem]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [itemId]);
 
-  // Load translations when item or locale changes
+  // ============================================================================
+  // RESET + LOAD — single effect handles both to avoid ordering issues
+  // ============================================================================
   useEffect(() => {
-    const itemId = selectedItem?.id;
     const loadKey = `${itemId}::${currentLanguage}`;
 
-    if (!itemId || isPrimaryLocale || loadedForRef.current === loadKey) return;
+    // If loadKey matches what we already loaded, nothing to do
+    if (loadedForRef.current === loadKey) return;
 
-    const resourceIds = getSubResourceIds();
-    if (resourceIds.length === 0) return;
+    // Reset state first (always, whether we load or not)
+    setOptionTranslations({});
+    setMetafieldTranslations({});
+    setHasChanges(false);
+    setIsTranslating(false);
+    setTranslatingOptionId(undefined);
+    setTranslatingMetafieldId(undefined);
+    setIsLoading(false);
 
+    // Don't load if no item, primary locale, or no sub-resources
+    if (!itemId || isPrimaryLocale || subResourceIds.length === 0) {
+      loadedForRef.current = loadKey;
+      return;
+    }
+
+    // Mark as loading and submit request
     loadedForRef.current = loadKey;
     setIsLoading(true);
-    pendingActionRef.current = "loadSubResourceTranslations";
 
     fetcher.submit(
       {
         action: "loadSubResourceTranslations",
         locale: currentLanguage,
-        resourceIds: JSON.stringify(resourceIds),
+        resourceIds: JSON.stringify(subResourceIds),
         itemId,
       },
       { method: "POST" }
     );
-  }, [selectedItem?.id, currentLanguage, isPrimaryLocale, getSubResourceIds, fetcher]);
+  }, [itemId, currentLanguage, isPrimaryLocale, subResourceIds, fetcher]);
 
+  // ============================================================================
   // Handle fetcher responses
+  // ============================================================================
   useEffect(() => {
     if (fetcher.state !== "idle" || !fetcher.data) return;
 
     const data = fetcher.data as any;
-    if (!data.success) return;
+    if (!data.success) {
+      // Clear loading on error
+      if (data.actionType === "loadSubResourceTranslations") setIsLoading(false);
+      return;
+    }
 
     if (data.actionType === "loadSubResourceTranslations") {
       setIsLoading(false);
@@ -205,18 +226,10 @@ export function useProductSubResources({
     }
   }, [fetcher.state, fetcher.data, selectedItem]);
 
-  // Reset when item changes
-  useEffect(() => {
-    setOptionTranslations({});
-    setMetafieldTranslations({});
-    setHasChanges(false);
-    setIsTranslating(false);
-    setTranslatingOptionId(undefined);
-    setTranslatingMetafieldId(undefined);
-    loadedForRef.current = "";
-  }, [selectedItem?.id]);
-
+  // ============================================================================
   // Handlers
+  // ============================================================================
+
   const handleOptionNameChange = useCallback((optionId: string, value: string) => {
     setOptionTranslations(prev => ({
       ...prev,
