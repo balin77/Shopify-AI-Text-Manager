@@ -6,13 +6,16 @@
  * - Editable translation fields in foreign locales
  * - AI translation support
  * - Color-coded backgrounds (orange = not translated)
+ * - Distinguishes regular options (name + values translatable)
+ *   from linked/metaobject options (only name translatable here)
  */
 
-import { Card, BlockStack, Text, TextField, Button, Divider } from "@shopify/polaris";
+import { Card, BlockStack, Text, TextField, Button, Divider, Badge, Banner } from "@shopify/polaris";
 
 export interface OptionValueData {
   id: string;  // gid://shopify/ProductOptionValue/...
   name: string;
+  linked?: boolean;  // true = metaobject-linked value
 }
 
 export interface OptionData {
@@ -20,6 +23,7 @@ export interface OptionData {
   name: string;
   position: number;
   values: OptionValueData[];
+  isLinked?: boolean;  // true = metaobject-linked option
 }
 
 export interface OptionTranslation {
@@ -65,6 +69,8 @@ interface OptionsFieldProps {
     valueLabel?: string;
     translateButton?: string;
     originalLabel?: string;
+    linkedOptionHint?: string;
+    linkedBadge?: string;
   };
 }
 
@@ -88,7 +94,7 @@ export function OptionsField({
     <Card>
       <BlockStack gap="400">
         <Text as="h3" variant="headingMd" fontWeight="bold">
-          {t.title || "Product Options (multilingual)"}
+          {t.title || "Product Options"}
         </Text>
 
         {isPrimaryLocale ? (
@@ -103,10 +109,13 @@ export function OptionsField({
                 <BlockStack gap="200">
                   <div style={{ padding: "0.75rem", background: "#f6f6f7", borderRadius: "8px" }}>
                     <BlockStack gap="200">
-                      <div>
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                         <Text as="p" variant="bodyMd" fontWeight="semibold">
                           {option.name}
                         </Text>
+                        {option.isLinked && (
+                          <Badge tone="info">{t.linkedBadge || "Metaobject"}</Badge>
+                        )}
                       </div>
                       <div>
                         <Text as="p" variant="bodySm" tone="subdued">
@@ -136,12 +145,17 @@ export function OptionsField({
                     <BlockStack gap="300">
                       {/* Original values as reference */}
                       <div style={{ padding: "0.75rem", background: "#f6f6f7", borderRadius: "8px" }}>
-                        <Text as="p" variant="bodySm" tone="subdued">
-                          {t.originalLabel || "Original"}: <strong>{option.name}</strong> → {option.values.map(v => v.name).join(", ")}
-                        </Text>
+                        <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: option.isLinked ? "4px" : "0" }}>
+                          <Text as="p" variant="bodySm" tone="subdued">
+                            {t.originalLabel || "Original"}: <strong>{option.name}</strong> → {option.values.map(v => v.name).join(", ")}
+                          </Text>
+                          {option.isLinked && (
+                            <Badge tone="info">{t.linkedBadge || "Metaobject"}</Badge>
+                          )}
+                        </div>
                       </div>
 
-                      {/* Option Name Translation */}
+                      {/* Option Name Translation — always available */}
                       <div
                         style={{
                           background: hasTranslation ? "white" : "#fff4e5",
@@ -157,29 +171,37 @@ export function OptionsField({
                         />
                       </div>
 
-                      {/* Option Values Translation */}
-                      <BlockStack gap="200">
-                        <Text as="p" variant="bodyMd" fontWeight="medium">
-                          {t.valuesLabel || "Values"} ({currentLanguage})
-                        </Text>
-                        {option.values.map((optVal, valueIndex) => (
-                          <div
-                            key={optVal.id || valueIndex}
-                            style={{
-                              background: translation.values[valueIndex] ? "white" : "#fff4e5",
-                              borderRadius: "8px",
-                              padding: "1px",
-                            }}
-                          >
-                            <TextField
-                              label={`${t.valueLabel || "Value"} ${valueIndex + 1}: "${optVal.name}"`}
-                              value={translation.values[valueIndex] || ""}
-                              onChange={(newValue) => onOptionValueChange(option.id, valueIndex, newValue)}
-                              autoComplete="off"
-                            />
-                          </div>
-                        ))}
-                      </BlockStack>
+                      {/* Option Values Translation — only for regular (non-linked) options */}
+                      {!option.isLinked ? (
+                        <BlockStack gap="200">
+                          <Text as="p" variant="bodyMd" fontWeight="medium">
+                            {t.valuesLabel || "Values"} ({currentLanguage})
+                          </Text>
+                          {option.values.map((optVal, valueIndex) => (
+                            <div
+                              key={optVal.id || valueIndex}
+                              style={{
+                                background: translation.values[valueIndex] ? "white" : "#fff4e5",
+                                borderRadius: "8px",
+                                padding: "1px",
+                              }}
+                            >
+                              <TextField
+                                label={`${t.valueLabel || "Value"} ${valueIndex + 1}: "${optVal.name}"`}
+                                value={translation.values[valueIndex] || ""}
+                                onChange={(newValue) => onOptionValueChange(option.id, valueIndex, newValue)}
+                                autoComplete="off"
+                              />
+                            </div>
+                          ))}
+                        </BlockStack>
+                      ) : (
+                        <Banner tone="info">
+                          <p>
+                            {t.linkedOptionHint || "The values of this option are metaobjects and are translated separately under Metaobjects."}
+                          </p>
+                        </Banner>
+                      )}
 
                       {/* Translate Button */}
                       <div>

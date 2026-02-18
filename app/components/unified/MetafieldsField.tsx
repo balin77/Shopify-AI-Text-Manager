@@ -80,7 +80,7 @@ export function MetafieldsField({
     <Card>
       <BlockStack gap="400">
         <Text as="h3" variant="headingMd" fontWeight="bold">
-          {t.title || "Metafields (multilingual)"}
+          {t.title || "Metafields"}
         </Text>
 
         {isPrimaryLocale ? (

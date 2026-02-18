@@ -66,7 +66,8 @@ export interface TranslatableContentItem {
     id: string;           // gid://shopify/ProductOption/...
     name: string;
     position: number;
-    values: Array<{ id: string; name: string }>;  // ProductOptionValue GIDs
+    values: Array<{ id: string; name: string; linked?: boolean }>;  // ProductOptionValue GIDs
+    isLinked?: boolean;   // true = metaobject-linked (values translated via Metaobjects, not here)
   }>;
   metafields?: Array<{
     id: string;           // gid://shopify/Metafield/...

@@ -515,7 +515,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                     {/* Card heading for products */}
                     {config.contentType === "products" && (
                       <Text as="h2" variant="headingMd" fontWeight="bold">
-                        Product (multilingual)
+                        {t.products?.productCardTitle || "Product"}
                       </Text>
                     )}
                     {/* Field Search (always visible when available) */}
@@ -697,6 +697,13 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                       onOptionValueChange={subResourceHandlers.handleOptionValueChange}
                       isTranslating={subResourceState.isTranslating}
                       translatingOptionId={subResourceState.translatingOptionId}
+                      t={{
+                        title: t.products?.productOptions,
+                        notEditableInPrimary: t.products?.optionsNotEditableInPrimary,
+                        translateButton: t.products?.translateEntireOption,
+                        linkedOptionHint: t.products?.linkedOptionHint,
+                        linkedBadge: t.products?.linkedBadge,
+                      }}
                     />
                   </div>
                 )}
@@ -714,6 +721,11 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                       onMetafieldChange={subResourceHandlers.handleMetafieldChange}
                       isTranslating={subResourceState.isTranslating}
                       translatingMetafieldId={subResourceState.translatingMetafieldId}
+                      t={{
+                        title: t.products?.productMetafields,
+                        notEditableInPrimary: t.products?.metafieldsNotEditableInPrimary,
+                        translateButton: t.products?.translateMetafield,
+                      }}
                     />
                   </div>
                 )}

@@ -58,6 +58,7 @@ interface ShopifyMediaImage {
 interface ShopifyProductOptionValue {
   id: string;
   name: string;
+  linkedMetafieldValue: string | null;
 }
 
 /** Product option from Shopify */
@@ -65,6 +66,7 @@ interface ShopifyProductOption {
   id: string;
   name: string;
   position: number;
+  linkedMetafield: { namespace: string; key: string } | null;
   optionValues: ShopifyProductOptionValue[];
 }
 
@@ -332,9 +334,14 @@ export class ProductSyncService {
               id
               name
               position
+              linkedMetafield {
+                namespace
+                key
+              }
               optionValues {
                 id
                 name
+                linkedMetafieldValue
               }
             }
             metafields(first: 100) {
@@ -802,7 +809,7 @@ export class ProductSyncService {
             productId: productData.id,
             name: opt.name,
             position: opt.position,
-            values: JSON.stringify(opt.optionValues.map(v => ({ id: v.id, name: v.name }))),
+            values: JSON.stringify(opt.optionValues.map(v => ({ id: v.id, name: v.name, linked: !!v.linkedMetafieldValue }))),
           })),
         });
         logger.debug(`[ProductSync] Saved ${productData.options.length} options`);

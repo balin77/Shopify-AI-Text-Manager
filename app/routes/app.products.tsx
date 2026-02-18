@@ -90,9 +90,14 @@ export const loader = createContentLoader({
                     id
                     name
                     position
+                    linkedMetafield {
+                      namespace
+                      key
+                    }
                     optionValues {
                       id
                       name
+                      linkedMetafieldValue
                     }
                   }
                   metafields(first: 50) {
@@ -196,7 +201,7 @@ export const loader = createContentLoader({
             productId: product.id,
             name: opt.name,
             position: opt.position,
-            values: JSON.stringify(opt.optionValues?.map((v: any) => ({ id: v.id, name: v.name })) || []),
+            values: JSON.stringify(opt.optionValues?.map((v: any) => ({ id: v.id, name: v.name, linked: !!v.linkedMetafieldValue })) || []),
           })),
         });
       }
@@ -269,15 +274,16 @@ export const loader = createContentLoader({
         description: p.seoDescription || "",
       },
       options: p.options?.map((opt: any) => {
-        let values: Array<{ id: string; name: string }> = [];
+        let values: Array<{ id: string; name: string; linked?: boolean }> = [];
         try {
           const parsed = JSON.parse(opt.values || "[]");
-          // Support both new format [{id, name}] and legacy ["string"] format
+          // Support both new format [{id, name, linked}] and legacy ["string"] format
           values = Array.isArray(parsed)
-            ? parsed.map((v: any) => typeof v === "string" ? { id: "", name: v } : { id: v.id, name: v.name })
+            ? parsed.map((v: any) => typeof v === "string" ? { id: "", name: v } : { id: v.id, name: v.name, linked: !!v.linked })
             : [];
         } catch { values = []; }
-        return { id: opt.id, name: opt.name, position: opt.position, values };
+        const isLinked = values.some(v => v.linked);
+        return { id: opt.id, name: opt.name, position: opt.position, values, isLinked };
       }) || [],
       metafields: p.metafields?.filter((mf: any) =>
         ["single_line_text_field", "multi_line_text_field", "rich_text_field", "list.single_line_text_field"].includes(mf.type)

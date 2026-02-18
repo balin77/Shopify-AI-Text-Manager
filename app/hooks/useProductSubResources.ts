@@ -73,11 +73,13 @@ export function useProductSubResources({
     if (!selectedItem) return [];
     const ids: string[] = [];
 
-    // Option GIDs
+    // Option GIDs (skip values for linked/metaobject options)
     for (const opt of selectedItem.options || []) {
       ids.push(opt.id);
-      for (const val of opt.values) {
-        if (val.id) ids.push(val.id);
+      if (!opt.isLinked) {
+        for (const val of opt.values) {
+          if (val.id) ids.push(val.id);
+        }
       }
     }
 
@@ -252,15 +254,18 @@ export function useProductSubResources({
         value: opt.name,
         label: `Option: ${opt.name}`,
       });
-      for (const val of opt.values) {
-        if (!val.id) continue;
-        sourceData.push({
-          resourceId: val.id,
-          resourceType: "ProductOptionValue",
-          key: "name",
-          value: val.name,
-          label: `Value: ${val.name}`,
-        });
+      // Skip values for linked/metaobject options — they are translated via Metaobjects
+      if (!opt.isLinked) {
+        for (const val of opt.values) {
+          if (!val.id) continue;
+          sourceData.push({
+            resourceId: val.id,
+            resourceType: "ProductOptionValue",
+            key: "name",
+            value: val.name,
+            label: `Value: ${val.name}`,
+          });
+        }
       }
     }
 
@@ -363,11 +368,14 @@ export function useProductSubResources({
         translationsData[opt.id] = { name: trans.name };
         resourceTypes[opt.id] = "ProductOption";
       }
-      for (let i = 0; i < opt.values.length; i++) {
-        const val = opt.values[i];
-        if (val.id && trans?.values[i]) {
-          translationsData[val.id] = { name: trans.values[i] };
-          resourceTypes[val.id] = "ProductOptionValue";
+      // Skip values for linked/metaobject options
+      if (!opt.isLinked) {
+        for (let i = 0; i < opt.values.length; i++) {
+          const val = opt.values[i];
+          if (val.id && trans?.values[i]) {
+            translationsData[val.id] = { name: trans.values[i] };
+            resourceTypes[val.id] = "ProductOptionValue";
+          }
         }
       }
     }
