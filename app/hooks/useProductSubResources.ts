@@ -183,13 +183,11 @@ export function useProductSubResources({
     const { optionTranslations: dbOpts, metafieldTranslations: dbMfs } =
       buildFromTranslationsMap(selectedItem, dbMap);
 
-    console.log(`[SUB-RESOURCE] Phase 1 (DB): item=${itemId}, locale=${currentLanguage}, dbKeys=${Object.keys(dbMap).length}`);
     setOptionTranslations(dbOpts);
     setMetafieldTranslations(dbMfs);
 
     // Phase 2: Shopify fetch — load from Shopify for any missing translations
     setIsLoading(true);
-    console.log(`[SUB-RESOURCE] Phase 2 (Shopify): fetching ${subResourceIds.length} sub-resource IDs`);
     fetcher.submit(
       {
         action: "loadSubResourceTranslations",
@@ -217,8 +215,6 @@ export function useProductSubResources({
     if (data.actionType === "loadSubResourceTranslations") {
       setIsLoading(false);
       const translations = data.translations as Record<string, Record<string, string>>;
-      console.log(`[SUB-RESOURCE] Phase 2 response: ${Object.keys(translations).length} resources with translations`);
-
       if (selectedItem) {
         const { optionTranslations: shopifyOpts, metafieldTranslations: shopifyMfs } =
           buildFromTranslationsMap(selectedItem, translations);

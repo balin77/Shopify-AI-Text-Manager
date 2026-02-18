@@ -274,9 +274,6 @@ export const loader = createContentLoader({
         acc[t.resourceId].push(t);
         return acc;
       }, {});
-      console.log(`[SUB-RESOURCE-LOADER] Collected ${allSubResourceIds.length} sub-resource IDs, found ${subTrans.length} translations in DB, grouped into ${Object.keys(subTransByResource).length} resources`);
-    } else {
-      console.log(`[SUB-RESOURCE-LOADER] No sub-resource IDs collected (${dbProducts.length} products, options/metafields may be empty)`);
     }
 
     // Transform to frontend format
@@ -351,15 +348,6 @@ export const loader = createContentLoader({
         return result;
       })(),
     }));
-
-    // Debug: log first product's sub-resource data
-    if (products.length > 0) {
-      const p0 = products[0];
-      console.log(`[SUB-RESOURCE-LOADER] First product "${p0.title}": ${p0.options?.length || 0} options, ${p0.metafields?.length || 0} metafields, subResourceTranslations keys: [${Object.keys(p0.subResourceTranslations || {}).join(", ")}]`);
-      if (p0.options?.length) {
-        console.log(`[SUB-RESOURCE-LOADER] First option: id=${p0.options[0].id}, name="${p0.options[0].name}", values=${JSON.stringify(p0.options[0].values.map((v: any) => ({ id: v.id, name: v.name })))}`);
-      }
-    }
 
     return {
       items: products,
