@@ -358,6 +358,47 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     return this.parseJSONResponse(responseText);
   }
 
+  /**
+   * Translate an array of string values to a target locale in a single AI request.
+   * Returns translated values in the same order as input.
+   */
+  async translateBatchValues(
+    values: string[],
+    fromLang: string,
+    toLang: string,
+    context: string = "product content"
+  ): Promise<string[]> {
+    if (values.length === 0) return [];
+
+    const localeNames = LOCALE_NAMES;
+    const fromName = localeNames[fromLang] || fromLang;
+    const toName = localeNames[toLang] || toLang;
+
+    // Build numbered list for clear mapping
+    const numberedValues = values.map((v, i) => `${i + 1}. ${sanitizePromptInput(v, { maxLength: 500, allowNewlines: false })}`).join('\n');
+
+    const prompt = `Translate these ${context} values from ${fromName} to ${toName} (${toLang}).
+
+${numberedValues}
+
+Requirements:
+- Keep translations concise and natural
+- Maintain similar character length
+- Return ONLY a JSON array of translated strings in the same order
+
+Respond in JSON format: ["translated1", "translated2", ...]`;
+
+    const responseText = await this.askAI(prompt);
+    const parsed = this.parseJSONResponse(responseText);
+
+    // Handle both array and object responses
+    if (Array.isArray(parsed)) {
+      return parsed.map(String);
+    }
+    // Fallback: return original values if parsing fails
+    return values;
+  }
+
   async translateSEO(
     seoTitle: string,
     metaDescription: string,

@@ -1,28 +1,30 @@
 /**
- * OptionsField - Optional field for managing product options/variants
+ * OptionsField - Component for translating product options
  *
- * Reusable component for content types that have options (primarily Products):
  * - Product options (Size, Color, Material, etc.)
  * - Read-only view in primary locale
  * - Editable translation fields in foreign locales
  * - AI translation support
  * - Color-coded backgrounds (orange = not translated)
- *
- * Can be extended for other content types that need similar structures.
  */
 
 import { Card, BlockStack, Text, TextField, Button, Divider } from "@shopify/polaris";
+
+export interface OptionValueData {
+  id: string;  // gid://shopify/ProductOptionValue/...
+  name: string;
+}
 
 export interface OptionData {
   id: string;
   name: string;
   position: number;
-  values: string[];
+  values: OptionValueData[];
 }
 
 export interface OptionTranslation {
   name: string;
-  values: string[];
+  values: string[];  // Translated value strings, indexed same as option.values
 }
 
 interface OptionsFieldProps {
@@ -86,7 +88,7 @@ export function OptionsField({
     <Card>
       <BlockStack gap="400">
         <Text as="h3" variant="headingMd" fontWeight="bold">
-          {t.title || "Options"}
+          {t.title || "Product Options (multilingual)"}
         </Text>
 
         {isPrimaryLocale ? (
@@ -108,7 +110,7 @@ export function OptionsField({
                       </div>
                       <div>
                         <Text as="p" variant="bodySm" tone="subdued">
-                          {t.valuesLabel || "Values"}: {option.values.join(", ")}
+                          {t.valuesLabel || "Values"}: {option.values.map(v => v.name).join(", ")}
                         </Text>
                       </div>
                     </BlockStack>
@@ -135,7 +137,7 @@ export function OptionsField({
                       {/* Original values as reference */}
                       <div style={{ padding: "0.75rem", background: "#f6f6f7", borderRadius: "8px" }}>
                         <Text as="p" variant="bodySm" tone="subdued">
-                          {t.originalLabel || "Original"}: <strong>{option.name}</strong> → {option.values.join(", ")}
+                          {t.originalLabel || "Original"}: <strong>{option.name}</strong> → {option.values.map(v => v.name).join(", ")}
                         </Text>
                       </div>
 
@@ -160,17 +162,17 @@ export function OptionsField({
                         <Text as="p" variant="bodyMd" fontWeight="medium">
                           {t.valuesLabel || "Values"} ({currentLanguage})
                         </Text>
-                        {option.values.map((value, valueIndex) => (
+                        {option.values.map((optVal, valueIndex) => (
                           <div
-                            key={valueIndex}
+                            key={optVal.id || valueIndex}
                             style={{
-                              background: hasTranslation ? "white" : "#fff4e5",
+                              background: translation.values[valueIndex] ? "white" : "#fff4e5",
                               borderRadius: "8px",
                               padding: "1px",
                             }}
                           >
                             <TextField
-                              label={`${t.valueLabel || "Value"} ${valueIndex + 1}: "${value}"`}
+                              label={`${t.valueLabel || "Value"} ${valueIndex + 1}: "${optVal.name}"`}
                               value={translation.values[valueIndex] || ""}
                               onChange={(newValue) => onOptionValueChange(option.id, valueIndex, newValue)}
                               autoComplete="off"

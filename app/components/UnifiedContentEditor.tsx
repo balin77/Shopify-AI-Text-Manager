@@ -15,7 +15,9 @@ import { UnifiedLanguageBar } from "./unified/UnifiedLanguageBar";
 import { MobileToolbar } from "./unified/MobileToolbar";
 import { ImageGalleryField } from "./unified/ImageGalleryField";
 import { OptionsField } from "./unified/OptionsField";
+import { MetafieldsField } from "./unified/MetafieldsField";
 import { ReloadButton } from "./ReloadButton";
+import type { SubResourceState, SubResourceHandlers } from "../hooks/useProductSubResources";
 import { HelpTooltip } from "./HelpTooltip";
 import { SeoSidebar } from "./SeoSidebar";
 import { useNavigationHeight } from "../contexts/NavigationHeightContext";
@@ -100,6 +102,12 @@ interface UnifiedContentEditorProps {
 
   /** Optional: Sort options for the item list */
   sortOptions?: SortOption[];
+
+  /** Optional: Sub-resource state (options + metafields translations) */
+  subResourceState?: SubResourceState;
+
+  /** Optional: Sub-resource handlers */
+  subResourceHandlers?: SubResourceHandlers;
 }
 
 export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
@@ -124,6 +132,8 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     isFieldsLoading = false,
     revalidator,
     sortOptions,
+    subResourceState,
+    subResourceHandlers,
   } = props;
 
   // Local state for search input - synced with fieldPagination.search
@@ -502,6 +512,12 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
               <div className="field-editor-area" style={{ flex: 1, overflowY: "auto", marginTop: "1rem" }}>
                 <Card padding="600">
                   <BlockStack gap="500">
+                    {/* Card heading for products */}
+                    {config.contentType === "products" && (
+                      <Text as="h2" variant="headingMd" fontWeight="bold">
+                        Product (multilingual)
+                      </Text>
+                    )}
                     {/* Field Search (always visible when available) */}
                     {onFieldSearch && (
                       <div className="field-search-always-clear" style={{ outline: 'none', marginBottom: '0.5rem' }} onKeyDown={(e) => {
@@ -666,6 +682,41 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                     )}
                   </BlockStack>
                 </Card>
+
+                {/* Product Options Card */}
+                {config.contentType === "products" && subResourceState && subResourceHandlers &&
+                  selectedItem?.options && selectedItem.options.length > 0 && (
+                  <div style={{ marginTop: "1rem" }}>
+                    <OptionsField
+                      options={selectedItem.options}
+                      isPrimaryLocale={state.currentLanguage === primaryLocale}
+                      currentLanguage={state.currentLanguage}
+                      translations={subResourceState.optionTranslations}
+                      onTranslate={subResourceHandlers.translateOption}
+                      onOptionNameChange={subResourceHandlers.handleOptionNameChange}
+                      onOptionValueChange={subResourceHandlers.handleOptionValueChange}
+                      isTranslating={subResourceState.isTranslating}
+                      translatingOptionId={subResourceState.translatingOptionId}
+                    />
+                  </div>
+                )}
+
+                {/* Metafields Card */}
+                {config.contentType === "products" && subResourceState && subResourceHandlers &&
+                  selectedItem?.metafields && selectedItem.metafields.length > 0 && (
+                  <div style={{ marginTop: "1rem" }}>
+                    <MetafieldsField
+                      metafields={selectedItem.metafields}
+                      isPrimaryLocale={state.currentLanguage === primaryLocale}
+                      currentLanguage={state.currentLanguage}
+                      translations={subResourceState.metafieldTranslations}
+                      onTranslate={subResourceHandlers.translateMetafield}
+                      onMetafieldChange={subResourceHandlers.handleMetafieldChange}
+                      isTranslating={subResourceState.isTranslating}
+                      translatingMetafieldId={subResourceState.translatingMetafieldId}
+                    />
+                  </div>
+                )}
               </div>
             </>
           ) : (

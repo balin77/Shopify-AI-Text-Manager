@@ -18,6 +18,7 @@ import { MainNavigation } from "../components/MainNavigation";
 import { ContentTypeNavigation } from "../components/ContentTypeNavigation";
 import { UnifiedContentEditor } from "../components/UnifiedContentEditor";
 import { useUnifiedContentEditor } from "../hooks/useUnifiedContentEditor";
+import { useProductSubResources } from "../hooks/useProductSubResources";
 import { handleUnifiedContentActions } from "../actions/unified-content.actions";
 import { PRODUCTS_CONFIG } from "../config/content-fields.config";
 import { useI18n } from "../contexts/I18nContext";
@@ -82,6 +83,26 @@ export const loader = createContentLoader({
                           alt
                           image { url }
                         }
+                      }
+                    }
+                  }
+                  options {
+                    id
+                    name
+                    position
+                    optionValues {
+                      id
+                      name
+                    }
+                  }
+                  metafields(first: 50) {
+                    edges {
+                      node {
+                        id
+                        namespace
+                        key
+                        value
+                        type
                       }
                     }
                   }
@@ -165,6 +186,36 @@ export const loader = createContentLoader({
           });
         }
       }
+
+      // Sync options (always update to keep optionValues GIDs fresh)
+      if (product.options && product.options.length > 0) {
+        await ctx.db.productOption.deleteMany({ where: { productId: product.id } });
+        await ctx.db.productOption.createMany({
+          data: product.options.map((opt: any) => ({
+            id: opt.id,
+            productId: product.id,
+            name: opt.name,
+            position: opt.position,
+            values: JSON.stringify(opt.optionValues?.map((v: any) => ({ id: v.id, name: v.name })) || []),
+          })),
+        });
+      }
+
+      // Sync metafields (always update)
+      const metafields = product.metafields?.edges?.map((e: any) => e.node) || [];
+      if (metafields.length > 0) {
+        await ctx.db.productMetafield.deleteMany({ where: { productId: product.id } });
+        await ctx.db.productMetafield.createMany({
+          data: metafields.map((mf: any) => ({
+            id: mf.id,
+            productId: product.id,
+            namespace: mf.namespace,
+            key: mf.key,
+            value: mf.value,
+            type: mf.type,
+          })),
+        });
+      }
     }
 
     // Remove deleted products
@@ -185,6 +236,8 @@ export const loader = createContentLoader({
         images: planLimits.cacheEnabled.productImages
           ? { include: { altTextTranslations: true }, orderBy: { position: "asc" } }
           : false,
+        options: { orderBy: { position: "asc" } },
+        metafields: true,
       },
       orderBy: { title: "asc" },
     });
@@ -215,6 +268,22 @@ export const loader = createContentLoader({
         title: p.seoTitle || "",
         description: p.seoDescription || "",
       },
+      options: p.options?.map((opt: any) => {
+        let values: Array<{ id: string; name: string }> = [];
+        try {
+          const parsed = JSON.parse(opt.values || "[]");
+          // Support both new format [{id, name}] and legacy ["string"] format
+          values = Array.isArray(parsed)
+            ? parsed.map((v: any) => typeof v === "string" ? { id: "", name: v } : { id: v.id, name: v.name })
+            : [];
+        } catch { values = []; }
+        return { id: opt.id, name: opt.name, position: opt.position, values };
+      }) || [],
+      metafields: p.metafields?.filter((mf: any) =>
+        ["single_line_text_field", "multi_line_text_field", "rich_text_field", "list.single_line_text_field"].includes(mf.type)
+      ).map((mf: any) => ({
+        id: mf.id, namespace: mf.namespace, key: mf.key, value: mf.value, type: mf.type,
+      })) || [],
     }));
 
     return {
@@ -293,6 +362,17 @@ export default function ProductsPage() {
     fetcher,
     showInfoBox,
     t,
+  });
+
+  // Sub-resource fetcher (options + metafields translations)
+  const subResourceFetcher = useFetcher<typeof action>();
+
+  // Initialize sub-resources hook for options + metafields translations
+  const subResources = useProductSubResources({
+    selectedItem: editor.selectedItem,
+    currentLanguage: editor.state.currentLanguage,
+    primaryLocale,
+    fetcher: subResourceFetcher,
   });
 
   // Get selected product AFTER editor is initialized
@@ -537,6 +617,8 @@ export default function ProductsPage() {
             { field: "status", label: "Status" },
             { field: "shopifyUpdatedAt", label: "Last Updated", type: "date" },
           ]}
+          subResourceState={subResources.state}
+          subResourceHandlers={subResources.handlers}
         />
       </div>
     </div>

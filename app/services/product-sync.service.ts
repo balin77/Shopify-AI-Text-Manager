@@ -54,12 +54,18 @@ interface ShopifyMediaImage {
   };
 }
 
+/** Product option value from Shopify */
+interface ShopifyProductOptionValue {
+  id: string;
+  name: string;
+}
+
 /** Product option from Shopify */
 interface ShopifyProductOption {
   id: string;
   name: string;
   position: number;
-  values: string[];
+  optionValues: ShopifyProductOptionValue[];
 }
 
 /** Product metafield from Shopify */
@@ -326,7 +332,10 @@ export class ProductSyncService {
               id
               name
               position
-              values
+              optionValues {
+                id
+                name
+              }
             }
             metafields(first: 100) {
               edges {
@@ -793,7 +802,7 @@ export class ProductSyncService {
             productId: productData.id,
             name: opt.name,
             position: opt.position,
-            values: JSON.stringify(opt.values),
+            values: JSON.stringify(opt.optionValues.map(v => ({ id: v.id, name: v.name }))),
           })),
         });
         logger.debug(`[ProductSync] Saved ${productData.options.length} options`);

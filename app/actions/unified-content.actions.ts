@@ -1416,5 +1416,253 @@ Image URL: ${image.url}`;
     }
   }
 
+  // ============================================================================
+  // LOAD SUB-RESOURCE TRANSLATIONS (Options + Metafields)
+  // ============================================================================
+
+  if (action === "loadSubResourceTranslations") {
+    const locale = getFormString(formData, "locale");
+    if (!locale || !isValidLocale(locale)) {
+      return json({ success: false, error: "Invalid locale format" }, { status: 400 });
+    }
+
+    try {
+      const resourceIdsJson = getFormString(formData, "resourceIds");
+      const resourceIds: string[] = resourceIdsJson ? JSON.parse(resourceIdsJson) : [];
+
+      if (resourceIds.length === 0) {
+        return json({
+          actionType: "loadSubResourceTranslations",
+          success: true,
+          translations: {},
+        });
+      }
+
+      // Validate all GIDs
+      for (const rid of resourceIds) {
+        if (!isValidShopifyGID(rid)) {
+          return json({ success: false, error: `Invalid resource ID: ${rid}` }, { status: 400 });
+        }
+      }
+
+      // Load translations from Shopify for each sub-resource
+      const translations: Record<string, Record<string, string>> = {};
+
+      // Batch: load from local DB first (faster)
+      const dbTranslations = await db.contentTranslation.findMany({
+        where: {
+          resourceId: { in: resourceIds },
+          locale,
+        },
+      });
+
+      for (const t of dbTranslations) {
+        if (!translations[t.resourceId]) translations[t.resourceId] = {};
+        translations[t.resourceId][t.key] = t.value;
+      }
+
+      // Also load from Shopify for any missing (in parallel, max 10 concurrent)
+      const missingIds = resourceIds.filter(id => !translations[id]);
+      if (missingIds.length > 0) {
+        const batchSize = 10;
+        for (let i = 0; i < missingIds.length; i += batchSize) {
+          const batch = missingIds.slice(i, i + batchSize);
+          const results = await Promise.allSettled(
+            batch.map(rid => shopifyContentService.loadTranslations(rid, locale))
+          );
+          results.forEach((result, idx) => {
+            if (result.status === "fulfilled" && result.value) {
+              const rid = batch[idx];
+              if (!translations[rid]) translations[rid] = {};
+              for (const t of result.value) {
+                translations[rid][t.key] = t.value;
+              }
+            }
+          });
+        }
+      }
+
+      return json({
+        actionType: "loadSubResourceTranslations",
+        success: true,
+        translations,
+      });
+    } catch (error: unknown) {
+      const msg = getFullErrorMessage(error);
+      return json({ success: false, error: msg }, { status: 500 });
+    }
+  }
+
+  // ============================================================================
+  // SAVE SUB-RESOURCE TRANSLATIONS (Options + Metafields)
+  // ============================================================================
+
+  if (action === "saveSubResourceTranslations") {
+    const locale = getFormString(formData, "locale");
+    if (!locale || !isValidLocale(locale)) {
+      return json({ success: false, error: "Invalid locale format" }, { status: 400 });
+    }
+
+    try {
+      // translationsData format: { resourceId: { key: value } }
+      const translationsDataJson = getFormString(formData, "translationsData");
+      const translationsData: Record<string, Record<string, string>> = translationsDataJson
+        ? JSON.parse(translationsDataJson) : {};
+
+      const resourceTypesJson = getFormString(formData, "resourceTypes");
+      const resourceTypes: Record<string, string> = resourceTypesJson
+        ? JSON.parse(resourceTypesJson) : {};
+
+      const savedResources: string[] = [];
+      const failedResources: string[] = [];
+
+      for (const [resourceId, fields] of Object.entries(translationsData)) {
+        if (!isValidShopifyGID(resourceId)) continue;
+
+        try {
+          // Build translation inputs (saveTranslations handles digest fetching internally)
+          const translationInputs: Array<{ key: string; value: string; locale: string }> = [];
+          for (const [key, value] of Object.entries(fields)) {
+            if (!value || value.trim() === "") continue;
+            translationInputs.push({ key, value, locale });
+          }
+
+          // Save to Shopify (saveTranslations fetches digests internally)
+          if (translationInputs.length > 0) {
+            await shopifyContentService.saveTranslations(resourceId, translationInputs);
+          }
+
+          // Also save to local DB (even without Shopify digest — digest-gated DB saves pattern)
+          const resourceType = resourceTypes[resourceId] || "Unknown";
+          for (const [key, value] of Object.entries(fields)) {
+            if (!value || value.trim() === "") continue;
+            await db.contentTranslation.upsert({
+              where: { resourceId_key_locale: { resourceId, key, locale } },
+              create: { resourceId, resourceType, key, value, locale },
+              update: { value },
+            });
+          }
+
+          savedResources.push(resourceId);
+        } catch (err) {
+          logger.error(`[UnifiedContent] Failed to save sub-resource translation for ${resourceId}`, {
+            context: "UnifiedContent", error: err instanceof Error ? err.message : String(err),
+          });
+          failedResources.push(resourceId);
+        }
+      }
+
+      return json({
+        actionType: "saveSubResourceTranslations",
+        success: true,
+        savedResources,
+        failedResources,
+      });
+    } catch (error: unknown) {
+      const msg = getFullErrorMessage(error);
+      return json({ success: false, error: msg }, { status: 500 });
+    }
+  }
+
+  // ============================================================================
+  // TRANSLATE SUB-RESOURCES (AI translate options + metafields)
+  // ============================================================================
+
+  if (action === "translateSubResources") {
+    const targetLocale = getFormString(formData, "targetLocale");
+    if (!targetLocale || !isValidLocale(targetLocale)) {
+      return json({ success: false, error: "Invalid target locale" }, { status: 400 });
+    }
+
+    try {
+      const sourceDataJson = getFormString(formData, "sourceData");
+      const sourceData: Array<{ resourceId: string; resourceType: string; key: string; value: string; label: string }> =
+        sourceDataJson ? JSON.parse(sourceDataJson) : [];
+
+      if (sourceData.length === 0) {
+        return json({ actionType: "translateSubResources", success: true, translations: {} });
+      }
+
+      const primaryLocale = getFormString(formData, "primaryLocale") || "en";
+
+      // Build a simple prompt for batch translation
+      const aiService = new AIService(provider, serviceConfig);
+
+      // Group by small batches for AI translation
+      const translations: Record<string, Record<string, string>> = {};
+      const fieldsToTranslate: Record<string, string> = {};
+
+      for (const item of sourceData) {
+        fieldsToTranslate[`${item.resourceId}::${item.key}`] = item.value;
+      }
+
+      // Use batch translation: send all values at once
+      const values = Object.values(fieldsToTranslate);
+      const keys = Object.keys(fieldsToTranslate);
+
+      if (values.length > 0) {
+        const translatedValues = await aiService.translateBatchValues(
+          values,
+          primaryLocale,
+          targetLocale,
+          "product options and metafield values"
+        );
+
+        for (let i = 0; i < keys.length; i++) {
+          const [resourceId, key] = keys[i].split("::");
+          if (!translations[resourceId]) translations[resourceId] = {};
+          translations[resourceId][key] = translatedValues[i] || values[i];
+        }
+      }
+
+      // Save translations to Shopify + DB
+      const savedResources: string[] = [];
+      const failedResources: string[] = [];
+
+      for (const [resourceId, fields] of Object.entries(translations)) {
+        try {
+          // Build translation inputs (saveTranslations handles digest internally)
+          const translationInputs: Array<{ key: string; value: string; locale: string }> = [];
+          for (const [key, value] of Object.entries(fields)) {
+            translationInputs.push({ key, value, locale: targetLocale });
+          }
+
+          if (translationInputs.length > 0) {
+            await shopifyContentService.saveTranslations(resourceId, translationInputs);
+          }
+
+          // Save to DB
+          const sourceItem = sourceData.find(s => s.resourceId === resourceId);
+          const resourceType = sourceItem?.resourceType || "Unknown";
+          for (const [key, value] of Object.entries(fields)) {
+            await db.contentTranslation.upsert({
+              where: { resourceId_key_locale: { resourceId, key, locale: targetLocale } },
+              create: { resourceId, resourceType, key, value, locale: targetLocale },
+              update: { value },
+            });
+          }
+
+          savedResources.push(resourceId);
+        } catch (err) {
+          logger.error(`[UnifiedContent] Failed to translate sub-resource ${resourceId}`, {
+            context: "UnifiedContent", error: err instanceof Error ? err.message : String(err),
+          });
+          failedResources.push(resourceId);
+        }
+      }
+
+      return json({
+        actionType: "translateSubResources",
+        success: true,
+        translations,
+        savedResources,
+        failedResources,
+      });
+    } catch (error: unknown) {
+      const msg = getFullErrorMessage(error);
+      return json({ success: false, error: msg }, { status: 500 });
+    }
+  }
+
   return json({ success: false, error: "Unknown action" }, { status: 400 });
 }

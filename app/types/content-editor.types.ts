@@ -62,6 +62,19 @@ export interface TranslatableContentItem {
   contentCount?: number; // For templates
   featuredImage?: ContentImage; // For products
   productType?: string; // For products
+  options?: Array<{
+    id: string;           // gid://shopify/ProductOption/...
+    name: string;
+    position: number;
+    values: Array<{ id: string; name: string }>;  // ProductOptionValue GIDs
+  }>;
+  metafields?: Array<{
+    id: string;           // gid://shopify/Metafield/...
+    namespace: string;
+    key: string;
+    value: string;
+    type: string;
+  }>;
 }
 
 // ============================================================================
