@@ -1,14 +1,21 @@
 /**
  * useProductSubResources - State management for product option & metafield translations
  *
+ * Data flow (same pattern as main product translations):
+ * 1. DB pre-load: Loader reads ContentTranslation from DB → item.subResourceTranslations
+ *    → Hook reads synchronously for instant display
+ * 2. Shopify fetch: Hook triggers fetcher POST → server loads from Shopify for any missing
+ *    → merges into state (catches translations from Translate & Adapt)
+ *
  * Manages:
- * - Reading pre-loaded translations from item data (loaded via DB pipeline in loader)
+ * - Reading pre-loaded translations from item data (DB pipeline)
+ * - Fetching from Shopify for translations not yet in DB
  * - Tracking local edits
  * - Saving changes to Shopify + DB
  * - AI translation per sub-resource
  */
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import type { FetcherWithComponents } from "@remix-run/react";
 import type { OptionTranslation } from "../components/unified/OptionsField";
 import type { TranslatableContentItem } from "../types/content-editor.types";
@@ -26,7 +33,7 @@ export interface SubResourceState {
   translatingMetafieldId?: string;
   /** Whether there are unsaved changes */
   hasChanges: boolean;
-  /** Whether translations are loading */
+  /** Whether translations are loading from Shopify */
   isLoading: boolean;
 }
 
@@ -49,13 +56,15 @@ interface UseProductSubResourcesProps {
 }
 
 /**
- * Helper: Build option + metafield translation state from pre-loaded sub-resource translations.
- * Reads from `item.subResourceTranslations` which is loaded in the products loader
- * via the same ContentTranslation DB pipeline as main product translations.
+ * Helper: Build option + metafield translation state from a flat translations map.
+ * Used for both DB pre-loaded data and Shopify fetcher responses.
+ *
+ * @param item - The selected product item
+ * @param translations - Map of resourceId → { key: value } (e.g. { "gid://...Option/123": { name: "Farbe" } })
  */
-function buildTranslationsFromItem(
+function buildFromTranslationsMap(
   item: TranslatableContentItem | null,
-  locale: string,
+  translations: Record<string, Record<string, string>>,
 ): {
   optionTranslations: Record<string, OptionTranslation>;
   metafieldTranslations: Record<string, string>;
@@ -65,32 +74,47 @@ function buildTranslationsFromItem(
 
   if (!item) return { optionTranslations, metafieldTranslations };
 
-  const subTrans = item.subResourceTranslations || {};
-
   for (const opt of item.options || []) {
-    // Find translated option name for this locale
-    const optRecords = subTrans[opt.id] || [];
-    const optNameRecord = optRecords.find(t => t.key === "name" && t.locale === locale);
-    const optName = optNameRecord?.value || "";
+    const optTrans = translations[opt.id];
+    const optName = optTrans?.name || "";
 
-    // Find translated values for this locale
     const valueTranslations: string[] = opt.values.map(val => {
       if (!val.id) return "";
-      const valRecords = subTrans[val.id] || [];
-      const valNameRecord = valRecords.find(t => t.key === "name" && t.locale === locale);
-      return valNameRecord?.value || "";
+      const valTrans = translations[val.id];
+      return valTrans?.name || "";
     });
 
     optionTranslations[opt.id] = { name: optName, values: valueTranslations };
   }
 
   for (const mf of item.metafields || []) {
-    const mfRecords = subTrans[mf.id] || [];
-    const mfValueRecord = mfRecords.find(t => t.key === "value" && t.locale === locale);
-    metafieldTranslations[mf.id] = mfValueRecord?.value || "";
+    const mfTrans = translations[mf.id];
+    metafieldTranslations[mf.id] = mfTrans?.value || "";
   }
 
   return { optionTranslations, metafieldTranslations };
+}
+
+/**
+ * Convert DB pre-loaded subResourceTranslations (array format per resource)
+ * into the flat map format { resourceId: { key: value } } for the given locale.
+ */
+function dbPreloadToMap(
+  subResourceTranslations: Record<string, Array<{ key: string; value: string; locale: string }>> | undefined,
+  locale: string,
+): Record<string, Record<string, string>> {
+  const map: Record<string, Record<string, string>> = {};
+  if (!subResourceTranslations) return map;
+
+  for (const [resourceId, records] of Object.entries(subResourceTranslations)) {
+    for (const r of records) {
+      if (r.locale === locale) {
+        if (!map[resourceId]) map[resourceId] = {};
+        map[resourceId][r.key] = r.value;
+      }
+    }
+  }
+  return map;
 }
 
 export function useProductSubResources({
@@ -107,20 +131,36 @@ export function useProductSubResources({
   const [hasChanges, setHasChanges] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
 
-  // Track which item+locale combo we've loaded translations for
+  // Track which item+locale combo we've loaded for
   const loadedForRef = useRef<string>("");
 
   const isPrimaryLocale = currentLanguage === primaryLocale;
   const itemId = selectedItem?.id;
 
+  // Stable sub-resource IDs (only recompute when item changes)
+  const subResourceIds = useMemo((): string[] => {
+    if (!selectedItem) return [];
+    const ids: string[] = [];
+    for (const opt of selectedItem.options || []) {
+      ids.push(opt.id);
+      if (!opt.isLinked) {
+        for (const val of opt.values) {
+          if (val.id) ids.push(val.id);
+        }
+      }
+    }
+    for (const mf of selectedItem.metafields || []) {
+      ids.push(mf.id);
+    }
+    return ids;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [itemId]);
+
   // ============================================================================
-  // LOAD — Read pre-loaded translations from item data (DB pipeline)
-  // No fetcher needed — translations come via the loader, same as main translations
+  // LOAD — Two-phase: DB pre-load (instant) + Shopify fetch (supplement)
   // ============================================================================
   useEffect(() => {
     const loadKey = `${itemId}::${currentLanguage}`;
-
-    // If loadKey matches what we already loaded, nothing to do
     if (loadedForRef.current === loadKey) return;
 
     // Reset state
@@ -128,47 +168,81 @@ export function useProductSubResources({
     setIsTranslating(false);
     setTranslatingOptionId(undefined);
     setTranslatingMetafieldId(undefined);
-    setIsLoading(false);
 
     loadedForRef.current = loadKey;
 
-    // Don't load translations for primary locale
-    if (!itemId || isPrimaryLocale) {
-      console.log(`[SUB-RESOURCE-HOOK] Skipping load: itemId=${itemId}, isPrimary=${isPrimaryLocale}`);
+    if (!itemId || isPrimaryLocale || subResourceIds.length === 0) {
       setOptionTranslations({});
       setMetafieldTranslations({});
+      setIsLoading(false);
       return;
     }
 
-    // Read translations from pre-loaded item data (loaded in products loader from DB)
-    const subTrans = selectedItem?.subResourceTranslations;
-    console.log(`[SUB-RESOURCE-HOOK] Loading for item=${itemId}, locale=${currentLanguage}`);
-    console.log(`[SUB-RESOURCE-HOOK] selectedItem has options=${selectedItem?.options?.length || 0}, metafields=${selectedItem?.metafields?.length || 0}`);
-    console.log(`[SUB-RESOURCE-HOOK] subResourceTranslations keys: [${Object.keys(subTrans || {}).join(", ")}]`);
-    if (subTrans) {
-      for (const [rid, records] of Object.entries(subTrans)) {
-        console.log(`[SUB-RESOURCE-HOOK]   ${rid}: ${records.length} records → ${JSON.stringify(records.slice(0, 3))}`);
-      }
-    }
+    // Phase 1: DB pre-load — read from item.subResourceTranslations (instant, synchronous)
+    const dbMap = dbPreloadToMap(selectedItem?.subResourceTranslations, currentLanguage);
+    const { optionTranslations: dbOpts, metafieldTranslations: dbMfs } =
+      buildFromTranslationsMap(selectedItem, dbMap);
 
-    const { optionTranslations: opts, metafieldTranslations: mfs } =
-      buildTranslationsFromItem(selectedItem, currentLanguage);
+    console.log(`[SUB-RESOURCE] Phase 1 (DB): item=${itemId}, locale=${currentLanguage}, dbKeys=${Object.keys(dbMap).length}`);
+    setOptionTranslations(dbOpts);
+    setMetafieldTranslations(dbMfs);
 
-    console.log(`[SUB-RESOURCE-HOOK] Built optionTranslations:`, JSON.stringify(opts));
-    console.log(`[SUB-RESOURCE-HOOK] Built metafieldTranslations:`, JSON.stringify(mfs));
-
-    setOptionTranslations(opts);
-    setMetafieldTranslations(mfs);
-  }, [itemId, currentLanguage, isPrimaryLocale, selectedItem]);
+    // Phase 2: Shopify fetch — load from Shopify for any missing translations
+    setIsLoading(true);
+    console.log(`[SUB-RESOURCE] Phase 2 (Shopify): fetching ${subResourceIds.length} sub-resource IDs`);
+    fetcher.submit(
+      {
+        action: "loadSubResourceTranslations",
+        locale: currentLanguage,
+        resourceIds: JSON.stringify(subResourceIds),
+        itemId,
+      },
+      { method: "POST" }
+    );
+  }, [itemId, currentLanguage, isPrimaryLocale, subResourceIds, selectedItem, fetcher]);
 
   // ============================================================================
-  // Handle fetcher responses (translate + save operations)
+  // Handle fetcher responses (load + translate + save)
   // ============================================================================
   useEffect(() => {
     if (fetcher.state !== "idle" || !fetcher.data) return;
 
     const data = fetcher.data as any;
-    if (!data.success) return;
+    if (!data.success) {
+      if (data.actionType === "loadSubResourceTranslations") setIsLoading(false);
+      return;
+    }
+
+    // Phase 2 complete: merge Shopify data into state
+    if (data.actionType === "loadSubResourceTranslations") {
+      setIsLoading(false);
+      const translations = data.translations as Record<string, Record<string, string>>;
+      console.log(`[SUB-RESOURCE] Phase 2 response: ${Object.keys(translations).length} resources with translations`);
+
+      if (selectedItem) {
+        const { optionTranslations: shopifyOpts, metafieldTranslations: shopifyMfs } =
+          buildFromTranslationsMap(selectedItem, translations);
+
+        // Merge: Shopify data overrides DB data (Shopify is fresher)
+        setOptionTranslations(prev => {
+          const merged = { ...prev };
+          for (const [optId, trans] of Object.entries(shopifyOpts)) {
+            if (trans.name || trans.values.some(v => v)) {
+              merged[optId] = trans;
+            }
+          }
+          return merged;
+        });
+        setMetafieldTranslations(prev => {
+          const merged = { ...prev };
+          for (const [mfId, value] of Object.entries(shopifyMfs)) {
+            if (value) merged[mfId] = value;
+          }
+          return merged;
+        });
+      }
+      setHasChanges(false);
+    }
 
     if (data.actionType === "translateSubResources") {
       setIsTranslating(false);
@@ -261,7 +335,6 @@ export function useProductSubResources({
         value: opt.name,
         label: `Option: ${opt.name}`,
       });
-      // Skip values for linked/metaobject options — they are translated via Metaobjects
       if (!opt.isLinked) {
         for (const val of opt.values) {
           if (!val.id) continue;
@@ -365,7 +438,6 @@ export function useProductSubResources({
   const saveSubResourceTranslations = useCallback(() => {
     if (!hasChanges || isPrimaryLocale || !selectedItem) return;
 
-    // Build translationsData: { resourceId: { key: value } }
     const translationsData: Record<string, Record<string, string>> = {};
     const resourceTypes: Record<string, string> = {};
 
@@ -375,7 +447,6 @@ export function useProductSubResources({
         translationsData[opt.id] = { name: trans.name };
         resourceTypes[opt.id] = "ProductOption";
       }
-      // Skip values for linked/metaobject options
       if (!opt.isLinked) {
         for (let i = 0; i < opt.values.length; i++) {
           const val = opt.values[i];
@@ -410,7 +481,6 @@ export function useProductSubResources({
   }, [hasChanges, isPrimaryLocale, selectedItem, optionTranslations, metafieldTranslations, currentLanguage, fetcher]);
 
   const resetChanges = useCallback(() => {
-    // Force re-read from pre-loaded data on next render
     loadedForRef.current = "";
     setHasChanges(false);
   }, []);
