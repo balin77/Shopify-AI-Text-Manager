@@ -570,6 +570,7 @@ export default function ProductsPage() {
     if (pendingTranslationSyncRefreshRef.current) {
       pendingTranslationSyncRefreshRef.current = false;
       editor.helpers.triggerDataRefresh();
+      subResources.handlers.resetForReload();
     }
   }, [products]); // eslint-disable-line react-hooks/exhaustive-deps -- intentionally fires when products changes after sync
 

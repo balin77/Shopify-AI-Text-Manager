@@ -5,7 +5,7 @@
  * Based on the products page structure with all bug fixes included.
  */
 
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { Page, Card, Text, BlockStack, InlineStack, Button, Modal, TextContainer, TextField, Icon, Spinner, Checkbox } from "@shopify/polaris";
 import { SearchIcon, ChevronLeftIcon, ChevronRightIcon } from "@shopify/polaris-icons";
 import { AIEditableField } from "./AIEditableField";
@@ -153,6 +153,12 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   const { getMaxProducts } = usePlan();
   const { showInfoBox } = useInfoBox();
   const { registerItems, clearItems } = useItemSelector();
+
+  // Combined reload handler: refresh main editor + sub-resources
+  const handleReloadComplete = useCallback(() => {
+    helpers.triggerDataRefresh();
+    subResourceHandlers?.resetForReload?.();
+  }, [helpers, subResourceHandlers]);
 
   // Use effective field definitions (dynamic for templates, static for other content types)
   const fieldDefinitions = effectiveFieldDefinitions || config.fieldDefinitions;
@@ -363,7 +369,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   reloadResourceId={selectedItem.id}
                   reloadResourceType={getResourceType(config.contentType)}
                   reloadLocale={state.currentLanguage}
-                  onReloadComplete={editor.helpers.triggerDataRefresh}
+                  onReloadComplete={handleReloadComplete}
                   revalidator={revalidator}
                   t={{
                     primaryLocaleSuffix: t.content?.primaryLanguageSuffix || "Primary",
@@ -497,7 +503,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         resourceId={selectedItem.id}
                         resourceType={getResourceType(config.contentType)}
                         locale={state.currentLanguage}
-                        onReloadComplete={editor.helpers.triggerDataRefresh}
+                        onReloadComplete={handleReloadComplete}
                         onReloadSuccess={() => showInfoBox(t.content?.reloadSuccess || "Data reloaded successfully!", "success", t.content?.success || "Success!")}
                         revalidator={revalidator}
                       />

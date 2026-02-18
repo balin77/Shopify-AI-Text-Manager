@@ -46,6 +46,7 @@ export interface SubResourceHandlers {
   translateAllSubResources: () => void;
   saveSubResourceTranslations: () => void;
   resetChanges: () => void;
+  resetForReload: () => void;
 }
 
 interface UseProductSubResourcesProps {
@@ -186,17 +187,25 @@ export function useProductSubResources({
     setOptionTranslations(dbOpts);
     setMetafieldTranslations(dbMfs);
 
-    // Phase 2: Shopify fetch — load from Shopify for any missing translations
-    setIsLoading(true);
-    fetcher.submit(
-      {
-        action: "loadSubResourceTranslations",
-        locale: currentLanguage,
-        resourceIds: JSON.stringify(subResourceIds),
-        itemId,
-      },
-      { method: "POST" }
-    );
+    // Phase 2: Only fetch from Shopify if Phase 1 found NO data for this locale.
+    // After syncProduct saves sub-resource translations to DB, Phase 1 has
+    // everything and this becomes unnecessary.
+    const hasAnyDbData = Object.keys(dbMap).length > 0;
+
+    if (!hasAnyDbData) {
+      setIsLoading(true);
+      fetcher.submit(
+        {
+          action: "loadSubResourceTranslations",
+          locale: currentLanguage,
+          resourceIds: JSON.stringify(subResourceIds),
+          itemId,
+        },
+        { method: "POST" }
+      );
+    } else {
+      setIsLoading(false);
+    }
   }, [itemId, currentLanguage, isPrimaryLocale, subResourceIds, selectedItem, fetcher]);
 
   // ============================================================================
@@ -481,6 +490,11 @@ export function useProductSubResources({
     setHasChanges(false);
   }, []);
 
+  /** Force re-load on next render (called after revalidation delivers fresh DB data) */
+  const resetForReload = useCallback(() => {
+    loadedForRef.current = "";
+  }, []);
+
   return {
     state: {
       optionTranslations,
@@ -500,6 +514,7 @@ export function useProductSubResources({
       translateAllSubResources,
       saveSubResourceTranslations,
       resetChanges,
+      resetForReload,
     },
   };
 }

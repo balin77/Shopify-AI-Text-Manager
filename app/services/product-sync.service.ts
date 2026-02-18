@@ -198,8 +198,15 @@ export class ProductSyncService {
       );
       logger.debug(`[ProductSync] Fetched ${imageAltTranslations.length} image alt-text translations`);
 
+      // 4b. Fetch sub-resource translations (options, option values, metafields)
+      const subResourceTranslations = await this.fetchSubResourceTranslations(
+        productData,
+        locales.filter((l) => !l.primary && l.published)
+      );
+      logger.debug(`[ProductSync] Fetched ${subResourceTranslations.length} sub-resource translations`);
+
       // 5. Save to database
-      await this.saveToDatabase(productData, allTranslations, imageAltTranslations, forceSync);
+      await this.saveToDatabase(productData, allTranslations, imageAltTranslations, subResourceTranslations, forceSync);
 
       logger.debug(`[ProductSync] Successfully synced product: ${productId}`);
     } catch (error) {
@@ -291,6 +298,106 @@ export class ProductSyncService {
 
     logger.debug(`[ProductSync] Total alt-text translations fetched: ${altTranslations.length}`);
     return altTranslations;
+  }
+
+  /**
+   * Fetch translations for all product sub-resources (options, option values, metafields)
+   * Uses translatableResourcesByIds for BULK loading — 1 API call per locale
+   *
+   * This puts sub-resource translations into the same sync pipeline as main
+   * product translations so the loader can pre-load them from DB instantly.
+   */
+  private async fetchSubResourceTranslations(
+    productData: ShopifyProductData,
+    locales: ShopLocale[]
+  ): Promise<Array<{ resourceId: string; resourceType: string; key: string; value: string; locale: string }>> {
+    const results: Array<{ resourceId: string; resourceType: string; key: string; value: string; locale: string }> = [];
+
+    // Collect all sub-resource IDs from product data
+    const subResources: Array<{ id: string; type: string }> = [];
+
+    for (const opt of productData.options || []) {
+      subResources.push({ id: opt.id, type: "ProductOption" });
+      for (const val of opt.optionValues || []) {
+        // Skip linked option values — their translations come from metafields
+        if (val.id && !val.linkedMetafieldValue) {
+          subResources.push({ id: val.id, type: "ProductOptionValue" });
+        }
+      }
+    }
+
+    for (const edge of productData.metafields?.edges || []) {
+      const mf = edge.node;
+      subResources.push({ id: mf.id, type: "Metafield" });
+    }
+
+    if (subResources.length === 0) return results;
+
+    const allIds = subResources.map(s => s.id);
+    const typeMap = new Map(subResources.map(s => [s.id, s.type]));
+
+    logger.debug(`[ProductSync] Fetching sub-resource translations for ${allIds.length} resources using BULK query`);
+
+    // 1 API call per locale (bulk)
+    for (const locale of locales) {
+      try {
+        const response = await this.admin.graphql(
+          `#graphql
+            query getSubResourceTranslationsBulk($resourceIds: [ID!]!, $locale: String!) {
+              translatableResourcesByIds(first: 250, resourceIds: $resourceIds) {
+                edges {
+                  node {
+                    resourceId
+                    translations(locale: $locale) {
+                      key
+                      value
+                    }
+                  }
+                }
+              }
+            }`,
+          { variables: { resourceIds: allIds, locale: locale.locale } }
+        );
+
+        const data = await response.json();
+
+        if (data.errors) {
+          logger.warn(`[ProductSync] GraphQL error fetching sub-resource translations for locale ${locale.locale}:`, data.errors[0]?.message);
+          continue;
+        }
+
+        const resources = data.data?.translatableResourcesByIds?.edges || [];
+
+        let foundCount = 0;
+        for (const edge of resources) {
+          const resourceId = edge.node.resourceId;
+          const translations: Array<{ key: string; value: string }> = edge.node.translations || [];
+          const resourceType = typeMap.get(resourceId) || "Unknown";
+
+          for (const t of translations) {
+            if (t.value) {
+              results.push({
+                resourceId,
+                resourceType,
+                key: t.key,
+                value: t.value,
+                locale: locale.locale,
+              });
+              foundCount++;
+            }
+          }
+        }
+
+        if (foundCount > 0) {
+          logger.debug(`[ProductSync] Found ${foundCount} sub-resource translations for locale ${locale.locale}`);
+        }
+      } catch (error) {
+        logger.warn(`[ProductSync] Failed to fetch sub-resource translations for locale ${locale.locale}:`, error);
+      }
+    }
+
+    logger.debug(`[ProductSync] Total sub-resource translations fetched: ${results.length}`);
+    return results;
   }
 
   /**
@@ -589,6 +696,7 @@ export class ProductSyncService {
     productData: ShopifyProductData,
     translations: ResolvedTranslation[],
     imageAltTranslations: Array<{ mediaId: string; locale: string; altText: string }> = [],
+    subResourceTranslations: Array<{ resourceId: string; resourceType: string; key: string; value: string; locale: string }> = [],
     forceSync = false
   ) {
     const { db } = await import("../db.server");
@@ -714,6 +822,31 @@ export class ProductSyncService {
           logger.debug(`[ProductSync] ✓ Successfully saved ${validTranslations.length} translations to database`);
         } else {
           logger.debug(`[ProductSync] No translations to save`);
+        }
+
+        // Save sub-resource translations (options, option values, metafields)
+        if (subResourceTranslations.length > 0) {
+          const subResourceIds = [...new Set(subResourceTranslations.map(t => t.resourceId))];
+
+          const deletedSubTrans = await tx.contentTranslation.deleteMany({
+            where: {
+              resourceId: { in: subResourceIds },
+              resourceType: { in: ["ProductOption", "ProductOptionValue", "Metafield"] },
+            },
+          });
+          logger.debug(`[ProductSync] Deleted ${deletedSubTrans.count} old sub-resource translations`);
+
+          await tx.contentTranslation.createMany({
+            data: subResourceTranslations.map(t => ({
+              resourceId: t.resourceId,
+              resourceType: t.resourceType,
+              key: t.key,
+              value: t.value,
+              locale: t.locale,
+              digest: null,
+            })),
+          });
+          logger.debug(`[ProductSync] Saved ${subResourceTranslations.length} sub-resource translations`);
         }
       }
 
