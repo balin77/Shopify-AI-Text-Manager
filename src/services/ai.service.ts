@@ -374,6 +374,13 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     const fromName = localeNames[fromLang] || fromLang;
     const toName = localeNames[toLang] || toLang;
 
+    loggers.ai('info', `[AI-SERVICE] Translating batch of ${values.length} values`, {
+      fromLang,
+      toLang,
+      context,
+      values: values.slice(0, 3), // Log first 3 values for debugging
+    });
+
     // Build numbered list for clear mapping
     const numberedValues = values.map((v, i) => `${i + 1}. ${sanitizePromptInput(v, { maxLength: 500, allowNewlines: false })}`).join('\n');
 
@@ -388,14 +395,22 @@ Requirements:
 
 Respond in JSON format: ["translated1", "translated2", ...]`;
 
+    loggers.ai('debug', '[AI-SERVICE] Batch translation prompt', { prompt: prompt.substring(0, 500) });
+
     const responseText = await this.askAI(prompt);
+
+    loggers.ai('debug', '[AI-SERVICE] Batch translation response', { response: responseText.substring(0, 500) });
+
     const parsed = this.parseJSONResponse(responseText);
 
     // Handle both array and object responses
     if (Array.isArray(parsed)) {
+      loggers.ai('info', `[AI-SERVICE] Batch translation successful: ${parsed.length} values translated`);
       return parsed.map(String);
     }
+
     // Fallback: return original values if parsing fails
+    loggers.ai('warn', '[AI-SERVICE] Batch translation response was not an array, returning original values');
     return values;
   }
 
@@ -984,18 +999,37 @@ Return only the alt text, without additional explanations. Output the result in 
   }
 
   private parseJSONResponse(text: string): any {
-    // Try to extract JSON from markdown code blocks
-    const jsonMatch = text.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
-    if (jsonMatch) {
-      return JSON.parse(jsonMatch[1]);
+    // Try to extract JSON from markdown code blocks (supports both objects and arrays)
+    const jsonBlockMatch = text.match(/```(?:json)?\s*([\[\{][\s\S]*?[\]\}])\s*```/);
+    if (jsonBlockMatch) {
+      try {
+        return JSON.parse(jsonBlockMatch[1]);
+      } catch (error) {
+        loggers.ai('warn', '[AI-SERVICE] Failed to parse JSON from code block', { error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+
+    // Try to find JSON array in text
+    const arrayMatch = text.match(/\[[\s\S]*?\]/);
+    if (arrayMatch) {
+      try {
+        return JSON.parse(arrayMatch[0]);
+      } catch (error) {
+        loggers.ai('warn', '[AI-SERVICE] Failed to parse JSON array', { error: error instanceof Error ? error.message : String(error) });
+      }
     }
 
     // Try to find JSON object in text
     const objectMatch = text.match(/\{[\s\S]*\}/);
     if (objectMatch) {
-      return JSON.parse(objectMatch[0]);
+      try {
+        return JSON.parse(objectMatch[0]);
+      } catch (error) {
+        loggers.ai('warn', '[AI-SERVICE] Failed to parse JSON object', { error: error instanceof Error ? error.message : String(error) });
+      }
     }
 
+    loggers.ai('error', '[AI-SERVICE] Could not parse JSON from AI response', { response: text.substring(0, 500) });
     throw new Error('Could not parse JSON from AI response');
   }
 }
