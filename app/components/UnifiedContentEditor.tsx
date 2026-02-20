@@ -351,14 +351,20 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   primaryLocale={primaryLocale}
                   selectedItem={selectedItem}
                   contentType={config.contentType}
-                  hasChanges={state.hasChanges}
+                  hasChanges={state.hasChanges || (subResourceState?.hasChanges ?? false)}
                   onLanguageChange={handlers.handleLanguageChange}
                   enabledLanguages={state.enabledLanguages}
                   isLoadingData={state.isLoadingData}
                   onTranslateAll={state.currentLanguage === primaryLocale ? handlers.handleTranslateAll : handlers.handleTranslateAllForLocale}
                   onClearAll={state.currentLanguage === primaryLocale ? handlers.handleClearAllClick : handlers.handleClearAllForLocaleClick}
-                  onSave={handlers.handleSave}
-                  onDiscard={handlers.handleDiscard}
+                  onSave={() => {
+                    handlers.handleSave();
+                    subResourceHandlers?.saveSubResources?.();
+                  }}
+                  onDiscard={() => {
+                    handlers.handleDiscard();
+                    subResourceHandlers?.resetChanges?.();
+                  }}
                   onToggleSendImageToAI={handlers.handleToggleSendImageToAI}
                   sendImageToAI={state.sendImageToAI}
                   images={state.images}
@@ -393,7 +399,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                     primaryLocale={primaryLocale}
                     selectedItem={selectedItem}
                     contentType={config.contentType}
-                    hasChanges={state.hasChanges}
+                    hasChanges={state.hasChanges || (subResourceState?.hasChanges ?? false)}
                     onLanguageChange={handlers.handleLanguageChange}
                     enabledLanguages={state.enabledLanguages}
                     onToggleLanguage={handlers.handleToggleLanguage}
@@ -477,8 +483,11 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                     {/* Right: Save/Discard + Reload Buttons - nowrap to stay together */}
                     <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexShrink: 0, flexWrap: "nowrap" }}>
                       <Button
-                        onClick={handlers.handleDiscard}
-                        disabled={!state.hasChanges || fetcherState !== "idle"}
+                        onClick={() => {
+                          handlers.handleDiscard();
+                          subResourceHandlers?.resetChanges?.();
+                        }}
+                        disabled={!(state.hasChanges || (subResourceState?.hasChanges ?? false)) || fetcherState !== "idle"}
                         size="slim"
                       >
                         {t.content?.discardChanges || "Discard"}
@@ -490,9 +499,12 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         }}
                       >
                         <Button
-                          variant={state.hasChanges ? "primary" : undefined}
-                          onClick={handlers.handleSave}
-                          disabled={!state.hasChanges}
+                          variant={(state.hasChanges || (subResourceState?.hasChanges ?? false)) ? "primary" : undefined}
+                          onClick={() => {
+                            handlers.handleSave();
+                            subResourceHandlers?.saveSubResources?.();
+                          }}
+                          disabled={!(state.hasChanges || (subResourceState?.hasChanges ?? false))}
                           loading={fetcherState !== "idle" && fetcherFormData?.get("action") === "updateContent"}
                           size="slim"
                         >
@@ -703,15 +715,22 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                       onTranslateField={subResourceHandlers.translateOptionField}
                       onOptionNameChange={subResourceHandlers.handleOptionNameChange}
                       onOptionValueChange={subResourceHandlers.handleOptionValueChange}
+                      onPrimaryOptionNameChange={subResourceHandlers.handlePrimaryOptionNameChange}
+                      onPrimaryOptionValuesChange={subResourceHandlers.handlePrimaryOptionValuesChange}
+                      primaryOptions={subResourceState.primaryOptionEdits}
                       isTranslating={subResourceState.isTranslating}
                       translatingOptionId={subResourceState.translatingOptionId}
                       translatingFieldId={subResourceState.translatingFieldId}
                       t={{
                         title: t.products?.productOptions,
                         notEditableInPrimary: t.products?.optionsNotEditableInPrimary,
+                        editInstructionPrimary: t.products?.optionsEditInstructionPrimary,
                         translateButton: t.products?.translateEntireOption,
                         linkedOptionHint: t.products?.linkedOptionHint,
                         linkedBadge: t.products?.linkedBadge,
+                        addValue: t.products?.addValue,
+                        removeValue: t.products?.removeValue,
+                        linkedNotEditableHint: t.products?.linkedNotEditableHint,
                       }}
                     />
                   </div>
@@ -728,11 +747,14 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                       translations={subResourceState.metafieldTranslations}
                       onTranslate={subResourceHandlers.translateMetafield}
                       onMetafieldChange={subResourceHandlers.handleMetafieldChange}
+                      onPrimaryMetafieldChange={subResourceHandlers.handlePrimaryMetafieldChange}
+                      primaryValues={subResourceState.primaryMetafieldEdits}
                       isTranslating={subResourceState.isTranslating}
                       translatingMetafieldId={subResourceState.translatingMetafieldId}
                       t={{
                         title: t.products?.productMetafields,
                         notEditableInPrimary: t.products?.metafieldsNotEditableInPrimary,
+                        editInstructionPrimary: t.products?.metafieldsEditInstructionPrimary,
                         translateButton: t.products?.translateMetafield,
                       }}
                     />

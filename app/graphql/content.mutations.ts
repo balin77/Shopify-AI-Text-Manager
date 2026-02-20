@@ -134,3 +134,59 @@ export const UPSERT_THEME_FILES = `#graphql
     }
   }
 `;
+
+/**
+ * PRODUCT OPTION UPDATE — Update product option name in primary locale
+ *
+ * This mutation updates the name of a product option (e.g., "Size", "Color").
+ * Used when editing primary language option names.
+ *
+ * REQUIREMENTS:
+ *   - `write_products` scope (already present)
+ */
+export const PRODUCT_OPTION_UPDATE = `#graphql
+  mutation productOptionUpdate($productId: ID!, $option: ProductOptionUpdateInput!) {
+    productOptionUpdate(productId: $productId, option: $option) {
+      product {
+        id
+        options {
+          id
+          name
+          position
+          values
+        }
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
+/**
+ * METAFIELDS SET — Create or update metafield values in primary locale
+ *
+ * This mutation sets metafield values directly (not translations).
+ * Can handle up to 25 metafields per request, max 10MB payload.
+ *
+ * REQUIREMENTS:
+ *   - `write_products` scope (for product metafields, already present)
+ */
+export const METAFIELDS_SET = `#graphql
+  mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
+    metafieldsSet(metafields: $metafields) {
+      metafields {
+        id
+        namespace
+        key
+        value
+        type
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;

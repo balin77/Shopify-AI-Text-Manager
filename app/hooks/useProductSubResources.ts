@@ -25,6 +25,10 @@ export interface SubResourceState {
   optionTranslations: Record<string, OptionTranslation>;
   /** Metafield translations keyed by metafield GID → translated value */
   metafieldTranslations: Record<string, string>;
+  /** Primary locale option edits keyed by option GID → { name, values[] } */
+  primaryOptionEdits: Record<string, { name: string; values: string[] }>;
+  /** Primary locale metafield edits keyed by metafield GID → value */
+  primaryMetafieldEdits: Record<string, string>;
   /** Whether any AI translation is in progress */
   isTranslating: boolean;
   /** Which option is currently being translated */
@@ -43,11 +47,14 @@ export interface SubResourceHandlers {
   handleOptionNameChange: (optionId: string, value: string) => void;
   handleOptionValueChange: (optionId: string, valueIndex: number, value: string) => void;
   handleMetafieldChange: (metafieldId: string, value: string) => void;
+  handlePrimaryOptionNameChange: (optionId: string, value: string) => void;
+  handlePrimaryOptionValuesChange: (optionId: string, values: string[]) => void;
+  handlePrimaryMetafieldChange: (metafieldId: string, value: string) => void;
   translateOption: (optionId: string) => void;
   translateOptionField: (optionId: string, fieldType: "name" | "value", valueIndex?: number) => void;
   translateMetafield: (metafieldId: string) => void;
   translateAllSubResources: () => void;
-  saveSubResourceTranslations: () => void;
+  saveSubResources: () => void;
   resetChanges: () => void;
   resetForReload: () => void;
 }
@@ -127,8 +134,15 @@ export function useProductSubResources({
   primaryLocale,
   fetcher,
 }: UseProductSubResourcesProps): { state: SubResourceState; handlers: SubResourceHandlers } {
+  // Translation state (for foreign locales)
   const [optionTranslations, setOptionTranslations] = useState<Record<string, OptionTranslation>>({});
   const [metafieldTranslations, setMetafieldTranslations] = useState<Record<string, string>>({});
+
+  // Primary locale editing state
+  const [primaryOptionEdits, setPrimaryOptionEdits] = useState<Record<string, { name: string; values: string[] }>>({});
+  const [primaryMetafieldEdits, setPrimaryMetafieldEdits] = useState<Record<string, string>>({});
+
+  // Shared state
   const [isTranslating, setIsTranslating] = useState(false);
   const [translatingOptionId, setTranslatingOptionId] = useState<string | undefined>();
   const [translatingFieldId, setTranslatingFieldId] = useState<string | undefined>();
@@ -302,6 +316,13 @@ export function useProductSubResources({
     if (data.actionType === "saveSubResourceTranslations") {
       setHasChanges(false);
     }
+
+    if (data.actionType === "savePrimarySubResources") {
+      setHasChanges(false);
+      // Clear primary edits after successful save
+      setPrimaryOptionEdits({});
+      setPrimaryMetafieldEdits({});
+    }
   }, [fetcher.state, fetcher.data, selectedItem]);
 
   // ============================================================================
@@ -328,6 +349,31 @@ export function useProductSubResources({
 
   const handleMetafieldChange = useCallback((metafieldId: string, value: string) => {
     setMetafieldTranslations(prev => ({ ...prev, [metafieldId]: value }));
+    setHasChanges(true);
+  }, []);
+
+  // ============================================================================
+  // Primary Locale Handlers
+  // ============================================================================
+
+  const handlePrimaryOptionNameChange = useCallback((optionId: string, value: string) => {
+    setPrimaryOptionEdits(prev => ({
+      ...prev,
+      [optionId]: { ...prev[optionId], name: value, values: prev[optionId]?.values || [] },
+    }));
+    setHasChanges(true);
+  }, []);
+
+  const handlePrimaryOptionValuesChange = useCallback((optionId: string, values: string[]) => {
+    setPrimaryOptionEdits(prev => ({
+      ...prev,
+      [optionId]: { ...prev[optionId], name: prev[optionId]?.name || "", values },
+    }));
+    setHasChanges(true);
+  }, []);
+
+  const handlePrimaryMetafieldChange = useCallback((metafieldId: string, value: string) => {
+    setPrimaryMetafieldEdits(prev => ({ ...prev, [metafieldId]: value }));
     setHasChanges(true);
   }, []);
 
@@ -489,50 +535,100 @@ export function useProductSubResources({
     );
   }, [isPrimaryLocale, isTranslating, buildSourceData, currentLanguage, primaryLocale, fetcher, selectedItem?.id]);
 
-  const saveSubResourceTranslations = useCallback(() => {
-    if (!hasChanges || isPrimaryLocale || !selectedItem) return;
+  // Unified save handler - automatically detects primary vs foreign locale
+  const saveSubResources = useCallback(() => {
+    if (!hasChanges || !selectedItem) return;
 
-    const translationsData: Record<string, Record<string, string>> = {};
-    const resourceTypes: Record<string, string> = {};
+    if (isPrimaryLocale) {
+      // PRIMARY LOCALE: Save primary values (options + metafields)
+      const optionsChanges: Record<string, { name?: string; values?: string[] }> = {};
+      const metafieldChanges: Record<string, string> = {};
 
-    for (const opt of selectedItem.options || []) {
-      const trans = optionTranslations[opt.id];
-      if (trans?.name) {
-        translationsData[opt.id] = { name: trans.name };
-        resourceTypes[opt.id] = "ProductOption";
+      // Collect option name and value changes
+      for (const [optionId, edit] of Object.entries(primaryOptionEdits)) {
+        const originalOption = selectedItem.options?.find(o => o.id === optionId);
+        if (!originalOption || originalOption.isLinked) continue; // Skip metaobject-linked options
+
+        const hasNameChange = edit.name !== undefined && edit.name !== originalOption.name;
+        const hasValuesChange =
+          edit.values !== undefined &&
+          JSON.stringify(edit.values) !== JSON.stringify(originalOption.values.map(v => v.name));
+
+        if (hasNameChange || hasValuesChange) {
+          optionsChanges[optionId] = {};
+          if (hasNameChange) optionsChanges[optionId].name = edit.name;
+          if (hasValuesChange) optionsChanges[optionId].values = edit.values;
+        }
       }
-      if (!opt.isLinked) {
-        for (let i = 0; i < opt.values.length; i++) {
-          const val = opt.values[i];
-          if (val.id && trans?.values[i]) {
-            translationsData[val.id] = { name: trans.values[i] };
-            resourceTypes[val.id] = "ProductOptionValue";
+
+      // Collect metafield value changes
+      for (const [metafieldId, editValue] of Object.entries(primaryMetafieldEdits)) {
+        const originalMetafield = selectedItem.metafields?.find(m => m.id === metafieldId);
+        if (!originalMetafield) continue;
+
+        if (editValue !== originalMetafield.value) {
+          metafieldChanges[metafieldId] = editValue;
+        }
+      }
+
+      if (Object.keys(optionsChanges).length === 0 && Object.keys(metafieldChanges).length === 0) {
+        setHasChanges(false);
+        return;
+      }
+
+      fetcher.submit(
+        {
+          action: "savePrimarySubResources",
+          productId: selectedItem.id,
+          optionsChanges: JSON.stringify(optionsChanges),
+          metafieldChanges: JSON.stringify(metafieldChanges),
+        },
+        { method: "POST" }
+      );
+    } else {
+      // FOREIGN LOCALE: Save translations
+      const translationsData: Record<string, Record<string, string>> = {};
+      const resourceTypes: Record<string, string> = {};
+
+      for (const opt of selectedItem.options || []) {
+        const trans = optionTranslations[opt.id];
+        if (trans?.name) {
+          translationsData[opt.id] = { name: trans.name };
+          resourceTypes[opt.id] = "ProductOption";
+        }
+        if (!opt.isLinked) {
+          for (let i = 0; i < opt.values.length; i++) {
+            const val = opt.values[i];
+            if (val.id && trans?.values[i]) {
+              translationsData[val.id] = { name: trans.values[i] };
+              resourceTypes[val.id] = "ProductOptionValue";
+            }
           }
         }
       }
-    }
 
-    for (const mf of selectedItem.metafields || []) {
-      const trans = metafieldTranslations[mf.id];
-      if (trans) {
-        translationsData[mf.id] = { value: trans };
-        resourceTypes[mf.id] = "Metafield";
+      for (const mf of selectedItem.metafields || []) {
+        const trans = metafieldTranslations[mf.id];
+        if (trans) {
+          translationsData[mf.id] = { value: trans };
+          resourceTypes[mf.id] = "Metafield";
+        }
       }
+
+      if (Object.keys(translationsData).length === 0) return;
+
+      fetcher.submit(
+        {
+          action: "saveSubResourceTranslations",
+          locale: currentLanguage,
+          translationsData: JSON.stringify(translationsData),
+          resourceTypes: JSON.stringify(resourceTypes),
+          itemId: selectedItem.id,
+        },
+        { method: "POST" }
+      );
     }
-
-    if (Object.keys(translationsData).length === 0) return;
-
-    fetcher.submit(
-      {
-        action: "saveSubResourceTranslations",
-        locale: currentLanguage,
-        translationsData: JSON.stringify(translationsData),
-        resourceTypes: JSON.stringify(resourceTypes),
-        itemId: selectedItem.id,
-      },
-      { method: "POST" }
-    );
-  }, [hasChanges, isPrimaryLocale, selectedItem, optionTranslations, metafieldTranslations, currentLanguage, fetcher]);
+  }, [hasChanges, isPrimaryLocale, selectedItem, primaryOptionEdits, primaryMetafieldEdits, optionTranslations, metafieldTranslations, currentLanguage, fetcher]);
 
   const resetChanges = useCallback(() => {
     loadedForRef.current = "";
@@ -548,6 +644,8 @@ export function useProductSubResources({
     state: {
       optionTranslations,
       metafieldTranslations,
+      primaryOptionEdits,
+      primaryMetafieldEdits,
       isTranslating,
       translatingOptionId,
       translatingFieldId,
@@ -559,11 +657,14 @@ export function useProductSubResources({
       handleOptionNameChange,
       handleOptionValueChange,
       handleMetafieldChange,
+      handlePrimaryOptionNameChange,
+      handlePrimaryOptionValuesChange,
+      handlePrimaryMetafieldChange,
       translateOption,
       translateOptionField,
       translateMetafield,
       translateAllSubResources,
-      saveSubResourceTranslations,
+      saveSubResources,
       resetChanges,
       resetForReload,
     },

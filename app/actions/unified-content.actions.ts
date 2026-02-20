@@ -1738,5 +1738,366 @@ Image URL: ${image.url}`;
     }
   }
 
+  // ============================================================================
+  // SAVE PRIMARY SUB-RESOURCES (Options + Metafields - main language values)
+  // ============================================================================
+
+  if (action === "savePrimarySubResources") {
+    const productId = getFormString(formData, "productId");
+    if (!productId || !isValidShopifyGID(productId)) {
+      return json({ success: false, error: "Invalid product ID" }, { status: 400 });
+    }
+
+    try {
+      const optionsChangesJson = getFormString(formData, "optionsChanges");
+      const metafieldChangesJson = getFormString(formData, "metafieldChanges");
+
+      const optionsChanges: Record<string, { name?: string; values?: string[] }> = optionsChangesJson
+        ? JSON.parse(optionsChangesJson) : {};
+      const metafieldChanges: Record<string, string> = metafieldChangesJson
+        ? JSON.parse(metafieldChangesJson) : {};
+
+      const { PRODUCT_OPTION_UPDATE, METAFIELDS_SET, UPDATE_PRODUCT } = await import("~/graphql/content.mutations");
+
+      const savedOptions: string[] = [];
+      const failedOptions: string[] = [];
+      const savedMetafields: string[] = [];
+      const failedMetafields: string[] = [];
+
+      // 1. Update option names using productOptionUpdate mutation
+      for (const [optionId, changes] of Object.entries(optionsChanges)) {
+        if (!isValidShopifyGID(optionId)) continue;
+
+        if (changes.name !== undefined) {
+          try {
+            // Get original option position from product query
+            const productResponse = await gateway.graphql(
+              `#graphql
+                query getProduct($id: ID!) {
+                  product(id: $id) {
+                    options {
+                      id
+                      position
+                    }
+                  }
+                }`,
+              { variables: { id: productId } }
+            );
+            const productData = await productResponse.json();
+            const option = productData.data?.product?.options?.find((o: { id: string }) => o.id === optionId);
+
+            if (option) {
+              const updateResponse = await gateway.graphql(
+                PRODUCT_OPTION_UPDATE,
+                {
+                  variables: {
+                    productId,
+                    option: {
+                      id: optionId,
+                      name: changes.name,
+                      position: option.position,
+                    },
+                  },
+                }
+              );
+
+              const updateData = await updateResponse.json();
+              if (updateData.data?.productOptionUpdate?.userErrors?.length > 0) {
+                logger.error("[UnifiedContent] productOptionUpdate userErrors", {
+                  context: "UnifiedContent", optionId, errors: updateData.data.productOptionUpdate.userErrors,
+                });
+                failedOptions.push(optionId);
+              } else {
+                savedOptions.push(optionId);
+              }
+            }
+          } catch (err) {
+            logger.error(`[UnifiedContent] Failed to update option name for ${optionId}`, {
+              context: "UnifiedContent", error: err instanceof Error ? err.message : String(err),
+            });
+            failedOptions.push(optionId);
+          }
+        }
+      }
+
+      // 2. Update option values using productUpdate mutation (requires full options array)
+      const optionsWithValueChanges = Object.entries(optionsChanges).filter(([_, changes]) => changes.values !== undefined);
+      if (optionsWithValueChanges.length > 0) {
+        try {
+          // Fetch current product options
+          const productResponse = await gateway.graphql(
+            `#graphql
+              query getProduct($id: ID!) {
+                product(id: $id) {
+                  options {
+                    id
+                    name
+                    position
+                    values
+                  }
+                }
+              }`,
+            { variables: { id: productId } }
+          );
+          const productData = await productResponse.json();
+          const currentOptions = productData.data?.product?.options || [];
+
+          // Build updated options array
+          const updatedOptions = currentOptions.map((opt: { id: string; name: string; position: number; values: string[] }) => {
+            const changes = optionsChanges[opt.id];
+            return {
+              name: changes?.name !== undefined ? changes.name : opt.name,
+              position: opt.position,
+              values: changes?.values !== undefined ? changes.values : opt.values,
+            };
+          });
+
+          // Use productUpdate to set all options
+          const updateResponse = await gateway.graphql(
+            UPDATE_PRODUCT,
+            {
+              variables: {
+                input: {
+                  id: productId,
+                  options: updatedOptions,
+                },
+              },
+            }
+          );
+
+          const updateData = await updateResponse.json();
+          if (updateData.data?.productUpdate?.userErrors?.length > 0) {
+            logger.error("[UnifiedContent] productUpdate userErrors for option values", {
+              context: "UnifiedContent", errors: updateData.data.productUpdate.userErrors,
+            });
+            optionsWithValueChanges.forEach(([optionId]) => {
+              if (!failedOptions.includes(optionId)) failedOptions.push(optionId);
+            });
+          } else {
+            optionsWithValueChanges.forEach(([optionId]) => {
+              if (!savedOptions.includes(optionId)) savedOptions.push(optionId);
+            });
+          }
+        } catch (err) {
+          logger.error("[UnifiedContent] Failed to update option values via productUpdate", {
+            context: "UnifiedContent", error: err instanceof Error ? err.message : String(err),
+          });
+          optionsWithValueChanges.forEach(([optionId]) => {
+            if (!failedOptions.includes(optionId)) failedOptions.push(optionId);
+          });
+        }
+      }
+
+      // 3. Update metafields using metafieldsSet mutation
+      if (Object.keys(metafieldChanges).length > 0) {
+        try {
+          const metafieldsInput = Object.entries(metafieldChanges).map(([metafieldId, value]) => ({
+            id: metafieldId,
+            value,
+          }));
+
+          const metafieldsResponse = await gateway.graphql(
+            METAFIELDS_SET,
+            {
+              variables: {
+                metafields: metafieldsInput,
+              },
+            }
+          );
+
+          const metafieldsData = await metafieldsResponse.json();
+          if (metafieldsData.data?.metafieldsSet?.userErrors?.length > 0) {
+            logger.error("[UnifiedContent] metafieldsSet userErrors", {
+              context: "UnifiedContent", errors: metafieldsData.data.metafieldsSet.userErrors,
+            });
+            Object.keys(metafieldChanges).forEach(mfId => failedMetafields.push(mfId));
+          } else {
+            Object.keys(metafieldChanges).forEach(mfId => savedMetafields.push(mfId));
+          }
+        } catch (err) {
+          logger.error("[UnifiedContent] Failed to update metafields", {
+            context: "UnifiedContent", error: err instanceof Error ? err.message : String(err),
+          });
+          Object.keys(metafieldChanges).forEach(mfId => failedMetafields.push(mfId));
+        }
+      }
+
+      // 4. Delete translations for changed fields in all foreign languages
+      const changedOptionIds = [...new Set([...savedOptions, ...Object.keys(optionsChanges)])];
+      const changedMetafieldIds = [...new Set([...savedMetafields, ...Object.keys(metafieldChanges)])];
+
+      if (changedOptionIds.length > 0 || changedMetafieldIds.length > 0) {
+        try {
+          // Get all shop locales
+          const localesResponse = await gateway.graphql(
+            `#graphql
+              query getShopLocales {
+                shopLocales {
+                  locale
+                  primary
+                  published
+                }
+              }`
+          );
+          const localesData = await localesResponse.json();
+          const shopLocales = localesData.data?.shopLocales || [];
+
+          // Filter out the primary locale, only keep published foreign locales
+          const foreignLocales = shopLocales
+            .filter((l: { locale: string; primary: boolean; published: boolean }) => !l.primary && l.published)
+            .map((l: { locale: string }) => l.locale);
+
+          if (foreignLocales.length > 0) {
+            // Delete option translations
+            for (const optionId of changedOptionIds) {
+              if (!isValidShopifyGID(optionId)) continue;
+
+              try {
+                // Delete option name translation
+                await gateway.graphql(
+                  `#graphql
+                    mutation removeTranslations($resourceId: ID!, $translationKeys: [String!]!, $locales: [String!]!) {
+                      translationsRemove(resourceId: $resourceId, translationKeys: $translationKeys, locales: $locales) {
+                        userErrors { field message }
+                      }
+                    }`,
+                  {
+                    variables: {
+                      resourceId: optionId,
+                      translationKeys: ["name"],
+                      locales: foreignLocales,
+                    },
+                  }
+                );
+
+                // Delete from DB
+                await db.contentTranslation.deleteMany({
+                  where: {
+                    resourceId: optionId,
+                    resourceType: "ProductOption",
+                    key: "name",
+                    locale: { in: foreignLocales },
+                  },
+                });
+
+                // Also delete option value translations (if values changed)
+                const changes = optionsChanges[optionId];
+                if (changes?.values !== undefined) {
+                  // Get all value IDs for this option
+                  const productResponse = await gateway.graphql(
+                    `#graphql
+                      query getProduct($id: ID!) {
+                        product(id: $id) {
+                          options {
+                            id
+                            values {
+                              id
+                            }
+                          }
+                        }
+                      }`,
+                    { variables: { id: productId } }
+                  );
+                  const productData = await productResponse.json();
+                  const option = productData.data?.product?.options?.find((o: { id: string }) => o.id === optionId);
+
+                  if (option?.values) {
+                    for (const value of option.values) {
+                      if (!value.id) continue;
+
+                      await gateway.graphql(
+                        `#graphql
+                          mutation removeTranslations($resourceId: ID!, $translationKeys: [String!]!, $locales: [String!]!) {
+                            translationsRemove(resourceId: $resourceId, translationKeys: $translationKeys, locales: $locales) {
+                              userErrors { field message }
+                            }
+                          }`,
+                        {
+                          variables: {
+                            resourceId: value.id,
+                            translationKeys: ["name"],
+                            locales: foreignLocales,
+                          },
+                        }
+                      );
+
+                      await db.contentTranslation.deleteMany({
+                        where: {
+                          resourceId: value.id,
+                          resourceType: "ProductOptionValue",
+                          key: "name",
+                          locale: { in: foreignLocales },
+                        },
+                      });
+                    }
+                  }
+                }
+              } catch (err) {
+                logger.error(`[UnifiedContent] Failed to delete translations for option ${optionId}`, {
+                  context: "UnifiedContent", error: err instanceof Error ? err.message : String(err),
+                });
+              }
+            }
+
+            // Delete metafield translations
+            for (const metafieldId of changedMetafieldIds) {
+              if (!isValidShopifyGID(metafieldId)) continue;
+
+              try {
+                await gateway.graphql(
+                  `#graphql
+                    mutation removeTranslations($resourceId: ID!, $translationKeys: [String!]!, $locales: [String!]!) {
+                      translationsRemove(resourceId: $resourceId, translationKeys: $translationKeys, locales: $locales) {
+                        userErrors { field message }
+                      }
+                    }`,
+                  {
+                    variables: {
+                      resourceId: metafieldId,
+                      translationKeys: ["value"],
+                      locales: foreignLocales,
+                    },
+                  }
+                );
+
+                await db.contentTranslation.deleteMany({
+                  where: {
+                    resourceId: metafieldId,
+                    resourceType: "Metafield",
+                    key: "value",
+                    locale: { in: foreignLocales },
+                  },
+                });
+              } catch (err) {
+                logger.error(`[UnifiedContent] Failed to delete translations for metafield ${metafieldId}`, {
+                  context: "UnifiedContent", error: err instanceof Error ? err.message : String(err),
+                });
+              }
+            }
+          }
+        } catch (err) {
+          logger.error("[UnifiedContent] Failed to delete translations for changed sub-resources", {
+            context: "UnifiedContent", error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+
+      return json({
+        actionType: "savePrimarySubResources",
+        success: true,
+        savedOptions,
+        failedOptions,
+        savedMetafields,
+        failedMetafields,
+      });
+    } catch (error: unknown) {
+      const msg = getFullErrorMessage(error);
+      logger.error("[UnifiedContent] savePrimarySubResources error", {
+        context: "UnifiedContent", error: msg,
+      });
+      return json({ success: false, error: msg }, { status: 500 });
+    }
+  }
+
   return json({ success: false, error: "Unknown action" }, { status: 400 });
 }

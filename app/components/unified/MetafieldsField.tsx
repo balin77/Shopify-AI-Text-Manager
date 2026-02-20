@@ -1,8 +1,8 @@
 /**
- * MetafieldsField - Component for translating product metafields
+ * MetafieldsField - Component for editing and translating product metafields
  *
  * Shows translatable metafields (text-based types only):
- * - Read-only view in primary locale
+ * - Editable fields in primary locale (direct value editing)
  * - Editable translation fields in foreign locales
  * - AI translation support per metafield
  * - Color-coded backgrounds (orange = not translated)
@@ -37,6 +37,12 @@ interface MetafieldsFieldProps {
   /** Callback when metafield translation changes */
   onMetafieldChange: (metafieldId: string, value: string) => void;
 
+  /** Callback when primary metafield value changes (optional, for primary locale editing) */
+  onPrimaryMetafieldChange?: (metafieldId: string, value: string) => void;
+
+  /** Primary metafield values (indexed by metafield ID) - used when editing primary locale */
+  primaryValues?: Record<string, string>;
+
   /** Whether translation is in progress */
   isTranslating: boolean;
 
@@ -50,6 +56,7 @@ interface MetafieldsFieldProps {
     translateInstruction?: string;
     translateButton?: string;
     originalLabel?: string;
+    editInstructionPrimary?: string;
   };
 }
 
@@ -68,6 +75,8 @@ export function MetafieldsField({
   translations,
   onTranslate,
   onMetafieldChange,
+  onPrimaryMetafieldChange,
+  primaryValues = {},
   isTranslating,
   translatingMetafieldId,
   t = {},
@@ -84,16 +93,18 @@ export function MetafieldsField({
         </Text>
 
         {isPrimaryLocale ? (
-          // Read-only display in primary language
+          // Editable fields in primary language
           <BlockStack gap="300">
             <Text as="p" variant="bodySm" tone="subdued">
-              {t.notEditableInPrimary || "Metafield values are managed in Shopify and cannot be edited here."}
+              {t.editInstructionPrimary || "Edit the metafield values in the primary language."}
             </Text>
-            {metafields.map((mf, index) => (
-              <div key={mf.id}>
-                {index > 0 && <Divider />}
-                <BlockStack gap="200">
-                  <div style={{ padding: "0.75rem", background: "#f6f6f7", borderRadius: "8px" }}>
+            {metafields.map((mf, index) => {
+              const currentValue = primaryValues[mf.id] !== undefined ? primaryValues[mf.id] : mf.value;
+
+              return (
+                <div key={mf.id}>
+                  {index > 0 && <Divider />}
+                  <Card>
                     <BlockStack gap="200">
                       <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                         <Text as="p" variant="bodyMd" fontWeight="semibold">
@@ -101,14 +112,19 @@ export function MetafieldsField({
                         </Text>
                         <Badge tone="info">{TYPE_LABELS[mf.type] || mf.type}</Badge>
                       </div>
-                      <Text as="p" variant="bodySm" tone="subdued">
-                        {truncateValue(mf.value, 200)}
-                      </Text>
+                      <TextField
+                        label={`${mf.namespace}.${mf.key}`}
+                        labelHidden
+                        value={currentValue}
+                        onChange={(value) => onPrimaryMetafieldChange?.(mf.id, value)}
+                        autoComplete="off"
+                        multiline={mf.type === "multi_line_text_field" || mf.type === "rich_text_field" ? 3 : undefined}
+                      />
                     </BlockStack>
-                  </div>
-                </BlockStack>
-              </div>
-            ))}
+                  </Card>
+                </div>
+              );
+            })}
           </BlockStack>
         ) : (
           // Editable translation fields in foreign languages
