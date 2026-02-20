@@ -1,16 +1,17 @@
 /**
- * OptionsField - Component for translating product options
+ * OptionsField - Component for editing and translating product options
  *
  * - Product options (Size, Color, Material, etc.)
- * - Read-only view in primary locale
+ * - Editable fields in primary locale (direct value editing)
  * - Editable translation fields in foreign locales
  * - AI translation support (per field + entire option)
  * - Color-coded backgrounds (orange = not translated) matching AIEditableField styling
  * - Distinguishes regular options (name + values translatable)
- *   from linked/metaobject options (only name translatable here)
+ *   from linked/metaobject options (excluded from primary editing)
  */
 
-import { Card, BlockStack, Text, TextField, Button, Divider, Badge, Banner } from "@shopify/polaris";
+import { Card, BlockStack, Text, TextField, Button, Divider, Badge, Banner, Icon, InlineStack } from "@shopify/polaris";
+import { DeleteIcon } from "@shopify/polaris-icons";
 import { useI18n } from "../../contexts/I18nContext";
 import { getLocalizedLanguageName } from "../../utils/contentEditor.utils";
 import "../../styles/AIEditableField.css";
@@ -62,6 +63,15 @@ interface OptionsFieldProps {
   /** Callback when option value changes */
   onOptionValueChange: (optionId: string, valueIndex: number, value: string) => void;
 
+  /** Callback when primary option name changes (optional, for primary locale editing) */
+  onPrimaryOptionNameChange?: (optionId: string, value: string) => void;
+
+  /** Callback when primary option values change (optional, for primary locale editing) */
+  onPrimaryOptionValuesChange?: (optionId: string, values: string[]) => void;
+
+  /** Primary option data (indexed by option ID) - used when editing primary locale */
+  primaryOptions?: Record<string, { name: string; values: string[] }>;
+
   /** Whether translation is in progress */
   isTranslating: boolean;
 
@@ -75,15 +85,18 @@ interface OptionsFieldProps {
   t?: {
     title?: string;
     notEditableInPrimary?: string;
+    editInstructionPrimary?: string;
     translateInstruction?: string;
     optionNameLabel?: string;
     valuesLabel?: string;
     valueLabel?: string;
     translateButton?: string;
-    translateFromPrimary?: string;
     originalLabel?: string;
     linkedOptionHint?: string;
     linkedBadge?: string;
+    addValue?: string;
+    removeValue?: string;
+    linkedNotEditableHint?: string;
   };
 }
 
@@ -97,6 +110,9 @@ export function OptionsField({
   onTranslateField,
   onOptionNameChange,
   onOptionValueChange,
+  onPrimaryOptionNameChange,
+  onPrimaryOptionValuesChange,
+  primaryOptions = {},
   isTranslating,
   translatingOptionId,
   translatingFieldId,
@@ -123,35 +139,111 @@ export function OptionsField({
         </Text>
 
         {isPrimaryLocale ? (
-          // Read-only display in primary language
+          // Editable fields in primary language
           <BlockStack gap="300">
             <Text as="p" variant="bodySm" tone="subdued">
-              {t.notEditableInPrimary || "Options are managed in Shopify and cannot be edited here."}
+              {t.editInstructionPrimary || "Edit the product option names and values in the primary language."}
             </Text>
-            {options.map((option, index) => (
-              <div key={option.id}>
-                {index > 0 && <Divider />}
-                <BlockStack gap="200">
-                  <div style={{ padding: "0.75rem", background: "#f6f6f7", borderRadius: "8px" }}>
-                    <BlockStack gap="200">
+            {options.map((option, index) => {
+              // Get current values from primaryOptions state, fallback to original option data
+              const currentName = primaryOptions[option.id]?.name !== undefined
+                ? primaryOptions[option.id].name
+                : option.name;
+              const currentValues = primaryOptions[option.id]?.values !== undefined
+                ? primaryOptions[option.id].values
+                : option.values.map(v => v.name);
+
+              // Handler for value changes
+              const handleValueChange = (valueIndex: number, newValue: string) => {
+                const updatedValues = [...currentValues];
+                updatedValues[valueIndex] = newValue;
+                onPrimaryOptionValuesChange?.(option.id, updatedValues);
+              };
+
+              const handleAddValue = () => {
+                const updatedValues = [...currentValues, ""];
+                onPrimaryOptionValuesChange?.(option.id, updatedValues);
+              };
+
+              const handleRemoveValue = (valueIndex: number) => {
+                if (currentValues.length <= 1) {
+                  // Don't allow removing the last value
+                  return;
+                }
+                const updatedValues = currentValues.filter((_, i) => i !== valueIndex);
+                onPrimaryOptionValuesChange?.(option.id, updatedValues);
+              };
+
+              return (
+                <div key={option.id}>
+                  {index > 0 && <Divider />}
+                  <Card>
+                    <BlockStack gap="300">
                       <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                         <Text as="p" variant="bodyMd" fontWeight="semibold">
-                          {option.name}
+                          Option {option.position}
                         </Text>
                         {option.isLinked && (
                           <Badge tone="info">{t.linkedBadge || "Metaobject"}</Badge>
                         )}
                       </div>
-                      <div>
-                        <Text as="p" variant="bodySm" tone="subdued">
-                          {t.valuesLabel || "Values"}: {option.values.map(v => v.name).join(", ")}
-                        </Text>
-                      </div>
+
+                      {option.isLinked ? (
+                        // Metaobject-linked options: Not editable here
+                        <Banner tone="info">
+                          <p>
+                            {t.linkedNotEditableHint || "This option is linked to metaobjects and cannot be edited here. Manage it in Shopify."}
+                          </p>
+                        </Banner>
+                      ) : (
+                        <>
+                          {/* Option Name */}
+                          <TextField
+                            label={t.optionNameLabel || "Option name"}
+                            value={currentName}
+                            onChange={(value) => onPrimaryOptionNameChange?.(option.id, value)}
+                            autoComplete="off"
+                          />
+
+                          {/* Option Values */}
+                          <BlockStack gap="200">
+                            <Text as="p" variant="bodyMd" fontWeight="semibold">
+                              {t.valuesLabel || "Values"}
+                            </Text>
+                            {currentValues.map((value, valueIndex) => (
+                              <InlineStack key={valueIndex} gap="200" align="start" blockAlign="center">
+                                <div style={{ flex: 1 }}>
+                                  <TextField
+                                    label={`${t.valueLabel || "Value"} ${valueIndex + 1}`}
+                                    labelHidden
+                                    value={value}
+                                    onChange={(newValue) => handleValueChange(valueIndex, newValue)}
+                                    autoComplete="off"
+                                  />
+                                </div>
+                                {currentValues.length > 1 && (
+                                  <Button
+                                    icon={DeleteIcon}
+                                    onClick={() => handleRemoveValue(valueIndex)}
+                                    accessibilityLabel={t.removeValue || "Remove value"}
+                                    tone="critical"
+                                  />
+                                )}
+                              </InlineStack>
+                            ))}
+                            <div>
+                              <Button onClick={handleAddValue}>
+                                {t.addValue || "+ Add value"}
+                              </Button>
+                            </div>
+                          </BlockStack>
+                        </>
+                      )}
                     </BlockStack>
-                  </div>
-                </BlockStack>
-              </div>
-            ))}
+                  </Card>
+                </div>
+              );
+            })}
           </BlockStack>
         ) : (
           // Editable translation fields in foreign languages
@@ -216,7 +308,7 @@ export function OptionsField({
                                 loading={isTranslating && translatingFieldId === nameFieldId}
                                 disabled={isTranslating}
                               >
-                                🌍 {t.translateFromPrimary || "Translate from primary language"}
+                                🌍 Translate
                               </Button>
                             </div>
                           </div>
@@ -251,7 +343,7 @@ export function OptionsField({
                                         loading={isTranslating && translatingFieldId === valueFieldId}
                                         disabled={isTranslating}
                                       >
-                                        🌍 {t.translateFromPrimary || "Translate from primary language"}
+                                        🌍 Translate
                                       </Button>
                                     </div>
                                   </div>

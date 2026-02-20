@@ -710,7 +710,6 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         title: t.products?.productOptions,
                         notEditableInPrimary: t.products?.optionsNotEditableInPrimary,
                         translateButton: t.products?.translateEntireOption,
-                        translateFromPrimary: t.products?.translateFromPrimary,
                         linkedOptionHint: t.products?.linkedOptionHint,
                         linkedBadge: t.products?.linkedBadge,
                       }}
