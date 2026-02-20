@@ -1590,19 +1590,47 @@ Image URL: ${image.url}`;
       return json({ success: false, error: "Invalid target locale" }, { status: 400 });
     }
 
+    const sourceDataJson = getFormString(formData, "sourceData");
+    const sourceData: Array<{ resourceId: string; resourceType: string; key: string; value: string; label: string }> =
+      sourceDataJson ? JSON.parse(sourceDataJson) : [];
+
+    if (sourceData.length === 0) {
+      return json({ actionType: "translateSubResources", success: true, translations: {} });
+    }
+
+    const primaryLocale = getFormString(formData, "primaryLocale") || "en";
+
+    // Build a descriptive task title based on what's being translated
+    const resourceLabels = sourceData.map(s => s.label).join(", ");
+    const taskTitle = resourceLabels.length > 50
+      ? `${sourceData.length} sub-resource${sourceData.length > 1 ? 's' : ''}`
+      : resourceLabels;
+
+    // Create task entry for tracking
+    const task = await db.task.create({
+      data: {
+        shop: session.shop,
+        type: "translation",
+        status: "pending",
+        resourceType: contentConfig.resourceType,
+        resourceId: itemId,
+        resourceTitle: taskTitle,
+        fieldType: "sub-resources",
+        targetLocale,
+        progress: 0,
+        expiresAt: getTaskExpirationDate(),
+      },
+    });
+
     try {
-      const sourceDataJson = getFormString(formData, "sourceData");
-      const sourceData: Array<{ resourceId: string; resourceType: string; key: string; value: string; label: string }> =
-        sourceDataJson ? JSON.parse(sourceDataJson) : [];
+      // Update task to queued (queue will update to running)
+      await db.task.update({
+        where: { id: task.id },
+        data: { status: "queued", progress: 10 },
+      });
 
-      if (sourceData.length === 0) {
-        return json({ actionType: "translateSubResources", success: true, translations: {} });
-      }
-
-      const primaryLocale = getFormString(formData, "primaryLocale") || "en";
-
-      // Build a simple prompt for batch translation
-      const aiService = new AIService(provider, serviceConfig);
+      // Create AI service with shop and taskId for queue management
+      const aiService = new AIService(provider, serviceConfig, session.shop, task.id);
 
       // Group by small batches for AI translation
       const translations: Record<string, Record<string, string>> = {};
@@ -1630,6 +1658,12 @@ Image URL: ${image.url}`;
           translations[resourceId][key] = translatedValues[i] || values[i];
         }
       }
+
+      // Update progress after translation
+      await db.task.update({
+        where: { id: task.id },
+        data: { progress: 60 },
+      });
 
       // Save translations to Shopify + DB
       const savedResources: string[] = [];
@@ -1667,6 +1701,21 @@ Image URL: ${image.url}`;
         }
       }
 
+      // Update task to completed
+      await db.task.update({
+        where: { id: task.id },
+        data: {
+          status: "completed",
+          progress: 100,
+          completedAt: new Date(),
+          result: JSON.stringify({
+            translatedCount: savedResources.length,
+            failedCount: failedResources.length,
+            targetLocale,
+          }),
+        },
+      });
+
       return json({
         actionType: "translateSubResources",
         success: true,
@@ -1675,7 +1724,16 @@ Image URL: ${image.url}`;
         failedResources,
       });
     } catch (error: unknown) {
+      // Update task to failed
       const msg = getFullErrorMessage(error);
+      await db.task.update({
+        where: { id: task.id },
+        data: {
+          status: "failed",
+          completedAt: new Date(),
+          error: msg.substring(0, 1000),
+        },
+      });
       return json({ success: false, error: msg }, { status: 500 });
     }
   }
