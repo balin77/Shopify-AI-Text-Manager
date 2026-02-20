@@ -80,6 +80,7 @@ interface OptionsFieldProps {
     valuesLabel?: string;
     valueLabel?: string;
     translateButton?: string;
+    translateFromPrimary?: string;
     originalLabel?: string;
     linkedOptionHint?: string;
     linkedBadge?: string;
@@ -195,7 +196,11 @@ export function OptionsField({
                       <div>
                         <div className={`ai-editable-field-wrapper ${translation.name ? "bg-white" : "bg-untranslated"}`}>
                           <TextField
-                            label={t.optionNameLabel || `Option name (${localeName})`}
+                            label={
+                              <span style={{ fontWeight: 600 }}>
+                                {t.optionNameLabel || `Option name (${localeName})`}
+                              </span>
+                            }
                             value={translation.name || ""}
                             onChange={(value) => onOptionNameChange(option.id, value)}
                             autoComplete="off"
@@ -211,7 +216,7 @@ export function OptionsField({
                                 loading={isTranslating && translatingFieldId === nameFieldId}
                                 disabled={isTranslating}
                               >
-                                🌍 Translate
+                                🌍 {t.translateFromPrimary || "Translate from primary language"}
                               </Button>
                             </div>
                           </div>
@@ -221,7 +226,7 @@ export function OptionsField({
                       {/* Option Values Translation — only for regular (non-linked) options */}
                       {!option.isLinked ? (
                         <BlockStack gap="200">
-                          <Text as="p" variant="bodyMd" fontWeight="medium">
+                          <Text as="p" variant="bodyMd" fontWeight="semibold">
                             {t.valuesLabel || "Values"} ({localeName})
                           </Text>
                           {option.values.map((optVal, valueIndex) => {
@@ -246,7 +251,7 @@ export function OptionsField({
                                         loading={isTranslating && translatingFieldId === valueFieldId}
                                         disabled={isTranslating}
                                       >
-                                        🌍 Translate
+                                        🌍 {t.translateFromPrimary || "Translate from primary language"}
                                       </Button>
                                     </div>
                                   </div>
