@@ -4,13 +4,14 @@
  * - Product options (Size, Color, Material, etc.)
  * - Read-only view in primary locale
  * - Editable translation fields in foreign locales
- * - AI translation support
- * - Color-coded backgrounds (orange = not translated)
+ * - AI translation support (per field + entire option)
+ * - Color-coded backgrounds (orange = not translated) matching AIEditableField styling
  * - Distinguishes regular options (name + values translatable)
  *   from linked/metaobject options (only name translatable here)
  */
 
 import { Card, BlockStack, Text, TextField, Button, Divider, Badge, Banner } from "@shopify/polaris";
+import "../../styles/AIEditableField.css";
 
 export interface OptionValueData {
   id: string;  // gid://shopify/ProductOptionValue/...
@@ -47,6 +48,9 @@ interface OptionsFieldProps {
   /** Callback to translate entire option */
   onTranslate: (optionId: string) => void;
 
+  /** Callback to translate a single field (option name or value) */
+  onTranslateField?: (optionId: string, fieldType: "name" | "value", valueIndex?: number) => void;
+
   /** Callback when option name changes */
   onOptionNameChange: (optionId: string, value: string) => void;
 
@@ -58,6 +62,9 @@ interface OptionsFieldProps {
 
   /** ID of the option currently being translated */
   translatingOptionId?: string;
+
+  /** ID of the specific field being translated (e.g. "optId:name" or "optId:value:0") */
+  translatingFieldId?: string;
 
   /** Translation strings */
   t?: {
@@ -80,10 +87,12 @@ export function OptionsField({
   currentLanguage,
   translations,
   onTranslate,
+  onTranslateField,
   onOptionNameChange,
   onOptionValueChange,
   isTranslating,
   translatingOptionId,
+  translatingFieldId,
   t = {},
 }: OptionsFieldProps) {
   if (!options || options.length === 0) {
@@ -136,7 +145,7 @@ export function OptionsField({
             </Text>
             {options.map((option, index) => {
               const translation = translations[option.id] || { name: "", values: [] };
-              const hasTranslation = translation.name || translation.values.some(v => v);
+              const nameFieldId = `${option.id}:name`;
 
               return (
                 <div key={option.id}>
@@ -156,19 +165,30 @@ export function OptionsField({
                       </div>
 
                       {/* Option Name Translation — always available */}
-                      <div
-                        style={{
-                          background: hasTranslation ? "white" : "#fff4e5",
-                          borderRadius: "8px",
-                          padding: "1px",
-                        }}
-                      >
-                        <TextField
-                          label={t.optionNameLabel || "Option name (translated)"}
-                          value={translation.name || ""}
-                          onChange={(value) => onOptionNameChange(option.id, value)}
-                          autoComplete="off"
-                        />
+                      <div>
+                        <div className={`ai-editable-field-wrapper ${translation.name ? "bg-white" : "bg-untranslated"}`}>
+                          <TextField
+                            label={t.optionNameLabel || "Option name (translated)"}
+                            value={translation.name || ""}
+                            onChange={(value) => onOptionNameChange(option.id, value)}
+                            autoComplete="off"
+                          />
+                        </div>
+                        {onTranslateField && (
+                          <div className="ai-field-footer">
+                            <div className="ai-field-footer-left" />
+                            <div className="ai-field-footer-right">
+                              <Button
+                                size="slim"
+                                onClick={() => onTranslateField(option.id, "name")}
+                                loading={isTranslating && translatingFieldId === nameFieldId}
+                                disabled={isTranslating}
+                              >
+                                🌍 Translate
+                              </Button>
+                            </div>
+                          </div>
+                        )}
                       </div>
 
                       {/* Option Values Translation — only for regular (non-linked) options */}
@@ -177,23 +197,36 @@ export function OptionsField({
                           <Text as="p" variant="bodyMd" fontWeight="medium">
                             {t.valuesLabel || "Values"} ({currentLanguage})
                           </Text>
-                          {option.values.map((optVal, valueIndex) => (
-                            <div
-                              key={optVal.id || valueIndex}
-                              style={{
-                                background: translation.values[valueIndex] ? "white" : "#fff4e5",
-                                borderRadius: "8px",
-                                padding: "1px",
-                              }}
-                            >
-                              <TextField
-                                label={`${t.valueLabel || "Value"} ${valueIndex + 1}: "${optVal.name}"`}
-                                value={translation.values[valueIndex] || ""}
-                                onChange={(newValue) => onOptionValueChange(option.id, valueIndex, newValue)}
-                                autoComplete="off"
-                              />
-                            </div>
-                          ))}
+                          {option.values.map((optVal, valueIndex) => {
+                            const valueFieldId = `${option.id}:value:${valueIndex}`;
+                            return (
+                              <div key={optVal.id || valueIndex}>
+                                <div className={`ai-editable-field-wrapper ${translation.values[valueIndex] ? "bg-white" : "bg-untranslated"}`}>
+                                  <TextField
+                                    label={`${t.valueLabel || "Value"} ${valueIndex + 1}: "${optVal.name}"`}
+                                    value={translation.values[valueIndex] || ""}
+                                    onChange={(newValue) => onOptionValueChange(option.id, valueIndex, newValue)}
+                                    autoComplete="off"
+                                  />
+                                </div>
+                                {onTranslateField && (
+                                  <div className="ai-field-footer">
+                                    <div className="ai-field-footer-left" />
+                                    <div className="ai-field-footer-right">
+                                      <Button
+                                        size="slim"
+                                        onClick={() => onTranslateField(option.id, "value", valueIndex)}
+                                        loading={isTranslating && translatingFieldId === valueFieldId}
+                                        disabled={isTranslating}
+                                      >
+                                        🌍 Translate
+                                      </Button>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
                         </BlockStack>
                       ) : (
                         <Banner tone="info">
@@ -203,14 +236,19 @@ export function OptionsField({
                         </Banner>
                       )}
 
-                      {/* Translate Button */}
-                      <div>
-                        <Button
-                          onClick={() => onTranslate(option.id)}
-                          loading={isTranslating && translatingOptionId === option.id}
-                        >
-                          {t.translateButton || "Translate entire option"}
-                        </Button>
+                      {/* Translate Entire Option Button */}
+                      <div className="ai-field-footer">
+                        <div className="ai-field-footer-left" />
+                        <div className="ai-field-footer-right">
+                          <Button
+                            size="slim"
+                            onClick={() => onTranslate(option.id)}
+                            loading={isTranslating && translatingOptionId === option.id && !translatingFieldId}
+                            disabled={isTranslating}
+                          >
+                            🌍 {t.translateButton || "Translate entire option"}
+                          </Button>
+                        </div>
                       </div>
                     </BlockStack>
                   </Card>

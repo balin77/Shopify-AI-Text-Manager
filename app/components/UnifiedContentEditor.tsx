@@ -699,10 +699,12 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                       currentLanguage={state.currentLanguage}
                       translations={subResourceState.optionTranslations}
                       onTranslate={subResourceHandlers.translateOption}
+                      onTranslateField={subResourceHandlers.translateOptionField}
                       onOptionNameChange={subResourceHandlers.handleOptionNameChange}
                       onOptionValueChange={subResourceHandlers.handleOptionValueChange}
                       isTranslating={subResourceState.isTranslating}
                       translatingOptionId={subResourceState.translatingOptionId}
+                      translatingFieldId={subResourceState.translatingFieldId}
                       t={{
                         title: t.products?.productOptions,
                         notEditableInPrimary: t.products?.optionsNotEditableInPrimary,

@@ -29,6 +29,8 @@ export interface SubResourceState {
   isTranslating: boolean;
   /** Which option is currently being translated */
   translatingOptionId?: string;
+  /** Which specific field is being translated (e.g. "optId:name" or "optId:value:0") */
+  translatingFieldId?: string;
   /** Which metafield is currently being translated */
   translatingMetafieldId?: string;
   /** Whether there are unsaved changes */
@@ -42,6 +44,7 @@ export interface SubResourceHandlers {
   handleOptionValueChange: (optionId: string, valueIndex: number, value: string) => void;
   handleMetafieldChange: (metafieldId: string, value: string) => void;
   translateOption: (optionId: string) => void;
+  translateOptionField: (optionId: string, fieldType: "name" | "value", valueIndex?: number) => void;
   translateMetafield: (metafieldId: string) => void;
   translateAllSubResources: () => void;
   saveSubResourceTranslations: () => void;
@@ -128,6 +131,7 @@ export function useProductSubResources({
   const [metafieldTranslations, setMetafieldTranslations] = useState<Record<string, string>>({});
   const [isTranslating, setIsTranslating] = useState(false);
   const [translatingOptionId, setTranslatingOptionId] = useState<string | undefined>();
+  const [translatingFieldId, setTranslatingFieldId] = useState<string | undefined>();
   const [translatingMetafieldId, setTranslatingMetafieldId] = useState<string | undefined>();
   const [hasChanges, setHasChanges] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -252,6 +256,7 @@ export function useProductSubResources({
     if (data.actionType === "translateSubResources") {
       setIsTranslating(false);
       setTranslatingOptionId(undefined);
+      setTranslatingFieldId(undefined);
       setTranslatingMetafieldId(undefined);
 
       const translations = data.translations as Record<string, Record<string, string>>;
@@ -391,6 +396,50 @@ export function useProductSubResources({
     );
   }, [isPrimaryLocale, isTranslating, buildSourceData, currentLanguage, primaryLocale, fetcher, selectedItem?.id]);
 
+  const translateOptionField = useCallback((optionId: string, fieldType: "name" | "value", valueIndex?: number) => {
+    if (isPrimaryLocale || isTranslating || !selectedItem) return;
+
+    const option = selectedItem.options?.find(o => o.id === optionId);
+    if (!option) return;
+
+    let sourceData: Array<{ resourceId: string; resourceType: string; key: string; value: string; label: string }>;
+
+    if (fieldType === "name") {
+      sourceData = [{
+        resourceId: option.id,
+        resourceType: "ProductOption",
+        key: "name",
+        value: option.name,
+        label: `Option: ${option.name}`,
+      }];
+    } else {
+      const val = option.values[valueIndex!];
+      if (!val?.id) return;
+      sourceData = [{
+        resourceId: val.id,
+        resourceType: "ProductOptionValue",
+        key: "name",
+        value: val.name,
+        label: `Value: ${val.name}`,
+      }];
+    }
+
+    setIsTranslating(true);
+    setTranslatingOptionId(optionId);
+    setTranslatingFieldId(fieldType === "name" ? `${optionId}:name` : `${optionId}:value:${valueIndex}`);
+
+    fetcher.submit(
+      {
+        action: "translateSubResources",
+        targetLocale: currentLanguage,
+        primaryLocale,
+        sourceData: JSON.stringify(sourceData),
+        itemId: selectedItem.id,
+      },
+      { method: "POST" }
+    );
+  }, [isPrimaryLocale, isTranslating, selectedItem, currentLanguage, primaryLocale, fetcher]);
+
   const translateMetafield = useCallback((metafieldId: string) => {
     if (isPrimaryLocale || isTranslating || !selectedItem) return;
 
@@ -501,6 +550,7 @@ export function useProductSubResources({
       metafieldTranslations,
       isTranslating,
       translatingOptionId,
+      translatingFieldId,
       translatingMetafieldId,
       hasChanges,
       isLoading,
@@ -510,6 +560,7 @@ export function useProductSubResources({
       handleOptionValueChange,
       handleMetafieldChange,
       translateOption,
+      translateOptionField,
       translateMetafield,
       translateAllSubResources,
       saveSubResourceTranslations,
