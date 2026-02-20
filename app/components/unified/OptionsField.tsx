@@ -152,6 +152,21 @@ export function OptionsField({
                   {index > 0 && <Divider />}
                   <Card>
                     <BlockStack gap="300">
+                      {/* Translate Entire Option Button — top of card */}
+                      <div className="ai-field-footer">
+                        <div className="ai-field-footer-left" />
+                        <div className="ai-field-footer-right">
+                          <Button
+                            size="slim"
+                            onClick={() => onTranslate(option.id)}
+                            loading={isTranslating && translatingOptionId === option.id && !translatingFieldId}
+                            disabled={isTranslating}
+                          >
+                            🌍 {t.translateButton || "Translate entire option"}
+                          </Button>
+                        </div>
+                      </div>
+
                       {/* Original values as reference */}
                       <div style={{ padding: "0.75rem", background: "#f6f6f7", borderRadius: "8px" }}>
                         <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: option.isLinked ? "4px" : "0" }}>
@@ -236,20 +251,6 @@ export function OptionsField({
                         </Banner>
                       )}
 
-                      {/* Translate Entire Option Button */}
-                      <div className="ai-field-footer">
-                        <div className="ai-field-footer-left" />
-                        <div className="ai-field-footer-right">
-                          <Button
-                            size="slim"
-                            onClick={() => onTranslate(option.id)}
-                            loading={isTranslating && translatingOptionId === option.id && !translatingFieldId}
-                            disabled={isTranslating}
-                          >
-                            🌍 {t.translateButton || "Translate entire option"}
-                          </Button>
-                        </div>
-                      </div>
                     </BlockStack>
                   </Card>
                 </div>
