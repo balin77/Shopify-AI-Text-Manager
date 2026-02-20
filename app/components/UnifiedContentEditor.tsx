@@ -697,6 +697,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                       options={selectedItem.options}
                       isPrimaryLocale={state.currentLanguage === primaryLocale}
                       currentLanguage={state.currentLanguage}
+                      shopLocales={shopLocales}
                       translations={subResourceState.optionTranslations}
                       onTranslate={subResourceHandlers.translateOption}
                       onTranslateField={subResourceHandlers.translateOptionField}

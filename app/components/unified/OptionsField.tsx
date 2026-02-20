@@ -11,6 +11,8 @@
  */
 
 import { Card, BlockStack, Text, TextField, Button, Divider, Badge, Banner } from "@shopify/polaris";
+import { useI18n } from "../../contexts/I18nContext";
+import { getLocalizedLanguageName } from "../../utils/contentEditor.utils";
 import "../../styles/AIEditableField.css";
 
 export interface OptionValueData {
@@ -41,6 +43,9 @@ interface OptionsFieldProps {
 
   /** Current language code */
   currentLanguage: string;
+
+  /** Shop locales array for language name resolution */
+  shopLocales: any[];
 
   /** Translation data (indexed by option ID) */
   translations: Record<string, OptionTranslation>;
@@ -85,6 +90,7 @@ export function OptionsField({
   options,
   isPrimaryLocale,
   currentLanguage,
+  shopLocales,
   translations,
   onTranslate,
   onTranslateField,
@@ -95,6 +101,15 @@ export function OptionsField({
   translatingFieldId,
   t = {},
 }: OptionsFieldProps) {
+  const { locale: appLocale } = useI18n();
+
+  // Get localized language name (e.g., "English", "German" instead of "en", "de")
+  const localeName = getLocalizedLanguageName(
+    currentLanguage,
+    appLocale,
+    shopLocales.find((l: any) => l.locale === currentLanguage)?.name
+  );
+
   if (!options || options.length === 0) {
     return null;
   }
@@ -140,9 +155,6 @@ export function OptionsField({
         ) : (
           // Editable translation fields in foreign languages
           <BlockStack gap="400">
-            <Text as="p" variant="bodySm" tone="subdued">
-              {t.translateInstruction || `Translate the option names and values for ${currentLanguage}.`}
-            </Text>
             {options.map((option, index) => {
               const translation = translations[option.id] || { name: "", values: [] };
               const nameFieldId = `${option.id}:name`;
@@ -183,7 +195,7 @@ export function OptionsField({
                       <div>
                         <div className={`ai-editable-field-wrapper ${translation.name ? "bg-white" : "bg-untranslated"}`}>
                           <TextField
-                            label={t.optionNameLabel || "Option name (translated)"}
+                            label={t.optionNameLabel || `Option name (${localeName})`}
                             value={translation.name || ""}
                             onChange={(value) => onOptionNameChange(option.id, value)}
                             autoComplete="off"
@@ -210,7 +222,7 @@ export function OptionsField({
                       {!option.isLinked ? (
                         <BlockStack gap="200">
                           <Text as="p" variant="bodyMd" fontWeight="medium">
-                            {t.valuesLabel || "Values"} ({currentLanguage})
+                            {t.valuesLabel || "Values"} ({localeName})
                           </Text>
                           {option.values.map((optVal, valueIndex) => {
                             const valueFieldId = `${option.id}:value:${valueIndex}`;
