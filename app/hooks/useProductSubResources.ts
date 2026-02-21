@@ -544,7 +544,7 @@ export function useProductSubResources({
       const optionsChanges: Record<string, { name?: string; values?: string[] }> = {};
       const metafieldChanges: Record<string, string> = {};
 
-      // Collect option name and value changes
+      // Collect option name and value changes with validation
       for (const [optionId, edit] of Object.entries(primaryOptionEdits)) {
         const originalOption = selectedItem.options?.find(o => o.id === optionId);
         if (!originalOption || originalOption.isLinked) continue; // Skip metaobject-linked options
@@ -555,18 +555,33 @@ export function useProductSubResources({
           JSON.stringify(edit.values) !== JSON.stringify(originalOption.values.map(v => v.name));
 
         if (hasNameChange || hasValuesChange) {
+          // VALIDATION: Prevent empty option names and values
+          if (hasNameChange && edit.name.trim() === "") {
+            alert("Option name cannot be empty");
+            return;
+          }
+          if (hasValuesChange && edit.values.some(v => v.trim() === "")) {
+            alert("Option values cannot be empty");
+            return;
+          }
+
           optionsChanges[optionId] = {};
           if (hasNameChange) optionsChanges[optionId].name = edit.name;
           if (hasValuesChange) optionsChanges[optionId].values = edit.values;
         }
       }
 
-      // Collect metafield value changes
+      // Collect metafield value changes with validation
       for (const [metafieldId, editValue] of Object.entries(primaryMetafieldEdits)) {
         const originalMetafield = selectedItem.metafields?.find(m => m.id === metafieldId);
         if (!originalMetafield) continue;
 
         if (editValue !== originalMetafield.value) {
+          // VALIDATION: Prevent empty metafield values
+          if (editValue.trim() === "") {
+            alert("Metafield values cannot be empty");
+            return;
+          }
           metafieldChanges[metafieldId] = editValue;
         }
       }

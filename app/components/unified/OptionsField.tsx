@@ -153,26 +153,14 @@ export function OptionsField({
                 ? primaryOptions[option.id].values
                 : option.values.map(v => v.name);
 
-              // Handler for value changes
+              // Handler for individual value changes (no add/remove)
               const handleValueChange = (valueIndex: number, newValue: string) => {
                 const updatedValues = [...currentValues];
                 updatedValues[valueIndex] = newValue;
                 onPrimaryOptionValuesChange?.(option.id, updatedValues);
               };
 
-              const handleAddValue = () => {
-                const updatedValues = [...currentValues, ""];
-                onPrimaryOptionValuesChange?.(option.id, updatedValues);
-              };
-
-              const handleRemoveValue = (valueIndex: number) => {
-                if (currentValues.length <= 1) {
-                  // Don't allow removing the last value
-                  return;
-                }
-                const updatedValues = currentValues.filter((_, i) => i !== valueIndex);
-                onPrimaryOptionValuesChange?.(option.id, updatedValues);
-              };
+              const nameFieldId = `${option.id}:name`;
 
               return (
                 <div key={option.id}>
@@ -198,44 +186,63 @@ export function OptionsField({
                       ) : (
                         <>
                           {/* Option Name */}
-                          <TextField
-                            label={t.optionNameLabel || "Option name"}
-                            value={currentName}
-                            onChange={(value) => onPrimaryOptionNameChange?.(option.id, value)}
-                            autoComplete="off"
-                          />
+                          <div>
+                            <TextField
+                              label={t.optionNameLabel || "Option name"}
+                              value={currentName}
+                              onChange={(value) => onPrimaryOptionNameChange?.(option.id, value)}
+                              autoComplete="off"
+                            />
+                            {onTranslateField && (
+                              <div className="ai-field-footer">
+                                <div className="ai-field-footer-left" />
+                                <div className="ai-field-footer-right">
+                                  <Button
+                                    size="slim"
+                                    onClick={() => onTranslateField(option.id, "name")}
+                                    loading={isTranslating && translatingFieldId === nameFieldId}
+                                    disabled={isTranslating}
+                                  >
+                                    🌍 {t.translateButton || "Translate"}
+                                  </Button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
 
                           {/* Option Values */}
                           <BlockStack gap="200">
                             <Text as="p" variant="bodyMd" fontWeight="semibold">
                               {t.valuesLabel || "Values"}
                             </Text>
-                            {currentValues.map((value, valueIndex) => (
-                              <InlineStack key={valueIndex} gap="200" align="start" blockAlign="center">
-                                <div style={{ flex: 1 }}>
+                            {currentValues.map((value, valueIndex) => {
+                              const valueFieldId = `${option.id}:value:${valueIndex}`;
+                              return (
+                                <div key={valueIndex}>
                                   <TextField
                                     label={`${t.valueLabel || "Value"} ${valueIndex + 1}`}
-                                    labelHidden
                                     value={value}
                                     onChange={(newValue) => handleValueChange(valueIndex, newValue)}
                                     autoComplete="off"
                                   />
+                                  {onTranslateField && (
+                                    <div className="ai-field-footer">
+                                      <div className="ai-field-footer-left" />
+                                      <div className="ai-field-footer-right">
+                                        <Button
+                                          size="slim"
+                                          onClick={() => onTranslateField(option.id, "value", valueIndex)}
+                                          loading={isTranslating && translatingFieldId === valueFieldId}
+                                          disabled={isTranslating}
+                                        >
+                                          🌍 {t.translateButton || "Translate"}
+                                        </Button>
+                                      </div>
+                                    </div>
+                                  )}
                                 </div>
-                                {currentValues.length > 1 && (
-                                  <Button
-                                    icon={DeleteIcon}
-                                    onClick={() => handleRemoveValue(valueIndex)}
-                                    accessibilityLabel={t.removeValue || "Remove value"}
-                                    tone="critical"
-                                  />
-                                )}
-                              </InlineStack>
-                            ))}
-                            <div>
-                              <Button onClick={handleAddValue}>
-                                {t.addValue || "+ Add value"}
-                              </Button>
-                            </div>
+                              );
+                            })}
                           </BlockStack>
                         </>
                       )}
