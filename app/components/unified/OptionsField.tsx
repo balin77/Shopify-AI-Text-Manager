@@ -91,12 +91,14 @@ interface OptionsFieldProps {
     valuesLabel?: string;
     valueLabel?: string;
     translateButton?: string;
+    translateFieldButton?: string;
     originalLabel?: string;
     linkedOptionHint?: string;
     linkedBadge?: string;
     addValue?: string;
     removeValue?: string;
     linkedNotEditableHint?: string;
+    optionPositionLabel?: string;
   };
 }
 
@@ -169,7 +171,7 @@ export function OptionsField({
                     <BlockStack gap="300">
                       <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                         <Text as="p" variant="bodyMd" fontWeight="semibold">
-                          Option {option.position}
+                          {t.optionPositionLabel || "Option"} {option.position}
                         </Text>
                         {option.isLinked && (
                           <Badge tone="info">{t.linkedBadge || "Metaobject"}</Badge>
@@ -203,7 +205,7 @@ export function OptionsField({
                                     loading={isTranslating && translatingFieldId === nameFieldId}
                                     disabled={isTranslating}
                                   >
-                                    🌍 {t.translateButton || "Translate"}
+                                    🌍 {t.translateFieldButton || t.translateButton || "Translate"}
                                   </Button>
                                 </div>
                               </div>
@@ -220,7 +222,8 @@ export function OptionsField({
                               return (
                                 <div key={valueIndex}>
                                   <TextField
-                                    label={`${t.valueLabel || "Value"} ${valueIndex + 1}`}
+                                    label={t.valuesLabel || "Values"}
+                                    labelHidden
                                     value={value}
                                     onChange={(newValue) => handleValueChange(valueIndex, newValue)}
                                     autoComplete="off"
@@ -235,7 +238,7 @@ export function OptionsField({
                                           loading={isTranslating && translatingFieldId === valueFieldId}
                                           disabled={isTranslating}
                                         >
-                                          🌍 {t.translateButton || "Translate"}
+                                          🌍 {t.translateFieldButton || t.translateButton || "Translate"}
                                         </Button>
                                       </div>
                                     </div>

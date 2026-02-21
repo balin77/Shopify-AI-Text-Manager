@@ -726,11 +726,13 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         notEditableInPrimary: t.products?.optionsNotEditableInPrimary,
                         editInstructionPrimary: t.products?.optionsEditInstructionPrimary,
                         translateButton: t.products?.translateEntireOption,
+                        translateFieldButton: t.products?.translateFieldButton,
                         linkedOptionHint: t.products?.linkedOptionHint,
                         linkedBadge: t.products?.linkedBadge,
-                        addValue: t.products?.addValue,
-                        removeValue: t.products?.removeValue,
+                        optionNameLabel: t.products?.optionNameLabel,
+                        valuesLabel: t.products?.valuesLabel,
                         linkedNotEditableHint: t.products?.linkedNotEditableHint,
+                        optionPositionLabel: t.products?.optionPositionLabel,
                       }}
                     />
                   </div>
