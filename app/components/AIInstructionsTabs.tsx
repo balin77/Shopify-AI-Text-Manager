@@ -13,6 +13,8 @@ import type { FetcherWithComponents } from "@remix-run/react";
 import { useI18n } from "../contexts/I18nContext";
 
 interface Instructions {
+  // General (Writing Style Instructions)
+  writingStyleInstructions: string;
   // General (Format Instructions)
   formatPreserveInstructions: string;
   // General (Translate Instructions)
@@ -269,6 +271,42 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, on
                 <Text as="p" variant="bodyMd" tone="subdued">
                   {t.settings.generalTabDescription || 'These instructions control how the "Format" function behaves. The Format function preserves your original text and only applies formatting changes.'}
                 </Text>
+
+                {/* Writing Style Instructions */}
+                <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
+                  <BlockStack gap="400">
+                    <InlineStack gap="100" blockAlign="center">
+                      <Text as="h3" variant="headingMd">
+                        {t.settings.writingStyleInstructionsLabel || 'Writing Style'}
+                      </Text>
+                      <HelpTooltip helpKey="writingStyleInstructions" />
+                    </InlineStack>
+                    <div>
+                      <InlineStack align="space-between" blockAlign="center">
+                        <Text as="p" variant="bodyMd" fontWeight="medium">
+                          {t.settings.instructionsLabel || 'Instructions'}
+                        </Text>
+                        <Button
+                          size="slim"
+                          onClick={() => handleFieldChange('writingStyleInstructions', DEFAULT_GENERAL_INSTRUCTIONS.writingStyleInstructions)}
+                          tone="critical"
+                          variant="plain"
+                        >
+                          {t.settings?.resetField || "Reset"}
+                        </Button>
+                      </InlineStack>
+                      <TextField
+                        label=""
+                        value={localInstructions.writingStyleInstructions || ''}
+                        onChange={(v) => handleFieldChange('writingStyleInstructions', v)}
+                        multiline={8}
+                        placeholder={t.settings.writingStyleInstructionsPlaceholder || 'Instructions for writing style...'}
+                        helpText={`${(localInstructions.writingStyleInstructions || '').length} ${t.products.characters}`}
+                        autoComplete="off"
+                      />
+                    </div>
+                  </BlockStack>
+                </div>
 
                 {/* Format Instructions */}
                 <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>

@@ -7,11 +7,22 @@
 
 // General formatting instructions used by the "Format" action
 export interface GeneralInstructions {
+  writingStyleInstructions: string;
   formatPreserveInstructions: string;
   translateInstructions: string;
 }
 
 export const DEFAULT_GENERAL_INSTRUCTIONS: GeneralInstructions = {
+  writingStyleInstructions: `Write in a professional, clear, and customer-oriented style:
+- Use active voice instead of passive constructions
+- Write precisely and concretely, avoid filler words
+- Focus on benefits and value for the customer
+- Keep sentences short and understandable (max. 20 words per sentence on average)
+- Use positive, inviting language
+- Avoid superlatives and exaggerated marketing language
+- Ensure correct spelling and grammar
+- Adapt the tone to match the brand and target audience`,
+
   formatPreserveInstructions: `CRITICAL: You must PRESERVE the original text content. DO NOT rewrite, rephrase, or generate new content.
 Only apply formatting changes such as:
 - Adding separators (| or - or :)

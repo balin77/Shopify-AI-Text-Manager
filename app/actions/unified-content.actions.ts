@@ -153,6 +153,9 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
       if (field.type === "text" || field.type === "slug") {
         let prompt = `Create an optimized ${field.label}.`;
 
+        if (instructions?.writingStyleInstructions) {
+          prompt += `\n\nGeneral Writing Style:\n${instructions.writingStyleInstructions}`;
+        }
         if (instructions?.[formatKey]) {
           prompt += `\n\nFormat Example:\n${instructions[formatKey]}`;
         }
@@ -182,6 +185,9 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
       } else if (field.type === "html" || field.type === "textarea") {
         let prompt = `Create an optimized ${field.label} for: ${sanitizedContextTitle}`;
 
+        if (instructions?.writingStyleInstructions) {
+          prompt += `\n\nGeneral Writing Style:\n${instructions.writingStyleInstructions}`;
+        }
         if (instructions?.[formatKey]) {
           prompt += `\n\nFormat Example:\n${instructions[formatKey]}`;
         }

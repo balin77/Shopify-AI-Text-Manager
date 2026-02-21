@@ -74,6 +74,8 @@ model AIInstructions {
   id   String @id @default(cuid())
   shop String @unique
 
+  // GENERAL - Writing Style Instructions (used by all AI generate/improve operations)
+  writingStyleInstructions String? @db.Text
   // GENERAL - Format Instructions (used by the "Format" function)
   formatPreserveInstructions String? @db.Text
   // GENERAL - Translate Instructions (used by the "Translate" function)

@@ -333,6 +333,9 @@ export const en: Translation = {
     tabPolicies: "Policies",
     // General Tab
     generalTabDescription: "These general instructions control how the \"Format\" and \"Translate\" functions work.",
+    writingStyleInstructionsLabel: "Writing Style",
+    writingStyleInstructionsPlaceholder: "Instructions for writing style...",
+    writingStyleInstructionsHelp: "These instructions define the general writing style and tone for all AI-generated content.",
     formatPreserveInstructionsLabel: "Format Instructions",
     formatPreserveInstructionsPlaceholder: "Instructions for the Format function...",
     formatPreserveInstructionsHelp: "These instructions tell the AI how to format text without changing its content.",
@@ -784,6 +787,16 @@ export const en: Translation = {
     },
 
     // Settings - AI Instructions
+    writingStyleInstructions: {
+      title: "Writing Style",
+      summary: "Defines the general writing style and tone for all AI-generated content.",
+      details: "These instructions are applied to all AI generation and improvement operations. They define the overall writing style, tone, sentence structure, and language preferences that the AI should follow when creating or improving any content.",
+      tips: [
+        "Example: 'Use professional, customer-oriented language'",
+        "Applied to all generate and improve operations",
+        "Affects products, collections, blogs, and pages",
+      ],
+    },
     formatInstructions: {
       title: "Format Instructions",
       summary: "Controls how the AI formats text without changing the content.",

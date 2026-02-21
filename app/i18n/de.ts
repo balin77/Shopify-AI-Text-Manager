@@ -331,6 +331,9 @@ export const de = {
     tabPolicies: "Richtlinien",
     // General Tab
     generalTabDescription: "Diese allgemeinen Anweisungen steuern, wie die \"Formatieren\"- und \"Übersetzen\"-Funktionen arbeiten.",
+    writingStyleInstructionsLabel: "Schreibstil",
+    writingStyleInstructionsPlaceholder: "Anweisungen für den Schreibstil...",
+    writingStyleInstructionsHelp: "Diese Anweisungen definieren den allgemeinen Schreibstil und Tonfall für alle KI-generierten Inhalte.",
     formatPreserveInstructionsLabel: "Format-Anweisungen",
     formatPreserveInstructionsPlaceholder: "Anweisungen für die Formatieren-Funktion...",
     formatPreserveInstructionsHelp: "Diese Anweisungen sagen der KI, wie sie Text formatieren soll, ohne dessen Inhalt zu ändern.",
@@ -782,6 +785,16 @@ export const de = {
     },
 
     // Settings - AI Instructions
+    writingStyleInstructions: {
+      title: "Schreibstil",
+      summary: "Definiert den allgemeinen Schreibstil und Tonfall für alle KI-generierten Inhalte.",
+      details: "Diese Anweisungen werden bei allen KI-Generierungs- und Verbesserungsoperationen angewendet. Sie definieren den allgemeinen Schreibstil, Tonfall, Satzstruktur und Sprachpräferenzen, die die KI beim Erstellen oder Verbessern von Inhalten befolgen soll.",
+      tips: [
+        "Beispiel: 'Professionelle, kundenorientierte Sprache verwenden'",
+        "Wird bei allen Generierungs- und Verbesserungsoperationen angewendet",
+        "Betrifft Produkte, Kollektionen, Blogs und Seiten",
+      ],
+    },
     formatInstructions: {
       title: "Format-Anweisungen",
       summary: "Steuert, wie die KI Text formatiert, ohne den Inhalt zu ändern.",
