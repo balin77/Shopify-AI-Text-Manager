@@ -94,6 +94,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     instructions = await db.aIInstructions.create({
       data: {
         shop: session.shop,
+        // General (Writing Style Instructions)
+        writingStyleInstructions: DEFAULT_GENERAL_INSTRUCTIONS.writingStyleInstructions,
         // General (Format Instructions)
         formatPreserveInstructions: DEFAULT_GENERAL_INSTRUCTIONS.formatPreserveInstructions,
         // General (Translate Instructions)
@@ -149,11 +151,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         policyDescriptionInstructions: DEFAULT_POLICY_INSTRUCTIONS.descriptionInstructions,
       },
     });
-  } else if (!instructions.productSeoTitleInstructions || !instructions.productTitleInstructions || !instructions.formatPreserveInstructions || !instructions.translateInstructions) {
+  } else if (!instructions.productSeoTitleInstructions || !instructions.productTitleInstructions || !instructions.formatPreserveInstructions || !instructions.translateInstructions || !instructions.writingStyleInstructions) {
     // Entry exists but some fields are empty - populate with defaults (only once)
     instructions = await db.aIInstructions.update({
       where: { shop: session.shop },
       data: {
+        // General (Writing Style Instructions)
+        writingStyleInstructions: instructions.writingStyleInstructions || DEFAULT_GENERAL_INSTRUCTIONS.writingStyleInstructions,
         // General (Format Instructions)
         formatPreserveInstructions: instructions.formatPreserveInstructions || DEFAULT_GENERAL_INSTRUCTIONS.formatPreserveInstructions,
         // General (Translate Instructions)
@@ -347,6 +351,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         deepseekMaxRequestsPerMinute: settings.deepseekMaxRequestsPerMinute || 60,
       },
       instructions: {
+        // General (Writing Style Instructions)
+        writingStyleInstructions: instructions.writingStyleInstructions || DEFAULT_GENERAL_INSTRUCTIONS.writingStyleInstructions,
         // General (Format Instructions)
         formatPreserveInstructions: instructions.formatPreserveInstructions || DEFAULT_GENERAL_INSTRUCTIONS.formatPreserveInstructions,
         // General (Translate Instructions)
@@ -441,6 +447,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
       // Sanitize HTML content in format examples (for description fields)
       const sanitizedData = {
+        // General (Writing Style Instructions)
+        writingStyleInstructions: data.writingStyleInstructions || null,
         // General (Format Instructions)
         formatPreserveInstructions: data.formatPreserveInstructions || null,
         // General (Translate Instructions)
