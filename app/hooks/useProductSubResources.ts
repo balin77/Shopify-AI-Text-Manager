@@ -353,20 +353,38 @@ export function useProductSubResources({
   // ============================================================================
 
   const handlePrimaryOptionNameChange = useCallback((optionId: string, value: string) => {
-    setPrimaryOptionEdits(prev => ({
-      ...prev,
-      [optionId]: { ...prev[optionId], name: value, values: prev[optionId]?.values || [] },
-    }));
+    setPrimaryOptionEdits(prev => {
+      // If this option hasn't been edited yet, get the original values from selectedItem
+      const originalOption = selectedItem?.options?.find(o => o.id === optionId);
+      const originalValues = originalOption?.values.map(v => v.name) || [];
+
+      return {
+        ...prev,
+        [optionId]: {
+          name: value,
+          values: prev[optionId]?.values || originalValues,
+        },
+      };
+    });
     setHasChanges(true);
-  }, []);
+  }, [selectedItem]);
 
   const handlePrimaryOptionValuesChange = useCallback((optionId: string, values: string[]) => {
-    setPrimaryOptionEdits(prev => ({
-      ...prev,
-      [optionId]: { ...prev[optionId], name: prev[optionId]?.name || "", values },
-    }));
+    setPrimaryOptionEdits(prev => {
+      // If this option hasn't been edited yet, get the original name from selectedItem
+      const originalOption = selectedItem?.options?.find(o => o.id === optionId);
+      const originalName = originalOption?.name || "";
+
+      return {
+        ...prev,
+        [optionId]: {
+          name: prev[optionId]?.name || originalName,
+          values,
+        },
+      };
+    });
     setHasChanges(true);
-  }, []);
+  }, [selectedItem]);
 
   const handlePrimaryMetafieldChange = useCallback((metafieldId: string, value: string) => {
     setPrimaryMetafieldEdits(prev => ({ ...prev, [metafieldId]: value }));
