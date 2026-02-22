@@ -208,7 +208,7 @@ export function useProductSubResources({
           resourceIds: JSON.stringify(subResourceIds),
           itemId,
         },
-        { method: "POST", action: "/app/products" }
+        { method: "POST", action: "/app/products/subresources" }
       );
     } else {
       setIsLoading(false);
@@ -454,7 +454,7 @@ export function useProductSubResources({
           primaryLocale,
           fieldId, // Send fieldId so server can echo it back
         },
-        { method: "POST", action: "/app/products" }
+        { method: "POST", action: "/app/products/subresources" }
       );
     } else {
       // Foreign locale: translate from primary to this locale only
@@ -467,7 +467,7 @@ export function useProductSubResources({
           itemId: selectedItem?.id || "",
           fieldId, // Send fieldId so server can echo it back
         },
-        { method: "POST", action: "/app/products" }
+        { method: "POST", action: "/app/products/subresources" }
       );
     }
   }, [isPrimaryLocale, buildSourceData, currentLanguage, primaryLocale, fetcher, selectedItem?.id]);
@@ -514,7 +514,7 @@ export function useProductSubResources({
           primaryLocale,
           fieldId, // Send fieldId so server can echo it back
         },
-        { method: "POST", action: "/app/products" }
+        { method: "POST", action: "/app/products/subresources" }
       );
     } else {
       // Foreign locale: translate from primary to this locale only
@@ -527,7 +527,7 @@ export function useProductSubResources({
           itemId: selectedItem.id,
           fieldId, // Send fieldId so server can echo it back
         },
-        { method: "POST", action: "/app/products" }
+        { method: "POST", action: "/app/products/subresources" }
       );
     }
   }, [isPrimaryLocale, selectedItem, currentLanguage, primaryLocale, fetcher]);
@@ -559,7 +559,7 @@ export function useProductSubResources({
         itemId: selectedItem.id,
         fieldId, // Send fieldId so server can echo it back
       },
-      { method: "POST", action: "/app/products" }
+      { method: "POST", action: "/app/products/subresources" }
     );
   }, [isPrimaryLocale, selectedItem, currentLanguage, primaryLocale, fetcher]);
 
@@ -583,7 +583,7 @@ export function useProductSubResources({
         itemId: selectedItem?.id || "",
         fieldId, // Send fieldId so server can echo it back
       },
-      { method: "POST", action: "/app/products" }
+      { method: "POST", action: "/app/products/subresources" }
     );
   }, [isPrimaryLocale, buildSourceData, currentLanguage, primaryLocale, fetcher, selectedItem?.id]);
 
@@ -686,40 +686,8 @@ export function useProductSubResources({
         console.log(`  ${key}:`, value);
       }
 
-      console.log("[saveSubResources] Submit options:", { method: "POST", action: "/app/products" });
-      console.log("[saveSubResources] Current window.location.pathname:", window.location.pathname);
-      console.log("[saveSubResources] Fetcher before submit:", {
-        state: fetcher.state,
-        formAction: fetcher.formAction,
-        formMethod: fetcher.formMethod
-      });
-
-      // WORKAROUND: Create a temporary form element and submit it
-      // This is needed because fetcher.submit ignores the action option in Remix 2.17.3
-      const form = document.createElement('form');
-      form.method = 'POST';
-      form.action = '/app/products';
-      form.style.display = 'none';
-
-      // Append all form data
-      for (const [key, value] of formData.entries()) {
-        const input = document.createElement('input');
-        input.type = 'hidden';
-        input.name = key;
-        input.value = value as string;
-        form.appendChild(input);
-      }
-
-      document.body.appendChild(form);
-      console.log("[saveSubResources] Using form element workaround, action:", form.action);
-      fetcher.submit(form);
-      document.body.removeChild(form);
-
-      console.log("[saveSubResources] Fetcher after submit:", {
-        state: fetcher.state,
-        formAction: fetcher.formAction,
-        formMethod: fetcher.formMethod
-      });
+      console.log("[saveSubResources] Submitting to /app/products/subresources");
+      fetcher.submit(formData, { method: "POST", action: "/app/products/subresources" });
     } else {
       // FOREIGN LOCALE: Save translations
       const translationsData: Record<string, Record<string, string>> = {};
@@ -760,7 +728,7 @@ export function useProductSubResources({
           resourceTypes: JSON.stringify(resourceTypes),
           itemId: selectedItem.id,
         },
-        { method: "POST", action: "/app/products" }
+        { method: "POST", action: "/app/products/subresources" }
       );
     }
   }, [hasChanges, isPrimaryLocale, selectedItem, primaryOptionEdits, primaryMetafieldEdits, optionTranslations, metafieldTranslations, currentLanguage, fetcher]);
