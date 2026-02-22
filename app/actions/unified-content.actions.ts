@@ -2056,6 +2056,8 @@ Image URL: ${image.url}`;
 
   if (action === "savePrimarySubResources") {
     const productId = getFormString(formData, "productId");
+    logger.info("[savePrimarySubResources] Started", { productId });
+
     if (!productId || !isValidShopifyGID(productId)) {
       return json({ success: false, error: "Invalid product ID" }, { status: 400 });
     }
@@ -2068,6 +2070,13 @@ Image URL: ${image.url}`;
         ? JSON.parse(optionsChangesJson) : {};
       const metafieldChanges: Record<string, string> = metafieldChangesJson
         ? JSON.parse(metafieldChangesJson) : {};
+
+      logger.info("[savePrimarySubResources] Parsed changes", {
+        optionsChanges,
+        metafieldChanges,
+        hasOptionsChanges: Object.keys(optionsChanges).length > 0,
+        hasMetafieldChanges: Object.keys(metafieldChanges).length > 0
+      });
 
       const { PRODUCT_OPTION_UPDATE, METAFIELDS_SET } = await import("~/graphql/content.mutations");
 
@@ -2120,6 +2129,12 @@ Image URL: ${image.url}`;
             const option = productData.data?.product?.options?.find((o: { id: string }) => o.id === optionId);
 
             if (option) {
+              logger.info("[savePrimarySubResources] Updating option name via Shopify", {
+                optionId,
+                newName: changes.name,
+                position: option.position
+              });
+
               const updateResponse = await gateway.graphql(
                 PRODUCT_OPTION_UPDATE,
                 {
@@ -2135,12 +2150,19 @@ Image URL: ${image.url}`;
               );
 
               const updateData = await updateResponse.json();
+              logger.info("[savePrimarySubResources] Shopify productOptionUpdate response", {
+                optionId,
+                userErrors: updateData.data?.productOptionUpdate?.userErrors,
+                success: !updateData.data?.productOptionUpdate?.userErrors || updateData.data.productOptionUpdate.userErrors.length === 0
+              });
+
               if (updateData.data?.productOptionUpdate?.userErrors?.length > 0) {
                 logger.error("[UnifiedContent] productOptionUpdate userErrors", {
                   context: "UnifiedContent", optionId, errors: updateData.data.productOptionUpdate.userErrors,
                 });
                 failedOptions.push(optionId);
               } else {
+                logger.info("[savePrimarySubResources] Successfully saved option name to Shopify", { optionId });
                 savedOptions.push(optionId);
               }
             }
@@ -2414,6 +2436,15 @@ Image URL: ${image.url}`;
           });
         }
       }
+
+      logger.info("[savePrimarySubResources] Completed", {
+        savedOptions,
+        failedOptions,
+        savedMetafields,
+        failedMetafields,
+        totalOptionsProcessed: savedOptions.length + failedOptions.length,
+        totalMetafieldsProcessed: savedMetafields.length + failedMetafields.length
+      });
 
       return json({
         actionType: "savePrimarySubResources",
