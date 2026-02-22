@@ -158,7 +158,6 @@ export function OptionsField({
 
               return (
                 <div key={option.id}>
-                  {index > 0 && <Divider />}
                   <Card>
                     <BlockStack gap="300">
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -301,21 +300,25 @@ export function OptionsField({
 
               return (
                 <div key={option.id}>
-                  {index > 0 && <Divider />}
                   <Card>
                     <BlockStack gap="300">
-                      {/* Translate Entire Option Button — top of card */}
-                      <div className="ai-field-footer">
-                        <div className="ai-field-footer-left" />
-                        <div className="ai-field-footer-right">
-                          <Button
-                            size="slim"
-                            onClick={() => onTranslate(option.id)}
-                            loading={translatingFieldIds.has(`${option.id}:entire`)}
-                          >
-                            🌍 {t.translateButton || "Translate entire option"}
-                          </Button>
+                      {/* Option header with translate button */}
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                          <Text as="p" variant="bodyMd" fontWeight="semibold">
+                            {t.optionPositionLabel || "Option"} {option.position}
+                          </Text>
+                          {option.isLinked && (
+                            <Badge tone="info">{t.linkedBadge || "Metaobject"}</Badge>
+                          )}
                         </div>
+                        <Button
+                          size="slim"
+                          onClick={() => onTranslate(option.id)}
+                          loading={translatingFieldIds.has(`${option.id}:entire`)}
+                        >
+                          🌍 {t.translateButton || "Translate entire option"}
+                        </Button>
                       </div>
 
                       {/* Original values as reference */}
