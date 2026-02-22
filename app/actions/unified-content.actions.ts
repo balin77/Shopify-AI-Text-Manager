@@ -2131,8 +2131,7 @@ Image URL: ${image.url}`;
             if (option) {
               logger.info("[savePrimarySubResources] Updating option name via Shopify", {
                 optionId,
-                newName: changes.name,
-                position: option.position
+                newName: changes.name
               });
 
               const updateResponse = await gateway.graphql(
@@ -2140,11 +2139,8 @@ Image URL: ${image.url}`;
                 {
                   variables: {
                     productId,
-                    option: {
-                      id: optionId,
-                      name: changes.name,
-                      position: option.position,
-                    },
+                    optionId,
+                    name: changes.name,
                   },
                 }
               );
