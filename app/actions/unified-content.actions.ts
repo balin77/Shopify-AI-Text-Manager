@@ -20,7 +20,7 @@ import { getFormString, getFormInt, getFormJSON } from "../utils/form-data.utils
 import { isValidShopifyGID, isValidLocale, safeJsonParse } from "../utils/validation";
 import { sanitizePromptInput } from "../utils/prompt-sanitizer";
 import { getFullErrorMessage } from "../utils/error-handler";
-import { getInstructionWithDefault, getWritingStyleInstructions } from "../utils/ai-instructions.utils";
+import { getInstructionWithDefault, getWritingStyleInstructions } from "~/utils/ai-instructions.utils";
 import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
 import type { Session } from "@shopify/shopify-api";
 import type { PrismaClient } from "@prisma/client";
