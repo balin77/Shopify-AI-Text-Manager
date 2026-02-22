@@ -29,14 +29,8 @@ export interface SubResourceState {
   primaryOptionEdits: Record<string, { name: string; values: string[] }>;
   /** Primary locale metafield edits keyed by metafield GID → value */
   primaryMetafieldEdits: Record<string, string>;
-  /** Whether any AI translation is in progress */
-  isTranslating: boolean;
-  /** Which option is currently being translated */
-  translatingOptionId?: string;
-  /** Which specific field is being translated (e.g. "optId:name" or "optId:value:0") */
-  translatingFieldId?: string;
-  /** Which metafield is currently being translated */
-  translatingMetafieldId?: string;
+  /** Set of field IDs currently being translated (e.g. "optId:name", "optId:value:0") */
+  translatingFieldIds: Set<string>;
   /** Whether there are unsaved changes */
   hasChanges: boolean;
   /** Whether translations are loading from Shopify */
@@ -143,10 +137,7 @@ export function useProductSubResources({
   const [primaryMetafieldEdits, setPrimaryMetafieldEdits] = useState<Record<string, string>>({});
 
   // Shared state
-  const [isTranslating, setIsTranslating] = useState(false);
-  const [translatingOptionId, setTranslatingOptionId] = useState<string | undefined>();
-  const [translatingFieldId, setTranslatingFieldId] = useState<string | undefined>();
-  const [translatingMetafieldId, setTranslatingMetafieldId] = useState<string | undefined>();
+  const [translatingFieldIds, setTranslatingFieldIds] = useState<Set<string>>(new Set());
   const [hasChanges, setHasChanges] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
 
@@ -184,9 +175,7 @@ export function useProductSubResources({
 
     // Reset state
     setHasChanges(false);
-    setIsTranslating(false);
-    setTranslatingOptionId(undefined);
-    setTranslatingMetafieldId(undefined);
+    setTranslatingFieldIds(new Set());
 
     loadedForRef.current = loadKey;
 
@@ -268,10 +257,15 @@ export function useProductSubResources({
     }
 
     if (data.actionType === "translateSubResources" || data.actionType === "translateSubResourceToAllLocales") {
-      setIsTranslating(false);
-      setTranslatingOptionId(undefined);
-      setTranslatingFieldId(undefined);
-      setTranslatingMetafieldId(undefined);
+      // Remove the field IDs that were just translated from the translating set
+      const fieldId = data.fieldId as string | undefined;
+      if (fieldId) {
+        setTranslatingFieldIds(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(fieldId);
+          return newSet;
+        });
+      }
 
       const translations = data.translations as Record<string, Record<string, string>>;
 
@@ -424,14 +418,13 @@ export function useProductSubResources({
   }, [selectedItem]);
 
   const translateOption = useCallback((optionId: string) => {
-    if (isTranslating) return;
-
     const sourceData = buildSourceData(optionId);
     if (sourceData.length === 0) return;
 
-    setIsTranslating(true);
-    setTranslatingOptionId(optionId);
-    setTranslatingFieldId(undefined); // Clear field-specific ID for entire option
+    const fieldId = `${optionId}:entire`;
+
+    // Add this field to the translating set
+    setTranslatingFieldIds(prev => new Set(prev).add(fieldId));
 
     // If primary locale, translate to all foreign locales
     if (isPrimaryLocale) {
@@ -441,6 +434,7 @@ export function useProductSubResources({
           sourceData: JSON.stringify(sourceData),
           itemId: selectedItem?.id || "",
           primaryLocale,
+          fieldId, // Send fieldId so server can echo it back
         },
         { method: "POST" }
       );
@@ -453,19 +447,21 @@ export function useProductSubResources({
           primaryLocale,
           sourceData: JSON.stringify(sourceData),
           itemId: selectedItem?.id || "",
+          fieldId, // Send fieldId so server can echo it back
         },
         { method: "POST" }
       );
     }
-  }, [isPrimaryLocale, isTranslating, buildSourceData, currentLanguage, primaryLocale, fetcher, selectedItem?.id]);
+  }, [isPrimaryLocale, buildSourceData, currentLanguage, primaryLocale, fetcher, selectedItem?.id]);
 
   const translateOptionField = useCallback((optionId: string, fieldType: "name" | "value", valueIndex?: number) => {
-    if (isTranslating || !selectedItem) return;
+    if (!selectedItem) return;
 
     const option = selectedItem.options?.find(o => o.id === optionId);
     if (!option) return;
 
     let sourceData: Array<{ resourceId: string; resourceType: string; key: string; value: string; label: string }>;
+    const fieldId = fieldType === "name" ? `${optionId}:name` : `${optionId}:value:${valueIndex}`;
 
     if (fieldType === "name") {
       sourceData = [{
@@ -487,9 +483,8 @@ export function useProductSubResources({
       }];
     }
 
-    setIsTranslating(true);
-    setTranslatingOptionId(optionId);
-    setTranslatingFieldId(fieldType === "name" ? `${optionId}:name` : `${optionId}:value:${valueIndex}`);
+    // Add this field to the translating set
+    setTranslatingFieldIds(prev => new Set(prev).add(fieldId));
 
     // If primary locale, translate to all foreign locales
     if (isPrimaryLocale) {
@@ -499,6 +494,7 @@ export function useProductSubResources({
           sourceData: JSON.stringify(sourceData),
           itemId: selectedItem.id,
           primaryLocale,
+          fieldId, // Send fieldId so server can echo it back
         },
         { method: "POST" }
       );
@@ -511,18 +507,20 @@ export function useProductSubResources({
           primaryLocale,
           sourceData: JSON.stringify(sourceData),
           itemId: selectedItem.id,
+          fieldId, // Send fieldId so server can echo it back
         },
         { method: "POST" }
       );
     }
-  }, [isPrimaryLocale, isTranslating, selectedItem, currentLanguage, primaryLocale, fetcher]);
+  }, [isPrimaryLocale, selectedItem, currentLanguage, primaryLocale, fetcher]);
 
   const translateMetafield = useCallback((metafieldId: string) => {
-    if (isPrimaryLocale || isTranslating || !selectedItem) return;
+    if (isPrimaryLocale || !selectedItem) return;
 
     const mf = selectedItem.metafields?.find(m => m.id === metafieldId);
     if (!mf) return;
 
+    const fieldId = `${metafieldId}:value`;
     const sourceData = [{
       resourceId: mf.id,
       resourceType: "Metafield",
@@ -531,8 +529,8 @@ export function useProductSubResources({
       label: `${mf.namespace}.${mf.key}`,
     }];
 
-    setIsTranslating(true);
-    setTranslatingMetafieldId(metafieldId);
+    // Add this field to the translating set
+    setTranslatingFieldIds(prev => new Set(prev).add(fieldId));
 
     fetcher.submit(
       {
@@ -541,18 +539,22 @@ export function useProductSubResources({
         primaryLocale,
         sourceData: JSON.stringify(sourceData),
         itemId: selectedItem.id,
+        fieldId, // Send fieldId so server can echo it back
       },
       { method: "POST" }
     );
-  }, [isPrimaryLocale, isTranslating, selectedItem, currentLanguage, primaryLocale, fetcher]);
+  }, [isPrimaryLocale, selectedItem, currentLanguage, primaryLocale, fetcher]);
 
   const translateAllSubResources = useCallback(() => {
-    if (isPrimaryLocale || isTranslating) return;
+    if (isPrimaryLocale) return;
 
     const sourceData = buildSourceData();
     if (sourceData.length === 0) return;
 
-    setIsTranslating(true);
+    const fieldId = "all:subresources";
+
+    // Add this to the translating set
+    setTranslatingFieldIds(prev => new Set(prev).add(fieldId));
 
     fetcher.submit(
       {
@@ -561,10 +563,11 @@ export function useProductSubResources({
         primaryLocale,
         sourceData: JSON.stringify(sourceData),
         itemId: selectedItem?.id || "",
+        fieldId, // Send fieldId so server can echo it back
       },
       { method: "POST" }
     );
-  }, [isPrimaryLocale, isTranslating, buildSourceData, currentLanguage, primaryLocale, fetcher, selectedItem?.id]);
+  }, [isPrimaryLocale, buildSourceData, currentLanguage, primaryLocale, fetcher, selectedItem?.id]);
 
   // Unified save handler - automatically detects primary vs foreign locale
   const saveSubResources = useCallback(() => {
@@ -692,10 +695,7 @@ export function useProductSubResources({
       metafieldTranslations,
       primaryOptionEdits,
       primaryMetafieldEdits,
-      isTranslating,
-      translatingOptionId,
-      translatingFieldId,
-      translatingMetafieldId,
+      translatingFieldIds,
       hasChanges,
       isLoading,
     },

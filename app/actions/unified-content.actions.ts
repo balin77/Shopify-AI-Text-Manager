@@ -20,6 +20,7 @@ import { getFormString, getFormInt, getFormJSON } from "../utils/form-data.utils
 import { isValidShopifyGID, isValidLocale, safeJsonParse } from "../utils/validation";
 import { sanitizePromptInput } from "../utils/prompt-sanitizer";
 import { getFullErrorMessage } from "../utils/error-handler";
+import { getInstructionWithDefault, getWritingStyleInstructions } from "../utils/ai-instructions.utils";
 import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
 import type { Session } from "@shopify/shopify-api";
 import type { PrismaClient } from "@prisma/client";
@@ -153,14 +154,22 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
       if (field.type === "text" || field.type === "slug") {
         let prompt = `Create an optimized ${field.label}.`;
 
-        if (instructions?.writingStyleInstructions) {
-          prompt += `\n\nGeneral Writing Style:\n${instructions.writingStyleInstructions}`;
+        // Always include writing style (from DB or default)
+        const writingStyle = getWritingStyleInstructions(instructions);
+        if (writingStyle) {
+          prompt += `\n\nGeneral Writing Style:\n${writingStyle}`;
         }
-        if (instructions?.[formatKey]) {
-          prompt += `\n\nFormat Example:\n${instructions[formatKey]}`;
+
+        // Include format example if available (from DB or default)
+        const formatExample = getInstructionWithDefault(instructions, formatKey);
+        if (formatExample) {
+          prompt += `\n\nFormat Example:\n${formatExample}`;
         }
-        if (instructions?.[instructionsTextKey]) {
-          prompt += `\n\nInstructions:\n${instructions[instructionsTextKey]}`;
+
+        // Include field-specific instructions if available (from DB or default)
+        const fieldInstructions = getInstructionWithDefault(instructions, instructionsTextKey);
+        if (fieldInstructions) {
+          prompt += `\n\nInstructions:\n${fieldInstructions}`;
         }
 
         if (field.type === "slug") {
@@ -185,14 +194,22 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
       } else if (field.type === "html" || field.type === "textarea") {
         let prompt = `Create an optimized ${field.label} for: ${sanitizedContextTitle}`;
 
-        if (instructions?.writingStyleInstructions) {
-          prompt += `\n\nGeneral Writing Style:\n${instructions.writingStyleInstructions}`;
+        // Always include writing style (from DB or default)
+        const writingStyle = getWritingStyleInstructions(instructions);
+        if (writingStyle) {
+          prompt += `\n\nGeneral Writing Style:\n${writingStyle}`;
         }
-        if (instructions?.[formatKey]) {
-          prompt += `\n\nFormat Example:\n${instructions[formatKey]}`;
+
+        // Include format example if available (from DB or default)
+        const formatExample = getInstructionWithDefault(instructions, formatKey);
+        if (formatExample) {
+          prompt += `\n\nFormat Example:\n${formatExample}`;
         }
-        if (instructions?.[instructionsTextKey]) {
-          prompt += `\n\nInstructions:\n${instructions[instructionsTextKey]}`;
+
+        // Include field-specific instructions if available (from DB or default)
+        const fieldInstructions = getInstructionWithDefault(instructions, instructionsTextKey);
+        if (fieldInstructions) {
+          prompt += `\n\nInstructions:\n${fieldInstructions}`;
         }
 
         prompt += `\n\nContext:\n${sanitizedContextDescription || currentValue}\n\nCurrent Content:\n${currentValue}\n\nReturn ONLY the ${field.label}, without explanations. Output the result in ${mainLanguage}.`;
@@ -295,19 +312,8 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
       const formatKey = `${instructionsKey}Format`;
       const instructionsTextKey = `${instructionsKey}Instructions`;
 
-      // Default formatting instruction
-      const defaultPreserveInstruction = `CRITICAL: You must PRESERVE the original text content. DO NOT rewrite, rephrase, or generate new content.
-Only apply formatting changes such as:
-- Adding separators (| or - or :)
-- Adjusting capitalization
-- Adding HTML tags for structure (<strong>, <em>, <h2>, <h3>, <ul>, <li>, <p>)
-- Fixing punctuation and spacing
-- Removing redundant characters
-
-The meaning, words, and information must stay the same. Only the presentation/formatting changes.`;
-
-      // Use custom instructions if provided, otherwise use default
-      const preserveTextInstruction = aiInstructions?.formatPreserveInstructions || defaultPreserveInstruction;
+      // Get format preserve instructions (from DB or default)
+      const preserveTextInstruction = getInstructionWithDefault(aiInstructions, "formatPreserveInstructions");
 
       if (field.type === "text" || field.type === "slug") {
         let prompt = "";
@@ -326,8 +332,9 @@ Allowed formatting changes for handles:
 - Convert umlauts (ä→ae, ö→oe, ü→ue, ß→ss)
 - Remove special characters
 - Remove excessive hyphens`;
-          if (instructions?.[formatKey]) {
-            prompt += `\n\nFormat Style Example:\n${instructions![formatKey]}`;
+          const formatExample = getInstructionWithDefault(instructions, formatKey);
+          if (formatExample) {
+            prompt += `\n\nFormat Style Example:\n${formatExample}`;
           }
           prompt += `\n\nReturn ONLY the formatted URL slug. Keep the original keywords.`;
         } else {
@@ -343,8 +350,9 @@ Allowed formatting changes:
 - Adjust capitalization (e.g., Title Case)
 - Remove excessive punctuation
 - Fix spacing issues`;
-          if (instructions?.[formatKey]) {
-            prompt += `\n\nFormat Style Example (for structure reference only, do NOT copy the content):\n${instructions![formatKey]}`;
+          const formatExample2 = getInstructionWithDefault(instructions, formatKey);
+          if (formatExample2) {
+            prompt += `\n\nFormat Style Example (for structure reference only, do NOT copy the content):\n${formatExample2}`;
           }
           prompt += `\n\nReturn ONLY the formatted ${field.label}. Keep the original language. Do NOT add new information or rewrite the text. Output the result in ${mainLanguage}.`;
         }
@@ -369,8 +377,9 @@ Allowed formatting changes:
 - Add paragraph breaks with <p> tags
 - Fix spacing and punctuation`;
 
-        if (instructions?.[formatKey]) {
-          prompt += `\n\nFormat Style Example (for HTML structure reference only):\n${instructions![formatKey]}`;
+        const formatExample3 = getInstructionWithDefault(instructions, formatKey);
+        if (formatExample3) {
+          prompt += `\n\nFormat Style Example (for HTML structure reference only):\n${formatExample3}`;
         }
 
         prompt += `\n\nReturn ONLY the formatted HTML ${field.label}. Keep the original language and all original content. Do NOT add new sentences or rewrite existing ones. Output the result in ${mainLanguage}.`;
@@ -454,11 +463,14 @@ Allowed formatting changes:
         data: { status: "queued", progress: 10 },
       });
 
+      // Get translate instructions (from DB or default)
+      const translateInstructions = getInstructionWithDefault(aiInstructions, "translateInstructions");
+
       const translations = await translationServiceWithTask.translateProduct(
         changedFields,
         [targetLocale],
         contentConfig.contentType,
-        aiInstructions?.translateInstructions || undefined
+        translateInstructions || undefined
       );
       const translatedValue = translations[targetLocale]?.[fieldType] || "";
 
@@ -548,6 +560,9 @@ Allowed formatting changes:
         data: { status: "queued", progress: 10 },
       });
 
+      // Get translate instructions (from DB or default)
+      const translateInstructionsAll = getInstructionWithDefault(aiInstructions, "translateInstructions");
+
       const result = await shopifyContentService.translateAllContent({
         resourceId: itemId,
         resourceType: contentConfig.resourceType,
@@ -557,7 +572,7 @@ Allowed formatting changes:
         targetLocales: targetLocalesStr ? safeJsonParse<string[]>(targetLocalesStr, []) : undefined,
         contentType: contentConfig.contentType,
         taskId: task.id,
-        customInstructions: aiInstructions?.translateInstructions || undefined,
+        customInstructions: translateInstructionsAll || undefined,
         sourceLocale,
       });
 
@@ -656,6 +671,9 @@ Allowed formatting changes:
         data: { status: "queued", progress: 10 },
       });
 
+      // Get translate instructions (from DB or default)
+      const translateInstructionsForLocale = getInstructionWithDefault(aiInstructions, "translateInstructions");
+
       // Translate to only ONE specific locale
       const result = await shopifyContentService.translateAllContent({
         resourceId: itemId,
@@ -666,7 +684,7 @@ Allowed formatting changes:
         targetLocales: [targetLocale],
         contentType: contentConfig.contentType,
         taskId: task.id,
-        customInstructions: aiInstructions?.translateInstructions || undefined,
+        customInstructions: translateInstructionsForLocale || undefined,
         sourceLocale,
       });
 
@@ -762,6 +780,9 @@ Allowed formatting changes:
         data: { status: "queued", progress: 10 },
       });
 
+      // Get translate instructions (from DB or default)
+      const translateInstructionsFieldToAll = getInstructionWithDefault(aiInstructions, "translateInstructions");
+
       const result = await shopifyContentService.translateAllContent({
         resourceId: itemId,
         resourceType: contentConfig.resourceType,
@@ -771,7 +792,7 @@ Allowed formatting changes:
         targetLocales: targetLocalesStr ? safeJsonParse<string[]>(targetLocalesStr, []) : undefined,
         contentType: contentConfig.contentType,
         taskId: task.id,
-        customInstructions: aiInstructions?.translateInstructions || undefined,
+        customInstructions: translateInstructionsFieldToAll || undefined,
         sourceLocale,
       });
 
@@ -1728,6 +1749,7 @@ Image URL: ${image.url}`;
         translations,
         savedResources,
         failedResources,
+        fieldId: getFormString(formData, "fieldId"), // Echo back fieldId for client state management
       });
     } catch (error: unknown) {
       // Update task to failed
@@ -1911,6 +1933,7 @@ Image URL: ${image.url}`;
         success: true,
         translations: {}, // Already saved to Shopify, no need to return
         failedLocales,
+        fieldId: getFormString(formData, "fieldId"), // Echo back fieldId for client state management
       });
     } catch (error: unknown) {
       const msg = getFullErrorMessage(error);

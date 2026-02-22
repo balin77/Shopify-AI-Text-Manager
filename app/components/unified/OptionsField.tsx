@@ -72,14 +72,8 @@ interface OptionsFieldProps {
   /** Primary option data (indexed by option ID) - used when editing primary locale */
   primaryOptions?: Record<string, { name: string; values: string[] }>;
 
-  /** Whether translation is in progress */
-  isTranslating: boolean;
-
-  /** ID of the option currently being translated */
-  translatingOptionId?: string;
-
-  /** ID of the specific field being translated (e.g. "optId:name" or "optId:value:0") */
-  translatingFieldId?: string;
+  /** Set of field IDs currently being translated (e.g. "optId:name", "optId:value:0") */
+  translatingFieldIds: Set<string>;
 
   /** Translation strings */
   t?: {
@@ -115,9 +109,7 @@ export function OptionsField({
   onPrimaryOptionNameChange,
   onPrimaryOptionValuesChange,
   primaryOptions = {},
-  isTranslating,
-  translatingOptionId,
-  translatingFieldId,
+  translatingFieldIds,
   t = {},
 }: OptionsFieldProps) {
   const { locale: appLocale } = useI18n();
@@ -195,8 +187,7 @@ export function OptionsField({
                                 <Button
                                   size="slim"
                                   onClick={() => onTranslate(option.id)}
-                                  loading={isTranslating && translatingOptionId === option.id && !translatingFieldId}
-                                  disabled={isTranslating && (translatingOptionId !== option.id || translatingFieldId !== undefined)}
+                                  loading={translatingFieldIds.has(`${option.id}:entire`)}
                                 >
                                   🌍 {t.translateButton || "Translate entire option"}
                                 </Button>
@@ -219,8 +210,7 @@ export function OptionsField({
                                   <Button
                                     size="slim"
                                     onClick={() => onTranslateField(option.id, "name")}
-                                    loading={isTranslating && translatingFieldId === nameFieldId}
-                                    disabled={isTranslating && translatingFieldId !== nameFieldId}
+                                    loading={translatingFieldIds.has(nameFieldId)}
                                   >
                                     🌍 {t.translateFieldButton || t.translateButton || "Translate"}
                                   </Button>
@@ -252,8 +242,7 @@ export function OptionsField({
                                         <Button
                                           size="slim"
                                           onClick={() => onTranslateField(option.id, "value", valueIndex)}
-                                          loading={isTranslating && translatingFieldId === valueFieldId}
-                                          disabled={isTranslating && translatingFieldId !== valueFieldId}
+                                          loading={translatingFieldIds.has(valueFieldId)}
                                         >
                                           🌍 {t.translateFieldButton || t.translateButton || "Translate"}
                                         </Button>
@@ -291,8 +280,7 @@ export function OptionsField({
                           <Button
                             size="slim"
                             onClick={() => onTranslate(option.id)}
-                            loading={isTranslating && translatingOptionId === option.id && !translatingFieldId}
-                            disabled={isTranslating && (translatingOptionId !== option.id || translatingFieldId !== undefined)}
+                            loading={translatingFieldIds.has(`${option.id}:entire`)}
                           >
                             🌍 {t.translateButton || "Translate entire option"}
                           </Button>
@@ -332,8 +320,7 @@ export function OptionsField({
                               <Button
                                 size="slim"
                                 onClick={() => onTranslateField(option.id, "name")}
-                                loading={isTranslating && translatingFieldId === nameFieldId}
-                                disabled={isTranslating && translatingFieldId !== nameFieldId}
+                                loading={translatingFieldIds.has(nameFieldId)}
                               >
                                 🌍 Translate
                               </Button>
@@ -367,8 +354,7 @@ export function OptionsField({
                                       <Button
                                         size="slim"
                                         onClick={() => onTranslateField(option.id, "value", valueIndex)}
-                                        loading={isTranslating && translatingFieldId === valueFieldId}
-                                        disabled={isTranslating && translatingFieldId !== valueFieldId}
+                                        loading={translatingFieldIds.has(valueFieldId)}
                                       >
                                         🌍 Translate
                                       </Button>
