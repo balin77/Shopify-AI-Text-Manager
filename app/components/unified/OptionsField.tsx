@@ -171,12 +171,56 @@ export function OptionsField({
                       </div>
 
                       {option.isLinked ? (
-                        // Metaobject-linked options: Not editable here
-                        <Banner tone="info">
-                          <p>
-                            {t.linkedNotEditableHint || "This option is linked to metaobjects and cannot be edited here. Manage it in Shopify."}
-                          </p>
-                        </Banner>
+                        // Metaobject-linked options: Only option name is editable, values are not
+                        <>
+                          {/* Translate Entire Option Button — only translates the name for metaobjects */}
+                          {onTranslate && (
+                            <div className="ai-field-footer">
+                              <div className="ai-field-footer-left" />
+                              <div className="ai-field-footer-right">
+                                <Button
+                                  size="slim"
+                                  onClick={() => onTranslate(option.id)}
+                                  loading={translatingFieldIds.has(`${option.id}:entire`)}
+                                >
+                                  🌍 {t.translateButton || "Translate option name"}
+                                </Button>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Option Name — editable for metaobjects */}
+                          <div>
+                            <TextField
+                              label={t.optionNameLabel || "Option name"}
+                              value={currentName}
+                              onChange={(value) => onPrimaryOptionNameChange?.(option.id, value)}
+                              autoComplete="off"
+                              requiredIndicator
+                            />
+                            {onTranslateField && (
+                              <div className="ai-field-footer">
+                                <div className="ai-field-footer-left" />
+                                <div className="ai-field-footer-right">
+                                  <Button
+                                    size="slim"
+                                    onClick={() => onTranslateField(option.id, "name")}
+                                    loading={translatingFieldIds.has(nameFieldId)}
+                                  >
+                                    🌍 {t.translateFieldButton || t.translateButton || "Translate"}
+                                  </Button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Info banner about values */}
+                          <Banner tone="info">
+                            <p>
+                              {t.linkedNotEditableHint || "The values of this option are metaobjects and cannot be edited here. Manage them in Shopify."}
+                            </p>
+                          </Banner>
+                        </>
                       ) : (
                         <>
                           {/* Translate Entire Option Button — at top for primary locale */}

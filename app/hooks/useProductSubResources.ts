@@ -581,7 +581,7 @@ export function useProductSubResources({
       // Collect option name and value changes with validation
       for (const [optionId, edit] of Object.entries(primaryOptionEdits)) {
         const originalOption = selectedItem.options?.find(o => o.id === optionId);
-        if (!originalOption || originalOption.isLinked) continue; // Skip metaobject-linked options
+        if (!originalOption) continue;
 
         const hasNameChange = edit.name !== undefined && edit.name !== originalOption.name;
         const hasValuesChange =
@@ -601,7 +601,10 @@ export function useProductSubResources({
 
           optionsChanges[optionId] = {};
           if (hasNameChange) optionsChanges[optionId].name = edit.name;
-          if (hasValuesChange) optionsChanges[optionId].values = edit.values;
+          // For metaobject-linked options, only save name changes (not values)
+          if (hasValuesChange && !originalOption.isLinked) {
+            optionsChanges[optionId].values = edit.values;
+          }
         }
       }
 
