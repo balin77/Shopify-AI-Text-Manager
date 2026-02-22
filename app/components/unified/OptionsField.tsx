@@ -161,42 +161,41 @@ export function OptionsField({
                   {index > 0 && <Divider />}
                   <Card>
                     <BlockStack gap="300">
-                      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                        <Text as="p" variant="bodyMd" fontWeight="semibold">
-                          {t.optionPositionLabel || "Option"} {option.position}
-                        </Text>
-                        {option.isLinked && (
-                          <Badge tone="info">{t.linkedBadge || "Metaobject"}</Badge>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                          <Text as="p" variant="bodyMd" fontWeight="semibold">
+                            {t.optionPositionLabel || "Option"} {option.position}
+                          </Text>
+                          {option.isLinked && (
+                            <Badge tone="info">{t.linkedBadge || "Metaobject"}</Badge>
+                          )}
+                        </div>
+                        {/* Translate Entire Option Button — on same line as Option header */}
+                        {onTranslate && (
+                          <Button
+                            size="slim"
+                            onClick={() => onTranslate(option.id)}
+                            loading={translatingFieldIds.has(`${option.id}:entire`)}
+                          >
+                            🌍 {t.translateButton || (option.isLinked ? "Translate option name" : "Translate entire option")}
+                          </Button>
                         )}
                       </div>
 
                       {option.isLinked ? (
                         // Metaobject-linked options: Only option name is editable, values are not
                         <>
-                          {/* Translate Entire Option Button — only translates the name for metaobjects */}
-                          {onTranslate && (
-                            <div className="ai-field-footer">
-                              <div className="ai-field-footer-left" />
-                              <div className="ai-field-footer-right">
-                                <Button
-                                  size="slim"
-                                  onClick={() => onTranslate(option.id)}
-                                  loading={translatingFieldIds.has(`${option.id}:entire`)}
-                                >
-                                  🌍 {t.translateButton || "Translate option name"}
-                                </Button>
-                              </div>
-                            </div>
-                          )}
-
                           {/* Option Name — editable for metaobjects */}
                           <div>
+                            <Text as="p" variant="bodyMd" fontWeight="semibold">
+                              {t.optionNameLabel || "Option name"} <span style={{ color: 'var(--p-color-text-critical)' }}>*</span>
+                            </Text>
                             <TextField
                               label={t.optionNameLabel || "Option name"}
+                              labelHidden
                               value={currentName}
                               onChange={(value) => onPrimaryOptionNameChange?.(option.id, value)}
                               autoComplete="off"
-                              requiredIndicator
                             />
                             {onTranslateField && (
                               <div className="ai-field-footer">
@@ -223,30 +222,17 @@ export function OptionsField({
                         </>
                       ) : (
                         <>
-                          {/* Translate Entire Option Button — at top for primary locale */}
-                          {onTranslate && (
-                            <div className="ai-field-footer">
-                              <div className="ai-field-footer-left" />
-                              <div className="ai-field-footer-right">
-                                <Button
-                                  size="slim"
-                                  onClick={() => onTranslate(option.id)}
-                                  loading={translatingFieldIds.has(`${option.id}:entire`)}
-                                >
-                                  🌍 {t.translateButton || "Translate entire option"}
-                                </Button>
-                              </div>
-                            </div>
-                          )}
-
                           {/* Option Name */}
                           <div>
+                            <Text as="p" variant="bodyMd" fontWeight="semibold">
+                              {t.optionNameLabel || "Option name"} <span style={{ color: 'var(--p-color-text-critical)' }}>*</span>
+                            </Text>
                             <TextField
                               label={t.optionNameLabel || "Option name"}
+                              labelHidden
                               value={currentName}
                               onChange={(value) => onPrimaryOptionNameChange?.(option.id, value)}
                               autoComplete="off"
-                              requiredIndicator
                             />
                             {onTranslateField && (
                               <div className="ai-field-footer">
@@ -267,7 +253,7 @@ export function OptionsField({
                           {/* Option Values */}
                           <BlockStack gap="200">
                             <Text as="p" variant="bodyMd" fontWeight="semibold">
-                              {t.valuesLabel || "Values"}
+                              {t.valuesLabel || "Values"} <span style={{ color: 'var(--p-color-text-critical)' }}>*</span>
                             </Text>
                             {currentValues.map((value, valueIndex) => {
                               const valueFieldId = `${option.id}:value:${valueIndex}`;
@@ -279,7 +265,6 @@ export function OptionsField({
                                     value={value}
                                     onChange={(newValue) => handleValueChange(valueIndex, newValue)}
                                     autoComplete="off"
-                                    requiredIndicator
                                   />
                                   {onTranslateField && (
                                     <div className="ai-field-footer">
