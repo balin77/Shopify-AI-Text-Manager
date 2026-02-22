@@ -718,9 +718,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                       onPrimaryOptionNameChange={subResourceHandlers.handlePrimaryOptionNameChange}
                       onPrimaryOptionValuesChange={subResourceHandlers.handlePrimaryOptionValuesChange}
                       primaryOptions={subResourceState.primaryOptionEdits}
-                      isTranslating={subResourceState.isTranslating}
-                      translatingOptionId={subResourceState.translatingOptionId}
-                      translatingFieldId={subResourceState.translatingFieldId}
+                      translatingFieldIds={subResourceState.translatingFieldIds}
                       t={{
                         title: t.products?.productOptions,
                         notEditableInPrimary: t.products?.optionsNotEditableInPrimary,
