@@ -699,10 +699,10 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
         fullPrompt = `[📷 Image attached: ${imageUrl}]\n\n${prompt}`;
       }
 
-      // Add new prompt with timestamp
+      // Add new prompt with timestamp (store full prompt, no truncation)
       promptHistory.push({
         timestamp: new Date().toISOString(),
-        prompt: fullPrompt.length > 2000 ? fullPrompt.substring(0, 2000) + '...[truncated]' : fullPrompt,
+        prompt: fullPrompt,
       });
 
       await db.task.update({
@@ -731,11 +731,8 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
         try {
           const parsed = JSON.parse(existingTask.prompt);
           if (Array.isArray(parsed) && parsed.length > 0) {
-            // Add response to the last prompt entry
-            const truncatedResponse = response.length > 2000
-              ? response.substring(0, 2000) + '...[truncated]'
-              : response;
-            parsed[parsed.length - 1].response = truncatedResponse;
+            // Add response to the last prompt entry (store full response, no truncation)
+            parsed[parsed.length - 1].response = response;
 
             await db.task.update({
               where: { id: this.taskId },

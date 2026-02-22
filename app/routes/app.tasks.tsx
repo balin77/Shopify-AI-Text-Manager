@@ -145,6 +145,7 @@ export default function TasksPage() {
   const { t } = useI18n();
   const [searchParams, setSearchParams] = useSearchParams();
   const [expandedTaskIds, setExpandedTaskIds] = useState<Set<string>>(new Set());
+  const [expandedPromptIds, setExpandedPromptIds] = useState<Set<string>>(new Set());
   const [isClient, setIsClient] = useState(false);
 
   // Mark when we're on the client to avoid hydration mismatches with date formatting
@@ -243,6 +244,29 @@ export default function TasksPage() {
       }
       return newSet;
     });
+  };
+
+  const togglePromptExpanded = (promptId: string) => {
+    setExpandedPromptIds((prev) => {
+      const newSet = new Set(prev);
+      if (newSet.has(promptId)) {
+        newSet.delete(promptId);
+      } else {
+        newSet.add(promptId);
+      }
+      return newSet;
+    });
+  };
+
+  // Helper to truncate text if too long
+  const TRUNCATE_LENGTH = 500;
+  const shouldTruncate = (text: string) => text.length > TRUNCATE_LENGTH;
+  const truncateText = (text: string, id: string) => {
+    const isExpanded = expandedPromptIds.has(id);
+    if (!shouldTruncate(text) || isExpanded) {
+      return text;
+    }
+    return text.substring(0, TRUNCATE_LENGTH);
   };
 
   // Generate Shopify admin URL from resourceId and resourceType
@@ -485,35 +509,89 @@ export default function TasksPage() {
                                       // New format: array of { timestamp, prompt, response? }
                                       return (
                                         <BlockStack gap="300">
-                                          {parsed.map((entry: { timestamp: string; prompt: string; response?: string }, index: number) => (
+                                          {parsed.map((entry: { timestamp: string; prompt: string; response?: string }, index: number) => {
+                                            const promptId = `${task.id}-prompt-${index}`;
+                                            const responseId = `${task.id}-response-${index}`;
+                                            const promptTruncated = shouldTruncate(entry.prompt);
+                                            const responseTruncated = entry.response ? shouldTruncate(entry.response) : false;
+
+                                            return (
                                             <div key={index} style={{ padding: "0.75rem", background: "white", borderRadius: "4px", border: "1px solid #e5e5e5" }}>
                                               <Text as="p" variant="bodySm" tone="subdued">
                                                 #{index + 1} - {isClient ? new Date(entry.timestamp).toLocaleTimeString() : entry.timestamp}
                                               </Text>
-                                              <div style={{ fontFamily: "monospace", fontSize: "11px", whiteSpace: "pre-wrap", marginTop: "0.5rem", maxHeight: "150px", overflowY: "auto" }}>
-                                                {entry.prompt}
+                                              <div style={{ fontFamily: "monospace", fontSize: "11px", whiteSpace: "pre-wrap", marginTop: "0.5rem", maxHeight: "400px", overflowY: "auto" }}>
+                                                {truncateText(entry.prompt, promptId)}
+                                                {promptTruncated && (
+                                                  <div style={{ marginTop: "0.5rem" }}>
+                                                    <Button
+                                                      size="slim"
+                                                      plain
+                                                      onClick={(e: React.MouseEvent) => {
+                                                        e.stopPropagation();
+                                                        togglePromptExpanded(promptId);
+                                                      }}
+                                                    >
+                                                      {expandedPromptIds.has(promptId) ? t.tasks.showLess || "Show less" : `...${t.tasks.showMore || "Show more"} (${entry.prompt.length} chars)`}
+                                                    </Button>
+                                                  </div>
+                                                )}
                                               </div>
                                               {entry.response && (
                                                 <div style={{ marginTop: "0.5rem", padding: "0.5rem", background: "#f0fff4", borderRadius: "4px", border: "1px solid #9ae6b4" }}>
                                                   <Text as="p" variant="bodySm" fontWeight="semibold" tone="success">
                                                     {t.tasks.aiOutput || "AI Output"} #{index + 1}
                                                   </Text>
-                                                  <div style={{ fontFamily: "monospace", fontSize: "11px", whiteSpace: "pre-wrap", marginTop: "0.25rem", maxHeight: "150px", overflowY: "auto" }}>
-                                                    {entry.response}
+                                                  <div style={{ fontFamily: "monospace", fontSize: "11px", whiteSpace: "pre-wrap", marginTop: "0.25rem", maxHeight: "400px", overflowY: "auto" }}>
+                                                    {truncateText(entry.response, responseId)}
+                                                    {responseTruncated && (
+                                                      <div style={{ marginTop: "0.5rem" }}>
+                                                        <Button
+                                                          size="slim"
+                                                          plain
+                                                          onClick={(e: React.MouseEvent) => {
+                                                            e.stopPropagation();
+                                                            togglePromptExpanded(responseId);
+                                                          }}
+                                                        >
+                                                          {expandedPromptIds.has(responseId) ? t.tasks.showLess || "Show less" : `...${t.tasks.showMore || "Show more"} (${entry.response.length} chars)`}
+                                                        </Button>
+                                                      </div>
+                                                    )}
                                                   </div>
                                                 </div>
                                               )}
                                             </div>
-                                          ))}
+                                            );
+                                          })}
                                         </BlockStack>
                                       );
                                     }
                                   } catch {
                                     // Not JSON, display as single prompt
                                   }
+                                  // Legacy format: single prompt string
+                                  const legacyPromptId = `${task.id}-legacy-prompt`;
+                                  const legacyTruncated = shouldTruncate(task.prompt);
                                   return (
-                                    <div style={{ padding: "0.75rem", background: "white", borderRadius: "4px", fontFamily: "monospace", fontSize: "12px", whiteSpace: "pre-wrap" }}>
-                                      {task.prompt}
+                                    <div style={{ padding: "0.75rem", background: "white", borderRadius: "4px" }}>
+                                      <div style={{ fontFamily: "monospace", fontSize: "12px", whiteSpace: "pre-wrap", maxHeight: "400px", overflowY: "auto" }}>
+                                        {truncateText(task.prompt, legacyPromptId)}
+                                      </div>
+                                      {legacyTruncated && (
+                                        <div style={{ marginTop: "0.5rem" }}>
+                                          <Button
+                                            size="slim"
+                                            plain
+                                            onClick={(e: React.MouseEvent) => {
+                                              e.stopPropagation();
+                                              togglePromptExpanded(legacyPromptId);
+                                            }}
+                                          >
+                                            {expandedPromptIds.has(legacyPromptId) ? t.tasks.showLess || "Show less" : `...${t.tasks.showMore || "Show more"} (${task.prompt.length} chars)`}
+                                          </Button>
+                                        </div>
+                                      )}
                                     </div>
                                   );
                                 })()}
