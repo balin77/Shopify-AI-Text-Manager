@@ -573,6 +573,7 @@ export function hasPrimaryContentMissing(
  * Check if a specific locale has missing translations
  * Only marks a field as missing if the primary locale has content for that field
  * For templates: checks translations for dynamic translatableContent fields
+ * For products: also checks product options translations
  */
 export function hasLocaleMissingTranslations(
   selectedItem: TranslatableItem | null,
@@ -608,7 +609,7 @@ export function hasLocaleMissingTranslations(
 
   const requiredFields = getRequiredFieldsForContentType(contentType);
 
-  return requiredFields.some(field => {
+  const hasMissingMainFields = requiredFields.some(field => {
     // Skip handle field - Shopify often doesn't return translations for handles
     // that are identical to the primary locale, so we ignore it in validation
     if (field === 'handle') {
@@ -623,6 +624,43 @@ export function hasLocaleMissingTranslations(
     // Check if translation exists
     return !hasTranslationForField(selectedItem, field, locale);
   });
+
+  // For products, also check product options translations
+  if (contentType === 'products' && selectedItem.options && selectedItem.options.length > 0) {
+    const subResourceTranslations = selectedItem.subResourceTranslations || {};
+
+    const hasMissingOptionTranslations = selectedItem.options.some(option => {
+      // Check if option name translation is missing
+      const optionTranslations = subResourceTranslations[option.id] || [];
+      const nameTranslation = optionTranslations.find(t => t.key === 'name' && t.locale === locale);
+
+      // If option name exists in primary but translation is missing
+      if (option.name && (!nameTranslation || isFieldEmpty(nameTranslation.value))) {
+        return true;
+      }
+
+      // For non-linked options, also check value translations
+      if (!option.isLinked && option.values && option.values.length > 0) {
+        return option.values.some((value, index) => {
+          // Check if value translation is missing
+          const valueTranslation = optionTranslations.find(
+            t => t.key === `value:${index}` && t.locale === locale
+          );
+
+          // If value exists in primary but translation is missing
+          return value.name && (!valueTranslation || isFieldEmpty(valueTranslation.value));
+        });
+      }
+
+      return false;
+    });
+
+    if (hasMissingOptionTranslations) {
+      return true;
+    }
+  }
+
+  return hasMissingMainFields;
 }
 
 /**
