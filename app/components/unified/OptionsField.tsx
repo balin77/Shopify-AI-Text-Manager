@@ -196,6 +196,7 @@ export function OptionsField({
                               value={currentName}
                               onChange={(value) => onPrimaryOptionNameChange?.(option.id, value)}
                               autoComplete="off"
+                              requiredIndicator
                             />
                             {onTranslateField && (
                               <div className="ai-field-footer">
@@ -245,6 +246,7 @@ export function OptionsField({
                               value={currentName}
                               onChange={(value) => onPrimaryOptionNameChange?.(option.id, value)}
                               autoComplete="off"
+                              requiredIndicator
                             />
                             {onTranslateField && (
                               <div className="ai-field-footer">
@@ -277,6 +279,7 @@ export function OptionsField({
                                     value={value}
                                     onChange={(newValue) => handleValueChange(valueIndex, newValue)}
                                     autoComplete="off"
+                                    requiredIndicator
                                   />
                                   {onTranslateField && (
                                     <div className="ai-field-footer">
