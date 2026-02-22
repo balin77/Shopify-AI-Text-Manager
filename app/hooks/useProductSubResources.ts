@@ -589,10 +589,7 @@ export function useProductSubResources({
 
   // Unified save handler - automatically detects primary vs foreign locale
   const saveSubResources = useCallback(() => {
-    console.log("[saveSubResources] Called", { hasChanges, isPrimaryLocale, selectedItemId: selectedItem?.id });
-
     if (!hasChanges || !selectedItem) {
-      console.log("[saveSubResources] Exiting early:", { hasChanges, hasSelectedItem: !!selectedItem });
       return;
     }
 
@@ -601,16 +598,10 @@ export function useProductSubResources({
       const optionsChanges: Record<string, { name?: string; values?: string[] }> = {};
       const metafieldChanges: Record<string, string> = {};
 
-      console.log("[saveSubResources] Primary locale - checking edits", {
-        primaryOptionEdits,
-        primaryMetafieldEdits
-      });
-
       // Collect option name and value changes with validation
       for (const [optionId, edit] of Object.entries(primaryOptionEdits)) {
         const originalOption = selectedItem.options?.find(o => o.id === optionId);
         if (!originalOption) {
-          console.log("[saveSubResources] Option not found:", optionId);
           continue;
         }
 
@@ -618,16 +609,6 @@ export function useProductSubResources({
         const hasValuesChange =
           edit.values !== undefined &&
           JSON.stringify(edit.values) !== JSON.stringify(originalOption.values.map(v => v.name));
-
-        console.log("[saveSubResources] Checking option:", {
-          optionId,
-          editName: edit.name,
-          originalName: originalOption.name,
-          editValues: edit.values,
-          originalValues: originalOption.values.map(v => v.name),
-          hasNameChange,
-          hasValuesChange
-        });
 
         if (hasNameChange || hasValuesChange) {
           // VALIDATION: Prevent empty option names and values
@@ -664,15 +645,10 @@ export function useProductSubResources({
         }
       }
 
-      console.log("[saveSubResources] Collected changes:", { optionsChanges, metafieldChanges });
-
       if (Object.keys(optionsChanges).length === 0 && Object.keys(metafieldChanges).length === 0) {
-        console.log("[saveSubResources] No changes detected, resetting hasChanges");
         setHasChanges(false);
         return;
       }
-
-      console.log("[saveSubResources] Submitting to server...");
 
       // Create FormData to submit
       const formData = new FormData();
@@ -681,12 +657,6 @@ export function useProductSubResources({
       formData.append("optionsChanges", JSON.stringify(optionsChanges));
       formData.append("metafieldChanges", JSON.stringify(metafieldChanges));
 
-      console.log("[saveSubResources] FormData contents:");
-      for (const [key, value] of formData.entries()) {
-        console.log(`  ${key}:`, value);
-      }
-
-      console.log("[saveSubResources] Submitting to /app/products");
       fetcher.submit(formData, { method: "POST", action: "/app/products" });
     } else {
       // FOREIGN LOCALE: Save translations
