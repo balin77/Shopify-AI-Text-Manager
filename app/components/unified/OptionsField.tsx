@@ -73,7 +73,7 @@ interface OptionsFieldProps {
   primaryOptions?: Record<string, { name: string; values: string[] }>;
 
   /** Set of field IDs currently being translated (e.g. "optId:name", "optId:value:0") */
-  translatingFieldIds: Set<string>;
+  translatingFieldIds?: Set<string>;
 
   /** Translation strings */
   t?: {
@@ -109,7 +109,7 @@ export function OptionsField({
   onPrimaryOptionNameChange,
   onPrimaryOptionValuesChange,
   primaryOptions = {},
-  translatingFieldIds,
+  translatingFieldIds = new Set(),
   t = {},
 }: OptionsFieldProps) {
   const { locale: appLocale } = useI18n();
