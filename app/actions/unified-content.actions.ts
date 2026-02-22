@@ -218,7 +218,7 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
         prompt += `\n\nRequirements:`;
 
         // Add character limit if available
-        const charLimit = getCharacterLimitRequirement(instructionsKey);
+        const charLimit = getCharacterLimitRequirement(instructionsKey || "");
         if (charLimit) {
           prompt += `\n- Length: ${charLimit}`;
         }
@@ -282,7 +282,7 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
         prompt += `\n\nRequirements:`;
 
         // Add character limit if available
-        const charLimitHtml = getCharacterLimitRequirement(instructionsKey);
+        const charLimitHtml = getCharacterLimitRequirement(instructionsKey || "");
         if (charLimitHtml) {
           prompt += `\n- Length: ${charLimitHtml}`;
         }
@@ -2022,7 +2022,7 @@ Image URL: ${image.url}`;
           progress: 100,
           completedAt: new Date(),
           result: JSON.stringify({
-            translatedLocales: targetLocales.filter(l => !failedLocales.includes(l)),
+            translatedLocales: targetLocales.filter((l: string) => !failedLocales.includes(l)),
             failedLocales,
           }),
         },
@@ -2069,7 +2069,28 @@ Image URL: ${image.url}`;
       const metafieldChanges: Record<string, string> = metafieldChangesJson
         ? JSON.parse(metafieldChangesJson) : {};
 
-      const { PRODUCT_OPTION_UPDATE, METAFIELDS_SET, UPDATE_PRODUCT } = await import("~/graphql/content.mutations");
+      const { PRODUCT_OPTION_UPDATE, METAFIELDS_SET } = await import("~/graphql/content.mutations");
+
+      // Define productUpdate mutation inline (used for updating option values)
+      const UPDATE_PRODUCT = `#graphql
+        mutation updateProduct($input: ProductInput!) {
+          productUpdate(input: $input) {
+            product {
+              id
+              options {
+                id
+                name
+                position
+                values
+              }
+            }
+            userErrors {
+              field
+              message
+            }
+          }
+        }
+      `;
 
       const savedOptions: string[] = [];
       const failedOptions: string[] = [];

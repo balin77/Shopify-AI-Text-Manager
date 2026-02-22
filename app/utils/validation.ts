@@ -86,6 +86,8 @@ export const AISettingsSchema = z.object({
  * AI Instructions validation schema - Entity-specific fields
  */
 export const AIInstructionsSchema = z.object({
+  // GENERAL (Writing Style Instructions)
+  writingStyleInstructions: z.string().max(3000).optional().or(z.literal('')),
   // GENERAL (Format Instructions)
   formatPreserveInstructions: z.string().max(3000).optional().or(z.literal('')),
   // GENERAL (Translate Instructions)

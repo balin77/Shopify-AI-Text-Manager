@@ -526,13 +526,10 @@ export default function TasksPage() {
                                                   <div style={{ marginTop: "0.5rem" }}>
                                                     <Button
                                                       size="slim"
-                                                      plain
-                                                      onClick={(e: React.MouseEvent) => {
-                                                        e.stopPropagation();
-                                                        togglePromptExpanded(promptId);
-                                                      }}
+                                                      variant="plain"
+                                                      onClick={() => togglePromptExpanded(promptId)}
                                                     >
-                                                      {expandedPromptIds.has(promptId) ? t.tasks.showLess || "Show less" : `...${t.tasks.showMore || "Show more"} (${entry.prompt.length} chars)`}
+                                                      {expandedPromptIds.has(promptId) ? (t.tasks as any).showLess || "Show less" : `...${(t.tasks as any).showMore || "Show more"} (${entry.prompt.length} chars)`}
                                                     </Button>
                                                   </div>
                                                 )}
@@ -548,13 +545,10 @@ export default function TasksPage() {
                                                       <div style={{ marginTop: "0.5rem" }}>
                                                         <Button
                                                           size="slim"
-                                                          plain
-                                                          onClick={(e: React.MouseEvent) => {
-                                                            e.stopPropagation();
-                                                            togglePromptExpanded(responseId);
-                                                          }}
+                                                          variant="plain"
+                                                          onClick={() => togglePromptExpanded(responseId)}
                                                         >
-                                                          {expandedPromptIds.has(responseId) ? t.tasks.showLess || "Show less" : `...${t.tasks.showMore || "Show more"} (${entry.response.length} chars)`}
+                                                          {expandedPromptIds.has(responseId) ? (t.tasks as any).showLess || "Show less" : `...${(t.tasks as any).showMore || "Show more"} (${entry.response.length} chars)`}
                                                         </Button>
                                                       </div>
                                                     )}
@@ -582,13 +576,10 @@ export default function TasksPage() {
                                         <div style={{ marginTop: "0.5rem" }}>
                                           <Button
                                             size="slim"
-                                            plain
-                                            onClick={(e: React.MouseEvent) => {
-                                              e.stopPropagation();
-                                              togglePromptExpanded(legacyPromptId);
-                                            }}
+                                            variant="plain"
+                                            onClick={() => togglePromptExpanded(legacyPromptId)}
                                           >
-                                            {expandedPromptIds.has(legacyPromptId) ? t.tasks.showLess || "Show less" : `...${t.tasks.showMore || "Show more"} (${task.prompt.length} chars)`}
+                                            {expandedPromptIds.has(legacyPromptId) ? (t.tasks as any).showLess || "Show less" : `...${(t.tasks as any).showMore || "Show more"} (${task.prompt.length} chars)`}
                                           </Button>
                                         </div>
                                       )}

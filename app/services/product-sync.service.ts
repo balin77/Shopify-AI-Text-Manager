@@ -102,6 +102,10 @@ interface ShopifyProductData {
   options: ShopifyProductOption[] | null;
   metafields: {
     edges: GraphQLEdge<ShopifyMetafield>[];
+    pageInfo?: {
+      hasNextPage: boolean;
+      endCursor: string | null;
+    };
   } | null;
 }
 

@@ -44,12 +44,6 @@ interface MetafieldsFieldProps {
   /** Primary metafield values (indexed by metafield ID) - used when editing primary locale */
   primaryValues?: Record<string, string>;
 
-  /** Whether translation is in progress */
-  isTranslating: boolean;
-
-  /** ID of the metafield currently being translated */
-  translatingMetafieldId?: string;
-
   /** Set of field IDs currently being translated */
   translatingFieldIds?: Set<string>;
 
@@ -81,8 +75,6 @@ export function MetafieldsField({
   onMetafieldChange,
   onPrimaryMetafieldChange,
   primaryValues = {},
-  isTranslating,
-  translatingMetafieldId,
   translatingFieldIds = new Set(),
   t = {},
 }: MetafieldsFieldProps) {

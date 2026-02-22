@@ -750,8 +750,6 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                       onMetafieldChange={subResourceHandlers.handleMetafieldChange}
                       onPrimaryMetafieldChange={subResourceHandlers.handlePrimaryMetafieldChange}
                       primaryValues={subResourceState.primaryMetafieldEdits}
-                      isTranslating={subResourceState.isTranslating}
-                      translatingMetafieldId={subResourceState.translatingMetafieldId}
                       translatingFieldIds={subResourceState.translatingFieldIds}
                       t={{
                         title: t.products?.productMetafields,
