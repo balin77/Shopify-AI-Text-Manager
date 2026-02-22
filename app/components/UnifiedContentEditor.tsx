@@ -752,6 +752,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                       primaryValues={subResourceState.primaryMetafieldEdits}
                       isTranslating={subResourceState.isTranslating}
                       translatingMetafieldId={subResourceState.translatingMetafieldId}
+                      translatingFieldIds={subResourceState.translatingFieldIds}
                       t={{
                         title: t.products?.productMetafields,
                         notEditableInPrimary: t.products?.metafieldsNotEditableInPrimary,

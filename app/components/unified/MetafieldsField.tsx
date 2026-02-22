@@ -9,6 +9,7 @@
  */
 
 import { Card, BlockStack, Text, TextField, Button, Divider, Badge } from "@shopify/polaris";
+import "../../styles/AIEditableField.css";
 
 export interface MetafieldData {
   id: string;       // gid://shopify/Metafield/...
@@ -49,6 +50,9 @@ interface MetafieldsFieldProps {
   /** ID of the metafield currently being translated */
   translatingMetafieldId?: string;
 
+  /** Set of field IDs currently being translated */
+  translatingFieldIds?: Set<string>;
+
   /** Translation strings */
   t?: {
     title?: string;
@@ -79,6 +83,7 @@ export function MetafieldsField({
   primaryValues = {},
   isTranslating,
   translatingMetafieldId,
+  translatingFieldIds = new Set(),
   t = {},
 }: MetafieldsFieldProps) {
   if (!metafields || metafields.length === 0) {
@@ -100,6 +105,7 @@ export function MetafieldsField({
             </Text>
             {metafields.map((mf, index) => {
               const currentValue = primaryValues[mf.id] !== undefined ? primaryValues[mf.id] : mf.value;
+              const fieldId = mf.id;
 
               return (
                 <div key={mf.id}>
@@ -120,6 +126,20 @@ export function MetafieldsField({
                         autoComplete="off"
                         multiline={mf.type === "multi_line_text_field" || mf.type === "rich_text_field" ? 3 : undefined}
                       />
+                      {onTranslate && (
+                        <div className="ai-field-footer">
+                          <div className="ai-field-footer-left" />
+                          <div className="ai-field-footer-right">
+                            <Button
+                              size="slim"
+                              onClick={() => onTranslate(mf.id)}
+                              loading={translatingFieldIds.has(fieldId)}
+                            >
+                              🌍 {t.translateButton || "Translate"}
+                            </Button>
+                          </div>
+                        </div>
+                      )}
                     </BlockStack>
                   </Card>
                 </div>
@@ -135,6 +155,7 @@ export function MetafieldsField({
             {metafields.map((mf, index) => {
               const translation = translations[mf.id] || "";
               const hasTranslation = !!translation;
+              const fieldId = mf.id;
 
               return (
                 <div key={mf.id}>
@@ -157,30 +178,28 @@ export function MetafieldsField({
                       </div>
 
                       {/* Translation input */}
-                      <div
-                        style={{
-                          background: hasTranslation ? "white" : "#fff4e5",
-                          borderRadius: "8px",
-                          padding: "1px",
-                        }}
-                      >
-                        <TextField
-                          label={`${mf.namespace}.${mf.key} (${currentLanguage})`}
-                          value={translation}
-                          onChange={(value) => onMetafieldChange(mf.id, value)}
-                          autoComplete="off"
-                          multiline={mf.type === "multi_line_text_field" || mf.type === "rich_text_field" ? 3 : undefined}
-                        />
-                      </div>
-
-                      {/* Translate Button */}
                       <div>
-                        <Button
-                          onClick={() => onTranslate(mf.id)}
-                          loading={isTranslating && translatingMetafieldId === mf.id}
-                        >
-                          {t.translateButton || "Translate"}
-                        </Button>
+                        <div className={`ai-editable-field-wrapper ${hasTranslation ? "bg-white" : "bg-untranslated"}`}>
+                          <TextField
+                            label={`${mf.namespace}.${mf.key} (${currentLanguage})`}
+                            value={translation}
+                            onChange={(value) => onMetafieldChange(mf.id, value)}
+                            autoComplete="off"
+                            multiline={mf.type === "multi_line_text_field" || mf.type === "rich_text_field" ? 3 : undefined}
+                          />
+                        </div>
+                        <div className="ai-field-footer">
+                          <div className="ai-field-footer-left" />
+                          <div className="ai-field-footer-right">
+                            <Button
+                              size="slim"
+                              onClick={() => onTranslate(mf.id)}
+                              loading={translatingFieldIds.has(fieldId)}
+                            >
+                              🌍 {t.translateButton || "Translate"}
+                            </Button>
+                          </div>
+                        </div>
                       </div>
                     </BlockStack>
                   </Card>
