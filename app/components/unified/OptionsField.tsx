@@ -187,6 +187,23 @@ export function OptionsField({
                         </Banner>
                       ) : (
                         <>
+                          {/* Translate Entire Option Button — at top for primary locale */}
+                          {onTranslate && (
+                            <div className="ai-field-footer">
+                              <div className="ai-field-footer-left" />
+                              <div className="ai-field-footer-right">
+                                <Button
+                                  size="slim"
+                                  onClick={() => onTranslate(option.id)}
+                                  loading={isTranslating && translatingOptionId === option.id && !translatingFieldId}
+                                  disabled={isTranslating && (translatingOptionId !== option.id || translatingFieldId !== undefined)}
+                                >
+                                  🌍 {t.translateButton || "Translate entire option"}
+                                </Button>
+                              </div>
+                            </div>
+                          )}
+
                           {/* Option Name */}
                           <div>
                             <TextField
@@ -203,7 +220,7 @@ export function OptionsField({
                                     size="slim"
                                     onClick={() => onTranslateField(option.id, "name")}
                                     loading={isTranslating && translatingFieldId === nameFieldId}
-                                    disabled={isTranslating}
+                                    disabled={isTranslating && translatingFieldId !== nameFieldId}
                                   >
                                     🌍 {t.translateFieldButton || t.translateButton || "Translate"}
                                   </Button>
@@ -236,7 +253,7 @@ export function OptionsField({
                                           size="slim"
                                           onClick={() => onTranslateField(option.id, "value", valueIndex)}
                                           loading={isTranslating && translatingFieldId === valueFieldId}
-                                          disabled={isTranslating}
+                                          disabled={isTranslating && translatingFieldId !== valueFieldId}
                                         >
                                           🌍 {t.translateFieldButton || t.translateButton || "Translate"}
                                         </Button>
@@ -275,7 +292,7 @@ export function OptionsField({
                             size="slim"
                             onClick={() => onTranslate(option.id)}
                             loading={isTranslating && translatingOptionId === option.id && !translatingFieldId}
-                            disabled={isTranslating}
+                            disabled={isTranslating && (translatingOptionId !== option.id || translatingFieldId !== undefined)}
                           >
                             🌍 {t.translateButton || "Translate entire option"}
                           </Button>
@@ -316,7 +333,7 @@ export function OptionsField({
                                 size="slim"
                                 onClick={() => onTranslateField(option.id, "name")}
                                 loading={isTranslating && translatingFieldId === nameFieldId}
-                                disabled={isTranslating}
+                                disabled={isTranslating && translatingFieldId !== nameFieldId}
                               >
                                 🌍 Translate
                               </Button>
@@ -351,7 +368,7 @@ export function OptionsField({
                                         size="slim"
                                         onClick={() => onTranslateField(option.id, "value", valueIndex)}
                                         loading={isTranslating && translatingFieldId === valueFieldId}
-                                        disabled={isTranslating}
+                                        disabled={isTranslating && translatingFieldId !== valueFieldId}
                                       >
                                         🌍 Translate
                                       </Button>

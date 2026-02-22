@@ -1745,6 +1745,188 @@ Image URL: ${image.url}`;
   }
 
   // ============================================================================
+  // TRANSLATE SUB-RESOURCES TO ALL LOCALES (from primary language)
+  // ============================================================================
+
+  if (action === "translateSubResourceToAllLocales") {
+    const sourceDataJson = getFormString(formData, "sourceData");
+    const sourceData: Array<{ resourceId: string; resourceType: string; key: string; value: string; label: string }> =
+      sourceDataJson ? JSON.parse(sourceDataJson) : [];
+
+    if (sourceData.length === 0) {
+      return json({ actionType: "translateSubResourceToAllLocales", success: true, translations: {} });
+    }
+
+    const primaryLocale = getFormString(formData, "primaryLocale") || "en";
+
+    // Get target locales (all published foreign locales)
+    const localesResponse = await gateway.graphql(
+      `#graphql
+        query getShopLocales {
+          shopLocales {
+            locale
+            primary
+            published
+          }
+        }`
+    );
+    const localesData = await localesResponse.json();
+    const shopLocales = localesData.data?.shopLocales || [];
+    const targetLocales = shopLocales
+      .filter((l: { locale: string; primary: boolean; published: boolean }) => !l.primary && l.published)
+      .map((l: { locale: string }) => l.locale);
+
+    if (targetLocales.length === 0) {
+      return json({ actionType: "translateSubResourceToAllLocales", success: true, translations: {} });
+    }
+
+    // Build a descriptive task title
+    const resourceLabels = sourceData.map(s => s.label).join(", ");
+    const taskTitle = resourceLabels.length > 50
+      ? `${sourceData.length} sub-resource${sourceData.length > 1 ? 's' : ''}`
+      : resourceLabels;
+
+    // Create task entry for tracking
+    const task = await db.task.create({
+      data: {
+        shop: session.shop,
+        type: "bulkTranslation",
+        status: "pending",
+        resourceType: contentConfig.resourceType,
+        resourceId: itemId,
+        resourceTitle: taskTitle,
+        fieldType: "sub-resources",
+        targetLocale: targetLocales.join(","),
+        progress: 0,
+        expiresAt: getTaskExpirationDate(),
+      },
+    });
+
+    try {
+      // Update task to queued
+      await db.task.update({
+        where: { id: task.id },
+        data: { status: "queued", progress: 10 },
+      });
+
+      // Create AI service with shop and taskId for queue management
+      const aiService = new AIService(provider, serviceConfig, session.shop, task.id);
+
+      // Translate to each target locale
+      const allTranslations: Record<string, Record<string, Record<string, string>>> = {}; // locale → resourceId → { key: value }
+      const failedLocales: string[] = [];
+
+      for (let localeIdx = 0; localeIdx < targetLocales.length; localeIdx++) {
+        const targetLocale = targetLocales[localeIdx];
+
+        try {
+          const fieldsToTranslate: Record<string, string> = {};
+          for (const item of sourceData) {
+            fieldsToTranslate[`${item.resourceId}::${item.key}`] = item.value;
+          }
+
+          const values = Object.values(fieldsToTranslate);
+          const keys = Object.keys(fieldsToTranslate);
+
+          if (values.length > 0) {
+            const translatedValues = await aiService.translateBatchValues(
+              values,
+              primaryLocale,
+              targetLocale,
+              "product options and metafield values"
+            );
+
+            const translations: Record<string, Record<string, string>> = {};
+            for (let i = 0; i < keys.length; i++) {
+              const [resourceId, key] = keys[i].split("::");
+              if (!translations[resourceId]) translations[resourceId] = {};
+              translations[resourceId][key] = translatedValues[i] || values[i];
+            }
+
+            allTranslations[targetLocale] = translations;
+
+            // Update progress
+            const progressPercent = Math.round(10 + ((localeIdx + 1) / targetLocales.length) * 50);
+            await db.task.update({
+              where: { id: task.id },
+              data: { progress: progressPercent },
+            });
+          }
+        } catch (err) {
+          logger.error(`[UnifiedContent] Failed to translate sub-resources to ${targetLocale}`, {
+            context: "UnifiedContent", error: err instanceof Error ? err.message : String(err),
+          });
+          failedLocales.push(targetLocale);
+        }
+      }
+
+      // Save all translations to Shopify + DB
+      for (const [locale, translations] of Object.entries(allTranslations)) {
+        for (const [resourceId, fields] of Object.entries(translations)) {
+          try {
+            const translationInputs: Array<{ key: string; value: string; locale: string }> = [];
+            for (const [key, value] of Object.entries(fields)) {
+              translationInputs.push({ key, value, locale });
+            }
+
+            if (translationInputs.length > 0) {
+              await shopifyContentService.saveTranslations(resourceId, translationInputs);
+            }
+
+            // Save to DB
+            const sourceItem = sourceData.find(s => s.resourceId === resourceId);
+            const resourceType = sourceItem?.resourceType || "Unknown";
+            for (const [key, value] of Object.entries(fields)) {
+              await db.contentTranslation.upsert({
+                where: { resourceId_key_locale: { resourceId, key, locale } },
+                create: { resourceId, resourceType, key, value, locale },
+                update: { value },
+              });
+            }
+          } catch (err) {
+            logger.error(`[UnifiedContent] Failed to save sub-resource translation for ${resourceId} in ${locale}`, {
+              context: "UnifiedContent", error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
+      }
+
+      // Update task to completed
+      await db.task.update({
+        where: { id: task.id },
+        data: {
+          status: "completed",
+          progress: 100,
+          completedAt: new Date(),
+          result: JSON.stringify({
+            translatedLocales: targetLocales.filter(l => !failedLocales.includes(l)),
+            failedLocales,
+          }),
+        },
+      });
+
+      // Return translations in the format expected by the hook (for current locale only - we return empty since already saved)
+      return json({
+        actionType: "translateSubResourceToAllLocales",
+        success: true,
+        translations: {}, // Already saved to Shopify, no need to return
+        failedLocales,
+      });
+    } catch (error: unknown) {
+      const msg = getFullErrorMessage(error);
+      await db.task.update({
+        where: { id: task.id },
+        data: {
+          status: "failed",
+          completedAt: new Date(),
+          error: msg.substring(0, 1000),
+        },
+      });
+      return json({ success: false, error: msg }, { status: 500 });
+    }
+  }
+
+  // ============================================================================
   // SAVE PRIMARY SUB-RESOURCES (Options + Metafields - main language values)
   // ============================================================================
 

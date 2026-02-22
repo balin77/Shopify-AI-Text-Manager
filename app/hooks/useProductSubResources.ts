@@ -267,7 +267,7 @@ export function useProductSubResources({
       setHasChanges(false);
     }
 
-    if (data.actionType === "translateSubResources") {
+    if (data.actionType === "translateSubResources" || data.actionType === "translateSubResourceToAllLocales") {
       setIsTranslating(false);
       setTranslatingOptionId(undefined);
       setTranslatingFieldId(undefined);
@@ -310,7 +310,9 @@ export function useProductSubResources({
         });
       }
 
-      setHasChanges(true);
+      // Both translateSubResources and translateSubResourceToAllLocales save to Shopify immediately
+      // So we don't need to mark as changed - translations are already persisted
+      setHasChanges(false);
     }
 
     if (data.actionType === "saveSubResourceTranslations") {
@@ -422,28 +424,43 @@ export function useProductSubResources({
   }, [selectedItem]);
 
   const translateOption = useCallback((optionId: string) => {
-    if (isPrimaryLocale || isTranslating) return;
+    if (isTranslating) return;
 
     const sourceData = buildSourceData(optionId);
     if (sourceData.length === 0) return;
 
     setIsTranslating(true);
     setTranslatingOptionId(optionId);
+    setTranslatingFieldId(undefined); // Clear field-specific ID for entire option
 
-    fetcher.submit(
-      {
-        action: "translateSubResources",
-        targetLocale: currentLanguage,
-        primaryLocale,
-        sourceData: JSON.stringify(sourceData),
-        itemId: selectedItem?.id || "",
-      },
-      { method: "POST" }
-    );
+    // If primary locale, translate to all foreign locales
+    if (isPrimaryLocale) {
+      fetcher.submit(
+        {
+          action: "translateSubResourceToAllLocales",
+          sourceData: JSON.stringify(sourceData),
+          itemId: selectedItem?.id || "",
+          primaryLocale,
+        },
+        { method: "POST" }
+      );
+    } else {
+      // Foreign locale: translate from primary to this locale only
+      fetcher.submit(
+        {
+          action: "translateSubResources",
+          targetLocale: currentLanguage,
+          primaryLocale,
+          sourceData: JSON.stringify(sourceData),
+          itemId: selectedItem?.id || "",
+        },
+        { method: "POST" }
+      );
+    }
   }, [isPrimaryLocale, isTranslating, buildSourceData, currentLanguage, primaryLocale, fetcher, selectedItem?.id]);
 
   const translateOptionField = useCallback((optionId: string, fieldType: "name" | "value", valueIndex?: number) => {
-    if (isPrimaryLocale || isTranslating || !selectedItem) return;
+    if (isTranslating || !selectedItem) return;
 
     const option = selectedItem.options?.find(o => o.id === optionId);
     if (!option) return;
@@ -474,16 +491,30 @@ export function useProductSubResources({
     setTranslatingOptionId(optionId);
     setTranslatingFieldId(fieldType === "name" ? `${optionId}:name` : `${optionId}:value:${valueIndex}`);
 
-    fetcher.submit(
-      {
-        action: "translateSubResources",
-        targetLocale: currentLanguage,
-        primaryLocale,
-        sourceData: JSON.stringify(sourceData),
-        itemId: selectedItem.id,
-      },
-      { method: "POST" }
-    );
+    // If primary locale, translate to all foreign locales
+    if (isPrimaryLocale) {
+      fetcher.submit(
+        {
+          action: "translateSubResourceToAllLocales",
+          sourceData: JSON.stringify(sourceData),
+          itemId: selectedItem.id,
+          primaryLocale,
+        },
+        { method: "POST" }
+      );
+    } else {
+      // Foreign locale: translate from primary to this locale only
+      fetcher.submit(
+        {
+          action: "translateSubResources",
+          targetLocale: currentLanguage,
+          primaryLocale,
+          sourceData: JSON.stringify(sourceData),
+          itemId: selectedItem.id,
+        },
+        { method: "POST" }
+      );
+    }
   }, [isPrimaryLocale, isTranslating, selectedItem, currentLanguage, primaryLocale, fetcher]);
 
   const translateMetafield = useCallback((metafieldId: string) => {
