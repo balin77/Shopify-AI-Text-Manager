@@ -49,6 +49,15 @@ function getCharacterLimitRequirement(aiInstructionsKey: string): string | null 
     collectionMetaDesc: "120-160 characters",
     blogMetaDesc: "120-160 characters",
     pageMetaDesc: "120-160 characters",
+
+    // URL Handles (slugs): 50-70 characters
+    productHandle: "50-70 characters",
+    collectionHandle: "50-70 characters",
+    blogHandle: "50-70 characters",
+    pageHandle: "50-70 characters",
+
+    // Alt Text: 100-125 characters (optimal for screen readers)
+    productAltText: "100-125 characters",
   };
 
   return limits[aiInstructionsKey] || null;
@@ -1527,8 +1536,19 @@ Do NOT:
           });
 
           let prompt = `Create an optimized alt text for a product image.
+
 Product: ${productTitle}
-Image URL: ${imageUrl}`;
+Image URL: ${imageUrl}${mainLanguage ? `\nLanguage: ${mainLanguage}` : ''}`;
+
+          // Add requirements
+          prompt += `\n\nRequirements:`;
+          const altTextCharLimit = getCharacterLimitRequirement("productAltText");
+          if (altTextCharLimit) {
+            prompt += `\n- Length: ${altTextCharLimit}`;
+          }
+          prompt += `\n- Describe what's visible in the image`;
+          prompt += `\n- Include product name or key feature`;
+          prompt += `\n- Accessible and helpful for screen readers`;
 
           const altTextFormat = getInstructionWithDefault(aiInstructions, "productAltTextFormat");
           if (altTextFormat) {
@@ -1537,10 +1557,10 @@ Image URL: ${imageUrl}`;
 
           const altTextInstructions = getInstructionWithDefault(aiInstructions, "productAltTextInstructions");
           if (altTextInstructions) {
-            prompt += `\n\nInstructions:\n${altTextInstructions}`;
+            prompt += `\n\nGuidelines:\n${altTextInstructions}`;
           }
 
-          prompt += `\n\nReturn ONLY the alt text, without explanations.${mainLanguage ? ` Output the result in ${mainLanguage}.` : ''}`;
+          prompt += `\n\nIMPORTANT: Return ONLY the alt text, nothing else.${mainLanguage ? ` Output in ${mainLanguage}.` : ''}`;
 
           const altText = await aiService.generateImageAltText(imageUrl, productTitle, prompt, sendImageToAI);
 
@@ -1641,8 +1661,19 @@ Image URL: ${imageUrl}`;
             const image = imagesData[i];
             try {
               let prompt = `Create an optimized alt text for a product image.
+
 Product: ${productTitle}
-Image URL: ${image.url}`;
+Image URL: ${image.url}${mainLanguage ? `\nLanguage: ${mainLanguage}` : ''}`;
+
+              // Add requirements
+              prompt += `\n\nRequirements:`;
+              const bulkAltTextCharLimit = getCharacterLimitRequirement("productAltText");
+              if (bulkAltTextCharLimit) {
+                prompt += `\n- Length: ${bulkAltTextCharLimit}`;
+              }
+              prompt += `\n- Describe what's visible in the image`;
+              prompt += `\n- Include product name or key feature`;
+              prompt += `\n- Accessible and helpful for screen readers`;
 
               const bulkAltTextFormat = getInstructionWithDefault(altTextInstructions, "productAltTextFormat");
               if (bulkAltTextFormat) {
@@ -1651,10 +1682,10 @@ Image URL: ${image.url}`;
 
               const bulkAltTextInstructions = getInstructionWithDefault(altTextInstructions, "productAltTextInstructions");
               if (bulkAltTextInstructions) {
-                prompt += `\n\nInstructions:\n${bulkAltTextInstructions}`;
+                prompt += `\n\nGuidelines:\n${bulkAltTextInstructions}`;
               }
 
-              prompt += `\n\nReturn ONLY the alt text, without explanations.${mainLanguage ? ` Output the result in ${mainLanguage}.` : ''}`;
+              prompt += `\n\nIMPORTANT: Return ONLY the alt text, nothing else.${mainLanguage ? ` Output in ${mainLanguage}.` : ''}`;
 
               const altText = await bulkAiService.generateImageAltText(image.url, productTitle, prompt, sendImageToAI);
               generatedAltTexts[i] = altText;

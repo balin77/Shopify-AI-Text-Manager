@@ -55,6 +55,15 @@ function getCharacterLimitRequirement(aiInstructionsKey: string): string | null 
     collectionMetaDesc: "120-160 characters",
     blogMetaDesc: "120-160 characters",
     pageMetaDesc: "120-160 characters",
+
+    // URL Handles (slugs): 50-70 characters
+    productHandle: "50-70 characters",
+    collectionHandle: "50-70 characters",
+    blogHandle: "50-70 characters",
+    pageHandle: "50-70 characters",
+
+    // Alt Text: 100-125 characters (optimal for screen readers)
+    productAltText: "100-125 characters",
   };
 
   return limits[aiInstructionsKey] || null;
