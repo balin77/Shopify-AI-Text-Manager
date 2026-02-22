@@ -208,7 +208,7 @@ export function useProductSubResources({
           resourceIds: JSON.stringify(subResourceIds),
           itemId,
         },
-        { method: "POST", action: "/app/products/subresources" }
+        { method: "POST", action: "/app/products" }
       );
     } else {
       setIsLoading(false);
@@ -454,7 +454,7 @@ export function useProductSubResources({
           primaryLocale,
           fieldId, // Send fieldId so server can echo it back
         },
-        { method: "POST", action: "/app/products/subresources" }
+        { method: "POST", action: "/app/products" }
       );
     } else {
       // Foreign locale: translate from primary to this locale only
@@ -467,7 +467,7 @@ export function useProductSubResources({
           itemId: selectedItem?.id || "",
           fieldId, // Send fieldId so server can echo it back
         },
-        { method: "POST", action: "/app/products/subresources" }
+        { method: "POST", action: "/app/products" }
       );
     }
   }, [isPrimaryLocale, buildSourceData, currentLanguage, primaryLocale, fetcher, selectedItem?.id]);
@@ -514,7 +514,7 @@ export function useProductSubResources({
           primaryLocale,
           fieldId, // Send fieldId so server can echo it back
         },
-        { method: "POST", action: "/app/products/subresources" }
+        { method: "POST", action: "/app/products" }
       );
     } else {
       // Foreign locale: translate from primary to this locale only
@@ -527,7 +527,7 @@ export function useProductSubResources({
           itemId: selectedItem.id,
           fieldId, // Send fieldId so server can echo it back
         },
-        { method: "POST", action: "/app/products/subresources" }
+        { method: "POST", action: "/app/products" }
       );
     }
   }, [isPrimaryLocale, selectedItem, currentLanguage, primaryLocale, fetcher]);
@@ -559,7 +559,7 @@ export function useProductSubResources({
         itemId: selectedItem.id,
         fieldId, // Send fieldId so server can echo it back
       },
-      { method: "POST", action: "/app/products/subresources" }
+      { method: "POST", action: "/app/products" }
     );
   }, [isPrimaryLocale, selectedItem, currentLanguage, primaryLocale, fetcher]);
 
@@ -583,7 +583,7 @@ export function useProductSubResources({
         itemId: selectedItem?.id || "",
         fieldId, // Send fieldId so server can echo it back
       },
-      { method: "POST", action: "/app/products/subresources" }
+      { method: "POST", action: "/app/products" }
     );
   }, [isPrimaryLocale, buildSourceData, currentLanguage, primaryLocale, fetcher, selectedItem?.id]);
 
@@ -686,8 +686,8 @@ export function useProductSubResources({
         console.log(`  ${key}:`, value);
       }
 
-      console.log("[saveSubResources] Submitting to /app/products/subresources");
-      fetcher.submit(formData, { method: "POST", action: "/app/products/subresources" });
+      console.log("[saveSubResources] Submitting to /app/products");
+      fetcher.submit(formData, { method: "POST", action: "/app/products" });
     } else {
       // FOREIGN LOCALE: Save translations
       const translationsData: Record<string, Record<string, string>> = {};
@@ -728,7 +728,7 @@ export function useProductSubResources({
           resourceTypes: JSON.stringify(resourceTypes),
           itemId: selectedItem.id,
         },
-        { method: "POST", action: "/app/products/subresources" }
+        { method: "POST", action: "/app/products" }
       );
     }
   }, [hasChanges, isPrimaryLocale, selectedItem, primaryOptionEdits, primaryMetafieldEdits, optionTranslations, metafieldTranslations, currentLanguage, fetcher]);

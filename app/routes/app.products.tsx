@@ -419,15 +419,13 @@ export default function ProductsPage() {
     t,
   });
 
-  // Sub-resource fetcher (options + metafields translations)
-  const subResourceFetcher = useFetcher<typeof action>();
-
   // Initialize sub-resources hook for options + metafields translations
+  // Uses the same fetcher as the main editor for consistent loading states
   const subResources = useProductSubResources({
     selectedItem: editor.selectedItem,
     currentLanguage: editor.state.currentLanguage,
     primaryLocale,
-    fetcher: subResourceFetcher,
+    fetcher,
   });
 
   // Get selected product AFTER editor is initialized
