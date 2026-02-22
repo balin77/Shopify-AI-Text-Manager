@@ -589,22 +589,45 @@ export function useProductSubResources({
 
   // Unified save handler - automatically detects primary vs foreign locale
   const saveSubResources = useCallback(() => {
-    if (!hasChanges || !selectedItem) return;
+    console.log("[saveSubResources] Called", { hasChanges, isPrimaryLocale, selectedItemId: selectedItem?.id });
+
+    if (!hasChanges || !selectedItem) {
+      console.log("[saveSubResources] Exiting early:", { hasChanges, hasSelectedItem: !!selectedItem });
+      return;
+    }
 
     if (isPrimaryLocale) {
       // PRIMARY LOCALE: Save primary values (options + metafields)
       const optionsChanges: Record<string, { name?: string; values?: string[] }> = {};
       const metafieldChanges: Record<string, string> = {};
 
+      console.log("[saveSubResources] Primary locale - checking edits", {
+        primaryOptionEdits,
+        primaryMetafieldEdits
+      });
+
       // Collect option name and value changes with validation
       for (const [optionId, edit] of Object.entries(primaryOptionEdits)) {
         const originalOption = selectedItem.options?.find(o => o.id === optionId);
-        if (!originalOption) continue;
+        if (!originalOption) {
+          console.log("[saveSubResources] Option not found:", optionId);
+          continue;
+        }
 
         const hasNameChange = edit.name !== undefined && edit.name !== originalOption.name;
         const hasValuesChange =
           edit.values !== undefined &&
           JSON.stringify(edit.values) !== JSON.stringify(originalOption.values.map(v => v.name));
+
+        console.log("[saveSubResources] Checking option:", {
+          optionId,
+          editName: edit.name,
+          originalName: originalOption.name,
+          editValues: edit.values,
+          originalValues: originalOption.values.map(v => v.name),
+          hasNameChange,
+          hasValuesChange
+        });
 
         if (hasNameChange || hasValuesChange) {
           // VALIDATION: Prevent empty option names and values
@@ -641,11 +664,15 @@ export function useProductSubResources({
         }
       }
 
+      console.log("[saveSubResources] Collected changes:", { optionsChanges, metafieldChanges });
+
       if (Object.keys(optionsChanges).length === 0 && Object.keys(metafieldChanges).length === 0) {
+        console.log("[saveSubResources] No changes detected, resetting hasChanges");
         setHasChanges(false);
         return;
       }
 
+      console.log("[saveSubResources] Submitting to server...");
       fetcher.submit(
         {
           action: "savePrimarySubResources",
