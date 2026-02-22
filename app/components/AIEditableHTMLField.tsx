@@ -199,6 +199,7 @@ export function AIEditableHTMLField({
         <InlineStack gap="100" blockAlign="center">
           <Text as="p" variant="bodyMd" fontWeight="bold" tone={readOnly ? "subdued" : undefined}>
             {label}
+            {isPrimaryLocale && !readOnly && <span style={{ color: 'var(--p-color-text-critical)', marginLeft: '4px' }}>*</span>}
           </Text>
           {helpKey && <HelpTooltip helpKey={helpKey} />}
         </InlineStack>

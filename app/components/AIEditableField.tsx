@@ -135,6 +135,7 @@ export function AIEditableField({
           maxLength={maxLength}
           placeholder={placeholder}
           showCharacterCount={!!maxLength}
+          requiredIndicator={isPrimaryLocale && !readOnly}
         />
       </div>
 
