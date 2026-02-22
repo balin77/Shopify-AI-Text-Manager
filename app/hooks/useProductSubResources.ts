@@ -673,15 +673,15 @@ export function useProductSubResources({
       }
 
       console.log("[saveSubResources] Submitting to server...");
-      fetcher.submit(
-        {
-          action: "savePrimarySubResources",
-          productId: selectedItem.id,
-          optionsChanges: JSON.stringify(optionsChanges),
-          metafieldChanges: JSON.stringify(metafieldChanges),
-        },
-        { method: "POST", action: "/app/products" }
-      );
+
+      // Create FormData to submit
+      const formData = new FormData();
+      formData.append("action", "savePrimarySubResources");
+      formData.append("productId", selectedItem.id);
+      formData.append("optionsChanges", JSON.stringify(optionsChanges));
+      formData.append("metafieldChanges", JSON.stringify(metafieldChanges));
+
+      fetcher.submit(formData, { method: "POST", action: "/app/products" });
     } else {
       // FOREIGN LOCALE: Save translations
       const translationsData: Record<string, Record<string, string>> = {};
