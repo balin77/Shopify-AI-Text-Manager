@@ -655,6 +655,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                           currentLanguage={state.currentLanguage}
                           primaryLocale={primaryLocale}
                           selectedItem={selectedItem}
+                          contentType={config.contentType}
                           t={t}
                           state={state}
                           handlers={handlers}
@@ -850,6 +851,7 @@ interface FieldRendererProps {
   currentLanguage: string;
   primaryLocale: string;
   selectedItem: any;
+  contentType: string;
   t: any;
 }
 
@@ -881,6 +883,7 @@ function FieldRenderer(props: FieldRendererProps & { state?: any; handlers?: any
     currentLanguage,
     primaryLocale,
     selectedItem,
+    contentType,
     t,
     state,
     handlers,
@@ -941,6 +944,14 @@ function FieldRenderer(props: FieldRendererProps & { state?: any; handlers?: any
     productType: "productType",
   };
   const helpKey = helpKeyMap[field.key];
+
+  // Determine if required indicator should be shown
+  // Templates: All fields are required in primary locale (Shopify removes fields if empty)
+  // Products: Only title field is required in primary locale
+  const requiredIndicator = isPrimaryLocale && !readOnly && (
+    contentType === 'templates' || // All template fields
+    (contentType === 'products' && field.key === 'title') // Only product title
+  );
 
   // Render based on field type
 
@@ -1058,6 +1069,7 @@ function FieldRenderer(props: FieldRendererProps & { state?: any; handlers?: any
         sourceTextAvailable={sourceTextAvailable}
         disableGeneration={disableGeneration}
         readOnly={readOnly}
+        requiredIndicator={requiredIndicator}
         onGenerateAI={field.supportsAI !== false && isPrimaryLocale ? onGenerateAI : undefined}
         onFormatAI={field.supportsFormatting !== false && isPrimaryLocale ? onFormatAI : undefined}
         onTranslate={field.supportsTranslation !== false ? onTranslate : undefined}
@@ -1090,6 +1102,7 @@ function FieldRenderer(props: FieldRendererProps & { state?: any; handlers?: any
       disableGeneration={disableGeneration}
       isFallbackValue={isFallbackValue}
       readOnly={readOnly}
+      requiredIndicator={requiredIndicator}
       onGenerateAI={field.supportsAI !== false && isPrimaryLocale ? onGenerateAI : undefined}
       onFormatAI={field.supportsFormatting !== false && isPrimaryLocale ? onFormatAI : undefined}
       onTranslate={field.supportsTranslation !== false ? onTranslate : undefined}

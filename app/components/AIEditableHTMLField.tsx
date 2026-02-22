@@ -32,6 +32,8 @@ interface AIEditableHTMLFieldProps {
   isFallbackValue?: boolean;
   /** If true, the field is read-only (disabled). Used when primary locale template editing is not enabled. */
   readOnly?: boolean;
+  /** If true, show required indicator (red asterisk) */
+  requiredIndicator?: boolean;
   onGenerateAI?: () => void;
   onFormatAI?: () => void;
   onTranslate?: () => void;
@@ -62,6 +64,7 @@ export function AIEditableHTMLField({
   disableGeneration = false,
   isFallbackValue = false,
   readOnly = false,
+  requiredIndicator = false,
   onGenerateAI,
   onFormatAI,
   onTranslate,
@@ -199,7 +202,7 @@ export function AIEditableHTMLField({
         <InlineStack gap="100" blockAlign="center">
           <Text as="p" variant="bodyMd" fontWeight="bold" tone={readOnly ? "subdued" : undefined}>
             {label}
-            {isPrimaryLocale && !readOnly && <span style={{ color: 'var(--p-color-text-critical)', marginLeft: '4px' }}>*</span>}
+            {requiredIndicator && <span style={{ color: 'var(--p-color-text-critical)', marginLeft: '4px' }}>*</span>}
           </Text>
           {helpKey && <HelpTooltip helpKey={helpKey} />}
         </InlineStack>

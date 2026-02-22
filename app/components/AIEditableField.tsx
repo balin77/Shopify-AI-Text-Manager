@@ -30,6 +30,8 @@ interface AIEditableFieldProps {
   isFallbackValue?: boolean;
   /** If true, the field is read-only (disabled). Used when primary locale template editing is not enabled. */
   readOnly?: boolean;
+  /** If true, show required indicator (red asterisk) */
+  requiredIndicator?: boolean;
   onGenerateAI?: () => void;
   onFormatAI?: () => void;
   onTranslate?: () => void;
@@ -62,6 +64,7 @@ export function AIEditableField({
   disableGeneration = false,
   isFallbackValue = false,
   readOnly = false,
+  requiredIndicator = false,
   onGenerateAI,
   onFormatAI,
   onTranslate,
@@ -135,7 +138,7 @@ export function AIEditableField({
           maxLength={maxLength}
           placeholder={placeholder}
           showCharacterCount={!!maxLength}
-          requiredIndicator={isPrimaryLocale && !readOnly}
+          requiredIndicator={requiredIndicator}
         />
       </div>
 
