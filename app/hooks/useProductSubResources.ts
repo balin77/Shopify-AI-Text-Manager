@@ -694,7 +694,26 @@ export function useProductSubResources({
         formMethod: fetcher.formMethod
       });
 
-      fetcher.submit(formData, { method: "POST", action: "/app/products" });
+      // WORKAROUND: Create a temporary form element and submit it
+      // This is needed because fetcher.submit ignores the action option in Remix 2.17.3
+      const form = document.createElement('form');
+      form.method = 'POST';
+      form.action = '/app/products';
+      form.style.display = 'none';
+
+      // Append all form data
+      for (const [key, value] of formData.entries()) {
+        const input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = key;
+        input.value = value as string;
+        form.appendChild(input);
+      }
+
+      document.body.appendChild(form);
+      console.log("[saveSubResources] Using form element workaround, action:", form.action);
+      fetcher.submit(form);
+      document.body.removeChild(form);
 
       console.log("[saveSubResources] Fetcher after submit:", {
         state: fetcher.state,
