@@ -401,13 +401,16 @@ export class ProductSyncService {
   }
 
   /**
-   * Fetch product data from Shopify
+   * Fetch product data from Shopify with paginated metafields
    * Uses media query instead of images to get MediaImage IDs for translations (API 2025-10+)
    */
   private async fetchProductData(productId: string): Promise<ShopifyProductData | null> {
+    logger.debug(`[ProductSync] Fetching product data with paginated metafields for: ${productId}`);
+
+    // First, fetch base product data with first page of metafields
     const response = await this.admin.graphql(
       `#graphql
-        query getProduct($id: ID!) {
+        query getProduct($id: ID!, $metafieldsFirst: Int!, $metafieldsAfter: String) {
           product(id: $id) {
             id
             title
@@ -451,7 +454,7 @@ export class ProductSyncService {
                 linkedMetafieldValue
               }
             }
-            metafields(first: 100) {
+            metafields(first: $metafieldsFirst, after: $metafieldsAfter) {
               edges {
                 node {
                   id
@@ -461,10 +464,14 @@ export class ProductSyncService {
                   type
                 }
               }
+              pageInfo {
+                hasNextPage
+                endCursor
+              }
             }
           }
         }`,
-      { variables: { id: productId } }
+      { variables: { id: productId, metafieldsFirst: 250, metafieldsAfter: null } }
     );
 
     const data = await response.json();
@@ -493,12 +500,73 @@ export class ProductSyncService {
     }
 
     // Check if product data is present
-    const product: ShopifyProductData | undefined = data.data?.product;
+    let product: ShopifyProductData | undefined = data.data?.product;
 
     if (!product) {
       logger.warn(`[ProductSync] Product data is null (but no GraphQL errors): ${productId}`);
       return null;
     }
+
+    // Collect all metafields using pagination
+    const allMetafields: ShopifyMetafield[] = [];
+    let hasNextPage = product.metafields?.pageInfo?.hasNextPage || false;
+    let cursor = product.metafields?.pageInfo?.endCursor || null;
+
+    // Add first page of metafields
+    const firstPageMetafields = product.metafields?.edges?.map((edge) => edge.node) || [];
+    allMetafields.push(...firstPageMetafields);
+    logger.debug(`[ProductSync] Fetched ${firstPageMetafields.length} metafields (first page), hasNextPage: ${hasNextPage}`);
+
+    // Fetch remaining pages
+    while (hasNextPage && cursor) {
+      logger.debug(`[ProductSync] Fetching next page of metafields, cursor: ${cursor.substring(0, 20)}...`);
+
+      const nextResponse = await this.admin.graphql(
+        `#graphql
+          query getProductMetafields($id: ID!, $metafieldsFirst: Int!, $metafieldsAfter: String) {
+            product(id: $id) {
+              metafields(first: $metafieldsFirst, after: $metafieldsAfter) {
+                edges {
+                  node {
+                    id
+                    namespace
+                    key
+                    value
+                    type
+                  }
+                }
+                pageInfo {
+                  hasNextPage
+                  endCursor
+                }
+              }
+            }
+          }`,
+        { variables: { id: productId, metafieldsFirst: 250, metafieldsAfter: cursor } }
+      );
+
+      const nextData = await nextResponse.json();
+
+      if (nextData.errors && nextData.errors.length > 0) {
+        logger.error(`[ProductSync] Error fetching next page of metafields:`, nextData.errors[0].message);
+        break; // Stop pagination on error, but keep what we have
+      }
+
+      const nextPageMetafields = nextData.data?.product?.metafields?.edges?.map((edge: GraphQLEdge<ShopifyMetafield>) => edge.node) || [];
+      allMetafields.push(...nextPageMetafields);
+
+      hasNextPage = nextData.data?.product?.metafields?.pageInfo?.hasNextPage || false;
+      cursor = nextData.data?.product?.metafields?.pageInfo?.endCursor || null;
+
+      logger.debug(`[ProductSync] Fetched ${nextPageMetafields.length} metafields (page), total: ${allMetafields.length}, hasNextPage: ${hasNextPage}`);
+    }
+
+    logger.info(`[ProductSync] Successfully fetched ${allMetafields.length} metafields for product ${productId}`);
+
+    // Replace metafields with all paginated results
+    product.metafields = {
+      edges: allMetafields.map(node => ({ node }))
+    };
 
     // Log warning if productType is missing (this shouldn't happen normally)
     if (!product.productType) {

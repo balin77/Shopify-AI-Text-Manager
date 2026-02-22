@@ -112,7 +112,7 @@ export const GET_SHOP_POLICIES = `#graphql
 `;
 
 export const GET_SHOP_METADATA = `#graphql
-  query getShopMetadata {
+  query getShopMetadata($metafieldsFirst: Int!, $metafieldsAfter: String) {
     shop {
       id
       name
@@ -126,7 +126,7 @@ export const GET_SHOP_METADATA = `#graphql
         url
       }
       myshopifyDomain
-      metafields(first: 100) {
+      metafields(first: $metafieldsFirst, after: $metafieldsAfter) {
         edges {
           node {
             id
@@ -135,6 +135,10 @@ export const GET_SHOP_METADATA = `#graphql
             value
             type
           }
+        }
+        pageInfo {
+          hasNextPage
+          endCursor
         }
       }
     }

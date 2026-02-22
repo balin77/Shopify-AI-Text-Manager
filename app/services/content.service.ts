@@ -144,14 +144,66 @@ export class ContentService {
 
   async getShopMetadata() {
     try {
-      const response = await this.admin.graphql(GET_SHOP_METADATA);
-      const data = await response.json();
+      logger.debug('Fetching shop metadata with paginated metafields', { context: 'ContentService' });
 
-      const shop = data.data.shop;
-      shop.metafields = shop.metafields?.edges?.map((edge: GraphQLEdge<Record<string, unknown>>) => ({
-        ...edge.node,
-        translations: []
-      })) || [];
+      // Fetch all metafields using pagination
+      const allMetafields: Array<Record<string, unknown>> = [];
+      let hasNextPage = true;
+      let cursor: string | null = null;
+      const pageSize = 250; // Use maximum page size for efficiency
+
+      while (hasNextPage) {
+        const response = await this.admin.graphql(GET_SHOP_METADATA, {
+          variables: {
+            metafieldsFirst: pageSize,
+            metafieldsAfter: cursor
+          }
+        });
+        const data = await response.json();
+
+        const shop = data.data?.shop;
+        if (!shop) {
+          logger.warn('No shop data returned', { context: 'ContentService' });
+          break;
+        }
+
+        const metafieldsConnection = shop.metafields;
+        const metafields = metafieldsConnection?.edges?.map((edge: GraphQLEdge<Record<string, unknown>>) => ({
+          ...edge.node,
+          translations: []
+        })) || [];
+
+        allMetafields.push(...metafields);
+
+        // Check if there are more pages
+        hasNextPage = metafieldsConnection?.pageInfo?.hasNextPage || false;
+        cursor = metafieldsConnection?.pageInfo?.endCursor || null;
+
+        logger.debug(`Fetched ${metafields.length} metafields (page), total: ${allMetafields.length}`, {
+          context: 'ContentService',
+          hasNextPage,
+          cursor: cursor?.substring(0, 20) + '...'
+        });
+
+        if (!hasNextPage) {
+          break;
+        }
+      }
+
+      logger.info(`Successfully fetched ${allMetafields.length} shop metafields`, { context: 'ContentService' });
+
+      // Get shop data from first response (we need to fetch again without pagination to get base shop data)
+      const finalResponse = await this.admin.graphql(GET_SHOP_METADATA, {
+        variables: {
+          metafieldsFirst: 1, // We already have all metafields, just need shop data
+          metafieldsAfter: null
+        }
+      });
+      const finalData = await finalResponse.json();
+      const shop = finalData.data.shop;
+
+      // Replace metafields with all paginated results
+      shop.metafields = allMetafields;
       shop.translations = [];
 
       return shop;
