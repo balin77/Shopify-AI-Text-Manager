@@ -681,7 +681,26 @@ export function useProductSubResources({
       formData.append("optionsChanges", JSON.stringify(optionsChanges));
       formData.append("metafieldChanges", JSON.stringify(metafieldChanges));
 
+      console.log("[saveSubResources] FormData contents:");
+      for (const [key, value] of formData.entries()) {
+        console.log(`  ${key}:`, value);
+      }
+
+      console.log("[saveSubResources] Submit options:", { method: "POST", action: "/app/products" });
+      console.log("[saveSubResources] Current window.location.pathname:", window.location.pathname);
+      console.log("[saveSubResources] Fetcher before submit:", {
+        state: fetcher.state,
+        formAction: fetcher.formAction,
+        formMethod: fetcher.formMethod
+      });
+
       fetcher.submit(formData, { method: "POST", action: "/app/products" });
+
+      console.log("[saveSubResources] Fetcher after submit:", {
+        state: fetcher.state,
+        formAction: fetcher.formAction,
+        formMethod: fetcher.formMethod
+      });
     } else {
       // FOREIGN LOCALE: Save translations
       const translationsData: Record<string, Record<string, string>> = {};
