@@ -66,7 +66,7 @@ export const de = {
     linkedOptionHint: "Die Werte dieser Option sind Metaobjekte und werden separat unter Metaobjekte übersetzt.",
     linkedBadge: "Metaobjekt",
     optionsEditInstructionPrimary: "Bearbeiten Sie die Optionsnamen und -werte in der Hauptsprache.",
-    optionNameLabel: "Optionsname",
+    optionNameLabel: "Name",
     valuesLabel: "Werte",
     translateFieldButton: "Übersetzen",
     linkedNotEditableHint: "Diese Option ist mit Metaobjekten verknüpft und kann hier nicht bearbeitet werden. Verwalten Sie sie in Shopify.",

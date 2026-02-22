@@ -68,7 +68,7 @@ export const es: Translation = {
     linkedOptionHint: "Los valores de esta opción son metaobjetos y se traducen por separado en Metaobjetos.",
     linkedBadge: "Metaobjeto",
     optionsEditInstructionPrimary: "Editar los nombres y valores de las opciones del producto en el idioma principal.",
-    optionNameLabel: "Nombre de opción",
+    optionNameLabel: "Nombre",
     valuesLabel: "Valores",
     translateFieldButton: "Traducir",
     linkedNotEditableHint: "Esta opción está vinculada a metaobjetos y no se puede editar aquí. Adminístrela en Shopify.",
