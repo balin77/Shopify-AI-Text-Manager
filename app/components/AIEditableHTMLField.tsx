@@ -200,9 +200,8 @@ export function AIEditableHTMLField({
     <div className={`ai-editable-html-field ${getBackgroundClass()}`}>
       <InlineStack align="space-between" blockAlign="center">
         <InlineStack gap="100" blockAlign="center">
-          <Text as="p" variant="bodyMd" fontWeight="bold" tone={readOnly ? "subdued" : undefined}>
-            {label}
-            {requiredIndicator && <span style={{ color: 'var(--p-color-text-critical)', marginLeft: '4px' }}>*</span>}
+          <Text as="span" variant="bodyMd" fontWeight="bold" tone={readOnly ? "subdued" : undefined}>
+            {label}{requiredIndicator && <span style={{ color: 'var(--p-color-text-critical)' }}> *</span>}
           </Text>
           {helpKey && <HelpTooltip helpKey={helpKey} />}
         </InlineStack>
