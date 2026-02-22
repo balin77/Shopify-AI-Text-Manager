@@ -18,6 +18,7 @@ import { getFormString, getFormJSON } from "~/utils/form-data.utils";
 import { safeJsonParse } from "~/utils/validation";
 import { sanitizePromptInput } from "~/utils/prompt-sanitizer";
 import { extractReadableName } from "~/utils/templates-field-factory";
+import { getInstructionWithDefault, getWritingStyleInstructions } from "~/utils/ai-instructions.utils";
 
 // Map contentType to its config for looking up field definitions
 const CONTENT_CONFIGS: Record<string, ContentEditorConfig> = {
@@ -1093,13 +1094,26 @@ Current ${genFieldLabel}: ${currentValue || "(empty)"}
 Language: ${mainLanguage}`;
         }
 
-        // Add format example as soft guidance (not strict)
-        if (genFormatKey && genAiInstructions?.[genFormatKey]) {
-          prompt += `\n\nUse the following as a rough structural guideline (adapt freely to the actual content):\n${genAiInstructions[genFormatKey]}`;
+        // Add writing style instructions (from DB or default)
+        const writingStyle = getWritingStyleInstructions(genAiInstructions);
+        if (writingStyle) {
+          prompt += `\n\nGeneral Writing Style:\n${writingStyle}`;
         }
-        // Add instructions as guidance
-        if (genInstructionsTextKey && genAiInstructions?.[genInstructionsTextKey]) {
-          prompt += `\n\nGuidelines:\n${genAiInstructions[genInstructionsTextKey]}`;
+
+        // Add format example as soft guidance (from DB or default)
+        if (genFormatKey) {
+          const formatExample = getInstructionWithDefault(genAiInstructions, genFormatKey);
+          if (formatExample) {
+            prompt += `\n\nUse the following as a rough structural guideline (adapt freely to the actual content):\n${formatExample}`;
+          }
+        }
+
+        // Add instructions as guidance (from DB or default)
+        if (genInstructionsTextKey) {
+          const fieldInstructions = getInstructionWithDefault(genAiInstructions, genInstructionsTextKey);
+          if (fieldInstructions) {
+            prompt += `\n\nGuidelines:\n${fieldInstructions}`;
+          }
         }
 
         prompt += `\n\nIMPORTANT: Return ONLY the generated ${genFieldLabel}, nothing else. No explanations, no options, no labels. Output the result in ${mainLanguage}.`;
@@ -1246,11 +1260,17 @@ Allowed formatting changes for handles:
 - Convert umlauts (ä→ae, ö→oe, ü→ue, ß→ss)
 - Remove special characters
 - Remove excessive hyphens`;
-          if (formatKey && aiInstructions?.[formatKey]) {
-            prompt += `\n\nFormat Style Example:\n${aiInstructions[formatKey]}`;
+          if (formatKey) {
+            const formatExample = getInstructionWithDefault(aiInstructions, formatKey);
+            if (formatExample) {
+              prompt += `\n\nFormat Style Example:\n${formatExample}`;
+            }
           }
-          if (instructionsTextKey && aiInstructions?.[instructionsTextKey]) {
-            prompt += `\n\nAdditional Instructions:\n${aiInstructions[instructionsTextKey]}`;
+          if (instructionsTextKey) {
+            const fieldInstructions = getInstructionWithDefault(aiInstructions, instructionsTextKey);
+            if (fieldInstructions) {
+              prompt += `\n\nAdditional Instructions:\n${fieldInstructions}`;
+            }
           }
           prompt += `\n\nReturn ONLY the formatted URL slug. Keep the original keywords.`;
         } else if (supportsHtmlFormatting) {
@@ -1273,11 +1293,17 @@ Do NOT:
 - Completely rewrite or replace the content
 - Add entirely new information or paragraphs
 - Change the language or tone significantly`;
-          if (formatKey && aiInstructions?.[formatKey]) {
-            prompt += `\n\nFormat Style Example (for HTML structure reference):\n${aiInstructions[formatKey]}`;
+          if (formatKey) {
+            const formatExample = getInstructionWithDefault(aiInstructions, formatKey);
+            if (formatExample) {
+              prompt += `\n\nFormat Style Example (for HTML structure reference):\n${formatExample}`;
+            }
           }
-          if (instructionsTextKey && aiInstructions?.[instructionsTextKey]) {
-            prompt += `\n\nAdditional Instructions:\n${aiInstructions[instructionsTextKey]}`;
+          if (instructionsTextKey) {
+            const fieldInstructions = getInstructionWithDefault(aiInstructions, instructionsTextKey);
+            if (fieldInstructions) {
+              prompt += `\n\nAdditional Instructions:\n${fieldInstructions}`;
+            }
           }
           prompt += `\n\nReturn ONLY the formatted HTML ${fieldLabel}. Keep the original language. Output the result in ${mainLanguage}.`;
         } else {
@@ -1298,11 +1324,17 @@ Do NOT:
 - Completely rewrite the content
 - Add new information that wasn't there
 - Change the language or core meaning`;
-          if (formatKey && aiInstructions?.[formatKey]) {
-            prompt += `\n\nFormat Style Example (use as structural reference, adapt to the actual content):\n${aiInstructions[formatKey]}`;
+          if (formatKey) {
+            const formatExample = getInstructionWithDefault(aiInstructions, formatKey);
+            if (formatExample) {
+              prompt += `\n\nFormat Style Example (use as structural reference, adapt to the actual content):\n${formatExample}`;
+            }
           }
-          if (instructionsTextKey && aiInstructions?.[instructionsTextKey]) {
-            prompt += `\n\nAdditional Instructions:\n${aiInstructions[instructionsTextKey]}`;
+          if (instructionsTextKey) {
+            const fieldInstructions = getInstructionWithDefault(aiInstructions, instructionsTextKey);
+            if (fieldInstructions) {
+              prompt += `\n\nAdditional Instructions:\n${fieldInstructions}`;
+            }
           }
           prompt += `\n\nReturn ONLY the formatted ${fieldLabel} as plain text (no HTML). Keep the original language. Output the result in ${mainLanguage}.`;
         }
@@ -1461,12 +1493,14 @@ Do NOT:
 Product: ${productTitle}
 Image URL: ${imageUrl}`;
 
-          if (aiInstructions?.productAltTextFormat) {
-            prompt += `\n\nFormat Example:\n${aiInstructions.productAltTextFormat}`;
+          const altTextFormat = getInstructionWithDefault(aiInstructions, "productAltTextFormat");
+          if (altTextFormat) {
+            prompt += `\n\nFormat Example:\n${altTextFormat}`;
           }
 
-          if (aiInstructions?.productAltTextInstructions) {
-            prompt += `\n\nInstructions:\n${aiInstructions.productAltTextInstructions}`;
+          const altTextInstructions = getInstructionWithDefault(aiInstructions, "productAltTextInstructions");
+          if (altTextInstructions) {
+            prompt += `\n\nInstructions:\n${altTextInstructions}`;
           }
 
           prompt += `\n\nReturn ONLY the alt text, without explanations.${mainLanguage ? ` Output the result in ${mainLanguage}.` : ''}`;
@@ -1573,12 +1607,14 @@ Image URL: ${imageUrl}`;
 Product: ${productTitle}
 Image URL: ${image.url}`;
 
-              if (altTextInstructions?.productAltTextFormat) {
-                prompt += `\n\nFormat Example:\n${altTextInstructions.productAltTextFormat}`;
+              const bulkAltTextFormat = getInstructionWithDefault(altTextInstructions, "productAltTextFormat");
+              if (bulkAltTextFormat) {
+                prompt += `\n\nFormat Example:\n${bulkAltTextFormat}`;
               }
 
-              if (altTextInstructions?.productAltTextInstructions) {
-                prompt += `\n\nInstructions:\n${altTextInstructions.productAltTextInstructions}`;
+              const bulkAltTextInstructions = getInstructionWithDefault(altTextInstructions, "productAltTextInstructions");
+              if (bulkAltTextInstructions) {
+                prompt += `\n\nInstructions:\n${bulkAltTextInstructions}`;
               }
 
               prompt += `\n\nReturn ONLY the alt text, without explanations.${mainLanguage ? ` Output the result in ${mainLanguage}.` : ''}`;
