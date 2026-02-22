@@ -152,67 +152,103 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
       const instructionsTextKey = `${instructionsKey}Instructions`;
 
       if (field.type === "text" || field.type === "slug") {
-        let prompt = `Create an optimized ${field.label}.`;
-
-        // Always include writing style (from DB or default)
+        // Get instructions (with default fallback)
         const writingStyle = getWritingStyleInstructions(instructions);
-        if (writingStyle) {
-          prompt += `\n\nGeneral Writing Style:\n${writingStyle}`;
-        }
-
-        // Include format example if available (from DB or default)
         const formatExample = getInstructionWithDefault(instructions, formatKey);
-        if (formatExample) {
-          prompt += `\n\nFormat Example:\n${formatExample}`;
-        }
-
-        // Include field-specific instructions if available (from DB or default)
         const fieldInstructions = getInstructionWithDefault(instructions, instructionsTextKey);
-        if (fieldInstructions) {
-          prompt += `\n\nInstructions:\n${fieldInstructions}`;
+
+        let prompt = `Create an improved ${field.label} for the following content.`;
+
+        // Add context information
+        if (sanitizedContextTitle) {
+          prompt += `\n\nContext - Title: ${sanitizedContextTitle}`;
         }
+        if (sanitizedContextDescription) {
+          prompt += `\nContext - Description: ${sanitizedContextDescription}`;
+        }
+        if (currentValue) {
+          prompt += `\nCurrent ${field.label}: ${currentValue}`;
+        }
+        prompt += `\nLanguage: ${mainLanguage}`;
+
+        // Add requirements section
+        prompt += `\n\nRequirements:`;
 
         if (field.type === "slug") {
-          prompt += `\n\nIMPORTANT - The URL slug MUST follow this format:`;
-          prompt += `\n- ONLY lowercase letters (a-z)`;
-          prompt += `\n- ONLY digits (0-9)`;
-          prompt += `\n- ONLY hyphens (-) as separators`;
-          prompt += `\n- NO spaces, NO underscores, NO special characters`;
-          prompt += `\n- Umlauts MUST be converted (ä→ae, ö→oe, ü→ue, ß→ss)`;
+          prompt += `\n- Use only lowercase letters (a-z), digits (0-9), and hyphens (-)`;
+          prompt += `\n- No umlauts - convert them (ä→ae, ö→oe, ü→ue, ß→ss)`;
+          prompt += `\n- No spaces, underscores, or special characters`;
           prompt += `\n- 2-5 words, separated by hyphens`;
-          prompt += `\n\nExamples:`;
+          prompt += `\n\nSlug Examples:`;
           prompt += `\n- "Über Uns" → "ueber-uns"`;
           prompt += `\n- "Kontakt & Impressum" → "kontakt-impressum"`;
         }
 
-        prompt += `\n\nContext:\n${sanitizedContextDescription || currentValue}\n\nReturn ONLY the ${field.label}, without explanations. Output the result in ${mainLanguage}.`;
+        // Add writing style (compact)
+        if (writingStyle) {
+          prompt += `\n\nWriting Style:\n${writingStyle}`;
+        }
+
+        // Add format example (compact)
+        if (formatExample) {
+          prompt += `\n\nFormat Example (adapt to actual content):\n${formatExample}`;
+        }
+
+        // Add field-specific instructions (compact)
+        if (fieldInstructions) {
+          prompt += `\n\nGuidelines:\n${fieldInstructions}`;
+        }
+
+        prompt += `\n\nIMPORTANT: Return ONLY the ${field.label}, nothing else. Output in ${mainLanguage}.`;
         generatedContent = await aiServiceWithTask.generateProductTitle(prompt);
 
         if (field.type === "slug") {
           generatedContent = sanitizeSlug(generatedContent);
         }
       } else if (field.type === "html" || field.type === "textarea") {
-        let prompt = `Create an optimized ${field.label} for: ${sanitizedContextTitle}`;
-
-        // Always include writing style (from DB or default)
+        // Get instructions (with default fallback)
         const writingStyle = getWritingStyleInstructions(instructions);
-        if (writingStyle) {
-          prompt += `\n\nGeneral Writing Style:\n${writingStyle}`;
-        }
-
-        // Include format example if available (from DB or default)
         const formatExample = getInstructionWithDefault(instructions, formatKey);
-        if (formatExample) {
-          prompt += `\n\nFormat Example:\n${formatExample}`;
-        }
-
-        // Include field-specific instructions if available (from DB or default)
         const fieldInstructions = getInstructionWithDefault(instructions, instructionsTextKey);
-        if (fieldInstructions) {
-          prompt += `\n\nInstructions:\n${fieldInstructions}`;
+
+        let prompt = `Create an improved ${field.label} for the following content.`;
+
+        // Add context information
+        if (sanitizedContextTitle) {
+          prompt += `\n\nContext - Title: ${sanitizedContextTitle}`;
+        }
+        if (sanitizedContextDescription) {
+          prompt += `\nContext - Description: ${sanitizedContextDescription}`;
+        }
+        if (currentValue) {
+          prompt += `\nCurrent ${field.label}: ${currentValue}`;
+        }
+        prompt += `\nLanguage: ${mainLanguage}`;
+
+        // Add requirements for HTML fields
+        if (field.type === "html") {
+          prompt += `\n\nRequirements:`;
+          prompt += `\n- Use HTML formatting (<h2>, <h3>, <p>, <strong>, <em>, <ul>, <li>)`;
+          prompt += `\n- Structure content with headings and paragraphs`;
+          prompt += `\n- Focus on readability and user engagement`;
         }
 
-        prompt += `\n\nContext:\n${sanitizedContextDescription || currentValue}\n\nCurrent Content:\n${currentValue}\n\nReturn ONLY the ${field.label}, without explanations. Output the result in ${mainLanguage}.`;
+        // Add writing style (compact)
+        if (writingStyle) {
+          prompt += `\n\nWriting Style:\n${writingStyle}`;
+        }
+
+        // Add format example (compact)
+        if (formatExample) {
+          prompt += `\n\nFormat Example (adapt to actual content):\n${formatExample}`;
+        }
+
+        // Add field-specific instructions (compact)
+        if (fieldInstructions) {
+          prompt += `\n\nGuidelines:\n${fieldInstructions}`;
+        }
+
+        prompt += `\n\nIMPORTANT: Return ONLY the ${field.label}, nothing else. Output in ${mainLanguage}.`;
         generatedContent = await aiServiceWithTask.generateProductDescription(sanitizedContextTitle, prompt);
       }
 

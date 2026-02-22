@@ -1062,61 +1062,58 @@ Return only the formatted text, without explanations.`;
         const genFieldLabel = genField?.label || fieldType;
         const isGenLongContent = genField?.type === "html";
 
+        // Get instructions (with default fallback)
+        const writingStyle = getWritingStyleInstructions(genAiInstructions);
+        const formatExample = genFormatKey ? getInstructionWithDefault(genAiInstructions, genFormatKey) : null;
+        const fieldInstructions = genInstructionsTextKey ? getInstructionWithDefault(genAiInstructions, genInstructionsTextKey) : null;
+
         // Build field-type-aware prompt
-        let prompt = "";
+        let prompt = `Create an improved ${genFieldLabel} for the following content.`;
+
+        // Add context information
+        prompt += `\n\nContext - Title: ${sanitizedContextTitle}`;
+        if (!isGenLongContent && sanitizedContextDescription) {
+          prompt += `\nContext - Description: ${sanitizedContextDescription}`;
+        }
+        if (currentValue) {
+          prompt += `\nCurrent ${genFieldLabel}: ${currentValue}`;
+        }
+        prompt += `\nLanguage: ${mainLanguage}`;
+
+        // Add requirements section
+        prompt += `\n\nRequirements:`;
 
         if (genField?.type === "slug") {
-          prompt = `Create an optimized URL slug for the following content.
-
-Context - Title: ${sanitizedContextTitle}
-Current slug: ${currentValue || "(empty)"}
-Language: ${mainLanguage}
-
-Requirements:
-- Use only lowercase letters (a-z), digits (0-9), and hyphens (-)
-- No umlauts - convert them (ä→ae, ö→oe, ü→ue, ß→ss)
-- No spaces, underscores, or special characters
-- 3-5 relevant keywords`;
+          prompt += `\n- Use only lowercase letters (a-z), digits (0-9), and hyphens (-)`;
+          prompt += `\n- No umlauts - convert them (ä→ae, ö→oe, ü→ue, ß→ss)`;
+          prompt += `\n- No spaces, underscores, or special characters`;
+          prompt += `\n- 2-5 relevant keywords`;
         } else if (isGenLongContent) {
-          prompt = `Create an improved ${genFieldLabel} for the following content.
-
-Context - Title: ${sanitizedContextTitle}
-Current ${genFieldLabel}: ${currentValue || "(empty)"}
-Language: ${mainLanguage}
-
-Use HTML formatting (<h2>, <h3>, <p>, <strong>, <em>, <ul>, <li>) for structure.`;
+          prompt += `\n- Use HTML formatting (<h2>, <h3>, <p>, <strong>, <em>, <ul>, <li>)`;
+          prompt += `\n- Structure content with headings and paragraphs`;
+          prompt += `\n- Focus on readability and user engagement`;
         } else {
-          prompt = `Create an improved ${genFieldLabel} for the following content.
-
-Context - Title: ${sanitizedContextTitle}
-Context - Description: ${sanitizedContextDescription}
-Current ${genFieldLabel}: ${currentValue || "(empty)"}
-Language: ${mainLanguage}`;
+          prompt += `\n- Clear and concise`;
+          prompt += `\n- SEO-friendly where applicable`;
+          prompt += `\n- Customer-focused language`;
         }
 
-        // Add writing style instructions (from DB or default)
-        const writingStyle = getWritingStyleInstructions(genAiInstructions);
+        // Add writing style (compact)
         if (writingStyle) {
-          prompt += `\n\nGeneral Writing Style:\n${writingStyle}`;
+          prompt += `\n\nWriting Style:\n${writingStyle}`;
         }
 
-        // Add format example as soft guidance (from DB or default)
-        if (genFormatKey) {
-          const formatExample = getInstructionWithDefault(genAiInstructions, genFormatKey);
-          if (formatExample) {
-            prompt += `\n\nUse the following as a rough structural guideline (adapt freely to the actual content):\n${formatExample}`;
-          }
+        // Add format example (compact)
+        if (formatExample) {
+          prompt += `\n\nFormat Example (adapt to actual content):\n${formatExample}`;
         }
 
-        // Add instructions as guidance (from DB or default)
-        if (genInstructionsTextKey) {
-          const fieldInstructions = getInstructionWithDefault(genAiInstructions, genInstructionsTextKey);
-          if (fieldInstructions) {
-            prompt += `\n\nGuidelines:\n${fieldInstructions}`;
-          }
+        // Add field-specific instructions (compact)
+        if (fieldInstructions) {
+          prompt += `\n\nGuidelines:\n${fieldInstructions}`;
         }
 
-        prompt += `\n\nIMPORTANT: Return ONLY the generated ${genFieldLabel}, nothing else. No explanations, no options, no labels. Output the result in ${mainLanguage}.`;
+        prompt += `\n\nIMPORTANT: Return ONLY the ${genFieldLabel}, nothing else. Output in ${mainLanguage}.`;
 
         // Create task entry (prompt is saved by AI service via savePromptToTask)
         const taskFieldLabel4 = contentType === 'templates' ? extractReadableName(fieldType) : fieldType;
