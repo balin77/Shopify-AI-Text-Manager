@@ -126,7 +126,9 @@ export function AIEditableField({
         <TextField
           label={
             <InlineStack gap="100" blockAlign="center">
-              <span style={{ fontWeight: 600 }}>{label}</span>
+              <span style={{ fontWeight: 600 }}>
+                {label}{requiredIndicator && <span style={{ color: 'var(--p-color-text-critical)' }}> *</span>}
+              </span>
               {helpKey && <HelpTooltip helpKey={helpKey} />}
             </InlineStack>
           }
@@ -138,7 +140,6 @@ export function AIEditableField({
           maxLength={maxLength}
           placeholder={placeholder}
           showCharacterCount={!!maxLength}
-          requiredIndicator={requiredIndicator}
         />
       </div>
 

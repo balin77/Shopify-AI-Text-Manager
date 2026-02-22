@@ -188,10 +188,10 @@ export function OptionsField({
                           {/* Option Name — editable for metaobjects */}
                           <div>
                             <Text as="p" variant="bodyMd" fontWeight="semibold">
-                              {t.optionNameLabel || "Option name"} <span style={{ color: 'var(--p-color-text-critical)' }}>*</span>
+                              {t.optionNameLabel || "Name"} <span style={{ color: 'var(--p-color-text-critical)' }}>*</span>
                             </Text>
                             <TextField
-                              label={t.optionNameLabel || "Option name"}
+                              label={t.optionNameLabel || "Name"}
                               labelHidden
                               value={currentName}
                               onChange={(value) => onPrimaryOptionNameChange?.(option.id, value)}
@@ -225,10 +225,10 @@ export function OptionsField({
                           {/* Option Name */}
                           <div>
                             <Text as="p" variant="bodyMd" fontWeight="semibold">
-                              {t.optionNameLabel || "Option name"} <span style={{ color: 'var(--p-color-text-critical)' }}>*</span>
+                              {t.optionNameLabel || "Name"} <span style={{ color: 'var(--p-color-text-critical)' }}>*</span>
                             </Text>
                             <TextField
-                              label={t.optionNameLabel || "Option name"}
+                              label={t.optionNameLabel || "Name"}
                               labelHidden
                               value={currentName}
                               onChange={(value) => onPrimaryOptionNameChange?.(option.id, value)}
@@ -336,7 +336,7 @@ export function OptionsField({
                           <TextField
                             label={
                               <span style={{ fontWeight: 600 }}>
-                                {t.optionNameLabel || `Option name (${localeName})`}
+                                {t.optionNameLabel || `Name (${localeName})`}
                               </span>
                             }
                             value={translation.name || ""}
