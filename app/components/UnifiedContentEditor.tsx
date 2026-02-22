@@ -505,7 +505,11 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                             subResourceHandlers?.saveSubResources?.();
                           }}
                           disabled={!(state.hasChanges || (subResourceState?.hasChanges ?? false))}
-                          loading={fetcherState !== "idle" && fetcherFormData?.get("action") === "updateContent"}
+                          loading={fetcherState !== "idle" && (
+                            fetcherFormData?.get("action") === "updateContent" ||
+                            fetcherFormData?.get("action") === "savePrimarySubResources" ||
+                            fetcherFormData?.get("action") === "saveSubResourceTranslations"
+                          )}
                           size="slim"
                         >
                           {t.content?.save || "Save"}

@@ -116,7 +116,11 @@ export function MobileToolbar({
     fetcherState !== "idle" && isSameItem &&
     (currentAction === "translateAll" ||
      (currentAction === "translateAllForLocale" && fetcherTargetLocale === currentLanguage));
-  const isSaving = fetcherState !== "idle" && currentAction === "updateContent";
+  const isSaving = fetcherState !== "idle" && (
+    currentAction === "updateContent" ||
+    currentAction === "savePrimarySubResources" ||
+    currentAction === "saveSubResourceTranslations"
+  );
 
   const popoverActivator = (
     <Button icon={MenuHorizontalIcon} size="slim" onClick={togglePopover} accessibilityLabel="More actions" />
