@@ -26,6 +26,40 @@ import type { Session } from "@shopify/shopify-api";
 import type { PrismaClient } from "@prisma/client";
 import type { AISettings, AIInstructions } from "@prisma/client";
 
+/**
+ * Get character limit requirements for a field based on its aiInstructionsKey
+ */
+function getCharacterLimitRequirement(aiInstructionsKey: string): string | null {
+  const limits: Record<string, string> = {
+    // Titles: 30-70 characters
+    productTitle: "30-70 characters",
+    collectionTitle: "30-70 characters",
+    blogTitle: "30-70 characters",
+    pageTitle: "30-70 characters",
+
+    // Descriptions: minimum 150 characters
+    productDescription: "minimum 150 characters",
+    collectionDescription: "minimum 150 characters",
+    blogDescription: "minimum 150 characters",
+    pageDescription: "minimum 150 characters",
+    policyDescription: "minimum 150 characters",
+
+    // SEO Titles: max 60 characters
+    productSeoTitle: "maximum 60 characters",
+    collectionSeoTitle: "maximum 60 characters",
+    blogSeoTitle: "maximum 60 characters",
+    pageSeoTitle: "maximum 60 characters",
+
+    // Meta Descriptions: 120-160 characters
+    productMetaDesc: "120-160 characters",
+    collectionMetaDesc: "120-160 characters",
+    blogMetaDesc: "120-160 characters",
+    pageMetaDesc: "120-160 characters",
+  };
+
+  return limits[aiInstructionsKey] || null;
+}
+
 interface UnifiedContentActionsConfig {
   admin: AdminApiContext;
   session: Session;
@@ -174,6 +208,12 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
         // Add requirements section
         prompt += `\n\nRequirements:`;
 
+        // Add character limit if available
+        const charLimit = getCharacterLimitRequirement(instructionsKey);
+        if (charLimit) {
+          prompt += `\n- Length: ${charLimit}`;
+        }
+
         if (field.type === "slug") {
           prompt += `\n- Use only lowercase letters (a-z), digits (0-9), and hyphens (-)`;
           prompt += `\n- No umlauts - convert them (ä→ae, ö→oe, ü→ue, ß→ss)`;
@@ -182,6 +222,10 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
           prompt += `\n\nSlug Examples:`;
           prompt += `\n- "Über Uns" → "ueber-uns"`;
           prompt += `\n- "Kontakt & Impressum" → "kontakt-impressum"`;
+        } else {
+          prompt += `\n- Clear and concise`;
+          prompt += `\n- SEO-friendly where applicable`;
+          prompt += `\n- Customer-focused language`;
         }
 
         // Add writing style (compact)
@@ -225,12 +269,24 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
         }
         prompt += `\nLanguage: ${mainLanguage}`;
 
-        // Add requirements for HTML fields
+        // Add requirements section
+        prompt += `\n\nRequirements:`;
+
+        // Add character limit if available
+        const charLimitHtml = getCharacterLimitRequirement(instructionsKey);
+        if (charLimitHtml) {
+          prompt += `\n- Length: ${charLimitHtml}`;
+        }
+
+        // Add HTML-specific requirements
         if (field.type === "html") {
-          prompt += `\n\nRequirements:`;
           prompt += `\n- Use HTML formatting (<h2>, <h3>, <p>, <strong>, <em>, <ul>, <li>)`;
           prompt += `\n- Structure content with headings and paragraphs`;
           prompt += `\n- Focus on readability and user engagement`;
+        } else {
+          prompt += `\n- Clear and concise`;
+          prompt += `\n- SEO-friendly where applicable`;
+          prompt += `\n- Customer-focused language`;
         }
 
         // Add writing style (compact)

@@ -20,6 +20,40 @@ import { sanitizePromptInput } from "~/utils/prompt-sanitizer";
 import { extractReadableName } from "~/utils/templates-field-factory";
 import { getInstructionWithDefault, getWritingStyleInstructions } from "~/utils/ai-instructions.utils";
 
+/**
+ * Get character limit requirements for a field based on its aiInstructionsKey
+ */
+function getCharacterLimitRequirement(aiInstructionsKey: string): string | null {
+  const limits: Record<string, string> = {
+    // Titles: 30-70 characters
+    productTitle: "30-70 characters",
+    collectionTitle: "30-70 characters",
+    blogTitle: "30-70 characters",
+    pageTitle: "30-70 characters",
+
+    // Descriptions: minimum 150 characters
+    productDescription: "minimum 150 characters",
+    collectionDescription: "minimum 150 characters",
+    blogDescription: "minimum 150 characters",
+    pageDescription: "minimum 150 characters",
+    policyDescription: "minimum 150 characters",
+
+    // SEO Titles: max 60 characters
+    productSeoTitle: "maximum 60 characters",
+    collectionSeoTitle: "maximum 60 characters",
+    blogSeoTitle: "maximum 60 characters",
+    pageSeoTitle: "maximum 60 characters",
+
+    // Meta Descriptions: 120-160 characters
+    productMetaDesc: "120-160 characters",
+    collectionMetaDesc: "120-160 characters",
+    blogMetaDesc: "120-160 characters",
+    pageMetaDesc: "120-160 characters",
+  };
+
+  return limits[aiInstructionsKey] || null;
+}
+
 // Map contentType to its config for looking up field definitions
 const CONTENT_CONFIGS: Record<string, ContentEditorConfig> = {
   products: PRODUCTS_CONFIG,
@@ -1082,6 +1116,12 @@ Return only the formatted text, without explanations.`;
 
         // Add requirements section
         prompt += `\n\nRequirements:`;
+
+        // Add character limit if available
+        const charLimit = genInstructionsKey ? getCharacterLimitRequirement(genInstructionsKey) : null;
+        if (charLimit) {
+          prompt += `\n- Length: ${charLimit}`;
+        }
 
         if (genField?.type === "slug") {
           prompt += `\n- Use only lowercase letters (a-z), digits (0-9), and hyphens (-)`;
