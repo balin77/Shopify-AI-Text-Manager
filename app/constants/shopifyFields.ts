@@ -52,7 +52,8 @@ export const FIELD_CONFIGS = {
   pages: ['title', 'body', 'handle'],
   blogs: ['title', 'body', 'summary', 'handle', 'seo.title', 'seo.description'],
   policies: ['body'],
-  templates: ['title', 'body']
+  templates: ['title', 'body'],
+  metaobjects: [] // Metaobjects have dynamic fields
 } as const;
 
 /**

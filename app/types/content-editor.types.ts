@@ -62,6 +62,9 @@ export interface TranslatableContentItem {
   contentCount?: number; // For templates
   featuredImage?: ContentImage; // For products
   productType?: string; // For products
+  displayName?: string; // For metaobjects
+  definitionName?: string; // For metaobjects
+  fields?: Array<{ key: string; value: string | null; type?: string }>; // For metaobjects
   options?: Array<{
     id: string;           // gid://shopify/ProductOption/...
     name: string;
@@ -193,7 +196,7 @@ export interface TranslationStrings {
   [key: string]: Record<string, TranslationValue> | Record<string, HelpContent> | undefined;
 }
 
-export type ContentType = 'products' | 'collections' | 'blogs' | 'pages' | 'policies' | 'templates';
+export type ContentType = 'products' | 'collections' | 'blogs' | 'pages' | 'policies' | 'templates' | 'metaobjects';
 
 export type FieldType = 'text' | 'html' | 'slug' | 'textarea' | 'number' | 'image-gallery' | 'options';
 

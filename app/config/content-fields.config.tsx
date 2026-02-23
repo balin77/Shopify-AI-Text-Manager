@@ -377,6 +377,51 @@ export const TEMPLATES_CONFIG: ContentEditorConfig = {
 };
 
 // ============================================================================
+// METAOBJECTS
+// ============================================================================
+
+export const METAOBJECTS_CONFIG: ContentEditorConfig = {
+  contentType: "metaobjects",
+  resourceType: "Metaobject",
+  displayName: "Metaobjects",
+  displayNameSingular: "Metaobject",
+  showSeoSidebar: false,
+  idPrefix: "ID:",
+  getPrimaryField: (item) => item.displayName || item.handle || "Untitled",
+  getSubtitle: (item) => item.definitionName ? `Type: ${item.definitionName}` : undefined,
+
+  // Metaobjects use dynamic fields from the fields array
+  fieldDefinitions: [],
+
+  // Enable dynamic field generation
+  dynamicFields: true,
+
+  // Generate field definitions from item's fields
+  getFieldDefinitions: (item) => {
+    if (!item?.fields || !Array.isArray(item.fields)) return [];
+
+    return item.fields.map((field: any) => ({
+      key: field.key,
+      type: "text" as const,
+      label: field.key,
+      translationKey: field.key,
+      required: false,
+      supportsAI: false,
+      supportsFormatting: false,
+      supportsTranslation: true,
+      helpText: field.type ? `Type: ${field.type}` : undefined,
+    }));
+  },
+
+  // Custom value getter for metaobject data structure
+  getFieldValue: (item, fieldKey) => {
+    if (!item?.fields || !Array.isArray(item.fields)) return "";
+    const field = item.fields.find((f: any) => f.key === fieldKey);
+    return field?.value || "";
+  },
+};
+
+// ============================================================================
 // UTILITY FUNCTIONS
 // ============================================================================
 

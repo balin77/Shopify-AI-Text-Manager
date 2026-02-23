@@ -6,79 +6,48 @@
  * ONLY metaobjects that are actually used as product option values.
  *
  * Only the metaobject VALUES are editable/translatable here - names are NOT editable.
- * Structure similar to templates, but without "Improve with AI" buttons per element.
+ * Uses the UnifiedContentEditor system for consistency.
  */
 
-import { useState } from "react";
-import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useSubmit, useNavigation } from "@remix-run/react";
-import {
-  Page,
-  Card,
-  Text,
-  BlockStack,
-  ResourceList,
-  ResourceItem,
-  Banner,
-  TextField,
-  Button,
-  InlineStack,
-} from "@shopify/polaris";
+import { useEffect } from "react";
+import { type ActionFunctionArgs } from "@remix-run/node";
+import { useLoaderData, useFetcher, useRevalidator } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
 import { ContentTypeNavigation } from "../components/ContentTypeNavigation";
+import { UnifiedContentEditor } from "../components/UnifiedContentEditor";
+import { useUnifiedContentEditor } from "../hooks/useUnifiedContentEditor";
+import { handleUnifiedContentActions } from "../actions/unified-content.actions";
+import { METAOBJECTS_CONFIG } from "../config/content-fields.config";
 import { useI18n } from "../contexts/I18nContext";
-import { useNavigationHeight } from "../contexts/NavigationHeightContext";
-import { ContentService } from "../services/content.service";
-import { CONTENT_MAX_HEIGHT } from "../constants/layout";
+import { useInfoBox } from "../contexts/InfoBoxContext";
+import type { ContentItem } from "../types/content-editor.types";
+import { measurePageLoad } from "~/utils/performance.client";
+import { createContentLoader } from "~/utils/loader-factory.server";
 import { logger } from "~/utils/logger.server";
 
-interface MetaobjectField {
-  key: string;
-  value: string | null;
-  type?: string;
-}
+// ============================================================================
+// LOADER - Load metaobjects with fields
+// ============================================================================
 
-interface MetaobjectItem {
-  id: string;
-  displayName?: string | null;
-  definitionName?: string;
-  handle?: string;
-  type?: string;
-  fields?: MetaobjectField[];
-}
+export const loader = createContentLoader({
+  logPrefix: "METAOBJECTS",
+  resourceType: "Metaobject",
+  itemsKey: "metaobjects",
 
-export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { admin, session } = await authenticate.admin(request);
-
-  try {
-    // Load shopLocales
-    const localesResponse = await admin.graphql(
-      `#graphql
-        query getShopLocales {
-          shopLocales {
-            locale
-            name
-            primary
-            published
-          }
-        }`
-    );
-
-    const localesData = await localesResponse.json();
-    const shopLocales = localesData.data?.shopLocales || [];
-    const primaryLocale = shopLocales.find((l: { primary: boolean }) => l.primary)?.locale || "en";
+  async loadData(ctx) {
+    const { ContentService } = await import("../services/content.service");
+    const contentService = new ContentService(ctx.admin);
 
     // Load metaobject definitions
-    const contentService = new ContentService(admin);
     const definitions = await contentService.getMetaobjectDefinitions(50);
 
-    const allMetaobjects: MetaobjectItem[] = [];
+    const allMetaobjects: any[] = [];
 
     // For each definition, fetch metaobjects with fields
     for (const definition of definitions) {
       try {
-        const response = await admin.graphql(
+        const response = await ctx.admin.graphql(
           `#graphql
             query getMetaobjectsWithFields($type: String!, $first: Int!) {
               metaobjects(type: $type, first: $first) {
@@ -121,337 +90,95 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
     logger.info('[METAOBJECTS-LOADER] Loaded metaobjects', { count: allMetaobjects.length });
 
-    return json({
-      metaobjects: allMetaobjects,
-      shop: session.shop,
-      shopLocales,
-      primaryLocale,
-      error: null
-    });
-  } catch (error: unknown) {
-    logger.error("[METAOBJECTS-LOADER] Error", { error: error instanceof Error ? error.message : String(error) });
-    return json({
-      metaobjects: [],
-      shop: session.shop,
-      shopLocales: [],
-      primaryLocale: "en",
-      error: error instanceof Error ? error.message : String(error)
-    }, { status: 500 });
-  }
+    return {
+      items: allMetaobjects,
+      ids: allMetaobjects.map((m: any) => m.id),
+    };
+  },
+});
+
+// ============================================================================
+// ACTION - Handle all actions via unified handler
+// ============================================================================
+
+export const action = async (args: ActionFunctionArgs) => {
+  const { admin, session } = await authenticate.admin(args.request);
+  const formData = await args.request.formData();
+
+  // Load AI settings
+  const { db } = await import("../db.server");
+  const [aiSettings, aiInstructions] = await Promise.all([
+    db.aISettings.findUnique({ where: { shop: session.shop } }),
+    db.aIInstructions.findUnique({ where: { shop: session.shop } }),
+  ]);
+
+  // Use unified action handler
+  return handleUnifiedContentActions({
+    admin,
+    session,
+    formData,
+    contentConfig: METAOBJECTS_CONFIG,
+    db,
+    aiSettings,
+    aiInstructions,
+  });
 };
 
-export const action = async ({ request }: ActionFunctionArgs) => {
-  const { admin } = await authenticate.admin(request);
-  const formData = await request.formData();
-  const metaobjectId = formData.get("metaobjectId") as string;
-  const fieldsJson = formData.get("fields") as string;
-
-  try {
-    const fields = JSON.parse(fieldsJson);
-
-    // Build fields array for the mutation
-    const fieldInputs = Object.entries(fields).map(([key, value]) => ({
-      key,
-      value: value as string
-    }));
-
-    logger.info('[METAOBJECTS-ACTION] Updating metaobject', {
-      id: metaobjectId,
-      fieldsCount: fieldInputs.length
-    });
-
-    const response = await admin.graphql(
-      `#graphql
-        mutation updateMetaobject($id: ID!, $fields: [MetaobjectFieldInput!]!) {
-          metaobjectUpdate(id: $id, metaobject: { fields: $fields }) {
-            metaobject {
-              id
-              handle
-              displayName
-              fields {
-                key
-                value
-                type
-              }
-            }
-            userErrors {
-              field
-              message
-            }
-          }
-        }`,
-      {
-        variables: {
-          id: metaobjectId,
-          fields: fieldInputs
-        }
-      }
-    );
-
-    const data = await response.json();
-
-    if (data.data?.metaobjectUpdate?.userErrors?.length > 0) {
-      const errors = data.data.metaobjectUpdate.userErrors;
-      logger.error('[METAOBJECTS-ACTION] User errors', { errors });
-      return json({
-        success: false,
-        error: errors.map((e: any) => e.message).join(", ")
-      }, { status: 400 });
-    }
-
-    logger.info('[METAOBJECTS-ACTION] Successfully updated metaobject', { id: metaobjectId });
-
-    return json({
-      success: true,
-      metaobject: data.data?.metaobjectUpdate?.metaobject
-    });
-  } catch (error) {
-    logger.error('[METAOBJECTS-ACTION] Error updating metaobject', {
-      error: error instanceof Error ? error.message : String(error),
-      id: metaobjectId
-    });
-    return json({
-      success: false,
-      error: error instanceof Error ? error.message : "Failed to save changes"
-    }, { status: 500 });
-  }
-};
+// ============================================================================
+// COMPONENT - Configuration only!
+// ============================================================================
 
 export default function MetaobjectsPage() {
-  const { metaobjects, shop, shopLocales, primaryLocale, error } = useLoaderData<typeof loader>();
+  const { metaobjects, shopLocales, primaryLocale, error, aiSettings } = useLoaderData<typeof loader>();
+  const fetcher = useFetcher<typeof action>();
+  const revalidator = useRevalidator();
   const { t } = useI18n();
-  const { mainNavHeight } = useNavigationHeight();
-  const submit = useSubmit();
-  const navigation = useNavigation();
+  const { showInfoBox } = useInfoBox();
 
-  const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
-  const [editedFields, setEditedFields] = useState<Record<string, string>>({});
-  const [saveError, setSaveError] = useState<string | null>(null);
-  const [saveSuccess, setSaveSuccess] = useState(false);
+  // Initialize unified content editor
+  const editor = useUnifiedContentEditor({
+    config: METAOBJECTS_CONFIG,
+    items: metaobjects as unknown as ContentItem[],
+    shopLocales,
+    primaryLocale,
+    fetcher,
+    showInfoBox,
+    t,
+  });
 
-  const selectedItem = (metaobjects as MetaobjectItem[]).find((item) => item.id === selectedItemId);
-  const isSaving = navigation.state === "submitting";
+  // Show loader error
+  useEffect(() => {
+    if (error) {
+      showInfoBox(error, "critical", t.content?.error || "Error");
+    }
+  }, [error, showInfoBox, t]);
 
-  const handleFieldChange = (fieldKey: string, value: string) => {
-    setEditedFields(prev => ({
-      ...prev,
-      [fieldKey]: value
-    }));
-    setSaveError(null);
-    setSaveSuccess(false);
-  };
-
-  const handleSave = () => {
-    if (!selectedItem) return;
-
-    const formData = new FormData();
-    formData.append("metaobjectId", selectedItem.id);
-    formData.append("fields", JSON.stringify(editedFields));
-
-    submit(formData, { method: "post" });
-
-    // Clear edited fields after submission
-    setTimeout(() => {
-      setEditedFields({});
-      setSaveSuccess(true);
-      setTimeout(() => setSaveSuccess(false), 3000);
-    }, 500);
-  };
+  // Measure page load performance
+  useEffect(() => {
+    measurePageLoad('MetaobjectsPage', {
+      metaobjectCount: metaobjects.length,
+    });
+  }, [metaobjects]);
 
   return (
-    <Page fullWidth>
+    <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" }}>
       <MainNavigation />
       <ContentTypeNavigation />
-
-      <div style={{ height: `calc(100vh - ${mainNavHeight}px - 85px)`, display: "flex", gap: "1rem", padding: "1rem", overflow: "hidden" }}>
-        {/* Left Sidebar - Metaobjects List */}
-        <div style={{ width: "350px", flexShrink: 0 }}>
-          <Card padding="0">
-            <div style={{ padding: "1rem", borderBottom: "1px solid #e1e3e5" }}>
-              <Text as="h2" variant="headingMd">
-                {t.content?.metaobjects || "Metaobjects"} ({metaobjects.length})
-              </Text>
-            </div>
-            <div style={{ maxHeight: CONTENT_MAX_HEIGHT, overflowY: "auto" }}>
-              {metaobjects.length > 0 ? (
-                <ResourceList
-                  resourceName={{ singular: "Metaobject", plural: "Metaobjects" }}
-                  items={metaobjects}
-                  renderItem={(item: MetaobjectItem) => {
-                    const { id, displayName, definitionName, handle } = item;
-                    const isSelected = selectedItemId === id;
-
-                    return (
-                      <ResourceItem
-                        id={id}
-                        onClick={() => {
-                          setSelectedItemId(id);
-                          setEditedFields({});
-                        }}
-                      >
-                        <BlockStack gap="100">
-                          <Text as="p" variant="bodyMd" fontWeight={isSelected ? "bold" : "regular"}>
-                            {displayName || handle || id.split("/").pop()}
-                          </Text>
-                          {definitionName && (
-                            <Text as="p" variant="bodySm" tone="subdued">
-                              Type: {definitionName}
-                            </Text>
-                          )}
-                        </BlockStack>
-                      </ResourceItem>
-                    );
-                  }}
-                />
-              ) : (
-                <div style={{ padding: "2rem", textAlign: "center" }}>
-                  <BlockStack gap="300">
-                    <Text as="p" variant="bodySm" tone="subdued">
-                      {t.content?.noEntries || "No metaobjects found"}
-                    </Text>
-                    <Text as="p" variant="bodySm" tone="subdued">
-                      Create metaobject definitions in your Shopify admin to get started.
-                    </Text>
-                  </BlockStack>
-                </div>
-              )}
-            </div>
-          </Card>
-        </div>
-
-        {/* Middle: Metaobject Editor */}
-        <div style={{ flex: 1, overflow: "auto", minWidth: 0 }}>
-          {error && (
-            <div style={{ marginBottom: "1rem" }}>
-              <Banner title={t.content?.error || "Error"} tone="critical"><p>{error}</p></Banner>
-            </div>
-          )}
-
-          <Card padding="600">
-            {selectedItem ? (
-              <BlockStack gap="500">
-                {/* Success/Error Banners */}
-                {saveSuccess && (
-                  <Banner tone="success">
-                    <Text as="p" variant="bodyMd">
-                      Changes saved successfully!
-                    </Text>
-                  </Banner>
-                )}
-                {saveError && (
-                  <Banner tone="critical">
-                    <Text as="p" variant="bodyMd">
-                      {saveError}
-                    </Text>
-                  </Banner>
-                )}
-
-                {/* Info Banner */}
-                <Banner tone="info">
-                  <BlockStack gap="200">
-                    <Text as="p" variant="bodyMd" fontWeight="semibold">
-                      Metaobject Option Values
-                    </Text>
-                    <Text as="p" variant="bodyMd">
-                      Edit metaobject field values in the primary language. Translation functionality will be added in future updates.
-                    </Text>
-                    <Text as="p" variant="bodySm" tone="subdued">
-                      Note: Currently showing ALL metaobjects. Future versions will filter to show only those used as product option values.
-                    </Text>
-                  </BlockStack>
-                </Banner>
-
-                {/* Header with Save Button */}
-                <InlineStack align="space-between" blockAlign="center">
-                  <BlockStack gap="200">
-                    <Text as="h3" variant="headingLg">
-                      {selectedItem.displayName || selectedItem.handle || "Untitled Metaobject"}
-                    </Text>
-                    <Text as="p" variant="bodySm" tone="subdued">
-                      ID: {selectedItem.id.split("/").pop()}
-                    </Text>
-                    {selectedItem.definitionName && (
-                      <Text as="p" variant="bodyMd" tone="subdued">
-                        Definition: {selectedItem.definitionName}
-                      </Text>
-                    )}
-                    {selectedItem.handle && (
-                      <Text as="p" variant="bodySm" tone="subdued">
-                        Handle: {selectedItem.handle}
-                      </Text>
-                    )}
-                  </BlockStack>
-
-                  <Button
-                    primary
-                    onClick={handleSave}
-                    disabled={Object.keys(editedFields).length === 0 || isSaving}
-                    loading={isSaving}
-                  >
-                    {isSaving ? "Saving..." : (t.content?.saveChanges || "Save")}
-                  </Button>
-                </InlineStack>
-
-                {/* Fields */}
-                {selectedItem.fields && selectedItem.fields.length > 0 ? (
-                  <Card>
-                    <BlockStack gap="400">
-                      <Text as="h4" variant="headingMd">
-                        Fields ({selectedItem.fields.length})
-                      </Text>
-                      {selectedItem.fields.map((field, index) => {
-                        const currentValue = editedFields[field.key] !== undefined
-                          ? editedFields[field.key]
-                          : (field.value || "");
-
-                        return (
-                          <BlockStack key={index} gap="200">
-                            <TextField
-                              label={field.key}
-                              value={currentValue}
-                              onChange={(value) => handleFieldChange(field.key, value)}
-                              autoComplete="off"
-                              helpText={field.type ? `Type: ${field.type}` : undefined}
-                            />
-                          </BlockStack>
-                        );
-                      })}
-                    </BlockStack>
-                  </Card>
-                ) : (
-                  <Banner>
-                    <Text as="p" variant="bodyMd">
-                      This metaobject has no fields.
-                    </Text>
-                  </Banner>
-                )}
-              </BlockStack>
-            ) : (
-              <div style={{ textAlign: "center", padding: "4rem 2rem" }}>
-                <BlockStack gap="300">
-                  <Text as="p" variant="headingLg" tone="subdued">
-                    {t.content?.selectFromList || "Select a metaobject from the list"}
-                  </Text>
-                  <Banner tone="info">
-                    <BlockStack gap="200">
-                      <Text as="p" variant="bodyMd" fontWeight="semibold">
-                        Metaobjects - Product Option Values
-                      </Text>
-                      <Text as="p" variant="bodyMd">
-                        Select a metaobject from the list to view and edit its field values.
-                        This page is designed for managing metaobjects that are used as product option values.
-                      </Text>
-                      <Text as="p" variant="bodySm" tone="subdued">
-                        Full translation and advanced editing features coming soon.
-                      </Text>
-                    </BlockStack>
-                  </Banner>
-                </BlockStack>
-              </div>
-            )}
-          </Card>
-        </div>
+      <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+        <UnifiedContentEditor
+          config={METAOBJECTS_CONFIG}
+          items={metaobjects}
+          shopLocales={shopLocales}
+          primaryLocale={primaryLocale}
+          editor={editor}
+          fetcherState={fetcher.state}
+          fetcherFormData={fetcher.formData}
+          t={t}
+          hideItemListImages={true}
+          hideItemListStatusBars={true}
+          revalidator={revalidator}
+        />
       </div>
-    </Page>
+    </div>
   );
 }

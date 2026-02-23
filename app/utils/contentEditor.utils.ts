@@ -152,8 +152,8 @@ function hasTranslationForField(
  * handled separately in hasPrimaryContentMissing and hasLocaleMissingTranslations
  */
 function getRequiredFieldsForContentType(contentType: ContentType): string[] {
-  if (contentType === 'templates') {
-    // Templates have dynamic fields in translatableContent
+  if (contentType === 'templates' || contentType === 'metaobjects') {
+    // Templates and metaobjects have dynamic fields in translatableContent/fields
     // The validation is handled separately in the calling functions
     return [];
   } else if (contentType === 'collections') {
