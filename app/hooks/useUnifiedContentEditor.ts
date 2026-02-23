@@ -3474,35 +3474,59 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   };
 
   const getEditableValue = (fieldKey: string): string => {
+    // DEBUG: Log every call
+    console.log('[METAOBJ-DEBUG] getEditableValue called', {
+      fieldKey,
+      currentLanguage,
+      primaryLocale,
+      hasSelectedItem: !!selectedItem,
+      selectedItemId: selectedItem?.id,
+      translationsCount: selectedItem?.translations?.length || 0
+    });
+
     // Check if there's a local edit first
     if (editableValues[fieldKey] !== undefined && editableValues[fieldKey] !== null) {
-      debugLog.dataLoad(`getEditableValue(${fieldKey}) -> local edit: "${editableValues[fieldKey]}"`);
+      console.log('[METAOBJ-DEBUG] -> local edit:', editableValues[fieldKey]);
       return editableValues[fieldKey];
     }
 
     // For foreign languages, try to get translation from item.translations
     if (currentLanguage !== primaryLocale && selectedItem) {
       const field = effectiveFieldDefinitions.find(f => f.key === fieldKey);
+      console.log('[METAOBJ-DEBUG] -> field lookup:', {
+        fieldKey,
+        foundField: !!field,
+        translationKey: field?.translationKey
+      });
+
       if (field?.translationKey) {
         const translation = selectedItem.translations?.find(
           (t: Translation) => t.key === field.translationKey && t.locale === currentLanguage
         );
+        console.log('[METAOBJ-DEBUG] -> translation search:', {
+          translationKey: field.translationKey,
+          locale: currentLanguage,
+          foundTranslation: !!translation,
+          translationValue: translation?.value,
+          allTranslationKeys: selectedItem.translations?.map((t: Translation) => t.key).slice(0, 3)
+        });
+
         if (translation?.value) {
-          debugLog.dataLoad(`getEditableValue(${fieldKey}) -> translation found: "${translation.value}" (key: ${field.translationKey}, locale: ${currentLanguage})`);
+          console.log('[METAOBJ-DEBUG] -> FOUND translation:', translation.value);
           return translation.value;
         }
-        debugLog.dataLoad(`getEditableValue(${fieldKey}) -> NO translation (key: ${field.translationKey}, locale: ${currentLanguage}, translations available: ${selectedItem.translations?.length || 0})`);
+        console.log('[METAOBJ-DEBUG] -> NO translation found');
       }
     }
 
     // Fallback: For primary locale or if no translation exists, use getFieldValue or original value
     if (currentLanguage === primaryLocale && selectedItem && config.getFieldValue) {
       const value = config.getFieldValue(selectedItem, fieldKey) || "";
-      debugLog.dataLoad(`getEditableValue(${fieldKey}) -> getFieldValue: "${value}"`);
+      console.log('[METAOBJ-DEBUG] -> getFieldValue:', value);
       return value;
     }
 
-    debugLog.dataLoad(`getEditableValue(${fieldKey}) -> empty (no match)`);
+    console.log('[METAOBJ-DEBUG] -> returning empty');
     return "";
   };
 
