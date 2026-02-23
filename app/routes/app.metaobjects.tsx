@@ -42,11 +42,26 @@ export const loader = createContentLoader({
     // Load metaobject definitions
     const definitions = await contentService.getMetaobjectDefinitions(50);
 
+    logger.info('[METAOBJECTS-LOADER] Metaobject definitions loaded', {
+      count: definitions.length,
+      types: definitions.map((d: any) => ({ type: d.type, name: d.name }))
+    });
+
+    if (definitions.length === 0) {
+      logger.warn('[METAOBJECTS-LOADER] No metaobject definitions found');
+      return { items: [], ids: [] };
+    }
+
     const allMetaobjects: any[] = [];
 
     // For each definition, fetch metaobjects with fields
     for (const definition of definitions) {
       try {
+        logger.debug('[METAOBJECTS-LOADER] Fetching metaobjects for type', {
+          type: definition.type,
+          name: definition.name
+        });
+
         const response = await ctx.admin.graphql(
           `#graphql
             query getMetaobjectsWithFields($type: String!, $first: Int!) {
@@ -73,11 +88,25 @@ export const loader = createContentLoader({
         );
         const data = await response.json();
 
+        // Check for GraphQL errors
+        if (data.errors) {
+          logger.error('[METAOBJECTS-LOADER] GraphQL errors', {
+            type: definition.type,
+            errors: data.errors
+          });
+          continue;
+        }
+
         const metaobjects = data.data?.metaobjects?.edges?.map((edge: { node: any }) => ({
           ...edge.node,
           definitionName: definition.name,
           fields: edge.node.fields || [],
         })) || [];
+
+        logger.debug('[METAOBJECTS-LOADER] Fetched metaobjects', {
+          type: definition.type,
+          count: metaobjects.length
+        });
 
         allMetaobjects.push(...metaobjects);
       } catch (error) {
