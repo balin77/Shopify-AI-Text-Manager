@@ -414,7 +414,7 @@ export const METAOBJECTS_CONFIG: ContentEditorConfig = {
         key: metaobj.id, // Use metaobject ID as field key
         type: "text" as const,
         label: metaobj.displayName || metaobj.handle || metaobj.id.split('/').pop(),
-        translationKey: labelField?.key || 'display_name',
+        translationKey: metaobj.id, // Must match the translation key in translations array
         required: false,
         supportsAI: false,
         supportsFormatting: false,
