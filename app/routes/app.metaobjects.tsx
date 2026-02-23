@@ -168,6 +168,13 @@ export const loader = createContentLoader({
           translations: translationsArray, // Translations for all metaobjects
         };
 
+        logger.info('[METAOBJECTS-LOADER] Group item created', {
+          type: definition.type,
+          metaobjectsCount: metaobjects.length,
+          translationsCount: translationsArray.length,
+          sampleTranslations: translationsArray.slice(0, 3)
+        });
+
         groupedItems.push(groupItem);
       } catch (error) {
         logger.error('[METAOBJECTS-LOADER] Error fetching metaobjects for type', {
