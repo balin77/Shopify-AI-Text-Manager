@@ -51,10 +51,10 @@ export const loader = createContentLoader({
 
     for (const definition of definitions) {
       try {
-        // Fetch metaobjects for this type WITH translations
+        // Fetch metaobjects for this type
         const response = await ctx.admin.graphql(
           `#graphql
-            query getMetaobjectsWithTranslations($type: String!, $first: Int!) {
+            query getMetaobjectsWithFields($type: String!, $first: Int!) {
               metaobjects(type: $type, first: $first) {
                 edges {
                   node {
@@ -67,11 +67,6 @@ export const loader = createContentLoader({
                       key
                       value
                       type
-                    }
-                    translations(locale: "*") {
-                      key
-                      value
-                      locale
                     }
                   }
                 }
@@ -93,15 +88,41 @@ export const loader = createContentLoader({
 
         const metaobjects = data.data?.metaobjects?.edges?.map((edge: { node: any }) => edge.node) || [];
 
-        // Build translations array for the unified editor
-        // Format: { key: metaobjectId, value: translatedLabel, locale: "de" }
+        // Fetch translations for all metaobjects in this type
+        // We need to query the Translations API for each metaobject
         const translationsArray: any[] = [];
 
-        metaobjects.forEach((metaobj: any) => {
-          // Get translations for this metaobject
-          if (metaobj.translations && Array.isArray(metaobj.translations)) {
-            metaobj.translations.forEach((trans: any) => {
-              // Only include display_name/name/label translations
+        for (const metaobj of metaobjects) {
+          try {
+            // Query translations for this specific metaobject
+            const translationsResponse = await ctx.admin.graphql(
+              `#graphql
+                query getMetaobjectTranslations($resourceId: ID!) {
+                  translatableResource(resourceId: $resourceId) {
+                    resourceId
+                    translatableContent {
+                      key
+                      value
+                      digest
+                      locale
+                    }
+                    translations {
+                      key
+                      value
+                      locale
+                    }
+                  }
+                }`,
+              {
+                variables: { resourceId: metaobj.id }
+              }
+            );
+
+            const transData = await translationsResponse.json();
+            const translations = transData.data?.translatableResource?.translations || [];
+
+            // Only include display_name/name/label translations
+            translations.forEach((trans: any) => {
               if (trans.key === 'display_name' || trans.key === 'name' || trans.key === 'label') {
                 translationsArray.push({
                   key: metaobj.id, // Use metaobject ID as translation key
@@ -110,8 +131,14 @@ export const loader = createContentLoader({
                 });
               }
             });
+          } catch (transError) {
+            // Silently skip if translations not available for this metaobject
+            logger.debug('[METAOBJECTS-LOADER] No translations for metaobject', {
+              id: metaobj.id,
+              error: transError instanceof Error ? transError.message : String(transError)
+            });
           }
-        });
+        }
 
         // Create a grouped item representing this metaobject type
         // Structure: One "item" per type, containing all metaobjects of that type
