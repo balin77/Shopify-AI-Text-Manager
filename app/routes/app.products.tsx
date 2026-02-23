@@ -427,6 +427,7 @@ export default function ProductsPage() {
     primaryLocale,
     fetcher,
     revalidator,
+    showInfoBox,
   });
 
   // Get selected product AFTER editor is initialized

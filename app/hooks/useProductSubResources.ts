@@ -59,6 +59,7 @@ interface UseProductSubResourcesProps {
   primaryLocale: string;
   fetcher: FetcherWithComponents<any>;
   revalidator?: { revalidate: () => void; state: string };
+  showInfoBox?: (message: string, tone?: "success" | "info" | "warning" | "critical", title?: string) => void;
 }
 
 /**
@@ -129,6 +130,7 @@ export function useProductSubResources({
   primaryLocale,
   fetcher,
   revalidator,
+  showInfoBox,
 }: UseProductSubResourcesProps): { state: SubResourceState; handlers: SubResourceHandlers } {
   // Translation state (for foreign locales)
   const [optionTranslations, setOptionTranslations] = useState<Record<string, OptionTranslation>>({});
@@ -623,11 +625,19 @@ export function useProductSubResources({
         if (hasNameChange || hasValuesChange) {
           // VALIDATION: Prevent empty option names and values
           if (hasNameChange && edit.name.trim() === "") {
-            alert("Option name cannot be empty");
+            if (showInfoBox) {
+              showInfoBox("Option name cannot be empty", "critical", "Validation Error");
+            } else {
+              alert("Option name cannot be empty");
+            }
             return;
           }
           if (hasValuesChange && edit.values.some(v => v.trim() === "")) {
-            alert("Option values cannot be empty");
+            if (showInfoBox) {
+              showInfoBox("Option values cannot be empty", "critical", "Validation Error");
+            } else {
+              alert("Option values cannot be empty");
+            }
             return;
           }
 
@@ -648,7 +658,11 @@ export function useProductSubResources({
         if (editValue !== originalMetafield.value) {
           // VALIDATION: Prevent empty metafield values
           if (editValue.trim() === "") {
-            alert("Metafield values cannot be empty");
+            if (showInfoBox) {
+              showInfoBox("Metafield values cannot be empty", "critical", "Validation Error");
+            } else {
+              alert("Metafield values cannot be empty");
+            }
             return;
           }
           metafieldChanges[metafieldId] = editValue;
