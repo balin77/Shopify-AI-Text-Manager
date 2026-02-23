@@ -266,7 +266,20 @@ export function useProductSubResources({
       if (fieldId) {
         setTranslatingFieldIds(prev => {
           const newSet = new Set(prev);
-          newSet.delete(fieldId);
+
+          // If this was a "translate all" operation, clear ALL sub-resource fieldIds
+          if (fieldId === "all:subresources") {
+            // Remove all granular fieldIds that were added for this operation
+            for (const id of newSet) {
+              if (id.includes(":name") || id.includes(":value") || id === "all:subresources") {
+                newSet.delete(id);
+              }
+            }
+          } else {
+            // Single field translation - just remove this fieldId
+            newSet.delete(fieldId);
+          }
+
           return newSet;
         });
       }
@@ -330,6 +343,12 @@ export function useProductSubResources({
       // Clear primary edits after successful save
       setPrimaryOptionEdits({});
       setPrimaryMetafieldEdits({});
+
+      // Trigger revalidation to reload fresh data from DB/Shopify
+      // This ensures new option value GIDs and updated values are loaded
+      if (revalidator && revalidator.state === "idle") {
+        revalidator.revalidate();
+      }
     }
   }, [fetcher.state, fetcher.data, selectedItem]);
 
@@ -576,15 +595,35 @@ export function useProductSubResources({
   }, [isPrimaryLocale, selectedItem, currentLanguage, primaryLocale, fetcher]);
 
   const translateAllSubResources = useCallback(() => {
-    if (isPrimaryLocale) return;
+    if (isPrimaryLocale || !selectedItem) return;
 
     const sourceData = buildSourceData();
     if (sourceData.length === 0) return;
 
-    const fieldId = "all:subresources";
+    // Build granular fieldIds for all fields being translated
+    const fieldIds = new Set<string>();
 
-    // Add this to the translating set
-    setTranslatingFieldIds(prev => new Set(prev).add(fieldId));
+    for (const opt of selectedItem.options || []) {
+      fieldIds.add(`${opt.id}:name`);
+      if (!opt.isLinked) {
+        for (let i = 0; i < opt.values.length; i++) {
+          const val = opt.values[i];
+          if (val.id) {
+            fieldIds.add(`${opt.id}:value:${i}`);
+          }
+        }
+      }
+    }
+
+    for (const mf of selectedItem.metafields || []) {
+      fieldIds.add(`${mf.id}:value`);
+    }
+
+    // Add global marker for overall operation
+    fieldIds.add("all:subresources");
+
+    // Add all fieldIds to the translating set
+    setTranslatingFieldIds(prev => new Set([...prev, ...fieldIds]));
 
     fetcher.submit(
       {
@@ -592,12 +631,12 @@ export function useProductSubResources({
         targetLocale: currentLanguage,
         primaryLocale,
         sourceData: JSON.stringify(sourceData),
-        itemId: selectedItem?.id || "",
-        fieldId, // Send fieldId so server can echo it back
+        itemId: selectedItem.id,
+        fieldId: "all:subresources", // Send global fieldId so server can echo it back
       },
       { method: "POST", action: "/app/products" }
     );
-  }, [isPrimaryLocale, buildSourceData, currentLanguage, primaryLocale, fetcher, selectedItem?.id]);
+  }, [isPrimaryLocale, buildSourceData, currentLanguage, primaryLocale, fetcher, selectedItem]);
 
   // Unified save handler - automatically detects primary vs foreign locale
   const saveSubResources = useCallback(() => {
