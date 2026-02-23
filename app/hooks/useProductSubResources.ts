@@ -58,6 +58,7 @@ interface UseProductSubResourcesProps {
   currentLanguage: string;
   primaryLocale: string;
   fetcher: FetcherWithComponents<any>;
+  revalidator?: { revalidate: () => void; state: string };
 }
 
 /**
@@ -127,6 +128,7 @@ export function useProductSubResources({
   currentLanguage,
   primaryLocale,
   fetcher,
+  revalidator,
 }: UseProductSubResourcesProps): { state: SubResourceState; handlers: SubResourceHandlers } {
   // Translation state (for foreign locales)
   const [optionTranslations, setOptionTranslations] = useState<Record<string, OptionTranslation>>({});
@@ -268,6 +270,14 @@ export function useProductSubResources({
       }
 
       const translations = data.translations as Record<string, Record<string, string>>;
+
+      // For translateSubResourceToAllLocales from primary locale:
+      // The server saves translations to DB but returns empty translations object.
+      // Trigger revalidation to reload fresh data including updated subResourceTranslations,
+      // which will update locale button pulsing state.
+      if (data.actionType === "translateSubResourceToAllLocales" && revalidator && revalidator.state === "idle") {
+        revalidator.revalidate();
+      }
 
       if (selectedItem) {
         setOptionTranslations(prev => {

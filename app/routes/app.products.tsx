@@ -426,6 +426,7 @@ export default function ProductsPage() {
     currentLanguage: editor.state.currentLanguage,
     primaryLocale,
     fetcher,
+    revalidator,
   });
 
   // Get selected product AFTER editor is initialized
