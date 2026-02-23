@@ -189,7 +189,7 @@ export function OptionsField({
                             <Text as="p" variant="bodyMd" fontWeight="semibold">
                               {t.optionNameLabel || "Name"} <span style={{ color: 'var(--p-color-text-critical)' }}>*</span>
                             </Text>
-                            <div style={{ position: "relative" }}>
+                            <div className="ai-editable-field-wrapper bg-white" style={{ position: "relative" }}>
                               {option.name && (
                                 <div style={{ position: "absolute", top: "0", right: "0", zIndex: 10 }}>
                                   <Button
@@ -240,7 +240,7 @@ export function OptionsField({
                             <Text as="p" variant="bodyMd" fontWeight="semibold">
                               {t.optionNameLabel || "Name"} <span style={{ color: 'var(--p-color-text-critical)' }}>*</span>
                             </Text>
-                            <div style={{ position: "relative" }}>
+                            <div className="ai-editable-field-wrapper bg-white" style={{ position: "relative" }}>
                               {option.name && (
                                 <div style={{ position: "absolute", top: "0", right: "0", zIndex: 10 }}>
                                   <Button
@@ -287,7 +287,7 @@ export function OptionsField({
                               const originalValue = option.values[valueIndex]?.name;
                               return (
                                 <div key={valueIndex}>
-                                  <div style={{ position: "relative" }}>
+                                  <div className="ai-editable-field-wrapper bg-white" style={{ position: "relative" }}>
                                     {originalValue && (
                                       <div style={{ position: "absolute", top: "0", right: "0", zIndex: 10 }}>
                                         <Button
