@@ -731,8 +731,20 @@ export function useProductSubResources({
   }, [hasChanges, isPrimaryLocale, selectedItem, primaryOptionEdits, primaryMetafieldEdits, optionTranslations, metafieldTranslations, currentLanguage, fetcher]);
 
   const resetChanges = useCallback(() => {
-    loadedForRef.current = "";
+    // Reset foreign locale translations
+    setOptionTranslations({});
+    setMetafieldTranslations({});
+
+    // Reset primary locale edits
+    setPrimaryOptionEdits({});
+    setPrimaryMetafieldEdits({});
+
+    // Reset flags
     setHasChanges(false);
+    setTranslatingFieldIds(new Set());
+
+    // Force reload from DB/Shopify on next render
+    loadedForRef.current = "";
   }, []);
 
   /** Force re-load on next render (called after revalidation delivers fresh DB data) */
