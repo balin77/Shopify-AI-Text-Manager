@@ -39,6 +39,20 @@ export const loader = createContentLoader({
     const { ContentService } = await import("../services/content.service");
     const contentService = new ContentService(ctx.admin);
 
+    // Load shop locales first
+    const localesResponse = await ctx.admin.graphql(
+      `#graphql
+        query getShopLocales {
+          shopLocales {
+            locale
+            primary
+          }
+        }`
+    );
+    const localesData = await localesResponse.json();
+    const shopLocales = localesData.data?.shopLocales || [];
+    const locales = shopLocales.map((l: any) => l.locale);
+
     // Load metaobject definitions
     const definitions = await contentService.getMetaobjectDefinitions(50);
 
@@ -93,50 +107,51 @@ export const loader = createContentLoader({
         const translationsArray: any[] = [];
 
         for (const metaobj of metaobjects) {
-          try {
-            // Query translations for this specific metaobject
-            const translationsResponse = await ctx.admin.graphql(
-              `#graphql
-                query getMetaobjectTranslations($resourceId: ID!) {
-                  translatableResource(resourceId: $resourceId) {
-                    resourceId
-                    translatableContent {
-                      key
-                      value
-                      digest
-                      locale
+          // Query translations for each locale
+          for (const locale of locales) {
+            try {
+              const translationsResponse = await ctx.admin.graphql(
+                `#graphql
+                  query getMetaobjectTranslations($resourceId: ID!, $locale: String!) {
+                    translatableResource(resourceId: $resourceId) {
+                      resourceId
+                      translations(locale: $locale) {
+                        key
+                        value
+                        locale
+                      }
                     }
-                    translations {
-                      key
-                      value
-                      locale
-                    }
+                  }`,
+                {
+                  variables: {
+                    resourceId: metaobj.id,
+                    locale: locale
                   }
-                }`,
-              {
-                variables: { resourceId: metaobj.id }
-              }
-            );
+                }
+              );
 
-            const transData = await translationsResponse.json();
-            const translations = transData.data?.translatableResource?.translations || [];
+              const transData = await translationsResponse.json();
 
-            // Only include display_name/name/label translations
-            translations.forEach((trans: any) => {
-              if (trans.key === 'display_name' || trans.key === 'name' || trans.key === 'label') {
-                translationsArray.push({
-                  key: metaobj.id, // Use metaobject ID as translation key
-                  value: trans.value,
-                  locale: trans.locale,
-                });
+              if (transData.errors) {
+                continue; // Skip if error
               }
-            });
-          } catch (transError) {
-            // Silently skip if translations not available for this metaobject
-            logger.debug('[METAOBJECTS-LOADER] No translations for metaobject', {
-              id: metaobj.id,
-              error: transError instanceof Error ? transError.message : String(transError)
-            });
+
+              const translations = transData.data?.translatableResource?.translations || [];
+
+              // Only include display_name/name/label translations
+              translations.forEach((trans: any) => {
+                if (trans.key === 'display_name' || trans.key === 'name' || trans.key === 'label') {
+                  translationsArray.push({
+                    key: metaobj.id, // Use metaobject ID as translation key
+                    value: trans.value,
+                    locale: trans.locale,
+                  });
+                }
+              });
+            } catch (transError) {
+              // Silently skip if translations not available
+              continue;
+            }
           }
         }
 
