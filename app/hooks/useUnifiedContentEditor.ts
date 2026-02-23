@@ -3484,10 +3484,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       translationsCount: selectedItem?.translations?.length || 0
     });
 
-    // Check if there's a local edit first
-    if (editableValues[fieldKey] !== undefined && editableValues[fieldKey] !== null) {
-      console.log('[METAOBJ-DEBUG] -> local edit:', editableValues[fieldKey]);
-      return editableValues[fieldKey];
+    // Check if there's a local edit first (but only if it's not an empty string)
+    // Empty strings should fall through to translation lookup
+    const localValue = editableValues[fieldKey];
+    if (localValue !== undefined && localValue !== null && localValue !== "") {
+      console.log('[METAOBJ-DEBUG] -> local edit (non-empty):', localValue);
+      return localValue;
     }
 
     // For foreign languages, try to get translation from item.translations
