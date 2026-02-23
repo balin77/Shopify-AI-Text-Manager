@@ -122,6 +122,11 @@ export const loader = createContentLoader({
     return {
       items: allMetaobjects,
       ids: allMetaobjects.map((m: any) => m.id),
+      debugInfo: {
+        definitionsCount: definitions.length,
+        definitionTypes: definitions.map((d: any) => ({ type: d.type, name: d.name })),
+        metaobjectsCount: allMetaobjects.length,
+      },
     };
   },
 });
@@ -158,11 +163,32 @@ export const action = async (args: ActionFunctionArgs) => {
 // ============================================================================
 
 export default function MetaobjectsPage() {
-  const { metaobjects, shopLocales, primaryLocale, error, aiSettings } = useLoaderData<typeof loader>();
+  const loaderData = useLoaderData<typeof loader>();
+  const { metaobjects, shopLocales, primaryLocale, error, aiSettings, debugInfo } = loaderData;
   const fetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
   const { t } = useI18n();
   const { showInfoBox } = useInfoBox();
+
+  // Show debug info
+  useEffect(() => {
+    if (debugInfo) {
+      console.log('[METAOBJECTS DEBUG]', debugInfo);
+      if (debugInfo.definitionsCount === 0) {
+        showInfoBox(
+          'No metaobject definitions found. Please create metaobject definitions in your Shopify admin first.',
+          "warning",
+          "No Metaobject Definitions"
+        );
+      } else if (debugInfo.metaobjectsCount === 0) {
+        showInfoBox(
+          `Found ${debugInfo.definitionsCount} metaobject definition(s), but no metaobjects. Create metaobjects in Shopify admin.`,
+          "info",
+          "No Metaobjects"
+        );
+      }
+    }
+  }, [debugInfo, showInfoBox]);
 
   // Initialize unified content editor
   const editor = useUnifiedContentEditor({
