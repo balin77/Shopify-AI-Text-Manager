@@ -3474,7 +3474,30 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   };
 
   const getEditableValue = (fieldKey: string): string => {
-    return editableValues[fieldKey] || "";
+    // Check if there's a local edit first
+    if (editableValues[fieldKey] !== undefined && editableValues[fieldKey] !== null) {
+      return editableValues[fieldKey];
+    }
+
+    // For foreign languages, try to get translation from item.translations
+    if (currentLanguage !== primaryLocale && selectedItem) {
+      const field = effectiveFieldDefinitions.find(f => f.key === fieldKey);
+      if (field?.translationKey) {
+        const translation = selectedItem.translations?.find(
+          (t: Translation) => t.key === field.translationKey && t.locale === currentLanguage
+        );
+        if (translation?.value) {
+          return translation.value;
+        }
+      }
+    }
+
+    // Fallback: For primary locale or if no translation exists, use getFieldValue or original value
+    if (currentLanguage === primaryLocale && selectedItem && config.getFieldValue) {
+      return config.getFieldValue(selectedItem, fieldKey) || "";
+    }
+
+    return "";
   };
 
   const setEditableValue = (fieldKey: string, value: string) => {
