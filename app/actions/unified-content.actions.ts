@@ -1664,7 +1664,8 @@ Image URL: ${image.url}`;
         context: "UnifiedContent",
         locale,
         resourceCount: Object.keys(translationsData).length,
-        translationsData: JSON.stringify(translationsData).substring(0, 500),
+        translationsData: JSON.stringify(translationsData), // Log full data to see what's missing
+        resourceIds: Object.keys(translationsData),
       });
 
       for (const [resourceId, fields] of Object.entries(translationsData)) {
