@@ -202,6 +202,7 @@ export function MainNavigation() {
   // Content types for mobile menu (wenn auf Content-Seiten)
   const isOnContentPage = location.pathname.startsWith("/app/collections") ||
     location.pathname.startsWith("/app/blog") ||
+    location.pathname.startsWith("/app/metaobjects") ||
     location.pathname.startsWith("/app/pages") ||
     location.pathname.startsWith("/app/policies") ||
     location.pathname.startsWith("/app/menus") ||
@@ -211,6 +212,7 @@ export function MainNavigation() {
   const contentTypes = [
     { id: "collections", label: t.content.collections, icon: "📂", path: "/app/collections" },
     { id: "blogs", label: t.content.blogs, icon: "📝", path: "/app/blog" },
+    { id: "metaobjects", label: t.content.metaobjects || "Metaobjects", icon: "🔷", path: "/app/metaobjects" },
     { id: "pages", label: t.content.pages, icon: "📄", path: "/app/pages" },
     { id: "policies", label: t.content.policies, icon: "📋", path: "/app/policies" },
     { id: "menus", label: t.content.menus, icon: "🍔", path: "/app/menus" },

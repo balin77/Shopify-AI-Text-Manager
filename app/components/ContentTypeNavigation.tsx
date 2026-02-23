@@ -14,7 +14,7 @@ import { type ContentType as PlanContentType } from "../config/plans";
 import { getPlanDisplayName as getPlanDisplayNameUtil } from "../utils/planUtils";
 import { useState, useEffect, useRef } from "react";
 
-type ContentType = "collections" | "blogs" | "pages" | "policies" | "menus" | "templates";
+type ContentType = "collections" | "blogs" | "metaobjects" | "pages" | "policies" | "menus" | "templates";
 
 interface ContentTypeConfig {
   id: ContentType;
@@ -39,6 +39,7 @@ export function ContentTypeNavigation() {
   const contentTypes: ContentTypeConfig[] = [
     { id: "collections", label: t.content.collections, icon: "📂", description: t.content.collectionsDescription, path: "/app/collections", planContentType: "collections" },
     { id: "blogs", label: t.content.blogs, icon: "📝", description: t.content.blogsDescription, path: "/app/blog", planContentType: "articles" },
+    { id: "metaobjects", label: t.content.metaobjects || "Metaobjects", icon: "🔷", description: t.content.metaobjectsDescription || "Product option metaobjects", path: "/app/metaobjects", planContentType: "products" },
     { id: "pages", label: t.content.pages, icon: "📄", description: t.content.pagesDescription, path: "/app/pages", planContentType: "pages" },
     { id: "policies", label: t.content.policies, icon: "📋", description: t.content.policiesDescription, path: "/app/policies", planContentType: "policies" },
     { id: "menus", label: t.content.menus, icon: "🍔", description: t.content.menusDescription, path: "/app/menus", planContentType: "menus" },
@@ -49,6 +50,7 @@ export function ContentTypeNavigation() {
   const getActiveType = (): string | null => {
     if (location.pathname === "/app/collections") return "collections";
     if (location.pathname === "/app/blog") return "blogs";
+    if (location.pathname === "/app/metaobjects") return "metaobjects";
     if (location.pathname === "/app/pages") return "pages";
     if (location.pathname === "/app/policies") return "policies";
     if (location.pathname === "/app/menus") return "menus";
