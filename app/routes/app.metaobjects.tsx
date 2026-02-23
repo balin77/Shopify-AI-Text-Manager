@@ -46,14 +46,15 @@ export const loader = createContentLoader({
       return { items: [], ids: [] };
     }
 
-    const allMetaobjects: any[] = [];
+    // Group items: Each "item" is a metaobject definition with its metaobjects
+    const groupedItems: any[] = [];
 
-    // For each definition, fetch metaobjects with fields
     for (const definition of definitions) {
       try {
+        // Fetch metaobjects for this type WITH translations
         const response = await ctx.admin.graphql(
           `#graphql
-            query getMetaobjectsWithFields($type: String!, $first: Int!) {
+            query getMetaobjectsWithTranslations($type: String!, $first: Int!) {
               metaobjects(type: $type, first: $first) {
                 edges {
                   node {
@@ -66,6 +67,11 @@ export const loader = createContentLoader({
                       key
                       value
                       type
+                    }
+                    translations(locale: "*") {
+                      key
+                      value
+                      locale
                     }
                   }
                 }
@@ -85,13 +91,22 @@ export const loader = createContentLoader({
           continue;
         }
 
-        const metaobjects = data.data?.metaobjects?.edges?.map((edge: { node: any }) => ({
-          ...edge.node,
-          definitionName: definition.name,
-          fields: edge.node.fields || [],
-        })) || [];
+        const metaobjects = data.data?.metaobjects?.edges?.map((edge: { node: any }) => edge.node) || [];
 
-        allMetaobjects.push(...metaobjects);
+        // Create a grouped item representing this metaobject type
+        // Structure: One "item" per type, containing all metaobjects of that type
+        const groupItem = {
+          id: `metaobject_type_${definition.type}`,
+          type: definition.type,
+          title: definition.name, // Display name for the type
+          handle: definition.type,
+          definitionName: definition.name,
+          definitionId: definition.id,
+          metaobjects: metaobjects, // All metaobjects of this type
+          translations: [], // Will be populated from metaobjects
+        };
+
+        groupedItems.push(groupItem);
       } catch (error) {
         logger.error('[METAOBJECTS-LOADER] Error fetching metaobjects for type', {
           error: error instanceof Error ? error.message : String(error),
@@ -101,8 +116,8 @@ export const loader = createContentLoader({
     }
 
     return {
-      items: allMetaobjects,
-      ids: allMetaobjects.map((m: any) => m.id),
+      items: groupedItems,
+      ids: groupedItems.map((g: any) => g.id),
     };
   },
 });

@@ -384,40 +384,60 @@ export const METAOBJECTS_CONFIG: ContentEditorConfig = {
   contentType: "metaobjects",
   resourceType: "Metaobject",
   displayName: "Metaobjects",
-  displayNameSingular: "Metaobject",
+  displayNameSingular: "Metaobject Type",
   showSeoSidebar: false,
-  idPrefix: "ID:",
-  getPrimaryField: (item) => item.displayName || item.handle || "Untitled",
-  getSubtitle: (item) => item.definitionName ? `Type: ${item.definitionName}` : undefined,
+  idPrefix: "Type:",
+  getPrimaryField: (item) => item.title || item.definitionName || "Untitled",
+  getSubtitle: (item) => {
+    const count = item.metaobjects?.length || 0;
+    return `${count} ${count === 1 ? 'entry' : 'entries'}`;
+  },
 
-  // Metaobjects use dynamic fields from the fields array
+  // Metaobjects use dynamic fields - one field per metaobject entry
   fieldDefinitions: [],
 
   // Enable dynamic field generation
   dynamicFields: true,
 
-  // Generate field definitions from item's fields
+  // Generate field definitions: One field per metaobject (showing only display_name/name)
   getFieldDefinitions: (item) => {
-    if (!item?.fields || !Array.isArray(item.fields)) return [];
+    if (!item?.metaobjects || !Array.isArray(item.metaobjects)) return [];
 
-    return item.fields.map((field: any) => ({
-      key: field.key,
-      type: "text" as const,
-      label: field.key,
-      translationKey: field.key,
-      required: false,
-      supportsAI: false,
-      supportsFormatting: false,
-      supportsTranslation: true,
-      helpText: field.type ? `Type: ${field.type}` : undefined,
-    }));
+    // Create one field per metaobject, showing only the display_name/name
+    return item.metaobjects.map((metaobj: any) => {
+      // Find the display_name or name field
+      const labelField = metaobj.fields?.find((f: any) =>
+        f.key === 'display_name' || f.key === 'name' || f.key === 'label'
+      );
+
+      return {
+        key: metaobj.id, // Use metaobject ID as field key
+        type: "text" as const,
+        label: metaobj.displayName || metaobj.handle || metaobj.id.split('/').pop(),
+        translationKey: labelField?.key || 'display_name',
+        required: false,
+        supportsAI: false,
+        supportsFormatting: false,
+        supportsTranslation: true,
+        helpText: `Metaobject: ${metaobj.handle || metaobj.id.split('/').pop()}`,
+      };
+    });
   },
 
-  // Custom value getter for metaobject data structure
+  // Custom value getter: Get display_name value for each metaobject
   getFieldValue: (item, fieldKey) => {
-    if (!item?.fields || !Array.isArray(item.fields)) return "";
-    const field = item.fields.find((f: any) => f.key === fieldKey);
-    return field?.value || "";
+    if (!item?.metaobjects || !Array.isArray(item.metaobjects)) return "";
+
+    // fieldKey is the metaobject ID
+    const metaobj = item.metaobjects.find((m: any) => m.id === fieldKey);
+    if (!metaobj) return "";
+
+    // Find the label field value
+    const labelField = metaobj.fields?.find((f: any) =>
+      f.key === 'display_name' || f.key === 'name' || f.key === 'label'
+    );
+
+    return labelField?.value || metaobj.displayName || "";
   },
 };
 
