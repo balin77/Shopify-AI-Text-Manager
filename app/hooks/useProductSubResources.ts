@@ -335,19 +335,71 @@ export function useProductSubResources({
     }
 
     if (data.actionType === "saveSubResourceTranslations") {
-      setHasChanges(false);
+      const failedResources = data.failedResources || [];
+
+      if (failedResources.length > 0) {
+        // Some resources failed - show error and reset changes
+        if (showInfoBox) {
+          showInfoBox(
+            `Failed to save ${failedResources.length} option(s). Changes have been discarded.`,
+            "critical",
+            "Save Failed"
+          );
+        }
+        // Reset all changes (like discard)
+        setOptionTranslations({});
+        setMetafieldTranslations({});
+        setPrimaryOptionEdits({});
+        setPrimaryMetafieldEdits({});
+        setHasChanges(false);
+        setTranslatingFieldIds(new Set());
+        loadedForRef.current = "";
+      } else {
+        // All saved successfully
+        if (showInfoBox) {
+          showInfoBox("Options and metafields saved successfully", "success", "Success");
+        }
+        setHasChanges(false);
+      }
     }
 
     if (data.actionType === "savePrimarySubResources") {
-      setHasChanges(false);
-      // Clear primary edits after successful save
-      setPrimaryOptionEdits({});
-      setPrimaryMetafieldEdits({});
+      const failedOptions = data.failedOptions || [];
+      const failedMetafields = data.failedMetafields || [];
+      const totalFailed = failedOptions.length + failedMetafields.length;
 
-      // Trigger revalidation to reload fresh data from DB/Shopify
-      // This ensures new option value GIDs and updated values are loaded
-      if (revalidator && revalidator.state === "idle") {
-        revalidator.revalidate();
+      if (totalFailed > 0) {
+        // Some resources failed - show error and reset changes
+        if (showInfoBox) {
+          showInfoBox(
+            `Failed to save ${totalFailed} item(s). Changes have been discarded.`,
+            "critical",
+            "Save Failed"
+          );
+        }
+        // Reset all changes (like discard)
+        setOptionTranslations({});
+        setMetafieldTranslations({});
+        setPrimaryOptionEdits({});
+        setPrimaryMetafieldEdits({});
+        setHasChanges(false);
+        setTranslatingFieldIds(new Set());
+        loadedForRef.current = "";
+      } else {
+        // All saved successfully
+        if (showInfoBox) {
+          showInfoBox("Options and metafields saved successfully", "success", "Success");
+        }
+        setHasChanges(false);
+        // Clear primary edits after successful save
+        setPrimaryOptionEdits({});
+        setPrimaryMetafieldEdits({});
+
+        // Trigger revalidation to reload fresh data from DB/Shopify
+        // This ensures new option value GIDs and updated values are loaded
+        if (revalidator && revalidator.state === "idle") {
+          revalidator.revalidate();
+        }
       }
     }
   }, [fetcher.state, fetcher.data, selectedItem]);

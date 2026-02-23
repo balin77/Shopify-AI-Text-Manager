@@ -1660,26 +1660,41 @@ Image URL: ${image.url}`;
       const savedResources: string[] = [];
       const failedResources: string[] = [];
 
+      logger.info('[UnifiedContent] saveSubResourceTranslations - Starting save operation', {
+        context: "UnifiedContent",
+        locale,
+        resourceCount: Object.keys(translationsData).length,
+        translationsData: JSON.stringify(translationsData).substring(0, 500),
+      });
+
       for (const [resourceId, fields] of Object.entries(translationsData)) {
         if (!isValidShopifyGID(resourceId)) continue;
 
         try {
           // Build translation inputs (saveTranslations handles digest fetching internally)
+          // IMPORTANT: Include empty strings - user explicitly cleared the field
           const translationInputs: Array<{ key: string; value: string; locale: string }> = [];
           for (const [key, value] of Object.entries(fields)) {
-            if (!value || value.trim() === "") continue;
+            // Allow empty strings (value !== undefined means user provided it)
             translationInputs.push({ key, value, locale });
           }
+
+          logger.info(`[UnifiedContent] Saving translations for resource ${resourceId}`, {
+            context: "UnifiedContent",
+            resourceId,
+            locale,
+            translationInputs: JSON.stringify(translationInputs),
+          });
 
           // Save to Shopify (saveTranslations fetches digests internally)
           if (translationInputs.length > 0) {
             await shopifyContentService.saveTranslations(resourceId, translationInputs);
           }
 
-          // Also save to local DB (even without Shopify digest — digest-gated DB saves pattern)
+          // Also save to local DB (even empty strings - user explicitly cleared the field)
           const resourceType = resourceTypes[resourceId] || "Unknown";
           for (const [key, value] of Object.entries(fields)) {
-            if (!value || value.trim() === "") continue;
+            // Allow empty strings (value !== undefined means user provided it)
             await db.contentTranslation.upsert({
               where: { resourceId_key_locale: { resourceId, key, locale } },
               create: { resourceId, resourceType, key, value, locale },
@@ -1688,13 +1703,31 @@ Image URL: ${image.url}`;
           }
 
           savedResources.push(resourceId);
+          logger.info(`[UnifiedContent] Successfully saved translations for ${resourceId}`, {
+            context: "UnifiedContent",
+            resourceId,
+            locale,
+          });
         } catch (err) {
           logger.error(`[UnifiedContent] Failed to save sub-resource translation for ${resourceId}`, {
-            context: "UnifiedContent", error: err instanceof Error ? err.message : String(err),
+            context: "UnifiedContent",
+            resourceId,
+            locale,
+            error: err instanceof Error ? err.message : String(err),
+            stack: err instanceof Error ? err.stack : undefined,
           });
           failedResources.push(resourceId);
         }
       }
+
+      logger.info('[UnifiedContent] saveSubResourceTranslations - Completed save operation', {
+        context: "UnifiedContent",
+        locale,
+        savedCount: savedResources.length,
+        failedCount: failedResources.length,
+        savedResources,
+        failedResources,
+      });
 
       return json({
         actionType: "saveSubResourceTranslations",
