@@ -573,6 +573,8 @@ export const de = {
       summary: "Zusammenfassung",
       seoTitle: "SEO-Titel",
       metaDescription: "Meta-Beschreibung",
+      optionName: "Option {number} Name",
+      optionValues: "Option {number} Werte",
     },
   },
 

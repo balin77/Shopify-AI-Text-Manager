@@ -575,6 +575,8 @@ export const es: Translation = {
       summary: "Resumen",
       seoTitle: "Título SEO",
       metaDescription: "Meta descripción",
+      optionName: "Opción {number} nombre",
+      optionValues: "Opción {number} valores",
     },
   },
 

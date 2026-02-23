@@ -720,11 +720,50 @@ export function getMissingLocaleTranslationFields(
   }
 
   const requiredFields = getRequiredFieldsForContentType(contentType);
-  return requiredFields.filter(field => {
+  const missingFields = requiredFields.filter(field => {
     if (field === 'handle') return false;
     if (!primaryHasFieldContent(selectedItem, field, contentType)) return false;
     return !hasTranslationForField(selectedItem, field, locale);
   });
+
+  // For products, also check product options translations
+  if (contentType === 'products' && selectedItem.options && selectedItem.options.length > 0) {
+    const subResourceTranslations = selectedItem.subResourceTranslations || {};
+
+    selectedItem.options.forEach((option, optionIndex) => {
+      // Check if option name translation is missing
+      const optionTranslations = subResourceTranslations[option.id] || [];
+      const nameTranslation = optionTranslations.find(t => t.key === 'name' && t.locale === locale);
+
+      // If option name exists in primary but translation is missing
+      if (option.name && (!nameTranslation || isFieldEmpty(nameTranslation.value))) {
+        missingFields.push(`option_${optionIndex + 1}_name`);
+      }
+
+      // For non-linked options, also check value translations
+      if (!option.isLinked && option.values && option.values.length > 0) {
+        const missingValueIndices: number[] = [];
+        option.values.forEach((value, valueIndex) => {
+          // Check if value translation is missing
+          const valueTranslation = optionTranslations.find(
+            t => t.key === `value:${valueIndex}` && t.locale === locale
+          );
+
+          // If value exists in primary but translation is missing
+          if (value.name && (!valueTranslation || isFieldEmpty(valueTranslation.value))) {
+            missingValueIndices.push(valueIndex + 1);
+          }
+        });
+
+        // Add a summary entry for missing values
+        if (missingValueIndices.length > 0) {
+          missingFields.push(`option_${optionIndex + 1}_values`);
+        }
+      }
+    });
+  }
+
+  return missingFields;
 }
 
 /**
@@ -767,6 +806,19 @@ export function getLocaleButtonTooltip(
     if (contentType === 'templates') {
       return extractReadableName(key);
     }
+
+    // Handle product option fields (e.g., "option_1_name", "option_2_values")
+    if (key.startsWith('option_')) {
+      const match = key.match(/^option_(\d+)_(name|values)$/);
+      if (match) {
+        const optionNumber = match[1];
+        const fieldType = match[2];
+        const templateKey = fieldType === 'name' ? 'optionName' : 'optionValues';
+        const template = fieldLabels[templateKey] || (fieldType === 'name' ? 'Option {number} name' : 'Option {number} values');
+        return template.replace('{number}', optionNumber);
+      }
+    }
+
     const labelKey = FIELD_TO_LABEL_KEY[key];
     return (labelKey && fieldLabels[labelKey]) || labelKey || key;
   });
