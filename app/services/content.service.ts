@@ -816,32 +816,14 @@ export class ContentService {
 
   async getMetaobjectDefinitions(first: number = 50) {
     try {
-      logger.debug('[ContentService] Fetching metaobject definitions', { context: 'ContentService', first });
-
       const response = await this.admin.graphql(GET_METAOBJECT_DEFINITIONS, {
         variables: { first }
       });
       const data = await response.json();
 
-      // Log complete response
-      logger.debug('[ContentService] Metaobject definitions response', {
-        context: 'ContentService',
-        hasData: !!data.data,
-        hasErrors: !!data.errors,
-        dataKeys: data.data ? Object.keys(data.data) : [],
-        fullResponse: JSON.stringify(data).substring(0, 500)
-      });
-
       // Check for GraphQL errors (like access denied)
       if ('errors' in data && data.errors && Array.isArray(data.errors) && data.errors.length > 0) {
         const errors = data.errors as Array<{ message: string }>;
-
-        logger.error('[ContentService] GraphQL errors in metaobjectDefinitions', {
-          context: 'ContentService',
-          errors: errors.map(e => e.message),
-          fullErrors: JSON.stringify(errors)
-        });
-
         const accessDeniedError = errors.find((err) =>
           err.message?.includes('Access denied') || err.message?.includes('metaobjectDefinitions')
         );
@@ -855,28 +837,9 @@ export class ContentService {
       }
 
       const definitions = data.data?.metaobjectDefinitions?.edges?.map((edge: GraphQLEdge<Record<string, unknown>>) => edge.node) || [];
-
-      logger.info('[ContentService] Metaobject definitions fetched successfully', {
-        context: 'ContentService',
-        count: definitions.length,
-        definitions: definitions.map((d: any) => ({ id: d.id, type: d.type, name: d.name }))
-      });
-
       return definitions;
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
-      const fullError = error instanceof Error ? {
-        message: error.message,
-        stack: error.stack,
-        name: error.name
-      } : String(error);
-
-      logger.error('[ContentService] Exception in getMetaobjectDefinitions', {
-        context: 'ContentService',
-        errorMessage: message,
-        fullError: JSON.stringify(fullError).substring(0, 1000)
-      });
-
       // Gracefully handle permission errors
       if (message?.includes('Access denied') || message?.includes('metaobjectDefinitions')) {
         logger.warn('Metaobjects access denied - feature requires additional Shopify permissions', { context: 'ContentService' });

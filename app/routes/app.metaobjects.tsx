@@ -42,13 +42,7 @@ export const loader = createContentLoader({
     // Load metaobject definitions
     const definitions = await contentService.getMetaobjectDefinitions(50);
 
-    logger.info('[METAOBJECTS-LOADER] Metaobject definitions loaded', {
-      count: definitions.length,
-      types: definitions.map((d: any) => ({ type: d.type, name: d.name }))
-    });
-
     if (definitions.length === 0) {
-      logger.warn('[METAOBJECTS-LOADER] No metaobject definitions found');
       return { items: [], ids: [] };
     }
 
@@ -57,11 +51,6 @@ export const loader = createContentLoader({
     // For each definition, fetch metaobjects with fields
     for (const definition of definitions) {
       try {
-        logger.debug('[METAOBJECTS-LOADER] Fetching metaobjects for type', {
-          type: definition.type,
-          name: definition.name
-        });
-
         const response = await ctx.admin.graphql(
           `#graphql
             query getMetaobjectsWithFields($type: String!, $first: Int!) {
@@ -88,7 +77,6 @@ export const loader = createContentLoader({
         );
         const data = await response.json();
 
-        // Check for GraphQL errors
         if (data.errors) {
           logger.error('[METAOBJECTS-LOADER] GraphQL errors', {
             type: definition.type,
@@ -103,11 +91,6 @@ export const loader = createContentLoader({
           fields: edge.node.fields || [],
         })) || [];
 
-        logger.debug('[METAOBJECTS-LOADER] Fetched metaobjects', {
-          type: definition.type,
-          count: metaobjects.length
-        });
-
         allMetaobjects.push(...metaobjects);
       } catch (error) {
         logger.error('[METAOBJECTS-LOADER] Error fetching metaobjects for type', {
@@ -117,16 +100,9 @@ export const loader = createContentLoader({
       }
     }
 
-    logger.info('[METAOBJECTS-LOADER] Loaded metaobjects', { count: allMetaobjects.length });
-
     return {
       items: allMetaobjects,
       ids: allMetaobjects.map((m: any) => m.id),
-      debugInfo: {
-        definitionsCount: definitions.length,
-        definitionTypes: definitions.map((d: any) => ({ type: d.type, name: d.name })),
-        metaobjectsCount: allMetaobjects.length,
-      },
     };
   },
 });
@@ -163,32 +139,11 @@ export const action = async (args: ActionFunctionArgs) => {
 // ============================================================================
 
 export default function MetaobjectsPage() {
-  const loaderData = useLoaderData<typeof loader>();
-  const { metaobjects, shopLocales, primaryLocale, error, aiSettings, debugInfo } = loaderData;
+  const { metaobjects, shopLocales, primaryLocale, error, aiSettings } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
   const { t } = useI18n();
   const { showInfoBox } = useInfoBox();
-
-  // Show debug info
-  useEffect(() => {
-    if (debugInfo) {
-      console.log('[METAOBJECTS DEBUG]', debugInfo);
-      if (debugInfo.definitionsCount === 0) {
-        showInfoBox(
-          'No metaobject definitions found. Please create metaobject definitions in your Shopify admin first.',
-          "warning",
-          "No Metaobject Definitions"
-        );
-      } else if (debugInfo.metaobjectsCount === 0) {
-        showInfoBox(
-          `Found ${debugInfo.definitionsCount} metaobject definition(s), but no metaobjects. Create metaobjects in Shopify admin.`,
-          "info",
-          "No Metaobjects"
-        );
-      }
-    }
-  }, [debugInfo, showInfoBox]);
 
   // Initialize unified content editor
   const editor = useUnifiedContentEditor({
