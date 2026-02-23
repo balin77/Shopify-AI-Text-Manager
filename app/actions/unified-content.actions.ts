@@ -1672,35 +1672,81 @@ Image URL: ${image.url}`;
         if (!isValidShopifyGID(resourceId)) continue;
 
         try {
-          // Build translation inputs (saveTranslations handles digest fetching internally)
-          // IMPORTANT: Include empty strings - user explicitly cleared the field
+          const resourceType = resourceTypes[resourceId] || "Unknown";
+
+          // Separate empty and non-empty values
+          // For ProductOption and ProductOptionValue, Shopify API rejects empty strings
+          // ("Value can't be blank" / "Name can't be blank")
+          // So we delete the translation instead of setting it to empty
           const translationInputs: Array<{ key: string; value: string; locale: string }> = [];
+          const keysToDelete: string[] = [];
+
           for (const [key, value] of Object.entries(fields)) {
-            // Allow empty strings (value !== undefined means user provided it)
-            translationInputs.push({ key, value, locale });
+            if (value === "" && (resourceType === "ProductOptionValue" || resourceType === "ProductOption")) {
+              // Empty value for ProductOption/ProductOptionValue - delete the translation instead
+              keysToDelete.push(key);
+            } else {
+              // Non-empty value OR empty value for other resource types
+              translationInputs.push({ key, value, locale });
+            }
           }
 
           logger.info(`[UnifiedContent] Saving translations for resource ${resourceId}`, {
             context: "UnifiedContent",
             resourceId,
+            resourceType,
             locale,
             translationInputs: JSON.stringify(translationInputs),
+            keysToDelete: JSON.stringify(keysToDelete),
           });
 
-          // Save to Shopify (saveTranslations fetches digests internally)
+          // Save non-empty translations to Shopify
           if (translationInputs.length > 0) {
             await shopifyContentService.saveTranslations(resourceId, translationInputs);
           }
 
-          // Also save to local DB (even empty strings - user explicitly cleared the field)
-          const resourceType = resourceTypes[resourceId] || "Unknown";
-          for (const [key, value] of Object.entries(fields)) {
-            // Allow empty strings (value !== undefined means user provided it)
-            await db.contentTranslation.upsert({
-              where: { resourceId_key_locale: { resourceId, key, locale } },
-              create: { resourceId, resourceType, key, value, locale },
-              update: { value },
+          // Delete empty translations for ProductOptionValue
+          if (keysToDelete.length > 0) {
+            await gateway.graphql(
+              `#graphql
+                mutation removeTranslations($resourceId: ID!, $translationKeys: [String!]!, $locales: [String!]!) {
+                  translationsRemove(resourceId: $resourceId, translationKeys: $translationKeys, locales: $locales) {
+                    userErrors { field message }
+                  }
+                }`,
+              {
+                variables: {
+                  resourceId,
+                  translationKeys: keysToDelete,
+                  locales: [locale],
+                },
+              }
+            );
+            logger.info(`[UnifiedContent] Deleted translations for ${resourceId}`, {
+              context: "UnifiedContent",
+              resourceId,
+              locale,
+              keysToDelete: JSON.stringify(keysToDelete),
             });
+          }
+
+          // Save to local DB (including empty strings - user explicitly cleared the field)
+          // This allows tracking that the field was intentionally cleared
+          for (const [key, value] of Object.entries(fields)) {
+            if (value === "" && (resourceType === "ProductOptionValue" || resourceType === "ProductOption")) {
+              // For ProductOption/ProductOptionValue with empty value, delete from DB too
+              // since there's no translation in Shopify (we removed it)
+              await db.contentTranslation.deleteMany({
+                where: { resourceId, key, locale },
+              });
+            } else {
+              // For all other cases, save to DB
+              await db.contentTranslation.upsert({
+                where: { resourceId_key_locale: { resourceId, key, locale } },
+                create: { resourceId, resourceType, key, value, locale },
+                update: { value },
+              });
+            }
           }
 
           savedResources.push(resourceId);
