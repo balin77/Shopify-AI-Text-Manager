@@ -10,8 +10,8 @@
  */
 
 import { useState } from "react";
-import { json, type LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData } from "@remix-run/react";
+import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
+import { useLoaderData, useSubmit, useNavigation } from "@remix-run/react";
 import {
   Page,
   Card,
@@ -140,27 +140,122 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   }
 };
 
+export const action = async ({ request }: ActionFunctionArgs) => {
+  const { admin } = await authenticate.admin(request);
+  const formData = await request.formData();
+  const metaobjectId = formData.get("metaobjectId") as string;
+  const fieldsJson = formData.get("fields") as string;
+
+  try {
+    const fields = JSON.parse(fieldsJson);
+
+    // Build fields array for the mutation
+    const fieldInputs = Object.entries(fields).map(([key, value]) => ({
+      key,
+      value: value as string
+    }));
+
+    logger.info('[METAOBJECTS-ACTION] Updating metaobject', {
+      id: metaobjectId,
+      fieldsCount: fieldInputs.length
+    });
+
+    const response = await admin.graphql(
+      `#graphql
+        mutation updateMetaobject($id: ID!, $fields: [MetaobjectFieldInput!]!) {
+          metaobjectUpdate(id: $id, metaobject: { fields: $fields }) {
+            metaobject {
+              id
+              handle
+              displayName
+              fields {
+                key
+                value
+                type
+              }
+            }
+            userErrors {
+              field
+              message
+            }
+          }
+        }`,
+      {
+        variables: {
+          id: metaobjectId,
+          fields: fieldInputs
+        }
+      }
+    );
+
+    const data = await response.json();
+
+    if (data.data?.metaobjectUpdate?.userErrors?.length > 0) {
+      const errors = data.data.metaobjectUpdate.userErrors;
+      logger.error('[METAOBJECTS-ACTION] User errors', { errors });
+      return json({
+        success: false,
+        error: errors.map((e: any) => e.message).join(", ")
+      }, { status: 400 });
+    }
+
+    logger.info('[METAOBJECTS-ACTION] Successfully updated metaobject', { id: metaobjectId });
+
+    return json({
+      success: true,
+      metaobject: data.data?.metaobjectUpdate?.metaobject
+    });
+  } catch (error) {
+    logger.error('[METAOBJECTS-ACTION] Error updating metaobject', {
+      error: error instanceof Error ? error.message : String(error),
+      id: metaobjectId
+    });
+    return json({
+      success: false,
+      error: error instanceof Error ? error.message : "Failed to save changes"
+    }, { status: 500 });
+  }
+};
+
 export default function MetaobjectsPage() {
   const { metaobjects, shop, shopLocales, primaryLocale, error } = useLoaderData<typeof loader>();
   const { t } = useI18n();
   const { mainNavHeight } = useNavigationHeight();
+  const submit = useSubmit();
+  const navigation = useNavigation();
 
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [editedFields, setEditedFields] = useState<Record<string, string>>({});
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saveSuccess, setSaveSuccess] = useState(false);
 
   const selectedItem = (metaobjects as MetaobjectItem[]).find((item) => item.id === selectedItemId);
+  const isSaving = navigation.state === "submitting";
 
   const handleFieldChange = (fieldKey: string, value: string) => {
     setEditedFields(prev => ({
       ...prev,
       [fieldKey]: value
     }));
+    setSaveError(null);
+    setSaveSuccess(false);
   };
 
   const handleSave = () => {
-    // TODO: Implement save functionality via GraphQL mutations
-    console.log('Saving fields:', editedFields);
-    alert('Save functionality coming soon!');
+    if (!selectedItem) return;
+
+    const formData = new FormData();
+    formData.append("metaobjectId", selectedItem.id);
+    formData.append("fields", JSON.stringify(editedFields));
+
+    submit(formData, { method: "post" });
+
+    // Clear edited fields after submission
+    setTimeout(() => {
+      setEditedFields({});
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 3000);
+    }, 500);
   };
 
   return (
@@ -235,15 +330,30 @@ export default function MetaobjectsPage() {
           <Card padding="600">
             {selectedItem ? (
               <BlockStack gap="500">
+                {/* Success/Error Banners */}
+                {saveSuccess && (
+                  <Banner tone="success">
+                    <Text as="p" variant="bodyMd">
+                      Changes saved successfully!
+                    </Text>
+                  </Banner>
+                )}
+                {saveError && (
+                  <Banner tone="critical">
+                    <Text as="p" variant="bodyMd">
+                      {saveError}
+                    </Text>
+                  </Banner>
+                )}
+
                 {/* Info Banner */}
                 <Banner tone="info">
                   <BlockStack gap="200">
                     <Text as="p" variant="bodyMd" fontWeight="semibold">
-                      Metaobject Option Values - Prototype
+                      Metaobject Option Values
                     </Text>
                     <Text as="p" variant="bodyMd">
-                      This is a prototype version. You can view metaobject fields here.
-                      Full editing and translation functionality will be added in future updates.
+                      Edit metaobject field values in the primary language. Translation functionality will be added in future updates.
                     </Text>
                     <Text as="p" variant="bodySm" tone="subdued">
                       Note: Currently showing ALL metaobjects. Future versions will filter to show only those used as product option values.
@@ -272,8 +382,13 @@ export default function MetaobjectsPage() {
                     )}
                   </BlockStack>
 
-                  <Button primary onClick={handleSave} disabled={Object.keys(editedFields).length === 0}>
-                    {t.content?.saveChanges || "Save"}
+                  <Button
+                    primary
+                    onClick={handleSave}
+                    disabled={Object.keys(editedFields).length === 0 || isSaving}
+                    loading={isSaving}
+                  >
+                    {isSaving ? "Saving..." : (t.content?.saveChanges || "Save")}
                   </Button>
                 </InlineStack>
 
