@@ -675,14 +675,16 @@ export function useProductSubResources({
 
       for (const opt of selectedItem.options || []) {
         const trans = optionTranslations[opt.id];
-        if (trans?.name) {
+        // Allow empty strings in foreign languages (user explicitly cleared the field)
+        if (trans?.name !== undefined) {
           translationsData[opt.id] = { name: trans.name };
           resourceTypes[opt.id] = "ProductOption";
         }
         if (!opt.isLinked) {
           for (let i = 0; i < opt.values.length; i++) {
             const val = opt.values[i];
-            if (val.id && trans?.values[i]) {
+            // Allow empty strings in foreign languages (user explicitly cleared the field)
+            if (val.id && trans?.values[i] !== undefined) {
               translationsData[val.id] = { name: trans.values[i] };
               resourceTypes[val.id] = "ProductOptionValue";
             }
@@ -692,7 +694,8 @@ export function useProductSubResources({
 
       for (const mf of selectedItem.metafields || []) {
         const trans = metafieldTranslations[mf.id];
-        if (trans) {
+        // Allow empty strings in foreign languages (user explicitly cleared the field)
+        if (trans !== undefined) {
           translationsData[mf.id] = { value: trans };
           resourceTypes[mf.id] = "Metafield";
         }

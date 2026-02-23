@@ -335,7 +335,19 @@ export function OptionsField({
 
                       {/* Option Name Translation — always available */}
                       <div>
-                        <div className={`ai-editable-field-wrapper ${translation.name ? "bg-white" : "bg-untranslated"}`}>
+                        <div className={`ai-editable-field-wrapper ${translation.name ? "bg-white" : "bg-untranslated"}`} style={{ position: "relative" }}>
+                          {translation.name && (
+                            <div style={{ position: "absolute", top: "0", right: "0", zIndex: 10 }}>
+                              <Button
+                                size="slim"
+                                onClick={() => onOptionNameChange(option.id, "")}
+                                tone="critical"
+                                variant="plain"
+                              >
+                                Clear
+                              </Button>
+                            </div>
+                          )}
                           <TextField
                             label={
                               <span style={{ fontWeight: 600 }}>
@@ -373,7 +385,19 @@ export function OptionsField({
                             const valueFieldId = `${option.id}:value:${valueIndex}`;
                             return (
                               <div key={optVal.id || valueIndex}>
-                                <div className={`ai-editable-field-wrapper ${translation.values[valueIndex] ? "bg-white" : "bg-untranslated"}`}>
+                                <div className={`ai-editable-field-wrapper ${translation.values[valueIndex] ? "bg-white" : "bg-untranslated"}`} style={{ position: "relative" }}>
+                                  {translation.values[valueIndex] && (
+                                    <div style={{ position: "absolute", top: "0", right: "0", zIndex: 10 }}>
+                                      <Button
+                                        size="slim"
+                                        onClick={() => onOptionValueChange(option.id, valueIndex, "")}
+                                        tone="critical"
+                                        variant="plain"
+                                      >
+                                        Clear
+                                      </Button>
+                                    </div>
+                                  )}
                                   <TextField
                                     label={`${t.valueLabel || "Value"} ${valueIndex + 1}: "${optVal.name}"`}
                                     value={translation.values[valueIndex] || ""}
