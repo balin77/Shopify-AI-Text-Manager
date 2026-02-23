@@ -93,6 +93,26 @@ export const loader = createContentLoader({
 
         const metaobjects = data.data?.metaobjects?.edges?.map((edge: { node: any }) => edge.node) || [];
 
+        // Build translations array for the unified editor
+        // Format: { key: metaobjectId, value: translatedLabel, locale: "de" }
+        const translationsArray: any[] = [];
+
+        metaobjects.forEach((metaobj: any) => {
+          // Get translations for this metaobject
+          if (metaobj.translations && Array.isArray(metaobj.translations)) {
+            metaobj.translations.forEach((trans: any) => {
+              // Only include display_name/name/label translations
+              if (trans.key === 'display_name' || trans.key === 'name' || trans.key === 'label') {
+                translationsArray.push({
+                  key: metaobj.id, // Use metaobject ID as translation key
+                  value: trans.value,
+                  locale: trans.locale,
+                });
+              }
+            });
+          }
+        });
+
         // Create a grouped item representing this metaobject type
         // Structure: One "item" per type, containing all metaobjects of that type
         const groupItem = {
@@ -103,7 +123,7 @@ export const loader = createContentLoader({
           definitionName: definition.name,
           definitionId: definition.id,
           metaobjects: metaobjects, // All metaobjects of this type
-          translations: [], // Will be populated from metaobjects
+          translations: translationsArray, // Translations for all metaobjects
         };
 
         groupedItems.push(groupItem);
