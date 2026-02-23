@@ -186,22 +186,22 @@ export function OptionsField({
                         <>
                           {/* Option Name — editable for metaobjects */}
                           <div>
-                            <Text as="p" variant="bodyMd" fontWeight="semibold">
-                              {t.optionNameLabel || "Name"} <span style={{ color: 'var(--p-color-text-critical)' }}>*</span>
-                            </Text>
-                            <div className="ai-editable-field-wrapper bg-white" style={{ position: "relative" }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                              <Text as="p" variant="bodyMd" fontWeight="semibold">
+                                {t.optionNameLabel || "Name"} <span style={{ color: 'var(--p-color-text-critical)' }}>*</span>
+                              </Text>
                               {currentName && (
-                                <div style={{ position: "absolute", top: "0", right: "0", zIndex: 100 }}>
-                                  <Button
-                                    size="slim"
-                                    onClick={() => onPrimaryOptionNameChange?.(option.id, "")}
-                                    tone="critical"
-                                    variant="plain"
-                                  >
-                                    Clear
-                                  </Button>
-                                </div>
+                                <Button
+                                  size="slim"
+                                  onClick={() => onPrimaryOptionNameChange?.(option.id, "")}
+                                  tone="critical"
+                                  variant="plain"
+                                >
+                                  Clear
+                                </Button>
                               )}
+                            </div>
+                            <div className="ai-editable-field-wrapper bg-white">
                               <TextField
                                 label={t.optionNameLabel || "Name"}
                                 labelHidden
@@ -237,22 +237,22 @@ export function OptionsField({
                         <>
                           {/* Option Name */}
                           <div>
-                            <Text as="p" variant="bodyMd" fontWeight="semibold">
-                              {t.optionNameLabel || "Name"} <span style={{ color: 'var(--p-color-text-critical)' }}>*</span>
-                            </Text>
-                            <div className="ai-editable-field-wrapper bg-white" style={{ position: "relative" }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                              <Text as="p" variant="bodyMd" fontWeight="semibold">
+                                {t.optionNameLabel || "Name"} <span style={{ color: 'var(--p-color-text-critical)' }}>*</span>
+                              </Text>
                               {currentName && (
-                                <div style={{ position: "absolute", top: "0", right: "0", zIndex: 100 }}>
-                                  <Button
-                                    size="slim"
-                                    onClick={() => onPrimaryOptionNameChange?.(option.id, "")}
-                                    tone="critical"
-                                    variant="plain"
-                                  >
-                                    Clear
-                                  </Button>
-                                </div>
+                                <Button
+                                  size="slim"
+                                  onClick={() => onPrimaryOptionNameChange?.(option.id, "")}
+                                  tone="critical"
+                                  variant="plain"
+                                >
+                                  Clear
+                                </Button>
                               )}
+                            </div>
+                            <div className="ai-editable-field-wrapper bg-white">
                               <TextField
                                 label={t.optionNameLabel || "Name"}
                                 labelHidden
@@ -287,21 +287,24 @@ export function OptionsField({
                               const originalValue = option.values[valueIndex]?.name;
                               return (
                                 <div key={valueIndex}>
-                                  <div className="ai-editable-field-wrapper bg-white" style={{ position: "relative" }}>
+                                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                    <Text as="p" variant="bodySm" fontWeight="medium">
+                                      {t.valueLabel || "Value"} {valueIndex + 1}
+                                    </Text>
                                     {value && (
-                                      <div style={{ position: "absolute", top: "0", right: "0", zIndex: 100 }}>
-                                        <Button
-                                          size="slim"
-                                          onClick={() => handleValueChange(valueIndex, "")}
-                                          tone="critical"
-                                          variant="plain"
-                                        >
-                                          Clear
-                                        </Button>
-                                      </div>
+                                      <Button
+                                        size="slim"
+                                        onClick={() => handleValueChange(valueIndex, "")}
+                                        tone="critical"
+                                        variant="plain"
+                                      >
+                                        Clear
+                                      </Button>
                                     )}
+                                  </div>
+                                  <div className="ai-editable-field-wrapper bg-white">
                                     <TextField
-                                      label={t.valuesLabel || "Values"}
+                                      label={`${t.valueLabel || "Value"} ${valueIndex + 1}`}
                                       labelHidden
                                       value={value}
                                       onChange={(newValue) => handleValueChange(valueIndex, newValue)}
