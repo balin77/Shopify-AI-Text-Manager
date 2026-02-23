@@ -190,7 +190,7 @@ export function OptionsField({
                               {t.optionNameLabel || "Name"} <span style={{ color: 'var(--p-color-text-critical)' }}>*</span>
                             </Text>
                             <div style={{ position: "relative" }}>
-                              {currentName && (
+                              {option.name && (
                                 <div style={{ position: "absolute", top: "0", right: "0", zIndex: 10 }}>
                                   <Button
                                     size="slim"
@@ -241,7 +241,7 @@ export function OptionsField({
                               {t.optionNameLabel || "Name"} <span style={{ color: 'var(--p-color-text-critical)' }}>*</span>
                             </Text>
                             <div style={{ position: "relative" }}>
-                              {currentName && (
+                              {option.name && (
                                 <div style={{ position: "absolute", top: "0", right: "0", zIndex: 10 }}>
                                   <Button
                                     size="slim"
@@ -284,10 +284,11 @@ export function OptionsField({
                             </Text>
                             {currentValues.map((value, valueIndex) => {
                               const valueFieldId = `${option.id}:value:${valueIndex}`;
+                              const originalValue = option.values[valueIndex]?.name;
                               return (
                                 <div key={valueIndex}>
                                   <div style={{ position: "relative" }}>
-                                    {value && (
+                                    {originalValue && (
                                       <div style={{ position: "absolute", top: "0", right: "0", zIndex: 10 }}>
                                         <Button
                                           size="slim"
