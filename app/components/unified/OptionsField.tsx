@@ -190,8 +190,8 @@ export function OptionsField({
                               {t.optionNameLabel || "Name"} <span style={{ color: 'var(--p-color-text-critical)' }}>*</span>
                             </Text>
                             <div className="ai-editable-field-wrapper bg-white" style={{ position: "relative" }}>
-                              {option.name && (
-                                <div style={{ position: "absolute", top: "0", right: "0", zIndex: 10 }}>
+                              {currentName && (
+                                <div style={{ position: "absolute", top: "0", right: "0", zIndex: 100 }}>
                                   <Button
                                     size="slim"
                                     onClick={() => onPrimaryOptionNameChange?.(option.id, "")}
@@ -241,8 +241,8 @@ export function OptionsField({
                               {t.optionNameLabel || "Name"} <span style={{ color: 'var(--p-color-text-critical)' }}>*</span>
                             </Text>
                             <div className="ai-editable-field-wrapper bg-white" style={{ position: "relative" }}>
-                              {option.name && (
-                                <div style={{ position: "absolute", top: "0", right: "0", zIndex: 10 }}>
+                              {currentName && (
+                                <div style={{ position: "absolute", top: "0", right: "0", zIndex: 100 }}>
                                   <Button
                                     size="slim"
                                     onClick={() => onPrimaryOptionNameChange?.(option.id, "")}
@@ -288,8 +288,8 @@ export function OptionsField({
                               return (
                                 <div key={valueIndex}>
                                   <div className="ai-editable-field-wrapper bg-white" style={{ position: "relative" }}>
-                                    {originalValue && (
-                                      <div style={{ position: "absolute", top: "0", right: "0", zIndex: 10 }}>
+                                    {value && (
+                                      <div style={{ position: "absolute", top: "0", right: "0", zIndex: 100 }}>
                                         <Button
                                           size="slim"
                                           onClick={() => handleValueChange(valueIndex, "")}

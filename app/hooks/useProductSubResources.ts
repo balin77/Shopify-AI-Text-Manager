@@ -338,22 +338,71 @@ export function useProductSubResources({
       const failedResources = data.failedResources || [];
 
       if (failedResources.length > 0) {
-        // Some resources failed - show error and reset changes
+        // Some resources failed - show error and restore original values for failed resources
         if (showInfoBox) {
           showInfoBox(
-            `Failed to save ${failedResources.length} option(s). Changes have been discarded.`,
+            `Failed to save ${failedResources.length} option(s). Changes have been reverted to original values.`,
             "critical",
             "Save Failed"
           );
         }
-        // Reset all changes (like discard)
-        setOptionTranslations({});
-        setMetafieldTranslations({});
-        setPrimaryOptionEdits({});
-        setPrimaryMetafieldEdits({});
+
+        // Restore original values for failed resources from selectedItem
+        if (selectedItem) {
+          setOptionTranslations(prev => {
+            const restored = { ...prev };
+
+            for (const resourceId of failedResources) {
+              // Check if this is an option
+              const option = selectedItem.options?.find(o => o.id === resourceId);
+              if (option) {
+                // Restore original option name (empty string if no translation existed)
+                const dbMap = dbPreloadToMap(selectedItem.subResourceTranslations, currentLanguage);
+                const originalName = dbMap[resourceId]?.name || "";
+                if (restored[resourceId]) {
+                  restored[resourceId] = { ...restored[resourceId], name: originalName };
+                } else {
+                  restored[resourceId] = { name: originalName, values: [] };
+                }
+              }
+
+              // Check if this is an option value
+              for (const opt of selectedItem.options || []) {
+                const valueIndex = opt.values.findIndex(v => v.id === resourceId);
+                if (valueIndex !== -1) {
+                  // Restore original value (empty string if no translation existed)
+                  const dbMap = dbPreloadToMap(selectedItem.subResourceTranslations, currentLanguage);
+                  const originalValue = dbMap[resourceId]?.name || "";
+                  if (restored[opt.id]) {
+                    const newValues = [...restored[opt.id].values];
+                    newValues[valueIndex] = originalValue;
+                    restored[opt.id] = { ...restored[opt.id], values: newValues };
+                  }
+                }
+              }
+            }
+
+            return restored;
+          });
+
+          // Also restore metafield values if any failed
+          setMetafieldTranslations(prev => {
+            const restored = { ...prev };
+
+            for (const resourceId of failedResources) {
+              const metafield = selectedItem.metafields?.find(m => m.id === resourceId);
+              if (metafield) {
+                const dbMap = dbPreloadToMap(selectedItem.subResourceTranslations, currentLanguage);
+                const originalValue = dbMap[resourceId]?.value || "";
+                restored[resourceId] = originalValue;
+              }
+            }
+
+            return restored;
+          });
+        }
+
         setHasChanges(false);
-        setTranslatingFieldIds(new Set());
-        loadedForRef.current = "";
       } else {
         // All saved successfully
         if (showInfoBox) {
@@ -369,22 +418,41 @@ export function useProductSubResources({
       const totalFailed = failedOptions.length + failedMetafields.length;
 
       if (totalFailed > 0) {
-        // Some resources failed - show error and reset changes
+        // Some resources failed - show error and restore original values
         if (showInfoBox) {
           showInfoBox(
-            `Failed to save ${totalFailed} item(s). Changes have been discarded.`,
+            `Failed to save ${totalFailed} item(s). Changes have been reverted to original values.`,
             "critical",
             "Save Failed"
           );
         }
-        // Reset all changes (like discard)
-        setOptionTranslations({});
-        setMetafieldTranslations({});
-        setPrimaryOptionEdits({});
-        setPrimaryMetafieldEdits({});
+
+        // Restore original values for failed resources from selectedItem
+        if (selectedItem) {
+          setPrimaryOptionEdits(prev => {
+            const restored = { ...prev };
+
+            for (const optionId of failedOptions) {
+              // Remove the failed edit to restore original value
+              delete restored[optionId];
+            }
+
+            return restored;
+          });
+
+          setPrimaryMetafieldEdits(prev => {
+            const restored = { ...prev };
+
+            for (const metafieldId of failedMetafields) {
+              // Remove the failed edit to restore original value
+              delete restored[metafieldId];
+            }
+
+            return restored;
+          });
+        }
+
         setHasChanges(false);
-        setTranslatingFieldIds(new Set());
-        loadedForRef.current = "";
       } else {
         // All saved successfully
         if (showInfoBox) {
