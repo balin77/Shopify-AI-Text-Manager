@@ -642,9 +642,13 @@ export function hasLocaleMissingTranslations(
       // For non-linked options, also check value translations
       if (!option.isLinked && option.values && option.values.length > 0) {
         return option.values.some((value, index) => {
-          // Check if value translation is missing
-          const valueTranslation = optionTranslations.find(
-            t => t.key === `value:${index}` && t.locale === locale
+          // ProductOptionValue translations are stored under value.id with key="name"
+          // (not under option.id with key="value:0", "value:1", etc.)
+          if (!value.id) return false; // Skip values without IDs
+
+          const valueTranslations = subResourceTranslations[value.id] || [];
+          const valueTranslation = valueTranslations.find(
+            t => t.key === 'name' && t.locale === locale
           );
 
           // If value exists in primary but translation is missing
@@ -744,9 +748,13 @@ export function getMissingLocaleTranslationFields(
       if (!option.isLinked && option.values && option.values.length > 0) {
         const missingValueIndices: number[] = [];
         option.values.forEach((value, valueIndex) => {
-          // Check if value translation is missing
-          const valueTranslation = optionTranslations.find(
-            t => t.key === `value:${valueIndex}` && t.locale === locale
+          // ProductOptionValue translations are stored under value.id with key="name"
+          // (not under option.id with key="value:0", "value:1", etc.)
+          if (!value.id) return; // Skip values without IDs (shouldn't happen but safety check)
+
+          const valueTranslations = subResourceTranslations[value.id] || [];
+          const valueTranslation = valueTranslations.find(
+            t => t.key === 'name' && t.locale === locale
           );
 
           // If value exists in primary but translation is missing
