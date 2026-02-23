@@ -189,13 +189,27 @@ export function OptionsField({
                             <Text as="p" variant="bodyMd" fontWeight="semibold">
                               {t.optionNameLabel || "Name"} <span style={{ color: 'var(--p-color-text-critical)' }}>*</span>
                             </Text>
-                            <TextField
-                              label={t.optionNameLabel || "Name"}
-                              labelHidden
-                              value={currentName}
-                              onChange={(value) => onPrimaryOptionNameChange?.(option.id, value)}
-                              autoComplete="off"
-                            />
+                            <div style={{ position: "relative" }}>
+                              {currentName && (
+                                <div style={{ position: "absolute", top: "0", right: "0", zIndex: 10 }}>
+                                  <Button
+                                    size="slim"
+                                    onClick={() => onPrimaryOptionNameChange?.(option.id, "")}
+                                    tone="critical"
+                                    variant="plain"
+                                  >
+                                    Clear
+                                  </Button>
+                                </div>
+                              )}
+                              <TextField
+                                label={t.optionNameLabel || "Name"}
+                                labelHidden
+                                value={currentName}
+                                onChange={(value) => onPrimaryOptionNameChange?.(option.id, value)}
+                                autoComplete="off"
+                              />
+                            </div>
                             {onTranslateField && (
                               <div className="ai-field-footer">
                                 <div className="ai-field-footer-left" />
@@ -226,13 +240,27 @@ export function OptionsField({
                             <Text as="p" variant="bodyMd" fontWeight="semibold">
                               {t.optionNameLabel || "Name"} <span style={{ color: 'var(--p-color-text-critical)' }}>*</span>
                             </Text>
-                            <TextField
-                              label={t.optionNameLabel || "Name"}
-                              labelHidden
-                              value={currentName}
-                              onChange={(value) => onPrimaryOptionNameChange?.(option.id, value)}
-                              autoComplete="off"
-                            />
+                            <div style={{ position: "relative" }}>
+                              {currentName && (
+                                <div style={{ position: "absolute", top: "0", right: "0", zIndex: 10 }}>
+                                  <Button
+                                    size="slim"
+                                    onClick={() => onPrimaryOptionNameChange?.(option.id, "")}
+                                    tone="critical"
+                                    variant="plain"
+                                  >
+                                    Clear
+                                  </Button>
+                                </div>
+                              )}
+                              <TextField
+                                label={t.optionNameLabel || "Name"}
+                                labelHidden
+                                value={currentName}
+                                onChange={(value) => onPrimaryOptionNameChange?.(option.id, value)}
+                                autoComplete="off"
+                              />
+                            </div>
                             {onTranslateField && (
                               <div className="ai-field-footer">
                                 <div className="ai-field-footer-left" />
@@ -258,13 +286,27 @@ export function OptionsField({
                               const valueFieldId = `${option.id}:value:${valueIndex}`;
                               return (
                                 <div key={valueIndex}>
-                                  <TextField
-                                    label={t.valuesLabel || "Values"}
-                                    labelHidden
-                                    value={value}
-                                    onChange={(newValue) => handleValueChange(valueIndex, newValue)}
-                                    autoComplete="off"
-                                  />
+                                  <div style={{ position: "relative" }}>
+                                    {value && (
+                                      <div style={{ position: "absolute", top: "0", right: "0", zIndex: 10 }}>
+                                        <Button
+                                          size="slim"
+                                          onClick={() => handleValueChange(valueIndex, "")}
+                                          tone="critical"
+                                          variant="plain"
+                                        >
+                                          Clear
+                                        </Button>
+                                      </div>
+                                    )}
+                                    <TextField
+                                      label={t.valuesLabel || "Values"}
+                                      labelHidden
+                                      value={value}
+                                      onChange={(newValue) => handleValueChange(valueIndex, newValue)}
+                                      autoComplete="off"
+                                    />
+                                  </div>
                                   {onTranslateField && (
                                     <div className="ai-field-footer">
                                       <div className="ai-field-footer-left" />
