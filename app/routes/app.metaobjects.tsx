@@ -175,6 +175,13 @@ export const loader = createContentLoader({
           sampleTranslations: translationsArray.slice(0, 3)
         });
 
+        // DEBUG: Log complete item structure for first group
+        if (groupedItems.length === 0) {
+          logger.info('[METAOBJECTS-LOADER] RAW GROUP ITEM STRUCTURE', {
+            fullItem: JSON.stringify(groupItem, null, 2)
+          });
+        }
+
         groupedItems.push(groupItem);
       } catch (error) {
         logger.error('[METAOBJECTS-LOADER] Error fetching metaobjects for type', {

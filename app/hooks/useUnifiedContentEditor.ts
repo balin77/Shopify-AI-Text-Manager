@@ -3476,6 +3476,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const getEditableValue = (fieldKey: string): string => {
     // Check if there's a local edit first
     if (editableValues[fieldKey] !== undefined && editableValues[fieldKey] !== null) {
+      debugLog.dataLoad(`getEditableValue(${fieldKey}) -> local edit: "${editableValues[fieldKey]}"`);
       return editableValues[fieldKey];
     }
 
@@ -3487,16 +3488,21 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           (t: Translation) => t.key === field.translationKey && t.locale === currentLanguage
         );
         if (translation?.value) {
+          debugLog.dataLoad(`getEditableValue(${fieldKey}) -> translation found: "${translation.value}" (key: ${field.translationKey}, locale: ${currentLanguage})`);
           return translation.value;
         }
+        debugLog.dataLoad(`getEditableValue(${fieldKey}) -> NO translation (key: ${field.translationKey}, locale: ${currentLanguage}, translations available: ${selectedItem.translations?.length || 0})`);
       }
     }
 
     // Fallback: For primary locale or if no translation exists, use getFieldValue or original value
     if (currentLanguage === primaryLocale && selectedItem && config.getFieldValue) {
-      return config.getFieldValue(selectedItem, fieldKey) || "";
+      const value = config.getFieldValue(selectedItem, fieldKey) || "";
+      debugLog.dataLoad(`getEditableValue(${fieldKey}) -> getFieldValue: "${value}"`);
+      return value;
     }
 
+    debugLog.dataLoad(`getEditableValue(${fieldKey}) -> empty (no match)`);
     return "";
   };
 
