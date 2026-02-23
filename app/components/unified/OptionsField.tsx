@@ -186,25 +186,25 @@ export function OptionsField({
                         <>
                           {/* Option Name — editable for metaobjects */}
                           <div>
-                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                              <Text as="p" variant="bodyMd" fontWeight="semibold">
-                                {t.optionNameLabel || "Name"} <span style={{ color: 'var(--p-color-text-critical)' }}>*</span>
-                              </Text>
+                            <div className="ai-editable-field-wrapper bg-white" style={{ position: "relative" }}>
                               {currentName && (
-                                <Button
-                                  size="slim"
-                                  onClick={() => onPrimaryOptionNameChange?.(option.id, "")}
-                                  tone="critical"
-                                  variant="plain"
-                                >
-                                  Clear
-                                </Button>
+                                <div style={{ position: "absolute", top: "0", right: "0", zIndex: 10 }}>
+                                  <Button
+                                    size="slim"
+                                    onClick={() => onPrimaryOptionNameChange?.(option.id, "")}
+                                    tone="critical"
+                                    variant="plain"
+                                  >
+                                    Clear
+                                  </Button>
+                                </div>
                               )}
-                            </div>
-                            <div className="ai-editable-field-wrapper bg-white">
                               <TextField
-                                label={t.optionNameLabel || "Name"}
-                                labelHidden
+                                label={
+                                  <span style={{ fontWeight: 600 }}>
+                                    {t.optionNameLabel || "Name"} <span style={{ color: 'var(--p-color-text-critical)' }}>*</span>
+                                  </span>
+                                }
                                 value={currentName}
                                 onChange={(value) => onPrimaryOptionNameChange?.(option.id, value)}
                                 autoComplete="off"
@@ -237,25 +237,25 @@ export function OptionsField({
                         <>
                           {/* Option Name */}
                           <div>
-                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                              <Text as="p" variant="bodyMd" fontWeight="semibold">
-                                {t.optionNameLabel || "Name"} <span style={{ color: 'var(--p-color-text-critical)' }}>*</span>
-                              </Text>
+                            <div className="ai-editable-field-wrapper bg-white" style={{ position: "relative" }}>
                               {currentName && (
-                                <Button
-                                  size="slim"
-                                  onClick={() => onPrimaryOptionNameChange?.(option.id, "")}
-                                  tone="critical"
-                                  variant="plain"
-                                >
-                                  Clear
-                                </Button>
+                                <div style={{ position: "absolute", top: "0", right: "0", zIndex: 10 }}>
+                                  <Button
+                                    size="slim"
+                                    onClick={() => onPrimaryOptionNameChange?.(option.id, "")}
+                                    tone="critical"
+                                    variant="plain"
+                                  >
+                                    Clear
+                                  </Button>
+                                </div>
                               )}
-                            </div>
-                            <div className="ai-editable-field-wrapper bg-white">
                               <TextField
-                                label={t.optionNameLabel || "Name"}
-                                labelHidden
+                                label={
+                                  <span style={{ fontWeight: 600 }}>
+                                    {t.optionNameLabel || "Name"} <span style={{ color: 'var(--p-color-text-critical)' }}>*</span>
+                                  </span>
+                                }
                                 value={currentName}
                                 onChange={(value) => onPrimaryOptionNameChange?.(option.id, value)}
                                 autoComplete="off"
@@ -287,25 +287,21 @@ export function OptionsField({
                               const originalValue = option.values[valueIndex]?.name;
                               return (
                                 <div key={valueIndex}>
-                                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                                    <Text as="p" variant="bodySm" fontWeight="medium">
-                                      {t.valueLabel || "Value"} {valueIndex + 1}
-                                    </Text>
+                                  <div className="ai-editable-field-wrapper bg-white" style={{ position: "relative" }}>
                                     {value && (
-                                      <Button
-                                        size="slim"
-                                        onClick={() => handleValueChange(valueIndex, "")}
-                                        tone="critical"
-                                        variant="plain"
-                                      >
-                                        Clear
-                                      </Button>
+                                      <div style={{ position: "absolute", top: "0", right: "0", zIndex: 10 }}>
+                                        <Button
+                                          size="slim"
+                                          onClick={() => handleValueChange(valueIndex, "")}
+                                          tone="critical"
+                                          variant="plain"
+                                        >
+                                          Clear
+                                        </Button>
+                                      </div>
                                     )}
-                                  </div>
-                                  <div className="ai-editable-field-wrapper bg-white">
                                     <TextField
                                       label={`${t.valueLabel || "Value"} ${valueIndex + 1}`}
-                                      labelHidden
                                       value={value}
                                       onChange={(newValue) => handleValueChange(valueIndex, newValue)}
                                       autoComplete="off"
