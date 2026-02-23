@@ -865,6 +865,18 @@ export class ContentService {
       return definitions;
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
+      const fullError = error instanceof Error ? {
+        message: error.message,
+        stack: error.stack,
+        name: error.name
+      } : String(error);
+
+      logger.error('[ContentService] Exception in getMetaobjectDefinitions', {
+        context: 'ContentService',
+        errorMessage: message,
+        fullError: JSON.stringify(fullError).substring(0, 1000)
+      });
+
       // Gracefully handle permission errors
       if (message?.includes('Access denied') || message?.includes('metaobjectDefinitions')) {
         logger.warn('Metaobjects access denied - feature requires additional Shopify permissions', { context: 'ContentService' });
