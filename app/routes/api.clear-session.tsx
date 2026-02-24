@@ -3,9 +3,10 @@
  * Use this after updating scopes to force re-authentication
  */
 
-import { json, type ActionFunctionArgs } from "@remix-run/node";
+import { json, type ActionFunctionArgs, type LoaderFunctionArgs } from "@remix-run/node";
 import { db } from "../db.server";
 import { logger } from "~/utils/logger.server";
+import { authenticate } from "../shopify.server";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   if (request.method !== "POST") {
@@ -13,12 +14,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 
   try {
-    const formData = await request.formData();
-    const shop = formData.get("shop") as string;
-
-    if (!shop) {
-      return json({ error: "Shop parameter required" }, { status: 400 });
-    }
+    // Authenticate the request - only logged-in shop admins can clear sessions
+    const { session } = await authenticate.admin(request);
+    const shop = session.shop;
 
     // Delete all sessions for this shop
     const result = await db.session.deleteMany({
@@ -47,9 +45,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 };
 
-export const loader = async () => {
-  return json({
-    message: "Use POST to clear sessions. Include 'shop' parameter.",
-    example: "curl -X POST /api/clear-session -d 'shop=your-shop.myshopify.com'"
-  });
+export const loader = async ({ request }: LoaderFunctionArgs) => {
+  await authenticate.admin(request);
+  return json({ message: "Use POST to clear sessions." });
 };
