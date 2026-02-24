@@ -214,6 +214,16 @@ export const loader = createContentLoader({
             linkedMetafieldKey: opt.linkedMetafield?.key || null,
           })),
         });
+        // Fallback: update linkedMetafieldKey via raw SQL in case Prisma client is stale
+        for (const opt of product.options) {
+          if (opt.linkedMetafield?.key) {
+            await ctx.db.$executeRawUnsafe(
+              `UPDATE "ProductOption" SET "linkedMetafieldKey" = $1 WHERE "id" = $2`,
+              opt.linkedMetafield.key,
+              opt.id
+            );
+          }
+        }
       }
 
       // Sync metafields (idempotent upsert — safe under concurrent execution)
