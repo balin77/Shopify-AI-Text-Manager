@@ -674,7 +674,7 @@ async function syncProductsWithProgress(
 
       // Send progress update every 10 products or at the end
       if (synced % 10 === 0 || synced === total) {
-        const progress = Math.round(20 + (synced / total) * 80);
+        const progress = Math.round(20 + (synced / total) * 50);
         sendEvent({
           type: 'progress',
           phase: 'products',
@@ -686,6 +686,162 @@ async function syncProductsWithProgress(
     } catch (err: any) {
       if (err.name === "AbortError") throw err;
       logger.error(`[SYNC-STREAM] Failed to save product ${product.id}`, { error: err.message });
+    }
+  }
+
+  // ==========================================
+  // Bulk-fetch translations for all products
+  // ==========================================
+  if (synced > 0) {
+    try {
+      if (signal.aborted) {
+        throw new DOMException("Client disconnected", "AbortError");
+      }
+
+      sendEvent({
+        type: 'progress',
+        phase: 'products',
+        message: `Fetching product translations...`,
+        current: 70,
+        total: 100,
+        detailMessage: 'Loading locales...'
+      });
+
+      // Fetch shop locales
+      const localesResponse: Response = await admin.graphql(
+        `#graphql
+          query getShopLocales {
+            shopLocales { locale, name, primary, published }
+          }`
+      );
+      const localesData: any = await localesResponse.json();
+      const shopLocales: Array<{ locale: string; name?: string; primary: boolean; published: boolean }> =
+        localesData.data?.shopLocales || [];
+      const nonPrimaryLocales = shopLocales.filter((l) => !l.primary && l.published);
+
+      if (nonPrimaryLocales.length > 0) {
+        const productIds = allProducts.map((p: any) => p.id);
+        const BATCH_SIZE = 100;
+        const batches: string[][] = [];
+        for (let i = 0; i < productIds.length; i += BATCH_SIZE) {
+          batches.push(productIds.slice(i, i + BATCH_SIZE));
+        }
+
+        let localeIndex = 0;
+        for (const locale of nonPrimaryLocales) {
+          localeIndex++;
+          if (signal.aborted) {
+            throw new DOMException("Client disconnected", "AbortError");
+          }
+
+          const localeProgress = Math.round(70 + (localeIndex / nonPrimaryLocales.length) * 25);
+          sendEvent({
+            type: 'progress',
+            phase: 'products',
+            message: `Fetching product translations...`,
+            current: localeProgress,
+            total: 100,
+            detailMessage: `Fetching translations: ${locale.name || locale.locale} (${localeIndex}/${nonPrimaryLocales.length})`
+          });
+
+          const allTranslations: Array<{
+            resourceId: string;
+            key: string;
+            value: string;
+            locale: string;
+            digest: string | null;
+          }> = [];
+
+          for (const batch of batches) {
+            try {
+              const response: Response = await admin.graphql(
+                `#graphql
+                  query getBulkProductTranslations($resourceIds: [ID!]!, $locale: String!) {
+                    translatableResourcesByIds(first: ${BATCH_SIZE}, resourceIds: $resourceIds) {
+                      edges {
+                        node {
+                          resourceId
+                          translatableContent {
+                            key
+                            digest
+                          }
+                          translations(locale: $locale) {
+                            key
+                            value
+                            locale
+                          }
+                        }
+                      }
+                    }
+                  }`,
+                { variables: { resourceIds: batch, locale: locale.locale } }
+              );
+
+              const data: any = await response.json();
+
+              if (data.errors) {
+                logger.warn(`[SYNC-STREAM] GraphQL error fetching translations for locale ${locale.locale}:`, data.errors[0]?.message);
+                continue;
+              }
+
+              const resources = data.data?.translatableResourcesByIds?.edges || [];
+              for (const edge of resources) {
+                const node = edge.node;
+                const digestMap = new Map<string, string>();
+                for (const content of node.translatableContent || []) {
+                  if (content.digest) {
+                    digestMap.set(content.key, content.digest);
+                  }
+                }
+                for (const t of node.translations || []) {
+                  if (t.value) {
+                    allTranslations.push({
+                      resourceId: node.resourceId,
+                      key: t.key,
+                      value: t.value,
+                      locale: t.locale,
+                      digest: digestMap.get(t.key) || null,
+                    });
+                  }
+                }
+              }
+            } catch (batchErr: any) {
+              if (batchErr.name === "AbortError") throw batchErr;
+              logger.warn(`[SYNC-STREAM] Failed to fetch translation batch for locale ${locale.locale}:`, batchErr.message);
+            }
+          }
+
+          // Bulk save translations for this locale
+          if (allTranslations.length > 0) {
+            sendEvent({
+              type: 'progress',
+              phase: 'products',
+              message: `Fetching product translations...`,
+              current: localeProgress,
+              total: 100,
+              detailMessage: `Saving translations: ${locale.name || locale.locale} (${allTranslations.length})`
+            });
+
+            await db.contentTranslation.createMany({
+              data: allTranslations.map(t => ({
+                resourceId: t.resourceId,
+                resourceType: "Product",
+                key: t.key,
+                value: t.value,
+                locale: t.locale,
+                digest: t.digest,
+              })),
+              skipDuplicates: true,
+            });
+
+            logger.debug(`[SYNC-STREAM] Saved ${allTranslations.length} product translations for locale ${locale.locale}`);
+          }
+        }
+      }
+    } catch (translationErr: any) {
+      if (translationErr.name === "AbortError") throw translationErr;
+      logger.error(`[SYNC-STREAM] Failed to fetch product translations:`, translationErr.message);
+      // Non-fatal: products are synced, translations can be loaded on-demand
     }
   }
 
