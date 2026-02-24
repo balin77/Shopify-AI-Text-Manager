@@ -672,6 +672,7 @@ export const es: Translation = {
   seo: {
     title: "Puntuación SEO",
     issuesTitle: "Problemas encontrados",
+    noIssuesTitle: "Análisis",
     recommendationsTitle: "Recomendaciones",
     scoreDetailsTitle: "Cálculo de puntuación",
     points: "ptos.",

@@ -670,6 +670,7 @@ export const de = {
   seo: {
     title: "SEO-Score",
     issuesTitle: "Gefundene Probleme",
+    noIssuesTitle: "Analyse",
     recommendationsTitle: "Empfehlungen",
     scoreDetailsTitle: "Score-Berechnung",
     points: "Pkt.",

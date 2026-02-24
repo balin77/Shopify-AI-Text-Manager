@@ -229,7 +229,9 @@ export function SeoSidebar({
         {/* Issues Summary */}
         <BlockStack gap="200">
           <Text as="p" variant="headingSm" fontWeight="semibold">
-            {t.seo.issuesTitle}
+            {analysis.issues.some((issue) => issue.type === "warning" || issue.type === "error")
+              ? t.seo.issuesTitle
+              : t.seo.noIssuesTitle}
           </Text>
           {analysis.issues.map((issue, index) => (
             <InlineStack key={index} gap="200" align="start">
