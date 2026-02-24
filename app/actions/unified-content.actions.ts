@@ -635,13 +635,21 @@ Allowed formatting changes:
     try {
       const changedFields: Record<string, string> = {};
 
-      // Collect all field values
-      contentConfig.fieldDefinitions.forEach((field) => {
-        const value = getFormString(formData, field.key);
-        if (value) {
-          changedFields[field.key] = value;
+      // Collect field values - for metaobjects, extract GID-based keys from formData
+      if (contentConfig.resourceType === "Metaobject") {
+        for (const [key, value] of formData.entries()) {
+          if (key.startsWith("gid://shopify/Metaobject/") && String(value).trim()) {
+            changedFields[key] = String(value);
+          }
         }
-      });
+      } else {
+        contentConfig.fieldDefinitions.forEach((field) => {
+          const value = getFormString(formData, field.key);
+          if (value) {
+            changedFields[field.key] = value;
+          }
+        });
+      }
 
       if (Object.keys(changedFields).length === 0) {
         await db.task.update({
@@ -665,6 +673,34 @@ Allowed formatting changes:
 
       // Get translate instructions (from DB or default)
       const translateInstructionsAll = getInstructionWithDefault(aiInstructions, "translateInstructions");
+
+      // Metaobjects need custom translation flow: each entry is a separate Shopify resource
+      if (contentConfig.resourceType === "Metaobject") {
+        const targetLocales = targetLocalesStr ? safeJsonParse<string[]>(targetLocalesStr, []) : [];
+        const result = await translateMetaobjectEntries({
+          admin, session, db, itemId,
+          metaobjectFields: changedFields,
+          targetLocales,
+          translationService: translationServiceWithTask,
+          customInstructions: translateInstructionsAll || undefined,
+        });
+
+        await db.task.update({
+          where: { id: task.id },
+          data: {
+            status: result.failedLocales.length > 0 ? "completed_with_errors" : "completed",
+            progress: 100,
+            completedAt: new Date(),
+            result: JSON.stringify({
+              success: true,
+              locales: Object.keys(result.translations),
+              failedLocales: result.failedLocales,
+            }),
+          },
+        });
+
+        return json({ actionType: "translateAll", success: true, translations: result.translations, failedLocales: result.failedLocales, rejectedFields: {}, skippedFields: {} });
+      }
 
       const result = await shopifyContentService.translateAllContent({
         resourceId: itemId,
@@ -746,13 +782,21 @@ Allowed formatting changes:
     try {
       const changedFields: Record<string, string> = {};
 
-      // Collect all field values
-      contentConfig.fieldDefinitions.forEach((field) => {
-        const value = getFormString(formData, field.key);
-        if (value) {
-          changedFields[field.key] = value;
+      // Collect field values - for metaobjects, extract GID-based keys from formData
+      if (contentConfig.resourceType === "Metaobject") {
+        for (const [key, value] of formData.entries()) {
+          if (key.startsWith("gid://shopify/Metaobject/") && String(value).trim()) {
+            changedFields[key] = String(value);
+          }
         }
-      });
+      } else {
+        contentConfig.fieldDefinitions.forEach((field) => {
+          const value = getFormString(formData, field.key);
+          if (value) {
+            changedFields[field.key] = value;
+          }
+        });
+      }
 
       if (Object.keys(changedFields).length === 0) {
         await db.task.update({
@@ -776,6 +820,31 @@ Allowed formatting changes:
 
       // Get translate instructions (from DB or default)
       const translateInstructionsForLocale = getInstructionWithDefault(aiInstructions, "translateInstructions");
+
+      // Metaobjects need custom translation flow
+      if (contentConfig.resourceType === "Metaobject") {
+        const result = await translateMetaobjectEntries({
+          admin, session, db, itemId,
+          metaobjectFields: changedFields,
+          targetLocales: [targetLocale],
+          translationService: translationServiceWithTask,
+          customInstructions: translateInstructionsForLocale || undefined,
+        });
+
+        const translations = result.translations[targetLocale] || {};
+
+        await db.task.update({
+          where: { id: task.id },
+          data: {
+            status: result.failedLocales.length > 0 ? "completed_with_errors" : "completed",
+            progress: 100,
+            completedAt: new Date(),
+            result: JSON.stringify({ success: true, targetLocale, translations, failedLocales: result.failedLocales }),
+          },
+        });
+
+        return json({ actionType: "translateAllForLocale", success: true, translations, targetLocale, failedLocales: result.failedLocales, rejectedFields: {}, skippedFields: {} });
+      }
 
       // Translate to only ONE specific locale
       const result = await shopifyContentService.translateAllContent({
@@ -2698,4 +2767,147 @@ Image URL: ${image.url}`;
   }
 
   return json({ success: false, error: "Unknown action" }, { status: 400 });
+}
+
+// ============================================================================
+// METAOBJECT TRANSLATION HELPER
+// ============================================================================
+
+/**
+ * Translate metaobject entries and save to Shopify + DB.
+ * Each metaobject entry is a separate Shopify resource requiring its own digest.
+ * Uses short keys (entry_0, entry_1, ...) for the AI prompt, then maps back to GIDs.
+ */
+async function translateMetaobjectEntries(params: {
+  admin: AdminApiContext;
+  session: Session;
+  db: PrismaClient;
+  itemId: string; // metaobject type ID
+  metaobjectFields: Record<string, string>; // gid -> primary value
+  targetLocales: string[];
+  translationService: TranslationService;
+  customInstructions?: string;
+}): Promise<{ translations: Record<string, Record<string, string>>; failedLocales: string[] }> {
+  const { admin, session, db, itemId, metaobjectFields, targetLocales, translationService, customInstructions } = params;
+  const { TRANSLATE_CONTENT } = await import("../graphql/content.mutations");
+  const { GET_TRANSLATABLE_CONTENT } = await import("../graphql/content.queries");
+
+  // Build short-key mapping for cleaner AI prompts
+  const gids = Object.keys(metaobjectFields);
+  const gidToShort: Record<string, string> = {};
+  const shortToGid: Record<string, string> = {};
+  const shortFields: Record<string, string> = {};
+
+  gids.forEach((gid, i) => {
+    const short = `entry_${i}`;
+    gidToShort[gid] = short;
+    shortToGid[short] = gid;
+    shortFields[short] = metaobjectFields[gid];
+  });
+
+  // AI translation (all entries × all locales in one request)
+  const aiResult = await translationService.translateProduct(
+    shortFields,
+    targetLocales,
+    "metaobject",
+    customInstructions
+  );
+
+  // Map AI results back to GID keys
+  const allTranslations: Record<string, Record<string, string>> = {};
+  const failedLocales: string[] = [];
+
+  for (const locale of targetLocales) {
+    const localeResult = aiResult[locale];
+    if (!localeResult || Object.keys(localeResult).length === 0) {
+      failedLocales.push(locale);
+      continue;
+    }
+    allTranslations[locale] = {};
+    for (const [shortKey, value] of Object.entries(localeResult)) {
+      const gid = shortToGid[shortKey];
+      if (gid && value) {
+        allTranslations[locale][gid] = String(value);
+      }
+    }
+  }
+
+  // Save translations to Shopify + DB for each metaobject × locale
+  for (const [locale, fieldMap] of Object.entries(allTranslations)) {
+    for (const [gid, translatedValue] of Object.entries(fieldMap)) {
+      try {
+        // Find label field key for this metaobject
+        const moResponse = await admin.graphql(
+          `#graphql
+            query getMetaobject($id: ID!) {
+              metaobject(id: $id) { fields { key type } }
+            }`,
+          { variables: { id: gid } }
+        );
+        const moData = await moResponse.json();
+        const fields = moData.data?.metaobject?.fields || [];
+        const labelField = fields.find((f: any) =>
+          f.key === "display_name" || f.key === "name" || f.key === "label"
+        );
+        if (!labelField) continue;
+
+        // Fetch digest
+        const digestResponse = await admin.graphql(GET_TRANSLATABLE_CONTENT, {
+          variables: { resourceId: gid },
+        });
+        const digestData = await digestResponse.json();
+        const tc = digestData.data?.translatableResource?.translatableContent || [];
+        const digestEntry = tc.find((c: any) => c.key === labelField.key);
+        if (!digestEntry?.digest) continue;
+
+        // Register translation
+        await admin.graphql(TRANSLATE_CONTENT, {
+          variables: {
+            resourceId: gid,
+            translations: [{
+              key: labelField.key,
+              value: translatedValue,
+              locale,
+              translatableContentDigest: digestEntry.digest,
+            }],
+          },
+        });
+
+        // Upsert DB
+        await db.metaobjectTranslation.upsert({
+          where: {
+            shop_metaobjectId_key_locale: {
+              shop: session.shop,
+              metaobjectId: gid,
+              key: labelField.key,
+              locale,
+            },
+          },
+          create: {
+            shop: session.shop,
+            metaobjectId: gid,
+            type: itemId,
+            key: labelField.key,
+            value: translatedValue,
+            locale,
+            outdated: false,
+          },
+          update: {
+            value: translatedValue,
+            outdated: false,
+            updatedAt: new Date(),
+          },
+        });
+      } catch (err: any) {
+        logger.error("[translateMetaobjectEntries] Error saving translation", {
+          context: "Metaobjects",
+          gid,
+          locale,
+          error: err.message,
+        });
+      }
+    }
+  }
+
+  return { translations: allTranslations, failedLocales };
 }
