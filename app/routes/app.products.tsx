@@ -54,12 +54,14 @@ export const loader = createContentLoader({
     const plan = (settings?.subscriptionPlan || "free") as "free" | "basic" | "pro" | "max";
     const planLimits = getPlanLimits(plan);
 
-    // Paginated fetch from Shopify
+    // Paginated fetch from Shopify (capped to plan limit)
+    const maxToFetch = planLimits.maxProducts === Infinity ? 10000 : planLimits.maxProducts;
     const shopifyProducts: any[] = [];
     let hasNextPage = true;
     let cursor: string | null = null;
 
-    while (hasNextPage) {
+    while (hasNextPage && shopifyProducts.length < maxToFetch) {
+      const batchSize = Math.min(250, maxToFetch - shopifyProducts.length);
       const shopifyResponse = await ctx.admin.graphql(
         `#graphql
           query getProductIds($first: Int!, $after: String) {
@@ -116,7 +118,7 @@ export const loader = createContentLoader({
               }
             }
           }`,
-        { variables: { first: 250, after: cursor } },
+        { variables: { first: batchSize, after: cursor } },
       );
       const shopifyData: any = await shopifyResponse.json();
 
@@ -136,6 +138,10 @@ export const loader = createContentLoader({
       hasNextPage = page?.pageInfo?.hasNextPage ?? false;
       cursor = page?.pageInfo?.endCursor ?? null;
     }
+
+    // Track whether we fetched ALL products from Shopify (loop ended naturally)
+    // vs. stopped early due to plan cap
+    const fetchedAllFromShopify = !hasNextPage;
 
     const shopifyProductIds = new Set(shopifyProducts.map((p: any) => p.id));
 
@@ -247,18 +253,22 @@ export const loader = createContentLoader({
       await upsertProductMetafields(ctx.db, product.id, metafields);
     }
 
-    // Remove deleted products
-    const removedIds = [...localProductIds].filter((id) => !shopifyProductIds.has(id));
-    if (removedIds.length > 0) {
-      logger.info(`[PRODUCTS-LOADER] Removing ${removedIds.length} deleted product(s) from DB`);
-      await ctx.db.productImage.deleteMany({ where: { productId: { in: removedIds } } });
-      await ctx.db.product.deleteMany({ where: { shop: ctx.session.shop, id: { in: removedIds } } });
-      await ctx.db.contentTranslation.deleteMany({
-        where: { resourceType: "Product", resourceId: { in: removedIds } },
-      });
+    // Remove deleted products — only when we fetched ALL from Shopify.
+    // When the fetch was capped by plan limits, we can't distinguish
+    // "deleted from Shopify" vs "not fetched due to plan cap".
+    if (fetchedAllFromShopify) {
+      const removedIds = [...localProductIds].filter((id) => !shopifyProductIds.has(id));
+      if (removedIds.length > 0) {
+        logger.info(`[PRODUCTS-LOADER] Removing ${removedIds.length} deleted product(s) from DB`);
+        await ctx.db.productImage.deleteMany({ where: { productId: { in: removedIds } } });
+        await ctx.db.product.deleteMany({ where: { shop: ctx.session.shop, id: { in: removedIds } } });
+        await ctx.db.contentTranslation.deleteMany({
+          where: { resourceType: "Product", resourceId: { in: removedIds } },
+        });
+      }
     }
 
-    // Fetch products from DATABASE
+    // Fetch products from DATABASE (capped to plan limit)
     const dbProducts = await ctx.db.product.findMany({
       where: { shop: ctx.session.shop },
       include: {
@@ -269,6 +279,7 @@ export const loader = createContentLoader({
         metafields: true,
       },
       orderBy: { title: "asc" },
+      ...(planLimits.maxProducts !== Infinity ? { take: planLimits.maxProducts } : {}),
     });
 
     // Load sub-resource translations (options, option values, metafields) from DB

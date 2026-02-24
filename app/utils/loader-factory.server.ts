@@ -136,6 +136,10 @@ export async function incrementalSync(
     resourceType: string;
     syncFn: (id: string) => Promise<void>;
     logPrefix: string;
+    /** When set, the Shopify fetch was capped at this limit.
+     *  Deletion of "removed" items is skipped because we can't
+     *  distinguish "deleted from Shopify" vs "not fetched due to cap". */
+    maxItems?: number;
   },
 ) {
   const local = await options.dbModel.findMany({
@@ -152,15 +156,20 @@ export async function incrementalSync(
   }
 
   // Remove deleted items (in DB but not in Shopify)
-  const removed = [...localIds].filter((id) => !options.shopifyIds.has(id));
-  if (removed.length > 0) {
-    logger.info(`[${options.logPrefix}-LOADER] Removing ${removed.length} deleted item(s) from DB`);
-    await options.dbModel.deleteMany({
-      where: { shop: ctx.session.shop, id: { in: removed } },
-    });
-    await ctx.db.contentTranslation.deleteMany({
-      where: { resourceType: options.resourceType, resourceId: { in: removed } },
-    });
+  // Skip when the Shopify fetch was capped — we can't tell if items
+  // are truly deleted or just beyond the plan limit.
+  const fetchWasCapped = options.maxItems != null && options.shopifyIds.size >= options.maxItems;
+  if (!fetchWasCapped) {
+    const removed = [...localIds].filter((id) => !options.shopifyIds.has(id));
+    if (removed.length > 0) {
+      logger.info(`[${options.logPrefix}-LOADER] Removing ${removed.length} deleted item(s) from DB`);
+      await options.dbModel.deleteMany({
+        where: { shop: ctx.session.shop, id: { in: removed } },
+      });
+      await ctx.db.contentTranslation.deleteMany({
+        where: { resourceType: options.resourceType, resourceId: { in: removed } },
+      });
+    }
   }
 }
 

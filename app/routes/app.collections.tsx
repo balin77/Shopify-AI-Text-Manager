@@ -32,35 +32,47 @@ export const loader = createContentLoader({
 
   async loadData(ctx) {
     const { ContentSyncService } = await import("../services/content-sync.service");
+    const { getPlanLimits } = await import("../utils/planUtils");
     const syncService = new ContentSyncService(ctx.admin, ctx.session.shop);
 
-    // Fetch collection IDs from Shopify
+    // Load plan limits for collection cap
+    const settings = await ctx.db.aISettings.findUnique({
+      where: { shop: ctx.session.shop },
+    });
+    const plan = (settings?.subscriptionPlan || "free") as "free" | "basic" | "pro" | "max";
+    const planLimits = getPlanLimits(plan);
+    const maxCollections = planLimits.maxCollections === Infinity ? 250 : Math.min(250, planLimits.maxCollections);
+
+    // Fetch collection IDs from Shopify (capped to plan limit)
     const response = await ctx.admin.graphql(
       `#graphql
-        query getCollectionIds {
-          collections(first: 250) {
+        query getCollectionIds($first: Int!) {
+          collections(first: $first) {
             edges { node { id } }
           }
         }`,
+      { variables: { first: maxCollections } },
     );
     const data = await response.json();
     const shopifyIds = new Set<string>(
       (data.data?.collections?.edges || []).map((e: any) => e.node.id),
     );
 
-    // Sync missing + remove deleted
+    // Sync missing + remove deleted (with plan cap awareness)
     await incrementalSync(ctx, {
       shopifyIds,
       dbModel: ctx.db.collection,
       resourceType: "Collection",
       logPrefix: "COLLECTIONS",
       syncFn: (id) => syncService.syncCollection(id),
+      maxItems: planLimits.maxCollections === Infinity ? undefined : planLimits.maxCollections,
     });
 
-    // Load from database
+    // Load from database (capped to plan limit)
     const collections = await ctx.db.collection.findMany({
       where: { shop: ctx.session.shop },
       orderBy: { title: "asc" },
+      ...(planLimits.maxCollections !== Infinity ? { take: planLimits.maxCollections } : {}),
     });
 
     return {
