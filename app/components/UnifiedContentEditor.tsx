@@ -623,6 +623,19 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                       </div>
                     )}
 
+                    {/* Empty state for metaobject types with 0 entries */}
+                    {!isFieldsLoading && config.dynamicFields && fieldDefinitions.length === 0 && selectedItem && (
+                      <div style={{
+                        padding: "2rem",
+                        textAlign: "center",
+                        color: "var(--p-color-text-subdued)",
+                      }}>
+                        <Text as="p" variant="bodyMd" tone="subdued">
+                          {t.content?.metaobjectsNoEntries || "This metaobject type has no entries to display."}
+                        </Text>
+                      </div>
+                    )}
+
                     {/* Dynamic Fields */}
                     {!isFieldsLoading && (() => {
                       // Template primary locale: read-only when themeFilesUpsert is not enabled

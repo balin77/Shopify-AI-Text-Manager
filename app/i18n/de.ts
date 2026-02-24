@@ -139,6 +139,7 @@ export const de = {
     },
     metaobjects: "Metaobjekte",
     metaobjectsDescription: "Verwalten und übersetzen Sie benutzerdefinierte Metaobjekte",
+    metaobjectsNoEntries: "Dieser Metaobjekt-Typ hat keine Einträge zum Anzeigen.",
     pages: "Seiten",
     pagesDescription: "Verwalten Sie Ihre Shop-Seiten (Impressum, AGB, etc.)",
     policies: "Richtlinien",

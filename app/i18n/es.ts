@@ -141,6 +141,7 @@ export const es: Translation = {
     },
     metaobjects: "Metaobjetos",
     metaobjectsDescription: "Gestiona y traduce metaobjetos personalizados",
+    metaobjectsNoEntries: "Este tipo de metaobjeto no tiene entradas para mostrar.",
     pages: "Páginas",
     pagesDescription: "Gestiona las páginas de tu tienda (Aviso legal, Términos, etc.)",
     policies: "Políticas",
