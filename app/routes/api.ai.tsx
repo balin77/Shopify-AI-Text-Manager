@@ -652,6 +652,129 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                     });
                   }
                 }
+                // Save to Shopify for metaobjects
+                // fieldType is the metaobject GID (e.g., gid://shopify/Metaobject/123)
+                else if (contentType === 'metaobjects' && fieldType) {
+                  const metaobjectGid = fieldType;
+                  let batchMetaAccepted = false;
+                  let metaLabelKey = '';
+
+                  try {
+                    // Populate digest cache for this metaobject
+                    await getCachedDigest(metaobjectGid, 'display_name');
+                    const metaDigests = digestCache.get(metaobjectGid);
+
+                    // Find the label field key (display_name, name, or label)
+                    metaLabelKey = (metaDigests
+                      ? ['display_name', 'name', 'label'].find(k => metaDigests.has(k))
+                      : null) || '';
+
+                    if (!metaLabelKey) {
+                      logger.warn("[API-AI] Batch: No label field digest found for metaobject", {
+                        context: "AI",
+                        metaobjectGid,
+                        locale,
+                        availableKeys: metaDigests ? Array.from(metaDigests.keys()) : []
+                      });
+                      if (!rejectedFields[locale]) rejectedFields[locale] = [];
+                      rejectedFields[locale].push(fieldType);
+                    } else {
+                      const digest = metaDigests!.get(metaLabelKey)!;
+
+                      const translationInput = [{
+                        key: metaLabelKey,
+                        value: translatedValue,
+                        locale: locale,
+                        translatableContentDigest: digest
+                      }];
+
+                      const metaResponse = await admin.graphql(TRANSLATE_CONTENT, {
+                        variables: {
+                          resourceId: metaobjectGid,
+                          translations: translationInput
+                        }
+                      });
+
+                      const metaData = await metaResponse.json() as ShopifyGraphQLResponse;
+
+                      if (metaData.errors && metaData.errors.length > 0) {
+                        logger.error("[API-AI] Batch: GraphQL error saving metaobject translation", {
+                          context: "AI",
+                          errors: metaData.errors,
+                          locale,
+                          metaobjectGid,
+                          metaLabelKey
+                        });
+                        if (!rejectedFields[locale]) rejectedFields[locale] = [];
+                        rejectedFields[locale].push(fieldType);
+                      } else if ((metaData.data?.translationsRegister?.userErrors?.length ?? 0) > 0) {
+                        logger.error("[API-AI] Batch: Shopify rejected metaobject translation", {
+                          context: "AI",
+                          errors: metaData.data?.translationsRegister?.userErrors,
+                          locale,
+                          metaobjectGid,
+                          metaLabelKey
+                        });
+                        if (!rejectedFields[locale]) rejectedFields[locale] = [];
+                        rejectedFields[locale].push(fieldType);
+                      } else {
+                        batchMetaAccepted = true;
+                      }
+                    }
+                  } catch (shopifyError: unknown) {
+                    logger.error("[API-AI] Batch: Error saving metaobject translation", {
+                      context: "AI",
+                      error: errorMessage(shopifyError),
+                      locale,
+                      metaobjectGid
+                    });
+                    if (!rejectedFields[locale]) rejectedFields[locale] = [];
+                    rejectedFields[locale].push(fieldType);
+                  }
+
+                  if (batchMetaAccepted && metaLabelKey) {
+                    try {
+                      const metaType = itemId.replace('metaobject_type_', '');
+                      await db.metaobjectTranslation.upsert({
+                        where: {
+                          shop_metaobjectId_key_locale: {
+                            shop: session.shop,
+                            metaobjectId: metaobjectGid,
+                            key: metaLabelKey,
+                            locale
+                          }
+                        },
+                        create: {
+                          shop: session.shop,
+                          metaobjectId: metaobjectGid,
+                          type: metaType,
+                          key: metaLabelKey,
+                          value: translatedValue,
+                          locale,
+                          outdated: false
+                        },
+                        update: {
+                          value: translatedValue,
+                          outdated: false,
+                          updatedAt: new Date()
+                        }
+                      });
+                      logger.debug("[API-AI] Batch: Saved metaobject translation to Shopify + DB", {
+                        context: "AI",
+                        metaobjectGid,
+                        metaLabelKey,
+                        locale
+                      });
+                    } catch (dbError: unknown) {
+                      logger.error("[API-AI] Batch: Error saving metaobject translation to DB", {
+                        context: "AI",
+                        error: errorMessage(dbError),
+                        metaobjectGid,
+                        locale
+                      });
+                    }
+                  }
+                }
 
                 // Update progress
                 const progress = Math.round(10 + ((i + 1) / targetLocales.length) * 80);
@@ -926,6 +1049,134 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                     locale,
                     fieldType
                   });
+                }
+              }
+              // For metaobjects: fieldType is the metaobject GID, use it as resourceId
+              else if (contentType === 'metaobjects' && fieldType) {
+                const metaobjectGid = fieldType;
+                let seqMetaAccepted = false;
+                let metaLabelKey = '';
+
+                try {
+                  // Populate digest cache for this metaobject
+                  await getCachedDigest(metaobjectGid, 'display_name');
+                  const metaDigests = digestCache.get(metaobjectGid);
+
+                  // Find the label field key (display_name, name, or label)
+                  metaLabelKey = (metaDigests
+                    ? ['display_name', 'name', 'label'].find(k => metaDigests.has(k))
+                    : null) || '';
+
+                  if (!metaLabelKey) {
+                    logger.warn("[API-AI] No label field digest found for metaobject", {
+                      context: "AI",
+                      metaobjectGid,
+                      locale,
+                      availableKeys: metaDigests ? Array.from(metaDigests.keys()) : []
+                    });
+                    if (!rejectedFields[locale]) rejectedFields[locale] = [];
+                    rejectedFields[locale].push(fieldType);
+                  } else {
+                    const digest = metaDigests!.get(metaLabelKey)!;
+
+                    const translationInput = [{
+                      key: metaLabelKey,
+                      value: translatedValue,
+                      locale: locale,
+                      translatableContentDigest: digest
+                    }];
+
+                    const metaResponse = await admin.graphql(TRANSLATE_CONTENT, {
+                      variables: {
+                        resourceId: metaobjectGid,
+                        translations: translationInput
+                      }
+                    });
+
+                    const metaData = await metaResponse.json() as ShopifyGraphQLResponse;
+
+                    if (metaData.errors && metaData.errors.length > 0) {
+                      logger.error("[API-AI] GraphQL error saving metaobject translation", {
+                        context: "AI",
+                        errors: metaData.errors,
+                        locale,
+                        metaobjectGid,
+                        metaLabelKey
+                      });
+                      if (!rejectedFields[locale]) rejectedFields[locale] = [];
+                      rejectedFields[locale].push(fieldType);
+                    } else if ((metaData.data?.translationsRegister?.userErrors?.length ?? 0) > 0) {
+                      logger.error("[API-AI] Shopify rejected metaobject translation", {
+                        context: "AI",
+                        errors: metaData.data?.translationsRegister?.userErrors,
+                        locale,
+                        metaobjectGid,
+                        metaLabelKey
+                      });
+                      if (!rejectedFields[locale]) rejectedFields[locale] = [];
+                      rejectedFields[locale].push(fieldType);
+                    } else {
+                      seqMetaAccepted = true;
+                      logger.info("[API-AI] SUCCESS - Metaobject translation saved to Shopify", {
+                        context: "AI",
+                        metaobjectGid,
+                        metaLabelKey,
+                        locale
+                      });
+                    }
+                  }
+                } catch (shopifyError: unknown) {
+                  logger.error("[API-AI] Error saving metaobject translation", {
+                    context: "AI",
+                    error: errorMessage(shopifyError),
+                    locale,
+                    metaobjectGid
+                  });
+                  if (!rejectedFields[locale]) rejectedFields[locale] = [];
+                  rejectedFields[locale].push(fieldType);
+                }
+
+                if (seqMetaAccepted && metaLabelKey) {
+                  try {
+                    const metaType = itemId.replace('metaobject_type_', '');
+                    await db.metaobjectTranslation.upsert({
+                      where: {
+                        shop_metaobjectId_key_locale: {
+                          shop: session.shop,
+                          metaobjectId: metaobjectGid,
+                          key: metaLabelKey,
+                          locale
+                        }
+                      },
+                      create: {
+                        shop: session.shop,
+                        metaobjectId: metaobjectGid,
+                        type: metaType,
+                        key: metaLabelKey,
+                        value: translatedValue,
+                        locale,
+                        outdated: false
+                      },
+                      update: {
+                        value: translatedValue,
+                        outdated: false,
+                        updatedAt: new Date()
+                      }
+                    });
+                    logger.debug("[API-AI] Saved metaobject translation to Shopify + DB", {
+                      context: "AI",
+                      metaobjectGid,
+                      metaLabelKey,
+                      locale
+                    });
+                  } catch (dbError: unknown) {
+                    logger.error("[API-AI] Error saving metaobject translation to DB", {
+                      context: "AI",
+                      error: errorMessage(dbError),
+                      metaobjectGid,
+                      locale
+                    });
+                  }
                 }
               }
 
