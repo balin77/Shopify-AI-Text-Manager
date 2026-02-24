@@ -82,9 +82,11 @@ export function createContentLoader<T extends { id: string }>(
       }
 
       // Attach translations to items
+      // NOTE: If item already has translations (e.g., metaobjects loaded from Shopify GraphQL),
+      // preserve them. Otherwise, use DB translations.
       const itemsWithTranslations = items.map((item) => ({
         ...item,
-        translations: translationsByResource[item.id] || [],
+        translations: (item as any).translations || translationsByResource[item.id] || [],
       }));
 
       // Optional: extra data
