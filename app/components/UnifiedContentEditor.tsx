@@ -962,10 +962,11 @@ function FieldRenderer(props: FieldRendererProps & { state?: any; handlers?: any
   const helpKey = helpKeyMap[field.key];
 
   // Determine if required indicator should be shown
-  // Templates: All fields are required in primary locale (Shopify removes fields if empty)
+  // Templates & Metaobjects: All fields are required in primary locale (Shopify removes fields if empty)
   // Products: Only title field is required in primary locale
   const requiredIndicator = isPrimaryLocale && !readOnly && (
     contentType === 'templates' || // All template fields
+    contentType === 'metaobjects' || // All metaobject entries
     (contentType === 'products' && field.key === 'title') // Only product title
   );
 

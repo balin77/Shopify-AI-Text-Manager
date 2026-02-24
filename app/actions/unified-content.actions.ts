@@ -1005,29 +1005,152 @@ Allowed formatting changes:
         return json({ ...productBody, actionType: "updateContent" }, { status: productResult.status });
       }
 
-      // Special handling for Metaobjects - use dedicated API route
+      // Special handling for Metaobjects
+      // Each field key is a metaobject ID (gid://shopify/Metaobject/...).
+      // We iterate over all changed fields and update each metaobject individually.
       if (contentConfig.resourceType === "Metaobject") {
-        // Metaobjects are handled via api.metaobjects.$.tsx route
-        // Since each "item" is actually a metaobject TYPE, we need to handle individual metaobject updates
-        // The fieldKey is the metaobject ID itself
-        const metaobjectId = getFormString(formData, "metaobjectId");
-        const updatedValue = getFormString(formData, "updatedValue");
+        const { METAOBJECT_UPDATE, TRANSLATE_CONTENT } = await import("../graphql/content.mutations");
 
-        if (!metaobjectId) {
-          return json({ success: false, error: "Missing metaobjectId" }, { status: 400 });
+        // Collect changed metaobject fields from formData
+        const metaobjectUpdates: Array<{ id: string; value: string }> = [];
+        for (const [key, value] of formData.entries()) {
+          if (key.startsWith("gid://shopify/Metaobject/")) {
+            metaobjectUpdates.push({ id: key, value: String(value) });
+          }
         }
 
-        // Delegate to api.metaobjects route
-        // This is handled by the metaobjects page itself using the API route
-        logger.warn('[UnifiedContent] Metaobject updates should use api.metaobjects.$.tsx route', {
-          context: 'UnifiedContent',
-          metaobjectId
+        if (metaobjectUpdates.length === 0) {
+          return json({ success: true, actionType: "updateContent" });
+        }
+
+        // Block empty primary-locale fields (same protection as templates)
+        if (locale === primaryLocale) {
+          const emptyEntries = metaobjectUpdates.filter(u => u.value.trim() === "");
+          if (emptyEntries.length > 0) {
+            logger.warn("[UnifiedContent] Blocked metaobject save — empty primary-locale fields", {
+              context: "Metaobjects",
+              locale,
+              emptyIds: emptyEntries.map(e => e.id),
+            });
+            return json({
+              success: false,
+              errorKey: "emptyPrimaryFieldsError",
+            }, { status: 400 });
+          }
+        }
+
+        const errors: string[] = [];
+
+        for (const update of metaobjectUpdates) {
+          try {
+            // Query metaobject to find the label field key
+            const metaobjectResponse = await admin.graphql(
+              `#graphql
+                query getMetaobject($id: ID!) {
+                  metaobject(id: $id) {
+                    id
+                    fields { key type }
+                  }
+                }`,
+              { variables: { id: update.id } }
+            );
+            const metaobjectData = await metaobjectResponse.json();
+            const fields = metaobjectData.data?.metaobject?.fields || [];
+            const labelField = fields.find((f: any) =>
+              f.key === 'display_name' || f.key === 'name' || f.key === 'label'
+            );
+
+            if (!labelField) {
+              errors.push(`No label field found for ${update.id}`);
+              continue;
+            }
+
+            if (locale === primaryLocale) {
+              // Update metaobject field directly
+              const updateResponse = await admin.graphql(METAOBJECT_UPDATE, {
+                variables: {
+                  id: update.id,
+                  metaobject: {
+                    fields: [{ key: labelField.key, value: update.value }]
+                  }
+                }
+              });
+              const updateData = await updateResponse.json();
+              if (updateData.data?.metaobjectUpdate?.userErrors?.length > 0) {
+                errors.push(updateData.data.metaobjectUpdate.userErrors[0].message);
+              } else {
+                // Update DB
+                await db.metaobject.update({
+                  where: { shop_id: { shop: session.shop, id: update.id } },
+                  data: { displayName: update.value, lastSyncedAt: new Date() }
+                });
+              }
+            } else {
+              // Register translation
+              const translationResponse = await admin.graphql(TRANSLATE_CONTENT, {
+                variables: {
+                  resourceId: update.id,
+                  translations: [{
+                    key: labelField.key,
+                    value: update.value,
+                    locale,
+                    translatableContentDigest: ""
+                  }]
+                }
+              });
+              const translationData = await translationResponse.json();
+              if (translationData.data?.translationsRegister?.userErrors?.length > 0) {
+                errors.push(translationData.data.translationsRegister.userErrors[0].message);
+              } else {
+                // Update DB translation
+                const typeId = itemId; // itemId is the metaobject type ID
+                await db.metaobjectTranslation.upsert({
+                  where: {
+                    shop_metaobjectId_key_locale: {
+                      shop: session.shop,
+                      metaobjectId: update.id,
+                      key: labelField.key,
+                      locale
+                    }
+                  },
+                  create: {
+                    shop: session.shop,
+                    metaobjectId: update.id,
+                    type: typeId,
+                    key: labelField.key,
+                    value: update.value,
+                    locale,
+                    outdated: false
+                  },
+                  update: {
+                    value: update.value,
+                    outdated: false,
+                    updatedAt: new Date()
+                  }
+                });
+              }
+            }
+          } catch (err: any) {
+            errors.push(`${update.id}: ${err.message}`);
+          }
+        }
+
+        if (errors.length > 0) {
+          logger.error("[UnifiedContent] Metaobject update errors", { context: "Metaobjects", errors });
+          return json({
+            success: false,
+            error: `Some updates failed: ${errors.join("; ")}`,
+            actionType: "updateContent"
+          }, { status: 500 });
+        }
+
+        logger.info("[UnifiedContent] Metaobjects updated successfully", {
+          context: "Metaobjects",
+          count: metaobjectUpdates.length,
+          locale
         });
 
-        return json({
-          success: false,
-          error: "Metaobject updates must use the dedicated API route"
-        }, { status: 400 });
+        return json({ success: true, actionType: "updateContent" });
       }
 
       // For other content types (Collections, Pages, Blogs, Policies), use unified service

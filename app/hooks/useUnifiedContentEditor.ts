@@ -1802,6 +1802,17 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           return restored;
         });
       }
+      if (config.contentType === 'metaobjects' && originalLoadedValuesRef.current) {
+        setEditableValues(prev => {
+          const restored = { ...prev };
+          for (const [key, value] of Object.entries(restored)) {
+            if (value.trim() === "" && originalLoadedValuesRef.current[key]) {
+              restored[key] = originalLoadedValuesRef.current[key];
+            }
+          }
+          return restored;
+        });
+      }
     }
   }, [fetcher.data, showInfoBox, t, safeSubmit, submitAIAction, effectiveFieldDefinitions, currentLanguage, primaryLocale]);
 
