@@ -211,7 +211,7 @@ export const loader = createContentLoader({
             values: opt.optionValues
               ? JSON.stringify(opt.optionValues.map((v: any) => ({ id: v.id, name: v.name, linked: !!v.linkedMetafieldValue })))
               : JSON.stringify(opt.values),
-            linkedMetafieldKey: opt.linkedMetafield?.key || null,
+            linkedMetafieldKey: opt.linkedMetafield ? `${opt.linkedMetafield.namespace}--${opt.linkedMetafield.key}` : null,
           }));
           if (product === shopifyProducts[0]) {
             logger.info(`[PRODUCTS-LOADER] createMany data sample: linkedMetafieldKey=${createData[0]?.linkedMetafieldKey}, valuesFormat=${createData[0]?.values?.substring(0, 60)}`);

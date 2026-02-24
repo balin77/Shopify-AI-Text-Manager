@@ -294,7 +294,7 @@ export class ProductSyncService {
               values: opt.optionValues
                 ? JSON.stringify(opt.optionValues.map((v: any) => ({ id: v.id, name: v.name, linked: !!v.linkedMetafieldValue, linkedValue: v.linkedMetafieldValue || undefined })))
                 : JSON.stringify(opt.values),
-              linkedMetafieldKey: opt.linkedMetafield?.key || null,
+              linkedMetafieldKey: opt.linkedMetafield ? `${opt.linkedMetafield.namespace}--${opt.linkedMetafield.key}` : null,
             }));
             try {
               await tx.productOption.createMany({ data: optCreateData });
@@ -1527,7 +1527,7 @@ export class ProductSyncService {
               name: opt.name,
               position: opt.position,
               values: JSON.stringify(opt.optionValues.map(v => ({ id: v.id, name: v.name, linked: !!v.linkedMetafieldValue, linkedValue: v.linkedMetafieldValue || undefined }))),
-              linkedMetafieldKey: opt.linkedMetafield?.key || null,
+              linkedMetafieldKey: opt.linkedMetafield ? `${opt.linkedMetafield.namespace}--${opt.linkedMetafield.key}` : null,
             })),
           });
         } catch (optErr: any) {

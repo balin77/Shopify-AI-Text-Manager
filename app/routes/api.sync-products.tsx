@@ -272,7 +272,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                   values: opt.optionValues
                     ? JSON.stringify(opt.optionValues.map((v: any) => ({ id: v.id, name: v.name, linked: !!v.linkedMetafieldValue, linkedValue: v.linkedMetafieldValue || undefined })))
                     : JSON.stringify(opt.values),
-                  linkedMetafieldKey: opt.linkedMetafield?.key || null,
+                  linkedMetafieldKey: opt.linkedMetafield ? `${opt.linkedMetafield.namespace}--${opt.linkedMetafield.key}` : null,
                 })),
               });
             } catch (optErr: any) {
