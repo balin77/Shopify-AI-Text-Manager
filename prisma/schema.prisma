@@ -242,6 +242,7 @@ model ProductOption {
   name     String
   position Int
   values   String @db.Text // JSON array
+  linkedMetafieldKey String? // Metaobject type key when option is linked (e.g. "color")
 
   @@index([productId])
 }

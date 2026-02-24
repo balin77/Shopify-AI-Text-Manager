@@ -1274,6 +1274,13 @@ export class BackgroundSyncService {
                 logger.debug(`[BackgroundSync-Themes] ⚠️  NO TRANSLATIONS found! Either they don't exist in Shopify or the API call failed`);
               }
 
+              // Report saving progress
+              if (onProgress) {
+                const baseProgress = Math.round((resourceTypeIndex - 1) / totalResourceTypes * 100);
+                const resourceProgress = Math.round((resourceIndex / resources.length) * (100 / totalResourceTypes));
+                onProgress(baseProgress + resourceProgress, 100, `Saving translations: ${groupName}`);
+              }
+
               // Track this combination for cleanup
               const combinationKey = `${resource.resourceId}::${groupId}`;
               syncedCombinations.add(combinationKey);
@@ -1379,6 +1386,9 @@ export class BackgroundSyncService {
       }
 
       // AGGRESSIVE CLEANUP: Delete theme content that no longer exists in Shopify
+      if (onProgress) {
+        onProgress(95, 100, `Cleaning up obsolete themes...`);
+      }
       if (syncedCombinations.size > 0) {
         // Get all existing theme content for this shop
         const existingThemeContent = await db.themeContent.findMany({
