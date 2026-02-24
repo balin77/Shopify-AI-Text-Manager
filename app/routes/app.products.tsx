@@ -195,6 +195,12 @@ export const loader = createContentLoader({
 
       // Sync options (always update to keep optionValues GIDs fresh)
       if (product.options && product.options.length > 0) {
+        // DEBUG: Log what Shopify API returns for the first product's options
+        if (product === shopifyProducts[0]) {
+          for (const opt of product.options) {
+            logger.info(`[PRODUCTS-LOADER] DEBUG option "${opt.name}": linkedMetafield=${JSON.stringify(opt.linkedMetafield)}, optionValues count=${opt.optionValues?.length ?? 'undefined'}, values=${JSON.stringify(opt.values)}`);
+          }
+        }
         await ctx.db.productOption.deleteMany({ where: { productId: product.id } });
         await ctx.db.productOption.createMany({
           data: product.options.map((opt: any) => ({
@@ -202,7 +208,9 @@ export const loader = createContentLoader({
             productId: product.id,
             name: opt.name,
             position: opt.position,
-            values: JSON.stringify(opt.optionValues?.map((v: any) => ({ id: v.id, name: v.name, linked: !!v.linkedMetafieldValue })) || []),
+            values: opt.optionValues
+              ? JSON.stringify(opt.optionValues.map((v: any) => ({ id: v.id, name: v.name, linked: !!v.linkedMetafieldValue })))
+              : JSON.stringify(opt.values),
             linkedMetafieldKey: opt.linkedMetafield?.key || null,
           })),
         });
