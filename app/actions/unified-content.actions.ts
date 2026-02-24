@@ -1005,6 +1005,31 @@ Allowed formatting changes:
         return json({ ...productBody, actionType: "updateContent" }, { status: productResult.status });
       }
 
+      // Special handling for Metaobjects - use dedicated API route
+      if (contentConfig.resourceType === "Metaobject") {
+        // Metaobjects are handled via api.metaobjects.$.tsx route
+        // Since each "item" is actually a metaobject TYPE, we need to handle individual metaobject updates
+        // The fieldKey is the metaobject ID itself
+        const metaobjectId = getFormString(formData, "metaobjectId");
+        const updatedValue = getFormString(formData, "updatedValue");
+
+        if (!metaobjectId) {
+          return json({ success: false, error: "Missing metaobjectId" }, { status: 400 });
+        }
+
+        // Delegate to api.metaobjects route
+        // This is handled by the metaobjects page itself using the API route
+        logger.warn('[UnifiedContent] Metaobject updates should use api.metaobjects.$.tsx route', {
+          context: 'UnifiedContent',
+          metaobjectId
+        });
+
+        return json({
+          success: false,
+          error: "Metaobject updates must use the dedicated API route"
+        }, { status: 400 });
+      }
+
       // For other content types (Collections, Pages, Blogs, Policies), use unified service
       // Only include fields that were actually sent by the client.
       // buildFieldsForSave only includes changed fields for foreign locales,

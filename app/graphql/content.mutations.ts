@@ -199,3 +199,34 @@ export const METAFIELDS_SET = `#graphql
     }
   }
 `;
+
+/**
+ * METAOBJECT UPDATE — Update metaobject field values in primary locale
+ *
+ * This mutation updates metaobject field values directly (not translations).
+ * For translations, use TRANSLATE_CONTENT mutation instead.
+ *
+ * REQUIREMENTS:
+ *   - `write_metaobjects` scope (should be added to shopify.app.toml)
+ */
+export const METAOBJECT_UPDATE = `#graphql
+  mutation metaobjectUpdate($id: ID!, $metaobject: MetaobjectUpdateInput!) {
+    metaobjectUpdate(id: $id, metaobject: $metaobject) {
+      metaobject {
+        id
+        handle
+        displayName
+        type
+        fields {
+          key
+          value
+          type
+        }
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
