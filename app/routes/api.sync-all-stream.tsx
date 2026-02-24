@@ -533,6 +533,15 @@ async function syncProductsWithProgress(
                   name
                   position
                   values
+                  linkedMetafield {
+                    namespace
+                    key
+                  }
+                  optionValues {
+                    id
+                    name
+                    linkedMetafieldValue
+                  }
                 }
                 metafields(first: 50) {
                   edges {
@@ -660,7 +669,10 @@ async function syncProductsWithProgress(
               productId: product.id,
               name: opt.name,
               position: opt.position,
-              values: JSON.stringify(opt.values),
+              values: opt.optionValues
+                ? JSON.stringify(opt.optionValues.map((v: any) => ({ id: v.id, name: v.name, linked: !!v.linkedMetafieldValue, linkedValue: v.linkedMetafieldValue || undefined })))
+                : JSON.stringify(opt.values),
+              linkedMetafieldKey: opt.linkedMetafield?.key || null,
             })),
           });
         }
