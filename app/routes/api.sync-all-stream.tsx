@@ -837,6 +837,123 @@ async function syncProductsWithProgress(
             logger.debug(`[SYNC-STREAM] Saved ${allTranslations.length} product translations for locale ${locale.locale}`);
           }
         }
+
+        // ==========================================
+        // Bulk-fetch image alt-text translations
+        // ==========================================
+        const allMediaIds: string[] = [];
+        for (const product of allProducts) {
+          const mediaImages = product.media?.edges
+            ?.filter((edge: any) => edge.node.id)
+            .map((edge: any) => edge.node.id) || [];
+          allMediaIds.push(...mediaImages);
+        }
+
+        if (allMediaIds.length > 0) {
+          sendEvent({
+            type: 'progress',
+            phase: 'products',
+            message: `Fetching product translations...`,
+            current: 95,
+            total: 100,
+            detailMessage: `Fetching image alt-text translations...`
+          });
+
+          // Build mediaId → DB imageId mapping
+          const dbImages = await db.productImage.findMany({
+            where: { mediaId: { in: allMediaIds } },
+            select: { id: true, mediaId: true },
+          });
+          const mediaIdToDbId = new Map<string, string>();
+          for (const img of dbImages) {
+            if (img.mediaId) mediaIdToDbId.set(img.mediaId, img.id);
+          }
+
+          const MEDIA_BATCH_SIZE = 250;
+          const mediaBatches: string[][] = [];
+          for (let i = 0; i < allMediaIds.length; i += MEDIA_BATCH_SIZE) {
+            mediaBatches.push(allMediaIds.slice(i, i + MEDIA_BATCH_SIZE));
+          }
+
+          const altTranslations: Array<{ imageId: string; locale: string; altText: string }> = [];
+
+          for (const locale of nonPrimaryLocales) {
+            if (signal.aborted) {
+              throw new DOMException("Client disconnected", "AbortError");
+            }
+
+            for (const batch of mediaBatches) {
+              try {
+                const response: Response = await admin.graphql(
+                  `#graphql
+                    query getBulkImageAltTranslations($resourceIds: [ID!]!, $locale: String!) {
+                      translatableResourcesByIds(first: 250, resourceIds: $resourceIds) {
+                        edges {
+                          node {
+                            resourceId
+                            translations(locale: $locale) {
+                              key
+                              value
+                            }
+                          }
+                        }
+                      }
+                    }`,
+                  { variables: { resourceIds: batch, locale: locale.locale } }
+                );
+
+                const data: any = await response.json();
+                if (data.errors) {
+                  logger.warn(`[SYNC-STREAM] GraphQL error fetching alt-text for locale ${locale.locale}:`, data.errors[0]?.message);
+                  continue;
+                }
+
+                const resources = data.data?.translatableResourcesByIds?.edges || [];
+                for (const edge of resources) {
+                  const mediaId = edge.node.resourceId;
+                  const translations: Array<{ key: string; value: string }> = edge.node.translations || [];
+                  const altTranslation = translations.find((t: any) => t.key === "alt");
+                  if (altTranslation?.value) {
+                    const dbId = mediaIdToDbId.get(mediaId);
+                    if (dbId) {
+                      altTranslations.push({
+                        imageId: dbId,
+                        locale: locale.locale,
+                        altText: altTranslation.value,
+                      });
+                    }
+                  }
+                }
+              } catch (batchErr: any) {
+                if (batchErr.name === "AbortError") throw batchErr;
+                logger.warn(`[SYNC-STREAM] Failed to fetch alt-text batch for locale ${locale.locale}:`, batchErr.message);
+              }
+            }
+          }
+
+          // Bulk save alt-text translations
+          if (altTranslations.length > 0) {
+            sendEvent({
+              type: 'progress',
+              phase: 'products',
+              message: `Fetching product translations...`,
+              current: 97,
+              total: 100,
+              detailMessage: `Saving ${altTranslations.length} image alt-text translations...`
+            });
+
+            await db.productImageAltTranslation.createMany({
+              data: altTranslations.map(t => ({
+                imageId: t.imageId,
+                locale: t.locale,
+                altText: t.altText,
+              })),
+              skipDuplicates: true,
+            });
+
+            logger.debug(`[SYNC-STREAM] Saved ${altTranslations.length} image alt-text translations`);
+          }
+        }
       }
     } catch (translationErr: any) {
       if (translationErr.name === "AbortError") throw translationErr;
