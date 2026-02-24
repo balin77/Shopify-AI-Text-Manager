@@ -12,8 +12,8 @@
 
 import { Card, BlockStack, Text, TextField, Button, Divider, Badge, Banner, Icon, InlineStack } from "@shopify/polaris";
 import { DeleteIcon } from "@shopify/polaris-icons";
-import { Link } from "@remix-run/react";
 import { useI18n } from "../../contexts/I18nContext";
+import { useAppNavigation } from "../../hooks/useAppNavigation";
 import { getLocalizedLanguageName } from "../../utils/contentEditor.utils";
 import "../../styles/AIEditableField.css";
 
@@ -29,6 +29,7 @@ export interface OptionData {
   position: number;
   values: OptionValueData[];
   isLinked?: boolean;  // true = metaobject-linked option
+  linkedMetaobjectType?: string;  // metaobject definition type handle (e.g. "color")
 }
 
 export interface OptionTranslation {
@@ -119,6 +120,15 @@ export function OptionsField({
   t = {},
 }: OptionsFieldProps) {
   const { locale: appLocale } = useI18n();
+  const { handleNavigate } = useAppNavigation();
+
+  // Navigate to metaobjects page with optional type pre-selection
+  const navigateToMetaobjects = (option: OptionData) => {
+    const selectValue = option.linkedMetaobjectType || option.name;
+    handleNavigate("/app/metaobjects", {
+      searchParams: new URLSearchParams({ select: selectValue }),
+    });
+  };
 
   // Get localized language name (e.g., "English", "German" instead of "en", "de")
   const localeName = getLocalizedLanguageName(
@@ -233,9 +243,15 @@ export function OptionsField({
                           <Banner tone="info">
                             <p>
                               {t.linkedNotEditableHintBefore || "The values of this option are linked to metaobjects. You can edit them under "}
-                              <Link to={`/app/metaobjects?select=${encodeURIComponent(option.name)}`} style={{ textDecoration: "underline" }}>
+                              <span
+                                role="link"
+                                tabIndex={0}
+                                onClick={() => navigateToMetaobjects(option)}
+                                onKeyDown={(e) => e.key === "Enter" && navigateToMetaobjects(option)}
+                                style={{ textDecoration: "underline", color: "var(--p-color-text-interactive)", cursor: "pointer" }}
+                              >
                                 {t.metaobjectsLinkText || "Metaobjects"}
-                              </Link>
+                              </span>
                               {t.linkedNotEditableHintAfter || "."}
                             </p>
                           </Banner>
@@ -476,9 +492,15 @@ export function OptionsField({
                         <Banner tone="info">
                           <p>
                             {t.linkedOptionHintBefore || "The values of this option are metaobjects and can be translated under "}
-                            <Link to={`/app/metaobjects?select=${encodeURIComponent(option.name)}`} style={{ textDecoration: "underline" }}>
+                            <span
+                              role="link"
+                              tabIndex={0}
+                              onClick={() => navigateToMetaobjects(option)}
+                              onKeyDown={(e) => e.key === "Enter" && navigateToMetaobjects(option)}
+                              style={{ textDecoration: "underline", color: "var(--p-color-text-interactive)", cursor: "pointer" }}
+                            >
                               {t.metaobjectsLinkText || "Metaobjects"}
-                            </Link>
+                            </span>
                             {t.linkedOptionHintAfter || "."}
                           </p>
                         </Banner>

@@ -158,6 +158,19 @@ export default function MetaobjectsPage() {
     });
   }, [metaobjects, loadedEntries]);
 
+  // Resolve ?select= URL param to an initial item ID (e.g. linked from product options)
+  const selectParam = searchParams.get("select");
+  const initialItemId = useMemo(() => {
+    if (!selectParam || metaobjects.length === 0) return undefined;
+    // Match by type handle (most reliable, e.g. "color") or definition name (e.g. "Color")
+    const match = metaobjects.find((m: any) =>
+      m.type?.toLowerCase() === selectParam.toLowerCase() ||
+      m.title?.toLowerCase() === selectParam.toLowerCase() ||
+      m.definitionName?.toLowerCase() === selectParam.toLowerCase()
+    );
+    return match?.id;
+  }, [selectParam, metaobjects]);
+
   // Initialize unified content editor with augmented items
   const editor = useUnifiedContentEditor({
     config: METAOBJECTS_CONFIG,
@@ -167,24 +180,8 @@ export default function MetaobjectsPage() {
     fetcher,
     showInfoBox,
     t,
+    initialItemId,
   });
-
-  // Auto-select metaobject type from URL ?select= param (e.g. linked from product options)
-  const selectParam = searchParams.get("select");
-  const hasAutoSelected = useRef(false);
-  useEffect(() => {
-    if (!selectParam || hasAutoSelected.current || metaobjects.length === 0) return;
-    // Try to match by definition name (case-insensitive) or type handle
-    const match = metaobjects.find((m: any) =>
-      m.title?.toLowerCase() === selectParam.toLowerCase() ||
-      m.definitionName?.toLowerCase() === selectParam.toLowerCase() ||
-      m.type?.toLowerCase() === selectParam.toLowerCase()
-    );
-    if (match) {
-      hasAutoSelected.current = true;
-      editor.handlers.handleItemSelect(match.id);
-    }
-  }, [selectParam, metaobjects]);
 
   // Lazy load entries when a type is selected
   useEffect(() => {

@@ -265,6 +265,34 @@ export const loader = createContentLoader({
       }, {});
     }
 
+    // Batch-resolve metaobject types for linked option values
+    // Collect all linked metaobject GIDs from option values
+    const linkedMetaobjectGids: string[] = [];
+    for (const p of dbProducts) {
+      for (const opt of (p as any).options || []) {
+        try {
+          const vals = JSON.parse(opt.values || "[]");
+          for (const v of vals) {
+            if (v.linkedValue && typeof v.linkedValue === "string" && v.linkedValue.startsWith("gid://")) {
+              linkedMetaobjectGids.push(v.linkedValue);
+            }
+          }
+        } catch { /* ignore */ }
+      }
+    }
+    // Look up metaobject types from DB (one batch query)
+    const metaobjectTypeMap: Record<string, string> = {};
+    if (linkedMetaobjectGids.length > 0) {
+      const uniqueGids = [...new Set(linkedMetaobjectGids)];
+      const metaobjects = await ctx.db.metaobject.findMany({
+        where: { id: { in: uniqueGids } },
+        select: { id: true, type: true },
+      });
+      for (const mo of metaobjects) {
+        metaobjectTypeMap[mo.id] = mo.type;
+      }
+    }
+
     // Transform to frontend format
     const products = dbProducts.map((p: any) => ({
       id: p.id,
@@ -291,16 +319,24 @@ export const loader = createContentLoader({
         description: p.seoDescription || "",
       },
       options: p.options?.map((opt: any) => {
-        let values: Array<{ id: string; name: string; linked?: boolean }> = [];
+        let values: Array<{ id: string; name: string; linked?: boolean; linkedValue?: string }> = [];
         try {
           const parsed = JSON.parse(opt.values || "[]");
-          // Support both new format [{id, name, linked}] and legacy ["string"] format
+          // Support both new format [{id, name, linked, linkedValue}] and legacy ["string"] format
           values = Array.isArray(parsed)
-            ? parsed.map((v: any) => typeof v === "string" ? { id: "", name: v } : { id: v.id, name: v.name, linked: !!v.linked })
+            ? parsed.map((v: any) => typeof v === "string" ? { id: "", name: v } : { id: v.id, name: v.name, linked: !!v.linked, linkedValue: v.linkedValue })
             : [];
         } catch { values = []; }
         const isLinked = values.some(v => v.linked);
-        return { id: opt.id, name: opt.name, position: opt.position, values, isLinked };
+        // Resolve the metaobject type from any linked value's GID
+        let linkedMetaobjectType: string | undefined;
+        if (isLinked) {
+          const firstLinkedGid = values.find(v => v.linkedValue)?.linkedValue;
+          if (firstLinkedGid) {
+            linkedMetaobjectType = metaobjectTypeMap[firstLinkedGid];
+          }
+        }
+        return { id: opt.id, name: opt.name, position: opt.position, values: values.map(v => ({ id: v.id, name: v.name, linked: v.linked })), isLinked, linkedMetaobjectType };
       }) || [],
       metafields: p.metafields?.filter((mf: any) =>
         ["single_line_text_field", "multi_line_text_field", "rich_text_field", "list.single_line_text_field"].includes(mf.type)

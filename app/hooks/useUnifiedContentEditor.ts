@@ -111,7 +111,7 @@ function translateErrorMessage(errorMessage: string, t: TranslationStrings): str
 }
 
 export function useUnifiedContentEditor(props: UseContentEditorProps): UseContentEditorReturn {
-  const { config, items, shopLocales, primaryLocale, fetcher, showInfoBox, t, onTranslateToAllLocalesComplete } = props;
+  const { config, items, shopLocales, primaryLocale, fetcher, showInfoBox, t, onTranslateToAllLocalesComplete, initialItemId } = props;
   const { refresh: refreshTaskCount } = useTaskCount();
   const revalidator = useRevalidator();
   // IMPORTANT: useRevalidator() returns an unstable reference that changes on
@@ -131,7 +131,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // STATE MANAGEMENT
   // ============================================================================
 
-  const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
+  const [selectedItemId, setSelectedItemId] = useState<string | null>(initialItemId || null);
   const [currentLanguage, setCurrentLanguage] = useState(primaryLocale);
   const [editableValues, setEditableValues] = useState<Record<string, string>>({});
   const [aiSuggestions, setAiSuggestions] = useState<Record<string, string>>({});
@@ -222,9 +222,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // ============================================================================
 
   useEffect(() => {
-    const firstItem = items[0];
-    if (items.length > 0 && !selectedItemId && firstItem) {
-      setSelectedItemId(firstItem.id);
+    if (items.length === 0) return;
+    // If no item selected, or selected item doesn't exist in list, select first item
+    if (!selectedItemId || !items.find(i => i.id === selectedItemId)) {
+      setSelectedItemId(items[0].id);
     }
   }, [items, selectedItemId]);
 

@@ -72,6 +72,7 @@ export interface TranslatableContentItem {
     position: number;
     values: Array<{ id: string; name: string; linked?: boolean }>;  // ProductOptionValue GIDs
     isLinked?: boolean;   // true = metaobject-linked (values translated via Metaobjects, not here)
+    linkedMetaobjectType?: string;  // metaobject definition type handle (e.g. "color")
   }>;
   metafields?: Array<{
     id: string;           // gid://shopify/Metafield/...
@@ -403,6 +404,9 @@ export interface UseContentEditorProps {
 
   /** Optional callback when translateFieldToAllLocales completes successfully */
   onTranslateToAllLocalesComplete?: (fieldKey: string, translations: Record<string, string>) => void;
+
+  /** Optional initial item ID to select on mount (e.g. from URL params) */
+  initialItemId?: string;
 }
 
 export interface UseContentEditorReturn {

@@ -1013,7 +1013,7 @@ export class ProductSyncService {
             productId: productData.id,
             name: opt.name,
             position: opt.position,
-            values: JSON.stringify(opt.optionValues.map(v => ({ id: v.id, name: v.name, linked: !!v.linkedMetafieldValue }))),
+            values: JSON.stringify(opt.optionValues.map(v => ({ id: v.id, name: v.name, linked: !!v.linkedMetafieldValue, linkedValue: v.linkedMetafieldValue || undefined }))),
           })),
         });
         logger.debug(`[ProductSync] Saved ${productData.options.length} options`);
