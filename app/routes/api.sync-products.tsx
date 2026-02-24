@@ -262,18 +262,33 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           // Save options
           if (product.options && product.options.length > 0) {
             await tx.productOption.deleteMany({ where: { productId: product.id } });
-            await tx.productOption.createMany({
-              data: product.options.map((opt: any) => ({
-                id: opt.id,
-                productId: product.id,
-                name: opt.name,
-                position: opt.position,
-                values: opt.optionValues
-                  ? JSON.stringify(opt.optionValues.map((v: any) => ({ id: v.id, name: v.name, linked: !!v.linkedMetafieldValue, linkedValue: v.linkedMetafieldValue || undefined })))
-                  : JSON.stringify(opt.values),
-                linkedMetafieldKey: opt.linkedMetafield?.key || null,
-              })),
-            });
+            try {
+              await tx.productOption.createMany({
+                data: product.options.map((opt: any) => ({
+                  id: opt.id,
+                  productId: product.id,
+                  name: opt.name,
+                  position: opt.position,
+                  values: opt.optionValues
+                    ? JSON.stringify(opt.optionValues.map((v: any) => ({ id: v.id, name: v.name, linked: !!v.linkedMetafieldValue, linkedValue: v.linkedMetafieldValue || undefined })))
+                    : JSON.stringify(opt.values),
+                  linkedMetafieldKey: opt.linkedMetafield?.key || null,
+                })),
+              });
+            } catch (optErr: any) {
+              logger.error(`[SYNC-PRODUCTS] OPTIONS createMany FAILED: ${optErr.message}`);
+              await tx.productOption.createMany({
+                data: product.options.map((opt: any) => ({
+                  id: opt.id,
+                  productId: product.id,
+                  name: opt.name,
+                  position: opt.position,
+                  values: opt.optionValues
+                    ? JSON.stringify(opt.optionValues.map((v: any) => ({ id: v.id, name: v.name, linked: !!v.linkedMetafieldValue, linkedValue: v.linkedMetafieldValue || undefined })))
+                    : JSON.stringify(opt.values),
+                })),
+              });
+            }
           }
 
           // Upsert metafields (idempotent — safe under concurrent execution)

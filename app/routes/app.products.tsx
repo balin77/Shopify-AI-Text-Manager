@@ -195,15 +195,15 @@ export const loader = createContentLoader({
 
       // Sync options (always update to keep optionValues GIDs fresh)
       if (product.options && product.options.length > 0) {
-        // DEBUG: Log what Shopify API returns for the first product's options
+        // Log what Shopify API returns for the first product's options
         if (product === shopifyProducts[0]) {
           for (const opt of product.options) {
-            logger.info(`[PRODUCTS-LOADER] DEBUG option "${opt.name}": linkedMetafield=${JSON.stringify(opt.linkedMetafield)}, optionValues count=${opt.optionValues?.length ?? 'undefined'}, values=${JSON.stringify(opt.values)}`);
+            logger.info(`[PRODUCTS-LOADER] Option "${opt.name}": linkedMetafield=${JSON.stringify(opt.linkedMetafield)}, optionValues=${opt.optionValues?.length ?? 'none'}`);
           }
         }
-        await ctx.db.productOption.deleteMany({ where: { productId: product.id } });
-        await ctx.db.productOption.createMany({
-          data: product.options.map((opt: any) => ({
+        try {
+          await ctx.db.productOption.deleteMany({ where: { productId: product.id } });
+          const createData = product.options.map((opt: any) => ({
             id: opt.id,
             productId: product.id,
             name: opt.name,
@@ -212,32 +212,32 @@ export const loader = createContentLoader({
               ? JSON.stringify(opt.optionValues.map((v: any) => ({ id: v.id, name: v.name, linked: !!v.linkedMetafieldValue })))
               : JSON.stringify(opt.values),
             linkedMetafieldKey: opt.linkedMetafield?.key || null,
-          })),
-        });
-        // Fallback: update linkedMetafieldKey via raw SQL in case Prisma client is stale
-        for (const opt of product.options) {
-          if (opt.linkedMetafield?.key) {
-            await ctx.db.$executeRawUnsafe(
-              `UPDATE "ProductOption" SET "linkedMetafieldKey" = $1 WHERE "id" = $2`,
-              opt.linkedMetafield.key,
-              opt.id
-            );
-          } else if (opt.optionValues?.some((v: any) => v.linkedMetafieldValue)) {
-            // Resolve metaobject type from linked option values when API returns null for linkedMetafield
-            const firstLinked = opt.optionValues.find((v: any) => v.linkedMetafieldValue);
-            if (firstLinked?.linkedMetafieldValue) {
-              const metaobj = await ctx.db.metaobject.findFirst({
-                where: { id: firstLinked.linkedMetafieldValue, shop: ctx.session.shop },
-                select: { type: true }
-              });
-              if (metaobj?.type) {
-                await ctx.db.$executeRawUnsafe(
-                  `UPDATE "ProductOption" SET "linkedMetafieldKey" = $1 WHERE "id" = $2`,
-                  metaobj.type,
-                  opt.id
-                );
-              }
-            }
+          }));
+          if (product === shopifyProducts[0]) {
+            logger.info(`[PRODUCTS-LOADER] createMany data sample: linkedMetafieldKey=${createData[0]?.linkedMetafieldKey}, valuesFormat=${createData[0]?.values?.substring(0, 60)}`);
+          }
+          await ctx.db.productOption.createMany({ data: createData });
+          if (product === shopifyProducts[0]) {
+            logger.info(`[PRODUCTS-LOADER] Options saved OK for ${product.id}`);
+          }
+        } catch (optErr: any) {
+          logger.error(`[PRODUCTS-LOADER] OPTIONS SAVE FAILED for ${product.id}: ${optErr.message}`);
+          // If the column doesn't exist, createMany fails — try without linkedMetafieldKey
+          try {
+            await ctx.db.productOption.createMany({
+              data: product.options.map((opt: any) => ({
+                id: opt.id,
+                productId: product.id,
+                name: opt.name,
+                position: opt.position,
+                values: opt.optionValues
+                  ? JSON.stringify(opt.optionValues.map((v: any) => ({ id: v.id, name: v.name, linked: !!v.linkedMetafieldValue })))
+                  : JSON.stringify(opt.values),
+              })),
+            });
+            logger.info(`[PRODUCTS-LOADER] Options saved (without linkedMetafieldKey) for ${product.id}`);
+          } catch (fallbackErr: any) {
+            logger.error(`[PRODUCTS-LOADER] OPTIONS FALLBACK ALSO FAILED for ${product.id}: ${fallbackErr.message}`);
           }
         }
       }

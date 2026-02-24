@@ -5,18 +5,14 @@
  * This script runs database migrations before starting the app.
  * It works on any platform (Windows, Linux, Mac).
  *
- * Usage in Railway Custom Start Command:
- *   node scripts/run-migration.js && npm run start
+ * Flow:
+ * 1. Generate Prisma Client
+ * 2. Resolve orphaned migrations (if any)
+ * 3. Run `prisma migrate deploy` (applies all formal migrations)
+ * 4. If migrate deploy fails, fall back to `prisma db push`
  */
 
 import { execSync } from 'child_process';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
-
-// ESM equivalent of __dirname
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 // ANSI color codes for terminal output
 const colors = {
@@ -31,13 +27,23 @@ function log(message, color = 'reset') {
   console.log(`${colors[color]}${message}${colors.reset}`);
 }
 
-function runCommand(command, errorMessage) {
+function runCommand(command, description) {
   try {
+    log(`🔨 ${description}...`, 'blue');
     execSync(command, { stdio: 'inherit' });
+    log(`✅ ${description} completed`, 'green');
     return true;
   } catch (error) {
-    log(`❌ ${errorMessage}`, 'red');
-    log(`Error: ${error.message}`, 'red');
+    log(`❌ ${description} failed: ${error.message}`, 'red');
+    return false;
+  }
+}
+
+function runSilent(command) {
+  try {
+    execSync(command, { stdio: 'pipe' });
+    return true;
+  } catch {
     return false;
   }
 }
@@ -53,61 +59,44 @@ async function main() {
 
   log('✅ DATABASE_URL is configured', 'green');
 
-  // Run all migrations in order
-  const migrations = [
-    'add_entity_specific_ai_instructions.sql',
-    '20250113_add_menu_model.sql',
-    '20260114_add_prompt_to_task.sql',
-    '20260116_add_webhook_retry.sql'
-  ];
-
-  for (const migrationFile of migrations) {
-    const migrationPath = path.join(__dirname, '..', 'prisma', 'migrations', migrationFile);
-
-    if (fs.existsSync(migrationPath)) {
-      log(`📦 Running migration: ${migrationFile}...`, 'blue');
-
-      // Read the migration SQL file
-      const migrationSQL = fs.readFileSync(migrationPath, 'utf8');
-
-      // Use Prisma's db execute command to run the SQL
-      const tempSqlPath = path.join(__dirname, '..', 'temp_migration.sql');
-      fs.writeFileSync(tempSqlPath, migrationSQL);
-
-      const success = runCommand(
-        `npx prisma db execute --file ${tempSqlPath} --schema prisma/schema.prisma`,
-        `Failed to run migration: ${migrationFile}`
-      );
-
-      // Clean up temp file
-      try {
-        fs.unlinkSync(tempSqlPath);
-      } catch (e) {
-        // Ignore cleanup errors
-      }
-
-      if (success) {
-        log(`✅ Migration ${migrationFile} completed successfully`, 'green');
-      } else {
-        log(`⚠️  Migration ${migrationFile} failed, but continuing...`, 'yellow');
-      }
-    } else {
-      log(`ℹ️  Migration file ${migrationFile} not found, skipping...`, 'blue');
-    }
-  }
-
-  // Generate Prisma Client
-  log('🔨 Generating Prisma Client...', 'blue');
+  // 1. Generate Prisma Client
   const genSuccess = runCommand(
     'npx prisma generate',
-    'Failed to generate Prisma Client'
+    'Generate Prisma Client'
   );
 
-  if (genSuccess) {
-    log('✅ Prisma Client generated successfully', 'green');
-  } else {
-    log('❌ Failed to generate Prisma Client', 'red');
+  if (!genSuccess) {
+    log('❌ Failed to generate Prisma Client — cannot continue', 'red');
     process.exit(1);
+  }
+
+  // 2. Resolve orphaned migrations that exist in the DB but not locally
+  //    (e.g. from previous manual schema pushes or deleted migration files)
+  const orphanedMigrations = [
+    '20250110_add_product_translation_webhook_models',
+  ];
+  for (const name of orphanedMigrations) {
+    runSilent(`npx prisma migrate resolve --rolled-back ${name}`);
+  }
+
+  // 3. Run Prisma Schema Migrations (applies all migration files)
+  const migrateSuccess = runCommand(
+    'npx prisma migrate deploy',
+    'Prisma Schema Migrations (migrate deploy)'
+  );
+
+  if (!migrateSuccess) {
+    log('⚠️  prisma migrate deploy failed, trying db push as fallback...', 'yellow');
+
+    const pushSuccess = runCommand(
+      'npx prisma db push --skip-generate --accept-data-loss',
+      'Prisma DB Push (fallback)'
+    );
+
+    if (!pushSuccess) {
+      log('❌ Both migrate deploy and db push failed!', 'red');
+      process.exit(1);
+    }
   }
 
   log('✅ Database setup complete!', 'green');

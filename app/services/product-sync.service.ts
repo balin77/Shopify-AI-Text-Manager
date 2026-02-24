@@ -286,37 +286,32 @@ export class ProductSyncService {
           // Save options
           if (product.options && product.options.length > 0) {
             await tx.productOption.deleteMany({ where: { productId: product.id } });
-            await tx.productOption.createMany({
-              data: product.options.map((opt: any) => ({
-                id: opt.id,
-                productId: product.id,
-                name: opt.name,
-                position: opt.position,
-                values: opt.optionValues
-                  ? JSON.stringify(opt.optionValues.map((v: any) => ({ id: v.id, name: v.name, linked: !!v.linkedMetafieldValue, linkedValue: v.linkedMetafieldValue || undefined })))
-                  : JSON.stringify(opt.values),
-                linkedMetafieldKey: opt.linkedMetafield?.key || null,
-              })),
-            });
-
-            // Resolve linkedMetafieldKey from option values when Shopify API returns null for linkedMetafield
-            for (const opt of product.options) {
-              if (!opt.linkedMetafield?.key && opt.optionValues?.some((v: any) => v.linkedMetafieldValue)) {
-                const firstLinked = opt.optionValues.find((v: any) => v.linkedMetafieldValue);
-                if (firstLinked?.linkedMetafieldValue) {
-                  const metaobj = await tx.metaobject.findFirst({
-                    where: { id: firstLinked.linkedMetafieldValue, shop: this.shop },
-                    select: { type: true }
-                  });
-                  if (metaobj?.type) {
-                    await tx.$executeRawUnsafe(
-                      `UPDATE "ProductOption" SET "linkedMetafieldKey" = $1 WHERE "id" = $2`,
-                      metaobj.type,
-                      opt.id
-                    );
-                  }
-                }
-              }
+            const optCreateData = product.options.map((opt: any) => ({
+              id: opt.id,
+              productId: product.id,
+              name: opt.name,
+              position: opt.position,
+              values: opt.optionValues
+                ? JSON.stringify(opt.optionValues.map((v: any) => ({ id: v.id, name: v.name, linked: !!v.linkedMetafieldValue, linkedValue: v.linkedMetafieldValue || undefined })))
+                : JSON.stringify(opt.values),
+              linkedMetafieldKey: opt.linkedMetafield?.key || null,
+            }));
+            try {
+              await tx.productOption.createMany({ data: optCreateData });
+            } catch (optErr: any) {
+              logger.error(`[ProductSync] OPTIONS createMany FAILED for ${product.id}: ${optErr.message}`);
+              // Fallback: save without linkedMetafieldKey if column doesn't exist yet
+              await tx.productOption.createMany({
+                data: product.options.map((opt: any) => ({
+                  id: opt.id,
+                  productId: product.id,
+                  name: opt.name,
+                  position: opt.position,
+                  values: opt.optionValues
+                    ? JSON.stringify(opt.optionValues.map((v: any) => ({ id: v.id, name: v.name, linked: !!v.linkedMetafieldValue, linkedValue: v.linkedMetafieldValue || undefined })))
+                    : JSON.stringify(opt.values),
+                })),
+              });
             }
           }
 
@@ -1524,35 +1519,29 @@ export class ProductSyncService {
 
       // Insert options
       if (productData.options && productData.options.length > 0) {
-        await tx.productOption.createMany({
-          data: productData.options.map((opt) => ({
-            id: opt.id,
-            productId: productData.id,
-            name: opt.name,
-            position: opt.position,
-            values: JSON.stringify(opt.optionValues.map(v => ({ id: v.id, name: v.name, linked: !!v.linkedMetafieldValue, linkedValue: v.linkedMetafieldValue || undefined }))),
-            linkedMetafieldKey: opt.linkedMetafield?.key || null,
-          })),
-        });
-
-        // Resolve linkedMetafieldKey from option values when Shopify API returns null for linkedMetafield
-        for (const opt of productData.options) {
-          if (!opt.linkedMetafield?.key && opt.optionValues?.some(v => v.linkedMetafieldValue)) {
-            const firstLinked = opt.optionValues.find(v => v.linkedMetafieldValue);
-            if (firstLinked?.linkedMetafieldValue) {
-              const metaobj = await tx.metaobject.findFirst({
-                where: { id: firstLinked.linkedMetafieldValue, shop: this.shop },
-                select: { type: true }
-              });
-              if (metaobj?.type) {
-                await tx.$executeRawUnsafe(
-                  `UPDATE "ProductOption" SET "linkedMetafieldKey" = $1 WHERE "id" = $2`,
-                  metaobj.type,
-                  opt.id
-                );
-              }
-            }
-          }
+        try {
+          await tx.productOption.createMany({
+            data: productData.options.map((opt) => ({
+              id: opt.id,
+              productId: productData.id,
+              name: opt.name,
+              position: opt.position,
+              values: JSON.stringify(opt.optionValues.map(v => ({ id: v.id, name: v.name, linked: !!v.linkedMetafieldValue, linkedValue: v.linkedMetafieldValue || undefined }))),
+              linkedMetafieldKey: opt.linkedMetafield?.key || null,
+            })),
+          });
+        } catch (optErr: any) {
+          logger.error(`[ProductSync] saveToDatabase OPTIONS createMany FAILED: ${optErr.message}`);
+          // Fallback: save without linkedMetafieldKey if column doesn't exist yet
+          await tx.productOption.createMany({
+            data: productData.options.map((opt) => ({
+              id: opt.id,
+              productId: productData.id,
+              name: opt.name,
+              position: opt.position,
+              values: JSON.stringify(opt.optionValues.map(v => ({ id: v.id, name: v.name, linked: !!v.linkedMetafieldValue, linkedValue: v.linkedMetafieldValue || undefined }))),
+            })),
+          });
         }
 
         logger.debug(`[ProductSync] Saved ${productData.options.length} options`);
