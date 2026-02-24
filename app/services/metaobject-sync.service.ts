@@ -12,6 +12,7 @@ import { db } from '../db.server';
 import { logger } from '~/utils/logger.server';
 import type { ShopifyGraphQLClient, ShopLocale } from './sync-types';
 import { fetchShopLocales } from './sync-utils';
+import { isMetaobjectLabelField } from '~/constants/shopifyFields';
 
 interface MetaobjectDefinition {
   id: string;
@@ -324,13 +325,14 @@ export class MetaobjectSyncService {
           const upsertOps = [];
 
           for (const edge of resources) {
+            if (!edge.node?.resourceId) continue;
             const metaobjectId = edge.node.resourceId;
             const translations = edge.node.translations || [];
 
             for (const trans of translations) {
               if (!trans.value) continue;
               // Only sync translatable field keys
-              if (trans.key === 'display_name' || trans.key === 'name' || trans.key === 'label') {
+              if (isMetaobjectLabelField(trans.key)) {
                 upsertOps.push(
                   db.metaobjectTranslation.upsert({
                     where: {

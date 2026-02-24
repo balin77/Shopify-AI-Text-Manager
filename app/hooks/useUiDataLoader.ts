@@ -12,6 +12,7 @@
 import { useRef, useState, useCallback } from "react";
 import { getTranslatedValue } from "../utils/contentEditor.utils";
 import { debugLog } from "../utils/debug";
+import { isMetaobjectLabelField } from "../constants/shopifyFields";
 import type {
   TranslatableContentItem,
   ContentEditorConfig,
@@ -180,9 +181,7 @@ export function getItemFieldValue(
     const metaobject = (item as any).metaobjects.find((m: any) => m.id === fieldKey);
     if (metaobject) {
       // Find the label field (display_name, name, or label)
-      const labelField = metaobject.fields?.find((f: any) =>
-        f.key === 'display_name' || f.key === 'name' || f.key === 'label'
-      );
+      const labelField = metaobject.fields?.find((f: any) => isMetaobjectLabelField(f.key));
       return labelField?.value || metaobject.displayName || "";
     }
   }

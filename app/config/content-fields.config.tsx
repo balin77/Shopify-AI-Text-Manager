@@ -6,6 +6,7 @@
 
 import type { ContentEditorConfig } from "../types/content-editor.types";
 import { createTemplateFieldDefinitions, getTemplateFieldValue } from "../utils/templates-field-factory";
+import { isMetaobjectLabelField } from "../constants/shopifyFields";
 
 // ============================================================================
 // PRODUCTS
@@ -406,9 +407,7 @@ export const METAOBJECTS_CONFIG: ContentEditorConfig = {
     // Create one field per metaobject, showing only the display_name/name
     return item.metaobjects.map((metaobj: any) => {
       // Find the display_name or name field
-      const labelField = metaobj.fields?.find((f: any) =>
-        f.key === 'display_name' || f.key === 'name' || f.key === 'label'
-      );
+      const labelField = metaobj.fields?.find((f: any) => isMetaobjectLabelField(f.key));
 
       return {
         key: metaobj.id, // Use metaobject ID as field key
@@ -433,9 +432,7 @@ export const METAOBJECTS_CONFIG: ContentEditorConfig = {
     if (!metaobj) return "";
 
     // Find the label field value
-    const labelField = metaobj.fields?.find((f: any) =>
-      f.key === 'display_name' || f.key === 'name' || f.key === 'label'
-    );
+    const labelField = metaobj.fields?.find((f: any) => isMetaobjectLabelField(f.key));
 
     return labelField?.value || metaobj.displayName || "";
   },

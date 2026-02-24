@@ -11,6 +11,7 @@ import {
   UI_FIELD_TO_TRANSLATION_KEY,
   FIELD_CONFIGS,
   FIELD_TO_LABEL_KEY,
+  isMetaobjectLabelField,
 } from "~/constants/shopifyFields";
 import { TIMING } from "~/constants/timing";
 import { extractReadableName } from "~/utils/templates-field-factory";
@@ -573,9 +574,7 @@ export function hasPrimaryContentMissing(
     }
     // Check if any metaobject entry has an empty label field (display_name/name/label)
     return metaobjects.some((metaobj: any) => {
-      const labelField = metaobj.fields?.find((f: any) =>
-        f.key === 'display_name' || f.key === 'name' || f.key === 'label'
-      );
+      const labelField = metaobj.fields?.find((f: any) => isMetaobjectLabelField(f.key));
       return !labelField || isFieldEmpty(labelField.value);
     });
   }
@@ -633,9 +632,7 @@ export function hasLocaleMissingTranslations(
 
     // Check if any metaobject entry with primary content is missing a translation
     return metaobjects.some((metaobj: any) => {
-      const labelField = metaobj.fields?.find((f: any) =>
-        f.key === 'display_name' || f.key === 'name' || f.key === 'label'
-      );
+      const labelField = metaobj.fields?.find((f: any) => isMetaobjectLabelField(f.key));
       // Only check if primary has content for this entry
       if (!labelField || isFieldEmpty(labelField.value)) {
         return false;
@@ -735,9 +732,7 @@ export function getMissingPrimaryFields(
     }
     return metaobjects
       .filter((metaobj: any) => {
-        const labelField = metaobj.fields?.find((f: any) =>
-          f.key === 'display_name' || f.key === 'name' || f.key === 'label'
-        );
+        const labelField = metaobj.fields?.find((f: any) => isMetaobjectLabelField(f.key));
         return !labelField || isFieldEmpty(labelField.value);
       })
       .map((metaobj: any) => metaobj.id);
@@ -787,9 +782,7 @@ export function getMissingLocaleTranslationFields(
     const translations = selectedItem.translations || [];
     return metaobjects
       .filter((metaobj: any) => {
-        const labelField = metaobj.fields?.find((f: any) =>
-          f.key === 'display_name' || f.key === 'name' || f.key === 'label'
-        );
+        const labelField = metaobj.fields?.find((f: any) => isMetaobjectLabelField(f.key));
         // Only check if primary has content
         if (!labelField || isFieldEmpty(labelField.value)) return false;
         // Check if translation exists for this locale

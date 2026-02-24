@@ -13,6 +13,7 @@ import { decryptApiKey } from "../utils/encryption.server";
 import { getFormString, getFormJSON } from "~/utils/form-data.utils";
 import { safeJsonParse } from "~/utils/validation";
 import { logger } from "~/utils/logger.server";
+import { isMetaobjectLabelField, findMetaobjectLabelField } from "~/constants/shopifyFields";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
@@ -130,7 +131,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       }
     };
 
-    return json({ metaobject: metaobjectData }, { headers: { "Cache-Control": "no-store" } });
+    return json({ success: true, metaobject: metaobjectData }, { headers: { "Cache-Control": "no-store" } });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : String(error);
     const stack = error instanceof Error ? error.stack : undefined;
@@ -191,12 +192,18 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
           }
         );
 
-        const transData = await translationsResponse.json();
+        const transData = (await translationsResponse.json()) as any;
+        if (transData.errors) {
+          logger.error("[API-METAOBJECTS] GraphQL error loading translations", {
+            context: "Metaobjects", metaobjectId, locale, errors: transData.errors
+          });
+          return json({ success: false, error: "GraphQL error loading translations" }, { status: 502 });
+        }
         const translations = transData.data?.translatableResource?.translations || [];
 
         // Filter to only display_name/name/label translations
         const filteredTranslations = translations
-          .filter((t: any) => t.key === 'display_name' || t.key === 'name' || t.key === 'label')
+          .filter((t: any) => isMetaobjectLabelField(t.key))
           .map((t: any) => ({
             key: metaobjectId, // Use metaobject ID as key (matches field definition)
             value: t.value,
@@ -291,13 +298,17 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
           { variables: { id: metaobjectId } }
         );
 
-        const metaobjectData = await metaobjectResponse.json();
+        const metaobjectData = (await metaobjectResponse.json()) as any;
+        if (metaobjectData.errors) {
+          logger.error("[API-METAOBJECTS] GraphQL error fetching metaobject fields", {
+            context: "Metaobjects", metaobjectId, errors: metaobjectData.errors
+          });
+          return json({ success: false, error: "GraphQL error fetching metaobject" }, { status: 502 });
+        }
         const fields = metaobjectData.data?.metaobject?.fields || [];
 
         // Find the label field (display_name, name, or label)
-        const labelField = fields.find((f: any) =>
-          f.key === 'display_name' || f.key === 'name' || f.key === 'label'
-        );
+        const labelField = findMetaobjectLabelField(fields);
 
         if (!labelField) {
           return json({

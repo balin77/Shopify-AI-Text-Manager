@@ -27,6 +27,7 @@ import { useItemSelector } from "../contexts/ItemSelectorContext";
 import { contentEditorStyles, getLocalizedLanguageName } from "../utils/contentEditor.utils";
 import { useI18n } from "../contexts/I18nContext";
 import { ENABLE_THEME_PRIMARY_EDIT } from "../config/constants";
+import { isMetaobjectLabelField } from "../constants/shopifyFields";
 import "../styles/UnifiedContentEditor.css";
 import type { ContentEditorConfig, UseContentEditorReturn, FieldDefinition } from "../types/content-editor.types";
 import type { UnifiedItem, SortOption } from "./unified/UnifiedItemList";
@@ -1170,9 +1171,7 @@ function getSourceText(item: any, fieldKey: string, primaryLocale: string): stri
   if (fieldKey.startsWith("gid://shopify/Metaobject/") && item.metaobjects && Array.isArray(item.metaobjects)) {
     const metaobj = item.metaobjects.find((m: any) => m.id === fieldKey);
     if (metaobj) {
-      const labelField = metaobj.fields?.find((f: any) =>
-        f.key === "display_name" || f.key === "name" || f.key === "label"
-      );
+      const labelField = metaobj.fields?.find((f: any) => isMetaobjectLabelField(f.key));
       return labelField?.value || metaobj.displayName || "";
     }
   }

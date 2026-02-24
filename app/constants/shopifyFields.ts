@@ -75,6 +75,23 @@ export const TRANSLATION_KEY_MAP = {
  * to i18n label keys (common.fieldLabels.*).
  * Used by getLocaleButtonTooltip to resolve human-readable labels.
  */
+/**
+ * Metaobject label field keys - the possible field names that hold
+ * the translatable "label" of a metaobject entry.
+ * Used across sync, API, editor, and AI translation logic.
+ */
+export const METAOBJECT_LABEL_FIELD_KEYS = ['display_name', 'name', 'label'] as const;
+
+/** Check whether a field key is a metaobject label field */
+export function isMetaobjectLabelField(key: string): boolean {
+  return (METAOBJECT_LABEL_FIELD_KEYS as readonly string[]).includes(key);
+}
+
+/** Find the label field in a metaobject's fields array */
+export function findMetaobjectLabelField<T extends { key: string }>(fields: T[]): T | undefined {
+  return fields.find(f => isMetaobjectLabelField(f.key));
+}
+
 export const FIELD_TO_LABEL_KEY: Record<string, string> = {
   // FIELD_CONFIGS paths (used by getMissingPrimaryFields)
   title: 'title',

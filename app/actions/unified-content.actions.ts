@@ -21,6 +21,7 @@ import { isValidShopifyGID, isValidLocale, safeJsonParse } from "../utils/valida
 import { sanitizePromptInput } from "../utils/prompt-sanitizer";
 import { getFullErrorMessage } from "../utils/error-handler";
 import { getInstructionWithDefault, getWritingStyleInstructions } from "~/utils/ai-instructions.utils";
+import { findMetaobjectLabelField } from "../constants/shopifyFields";
 import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
 import type { Session } from "@shopify/shopify-api";
 import type { PrismaClient } from "@prisma/client";
@@ -1128,9 +1129,7 @@ Allowed formatting changes:
             );
             const metaobjectData = await metaobjectResponse.json();
             const fields = metaobjectData.data?.metaobject?.fields || [];
-            const labelField = fields.find((f: any) =>
-              f.key === 'display_name' || f.key === 'name' || f.key === 'label'
-            );
+            const labelField = findMetaobjectLabelField(fields);
 
             if (!labelField) {
               errors.push(`No label field found for ${update.id}`);
@@ -2846,9 +2845,7 @@ async function translateMetaobjectEntries(params: {
         );
         const moData = await moResponse.json();
         const fields = moData.data?.metaobject?.fields || [];
-        const labelField = fields.find((f: any) =>
-          f.key === "display_name" || f.key === "name" || f.key === "label"
-        );
+        const labelField = findMetaobjectLabelField(fields);
         if (!labelField) continue;
 
         // Fetch digest

@@ -19,6 +19,7 @@ import { safeJsonParse } from "~/utils/validation";
 import { sanitizePromptInput } from "~/utils/prompt-sanitizer";
 import { extractReadableName } from "~/utils/templates-field-factory";
 import { getInstructionWithDefault, getWritingStyleInstructions } from "~/utils/ai-instructions.utils";
+import { METAOBJECT_LABEL_FIELD_KEYS } from "~/constants/shopifyFields";
 
 /**
  * Get character limit requirements for a field based on its aiInstructionsKey
@@ -666,7 +667,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
                     // Find the label field key (display_name, name, or label)
                     metaLabelKey = (metaDigests
-                      ? ['display_name', 'name', 'label'].find(k => metaDigests.has(k))
+                      ? METAOBJECT_LABEL_FIELD_KEYS.find(k => metaDigests.has(k))
                       : null) || '';
 
                     if (!metaLabelKey) {
@@ -1064,7 +1065,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
                   // Find the label field key (display_name, name, or label)
                   metaLabelKey = (metaDigests
-                    ? ['display_name', 'name', 'label'].find(k => metaDigests.has(k))
+                    ? METAOBJECT_LABEL_FIELD_KEYS.find(k => metaDigests.has(k))
                     : null) || '';
 
                   if (!metaLabelKey) {
