@@ -2,47 +2,47 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { AIService } from '../../src/services/ai.service';
 import type { AIProvider, AIServiceConfig } from '../../src/services/ai.service';
 
-// Mock the AI providers
+// Mock the AI providers using classes (arrow functions are not constructable with `new`)
 vi.mock('@huggingface/inference', () => ({
-  HfInference: vi.fn().mockImplementation(() => ({
-    chatCompletion: vi.fn().mockResolvedValue({
+  HfInference: class {
+    chatCompletion = vi.fn().mockResolvedValue({
       choices: [{ message: { content: 'Mocked HuggingFace response' } }],
-    }),
-  })),
+    });
+  },
 }));
 
 vi.mock('@google/generative-ai', () => ({
-  GoogleGenerativeAI: vi.fn().mockImplementation(() => ({
-    getGenerativeModel: vi.fn().mockReturnValue({
+  GoogleGenerativeAI: class {
+    getGenerativeModel = vi.fn().mockReturnValue({
       generateContent: vi.fn().mockResolvedValue({
         response: {
           text: () => 'Mocked Gemini response',
         },
       }),
-    }),
-  })),
+    });
+  },
 }));
 
 vi.mock('@anthropic-ai/sdk', () => ({
-  default: vi.fn().mockImplementation(() => ({
-    messages: {
+  default: class {
+    messages = {
       create: vi.fn().mockResolvedValue({
         content: [{ type: 'text', text: 'Mocked Claude response' }],
       }),
-    },
-  })),
+    };
+  },
 }));
 
 vi.mock('openai', () => ({
-  default: vi.fn().mockImplementation(() => ({
-    chat: {
+  default: class {
+    chat = {
       completions: {
         create: vi.fn().mockResolvedValue({
           choices: [{ message: { content: 'Mocked OpenAI response' } }],
         }),
       },
-    },
-  })),
+    };
+  },
 }));
 
 // Mock the queue service

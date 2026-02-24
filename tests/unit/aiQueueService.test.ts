@@ -15,15 +15,13 @@ describe('AIQueueService', () => {
   let queueService: AIQueueService;
 
   beforeEach(() => {
-    // Get the singleton instance
+    // Reset singleton to get a fresh instance each test
+    (AIQueueService as any).instance = undefined;
     queueService = AIQueueService.getInstance();
-
-    // Clear any existing queue
-    (queueService as any).queue = [];
-    (queueService as any).usageWindows = new Map();
   });
 
   afterEach(() => {
+    queueService.stopCleanup();
     vi.clearAllMocks();
   });
 
@@ -86,7 +84,7 @@ describe('AIQueueService', () => {
   });
 
   describe('enqueue()', () => {
-    it('should add request to queue', async () => {
+    it('should add request to shop-specific queue', async () => {
       const mockExecute = vi.fn().mockResolvedValue('result');
 
       // Create promise but don't await (enqueue returns a promise that resolves when executed)
@@ -98,13 +96,14 @@ describe('AIQueueService', () => {
         mockExecute
       );
 
-      // Check queue has the request
-      const queue = (queueService as any).queue;
-      expect(queue.length).toBe(1);
-      expect(queue[0].shop).toBe('test-shop');
-      expect(queue[0].taskId).toBe('task-123');
-      expect(queue[0].provider).toBe('huggingface');
-      expect(queue[0].estimatedTokens).toBe(1000);
+      // Check shop-specific queue has the request
+      const shopQueue = (queueService as any).queues.get('test-shop');
+      expect(shopQueue).toBeDefined();
+      expect(shopQueue.length).toBe(1);
+      expect(shopQueue[0].shop).toBe('test-shop');
+      expect(shopQueue[0].taskId).toBe('task-123');
+      expect(shopQueue[0].provider).toBe('huggingface');
+      expect(shopQueue[0].estimatedTokens).toBe(1000);
     });
 
     it('should generate unique IDs for requests', async () => {
@@ -114,8 +113,9 @@ describe('AIQueueService', () => {
       queueService.enqueue('shop1', 'task-1', 'huggingface', 1000, mockExecute1);
       queueService.enqueue('shop2', 'task-2', 'gemini', 2000, mockExecute2);
 
-      const queue = (queueService as any).queue;
-      expect(queue[0].id).not.toBe(queue[1].id);
+      const queue1 = (queueService as any).queues.get('shop1');
+      const queue2 = (queueService as any).queues.get('shop2');
+      expect(queue1[0].id).not.toBe(queue2[0].id);
     });
 
     it('should initialize retry count to 0', async () => {
@@ -123,8 +123,8 @@ describe('AIQueueService', () => {
 
       queueService.enqueue('test-shop', 'task-123', 'claude', 1500, mockExecute);
 
-      const queue = (queueService as any).queue;
-      expect(queue[0].retryCount).toBe(0);
+      const shopQueue = (queueService as any).queues.get('test-shop');
+      expect(shopQueue[0].retryCount).toBe(0);
     });
   });
 
@@ -279,11 +279,12 @@ describe('AIQueueService', () => {
     it('should count requests by provider', async () => {
       const mockExecute = vi.fn().mockResolvedValue('result');
 
+      // Enqueue to same shop so they share a queue
       queueService.enqueue('shop1', 'task-1', 'huggingface', 1000, mockExecute);
       queueService.enqueue('shop1', 'task-2', 'huggingface', 1000, mockExecute);
       queueService.enqueue('shop1', 'task-3', 'gemini', 1000, mockExecute);
 
-      const stats = queueService.getQueueStats();
+      const stats = queueService.getQueueStats('shop1');
 
       expect(stats.queueLength).toBe(3);
       expect(stats.byProvider.huggingface).toBe(2);
@@ -322,9 +323,8 @@ describe('AIQueueService', () => {
 
   describe('Retry Logic', () => {
     it('should retry on rate limit errors', async () => {
-      // This is tested via integration, as it requires timing control
-      // We can test the retry count increment
-      const queue = (queueService as any).queue;
+      // Test the retry count increment on a shop-specific queue
+      const shopQueue = (queueService as any).getShopQueue('test-shop');
 
       const mockRequest = {
         id: 'test-1',
@@ -339,7 +339,7 @@ describe('AIQueueService', () => {
         createdAt: new Date(),
       };
 
-      queue.push(mockRequest);
+      shopQueue.push(mockRequest);
 
       // Simulate retry increment
       mockRequest.retryCount++;
