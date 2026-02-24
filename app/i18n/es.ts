@@ -336,6 +336,7 @@ export const es: Translation = {
     planNote2: "Puedes actualizar o bajar de categoría en cualquier momento",
     planNote3: "Al bajar de categoría, los datos se ajustarán según los límites del plan",
     planNote4: "Las nuevas suscripciones incluyen una prueba gratuita de 7 días",
+    devModeBanner: "Modo desarrollo: Todos los planes son seleccionables libremente. Los cambios de plan se guardan directamente en la base de datos sin usar la API de facturación de Shopify.",
     testSubscription: "Esta es una suscripción de prueba. No se te cobrará.",
     trialPeriod: "Estás en el período de prueba de {days} días.",
     confirmDowngrade: "¿Realmente quieres cambiar al plan gratuito? Tu suscripción actual se cancelará.",

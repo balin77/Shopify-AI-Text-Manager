@@ -280,6 +280,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // Get subscription plan
     const subscriptionPlan = settings.subscriptionPlan || "free";
 
+    // Check if this is a development environment (custom app mode - all plans freely selectable)
+    const isDevMode = process.env.NODE_ENV === 'development' || process.env.APP_ENV === 'development';
+
     // Check if this is a development/partner test store
     let isTestStore = false;
     try {
@@ -329,6 +332,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       themeTranslationCount,
       localeCount,
       isTestStore,
+      isDevMode,
       subscriptionPlan,
       settings: {
         ...decryptedKeys,
@@ -593,7 +597,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function SettingsPage() {
-  const { shop, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, localeCount, subscriptionPlan, isTestStore } = useLoaderData<typeof loader>();
+  const { shop, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, localeCount, subscriptionPlan, isTestStore, isDevMode } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
   const [searchParams] = useSearchParams();
@@ -963,7 +967,13 @@ export default function SettingsPage() {
                     </Banner>
                   )}
 
-                  {isTestStore && (
+                  {isDevMode && (
+                    <Banner tone="info" title="Development Mode">
+                      <p>{t.settings?.devModeBanner || "Development-Modus: Alle Pläne sind frei wählbar. Planwechsel werden direkt in der Datenbank gespeichert, ohne die Shopify Billing API zu verwenden."}</p>
+                    </Banner>
+                  )}
+
+                  {isTestStore && !isDevMode && (
                     <Banner tone="info" title="Test Store">
                       <p>This is a development/test store. All plan subscriptions are free and will not be charged. You can freely switch between plans for testing purposes.</p>
                     </Banner>

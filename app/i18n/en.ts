@@ -336,6 +336,7 @@ export const en: Translation = {
     planNote2: "You can upgrade or downgrade at any time",
     planNote3: "When downgrading, data will be adjusted according to plan limits",
     planNote4: "New subscriptions include a 7-day free trial",
+    devModeBanner: "Development mode: All plans are freely selectable. Plan changes are saved directly to the database without using the Shopify Billing API.",
     testSubscription: "This is a test subscription. You will not be charged.",
     trialPeriod: "You are in the {days}-day trial period.",
     confirmDowngrade: "Do you really want to switch to the free plan? Your current subscription will be cancelled.",

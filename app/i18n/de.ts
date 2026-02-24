@@ -334,6 +334,7 @@ export const de = {
     planNote2: "Sie können jederzeit upgraden oder downgraden",
     planNote3: "Beim Downgrade werden Daten entsprechend der Plan-Limits angepasst",
     planNote4: "Neue Abonnements enthalten eine 7-tägige kostenlose Testphase",
+    devModeBanner: "Development-Modus: Alle Pläne sind frei wählbar. Planwechsel werden direkt in der Datenbank gespeichert, ohne die Shopify Billing API zu verwenden.",
     testSubscription: "Dies ist ein Test-Abonnement. Sie werden nicht belastet.",
     trialPeriod: "Sie befinden sich in der {days}-tägigen Testphase.",
     confirmDowngrade: "Möchten Sie wirklich zum kostenlosen Plan wechseln? Ihr aktuelles Abo wird gekündigt.",
