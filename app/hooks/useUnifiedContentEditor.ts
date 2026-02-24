@@ -380,9 +380,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   } = useNavigationGuard();
 
   // Change tracking - only track changes if we're not currently loading data
-  // For templates, use custom dynamic field comparison
+  // For templates and metaobjects, use custom dynamic field comparison
   const standardHasFieldChanges = useChangeTracking(
-    isLoadingData ? null : (config.contentType !== 'templates' ? (selectedItem || null) : null), // Skip for templates
+    isLoadingData ? null : (config.contentType !== 'templates' && config.contentType !== 'metaobjects' ? (selectedItem || null) : null), // Skip for templates & metaobjects
     currentLanguage,
     primaryLocale,
     editableValues,
@@ -418,8 +418,34 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // eslint-disable-next-line react-hooks/exhaustive-deps -- templateValuesVersion forces recalc when ref updates
   }, [config.contentType, isLoadingData, selectedItem, editableValues, templateValuesVersion]);
 
-  // Combined field changes: use template logic for templates, standard for others
-  const hasFieldChanges = config.contentType === 'templates' ? templateHasFieldChanges : standardHasFieldChanges;
+  // Metaobjects-specific change detection: compare editableValues with originalLoadedValuesRef
+  // Metaobject field keys are dynamic IDs (e.g. "gid://shopify/Metaobject/123") that
+  // useChangeTracking doesn't know about, so we compare against the loaded baseline directly.
+  const metaobjectsHasFieldChanges = useMemo(() => {
+    if (config.contentType !== 'metaobjects' || isLoadingData || !selectedItem) {
+      return false;
+    }
+
+    const originalValues = originalLoadedValuesRef.current;
+    if (!originalValues || Object.keys(originalValues).length === 0) {
+      return false;
+    }
+
+    for (const [key, originalValue] of Object.entries(originalValues)) {
+      const currentValue = editableValues[key] ?? "";
+      if (currentValue !== originalValue) {
+        return true;
+      }
+    }
+    return false;
+  }, [config.contentType, isLoadingData, selectedItem, editableValues]);
+
+  // Combined field changes: use type-specific logic for templates/metaobjects, standard for others
+  const hasFieldChanges = config.contentType === 'templates'
+    ? templateHasFieldChanges
+    : config.contentType === 'metaobjects'
+      ? metaobjectsHasFieldChanges
+      : standardHasFieldChanges;
 
   // Check for alt-text changes
   const hasAltTextChanges = useMemo(() => {
@@ -3474,61 +3500,35 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   };
 
   const getEditableValue = (fieldKey: string): string => {
-    // DEBUG: Log every call
-    console.log('[METAOBJ-DEBUG] getEditableValue called', {
-      fieldKey,
-      currentLanguage,
-      primaryLocale,
-      hasSelectedItem: !!selectedItem,
-      selectedItemId: selectedItem?.id,
-      translationsCount: selectedItem?.translations?.length || 0
-    });
-
-    // Check if there's a local edit first (but only if it's not an empty string)
-    // Empty strings should fall through to translation lookup
+    // If the key exists in editableValues, always use it (even if empty).
+    // After data loading, editableValues contains the resolved values for all fields.
+    // An empty string means either "no translation" or "user cleared the field" — both correct.
     const localValue = editableValues[fieldKey];
-    if (localValue !== undefined && localValue !== null && localValue !== "") {
-      console.log('[METAOBJ-DEBUG] -> local edit (non-empty):', localValue);
+    if (localValue !== undefined && localValue !== null) {
       return localValue;
     }
 
     // For foreign languages, try to get translation from item.translations
+    // (only reached before initial data load completes)
     if (currentLanguage !== primaryLocale && selectedItem) {
       const field = effectiveFieldDefinitions.find(f => f.key === fieldKey);
-      console.log('[METAOBJ-DEBUG] -> field lookup:', {
-        fieldKey,
-        foundField: !!field,
-        translationKey: field?.translationKey
-      });
 
       if (field?.translationKey) {
         const translation = selectedItem.translations?.find(
           (t: Translation) => t.key === field.translationKey && t.locale === currentLanguage
         );
-        console.log('[METAOBJ-DEBUG] -> translation search:', {
-          translationKey: field.translationKey,
-          locale: currentLanguage,
-          foundTranslation: !!translation,
-          translationValue: translation?.value,
-          allTranslationKeys: selectedItem.translations?.map((t: Translation) => t.key).slice(0, 3)
-        });
 
         if (translation?.value) {
-          console.log('[METAOBJ-DEBUG] -> FOUND translation:', translation.value);
           return translation.value;
         }
-        console.log('[METAOBJ-DEBUG] -> NO translation found');
       }
     }
 
     // Fallback: For primary locale or if no translation exists, use getFieldValue or original value
     if (currentLanguage === primaryLocale && selectedItem && config.getFieldValue) {
-      const value = config.getFieldValue(selectedItem, fieldKey) || "";
-      console.log('[METAOBJ-DEBUG] -> getFieldValue:', value);
-      return value;
+      return config.getFieldValue(selectedItem, fieldKey) || "";
     }
 
-    console.log('[METAOBJ-DEBUG] -> returning empty');
     return "";
   };
 
