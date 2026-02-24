@@ -320,7 +320,7 @@ export function OptionsField({
                                           tone="critical"
                                           variant="plain"
                                         >
-                                          Clear
+                                          {t.clearButton || "Clear"}
                                         </Button>
                                       </div>
                                     )}
@@ -410,7 +410,7 @@ export function OptionsField({
                                 tone="critical"
                                 variant="plain"
                               >
-                                Clear
+                                {t.clearButton || "Clear"}
                               </Button>
                             </div>
                           )}
