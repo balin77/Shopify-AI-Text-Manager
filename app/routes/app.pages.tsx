@@ -16,6 +16,7 @@ import { handleUnifiedContentActions } from "../actions/unified-content.actions"
 import { PAGES_CONFIG } from "../config/content-fields.config";
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
+import { PlanAccessGate } from "../components/PlanAccessGate";
 import { useEffect } from "react";
 import type { ContentItem } from "../types/content-editor.types";
 import { measurePageLoad } from "~/utils/performance.client";
@@ -127,6 +128,7 @@ export default function PagesPage() {
   }, [pages]);
 
   return (
+    <PlanAccessGate contentType="pages">
     <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" }}>
       <MainNavigation />
       <ContentTypeNavigation />
@@ -150,5 +152,6 @@ export default function PagesPage() {
         />
       </div>
     </div>
+    </PlanAccessGate>
   );
 }

@@ -10,7 +10,6 @@
  */
 
 import { useEffect, useState, useMemo, useRef } from "react";
-import { Text } from "@shopify/polaris";
 import { type ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher, useRevalidator, useSearchParams } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
@@ -22,7 +21,7 @@ import { handleUnifiedContentActions } from "../actions/unified-content.actions"
 import { METAOBJECTS_CONFIG } from "../config/content-fields.config";
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
-import { usePlan } from "../contexts/PlanContext";
+import { PlanAccessGate } from "../components/PlanAccessGate";
 import type { ContentItem } from "../types/content-editor.types";
 import { measurePageLoad } from "~/utils/performance.client";
 import { createContentLoader } from "~/utils/loader-factory.server";
@@ -140,23 +139,7 @@ export default function MetaobjectsPage() {
   const revalidator = useRevalidator();
   const { t } = useI18n();
   const { showInfoBox } = useInfoBox();
-  const { canAccessContentType } = usePlan();
   const [searchParams] = useSearchParams();
-
-  // Plan access gate: block page for plans without metaobjects access
-  if (!canAccessContentType("metaobjects")) {
-    return (
-      <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" }}>
-        <MainNavigation />
-        <ContentTypeNavigation />
-        <div style={{ padding: "2rem", textAlign: "center" }}>
-          <Text as="p" variant="bodyMd" tone="subdued">
-            {t.content?.upgradeToAccessFeature?.replace("{plan}", "Pro") || "Upgrade to Pro to access this feature."}
-          </Text>
-        </div>
-      </div>
-    );
-  }
 
   // Track loaded entries per metaobject type (keyed by item id)
   const [loadedEntries, setLoadedEntries] = useState<Record<string, any>>({});
@@ -251,6 +234,7 @@ export default function MetaobjectsPage() {
   }, [metaobjects]);
 
   return (
+    <PlanAccessGate contentType="metaobjects">
     <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" }}>
       <MainNavigation />
       <ContentTypeNavigation />
@@ -271,5 +255,6 @@ export default function MetaobjectsPage() {
         />
       </div>
     </div>
+    </PlanAccessGate>
   );
 }

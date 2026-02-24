@@ -22,6 +22,7 @@ import { MainNavigation } from "../components/MainNavigation";
 import { ContentTypeNavigation } from "../components/ContentTypeNavigation";
 import { useI18n } from "../contexts/I18nContext";
 import { useNavigationHeight } from "../contexts/NavigationHeightContext";
+import { PlanAccessGate } from "../components/PlanAccessGate";
 import { CONTENT_MAX_HEIGHT } from "../constants/layout";
 import { createContentLoader, incrementalSync } from "~/utils/loader-factory.server";
 
@@ -118,6 +119,7 @@ export default function MenusPage() {
   };
 
   return (
+    <PlanAccessGate contentType="menus">
     <Page fullWidth>
       <MainNavigation />
       <ContentTypeNavigation />
@@ -227,5 +229,6 @@ export default function MenusPage() {
         </div>
       </div>
     </Page>
+    </PlanAccessGate>
   );
 }

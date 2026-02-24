@@ -155,6 +155,20 @@ export function isAtLimit(plan: Plan, resourceType: ResourceType, currentCount: 
 }
 
 /**
+ * Get the minimum plan required to access a content type.
+ * Returns null if all plans have access (e.g. products, collections).
+ */
+export function getMinimumPlanForContentType(contentType: ContentType): Plan | null {
+  const planOrder: Plan[] = ["free", "basic", "pro", "max"];
+  for (const plan of planOrder) {
+    if (PLAN_CONFIG[plan].contentTypes.includes(contentType)) {
+      return plan === "free" ? null : plan;
+    }
+  }
+  return "pro"; // fallback
+}
+
+/**
  * Get all resources that are approaching their limits
  */
 export function getResourcesApproachingLimits(

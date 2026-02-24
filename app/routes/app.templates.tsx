@@ -18,6 +18,7 @@ import { useUnifiedContentEditor } from "../hooks/useUnifiedContentEditor";
 import { TEMPLATES_CONFIG } from "../config/content-fields.config";
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
+import { PlanAccessGate } from "../components/PlanAccessGate";
 import { AIService, type AIProvider, toValidProvider } from "../../src/services/ai.service";
 import { TranslationService } from "../../src/services/translation.service";
 import { decryptApiKey } from "../utils/encryption.server";
@@ -2513,6 +2514,7 @@ export default function TemplatesPage() {
   }, [error, showInfoBox, t]);
 
   return (
+    <PlanAccessGate contentType="templates">
     <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" }}>
       <MainNavigation />
       <ContentTypeNavigation />
@@ -2539,5 +2541,6 @@ export default function TemplatesPage() {
         />
       </div>
     </div>
+    </PlanAccessGate>
   );
 }
