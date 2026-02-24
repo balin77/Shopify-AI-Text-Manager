@@ -74,6 +74,8 @@ async function main() {
   //    (e.g. from previous manual schema pushes or deleted migration files)
   const orphanedMigrations = [
     '20250110_add_product_translation_webhook_models',
+    '20250111_add_alttext_instructions',
+    '20260113_add_product_image_alt_translations',
   ];
   for (const name of orphanedMigrations) {
     runSilent(`npx prisma migrate resolve --rolled-back ${name}`);
