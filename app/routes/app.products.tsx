@@ -203,6 +203,7 @@ export const loader = createContentLoader({
             name: opt.name,
             position: opt.position,
             values: JSON.stringify(opt.optionValues?.map((v: any) => ({ id: v.id, name: v.name, linked: !!v.linkedMetafieldValue })) || []),
+            linkedMetafieldKey: opt.linkedMetafield?.key || null,
           })),
         });
       }
