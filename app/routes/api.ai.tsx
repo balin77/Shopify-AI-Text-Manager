@@ -75,6 +75,7 @@ const CONTENT_CONFIGS: Record<string, ContentEditorConfig> = {
 const VALID_CONTENT_TYPES = new Set([
   ...Object.keys(CONTENT_CONFIGS),
   'templates',
+  'metaobjects',
 ]);
 
 
