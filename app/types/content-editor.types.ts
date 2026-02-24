@@ -65,6 +65,7 @@ export interface TranslatableContentItem {
   displayName?: string; // For metaobjects
   definitionName?: string; // For metaobjects
   fields?: Array<{ key: string; value: string | null; type?: string }>; // For metaobjects
+  metaobjects?: Array<{ id: string; handle?: string; displayName?: string; fields?: Array<{ key: string; value: string | null }> }>; // For metaobject types
   options?: Array<{
     id: string;           // gid://shopify/ProductOption/...
     name: string;

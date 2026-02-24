@@ -61,7 +61,7 @@ export default function ClearSessionPage() {
             </Banner>
 
             <Button
-              primary
+              variant="primary"
               onClick={handleClearSessions}
               loading={isLoading}
               disabled={cleared && result?.success}

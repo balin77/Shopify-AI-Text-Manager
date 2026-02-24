@@ -41,7 +41,7 @@ export const loader = createContentLoader({
     // LAZY LOADING: Load navigation metadata (type list) from DB
     const definitions = await db.metaobjectDefinition.findMany({
       where: {
-        shop: ctx.shop
+        shop: ctx.session.shop
       },
       orderBy: {
         name: 'asc'
@@ -60,7 +60,7 @@ export const loader = createContentLoader({
         // Count metaobjects for this type from DB
         const count = await db.metaobject.count({
           where: {
-            shop: ctx.shop,
+            shop: ctx.session.shop,
             type: definition.type
           }
         });
