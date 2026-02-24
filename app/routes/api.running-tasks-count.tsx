@@ -23,10 +23,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         { count: runningTaskCount },
         {
           headers: {
-            "Content-Type": "application/json",
             "Cache-Control": "no-store",
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "GET",
           },
         }
       );
@@ -34,13 +31,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       logger.error("Database error in running-tasks-count", { error: dbError instanceof Error ? dbError.message : String(dbError) });
       return json(
         { count: 0, error: "Database error" },
-        {
-          status: 500,
-          headers: {
-            "Content-Type": "application/json",
-            "Access-Control-Allow-Origin": "*",
-          },
-        }
+        { status: 500 }
       );
     }
   } catch (authError: any) {
@@ -53,10 +44,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       return json(
         { count: 0, warning: "Rate limited" },
         {
-          status: 200, // Return 200 to prevent client-side errors
+          status: 200,
           headers: {
-            "Content-Type": "application/json",
-            "Access-Control-Allow-Origin": "*",
             "Retry-After": "60",
           },
         }
@@ -66,13 +55,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // Return a valid JSON response even on auth errors
     return json(
       { count: 0, error: "Authentication failed" },
-      {
-        status: authError.status || 401,
-        headers: {
-          "Content-Type": "application/json",
-          "Access-Control-Allow-Origin": "*",
-        },
-      }
+      { status: authError.status || 401 }
     );
   }
 };

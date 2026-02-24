@@ -42,11 +42,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         { tasks: recentlyCompletedTasks },
         {
           headers: {
-            "Content-Type": "application/json",
             "Cache-Control": "no-store",
-            // Add CORS headers for embedded app
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "GET",
           },
         }
       );
@@ -54,13 +50,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       logger.error("Database error in recently-completed-tasks", { error: dbError instanceof Error ? dbError.message : String(dbError) });
       return json(
         { tasks: [], error: "Database error" },
-        {
-          status: 500,
-          headers: {
-            "Content-Type": "application/json",
-            "Access-Control-Allow-Origin": "*",
-          },
-        }
+        { status: 500 }
       );
     }
   } catch (authError: any) {
@@ -72,11 +62,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       return json(
         { tasks: [], warning: "Rate limited" },
         {
-          status: 200, // Return 200 to prevent client-side errors
+          status: 200,
           headers: {
-            "Content-Type": "application/json",
-            "Access-Control-Allow-Origin": "*",
-            "Retry-After": "60", // Tell client to wait 60 seconds
+            "Retry-After": "60",
           },
         }
       );
@@ -84,13 +72,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
     return json(
       { tasks: [], error: "Authentication failed" },
-      {
-        status: authError.status || 401,
-        headers: {
-          "Content-Type": "application/json",
-          "Access-Control-Allow-Origin": "*",
-        },
-      }
+      { status: authError.status || 401 }
     );
   }
 };
