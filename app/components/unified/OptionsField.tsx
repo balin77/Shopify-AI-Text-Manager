@@ -12,6 +12,7 @@
 
 import { Card, BlockStack, Text, TextField, Button, Divider, Badge, Banner, Icon, InlineStack } from "@shopify/polaris";
 import { DeleteIcon } from "@shopify/polaris-icons";
+import { Link } from "@remix-run/react";
 import { useI18n } from "../../contexts/I18nContext";
 import { getLocalizedLanguageName } from "../../utils/contentEditor.utils";
 import "../../styles/AIEditableField.css";
@@ -88,10 +89,15 @@ interface OptionsFieldProps {
     translateFieldButton?: string;
     originalLabel?: string;
     linkedOptionHint?: string;
+    linkedOptionHintBefore?: string;
+    linkedOptionHintAfter?: string;
     linkedBadge?: string;
     addValue?: string;
     removeValue?: string;
     linkedNotEditableHint?: string;
+    linkedNotEditableHintBefore?: string;
+    linkedNotEditableHintAfter?: string;
+    metaobjectsLinkText?: string;
     optionPositionLabel?: string;
   };
 }
@@ -135,9 +141,6 @@ export function OptionsField({
         {isPrimaryLocale ? (
           // Editable fields in primary language
           <BlockStack gap="300">
-            <Text as="p" variant="bodySm" tone="subdued">
-              {t.editInstructionPrimary || "Edit the product option names and values in the primary language."}
-            </Text>
             {options.map((option, index) => {
               // Get current values from primaryOptions state, fallback to original option data
               const currentName = primaryOptions[option.id]?.name !== undefined
@@ -226,10 +229,14 @@ export function OptionsField({
                             )}
                           </div>
 
-                          {/* Info banner about values */}
+                          {/* Info banner about values — link to metaobjects page */}
                           <Banner tone="info">
                             <p>
-                              {t.linkedNotEditableHint || "The values of this option are metaobjects and cannot be edited here. Manage them in Shopify."}
+                              {t.linkedNotEditableHintBefore || "The values of this option are linked to metaobjects. You can edit them under "}
+                              <Link to={`/app/metaobjects?select=${encodeURIComponent(option.name)}`} style={{ textDecoration: "underline" }}>
+                                {t.metaobjectsLinkText || "Metaobjects"}
+                              </Link>
+                              {t.linkedNotEditableHintAfter || "."}
                             </p>
                           </Banner>
                         </>
@@ -468,7 +475,11 @@ export function OptionsField({
                       ) : (
                         <Banner tone="info">
                           <p>
-                            {t.linkedOptionHint || "The values of this option are metaobjects and are translated separately under Metaobjects."}
+                            {t.linkedOptionHintBefore || "The values of this option are metaobjects and can be translated under "}
+                            <Link to={`/app/metaobjects?select=${encodeURIComponent(option.name)}`} style={{ textDecoration: "underline" }}>
+                              {t.metaobjectsLinkText || "Metaobjects"}
+                            </Link>
+                            {t.linkedOptionHintAfter || "."}
                           </p>
                         </Banner>
                       )}

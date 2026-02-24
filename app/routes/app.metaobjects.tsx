@@ -11,7 +11,7 @@
 
 import { useEffect, useState, useMemo, useRef } from "react";
 import { type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useFetcher, useRevalidator } from "@remix-run/react";
+import { useLoaderData, useFetcher, useRevalidator, useSearchParams } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
 import { ContentTypeNavigation } from "../components/ContentTypeNavigation";
@@ -138,6 +138,7 @@ export default function MetaobjectsPage() {
   const revalidator = useRevalidator();
   const { t } = useI18n();
   const { showInfoBox } = useInfoBox();
+  const [searchParams] = useSearchParams();
 
   // Track loaded entries per metaobject type (keyed by item id)
   const [loadedEntries, setLoadedEntries] = useState<Record<string, any>>({});
@@ -167,6 +168,23 @@ export default function MetaobjectsPage() {
     showInfoBox,
     t,
   });
+
+  // Auto-select metaobject type from URL ?select= param (e.g. linked from product options)
+  const selectParam = searchParams.get("select");
+  const hasAutoSelected = useRef(false);
+  useEffect(() => {
+    if (!selectParam || hasAutoSelected.current || metaobjects.length === 0) return;
+    // Try to match by definition name (case-insensitive) or type handle
+    const match = metaobjects.find((m: any) =>
+      m.title?.toLowerCase() === selectParam.toLowerCase() ||
+      m.definitionName?.toLowerCase() === selectParam.toLowerCase() ||
+      m.type?.toLowerCase() === selectParam.toLowerCase()
+    );
+    if (match) {
+      hasAutoSelected.current = true;
+      editor.handlers.handleItemSelect(match.id);
+    }
+  }, [selectParam, metaobjects]);
 
   // Lazy load entries when a type is selected
   useEffect(() => {

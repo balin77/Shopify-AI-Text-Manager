@@ -744,10 +744,15 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         translateButton: t.products?.translateEntireOption,
                         translateFieldButton: t.products?.translateFieldButton,
                         linkedOptionHint: t.products?.linkedOptionHint,
+                        linkedOptionHintBefore: t.products?.linkedOptionHintBefore,
+                        linkedOptionHintAfter: t.products?.linkedOptionHintAfter,
                         linkedBadge: t.products?.linkedBadge,
                         optionNameLabel: t.products?.optionNameLabel,
                         valuesLabel: t.products?.valuesLabel,
                         linkedNotEditableHint: t.products?.linkedNotEditableHint,
+                        linkedNotEditableHintBefore: t.products?.linkedNotEditableHintBefore,
+                        linkedNotEditableHintAfter: t.products?.linkedNotEditableHintAfter,
+                        metaobjectsLinkText: t.products?.metaobjectsLinkText,
                         optionPositionLabel: t.products?.optionPositionLabel,
                       }}
                     />
