@@ -9,32 +9,8 @@
 
 import { logger } from '~/utils/logger.server';
 import { isTranslationRecentlySaved } from '~/utils/translation-save-lock.server';
-
-interface ShopifyGraphQLClient {
-  graphql: (query: string, options?: { variables?: Record<string, unknown> }) => Promise<Response>;
-}
-
-/** Locale info returned by shopLocales query */
-interface ShopLocale {
-  locale: string;
-  name?: string;
-  primary: boolean;
-  published: boolean;
-}
-
-/** GraphQL edge wrapper */
-interface GraphQLEdge<T> {
-  node: T;
-}
-
-/** Resolved translation with digest and resource type */
-interface ResolvedTranslation {
-  key: string;
-  value: string;
-  locale: string;
-  digest?: string | null;
-  resourceType: string;
-}
+import type { ShopifyGraphQLClient, ShopLocale, GraphQLEdge, ResolvedTranslation, ProgressCallback } from './sync-types';
+import { fetchShopLocales, fetchAllTranslations } from './sync-utils';
 
 /** Collection data from Shopify GraphQL */
 interface ShopifyCollectionData {
@@ -83,10 +59,6 @@ interface ShopifyMenuData {
   items: unknown[];
 }
 
-export interface ProgressCallback {
-  (current: number, total: number, message: string): void;
-}
-
 export class ContentSyncService {
   constructor(
     private admin: ShopifyGraphQLClient,
@@ -113,11 +85,11 @@ export class ContentSyncService {
       }
 
       // 2. Fetch all available locales
-      const locales = await this.fetchShopLocales();
+      const locales = await fetchShopLocales(this.graphqlFn());
       logger.debug(`[ContentSync] Found ${locales.length} locales`);
 
       // 3. Fetch translations for all non-primary locales
-      const allTranslations = await this.fetchAllTranslations(
+      const allTranslations = await fetchAllTranslations(this.graphqlFn(),
         collectionId,
         locales.filter((l) => !l.primary),
         "Collection"
@@ -174,10 +146,10 @@ export class ContentSyncService {
       }
 
       // 2. Fetch all available locales
-      const locales = await this.fetchShopLocales();
+      const locales = await fetchShopLocales(this.graphqlFn());
 
       // 3. Fetch translations
-      const allTranslations = await this.fetchAllTranslations(
+      const allTranslations = await fetchAllTranslations(this.graphqlFn(),
         articleId,
         locales.filter((l) => !l.primary),
         "Article"
@@ -409,109 +381,8 @@ export class ContentSyncService {
   }
 
 
-  private async fetchShopLocales(): Promise<ShopLocale[]> {
-    const response = await this.admin.graphql(
-      `#graphql
-        query getShopLocales {
-          shopLocales {
-            locale
-            name
-            primary
-            published
-          }
-        }`
-    );
-
-    const data = await response.json();
-    if (data.errors?.length > 0) {
-      throw new Error(`GraphQL error in fetchShopLocales: ${data.errors[0].message}`);
-    }
-    return data.data?.shopLocales || [];
-  }
-
-  /**
-   * Fetch translations for all locales
-   *
-   * IMPORTANT: Only saves ACTUAL translations from Shopify.
-   * If a field has no translation in Shopify, it will NOT be stored in the database.
-   * This prevents the primary language text from appearing as a "translation".
-   */
-  private async fetchAllTranslations(resourceId: string, locales: ShopLocale[], resourceType: string): Promise<ResolvedTranslation[]> {
-    const allTranslationsMap = new Map<string, ResolvedTranslation>(); // Deduplicate using key::locale
-
-    for (const locale of locales) {
-      if (!locale.published) {
-        logger.debug(`[ContentSync] Skipping unpublished locale: ${locale.locale}`);
-        continue;
-      }
-
-      logger.debug(`[ContentSync] Fetching translations for locale: ${locale.locale}`);
-
-      const response = await this.admin.graphql(
-        `#graphql
-          query getTranslations($resourceId: ID!, $locale: String!) {
-            translatableResource(resourceId: $resourceId) {
-              translatableContent {
-                key
-                value
-                digest
-                locale
-              }
-              translations(locale: $locale) {
-                key
-                value
-                locale
-              }
-            }
-          }`,
-        { variables: { resourceId, locale: locale.locale } }
-      );
-
-      const data = await response.json();
-      if (data.errors?.length > 0) {
-        logger.warn(`[ContentSync] GraphQL error fetching translations for ${locale.locale}: ${data.errors[0].message}`);
-        continue;
-      }
-      const resource = data.data?.translatableResource;
-
-      if (!resource) continue;
-
-      const digestMap = new Map<string, string>();
-
-      // Build digest map from translatableContent (for reference only)
-      // DO NOT store these as translations - they are source language text
-      if (resource.translatableContent) {
-        for (const content of resource.translatableContent) {
-          digestMap.set(content.key, content.digest);
-        }
-      }
-
-      // ONLY save actual translations from Shopify
-      // DO NOT save translatableContent values - those are the source language text
-      if (resource.translations && resource.translations.length > 0) {
-        logger.debug(`[ContentSync] Actual translations for ${locale.locale}:`,
-          resource.translations.map((t: { key: string }) => t.key).join(', '));
-
-        for (const translation of resource.translations) {
-          const uniqueKey = `${translation.key}::${translation.locale}`;
-          if (!allTranslationsMap.has(uniqueKey)) {
-            allTranslationsMap.set(uniqueKey, {
-              key: translation.key,
-              value: translation.value,
-              locale: translation.locale,
-              digest: digestMap.get(translation.key),
-              resourceType,
-            });
-          }
-        }
-
-        logger.debug(`[ContentSync] Saved ${resource.translations.length} actual translations for ${locale.locale}`);
-      } else {
-        logger.debug(`[ContentSync] No translations found for ${locale.locale} - nothing to save`);
-      }
-    }
-
-    return Array.from(allTranslationsMap.values());
+  private graphqlFn() {
+    return this.admin.graphql.bind(this.admin);
   }
 
   // ============================================

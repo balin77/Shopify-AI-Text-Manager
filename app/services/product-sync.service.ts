@@ -7,38 +7,8 @@
 
 import { logger } from '~/utils/logger.server';
 import { isTranslationRecentlySaved } from '~/utils/translation-save-lock.server';
-
-interface ShopifyGraphQLClient {
-  graphql: (query: string, options?: { variables?: Record<string, unknown> }) => Promise<Response>;
-}
-
-/** Locale info returned by shopLocales query */
-interface ShopLocale {
-  locale: string;
-  name?: string;
-  primary: boolean;
-  published: boolean;
-}
-
-/** GraphQL edge wrapper */
-interface GraphQLEdge<T> {
-  node: T;
-}
-
-/** A single translation from Shopify */
-interface ShopifyTranslation {
-  key: string;
-  value: string;
-  locale: string;
-}
-
-/** Resolved translation with digest */
-interface ResolvedTranslation {
-  key: string;
-  value: string;
-  locale: string;
-  digest?: string;
-}
+import type { ShopifyGraphQLClient, ShopLocale, GraphQLEdge, ShopifyTranslation, ResolvedTranslation, ProgressCallback } from './sync-types';
+import { fetchShopLocales } from './sync-utils';
 
 /** GraphQL error shape */
 interface GraphQLError {
@@ -116,6 +86,563 @@ export class ProductSyncService {
   ) {}
 
   /**
+   * Bulk-sync all products with translations, images, options, and metafields.
+   * Used by the initial streaming sync to replace inline code in api.sync-all-stream.tsx.
+   *
+   * Fixes over the previous inline implementation:
+   * - Uses metafields(first: 250) instead of first: 50
+   * - Fetches sub-resource translations (options, option values, metafields)
+   */
+  async syncAllProducts(options: {
+    maxProducts: number;
+    cacheProductImages: boolean;
+    onProgress?: ProgressCallback;
+    signal?: AbortSignal;
+  }): Promise<number> {
+    const { maxProducts, cacheProductImages, onProgress, signal } = options;
+    const { db, upsertProductMetafields } = await import("../db.server");
+
+    const checkAborted = () => {
+      if (signal?.aborted) {
+        throw new DOMException("Client disconnected", "AbortError");
+      }
+    };
+
+    // ==========================================
+    // Phase 1: Fetch all products (0-20%)
+    // ==========================================
+    let allProducts: any[] = [];
+    let hasNextPage = true;
+    let cursor: string | null = null;
+
+    onProgress?.(0, 100, 'Fetching products from Shopify...');
+
+    while (hasNextPage && allProducts.length < maxProducts) {
+      checkAborted();
+      const batchSize = Math.min(250, maxProducts - allProducts.length);
+
+      const response: Response = await this.admin.graphql(
+        `#graphql
+          query getProductsBulk($first: Int!, $after: String) {
+            products(first: $first, after: $after) {
+              pageInfo {
+                hasNextPage
+                endCursor
+              }
+              edges {
+                node {
+                  id
+                  title
+                  descriptionHtml
+                  handle
+                  status
+                  productType
+                  updatedAt
+                  seo {
+                    title
+                    description
+                  }
+                  featuredImage {
+                    url
+                    altText
+                  }
+                  media(first: 250) {
+                    edges {
+                      node {
+                        ... on MediaImage {
+                          id
+                          alt
+                          image {
+                            url
+                          }
+                        }
+                      }
+                    }
+                  }
+                  options {
+                    id
+                    name
+                    position
+                    values
+                    linkedMetafield {
+                      namespace
+                      key
+                    }
+                    optionValues {
+                      id
+                      name
+                      linkedMetafieldValue
+                    }
+                  }
+                  metafields(first: 250) {
+                    edges {
+                      node {
+                        id
+                        namespace
+                        key
+                        value
+                        type
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }`,
+        { variables: { first: batchSize, after: cursor } }
+      );
+
+      const data: any = await response.json();
+
+      if (data.errors) {
+        throw new Error(data.errors[0]?.message || "GraphQL error");
+      }
+
+      const pageInfo: any = data.data?.products?.pageInfo;
+      const products = data.data?.products?.edges?.map((e: any) => e.node) || [];
+
+      allProducts = [...allProducts, ...products];
+      hasNextPage = pageInfo?.hasNextPage || false;
+      cursor = pageInfo?.endCursor || null;
+
+      onProgress?.(20, 100, `Fetched ${allProducts.length} products from Shopify...`);
+    }
+
+    if (allProducts.length === 0) {
+      onProgress?.(100, 100, 'No products found');
+      return 0;
+    }
+
+    // ==========================================
+    // Phase 2: Save products to DB (20-60%)
+    // ==========================================
+    let synced = 0;
+    const total = allProducts.length;
+
+    for (const product of allProducts) {
+      checkAborted();
+      try {
+        await db.$transaction(async (tx: any) => {
+          // Upsert product
+          await tx.product.upsert({
+            where: {
+              shop_id: { shop: this.shop, id: product.id },
+            },
+            create: {
+              id: product.id,
+              shop: this.shop,
+              title: product.title,
+              descriptionHtml: product.descriptionHtml || "",
+              handle: product.handle,
+              status: product.status,
+              productType: product.productType || null,
+              seoTitle: product.seo?.title || null,
+              seoDescription: product.seo?.description || null,
+              featuredImageUrl: product.featuredImage?.url || null,
+              featuredImageAlt: product.featuredImage?.altText || null,
+              shopifyUpdatedAt: new Date(product.updatedAt),
+              lastSyncedAt: new Date(),
+            },
+            update: {
+              title: product.title,
+              descriptionHtml: product.descriptionHtml || "",
+              handle: product.handle,
+              status: product.status,
+              productType: product.productType || null,
+              seoTitle: product.seo?.title || null,
+              seoDescription: product.seo?.description || null,
+              featuredImageUrl: product.featuredImage?.url || null,
+              featuredImageAlt: product.featuredImage?.altText || null,
+              shopifyUpdatedAt: new Date(product.updatedAt),
+              lastSyncedAt: new Date(),
+            },
+          });
+
+          // Save images
+          if (cacheProductImages) {
+            const mediaImages = product.media?.edges
+              ?.filter((edge: any) => edge.node.id && edge.node.image?.url)
+              .map((edge: any) => edge.node) || [];
+
+            if (mediaImages.length > 0) {
+              await tx.productImage.deleteMany({ where: { productId: product.id } });
+              await tx.productImage.createMany({
+                data: mediaImages.map((media: any, index: number) => ({
+                  productId: product.id,
+                  url: media.image.url,
+                  altText: media.alt || null,
+                  mediaId: media.id,
+                  position: index,
+                })),
+              });
+            }
+          }
+
+          // Save options
+          if (product.options && product.options.length > 0) {
+            await tx.productOption.deleteMany({ where: { productId: product.id } });
+            await tx.productOption.createMany({
+              data: product.options.map((opt: any) => ({
+                id: opt.id,
+                productId: product.id,
+                name: opt.name,
+                position: opt.position,
+                values: opt.optionValues
+                  ? JSON.stringify(opt.optionValues.map((v: any) => ({ id: v.id, name: v.name, linked: !!v.linkedMetafieldValue, linkedValue: v.linkedMetafieldValue || undefined })))
+                  : JSON.stringify(opt.values),
+                linkedMetafieldKey: opt.linkedMetafield?.key || null,
+              })),
+            });
+          }
+
+          // Upsert metafields (idempotent — safe under concurrent execution)
+          const metafields = product.metafields?.edges?.map((edge: any) => edge.node) || [];
+          await upsertProductMetafields(tx, product.id, metafields);
+        });
+
+        synced++;
+
+        if (synced % 10 === 0 || synced === total) {
+          const progress = Math.round(20 + (synced / total) * 40);
+          onProgress?.(progress, 100, `Saving products: ${synced}/${total}`);
+        }
+      } catch (err: any) {
+        if (err.name === "AbortError") throw err;
+        logger.error(`[ProductSync] Failed to save product ${product.id}`, { error: err.message });
+      }
+    }
+
+    // ==========================================
+    // Phase 3: Bulk-fetch translations (60-100%)
+    // ==========================================
+    if (synced > 0) {
+      try {
+        checkAborted();
+        onProgress?.(60, 100, 'Fetching product translations...');
+
+        const shopLocales = await fetchShopLocales(this.admin.graphql.bind(this.admin));
+        const nonPrimaryLocales = shopLocales.filter((l) => !l.primary && l.published);
+
+        if (nonPrimaryLocales.length > 0) {
+          const productIds = allProducts.map((p: any) => p.id);
+          const BATCH_SIZE = 100;
+          const batches: string[][] = [];
+          for (let i = 0; i < productIds.length; i += BATCH_SIZE) {
+            batches.push(productIds.slice(i, i + BATCH_SIZE));
+          }
+
+          // 3a. Product translations (60-80%)
+          let localeIndex = 0;
+          for (const locale of nonPrimaryLocales) {
+            localeIndex++;
+            checkAborted();
+
+            const localeProgress = Math.round(60 + (localeIndex / nonPrimaryLocales.length) * 20);
+            onProgress?.(localeProgress, 100, `Fetching translations: ${locale.name || locale.locale} (${localeIndex}/${nonPrimaryLocales.length})`);
+
+            const allTranslations: Array<{
+              resourceId: string;
+              key: string;
+              value: string;
+              locale: string;
+              digest: string | null;
+            }> = [];
+
+            for (const batch of batches) {
+              try {
+                const response: Response = await this.admin.graphql(
+                  `#graphql
+                    query getBulkProductTranslations($resourceIds: [ID!]!, $locale: String!) {
+                      translatableResourcesByIds(first: ${BATCH_SIZE}, resourceIds: $resourceIds) {
+                        edges {
+                          node {
+                            resourceId
+                            translatableContent {
+                              key
+                              digest
+                            }
+                            translations(locale: $locale) {
+                              key
+                              value
+                              locale
+                            }
+                          }
+                        }
+                      }
+                    }`,
+                  { variables: { resourceIds: batch, locale: locale.locale } }
+                );
+
+                const data: any = await response.json();
+
+                if (data.errors) {
+                  logger.warn(`[ProductSync] GraphQL error fetching translations for locale ${locale.locale}:`, data.errors[0]?.message);
+                  continue;
+                }
+
+                const resources = data.data?.translatableResourcesByIds?.edges || [];
+                for (const edge of resources) {
+                  const node = edge.node;
+                  const digestMap = new Map<string, string>();
+                  for (const content of node.translatableContent || []) {
+                    if (content.digest) {
+                      digestMap.set(content.key, content.digest);
+                    }
+                  }
+                  for (const t of node.translations || []) {
+                    if (t.value) {
+                      allTranslations.push({
+                        resourceId: node.resourceId,
+                        key: t.key,
+                        value: t.value,
+                        locale: t.locale,
+                        digest: digestMap.get(t.key) || null,
+                      });
+                    }
+                  }
+                }
+              } catch (batchErr: any) {
+                if (batchErr.name === "AbortError") throw batchErr;
+                logger.warn(`[ProductSync] Failed to fetch translation batch for locale ${locale.locale}:`, batchErr.message);
+              }
+            }
+
+            if (allTranslations.length > 0) {
+              await db.contentTranslation.createMany({
+                data: allTranslations.map(t => ({
+                  resourceId: t.resourceId,
+                  resourceType: "Product",
+                  key: t.key,
+                  value: t.value,
+                  locale: t.locale,
+                  digest: t.digest,
+                })),
+                skipDuplicates: true,
+              });
+
+              logger.debug(`[ProductSync] Saved ${allTranslations.length} product translations for locale ${locale.locale}`);
+            }
+          }
+
+          // 3b. Sub-resource translations — options, option values, metafields (80-90%)
+          onProgress?.(80, 100, 'Fetching sub-resource translations...');
+
+          const subResources: Array<{ id: string; type: string }> = [];
+          for (const product of allProducts) {
+            for (const opt of product.options || []) {
+              subResources.push({ id: opt.id, type: "ProductOption" });
+              for (const val of opt.optionValues || []) {
+                if (val.id && !val.linkedMetafieldValue) {
+                  subResources.push({ id: val.id, type: "ProductOptionValue" });
+                }
+              }
+            }
+            for (const edge of product.metafields?.edges || []) {
+              subResources.push({ id: edge.node.id, type: "Metafield" });
+            }
+          }
+
+          if (subResources.length > 0) {
+            const allSubIds = subResources.map(s => s.id);
+            const typeMap = new Map(subResources.map(s => [s.id, s.type]));
+            const SUB_BATCH_SIZE = 250;
+            const subBatches: string[][] = [];
+            for (let i = 0; i < allSubIds.length; i += SUB_BATCH_SIZE) {
+              subBatches.push(allSubIds.slice(i, i + SUB_BATCH_SIZE));
+            }
+
+            let subLocaleIndex = 0;
+            for (const locale of nonPrimaryLocales) {
+              subLocaleIndex++;
+              checkAborted();
+
+              const subProgress = Math.round(80 + (subLocaleIndex / nonPrimaryLocales.length) * 10);
+              onProgress?.(subProgress, 100, `Fetching sub-resource translations: ${locale.name || locale.locale} (${subLocaleIndex}/${nonPrimaryLocales.length})`);
+
+              const subTranslations: Array<{
+                resourceId: string;
+                resourceType: string;
+                key: string;
+                value: string;
+                locale: string;
+              }> = [];
+
+              for (const batch of subBatches) {
+                try {
+                  const response: Response = await this.admin.graphql(
+                    `#graphql
+                      query getSubResourceTranslationsBulk($resourceIds: [ID!]!, $locale: String!) {
+                        translatableResourcesByIds(first: 250, resourceIds: $resourceIds) {
+                          edges {
+                            node {
+                              resourceId
+                              translations(locale: $locale) {
+                                key
+                                value
+                              }
+                            }
+                          }
+                        }
+                      }`,
+                    { variables: { resourceIds: batch, locale: locale.locale } }
+                  );
+
+                  const data: any = await response.json();
+
+                  if (data.errors) {
+                    logger.warn(`[ProductSync] GraphQL error fetching sub-resource translations for locale ${locale.locale}:`, data.errors[0]?.message);
+                    continue;
+                  }
+
+                  const resources = data.data?.translatableResourcesByIds?.edges || [];
+                  for (const edge of resources) {
+                    const resourceId = edge.node.resourceId;
+                    const resourceType = typeMap.get(resourceId) || "Unknown";
+                    for (const t of edge.node.translations || []) {
+                      if (t.value) {
+                        subTranslations.push({
+                          resourceId,
+                          resourceType,
+                          key: t.key,
+                          value: t.value,
+                          locale: locale.locale,
+                        });
+                      }
+                    }
+                  }
+                } catch (batchErr: any) {
+                  if (batchErr.name === "AbortError") throw batchErr;
+                  logger.warn(`[ProductSync] Failed to fetch sub-resource translation batch for locale ${locale.locale}:`, batchErr.message);
+                }
+              }
+
+              if (subTranslations.length > 0) {
+                await db.contentTranslation.createMany({
+                  data: subTranslations.map(t => ({
+                    resourceId: t.resourceId,
+                    resourceType: t.resourceType,
+                    key: t.key,
+                    value: t.value,
+                    locale: t.locale,
+                    digest: null,
+                  })),
+                  skipDuplicates: true,
+                });
+
+                logger.debug(`[ProductSync] Saved ${subTranslations.length} sub-resource translations for locale ${locale.locale}`);
+              }
+            }
+          }
+
+          // 3c. Image alt-text translations (90-100%)
+          const allMediaIds: string[] = [];
+          for (const product of allProducts) {
+            const mediaImages = product.media?.edges
+              ?.filter((edge: any) => edge.node.id)
+              .map((edge: any) => edge.node.id) || [];
+            allMediaIds.push(...mediaImages);
+          }
+
+          if (allMediaIds.length > 0) {
+            onProgress?.(90, 100, 'Fetching image alt-text translations...');
+
+            const dbImages = await db.productImage.findMany({
+              where: { mediaId: { in: allMediaIds } },
+              select: { id: true, mediaId: true },
+            });
+            const mediaIdToDbId = new Map<string, string>();
+            for (const img of dbImages) {
+              if (img.mediaId) mediaIdToDbId.set(img.mediaId, img.id);
+            }
+
+            const MEDIA_BATCH_SIZE = 250;
+            const mediaBatches: string[][] = [];
+            for (let i = 0; i < allMediaIds.length; i += MEDIA_BATCH_SIZE) {
+              mediaBatches.push(allMediaIds.slice(i, i + MEDIA_BATCH_SIZE));
+            }
+
+            const altTranslations: Array<{ imageId: string; locale: string; altText: string }> = [];
+
+            for (const locale of nonPrimaryLocales) {
+              checkAborted();
+
+              for (const batch of mediaBatches) {
+                try {
+                  const response: Response = await this.admin.graphql(
+                    `#graphql
+                      query getBulkImageAltTranslations($resourceIds: [ID!]!, $locale: String!) {
+                        translatableResourcesByIds(first: 250, resourceIds: $resourceIds) {
+                          edges {
+                            node {
+                              resourceId
+                              translations(locale: $locale) {
+                                key
+                                value
+                              }
+                            }
+                          }
+                        }
+                      }`,
+                    { variables: { resourceIds: batch, locale: locale.locale } }
+                  );
+
+                  const data: any = await response.json();
+                  if (data.errors) {
+                    logger.warn(`[ProductSync] GraphQL error fetching alt-text for locale ${locale.locale}:`, data.errors[0]?.message);
+                    continue;
+                  }
+
+                  const resources = data.data?.translatableResourcesByIds?.edges || [];
+                  for (const edge of resources) {
+                    const mediaId = edge.node.resourceId;
+                    const translations: Array<{ key: string; value: string }> = edge.node.translations || [];
+                    const altTranslation = translations.find((t: any) => t.key === "alt");
+                    if (altTranslation?.value) {
+                      const dbId = mediaIdToDbId.get(mediaId);
+                      if (dbId) {
+                        altTranslations.push({
+                          imageId: dbId,
+                          locale: locale.locale,
+                          altText: altTranslation.value,
+                        });
+                      }
+                    }
+                  }
+                } catch (batchErr: any) {
+                  if (batchErr.name === "AbortError") throw batchErr;
+                  logger.warn(`[ProductSync] Failed to fetch alt-text batch for locale ${locale.locale}:`, batchErr.message);
+                }
+              }
+            }
+
+            if (altTranslations.length > 0) {
+              onProgress?.(97, 100, `Saving ${altTranslations.length} image alt-text translations...`);
+
+              await db.productImageAltTranslation.createMany({
+                data: altTranslations.map(t => ({
+                  imageId: t.imageId,
+                  locale: t.locale,
+                  altText: t.altText,
+                })),
+                skipDuplicates: true,
+              });
+
+              logger.debug(`[ProductSync] Saved ${altTranslations.length} image alt-text translations`);
+            }
+          }
+        }
+      } catch (translationErr: any) {
+        if (translationErr.name === "AbortError") throw translationErr;
+        logger.error(`[ProductSync] Failed to fetch product translations:`, translationErr.message);
+        // Non-fatal: products are synced, translations can be loaded on-demand
+      }
+    }
+
+    onProgress?.(100, 100, `Synced ${synced} products`);
+    return synced;
+  }
+
+  /**
    * Sync a single product with all its translations
    */
   async syncProduct(productId: string, forceSync = false): Promise<void> {
@@ -155,7 +682,7 @@ export class ProductSyncService {
       }
 
       // 2. Fetch all available locales
-      const locales = await this.fetchShopLocales();
+      const locales = await fetchShopLocales(this.admin.graphql.bind(this.admin));
       logger.debug(`[ProductSync] Found ${locales.length} locales`);
 
       // 3. Fetch translations for all non-primary locales
@@ -582,41 +1109,6 @@ export class ProductSyncService {
     }
 
     return product;
-  }
-
-  /**
-   * Fetch all shop locales
-   */
-  private async fetchShopLocales(): Promise<ShopLocale[]> {
-    const response = await this.admin.graphql(
-      `#graphql
-        query getShopLocales {
-          shopLocales {
-            locale
-            name
-            primary
-            published
-          }
-        }`
-    );
-
-    const data = await response.json();
-
-    // Check for GraphQL errors
-    if (data.errors && data.errors.length > 0) {
-      logger.error(`[ProductSync] GraphQL errors fetching shop locales:`, {
-        errors: data.errors,
-      });
-      throw new Error(`Failed to fetch shop locales: ${(data.errors as GraphQLError[])[0].message}`);
-    }
-
-    const locales: ShopLocale[] = data.data?.shopLocales || [];
-
-    if (locales.length === 0) {
-      logger.warn(`[ProductSync] No shop locales found - this might indicate an API issue`);
-    }
-
-    return locales;
   }
 
   /**

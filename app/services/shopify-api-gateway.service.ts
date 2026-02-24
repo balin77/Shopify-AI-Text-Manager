@@ -10,10 +10,7 @@
 
 import { logger } from '~/utils/logger.server';
 import { getFullErrorMessage } from '~/utils/error-handler';
-
-interface ShopifyGraphQLClient {
-  graphql: (query: string, options?: { variables?: any }) => Promise<any>;
-}
+import type { ShopifyGraphQLClient } from './sync-types';
 
 interface QueuedRequest {
   query: string;

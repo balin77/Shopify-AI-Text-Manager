@@ -19,9 +19,10 @@ const phaseKeys: Record<string, string> = {
   pages: "phasePages",
   policies: "phasePolicies",
   themes: "phaseThemes",
+  metaobjects: "phaseMetaobjects",
 };
 
-const phaseOrder = ["products", "collections", "articles", "pages", "policies", "themes"];
+const phaseOrder = ["products", "collections", "articles", "pages", "policies", "themes", "metaobjects"];
 
 export function SettingsSetupTab({
   shop,

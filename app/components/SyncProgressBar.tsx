@@ -51,9 +51,10 @@ const phaseLabels: Record<string, string> = {
   pages: "Pages",
   policies: "Policies",
   themes: "Themes",
+  metaobjects: "Metaobjects",
 };
 
-const phaseOrder = ["products", "collections", "articles", "pages", "policies", "themes"];
+const phaseOrder = ["products", "collections", "articles", "pages", "policies", "themes", "metaobjects"];
 
 export function SyncProgressBar({
   showButton = true,

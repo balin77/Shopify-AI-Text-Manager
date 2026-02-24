@@ -7,18 +7,8 @@
 
 import { ShopifyApiGateway } from './shopify-api-gateway.service';
 import { logger } from '~/utils/logger.server';
-
-interface ShopifyGraphQLClient {
-  graphql: (query: string, options?: { variables?: Record<string, unknown> }) => Promise<Response>;
-}
-
-/** Locale info returned by shopLocales query */
-interface ShopLocale {
-  locale: string;
-  name?: string;
-  primary: boolean;
-  published: boolean;
-}
+import type { ShopifyGraphQLClient, ShopLocale, ShopifyTranslation, ResolvedTranslation, ProgressCallback } from './sync-types';
+import { fetchShopLocales, fetchAllTranslations } from './sync-utils';
 
 /** A single translatable content item from Shopify */
 interface TranslatableContentItem {
@@ -26,23 +16,6 @@ interface TranslatableContentItem {
   value: string | null;
   digest: string | null;
   locale: string;
-}
-
-/** A single translation from Shopify */
-interface ShopifyTranslation {
-  key: string;
-  value: string;
-  locale: string;
-  outdated?: boolean;
-}
-
-/** Resolved translation with digest and resource type */
-interface ResolvedTranslation {
-  key: string;
-  value: string;
-  locale: string;
-  digest?: string | null;
-  resourceType: string;
 }
 
 /** Page data from Shopify GraphQL */
@@ -133,10 +106,6 @@ export interface SyncStats {
   metaobjects: number;
   total: number;
   duration: number;
-}
-
-export interface ProgressCallback {
-  (current: number, total: number, message: string): void;
 }
 
 export class BackgroundSyncService {
@@ -279,7 +248,7 @@ export class BackgroundSyncService {
       }
 
       // 3. Fetch shop locales
-      const locales = await this.fetchShopLocales();
+      const locales = await fetchShopLocales(this.gateway.graphql.bind(this.gateway));
       const nonPrimaryLocales = locales.filter((l) => !l.primary);
 
       // 4. Sync each page
@@ -335,7 +304,7 @@ export class BackgroundSyncService {
     }
 
     // Fetch locales
-    const locales = await this.fetchShopLocales();
+    const locales = await fetchShopLocales(this.gateway.graphql.bind(this.gateway));
     const nonPrimaryLocales = locales.filter((l) => !l.primary);
 
     // Sync the page
@@ -374,7 +343,7 @@ export class BackgroundSyncService {
     const { db } = await import("../db.server");
 
     // Fetch translations for all non-primary locales (outside transaction - API calls)
-    const allTranslations = await this.fetchAllTranslations(
+    const allTranslations = await fetchAllTranslations(this.gateway.graphql.bind(this.gateway),
       pageData.id,
       nonPrimaryLocales,
       "Page"
@@ -567,7 +536,7 @@ export class BackgroundSyncService {
       }
 
       // 3. Fetch shop locales
-      const locales = await this.fetchShopLocales();
+      const locales = await fetchShopLocales(this.gateway.graphql.bind(this.gateway));
       const nonPrimaryLocales = locales.filter((l) => !l.primary);
 
       // 4. Sync each policy
@@ -628,7 +597,7 @@ export class BackgroundSyncService {
     }
 
     // Fetch locales
-    const locales = await this.fetchShopLocales();
+    const locales = await fetchShopLocales(this.gateway.graphql.bind(this.gateway));
     const nonPrimaryLocales = locales.filter((l) => !l.primary);
 
     // Sync the policy
@@ -667,7 +636,7 @@ export class BackgroundSyncService {
     const { db } = await import("../db.server");
 
     // Fetch translations for all non-primary locales (outside transaction - API calls)
-    const allTranslations = await this.fetchAllTranslations(
+    const allTranslations = await fetchAllTranslations(this.gateway.graphql.bind(this.gateway),
       policyData.id,
       nonPrimaryLocales,
       "ShopPolicy"
@@ -784,7 +753,7 @@ export class BackgroundSyncService {
     logger.debug(`[BackgroundSync] Group "${groupId}" spans ${uniqueResourceIds.length} resource(s)`);
 
     // Get shop locales
-    const locales = await this.fetchShopLocales();
+    const locales = await fetchShopLocales(this.gateway.graphql.bind(this.gateway));
     const nonPrimaryLocales = locales.filter((l) => !l.primary);
 
     // Collect translations from ALL resources
@@ -957,7 +926,7 @@ export class BackgroundSyncService {
       const KEY_PATTERNS = THEME_KEY_PATTERNS;
 
       // Get shop locales
-      const locales = await this.fetchShopLocales();
+      const locales = await fetchShopLocales(this.gateway.graphql.bind(this.gateway));
       const nonPrimaryLocales = locales.filter((l) => !l.primary);
 
       let totalGroups = 0;
@@ -1450,94 +1419,6 @@ export class BackgroundSyncService {
   // ============================================
   // HELPER METHODS
   // ============================================
-
-  private async fetchShopLocales(): Promise<ShopLocale[]> {
-    const response = await this.gateway.graphql(
-      `#graphql
-        query getShopLocales {
-          shopLocales {
-            locale
-            name
-            primary
-            published
-          }
-        }`
-    );
-
-    const data = await response.json();
-    return data.data?.shopLocales || [];
-  }
-
-  /**
-   * Fetch translations for all locales
-   *
-   * IMPORTANT: Only saves ACTUAL translations from Shopify.
-   * If a field has no translation in Shopify, it will NOT be stored in the database.
-   * This prevents the primary language text from appearing as a "translation".
-   */
-  private async fetchAllTranslations(resourceId: string, locales: ShopLocale[], resourceType: string): Promise<ResolvedTranslation[]> {
-    const allTranslationsMap = new Map<string, ResolvedTranslation>(); // Deduplicate using key::locale
-
-    for (const locale of locales) {
-      if (!locale.published) {
-        continue;
-      }
-
-      const response = await this.gateway.graphql(
-        `#graphql
-          query getTranslations($resourceId: ID!, $locale: String!) {
-            translatableResource(resourceId: $resourceId) {
-              translatableContent {
-                key
-                value
-                digest
-                locale
-              }
-              translations(locale: $locale) {
-                key
-                value
-                locale
-              }
-            }
-          }`,
-        { variables: { resourceId, locale: locale.locale } }
-      );
-
-      const data = await response.json();
-      const resource = data.data?.translatableResource;
-
-      if (!resource) continue;
-
-      const digestMap = new Map<string, string>();
-
-      // Build digest map from translatableContent (for reference only)
-      // DO NOT store these as translations - they are source language text
-      if (resource.translatableContent) {
-        for (const content of resource.translatableContent) {
-          digestMap.set(content.key, content.digest);
-        }
-      }
-
-      // ONLY save actual translations from Shopify
-      // DO NOT save translatableContent values - those are the source language text
-      if (resource.translations && resource.translations.length > 0) {
-        for (const translation of resource.translations) {
-          const uniqueKey = `${translation.key}::${translation.locale}`;
-          if (!allTranslationsMap.has(uniqueKey)) {
-            allTranslationsMap.set(uniqueKey, {
-              key: translation.key,
-              value: translation.value,
-              locale: translation.locale,
-              digest: digestMap.get(translation.key),
-              resourceType,
-            });
-          }
-        }
-      }
-    }
-
-    return Array.from(allTranslationsMap.values());
-  }
 
   // ============================================
   // WRAPPER METHOD

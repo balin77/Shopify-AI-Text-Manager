@@ -7,10 +7,8 @@
 
 import { db } from '../db.server';
 import { logger } from '~/utils/logger.server';
-
-interface ShopifyGraphQLClient {
-  graphql: (query: string, options?: { variables?: Record<string, unknown> }) => Promise<Response>;
-}
+import type { ShopifyGraphQLClient } from './sync-types';
+import { fetchShopLocales } from './sync-utils';
 
 interface MetaobjectDefinition {
   id: string;
@@ -257,7 +255,7 @@ export class MetaobjectSyncService {
    */
   private async syncTranslationsForMetaobject(metaobjectId: string, type: string): Promise<number> {
     // Get shop locales
-    const locales = await this.getShopLocales();
+    const locales = await fetchShopLocales(this.admin.graphql.bind(this.admin));
     const foreignLocales = locales.filter(l => !l.primary).map(l => l.locale);
 
     if (foreignLocales.length === 0) {
@@ -339,25 +337,6 @@ export class MetaobjectSyncService {
     }
 
     return data.data?.translatableResource?.translations || [];
-  }
-
-  /**
-   * Get shop locales
-   */
-  private async getShopLocales(): Promise<Array<{ locale: string; primary: boolean }>> {
-    const query = `#graphql
-      query getShopLocales {
-        shopLocales {
-          locale
-          primary
-        }
-      }
-    `;
-
-    const response = await this.admin.graphql(query);
-    const data = await response.json();
-
-    return data.data?.shopLocales || [];
   }
 
   /**

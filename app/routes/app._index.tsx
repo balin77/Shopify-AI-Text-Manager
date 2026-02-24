@@ -22,9 +22,10 @@ const phaseLabels: Record<string, string> = {
   pages: "Pages",
   policies: "Policies",
   themes: "Themes",
+  metaobjects: "Metaobjects",
 };
 
-const phaseOrder = ["products", "collections", "articles", "pages", "policies", "themes"];
+const phaseOrder = ["products", "collections", "articles", "pages", "policies", "themes", "metaobjects"];
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
