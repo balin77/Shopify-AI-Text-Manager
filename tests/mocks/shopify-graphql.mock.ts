@@ -55,13 +55,22 @@ export const mockShopifyProduct = {
       id: 'gid://shopify/ProductOption/1',
       name: 'Color',
       position: 1,
-      values: ['Brown', 'Black', 'Navy']
+      linkedMetafield: null,
+      optionValues: [
+        { id: 'gid://shopify/ProductOptionValue/1', name: 'Brown', linkedMetafieldValue: null },
+        { id: 'gid://shopify/ProductOptionValue/2', name: 'Black', linkedMetafieldValue: null },
+        { id: 'gid://shopify/ProductOptionValue/3', name: 'Navy', linkedMetafieldValue: null },
+      ]
     },
     {
       id: 'gid://shopify/ProductOption/2',
       name: 'Size',
       position: 2,
-      values: ['Standard', 'Large']
+      linkedMetafield: null,
+      optionValues: [
+        { id: 'gid://shopify/ProductOptionValue/4', name: 'Standard', linkedMetafieldValue: null },
+        { id: 'gid://shopify/ProductOptionValue/5', name: 'Large', linkedMetafieldValue: null },
+      ]
     }
   ],
   metafields: {

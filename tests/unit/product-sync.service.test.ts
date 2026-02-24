@@ -49,6 +49,7 @@ const mockDb = {
 // Mock db.server import
 vi.mock('~/db.server', () => ({
   db: mockDb,
+  upsertProductMetafields: vi.fn().mockResolvedValue(undefined),
 }));
 
 // Mock logger
@@ -91,7 +92,10 @@ describe('ProductSyncService', () => {
       expect(mockAdmin.graphql).toHaveBeenCalledWith(
         expect.stringContaining('query getProduct'),
         expect.objectContaining({
-          variables: { id: productId },
+          variables: expect.objectContaining({
+            id: productId,
+            metafieldsFirst: 250,
+          }),
         })
       );
 
@@ -195,9 +199,11 @@ describe('ProductSyncService', () => {
       expect(mockDb.productOption.createMany).toHaveBeenCalledWith({
         data: expect.arrayContaining([
           expect.objectContaining({
-            id: expect.stringContaining('gid://shopify/ProductOption/'),
+            id: 'gid://shopify/ProductOption/1',
+            productId: productId,
             name: 'Color',
-            values: JSON.stringify(['Brown', 'Black', 'Navy']),
+            position: 1,
+            linkedMetafieldKey: null,
           }),
         ]),
       });
@@ -208,15 +214,19 @@ describe('ProductSyncService', () => {
 
       await service.syncProduct(productId);
 
-      expect(mockDb.productMetafield.createMany).toHaveBeenCalledWith({
-        data: expect.arrayContaining([
+      // Metafields werden jetzt über upsertProductMetafields gespeichert
+      const { upsertProductMetafields } = await import('~/db.server');
+      expect(upsertProductMetafields).toHaveBeenCalledWith(
+        expect.any(Object), // tx (transaction)
+        productId,
+        expect.arrayContaining([
           expect.objectContaining({
             namespace: 'custom',
             key: 'material',
             value: 'Genuine Italian Leather',
           }),
-        ]),
-      });
+        ])
+      );
     });
 
     it('sollte Fehler loggen wenn Produkt nicht gefunden wird', async () => {
@@ -234,7 +244,7 @@ describe('ProductSyncService', () => {
 
       // Logger verwendet Template-String, also prüfen wir auf den vollen String
       expect(logger.warn).toHaveBeenCalledWith(
-        `[ProductSync] Product not found: ${productId}`
+        `[ProductSync] Product not found in Shopify: ${productId} - attempting to delete from local database`
       );
     });
 
@@ -294,7 +304,10 @@ describe('ProductSyncService', () => {
       expect(mockAdmin.graphql).toHaveBeenCalledWith(
         expect.any(String),
         expect.objectContaining({
-          variables: { id: 'gid://shopify/Product/123456789' },
+          variables: expect.objectContaining({
+            id: 'gid://shopify/Product/123456789',
+            metafieldsFirst: 250,
+          }),
         })
       );
     });
