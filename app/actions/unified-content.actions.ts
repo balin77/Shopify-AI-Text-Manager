@@ -1012,6 +1012,7 @@ Allowed formatting changes:
       // We iterate over all changed fields and update each metaobject individually.
       if (contentConfig.resourceType === "Metaobject") {
         const { METAOBJECT_UPDATE, TRANSLATE_CONTENT, REMOVE_TRANSLATIONS } = await import("../graphql/content.mutations");
+        const { GET_TRANSLATABLE_CONTENT } = await import("../graphql/content.queries");
 
         // Collect changed metaobject fields from formData
         const metaobjectUpdates: Array<{ id: string; value: string }> = [];
@@ -1111,7 +1112,19 @@ Allowed formatting changes:
                 });
               }
             } else {
-              // Non-empty value in foreign locale → register translation
+              // Non-empty value in foreign locale → fetch digest then register translation
+              const digestResponse = await admin.graphql(GET_TRANSLATABLE_CONTENT, {
+                variables: { resourceId: update.id }
+              });
+              const digestData = await digestResponse.json();
+              const translatableContent = digestData.data?.translatableResource?.translatableContent || [];
+              const digestEntry = translatableContent.find((c: any) => c.key === labelField.key);
+
+              if (!digestEntry?.digest) {
+                errors.push(`No digest found for ${update.id} field ${labelField.key}`);
+                continue;
+              }
+
               const translationResponse = await admin.graphql(TRANSLATE_CONTENT, {
                 variables: {
                   resourceId: update.id,
@@ -1119,7 +1132,7 @@ Allowed formatting changes:
                     key: labelField.key,
                     value: update.value,
                     locale,
-                    translatableContentDigest: ""
+                    translatableContentDigest: digestEntry.digest
                   }]
                 }
               });
