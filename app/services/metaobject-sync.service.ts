@@ -52,10 +52,11 @@ export class MetaobjectSyncService {
   /**
    * Full sync: Sync all metaobject definitions and metaobjects
    */
-  async syncAll(): Promise<{ definitions: number; metaobjects: number; translations: number }> {
+  async syncAll(onProgress?: (current: number, total: number, message: string) => void): Promise<{ definitions: number; metaobjects: number; translations: number }> {
     logger.info('[MetaobjectSync] Starting full sync', { context: 'MetaobjectSync', shop: this.shop });
 
     // 1. Sync definitions
+    onProgress?.(0, 1, 'Fetching metaobject definitions...');
     const definitions = await this.syncDefinitions();
     logger.info(`[MetaobjectSync] Synced ${definitions.length} definitions`, {
       context: 'MetaobjectSync',
@@ -66,7 +67,9 @@ export class MetaobjectSyncService {
     let totalMetaobjects = 0;
     let totalTranslations = 0;
 
-    for (const def of definitions) {
+    for (let i = 0; i < definitions.length; i++) {
+      const def = definitions[i];
+      onProgress?.(i + 1, definitions.length, `Syncing ${def.name || def.type} (${i + 1}/${definitions.length})`);
       const result = await this.syncMetaobjectsForType(def.type);
       totalMetaobjects += result.metaobjects;
       totalTranslations += result.translations;

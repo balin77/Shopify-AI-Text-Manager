@@ -469,7 +469,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         try {
           const { MetaobjectSyncService } = await import("../services/metaobject-sync.service");
           const metaobjectSync = new MetaobjectSyncService(admin, shop);
-          const metaResult = await metaobjectSync.syncAll();
+          const metaResult = await metaobjectSync.syncAll((current, total, message) => {
+            checkAborted();
+            sendEvent({
+              type: 'progress',
+              phase: 'metaobjects',
+              message: 'Syncing metaobjects...',
+              current: Math.round((current / total) * 100),
+              total: 100,
+              detailCurrent: current,
+              detailTotal: total,
+              detailMessage: message
+            });
+          });
           stats.metaobjects = metaResult.metaobjects;
           sendEvent({
             type: 'progress',
