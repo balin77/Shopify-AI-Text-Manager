@@ -1160,6 +1160,17 @@ function getSourceText(item: any, fieldKey: string, primaryLocale: string): stri
     }
   }
 
+  // For metaobjects: fieldKey is a metaobject GID, look up the label field value
+  if (fieldKey.startsWith("gid://shopify/Metaobject/") && item.metaobjects && Array.isArray(item.metaobjects)) {
+    const metaobj = item.metaobjects.find((m: any) => m.id === fieldKey);
+    if (metaobj) {
+      const labelField = metaobj.fields?.find((f: any) =>
+        f.key === "display_name" || f.key === "name" || f.key === "label"
+      );
+      return labelField?.value || metaobj.displayName || "";
+    }
+  }
+
   return "";
 }
 
