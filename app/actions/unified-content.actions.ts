@@ -86,7 +86,9 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
   const itemId = getFormString(formData, "itemId") || getFormString(formData, "productId");
 
   // Validate resource GID before using it in any query
-  if (itemId && !isValidShopifyGID(itemId)) {
+  // Metaobject type IDs use a custom format (e.g. "metaobject_type_color"), not a Shopify GID
+  const isMetaobjectTypeId = itemId?.startsWith("metaobject_type_");
+  if (itemId && !isMetaobjectTypeId && !isValidShopifyGID(itemId)) {
     return json({ success: false, error: "Invalid resource ID format" }, { status: 400 });
   }
 
@@ -1009,7 +1011,7 @@ Allowed formatting changes:
       // Each field key is a metaobject ID (gid://shopify/Metaobject/...).
       // We iterate over all changed fields and update each metaobject individually.
       if (contentConfig.resourceType === "Metaobject") {
-        const { METAOBJECT_UPDATE, TRANSLATE_CONTENT } = await import("../graphql/content.mutations");
+        const { METAOBJECT_UPDATE, TRANSLATE_CONTENT, REMOVE_TRANSLATIONS } = await import("../graphql/content.mutations");
 
         // Collect changed metaobject fields from formData
         const metaobjectUpdates: Array<{ id: string; value: string }> = [];
@@ -1085,8 +1087,31 @@ Allowed formatting changes:
                   data: { displayName: update.value, lastSyncedAt: new Date() }
                 });
               }
+            } else if (update.value.trim() === "") {
+              // Empty value in foreign locale → remove the translation
+              const removeResponse = await admin.graphql(REMOVE_TRANSLATIONS, {
+                variables: {
+                  resourceId: update.id,
+                  translationKeys: [labelField.key],
+                  locales: [locale]
+                }
+              });
+              const removeData = await removeResponse.json();
+              if (removeData.data?.translationsRemove?.userErrors?.length > 0) {
+                errors.push(removeData.data.translationsRemove.userErrors[0].message);
+              } else {
+                // Remove from DB
+                await db.metaobjectTranslation.deleteMany({
+                  where: {
+                    shop: session.shop,
+                    metaobjectId: update.id,
+                    key: labelField.key,
+                    locale
+                  }
+                });
+              }
             } else {
-              // Register translation
+              // Non-empty value in foreign locale → register translation
               const translationResponse = await admin.graphql(TRANSLATE_CONTENT, {
                 variables: {
                   resourceId: update.id,
