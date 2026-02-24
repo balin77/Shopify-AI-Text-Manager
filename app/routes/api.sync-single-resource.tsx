@@ -131,8 +131,7 @@ export async function action({ request }: ActionFunctionArgs) {
       }
 
       case "metaobjects": {
-        // Metaobjects are loaded on-demand via api.metaobjects.$.tsx
-        // No background sync needed - just return success to trigger revalidation
+        // Sync single metaobject type from Shopify to DB
         const typeId = resourceId.startsWith("metaobject_type_")
           ? resourceId.replace("metaobject_type_", "")
           : resourceId;
@@ -143,7 +142,10 @@ export async function action({ request }: ActionFunctionArgs) {
           shop: session.shop
         });
 
-        result = { success: true, typeId };
+        const { MetaobjectSyncService } = await import("../services/metaobject-sync.service");
+        const metaobjectSync = new MetaobjectSyncService(admin, session.shop);
+
+        result = await metaobjectSync.syncSingleType(typeId);
         break;
       }
 

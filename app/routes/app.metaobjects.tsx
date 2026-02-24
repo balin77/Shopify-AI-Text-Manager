@@ -36,48 +36,34 @@ export const loader = createContentLoader({
   itemsKey: "metaobjects",
 
   async loadData(ctx) {
-    const { ContentService } = await import("../services/content.service");
-    const contentService = new ContentService(ctx.admin);
+    const { db } = await import("../db.server");
 
-    // LAZY LOADING: Only load navigation metadata (type list), not the full metaobjects
-    const definitions = await contentService.getMetaobjectDefinitions(50);
+    // LAZY LOADING: Load navigation metadata (type list) from DB
+    const definitions = await db.metaobjectDefinition.findMany({
+      where: {
+        shop: ctx.shop
+      },
+      orderBy: {
+        name: 'asc'
+      }
+    });
 
     if (definitions.length === 0) {
       return { items: [], ids: [] };
     }
 
-    // For each type, count metaobjects without loading full data
+    // For each type, count metaobjects from DB
     const metaobjectTypes: any[] = [];
 
     for (const definition of definitions) {
       try {
-        // Only count metaobjects for this type (lightweight query)
-        const response = await ctx.admin.graphql(
-          `#graphql
-            query getMetaobjectsCount($type: String!, $first: Int!) {
-              metaobjects(type: $type, first: $first) {
-                edges {
-                  node {
-                    id
-                  }
-                }
-              }
-            }`,
-          {
-            variables: { type: definition.type, first: 250 } // Count up to 250
+        // Count metaobjects for this type from DB
+        const count = await db.metaobject.count({
+          where: {
+            shop: ctx.shop,
+            type: definition.type
           }
-        );
-        const data = await response.json();
-
-        if (data.errors) {
-          logger.error('[METAOBJECTS-LOADER] GraphQL errors', {
-            type: definition.type,
-            errors: data.errors
-          });
-          continue;
-        }
-
-        const count = data.data?.metaobjects?.edges?.length || 0;
+        });
 
         // Create lightweight navigation item (no full metaobject data)
         const typeItem = {
@@ -93,7 +79,7 @@ export const loader = createContentLoader({
           translations: [], // Empty - will be loaded on-demand
         };
 
-        logger.debug('[METAOBJECTS-LOADER] Type item created', {
+        logger.debug('[METAOBJECTS-LOADER] Type item created from DB', {
           type: definition.type,
           count
         });
@@ -106,9 +92,6 @@ export const loader = createContentLoader({
         });
       }
     }
-
-    // Sort alphabetically by title
-    metaobjectTypes.sort((a, b) => a.title.localeCompare(b.title));
 
     return {
       items: metaobjectTypes,

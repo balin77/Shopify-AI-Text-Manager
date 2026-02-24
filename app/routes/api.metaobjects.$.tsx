@@ -31,144 +31,80 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   try {
     const { db } = await import("../db.server");
 
-    // Load metaobject definition to get type name
-    const { ContentService } = await import("../services/content.service");
-    const contentService = new ContentService(admin);
-    const definitions = await contentService.getMetaobjectDefinitions(50);
-    const definition = definitions.find(d => d.type === typeId);
+    // Load metaobject definition from DB
+    const definition = await db.metaobjectDefinition.findUnique({
+      where: {
+        shop_type: {
+          shop: session.shop,
+          type: typeId
+        }
+      }
+    });
 
     if (!definition) {
       return json({ success: false, error: "Metaobject type not found" }, { status: 404 });
     }
 
-    // Fetch metaobjects for this type
-    const response = await admin.graphql(
-      `#graphql
-        query getMetaobjectsWithFields($type: String!, $first: Int!) {
-          metaobjects(type: $type, first: $first) {
-            edges {
-              node {
-                id
-                handle
-                displayName
-                type
-                updatedAt
-                fields {
-                  key
-                  value
-                  type
-                }
-              }
-            }
-          }
-        }`,
-      {
-        variables: { type: typeId, first: 250 }
+    // Fetch metaobjects for this type from DB
+    let metaobjects = await db.metaobject.findMany({
+      where: {
+        shop: session.shop,
+        type: typeId
+      },
+      orderBy: {
+        displayName: 'asc'
       }
-    );
-    const data = await response.json();
-
-    if (data.errors) {
-      logger.error('[API-METAOBJECTS-LOADER] GraphQL errors', {
-        type: typeId,
-        errors: data.errors
-      });
-      return json({ success: false, error: "Failed to load metaobjects" }, { status: 500 });
-    }
-
-    const metaobjects = data.data?.metaobjects?.edges?.map((edge: { node: any }) => edge.node) || [];
+    });
 
     // Apply search filter if provided
-    let filteredMetaobjects = metaobjects;
     if (search) {
       const searchLower = search.toLowerCase();
-      filteredMetaobjects = metaobjects.filter((m: any) =>
+      metaobjects = metaobjects.filter((m) =>
         m.displayName?.toLowerCase().includes(searchLower) ||
         m.handle?.toLowerCase().includes(searchLower)
       );
     }
 
     // Calculate pagination
-    const totalCount = filteredMetaobjects.length;
+    const totalCount = metaobjects.length;
     const totalPages = Math.ceil(totalCount / limit);
     const startIndex = (page - 1) * limit;
-    const paginatedMetaobjects = filteredMetaobjects.slice(startIndex, startIndex + limit);
+    const paginatedMetaobjects = metaobjects.slice(startIndex, startIndex + limit);
 
-    logger.debug("[API-METAOBJECTS-LOADER] Metaobjects loaded", {
+    // Load translations for paginated metaobjects from DB
+    const metaobjectIds = paginatedMetaobjects.map(m => m.id);
+    const translations = await db.metaobjectTranslation.findMany({
+      where: {
+        shop: session.shop,
+        metaobjectId: { in: metaobjectIds }
+      }
+    });
+
+    // Format metaobjects with DB data
+    const formattedMetaobjects = paginatedMetaobjects.map((metaobj) => ({
+      id: metaobj.id,
+      handle: metaobj.handle,
+      displayName: metaobj.displayName,
+      type: metaobj.type,
+      updatedAt: metaobj.shopifyUpdatedAt.toISOString(),
+      fields: metaobj.fields as any,
+    }));
+
+    // Format translations for UI
+    const translationsArray = translations.map(t => ({
+      key: t.metaobjectId, // Use metaobject ID as translation key
+      value: t.value,
+      locale: t.locale,
+    }));
+
+    logger.debug("[API-METAOBJECTS-LOADER] Metaobjects loaded from DB", {
       context: "Metaobjects",
       typeId,
       totalCount,
       page,
       totalPages,
-      itemsShown: paginatedMetaobjects.length
-    });
-
-    // Load shop locales for translation loading
-    const localesResponse = await admin.graphql(
-      `#graphql
-        query getShopLocales {
-          shopLocales {
-            locale
-            primary
-          }
-        }`
-    );
-    const localesData = await localesResponse.json();
-    const shopLocales = localesData.data?.shopLocales || [];
-    const locales = shopLocales.map((l: any) => l.locale);
-
-    // Load translations for all paginated metaobjects
-    const translationsArray: any[] = [];
-    for (const metaobj of paginatedMetaobjects) {
-      for (const locale of locales) {
-        try {
-          const translationsResponse = await admin.graphql(
-            `#graphql
-              query getMetaobjectTranslations($resourceId: ID!, $locale: String!) {
-                translatableResource(resourceId: $resourceId) {
-                  resourceId
-                  translations(locale: $locale) {
-                    key
-                    value
-                    locale
-                  }
-                }
-              }`,
-            {
-              variables: {
-                resourceId: metaobj.id,
-                locale: locale
-              }
-            }
-          );
-
-          const transData = await translationsResponse.json();
-          if (transData.errors) continue;
-
-          const translations = transData.data?.translatableResource?.translations || [];
-
-          // Only include display_name/name/label translations
-          translations.forEach((trans: any) => {
-            if (trans.key === 'display_name' || trans.key === 'name' || trans.key === 'label') {
-              translationsArray.push({
-                key: metaobj.id, // Use metaobject ID as translation key
-                value: trans.value,
-                locale: trans.locale,
-              });
-            }
-          });
-        } catch (transError) {
-          // Silently skip if translations not available
-          continue;
-        }
-      }
-    }
-
-    logger.debug("[API-METAOBJECTS-LOADER] Translations loaded", {
-      context: "Metaobjects",
-      typeId,
-      translationsCount: translationsArray.length,
-      sampleTranslations: translationsArray.slice(0, 3)
+      itemsShown: paginatedMetaobjects.length,
+      translationsCount: translationsArray.length
     });
 
     // Build response with paginated metaobjects and translations
@@ -180,8 +116,8 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       definitionName: definition.name,
       definitionId: definition.id,
       role: 'METAOBJECT_TYPE',
-      metaobjects: paginatedMetaobjects,
-      translations: translationsArray, // Include translations
+      metaobjects: formattedMetaobjects,
+      translations: translationsArray, // Include translations from DB
       contentCount: totalCount,
       // Pagination metadata
       pagination: {
@@ -371,7 +307,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         }
 
         if (locale === primaryLocale) {
-          // Update primary locale: Update metaobject field directly
+          // Update primary locale: Update metaobject field directly in Shopify
           const updateResponse = await admin.graphql(METAOBJECT_UPDATE, {
             variables: {
               id: metaobjectId,
@@ -396,6 +332,26 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
               error: `Shopify error: ${errors[0].message}`
             }, { status: 500 });
           }
+
+          // Update DB: Update displayName field
+          await db.metaobject.update({
+            where: {
+              shop_id: {
+                shop: session.shop,
+                id: metaobjectId
+              }
+            },
+            data: {
+              displayName: updatedValue,
+              lastSyncedAt: new Date()
+            }
+          });
+
+          logger.info("[API-METAOBJECTS] Primary locale updated in Shopify and DB", {
+            context: "Metaobjects",
+            metaobjectId,
+            locale
+          });
 
           return json({ success: true });
         } else {
@@ -424,6 +380,39 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
               error: `Shopify error: ${errors[0].message}`
             }, { status: 500 });
           }
+
+          // Update DB: Upsert translation
+          await db.metaobjectTranslation.upsert({
+            where: {
+              shop_metaobjectId_key_locale: {
+                shop: session.shop,
+                metaobjectId,
+                key: labelField.key,
+                locale
+              }
+            },
+            create: {
+              shop: session.shop,
+              metaobjectId,
+              type: typeId,
+              key: labelField.key,
+              value: updatedValue,
+              locale,
+              outdated: false
+            },
+            update: {
+              value: updatedValue,
+              outdated: false,
+              updatedAt: new Date()
+            }
+          });
+
+          logger.info("[API-METAOBJECTS] Translation updated in Shopify and DB", {
+            context: "Metaobjects",
+            metaobjectId,
+            locale,
+            key: labelField.key
+          });
 
           return json({ success: true });
         }
