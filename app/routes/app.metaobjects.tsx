@@ -9,7 +9,7 @@
  * Uses the UnifiedContentEditor system for consistency.
  */
 
-import { useEffect } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import { type ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher, useRevalidator } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
@@ -134,20 +134,74 @@ export const action = async (args: ActionFunctionArgs) => {
 export default function MetaobjectsPage() {
   const { metaobjects, shopLocales, primaryLocale, error, aiSettings } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
+  const entryFetcher = useFetcher();
   const revalidator = useRevalidator();
   const { t } = useI18n();
   const { showInfoBox } = useInfoBox();
 
-  // Initialize unified content editor
+  // Track loaded entries per metaobject type (keyed by item id)
+  const [loadedEntries, setLoadedEntries] = useState<Record<string, any>>({});
+  const loadingTypeRef = useRef<string | null>(null);
+
+  // Augment metaobjects with lazily loaded entries
+  const augmentedMetaobjects = useMemo(() => {
+    return metaobjects.map((item: any) => {
+      const loaded = loadedEntries[item.id];
+      if (!loaded) return item;
+      return {
+        ...item,
+        metaobjects: loaded.metaobjects,
+        translations: loaded.translations,
+        contentCount: loaded.contentCount ?? item.contentCount,
+      };
+    });
+  }, [metaobjects, loadedEntries]);
+
+  // Initialize unified content editor with augmented items
   const editor = useUnifiedContentEditor({
     config: METAOBJECTS_CONFIG,
-    items: metaobjects as unknown as ContentItem[],
+    items: augmentedMetaobjects as unknown as ContentItem[],
     shopLocales,
     primaryLocale,
     fetcher,
     showInfoBox,
     t,
   });
+
+  // Lazy load entries when a type is selected
+  useEffect(() => {
+    const selectedId = editor.state.selectedItemId;
+    if (!selectedId) return;
+
+    // Already loaded or currently loading this type
+    if (loadedEntries[selectedId] || loadingTypeRef.current === selectedId) return;
+
+    // Find the item to get its type
+    const item = metaobjects.find((m: any) => m.id === selectedId);
+    if (!item?.type) return;
+
+    loadingTypeRef.current = selectedId;
+    entryFetcher.load(`/api/metaobjects/${item.type}`);
+  }, [editor.state.selectedItemId, metaobjects, loadedEntries]);
+
+  // Process entry fetcher response
+  useEffect(() => {
+    if (entryFetcher.state === "idle" && entryFetcher.data) {
+      const data = (entryFetcher.data as any)?.metaobject;
+      if (data?.id) {
+        setLoadedEntries((prev) => ({
+          ...prev,
+          [data.id]: data,
+        }));
+      }
+      loadingTypeRef.current = null;
+    }
+  }, [entryFetcher.state, entryFetcher.data]);
+
+  // Reset loaded entries when loader data changes (e.g. after sync)
+  useEffect(() => {
+    setLoadedEntries({});
+  }, [metaobjects]);
 
   // Show loader error
   useEffect(() => {
@@ -170,7 +224,7 @@ export default function MetaobjectsPage() {
       <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
         <UnifiedContentEditor
           config={METAOBJECTS_CONFIG}
-          items={metaobjects}
+          items={augmentedMetaobjects}
           shopLocales={shopLocales}
           primaryLocale={primaryLocale}
           editor={editor}

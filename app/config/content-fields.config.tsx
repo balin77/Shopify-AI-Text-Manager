@@ -389,7 +389,7 @@ export const METAOBJECTS_CONFIG: ContentEditorConfig = {
   idPrefix: "Type:",
   getPrimaryField: (item) => item.title || item.definitionName || "Untitled",
   getSubtitle: (item) => {
-    const count = item.metaobjects?.length || 0;
+    const count = item.contentCount ?? item.metaobjects?.length ?? 0;
     return `${count} ${count === 1 ? 'entry' : 'entries'}`;
   },
 
