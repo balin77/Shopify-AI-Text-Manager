@@ -1526,7 +1526,7 @@ export class ProductSyncService {
               productId: productData.id,
               name: opt.name,
               position: opt.position,
-              values: JSON.stringify(opt.optionValues.map(v => ({ id: v.id, name: v.name, linked: !!v.linkedMetafieldValue, linkedValue: v.linkedMetafieldValue || undefined }))),
+              values: JSON.stringify((opt.optionValues ?? []).map(v => ({ id: v.id, name: v.name, linked: !!v.linkedMetafieldValue, linkedValue: v.linkedMetafieldValue || undefined }))),
               linkedMetafieldKey: opt.linkedMetafield ? `${opt.linkedMetafield.namespace}--${opt.linkedMetafield.key}` : null,
             })),
           });
@@ -1539,7 +1539,7 @@ export class ProductSyncService {
               productId: productData.id,
               name: opt.name,
               position: opt.position,
-              values: JSON.stringify(opt.optionValues.map(v => ({ id: v.id, name: v.name, linked: !!v.linkedMetafieldValue, linkedValue: v.linkedMetafieldValue || undefined }))),
+              values: JSON.stringify((opt.optionValues ?? []).map(v => ({ id: v.id, name: v.name, linked: !!v.linkedMetafieldValue, linkedValue: v.linkedMetafieldValue || undefined }))),
             })),
           });
         }
