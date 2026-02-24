@@ -450,3 +450,60 @@ model ThemeTranslation {
   @@index([shop, groupId, locale]) // For efficient locale-specific group queries
   @@index([locale])
 }
+
+// ============================================
+// METAOBJECT MODELS (Background Sync)
+// ============================================
+
+model MetaobjectDefinition {
+  id              String @id // Shopify GID (e.g., "gid://shopify/MetaobjectDefinition/123")
+  shop            String
+  type            String // Metaobject type identifier (e.g., "size_guide", "product_spec")
+  name            String // Display name
+  description     String? @db.Text
+  fieldDefinitions Json // Array of field definitions with keys and types
+
+  lastSyncedAt DateTime @default(now())
+
+  @@unique([shop, id])
+  @@unique([shop, type])
+  @@index([shop])
+  @@index([lastSyncedAt])
+}
+
+model Metaobject {
+  id              String  @id // Shopify GID (e.g., "gid://shopify/Metaobject/123")
+  shop            String
+  type            String // Links to MetaobjectDefinition.type
+  handle          String
+  displayName     String // Primary locale display name
+  fields          Json // Array of field values {key, value, type}
+
+  // Shopify Metadata
+  shopifyUpdatedAt DateTime
+  lastSyncedAt     DateTime @default(now())
+
+  @@unique([shop, id])
+  @@index([shop])
+  @@index([shop, type])
+  @@index([lastSyncedAt])
+}
+
+model MetaobjectTranslation {
+  id           String  @id @default(cuid())
+  shop         String
+  metaobjectId String // Shopify GID of the metaobject
+  type         String // Metaobject type (for grouping)
+  key          String // Field key (e.g., "display_name", "name", "label")
+  value        String  @db.Text
+  locale       String // "en", "fr", "es", "it", etc.
+  outdated     Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([shop, metaobjectId, key, locale])
+  @@index([shop, metaobjectId])
+  @@index([shop, type, locale]) // For efficient type-specific locale queries
+  @@index([locale])
+}

@@ -167,7 +167,33 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         }
       }
 
-      logger.info("[INITIAL-SETUP] Complete", { context: "InitialSetup", shop, productsSynced });
+      logger.info("[INITIAL-SETUP] Products synced", { context: "InitialSetup", shop, productsSynced });
+    }
+
+    // Step 3: Sync Metaobjects
+    let metaobjectsSynced = 0;
+    let metaobjectDefinitionsSynced = 0;
+
+    try {
+      const { MetaobjectSyncService } = await import("../services/metaobject-sync.service");
+      const metaobjectSync = new MetaobjectSyncService(admin, shop);
+
+      const metaobjectResult = await metaobjectSync.syncAll();
+      metaobjectDefinitionsSynced = metaobjectResult.definitions;
+      metaobjectsSynced = metaobjectResult.metaobjects;
+
+      logger.info("[INITIAL-SETUP] Metaobjects synced", {
+        context: "InitialSetup",
+        shop,
+        definitions: metaobjectDefinitionsSynced,
+        metaobjects: metaobjectsSynced
+      });
+    } catch (metaobjectError: any) {
+      logger.error("[INITIAL-SETUP] Metaobject sync error", {
+        context: "InitialSetup",
+        error: metaobjectError.message
+      });
+      // Continue even if metaobject sync fails
     }
 
     return json({
@@ -175,7 +201,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       skipped: false,
       webhooksRegistered: true,
       productsSynced,
-      message: `Initial setup complete. Synced ${productsSynced} products.`,
+      metaobjectDefinitionsSynced,
+      metaobjectsSynced,
+      message: `Initial setup complete. Synced ${productsSynced} products and ${metaobjectsSynced} metaobjects.`,
     });
   } catch (error: any) {
     logger.error("[INITIAL-SETUP] Error", { context: "InitialSetup", error: error.message, stack: error.stack });

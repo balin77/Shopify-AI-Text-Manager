@@ -130,6 +130,7 @@ export interface SyncStats {
   pages: number;
   policies: number;
   themes: number;
+  metaobjects: number;
   total: number;
   duration: number;
 }
@@ -1543,7 +1544,7 @@ export class BackgroundSyncService {
 
     try {
       // Run all syncs in parallel with aggressive cleanup
-      const [pages, policies, themes] = await Promise.all([
+      const [pages, policies, themes, metaobjects] = await Promise.all([
         this.syncAllPages().catch(err => {
           logger.error('[BackgroundSync] Pages sync failed:', err);
           return 0;
@@ -1556,6 +1557,10 @@ export class BackgroundSyncService {
           logger.error('[BackgroundSync] Themes sync failed:', err);
           return 0;
         }),
+        this.syncAllMetaobjects().catch(err => {
+          logger.error('[BackgroundSync] Metaobjects sync failed:', err);
+          return 0;
+        }),
       ]);
 
       const duration = Date.now() - startTime;
@@ -1563,17 +1568,34 @@ export class BackgroundSyncService {
         pages,
         policies,
         themes,
-        total: pages + policies + themes,
+        metaobjects,
+        total: pages + policies + themes + metaobjects,
         duration,
       };
 
       logger.debug(`[BackgroundSync] ✓ Full sync complete in ${duration}ms`);
-      logger.debug(`[BackgroundSync]   Pages: ${pages}, Policies: ${policies}, Themes: ${themes}`);
+      logger.debug(`[BackgroundSync]   Pages: ${pages}, Policies: ${policies}, Themes: ${themes}, Metaobjects: ${metaobjects}`);
 
       return stats;
     } catch (error: unknown) {
       logger.error('[BackgroundSync] Full sync failed:', error);
       throw error;
+    }
+  }
+
+  /**
+   * Sync all metaobjects
+   */
+  private async syncAllMetaobjects(): Promise<number> {
+    try {
+      const { MetaobjectSyncService } = await import('./metaobject-sync.service');
+      const metaobjectSync = new MetaobjectSyncService(this.gateway, this.shop);
+
+      const result = await metaobjectSync.syncAll();
+      return result.metaobjects;
+    } catch (error: unknown) {
+      logger.error('[BackgroundSync] Metaobjects sync error:', error);
+      return 0;
     }
   }
 }
