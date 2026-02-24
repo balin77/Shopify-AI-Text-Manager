@@ -17,16 +17,36 @@ import type { AIProvider } from '~/utils/api-key-validation';
 // In-memory cache: key = "shop:provider", value = { models, timestamp }
 const modelCache = new Map<string, { models: ModelInfo[]; timestamp: number }>();
 const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
+const MAX_CACHE_ENTRIES = 500;
 
 function getCachedModels(cacheKey: string): ModelInfo[] | null {
   const cached = modelCache.get(cacheKey);
-  if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
-    return cached.models;
+  if (!cached) return null;
+  if (Date.now() - cached.timestamp >= CACHE_TTL_MS) {
+    modelCache.delete(cacheKey);
+    return null;
   }
-  return null;
+  return cached.models;
 }
 
 function setCachedModels(cacheKey: string, models: ModelInfo[]) {
+  // Evict expired entries when approaching the size limit
+  if (modelCache.size >= MAX_CACHE_ENTRIES) {
+    const now = Date.now();
+    for (const [key, value] of modelCache) {
+      if (now - value.timestamp >= CACHE_TTL_MS) {
+        modelCache.delete(key);
+      }
+    }
+    // If still at limit after sweeping expired, drop oldest entries
+    if (modelCache.size >= MAX_CACHE_ENTRIES) {
+      const excess = modelCache.size - MAX_CACHE_ENTRIES + 1;
+      const keys = modelCache.keys();
+      for (let i = 0; i < excess; i++) {
+        modelCache.delete(keys.next().value!);
+      }
+    }
+  }
   modelCache.set(cacheKey, { models, timestamp: Date.now() });
 }
 
