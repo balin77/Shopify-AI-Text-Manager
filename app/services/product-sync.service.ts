@@ -298,6 +298,26 @@ export class ProductSyncService {
                 linkedMetafieldKey: opt.linkedMetafield?.key || null,
               })),
             });
+
+            // Resolve linkedMetafieldKey from option values when Shopify API returns null for linkedMetafield
+            for (const opt of product.options) {
+              if (!opt.linkedMetafield?.key && opt.optionValues?.some((v: any) => v.linkedMetafieldValue)) {
+                const firstLinked = opt.optionValues.find((v: any) => v.linkedMetafieldValue);
+                if (firstLinked?.linkedMetafieldValue) {
+                  const metaobj = await tx.metaobject.findFirst({
+                    where: { id: firstLinked.linkedMetafieldValue, shop: this.shop },
+                    select: { type: true }
+                  });
+                  if (metaobj?.type) {
+                    await tx.$executeRawUnsafe(
+                      `UPDATE "ProductOption" SET "linkedMetafieldKey" = $1 WHERE "id" = $2`,
+                      metaobj.type,
+                      opt.id
+                    );
+                  }
+                }
+              }
+            }
           }
 
           // Upsert metafields (idempotent — safe under concurrent execution)
@@ -1514,6 +1534,27 @@ export class ProductSyncService {
             linkedMetafieldKey: opt.linkedMetafield?.key || null,
           })),
         });
+
+        // Resolve linkedMetafieldKey from option values when Shopify API returns null for linkedMetafield
+        for (const opt of productData.options) {
+          if (!opt.linkedMetafield?.key && opt.optionValues?.some(v => v.linkedMetafieldValue)) {
+            const firstLinked = opt.optionValues.find(v => v.linkedMetafieldValue);
+            if (firstLinked?.linkedMetafieldValue) {
+              const metaobj = await tx.metaobject.findFirst({
+                where: { id: firstLinked.linkedMetafieldValue, shop: this.shop },
+                select: { type: true }
+              });
+              if (metaobj?.type) {
+                await tx.$executeRawUnsafe(
+                  `UPDATE "ProductOption" SET "linkedMetafieldKey" = $1 WHERE "id" = $2`,
+                  metaobj.type,
+                  opt.id
+                );
+              }
+            }
+          }
+        }
+
         logger.debug(`[ProductSync] Saved ${productData.options.length} options`);
       }
 

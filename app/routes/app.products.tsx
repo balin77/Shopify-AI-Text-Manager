@@ -222,6 +222,22 @@ export const loader = createContentLoader({
               opt.linkedMetafield.key,
               opt.id
             );
+          } else if (opt.optionValues?.some((v: any) => v.linkedMetafieldValue)) {
+            // Resolve metaobject type from linked option values when API returns null for linkedMetafield
+            const firstLinked = opt.optionValues.find((v: any) => v.linkedMetafieldValue);
+            if (firstLinked?.linkedMetafieldValue) {
+              const metaobj = await ctx.db.metaobject.findFirst({
+                where: { id: firstLinked.linkedMetafieldValue, shop: ctx.session.shop },
+                select: { type: true }
+              });
+              if (metaobj?.type) {
+                await ctx.db.$executeRawUnsafe(
+                  `UPDATE "ProductOption" SET "linkedMetafieldKey" = $1 WHERE "id" = $2`,
+                  metaobj.type,
+                  opt.id
+                );
+              }
+            }
           }
         }
       }

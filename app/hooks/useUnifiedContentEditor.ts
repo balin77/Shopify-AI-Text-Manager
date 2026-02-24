@@ -217,6 +217,17 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const [dataRefreshTrigger, setDataRefreshTrigger] = useState(0);
 
   // ============================================================================
+  // SYNC initialItemId → selectedItemId (e.g. from ?select= URL param)
+  // useState only uses initialItemId on mount; this effect handles late resolution
+  // ============================================================================
+
+  useEffect(() => {
+    if (initialItemId && initialItemId !== selectedItemId && items.find(i => i.id === initialItemId)) {
+      setSelectedItemId(initialItemId);
+    }
+  }, [initialItemId, items]);
+
+  // ============================================================================
   // AUTO-SELECT FIRST ITEM ON MOUNT
   // Automatically select the first item when the page loads
   // ============================================================================
