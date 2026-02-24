@@ -100,6 +100,7 @@ interface OptionsFieldProps {
     linkedNotEditableHintAfter?: string;
     metaobjectsLinkText?: string;
     optionPositionLabel?: string;
+    clearButton?: string;
   };
 }
 
@@ -208,7 +209,7 @@ export function OptionsField({
                                     tone="critical"
                                     variant="plain"
                                   >
-                                    Clear
+                                    {t.clearButton || "Clear"}
                                   </Button>
                                 </div>
                               )}
@@ -269,7 +270,7 @@ export function OptionsField({
                                     tone="critical"
                                     variant="plain"
                                   >
-                                    Clear
+                                    {t.clearButton || "Clear"}
                                   </Button>
                                 </div>
                               )}
@@ -433,7 +434,7 @@ export function OptionsField({
                                 onClick={() => onTranslateField(option.id, "name")}
                                 loading={translatingFieldIds.has(nameFieldId)}
                               >
-                                🌍 Translate
+                                🌍 {t.translateFieldButton || t.translateButton || "Translate"}
                               </Button>
                             </div>
                           </div>
@@ -459,7 +460,7 @@ export function OptionsField({
                                         tone="critical"
                                         variant="plain"
                                       >
-                                        Clear
+                                        {t.clearButton || "Clear"}
                                       </Button>
                                     </div>
                                   )}
@@ -479,7 +480,7 @@ export function OptionsField({
                                         onClick={() => onTranslateField(option.id, "value", valueIndex)}
                                         loading={translatingFieldIds.has(valueFieldId)}
                                       >
-                                        🌍 Translate
+                                        🌍 {t.translateFieldButton || t.translateButton || "Translate"}
                                       </Button>
                                     </div>
                                   </div>

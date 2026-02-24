@@ -78,6 +78,7 @@ export const en: Translation = {
     linkedNotEditableHintAfter: ".",
     metaobjectsLinkText: "Metaobjects",
     optionPositionLabel: "Option",
+    clearButton: "Clear",
     metafieldsEditInstructionPrimary: "Edit the metafield values in the primary language.",
     discardChanges: "Discard",
     resourceName: {

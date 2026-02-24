@@ -76,6 +76,7 @@ export const de = {
     linkedNotEditableHintAfter: " bearbeiten.",
     metaobjectsLinkText: "Metaobjekte",
     optionPositionLabel: "Option",
+    clearButton: "Leeren",
     metafieldsEditInstructionPrimary: "Bearbeiten Sie die Metafeld-Werte in der Hauptsprache.",
     discardChanges: "Verwerfen",
     resourceName: {

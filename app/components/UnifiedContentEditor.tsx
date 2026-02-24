@@ -754,6 +754,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         linkedNotEditableHintAfter: t.products?.linkedNotEditableHintAfter,
                         metaobjectsLinkText: t.products?.metaobjectsLinkText,
                         optionPositionLabel: t.products?.optionPositionLabel,
+                        clearButton: t.products?.clearButton,
                       }}
                     />
                   </div>
