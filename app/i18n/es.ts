@@ -495,6 +495,7 @@ export const es: Translation = {
     phasePages: "Páginas",
     phasePolicies: "Políticas",
     phaseThemes: "Temas",
+    phaseMetaobjects: "Metaobjetos",
     settingUpWebhooks: "Configurando webhooks...",
     setupWebhooks: "Configurar Webhooks",
     setupWebhooksDescription: "Registra webhooks para sincronizar automáticamente los productos cuando cambien en Shopify.",

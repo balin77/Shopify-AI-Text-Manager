@@ -156,15 +156,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
               maxProducts: planLimits.maxProducts === Infinity ? 10000 : planLimits.maxProducts,
               cacheProductImages: planLimits.cacheEnabled.productImages,
               signal,
-              onProgress: (current, total, message) => {
+              onProgress: (info) => {
                 checkAborted();
                 sendEvent({
                   type: 'progress',
                   phase: 'products',
                   message: 'Syncing products...',
-                  current,
+                  current: info.overallPercent,
                   total: 100,
-                  detailMessage: message
+                  detailCurrent: info.detailCurrent,
+                  detailTotal: info.detailTotal,
+                  detailMessage: info.message
                 });
               },
             });
@@ -211,15 +213,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             maxProducts: planLimits.maxProducts === Infinity ? 10000 : planLimits.maxProducts,
             cacheProductImages: planLimits.cacheEnabled.productImages,
             signal,
-            onProgress: (current, total, message) => {
+            onProgress: (info) => {
               checkAborted();
               sendEvent({
                 type: 'progress',
                 phase: 'products',
                 message: 'Syncing products...',
-                current,
+                current: info.overallPercent,
                 total: 100,
-                detailMessage: message
+                detailCurrent: info.detailCurrent,
+                detailTotal: info.detailTotal,
+                detailMessage: info.message
               });
             },
           });

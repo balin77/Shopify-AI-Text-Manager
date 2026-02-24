@@ -493,6 +493,7 @@ export const de = {
     phasePages: "Seiten",
     phasePolicies: "Richtlinien",
     phaseThemes: "Themes",
+    phaseMetaobjects: "Metaobjects",
     settingUpWebhooks: "Webhooks werden eingerichtet...",
     setupWebhooks: "Webhooks einrichten",
     setupWebhooksDescription: "Registrieren Sie Webhooks, um Produkte automatisch zu synchronisieren, wenn sie sich in Shopify ändern.",

@@ -96,7 +96,12 @@ export class ProductSyncService {
   async syncAllProducts(options: {
     maxProducts: number;
     cacheProductImages: boolean;
-    onProgress?: ProgressCallback;
+    onProgress?: (info: {
+      overallPercent: number;
+      detailCurrent?: number;
+      detailTotal?: number;
+      message: string;
+    }) => void;
     signal?: AbortSignal;
   }): Promise<number> {
     const { maxProducts, cacheProductImages, onProgress, signal } = options;
@@ -115,7 +120,7 @@ export class ProductSyncService {
     let hasNextPage = true;
     let cursor: string | null = null;
 
-    onProgress?.(0, 100, 'Fetching products from Shopify...');
+    onProgress?.({ overallPercent: 0, message: 'Fetching products from Shopify...' });
 
     while (hasNextPage && allProducts.length < maxProducts) {
       checkAborted();
@@ -205,11 +210,11 @@ export class ProductSyncService {
       hasNextPage = pageInfo?.hasNextPage || false;
       cursor = pageInfo?.endCursor || null;
 
-      onProgress?.(20, 100, `Fetched ${allProducts.length} products from Shopify...`);
+      onProgress?.({ overallPercent: 20, message: `Fetched ${allProducts.length} products from Shopify...` });
     }
 
     if (allProducts.length === 0) {
-      onProgress?.(100, 100, 'No products found');
+      onProgress?.({ overallPercent: 100, message: 'No products found' });
       return 0;
     }
 
@@ -304,7 +309,7 @@ export class ProductSyncService {
 
         if (synced % 10 === 0 || synced === total) {
           const progress = Math.round(20 + (synced / total) * 40);
-          onProgress?.(progress, 100, `Saving products: ${synced}/${total}`);
+          onProgress?.({ overallPercent: progress, detailCurrent: synced, detailTotal: total, message: `Saving products: ${synced}/${total}` });
         }
       } catch (err: any) {
         if (err.name === "AbortError") throw err;
@@ -318,7 +323,7 @@ export class ProductSyncService {
     if (synced > 0) {
       try {
         checkAborted();
-        onProgress?.(60, 100, 'Fetching product translations...');
+        onProgress?.({ overallPercent: 60, message: 'Fetching product translations...' });
 
         const shopLocales = await fetchShopLocales(this.admin.graphql.bind(this.admin));
         const nonPrimaryLocales = shopLocales.filter((l) => !l.primary && l.published);
@@ -338,7 +343,7 @@ export class ProductSyncService {
             checkAborted();
 
             const localeProgress = Math.round(60 + (localeIndex / nonPrimaryLocales.length) * 20);
-            onProgress?.(localeProgress, 100, `Fetching translations: ${locale.name || locale.locale} (${localeIndex}/${nonPrimaryLocales.length})`);
+            onProgress?.({ overallPercent: localeProgress, detailCurrent: localeIndex, detailTotal: nonPrimaryLocales.length, message: `Fetching translations: ${locale.name || locale.locale} (${localeIndex}/${nonPrimaryLocales.length})` });
 
             const allTranslations: Array<{
               resourceId: string;
@@ -425,7 +430,7 @@ export class ProductSyncService {
           }
 
           // 3b. Sub-resource translations — options, option values, metafields (80-90%)
-          onProgress?.(80, 100, 'Fetching sub-resource translations...');
+          onProgress?.({ overallPercent: 80, message: 'Fetching sub-resource translations...' });
 
           const subResources: Array<{ id: string; type: string }> = [];
           for (const product of allProducts) {
@@ -457,7 +462,7 @@ export class ProductSyncService {
               checkAborted();
 
               const subProgress = Math.round(80 + (subLocaleIndex / nonPrimaryLocales.length) * 10);
-              onProgress?.(subProgress, 100, `Fetching sub-resource translations: ${locale.name || locale.locale} (${subLocaleIndex}/${nonPrimaryLocales.length})`);
+              onProgress?.({ overallPercent: subProgress, detailCurrent: subLocaleIndex, detailTotal: nonPrimaryLocales.length, message: `Fetching sub-resource translations: ${locale.name || locale.locale} (${subLocaleIndex}/${nonPrimaryLocales.length})` });
 
               const subTranslations: Array<{
                 resourceId: string;
@@ -544,7 +549,7 @@ export class ProductSyncService {
           }
 
           if (allMediaIds.length > 0) {
-            onProgress?.(90, 100, 'Fetching image alt-text translations...');
+            onProgress?.({ overallPercent: 90, message: 'Fetching image alt-text translations...' });
 
             const dbImages = await db.productImage.findMany({
               where: { mediaId: { in: allMediaIds } },
@@ -616,7 +621,7 @@ export class ProductSyncService {
             }
 
             if (altTranslations.length > 0) {
-              onProgress?.(97, 100, `Saving ${altTranslations.length} image alt-text translations...`);
+              onProgress?.({ overallPercent: 97, message: `Saving ${altTranslations.length} image alt-text translations...` });
 
               await db.productImageAltTranslation.createMany({
                 data: altTranslations.map(t => ({
@@ -638,7 +643,7 @@ export class ProductSyncService {
       }
     }
 
-    onProgress?.(100, 100, `Synced ${synced} products`);
+    onProgress?.({ overallPercent: 100, message: `Synced ${synced} products` });
     return synced;
   }
 
