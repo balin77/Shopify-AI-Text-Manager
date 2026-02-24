@@ -639,7 +639,7 @@ export function useUiDataLoader(
               value;
             upserted++;
           } else if (value === "") {
-            // User cleared this field
+            // User cleared this field — remove the locale-specific overlay
             if (
               localTranslationsRef.current[fieldDef.translationKey]?.[
                 savedLocale
@@ -649,10 +649,17 @@ export function useUiDataLoader(
                 savedLocale
               ];
             }
-            deletedTranslationKeysRef.current.add(fieldDef.translationKey);
             deleted++;
           }
         }
+
+        // Clear deletedTranslationKeysRef now that the save is complete.
+        // These keys were added by handleClearField before save to prevent
+        // revalidation from restoring stale data. Now that the save succeeded,
+        // revalidation will fetch fresh data and the protection is no longer
+        // needed. Keeping them would incorrectly show empty fields in OTHER
+        // locales because deletedTranslationKeysRef is not locale-specific.
+        deletedTranslationKeysRef.current.clear();
 
         debugLog.transition(
           `  upserted=${upserted}, deleted=${deleted} translations`

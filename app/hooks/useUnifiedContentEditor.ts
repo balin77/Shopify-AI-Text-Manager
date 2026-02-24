@@ -1743,6 +1743,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         }
       }
 
+      // For metaobjects: Update originalLoadedValuesRef so hasChanges becomes false
+      if (config.contentType === 'metaobjects') {
+        originalLoadedValuesRef.current = { ...editableValues };
+      }
+
       // Mark this item as recently saved to prevent on-demand sync from re-fetching
       // stale translations from Shopify (race condition with eventual consistency)
       if (selectedItemId) {
