@@ -39,7 +39,7 @@ export function ContentTypeNavigation() {
   const contentTypes: ContentTypeConfig[] = [
     { id: "collections", label: t.content.collections, icon: "📂", description: t.content.collectionsDescription, path: "/app/collections", planContentType: "collections" },
     { id: "blogs", label: t.content.blogs, icon: "📝", description: t.content.blogsDescription, path: "/app/blog", planContentType: "articles" },
-    { id: "metaobjects", label: t.content.metaobjects || "Metaobjects", icon: "🔷", description: t.content.metaobjectsDescription || "Product option metaobjects", path: "/app/metaobjects", planContentType: "products" },
+    { id: "metaobjects", label: t.content.metaobjects || "Metaobjects", icon: "🔷", description: t.content.metaobjectsDescription || "Product option metaobjects", path: "/app/metaobjects", planContentType: "metaobjects" },
     { id: "pages", label: t.content.pages, icon: "📄", description: t.content.pagesDescription, path: "/app/pages", planContentType: "pages" },
     { id: "policies", label: t.content.policies, icon: "📋", description: t.content.policiesDescription, path: "/app/policies", planContentType: "policies" },
     { id: "menus", label: t.content.menus, icon: "🍔", description: t.content.menusDescription, path: "/app/menus", planContentType: "menus" },

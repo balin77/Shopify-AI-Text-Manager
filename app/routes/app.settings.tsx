@@ -1058,8 +1058,6 @@ export default function SettingsPage() {
 
                                       if (type === "menus") {
                                         note = ` (${t.settings.readOnly || "read-only"})`;
-                                      } else if (type === "metaobjects" || type === "metadata") {
-                                        note = ` (${t.settings.comingSoon || "coming soon"})`;
                                       }
 
                                       return (

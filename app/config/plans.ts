@@ -14,8 +14,7 @@ export type ContentType =
   | "policies"
   | "templates"
   | "menus"
-  | "metaobjects"
-  | "metadata";
+  | "metaobjects";
 
 export interface PlanLimits {
   maxProducts: number;
@@ -93,7 +92,7 @@ export const PLAN_CONFIG: Record<Plan, PlanLimits> = {
     maxPages: 50,
     maxThemeTranslations: 50000,
     productImages: "all",
-    contentTypes: ["products", "collections", "articles", "blogs", "pages", "policies", "templates", "menus"],
+    contentTypes: ["products", "collections", "articles", "blogs", "pages", "policies", "templates", "menus", "metaobjects"],
     aiInstructionsEditable: true,
     cacheEnabled: {
       products: true,
@@ -115,7 +114,7 @@ export const PLAN_CONFIG: Record<Plan, PlanLimits> = {
     maxPages: 200,
     maxThemeTranslations: 100000,
     productImages: "all",
-    contentTypes: ["products", "collections", "articles", "blogs", "pages", "policies", "templates", "menus", "metaobjects", "metadata"],
+    contentTypes: ["products", "collections", "articles", "blogs", "pages", "policies", "templates", "menus", "metaobjects"],
     aiInstructionsEditable: true,
     cacheEnabled: {
       products: true,
