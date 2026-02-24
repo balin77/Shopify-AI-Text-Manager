@@ -5,7 +5,7 @@
   "description": "",
   "main": "dist/index.js",
   "scripts": {
-    "build": "remix vite:build",
+    "build": "prisma generate && remix vite:build",
     "postinstall": "prisma generate || true",
     "postdeploy": "node scripts/migrate-baseline.js",
     "dev": "remix vite:dev",
