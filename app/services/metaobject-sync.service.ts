@@ -3,11 +3,14 @@
  *
  * Synchronizes Metaobject Definitions and Metaobjects from Shopify to local PostgreSQL database.
  * This service is used by the sync scheduler and installation process.
+ *
+ * Performance: Uses translatableResourcesByIds for bulk translation fetching
+ * instead of per-metaobject queries. Locales are fetched once and reused.
  */
 
 import { db } from '../db.server';
 import { logger } from '~/utils/logger.server';
-import type { ShopifyGraphQLClient } from './sync-types';
+import type { ShopifyGraphQLClient, ShopLocale } from './sync-types';
 import { fetchShopLocales } from './sync-utils';
 
 interface MetaobjectDefinition {
@@ -37,13 +40,11 @@ interface Metaobject {
   }>;
 }
 
-interface MetaobjectTranslation {
-  key: string;
-  value: string;
-  locale: string;
-}
+const TRANSLATION_BATCH_SIZE = 250;
 
 export class MetaobjectSyncService {
+  private cachedLocales: ShopLocale[] | null = null;
+
   constructor(
     private admin: ShopifyGraphQLClient,
     private shop: string
@@ -54,6 +55,9 @@ export class MetaobjectSyncService {
    */
   async syncAll(onProgress?: (current: number, total: number, message: string) => void): Promise<{ definitions: number; metaobjects: number; translations: number }> {
     logger.info('[MetaobjectSync] Starting full sync', { context: 'MetaobjectSync', shop: this.shop });
+
+    // Pre-fetch locales once for the entire sync
+    await this.getLocales();
 
     // 1. Sync definitions
     onProgress?.(0, 1, 'Fetching metaobject definitions...');
@@ -200,17 +204,23 @@ export class MetaobjectSyncService {
       });
     }
 
-    // 3. Sync translations for all metaobjects
-    let totalTranslations = 0;
-    for (const metaobj of metaobjects) {
-      const transCount = await this.syncTranslationsForMetaobject(metaobj.id, type);
-      totalTranslations += transCount;
-    }
+    // 3. Bulk-fetch translations for all metaobjects of this type
+    const totalTranslations = await this.syncTranslationsBulk(metaobjects, type);
 
     return {
       metaobjects: metaobjects.length,
       translations: totalTranslations
     };
+  }
+
+  /**
+   * Get locales (cached for the lifetime of this service instance)
+   */
+  private async getLocales(): Promise<ShopLocale[]> {
+    if (!this.cachedLocales) {
+      this.cachedLocales = await fetchShopLocales(this.admin.graphql.bind(this.admin));
+    }
+    return this.cachedLocales;
   }
 
   /**
@@ -254,92 +264,118 @@ export class MetaobjectSyncService {
   }
 
   /**
-   * Sync translations for a single metaobject across all locales
+   * Bulk-fetch translations for a batch of metaobjects using translatableResourcesByIds.
+   *
+   * Before: N metaobjects × M locales = N×M API calls (e.g. 50×3 = 150 calls)
+   * After:  ceil(N/250) × M API calls (e.g. 1×3 = 3 calls)
    */
-  private async syncTranslationsForMetaobject(metaobjectId: string, type: string): Promise<number> {
-    // Get shop locales
-    const locales = await fetchShopLocales(this.admin.graphql.bind(this.admin));
-    const foreignLocales = locales.filter(l => !l.primary).map(l => l.locale);
+  private async syncTranslationsBulk(metaobjects: Metaobject[], type: string): Promise<number> {
+    if (metaobjects.length === 0) return 0;
 
-    if (foreignLocales.length === 0) {
-      return 0;
-    }
+    const locales = await this.getLocales();
+    const foreignLocales = locales.filter(l => !l.primary && l.published);
 
+    if (foreignLocales.length === 0) return 0;
+
+    const metaobjectIds = metaobjects.map(m => m.id);
     let translationCount = 0;
 
+    // Split IDs into batches for the bulk query
+    const batches: string[][] = [];
+    for (let i = 0; i < metaobjectIds.length; i += TRANSLATION_BATCH_SIZE) {
+      batches.push(metaobjectIds.slice(i, i + TRANSLATION_BATCH_SIZE));
+    }
+
     for (const locale of foreignLocales) {
-      const translations = await this.fetchTranslations(metaobjectId, locale);
+      for (const batch of batches) {
+        try {
+          const response = await this.admin.graphql(
+            `#graphql
+              query getMetaobjectTranslationsBulk($resourceIds: [ID!]!, $locale: String!) {
+                translatableResourcesByIds(first: ${batch.length}, resourceIds: $resourceIds) {
+                  edges {
+                    node {
+                      resourceId
+                      translations(locale: $locale) {
+                        key
+                        value
+                        locale
+                      }
+                    }
+                  }
+                }
+              }`,
+            { variables: { resourceIds: batch, locale: locale.locale } }
+          );
 
-      for (const trans of translations) {
-        // Only sync display_name, name, or label translations
-        if (trans.key === 'display_name' || trans.key === 'name' || trans.key === 'label') {
-          await db.metaobjectTranslation.upsert({
-            where: {
-              shop_metaobjectId_key_locale: {
-                shop: this.shop,
-                metaobjectId,
-                key: trans.key,
-                locale: trans.locale
+          const data = await response.json();
+
+          if (data.errors) {
+            logger.warn(`[MetaobjectSync] GraphQL error fetching bulk translations for locale ${locale.locale}:`, {
+              context: 'MetaobjectSync',
+              errors: data.errors[0]?.message
+            });
+            continue;
+          }
+
+          const resources = data.data?.translatableResourcesByIds?.edges || [];
+
+          // Collect all upsert operations for this batch
+          const upsertOps = [];
+
+          for (const edge of resources) {
+            const metaobjectId = edge.node.resourceId;
+            const translations = edge.node.translations || [];
+
+            for (const trans of translations) {
+              if (!trans.value) continue;
+              // Only sync translatable field keys
+              if (trans.key === 'display_name' || trans.key === 'name' || trans.key === 'label') {
+                upsertOps.push(
+                  db.metaobjectTranslation.upsert({
+                    where: {
+                      shop_metaobjectId_key_locale: {
+                        shop: this.shop,
+                        metaobjectId,
+                        key: trans.key,
+                        locale: trans.locale
+                      }
+                    },
+                    create: {
+                      shop: this.shop,
+                      metaobjectId,
+                      type,
+                      key: trans.key,
+                      value: trans.value,
+                      locale: trans.locale,
+                      outdated: false
+                    },
+                    update: {
+                      value: trans.value,
+                      outdated: false,
+                      updatedAt: new Date()
+                    }
+                  })
+                );
               }
-            },
-            create: {
-              shop: this.shop,
-              metaobjectId,
-              type,
-              key: trans.key,
-              value: trans.value,
-              locale: trans.locale,
-              outdated: false
-            },
-            update: {
-              value: trans.value,
-              outdated: false,
-              updatedAt: new Date()
             }
-          });
+          }
 
-          translationCount++;
+          // Execute all upserts in a single transaction
+          if (upsertOps.length > 0) {
+            await db.$transaction(upsertOps);
+            translationCount += upsertOps.length;
+          }
+        } catch (error) {
+          logger.warn(`[MetaobjectSync] Error fetching bulk translations for locale ${locale.locale}:`, {
+            context: 'MetaobjectSync',
+            error: error instanceof Error ? error.message : String(error)
+          });
         }
       }
     }
 
     return translationCount;
-  }
-
-  /**
-   * Fetch translations for a metaobject in a specific locale
-   */
-  private async fetchTranslations(metaobjectId: string, locale: string): Promise<MetaobjectTranslation[]> {
-    const query = `#graphql
-      query getMetaobjectTranslations($resourceId: ID!, $locale: String!) {
-        translatableResource(resourceId: $resourceId) {
-          resourceId
-          translations(locale: $locale) {
-            key
-            value
-            locale
-          }
-        }
-      }
-    `;
-
-    const response = await this.admin.graphql(query, {
-      variables: { resourceId: metaobjectId, locale }
-    });
-
-    const data = await response.json();
-
-    if (data.errors) {
-      logger.debug('[MetaobjectSync] GraphQL errors fetching translations', {
-        context: 'MetaobjectSync',
-        metaobjectId,
-        locale,
-        errors: data.errors
-      });
-      return [];
-    }
-
-    return data.data?.translatableResource?.translations || [];
   }
 
   /**
