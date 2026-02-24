@@ -565,6 +565,21 @@ export function hasPrimaryContentMissing(
     );
   }
 
+  // Metaobjects have dynamic fields in metaobjects array
+  if (contentType === 'metaobjects') {
+    const metaobjects = (selectedItem as any).metaobjects;
+    if (!metaobjects || !Array.isArray(metaobjects) || metaobjects.length === 0) {
+      return false;
+    }
+    // Check if any metaobject entry has an empty label field (display_name/name/label)
+    return metaobjects.some((metaobj: any) => {
+      const labelField = metaobj.fields?.find((f: any) =>
+        f.key === 'display_name' || f.key === 'name' || f.key === 'label'
+      );
+      return !labelField || isFieldEmpty(labelField.value);
+    });
+  }
+
   const requiredFields = FIELD_CONFIGS[contentType];
   return hasAnyFieldMissing(selectedItem, requiredFields);
 }
@@ -602,6 +617,32 @@ export function hasLocaleMissingTranslations(
       // Check if translation exists for this locale
       const translation = translations.find(
         (t: Translation) => t.key === item.key && t.locale === locale
+      );
+      return !translation || isFieldEmpty(translation.value);
+    });
+  }
+
+  // Metaobjects have dynamic fields in metaobjects array
+  if (contentType === 'metaobjects') {
+    const metaobjects = (selectedItem as any).metaobjects;
+    if (!metaobjects || !Array.isArray(metaobjects) || metaobjects.length === 0) {
+      return false;
+    }
+
+    const translations = selectedItem.translations || [];
+
+    // Check if any metaobject entry with primary content is missing a translation
+    return metaobjects.some((metaobj: any) => {
+      const labelField = metaobj.fields?.find((f: any) =>
+        f.key === 'display_name' || f.key === 'name' || f.key === 'label'
+      );
+      // Only check if primary has content for this entry
+      if (!labelField || isFieldEmpty(labelField.value)) {
+        return false;
+      }
+      // Check if translation exists for this locale (key = metaobject ID)
+      const translation = translations.find(
+        (t: Translation) => t.key === metaobj.id && t.locale === locale
       );
       return !translation || isFieldEmpty(translation.value);
     });
@@ -687,6 +728,21 @@ export function getMissingPrimaryFields(
       .map((item: { key: string; value: string }) => item.key);
   }
 
+  if (contentType === 'metaobjects') {
+    const metaobjects = (selectedItem as any).metaobjects;
+    if (!metaobjects || !Array.isArray(metaobjects) || metaobjects.length === 0) {
+      return [];
+    }
+    return metaobjects
+      .filter((metaobj: any) => {
+        const labelField = metaobj.fields?.find((f: any) =>
+          f.key === 'display_name' || f.key === 'name' || f.key === 'label'
+        );
+        return !labelField || isFieldEmpty(labelField.value);
+      })
+      .map((metaobj: any) => metaobj.id);
+  }
+
   const requiredFields = FIELD_CONFIGS[contentType];
   return requiredFields.filter(field => {
     const value = getFieldValue(selectedItem, field);
@@ -721,6 +777,28 @@ export function getMissingLocaleTranslationFields(
         return !translation || isFieldEmpty(translation.value);
       })
       .map((item: { key: string; value: string }) => item.key);
+  }
+
+  if (contentType === 'metaobjects') {
+    const metaobjects = (selectedItem as any).metaobjects;
+    if (!metaobjects || !Array.isArray(metaobjects) || metaobjects.length === 0) {
+      return [];
+    }
+    const translations = selectedItem.translations || [];
+    return metaobjects
+      .filter((metaobj: any) => {
+        const labelField = metaobj.fields?.find((f: any) =>
+          f.key === 'display_name' || f.key === 'name' || f.key === 'label'
+        );
+        // Only check if primary has content
+        if (!labelField || isFieldEmpty(labelField.value)) return false;
+        // Check if translation exists for this locale
+        const translation = translations.find(
+          (t: Translation) => t.key === metaobj.id && t.locale === locale
+        );
+        return !translation || isFieldEmpty(translation.value);
+      })
+      .map((metaobj: any) => metaobj.id);
   }
 
   const requiredFields = getRequiredFieldsForContentType(contentType);
@@ -813,6 +891,18 @@ export function getLocaleButtonTooltip(
   const labels = missingFields.map(key => {
     if (contentType === 'templates') {
       return extractReadableName(key);
+    }
+
+    // Metaobjects: resolve metaobject ID to its display name
+    if (contentType === 'metaobjects') {
+      const metaobjects = (selectedItem as any).metaobjects;
+      if (metaobjects && Array.isArray(metaobjects)) {
+        const metaobj = metaobjects.find((m: any) => m.id === key);
+        if (metaobj) {
+          return metaobj.displayName || metaobj.handle || key.split('/').pop() || key;
+        }
+      }
+      return key.split('/').pop() || key;
     }
 
     // Handle product option fields (e.g., "option_1_name", "option_2_values")
