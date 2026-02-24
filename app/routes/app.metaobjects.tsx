@@ -234,6 +234,7 @@ export default function MetaobjectsPage() {
           hideItemListImages={true}
           hideItemListStatusBars={true}
           revalidator={revalidator}
+          isFieldsLoading={entryFetcher.state !== "idle" || (!!editor.state.selectedItemId && !loadedEntries[editor.state.selectedItemId])}
         />
       </div>
     </div>
