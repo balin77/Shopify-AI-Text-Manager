@@ -161,7 +161,7 @@ export function getItemFieldValue(
   primaryLocale: string,
   config?: ContentEditorConfig
 ): string {
-  // Templates: Use custom getter if available
+  // Templates & Metaobjects: Use custom getter if available
   if (config?.getFieldValue) {
     return config.getFieldValue(item, fieldKey);
   }
@@ -172,6 +172,19 @@ export function getItemFieldValue(
       (c: { key: string; value: string }) => c != null && c.key === fieldKey
     );
     return content?.value || "";
+  }
+
+  // Metaobjects: Check metaobjects array
+  // fieldKey is the metaobject ID, find the metaobject and get its label field
+  if ((item as any)?.metaobjects && Array.isArray((item as any).metaobjects)) {
+    const metaobject = (item as any).metaobjects.find((m: any) => m.id === fieldKey);
+    if (metaobject) {
+      // Find the label field (display_name, name, or label)
+      const labelField = metaobject.fields?.find((f: any) =>
+        f.key === 'display_name' || f.key === 'name' || f.key === 'label'
+      );
+      return labelField?.value || metaobject.displayName || "";
+    }
   }
 
   // Standard content types: Common field mappings

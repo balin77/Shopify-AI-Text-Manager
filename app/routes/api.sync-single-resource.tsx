@@ -130,6 +130,23 @@ export async function action({ request }: ActionFunctionArgs) {
         break;
       }
 
+      case "metaobjects": {
+        // Metaobjects are loaded on-demand via api.metaobjects.$.tsx
+        // No background sync needed - just return success to trigger revalidation
+        const typeId = resourceId.startsWith("metaobject_type_")
+          ? resourceId.replace("metaobject_type_", "")
+          : resourceId;
+
+        logger.info("[Manual Sync] Metaobjects reload requested", {
+          context: "ManualSync",
+          typeId,
+          shop: session.shop
+        });
+
+        result = { success: true, typeId };
+        break;
+      }
+
       default:
         return json(
           { success: false, error: `Unknown resource type: ${resourceType}` },
