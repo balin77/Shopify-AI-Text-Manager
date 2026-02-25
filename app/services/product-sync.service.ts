@@ -360,7 +360,6 @@ export class ProductSyncService {
             checkAborted();
 
             const localeProgress = Math.round(60 + (localeIndex / nonPrimaryLocales.length) * 20);
-            onProgress?.({ overallPercent: localeProgress, detailCurrent: localeIndex, detailTotal: nonPrimaryLocales.length, message: `Fetching translations: ${locale.name || locale.locale} (${localeIndex}/${nonPrimaryLocales.length})` });
 
             const allTranslations: Array<{
               resourceId: string;
@@ -370,7 +369,11 @@ export class ProductSyncService {
               digest: string | null;
             }> = [];
 
+            let batchIndex = 0;
             for (const batch of batches) {
+              batchIndex++;
+              checkAborted();
+              onProgress?.({ overallPercent: localeProgress, detailCurrent: batchIndex, detailTotal: batches.length, message: `Fetching translations: ${locale.name || locale.locale} (${localeIndex}/${nonPrimaryLocales.length})` });
               try {
                 const response: Response = await this.admin.graphql(
                   `#graphql
@@ -479,7 +482,6 @@ export class ProductSyncService {
               checkAborted();
 
               const subProgress = Math.round(80 + (subLocaleIndex / nonPrimaryLocales.length) * 10);
-              onProgress?.({ overallPercent: subProgress, detailCurrent: subLocaleIndex, detailTotal: nonPrimaryLocales.length, message: `Fetching sub-resource translations: ${locale.name || locale.locale} (${subLocaleIndex}/${nonPrimaryLocales.length})` });
 
               const subTranslations: Array<{
                 resourceId: string;
@@ -489,7 +491,11 @@ export class ProductSyncService {
                 locale: string;
               }> = [];
 
+              let subBatchIndex = 0;
               for (const batch of subBatches) {
+                subBatchIndex++;
+                checkAborted();
+                onProgress?.({ overallPercent: subProgress, detailCurrent: subBatchIndex, detailTotal: subBatches.length, message: `Fetching sub-resource translations: ${locale.name || locale.locale} (${subLocaleIndex}/${nonPrimaryLocales.length})` });
                 try {
                   const response: Response = await this.admin.graphql(
                     `#graphql
@@ -585,10 +591,16 @@ export class ProductSyncService {
 
             const altTranslations: Array<{ imageId: string; locale: string; altText: string }> = [];
 
+            let mediaLocaleIndex = 0;
             for (const locale of nonPrimaryLocales) {
+              mediaLocaleIndex++;
               checkAborted();
 
+              let mediaBatchIndex = 0;
               for (const batch of mediaBatches) {
+                mediaBatchIndex++;
+                checkAborted();
+                onProgress?.({ overallPercent: Math.round(90 + (mediaLocaleIndex / nonPrimaryLocales.length) * 7), detailCurrent: mediaBatchIndex, detailTotal: mediaBatches.length, message: `Fetching image translations: ${locale.name || locale.locale} (${mediaLocaleIndex}/${nonPrimaryLocales.length})` });
                 try {
                   const response: Response = await this.admin.graphql(
                     `#graphql

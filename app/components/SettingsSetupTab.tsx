@@ -216,7 +216,7 @@ export function SettingsSetupTab({
                     );
                   })}
                 </InlineStack>
-                {syncProgress.detailTotal && syncProgress.detailTotal > 1 && (
+                {syncProgress.detailTotal != null && syncProgress.detailTotal > 0 && (
                   <Box paddingBlockStart="200">
                     <BlockStack gap="100">
                       <InlineStack align="space-between">
