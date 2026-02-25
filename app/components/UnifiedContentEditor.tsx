@@ -24,7 +24,7 @@ import { useNavigationHeight } from "../contexts/NavigationHeightContext";
 import { usePlan } from "../contexts/PlanContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { useItemSelector } from "../contexts/ItemSelectorContext";
-import { contentEditorStyles, getLocalizedLanguageName, hasPrimaryContentMissing, hasLocaleMissingTranslations } from "../utils/contentEditor.utils";
+import { contentEditorStyles, getLocalizedLanguageName, hasPrimaryContentMissing, getLocaleButtonTooltip } from "../utils/contentEditor.utils";
 import { useI18n } from "../contexts/I18nContext";
 import { ENABLE_THEME_PRIMARY_EDIT } from "../config/constants";
 import { isMetaobjectLabelField } from "../constants/shopifyFields";
@@ -198,28 +198,54 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   };
 
   // Transform items to UnifiedItem format (memoized to prevent re-render cascades)
-  const unifiedItems: UnifiedItem[] = useMemo(() => items.map((item) => {
-    let subtitle = config.getSubtitle ? config.getSubtitle(item, t) : undefined;
-    // Translate "translatable fields" for templates
-    if (config.contentType === "templates" && item.contentCount !== undefined) {
-      subtitle = `${item.contentCount || 0} ${t.content?.translatableFields || "translatable fields"}`;
-    }
-    const hasMissingPrimary = hasPrimaryContentMissing(item, config.contentType);
-    const hasMissingTranslations = shopLocales
-      .filter((l) => !l.primary)
-      .some((l) => hasLocaleMissingTranslations(item, l.locale, primaryLocale, config.contentType));
-    return {
-      ...item,
-      id: item.id,
-      title: config.getPrimaryField ? config.getPrimaryField(item, t) : item.title,
-      subtitle,
-      category: item.blogTitle || item.category,
-      status: item.status,
-      image: item.featuredImage || item.image,
-      hasMissingPrimary,
-      hasMissingTranslations,
+  const unifiedItems: UnifiedItem[] = useMemo(() => {
+    const tooltipI18n = {
+      missingContent: (t as any).common?.missingContent ?? "Missing content:",
+      missingTranslations: (t as any).common?.missingTranslations ?? "Missing translations:",
+      fieldLabels: ((t as any).common?.fieldLabels ?? {}) as Record<string, string>,
     };
-  }), [items, config.getPrimaryField, config.getSubtitle, config.contentType, t, shopLocales, primaryLocale]);
+    const primaryLocaleObj = shopLocales.find((l) => l.primary) ?? { locale: primaryLocale, primary: true };
+    const foreignLocales = shopLocales.filter((l) => !l.primary);
+
+    return items.map((item) => {
+      let subtitle = config.getSubtitle ? config.getSubtitle(item, t) : undefined;
+      // Translate "translatable fields" for templates
+      if (config.contentType === "templates" && item.contentCount !== undefined) {
+        subtitle = `${item.contentCount || 0} ${t.content?.translatableFields || "translatable fields"}`;
+      }
+      const hasMissingPrimary = hasPrimaryContentMissing(item, config.contentType);
+      const missingPrimaryTooltip = hasMissingPrimary
+        ? getLocaleButtonTooltip(primaryLocaleObj, item, primaryLocale, config.contentType, false, tooltipI18n)
+        : null;
+
+      const foreignMissingParts = foreignLocales
+        .map((l) => {
+          const tip = getLocaleButtonTooltip(l, item, primaryLocale, config.contentType, false, tooltipI18n);
+          if (!tip) return null;
+          const fieldsStr = tip.replace(/^[^:]+:\s*/, "");
+          return `${l.locale.toUpperCase()}: ${fieldsStr}`;
+        })
+        .filter(Boolean);
+      const hasMissingTranslations = foreignMissingParts.length > 0;
+      const missingTranslationsTooltip = hasMissingTranslations
+        ? `${tooltipI18n.missingTranslations} ${foreignMissingParts.join(" • ")}`
+        : null;
+
+      return {
+        ...item,
+        id: item.id,
+        title: config.getPrimaryField ? config.getPrimaryField(item, t) : item.title,
+        subtitle,
+        category: item.blogTitle || item.category,
+        status: item.status,
+        image: item.featuredImage || item.image,
+        hasMissingPrimary,
+        hasMissingTranslations,
+        missingPrimaryTooltip,
+        missingTranslationsTooltip,
+      };
+    });
+  }, [items, config.getPrimaryField, config.getSubtitle, config.contentType, t, shopLocales, primaryLocale]);
 
   // Plan limit configuration
   const maxItems = getMaxProducts(); // This works for all content types

@@ -27,6 +27,7 @@ import {
   TextField,
   Popover,
   ActionList,
+  Tooltip,
 } from "@shopify/polaris";
 import { SearchIcon, ChevronLeftIcon, ChevronRightIcon, RefreshIcon, SortIcon } from "@shopify/polaris-icons";
 import { Thumbnail } from "@shopify/polaris";
@@ -568,30 +569,34 @@ export function UnifiedItemList({
                         {itemRenderer(item, isSelected, isHovered)}
                       </div>
                       {(item.hasMissingPrimary || item.hasMissingTranslations) && (
-                        <div style={{ display: "flex", gap: "3px", flexShrink: 0, marginLeft: "6px" }}>
+                        <div style={{ display: "flex", gap: "4px", flexShrink: 0, marginLeft: "8px", alignItems: "center" }}>
                           {item.hasMissingPrimary && (
-                            <div
-                              title="Missing primary content"
-                              style={{
-                                width: "8px",
-                                height: "8px",
-                                borderRadius: "50%",
-                                backgroundColor: "rgba(255, 149, 0, 0.9)",
-                                flexShrink: 0,
-                              }}
-                            />
+                            <Tooltip content={item.missingPrimaryTooltip || "Missing primary content"} dismissOnMouseOut>
+                              <div
+                                style={{
+                                  width: "12px",
+                                  height: "12px",
+                                  borderRadius: "50%",
+                                  backgroundColor: "rgba(255, 149, 0, 0.9)",
+                                  flexShrink: 0,
+                                  cursor: "default",
+                                }}
+                              />
+                            </Tooltip>
                           )}
                           {item.hasMissingTranslations && (
-                            <div
-                              title="Missing translations"
-                              style={{
-                                width: "8px",
-                                height: "8px",
-                                borderRadius: "50%",
-                                backgroundColor: "rgba(59, 130, 246, 0.9)",
-                                flexShrink: 0,
-                              }}
-                            />
+                            <Tooltip content={item.missingTranslationsTooltip || "Missing translations"} dismissOnMouseOut>
+                              <div
+                                style={{
+                                  width: "12px",
+                                  height: "12px",
+                                  borderRadius: "50%",
+                                  backgroundColor: "rgba(59, 130, 246, 0.9)",
+                                  flexShrink: 0,
+                                  cursor: "default",
+                                }}
+                              />
+                            </Tooltip>
                           )}
                         </div>
                       )}
