@@ -24,7 +24,7 @@ import { useNavigationHeight } from "../contexts/NavigationHeightContext";
 import { usePlan } from "../contexts/PlanContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { useItemSelector } from "../contexts/ItemSelectorContext";
-import { contentEditorStyles, getLocalizedLanguageName } from "../utils/contentEditor.utils";
+import { contentEditorStyles, getLocalizedLanguageName, hasPrimaryContentMissing, hasLocaleMissingTranslations } from "../utils/contentEditor.utils";
 import { useI18n } from "../contexts/I18nContext";
 import { ENABLE_THEME_PRIMARY_EDIT } from "../config/constants";
 import { isMetaobjectLabelField } from "../constants/shopifyFields";
@@ -204,6 +204,10 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     if (config.contentType === "templates" && item.contentCount !== undefined) {
       subtitle = `${item.contentCount || 0} ${t.content?.translatableFields || "translatable fields"}`;
     }
+    const hasMissingPrimary = hasPrimaryContentMissing(item, config.contentType);
+    const hasMissingTranslations = shopLocales
+      .filter((l) => !l.primary)
+      .some((l) => hasLocaleMissingTranslations(item, l.locale, primaryLocale, config.contentType));
     return {
       ...item,
       id: item.id,
@@ -212,8 +216,10 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
       category: item.blogTitle || item.category,
       status: item.status,
       image: item.featuredImage || item.image,
+      hasMissingPrimary,
+      hasMissingTranslations,
     };
-  }), [items, config.getPrimaryField, config.getSubtitle, config.contentType, t]);
+  }), [items, config.getPrimaryField, config.getSubtitle, config.contentType, t, shopLocales, primaryLocale]);
 
   // Plan limit configuration
   const maxItems = getMaxProducts(); // This works for all content types

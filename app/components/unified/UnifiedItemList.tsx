@@ -561,9 +561,40 @@ export function UnifiedItemList({
                         height: `${itemHeight}px`,
                         display: "flex",
                         alignItems: "center",
+                        position: "relative",
                       }}
                     >
-                      {itemRenderer(item, isSelected, isHovered)}
+                      <div style={{ flex: 1, minWidth: 0, overflow: "hidden" }}>
+                        {itemRenderer(item, isSelected, isHovered)}
+                      </div>
+                      {(item.hasMissingPrimary || item.hasMissingTranslations) && (
+                        <div style={{ display: "flex", gap: "3px", flexShrink: 0, marginLeft: "6px" }}>
+                          {item.hasMissingPrimary && (
+                            <div
+                              title="Missing primary content"
+                              style={{
+                                width: "8px",
+                                height: "8px",
+                                borderRadius: "50%",
+                                backgroundColor: "rgba(255, 149, 0, 0.9)",
+                                flexShrink: 0,
+                              }}
+                            />
+                          )}
+                          {item.hasMissingTranslations && (
+                            <div
+                              title="Missing translations"
+                              style={{
+                                width: "8px",
+                                height: "8px",
+                                borderRadius: "50%",
+                                backgroundColor: "rgba(59, 130, 246, 0.9)",
+                                flexShrink: 0,
+                              }}
+                            />
+                          )}
+                        </div>
+                      )}
                     </div>
                   </ResourceItem>
                 );
