@@ -53,10 +53,12 @@ class SyncSchedulerService {
       isRunning: false,
     });
 
-    // Run first sync immediately
-    this.runSyncCycle(shop, admin).catch(err => {
-      logger.error(`[SyncScheduler] Initial sync failed for ${shop}:`, err);
-    });
+    // Delay first sync by 5 s so the initial page load can finish before competing for DB
+    setTimeout(() => {
+      this.runSyncCycle(shop, admin).catch(err => {
+        logger.error(`[SyncScheduler] Initial sync failed for ${shop}:`, err);
+      });
+    }, 5000);
 
     // Start periodic cleanup if not already running
     this.ensureCleanupTimerRunning();

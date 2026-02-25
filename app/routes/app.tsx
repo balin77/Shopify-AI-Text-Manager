@@ -21,6 +21,29 @@ import type { Plan } from "../config/plans";
 import { logger } from "~/utils/logger.server";
 import { de, en, es } from "../i18n";
 
+// Inline helper to build API-key presence flags from a single AISettings record.
+type AiSettingsRow = {
+  huggingfaceApiKey?: string | null;
+  geminiApiKey?: string | null;
+  claudeApiKey?: string | null;
+  openaiApiKey?: string | null;
+  grokApiKey?: string | null;
+  deepseekApiKey?: string | null;
+  preferredProvider?: string | null;
+} | null | undefined;
+
+function buildAiSettingsFlags(settings: AiSettingsRow, decryptApiKey: (v?: string | null) => string | null) {
+  return {
+    hasHuggingfaceApiKey: !!decryptApiKey(settings?.huggingfaceApiKey),
+    hasGeminiApiKey: !!decryptApiKey(settings?.geminiApiKey),
+    hasClaudeApiKey: !!decryptApiKey(settings?.claudeApiKey),
+    hasOpenaiApiKey: !!decryptApiKey(settings?.openaiApiKey),
+    hasGrokApiKey: !!decryptApiKey(settings?.grokApiKey),
+    hasDeepseekApiKey: !!decryptApiKey(settings?.deepseekApiKey),
+    preferredProvider: settings?.preferredProvider || null,
+  };
+}
+
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const headers = Object.fromEntries(request.headers.entries());
@@ -49,22 +72,34 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
     // Load app language preference from database
     const { db } = await import("../db.server");
-    const { loadAISettingsForValidation } = await import("../utils/loader-helpers");
+    const { decryptApiKey } = await import("../utils/encryption.server");
 
-    // Run DB queries in parallel for better TTFB performance
-    const [settings, aiSettings] = await Promise.all([
-      db.aISettings.findUnique({
-        where: { shop: session.shop },
-        select: {
-          appLanguage: true,
-          subscriptionPlan: true,
-        },
-      }),
-      loadAISettingsForValidation(db, session.shop),
-    ]);
+    // Single query for all needed AISettings fields — avoids two round-trips
+    const settings = await db.aISettings.findUnique({
+      where: { shop: session.shop },
+      select: {
+        appLanguage: true,
+        subscriptionPlan: true,
+        huggingfaceApiKey: true,
+        geminiApiKey: true,
+        claudeApiKey: true,
+        openaiApiKey: true,
+        grokApiKey: true,
+        deepseekApiKey: true,
+        preferredProvider: true,
+      },
+    });
 
     const appLanguage = (settings?.appLanguage || "en") as Locale;
     const subscriptionPlan = (settings?.subscriptionPlan || "free") as Plan;
+
+    // Build API-key presence flags from the single query result
+    let aiSettings: ReturnType<typeof buildAiSettingsFlags>;
+    try {
+      aiSettings = buildAiSettingsFlags(settings, decryptApiKey);
+    } catch {
+      aiSettings = buildAiSettingsFlags(null, decryptApiKey);
+    }
 
     return json({
       appLanguage,
