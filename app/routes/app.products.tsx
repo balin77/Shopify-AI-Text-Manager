@@ -31,6 +31,7 @@ import { Spinner, Text } from "@shopify/polaris";
 import type { ContentItem } from "../types/content-editor.types";
 import { logger } from "~/utils/logger.server";
 import { wasRecentlySaved } from "~/utils/translation-timing";
+import { isDefaultTitleOption } from "~/utils/shopify-product.utils";
 import { measurePageLoad } from "~/utils/performance.client";
 import { createContentLoader } from "~/utils/loader-factory.server";
 
@@ -200,16 +201,18 @@ export const loader = createContentLoader({
       }
 
       // Sync options (always update to keep optionValues GIDs fresh)
-      if (product.options && product.options.length > 0) {
+      // Filter out Shopify's internal "Default Title" placeholder (products with no real variants)
+      const realOptions = (product.options || []).filter((opt: any) => !isDefaultTitleOption(opt));
+      if (realOptions.length > 0) {
         // Log what Shopify API returns for the first product's options
         if (product === shopifyProducts[0]) {
-          for (const opt of product.options) {
+          for (const opt of realOptions) {
             logger.info(`[PRODUCTS-LOADER] Option "${opt.name}": linkedMetafield=${JSON.stringify(opt.linkedMetafield)}, optionValues=${opt.optionValues?.length ?? 'none'}`);
           }
         }
         try {
           await ctx.db.productOption.deleteMany({ where: { productId: product.id } });
-          const createData = product.options.map((opt: any) => ({
+          const createData = realOptions.map((opt: any) => ({
             id: opt.id,
             productId: product.id,
             name: opt.name,
@@ -231,7 +234,7 @@ export const loader = createContentLoader({
           // If the column doesn't exist, createMany fails — try without linkedMetafieldKey
           try {
             await ctx.db.productOption.createMany({
-              data: product.options.map((opt: any) => ({
+              data: realOptions.map((opt: any) => ({
                 id: opt.id,
                 productId: product.id,
                 name: opt.name,

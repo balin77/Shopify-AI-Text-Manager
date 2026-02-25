@@ -9,6 +9,7 @@ import { logger } from '~/utils/logger.server';
 import { isTranslationRecentlySaved } from '~/utils/translation-save-lock.server';
 import type { ShopifyGraphQLClient, ShopLocale, GraphQLEdge, ShopifyTranslation, ResolvedTranslation, ProgressCallback } from './sync-types';
 import { fetchShopLocales } from './sync-utils';
+import { isDefaultTitleOption } from '~/utils/shopify-product.utils';
 
 /** GraphQL error shape */
 interface GraphQLError {
@@ -283,10 +284,11 @@ export class ProductSyncService {
             }
           }
 
-          // Save options
-          if (product.options && product.options.length > 0) {
+          // Save options (filter out Shopify's internal "Default Title" placeholder)
+          const realOptions = (product.options || []).filter((opt: any) => !isDefaultTitleOption(opt));
+          if (realOptions.length > 0) {
             await tx.productOption.deleteMany({ where: { productId: product.id } });
-            const optCreateData = product.options.map((opt: any) => ({
+            const optCreateData = realOptions.map((opt: any) => ({
               id: opt.id,
               productId: product.id,
               name: opt.name,
@@ -302,7 +304,7 @@ export class ProductSyncService {
               logger.error(`[ProductSync] OPTIONS createMany FAILED for ${product.id}: ${optErr.message}`);
               // Fallback: save without linkedMetafieldKey if column doesn't exist yet
               await tx.productOption.createMany({
-                data: product.options.map((opt: any) => ({
+                data: realOptions.map((opt: any) => ({
                   id: opt.id,
                   productId: product.id,
                   name: opt.name,
