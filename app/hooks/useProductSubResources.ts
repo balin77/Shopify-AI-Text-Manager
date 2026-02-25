@@ -766,7 +766,7 @@ export function useProductSubResources({
 
     if (isPrimaryLocale) {
       // PRIMARY LOCALE: Save primary values (options + metafields)
-      const optionsChanges: Record<string, { name?: string; values?: string[] }> = {};
+      const optionsChanges: Record<string, { name?: string; valueUpdates?: { id: string; name: string }[] }> = {};
       const metafieldChanges: Record<string, string> = {};
 
       // Collect option name and value changes with validation
@@ -804,7 +804,10 @@ export function useProductSubResources({
           if (hasNameChange) optionsChanges[optionId].name = edit.name;
           // For metaobject-linked options, only save name changes (not values)
           if (hasValuesChange && !originalOption.isLinked) {
-            optionsChanges[optionId].values = edit.values;
+            optionsChanges[optionId].valueUpdates = originalOption.values.map((v, i) => ({
+              id: v.id,
+              name: edit.values[i],
+            }));
           }
         }
       }

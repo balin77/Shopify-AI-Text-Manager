@@ -136,25 +136,21 @@ export const UPSERT_THEME_FILES = `#graphql
 `;
 
 /**
- * PRODUCT OPTION UPDATE — Update product option name in primary locale
+ * PRODUCT OPTION UPDATE — Update product option name and/or values in primary locale
  *
- * This mutation updates the name of a product option (e.g., "Size", "Color").
- * Used when editing primary language option names.
- *
- * NOTE: The mutation uses inline object syntax for the option parameter,
- * not a named input type, as ProductOptionUpdateInput doesn't exist in Shopify's GraphQL schema.
+ * This mutation updates the name and/or values of a product option.
+ * Uses OptionUpdateInput for the option (id + optional name) and
+ * optionValuesToUpdate for changing existing option value names.
  *
  * REQUIREMENTS:
  *   - `write_products` scope (already present)
  */
 export const PRODUCT_OPTION_UPDATE = `#graphql
-  mutation productOptionUpdate($productId: ID!, $optionId: ID!, $name: String!) {
+  mutation productOptionUpdate($productId: ID!, $option: OptionUpdateInput!, $optionValuesToUpdate: [OptionValueUpdateInput!]) {
     productOptionUpdate(
       productId: $productId
-      option: {
-        id: $optionId
-        name: $name
-      }
+      option: $option
+      optionValuesToUpdate: $optionValuesToUpdate
     ) {
       product {
         id

@@ -2399,158 +2399,62 @@ Image URL: ${image.url}`;
       const optionsChangesJson = getFormString(formData, "optionsChanges");
       const metafieldChangesJson = getFormString(formData, "metafieldChanges");
 
-      const optionsChanges: Record<string, { name?: string; values?: string[] }> = optionsChangesJson
+      const optionsChanges: Record<string, { name?: string; valueUpdates?: { id: string; name: string }[] }> = optionsChangesJson
         ? JSON.parse(optionsChangesJson) : {};
       const metafieldChanges: Record<string, string> = metafieldChangesJson
         ? JSON.parse(metafieldChangesJson) : {};
 
       const { PRODUCT_OPTION_UPDATE, METAFIELDS_SET } = await import("~/graphql/content.mutations");
 
-      // Define productUpdate mutation inline (used for updating option values)
-      const UPDATE_PRODUCT = `#graphql
-        mutation updateProduct($input: ProductInput!) {
-          productUpdate(input: $input) {
-            product {
-              id
-              options {
-                id
-                name
-                position
-                values
-              }
-            }
-            userErrors {
-              field
-              message
-            }
-          }
-        }
-      `;
-
       const savedOptions: string[] = [];
       const failedOptions: string[] = [];
       const savedMetafields: string[] = [];
       const failedMetafields: string[] = [];
 
-      // 1. Update option names using productOptionUpdate mutation
+      // 1. Update option names and/or values using productOptionUpdate mutation
       for (const [optionId, changes] of Object.entries(optionsChanges)) {
         if (!isValidShopifyGID(optionId)) continue;
 
-        if (changes.name !== undefined) {
-          try {
-            // Get original option position from product query
-            const productResponse = await gateway.graphql(
-              `#graphql
-                query getProduct($id: ID!) {
-                  product(id: $id) {
-                    options {
-                      id
-                      position
-                    }
-                  }
-                }`,
-              { variables: { id: productId } }
-            );
-            const productData = await productResponse.json();
-            const option = productData.data?.product?.options?.find((o: { id: string }) => o.id === optionId);
+        const hasNameChange = changes.name !== undefined;
+        const hasValueChanges = changes.valueUpdates && changes.valueUpdates.length > 0;
 
-            if (option) {
-              const updateResponse = await gateway.graphql(
-                PRODUCT_OPTION_UPDATE,
-                {
-                  variables: {
-                    productId,
-                    optionId,
-                    name: changes.name,
-                  },
-                }
-              );
+        if (!hasNameChange && !hasValueChanges) continue;
 
-              const updateData = await updateResponse.json();
-
-              if (updateData.data?.productOptionUpdate?.userErrors?.length > 0) {
-                logger.error("[UnifiedContent] productOptionUpdate userErrors", {
-                  context: "UnifiedContent", optionId, errors: updateData.data.productOptionUpdate.userErrors,
-                });
-                failedOptions.push(optionId);
-              } else {
-                savedOptions.push(optionId);
-              }
-            }
-          } catch (err) {
-            logger.error(`[UnifiedContent] Failed to update option name for ${optionId}`, {
-              context: "UnifiedContent", error: err instanceof Error ? err.message : String(err),
-            });
-            failedOptions.push(optionId);
-          }
-        }
-      }
-
-      // 2. Update option values using productUpdate mutation (requires full options array)
-      const optionsWithValueChanges = Object.entries(optionsChanges).filter(([_, changes]) => changes.values !== undefined);
-      if (optionsWithValueChanges.length > 0) {
         try {
-          // Fetch current product options
-          const productResponse = await gateway.graphql(
-            `#graphql
-              query getProduct($id: ID!) {
-                product(id: $id) {
-                  options {
-                    id
-                    name
-                    position
-                    values
-                  }
-                }
-              }`,
-            { variables: { id: productId } }
-          );
-          const productData = await productResponse.json();
-          const currentOptions = productData.data?.product?.options || [];
+          const optionInput: { id: string; name?: string } = { id: optionId };
+          if (hasNameChange) {
+            optionInput.name = changes.name;
+          }
 
-          // Build updated options array
-          const updatedOptions = currentOptions.map((opt: { id: string; name: string; position: number; values: string[] }) => {
-            const changes = optionsChanges[opt.id];
-            return {
-              name: changes?.name !== undefined ? changes.name : opt.name,
-              position: opt.position,
-              values: changes?.values !== undefined ? changes.values : opt.values,
-            };
-          });
+          const variables: { productId: string; option: typeof optionInput; optionValuesToUpdate?: { id: string; name: string }[] } = {
+            productId,
+            option: optionInput,
+          };
 
-          // Use productUpdate to set all options
+          if (hasValueChanges) {
+            variables.optionValuesToUpdate = changes.valueUpdates;
+          }
+
           const updateResponse = await gateway.graphql(
-            UPDATE_PRODUCT,
-            {
-              variables: {
-                input: {
-                  id: productId,
-                  options: updatedOptions,
-                },
-              },
-            }
+            PRODUCT_OPTION_UPDATE,
+            { variables }
           );
 
           const updateData = await updateResponse.json();
-          if (updateData.data?.productUpdate?.userErrors?.length > 0) {
-            logger.error("[UnifiedContent] productUpdate userErrors for option values", {
-              context: "UnifiedContent", errors: updateData.data.productUpdate.userErrors,
+
+          if (updateData.data?.productOptionUpdate?.userErrors?.length > 0) {
+            logger.error("[UnifiedContent] productOptionUpdate userErrors", {
+              context: "UnifiedContent", optionId, errors: updateData.data.productOptionUpdate.userErrors,
             });
-            optionsWithValueChanges.forEach(([optionId]) => {
-              if (!failedOptions.includes(optionId)) failedOptions.push(optionId);
-            });
+            failedOptions.push(optionId);
           } else {
-            optionsWithValueChanges.forEach(([optionId]) => {
-              if (!savedOptions.includes(optionId)) savedOptions.push(optionId);
-            });
+            savedOptions.push(optionId);
           }
         } catch (err) {
-          logger.error("[UnifiedContent] Failed to update option values via productUpdate", {
+          logger.error(`[UnifiedContent] Failed to update option ${optionId}`, {
             context: "UnifiedContent", error: err instanceof Error ? err.message : String(err),
           });
-          optionsWithValueChanges.forEach(([optionId]) => {
-            if (!failedOptions.includes(optionId)) failedOptions.push(optionId);
-          });
+          failedOptions.push(optionId);
         }
       }
 
@@ -2648,54 +2552,35 @@ Image URL: ${image.url}`;
 
                 // Also delete option value translations (if values changed)
                 const changes = optionsChanges[optionId];
-                if (changes?.values !== undefined) {
-                  // Get all value IDs for this option
-                  const productResponse = await gateway.graphql(
-                    `#graphql
-                      query getProduct($id: ID!) {
-                        product(id: $id) {
-                          options {
-                            id
-                            values {
-                              id
-                            }
+                if (changes?.valueUpdates !== undefined) {
+                  // Use value IDs from the changes payload directly
+                  for (const valueUpdate of changes.valueUpdates) {
+                    if (!valueUpdate.id) continue;
+
+                    await gateway.graphql(
+                      `#graphql
+                        mutation removeTranslations($resourceId: ID!, $translationKeys: [String!]!, $locales: [String!]!) {
+                          translationsRemove(resourceId: $resourceId, translationKeys: $translationKeys, locales: $locales) {
+                            userErrors { field message }
                           }
-                        }
-                      }`,
-                    { variables: { id: productId } }
-                  );
-                  const productData = await productResponse.json();
-                  const option = productData.data?.product?.options?.find((o: { id: string }) => o.id === optionId);
-
-                  if (option?.values) {
-                    for (const value of option.values) {
-                      if (!value.id) continue;
-
-                      await gateway.graphql(
-                        `#graphql
-                          mutation removeTranslations($resourceId: ID!, $translationKeys: [String!]!, $locales: [String!]!) {
-                            translationsRemove(resourceId: $resourceId, translationKeys: $translationKeys, locales: $locales) {
-                              userErrors { field message }
-                            }
-                          }`,
-                        {
-                          variables: {
-                            resourceId: value.id,
-                            translationKeys: ["name"],
-                            locales: foreignLocales,
-                          },
-                        }
-                      );
-
-                      await db.contentTranslation.deleteMany({
-                        where: {
-                          resourceId: value.id,
-                          resourceType: "ProductOptionValue",
-                          key: "name",
-                          locale: { in: foreignLocales },
+                        }`,
+                      {
+                        variables: {
+                          resourceId: valueUpdate.id,
+                          translationKeys: ["name"],
+                          locales: foreignLocales,
                         },
-                      });
-                    }
+                      }
+                    );
+
+                    await db.contentTranslation.deleteMany({
+                      where: {
+                        resourceId: valueUpdate.id,
+                        resourceType: "ProductOptionValue",
+                        key: "name",
+                        locale: { in: foreignLocales },
+                      },
+                    });
                   }
                 }
               } catch (err) {
