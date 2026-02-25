@@ -219,11 +219,21 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // ============================================================================
   // SYNC initialItemId → selectedItemId (e.g. from ?select= URL param)
   // useState only uses initialItemId on mount; this effect handles late resolution
+  // (e.g. when items load async after mount and initialItemId wasn't in the list yet).
+  // We track which initialItemId value has already been applied so that subsequent
+  // changes to `items` (lazy loading, augmentation) never override a manual
+  // user selection after the initial auto-select was applied.
   // ============================================================================
 
+  const appliedInitialItemIdRef = useRef<string | null>(null);
+
   useEffect(() => {
-    if (initialItemId && initialItemId !== selectedItemId && items.find(i => i.id === initialItemId)) {
+    if (!initialItemId) return;
+    // Already applied this exact initialItemId once — don't override user navigation
+    if (appliedInitialItemIdRef.current === initialItemId) return;
+    if (items.find(i => i.id === initialItemId)) {
       setSelectedItemId(initialItemId);
+      appliedInitialItemIdRef.current = initialItemId;
     }
   }, [initialItemId, items]);
 
