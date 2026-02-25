@@ -2522,37 +2522,40 @@ Image URL: ${image.url}`;
             for (const optionId of changedOptionIds) {
               if (!isValidShopifyGID(optionId)) continue;
 
+              const changes = optionsChanges[optionId];
+
               try {
-                // Delete option name translation
-                await gateway.graphql(
-                  `#graphql
-                    mutation removeTranslations($resourceId: ID!, $translationKeys: [String!]!, $locales: [String!]!) {
-                      translationsRemove(resourceId: $resourceId, translationKeys: $translationKeys, locales: $locales) {
-                        userErrors { field message }
-                      }
-                    }`,
-                  {
-                    variables: {
+                // Only delete option name translation if the name was actually changed
+                if (changes?.name !== undefined) {
+                  await gateway.graphql(
+                    `#graphql
+                      mutation removeTranslations($resourceId: ID!, $translationKeys: [String!]!, $locales: [String!]!) {
+                        translationsRemove(resourceId: $resourceId, translationKeys: $translationKeys, locales: $locales) {
+                          userErrors { field message }
+                        }
+                      }`,
+                    {
+                      variables: {
+                        resourceId: optionId,
+                        translationKeys: ["name"],
+                        locales: foreignLocales,
+                      },
+                    }
+                  );
+
+                  // Delete from DB
+                  await db.contentTranslation.deleteMany({
+                    where: {
                       resourceId: optionId,
-                      translationKeys: ["name"],
-                      locales: foreignLocales,
+                      resourceType: "ProductOption",
+                      key: "name",
+                      locale: { in: foreignLocales },
                     },
-                  }
-                );
+                  });
+                }
 
-                // Delete from DB
-                await db.contentTranslation.deleteMany({
-                  where: {
-                    resourceId: optionId,
-                    resourceType: "ProductOption",
-                    key: "name",
-                    locale: { in: foreignLocales },
-                  },
-                });
-
-                // Also delete option value translations (if values changed)
-                const changes = optionsChanges[optionId];
-                if (changes?.valueUpdates !== undefined) {
+                // Only delete translations for values that actually changed
+                if (changes?.valueUpdates !== undefined && changes.valueUpdates.length > 0) {
                   // Use value IDs from the changes payload directly
                   for (const valueUpdate of changes.valueUpdates) {
                     if (!valueUpdate.id) continue;

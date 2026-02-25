@@ -147,6 +147,8 @@ export function useProductSubResources({
 
   // Track which item+locale combo we've loaded for
   const loadedForRef = useRef<string>("");
+  // Track the last processed fetcher response to avoid re-processing
+  const lastProcessedDataRef = useRef<any>(null);
 
   const isPrimaryLocale = currentLanguage === primaryLocale;
   const itemId = selectedItem?.id;
@@ -226,6 +228,11 @@ export function useProductSubResources({
     if (fetcher.state !== "idle" || !fetcher.data) return;
 
     const data = fetcher.data as any;
+
+    // Skip if we've already processed this exact response
+    if (data === lastProcessedDataRef.current) return;
+    lastProcessedDataRef.current = data;
+
     if (!data.success) {
       if (data.actionType === "loadSubResourceTranslations") setIsLoading(false);
       return;
@@ -804,10 +811,10 @@ export function useProductSubResources({
           if (hasNameChange) optionsChanges[optionId].name = edit.name;
           // For metaobject-linked options, only save name changes (not values)
           if (hasValuesChange && !originalOption.isLinked) {
-            optionsChanges[optionId].valueUpdates = originalOption.values.map((v, i) => ({
-              id: v.id,
-              name: edit.values[i],
-            }));
+            // Only include values that actually changed
+            optionsChanges[optionId].valueUpdates = originalOption.values
+              .map((v, i) => ({ id: v.id, name: edit.values[i] }))
+              .filter((v, i) => v.name !== originalOption.values[i].name);
           }
         }
       }
