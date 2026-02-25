@@ -169,6 +169,7 @@ export function OptionsField({
               };
 
               const nameFieldId = `${option.id}:name`;
+              const entireFieldId = `${option.id}:entire`;
 
               return (
                 <div key={option.id}>
@@ -188,7 +189,7 @@ export function OptionsField({
                           <Button
                             size="slim"
                             onClick={() => onTranslate(option.id)}
-                            loading={translatingFieldIds.has(`${option.id}:entire`)}
+                            loading={translatingFieldIds.has(entireFieldId)}
                           >
                             🌍 {t.translateButton || (option.isLinked ? "Translate option name" : "Translate entire option")}
                           </Button>
@@ -231,7 +232,7 @@ export function OptionsField({
                                   <Button
                                     size="slim"
                                     onClick={() => onTranslateField(option.id, "name")}
-                                    loading={translatingFieldIds.has(nameFieldId)}
+                                    loading={translatingFieldIds.has(nameFieldId) || translatingFieldIds.has(entireFieldId)}
                                   >
                                     🌍 {t.translateFieldButton || t.translateButton || "Translate"}
                                   </Button>
@@ -292,7 +293,7 @@ export function OptionsField({
                                   <Button
                                     size="slim"
                                     onClick={() => onTranslateField(option.id, "name")}
-                                    loading={translatingFieldIds.has(nameFieldId)}
+                                    loading={translatingFieldIds.has(nameFieldId) || translatingFieldIds.has(entireFieldId)}
                                   >
                                     🌍 {t.translateFieldButton || t.translateButton || "Translate"}
                                   </Button>
@@ -338,7 +339,7 @@ export function OptionsField({
                                         <Button
                                           size="slim"
                                           onClick={() => onTranslateField(option.id, "value", valueIndex)}
-                                          loading={translatingFieldIds.has(valueFieldId)}
+                                          loading={translatingFieldIds.has(valueFieldId) || translatingFieldIds.has(entireFieldId)}
                                         >
                                           🌍 {t.translateFieldButton || t.translateButton || "Translate"}
                                         </Button>
@@ -363,6 +364,7 @@ export function OptionsField({
             {options.map((option, index) => {
               const translation = translations[option.id] || { name: "", values: [] };
               const nameFieldId = `${option.id}:name`;
+              const entireFieldId = `${option.id}:entire`;
 
               return (
                 <div key={option.id}>
@@ -381,7 +383,7 @@ export function OptionsField({
                         <Button
                           size="slim"
                           onClick={() => onTranslate(option.id)}
-                          loading={translatingFieldIds.has(`${option.id}:entire`)}
+                          loading={translatingFieldIds.has(entireFieldId)}
                         >
                           🌍 {t.translateButton || "Translate entire option"}
                         </Button>
@@ -432,7 +434,7 @@ export function OptionsField({
                               <Button
                                 size="slim"
                                 onClick={() => onTranslateField(option.id, "name")}
-                                loading={translatingFieldIds.has(nameFieldId)}
+                                loading={translatingFieldIds.has(nameFieldId) || translatingFieldIds.has(entireFieldId)}
                               >
                                 🌍 {t.translateFieldButton || t.translateButton || "Translate"}
                               </Button>
@@ -478,7 +480,7 @@ export function OptionsField({
                                       <Button
                                         size="slim"
                                         onClick={() => onTranslateField(option.id, "value", valueIndex)}
-                                        loading={translatingFieldIds.has(valueFieldId)}
+                                        loading={translatingFieldIds.has(valueFieldId) || translatingFieldIds.has(entireFieldId)}
                                       >
                                         🌍 {t.translateFieldButton || t.translateButton || "Translate"}
                                       </Button>
