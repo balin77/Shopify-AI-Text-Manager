@@ -111,8 +111,10 @@ const enhancedAuthenticate = {
     // Call original authentication
     const { admin, session } = await originalAuthenticateAdmin(request);
 
-    // Track activity for this shop
-    await trackActivity(session.shop);
+    // Track activity for this shop (fire-and-forget — must not block the response)
+    trackActivity(session.shop).catch(err => {
+      logger.error('[SHOPIFY.SERVER] trackActivity failed:', err);
+    });
 
     // Start sync scheduler if not already active
     if (!syncScheduler.isShopActive(session.shop)) {
