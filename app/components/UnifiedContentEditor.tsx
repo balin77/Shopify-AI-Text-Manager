@@ -185,10 +185,11 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   const isPerLocaleActionRunning = fetcherState !== "idle" && isSameItem
     && PER_LOCALE_AI_ACTIONS.includes(currentAction as string)
     && fetcherTargetLocale === state.currentLanguage;
-  const isGlobalAIActionRunning = isAllLocalesActionRunning || isPerLocaleActionRunning;
-
   // Get the set of fields with loading AI actions (for per-field loading states)
   const loadingFieldKeys = state.loadingFieldKeys;
+
+  const isGlobalAIActionRunning = isAllLocalesActionRunning || isPerLocaleActionRunning
+    || loadingFieldKeys.has("__translateAll__");
 
   // Translated resource names for the item list
   const resourceNames = t.content?.resourceNames || {};

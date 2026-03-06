@@ -133,6 +133,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
   const [selectedItemId, setSelectedItemId] = useState<string | null>(initialItemId || null);
   const [currentLanguage, setCurrentLanguage] = useState(primaryLocale);
+  const currentLanguageRef = useLatestRef(currentLanguage);
   const [editableValues, setEditableValues] = useState<Record<string, string>>({});
   const [aiSuggestions, setAiSuggestions] = useState<Record<string, string>>({});
   const [htmlModes, setHtmlModes] = useState<Record<string, 'html' | 'rendered'>>({});
@@ -205,6 +206,100 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // Track which fields have AI actions currently running (for per-field loading states)
   // This allows multiple AI actions to run in parallel on different fields
   const [loadingFieldKeys, setLoadingFieldKeys] = useState<Set<string>>(new Set());
+
+  // ============================================================================
+  // RESTORE SPINNER STATE AFTER NAVIGATION
+  // When the user navigates away while tasks are running, then comes back,
+  // we re-seed loadingFieldKeys from the DB so buttons show spinners again.
+  // ============================================================================
+
+  useEffect(() => {
+    if (!selectedItemId) return;
+
+    let cancelled = false;
+
+    const run = async () => {
+      try {
+        const response = await fetch(
+          `/api/running-field-tasks?resourceId=${encodeURIComponent(selectedItemId)}`
+        );
+        if (!response.ok || cancelled) return;
+        const data = await response.json();
+
+        const lang = currentLanguageRef.current;
+        const activeTasks: Array<{ id: string; fieldType: string | null; targetLocale: string | null; type: string }> =
+          (data.tasks || []).filter((task: any) => {
+            if (!task.fieldType) return false;
+            // For locale-specific tasks, only restore if the user is on that locale
+            if (task.targetLocale && task.targetLocale !== lang) return false;
+            return true;
+          });
+
+        if (activeTasks.length === 0 || cancelled) return;
+
+        const fieldKeys = activeTasks.map((t) =>
+          t.fieldType === "all" ? "__translateAll__" : t.fieldType!
+        );
+
+        // Seed the spinners
+        setLoadingFieldKeys((prev) => {
+          const next = new Set(prev);
+          fieldKeys.forEach((k) => next.add(k));
+          return next;
+        });
+
+        // Poll until all seeded tasks finish
+        const pollUntilDone = async (remaining: Set<string>) => {
+          if (cancelled || remaining.size === 0) return;
+          await new Promise((res) => setTimeout(res, 2000));
+          if (cancelled) return;
+
+          try {
+            const r2 = await fetch(
+              `/api/running-field-tasks?resourceId=${encodeURIComponent(selectedItemId)}`
+            );
+            if (!r2.ok || cancelled) return;
+            const d2 = await r2.json();
+
+            const stillRunning = new Set(
+              (d2.tasks || [])
+                .filter((t: any) => t.fieldType)
+                .map((t: any) => t.fieldType === "all" ? "__translateAll__" : t.fieldType)
+            );
+
+            const nowDone = [...remaining].filter((k) => !stillRunning.has(k));
+            if (nowDone.length > 0) {
+              setLoadingFieldKeys((prev) => {
+                const next = new Set(prev);
+                nowDone.forEach((k) => next.delete(k));
+                return next;
+              });
+              // Refresh page data to show completed results
+              if (revalidatorRef.current.state === "idle") {
+                try { revalidatorRef.current.revalidate(); } catch {}
+              }
+            }
+
+            const newRemaining = new Set([...remaining].filter((k) => stillRunning.has(k)));
+            await pollUntilDone(newRemaining);
+          } catch {
+            // Network error during polling — retry after a longer delay
+            if (!cancelled) {
+              await new Promise((res) => setTimeout(res, 5000));
+              await pollUntilDone(remaining);
+            }
+          }
+        };
+
+        await pollUntilDone(new Set(fieldKeys));
+      } catch {
+        // Silently ignore — spinner simply won't be restored on this navigation
+      }
+    };
+
+    run();
+    return () => { cancelled = true; };
+  }, [selectedItemId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Track if initial data load was successful - disables retry mechanism after successful load
   // Reset when item or language changes, allowing retry during new load cycles
