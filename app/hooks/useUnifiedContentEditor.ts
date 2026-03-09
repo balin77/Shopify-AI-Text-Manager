@@ -613,7 +613,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const selectedItemTranslationSignal = useMemo(() => {
     if (!selectedItemId) return 0;
     const item = items.find(i => i.id === selectedItemId);
-    return item?.translations?.length ?? 0;
+    const translations = item?.translations ?? [];
+    // Content-aware fingerprint instead of plain count: detects re-translations
+    // (same count, different values) after background task polling + revalidation.
+    // Multiplier ensures count changes always dominate value-length sum changes.
+    return translations.reduce(
+      (acc, t) => acc + (t.value?.length ?? 0),
+      translations.length * 1_000_000
+    );
   }, [items, selectedItemId]);
 
   useEffect(() => {
