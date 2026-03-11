@@ -761,7 +761,9 @@ export class ShopifyContentService {
     const prepareField = async (locale: string, field: string, value: string): Promise<{ field: string; translationKey: string; value: string; digest: string } | null> => {
       const translationKey = keyMapping[field];
       if (!translationKey) {
-        loggers.translation('warn', `No keyMapping for field '${field}'`);
+        loggers.translation('warn', `No keyMapping for field '${field}' — translation NOT saved`);
+        if (!rejectedFields[locale]) rejectedFields[locale] = [];
+        rejectedFields[locale].push(field);
         return null;
       }
 
@@ -834,6 +836,11 @@ export class ShopifyContentService {
           }
           const p = await prepareField(locale, field, stringValue);
           if (p) prepared.push({ ...p, locale });
+        } else {
+          // AI returned empty/null for this field — report as rejected so the user is informed
+          loggers.translation('warn', `AI returned empty value for field '${field}' in locale '${locale}' — not saved`);
+          if (!rejectedFields[locale]) rejectedFields[locale] = [];
+          rejectedFields[locale].push(field);
         }
       }
       return prepared;
@@ -1026,6 +1033,10 @@ export class ShopifyContentService {
           if (translatedFields) {
             const prepared = await collectLocaleTranslations(locale, translatedFields);
             allPrepared.push(...prepared);
+          } else {
+            // AI returned no translations for this locale without throwing — treat as failure
+            loggers.translation('error', `AI returned no long-field translations for ${locale} (no exception thrown)`);
+            if (!failedLocales.includes(locale)) failedLocales.push(locale);
           }
         } catch (localeError: unknown) {
           loggers.translation('error', `Failed to translate long fields to ${locale}`, { error: localeError instanceof Error ? localeError.message : String(localeError) });
