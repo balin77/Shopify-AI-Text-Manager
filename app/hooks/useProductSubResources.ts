@@ -16,6 +16,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useFetcher } from "@remix-run/react";
 import type { FetcherWithComponents } from "@remix-run/react";
 import type { OptionTranslation } from "../components/unified/OptionsField";
 import type { TranslatableContentItem } from "../types/content-editor.types";
@@ -48,6 +49,7 @@ export interface SubResourceHandlers {
   translateOptionField: (optionId: string, fieldType: "name" | "value", valueIndex?: number) => void;
   translateMetafield: (metafieldId: string) => void;
   translateAllSubResources: () => void;
+  translateAllSubResourcesToAllLocales: () => void;
   saveSubResources: () => void;
   resetChanges: () => void;
   resetForReload: () => void;
@@ -144,6 +146,11 @@ export function useProductSubResources({
   const [translatingFieldIds, setTranslatingFieldIds] = useState<Set<string>>(new Set());
   const [hasChanges, setHasChanges] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+
+  // Separate fetcher for translate-all operations to avoid conflicting with
+  // the shared fetcher used for load/save/individual-translate operations.
+  const translateAllFetcher = useFetcher<any>();
+  const lastProcessedTranslateAllDataRef = useRef<any>(null);
 
   // Track which item+locale combo we've loaded for
   const loadedForRef = useRef<string>("");
@@ -479,6 +486,63 @@ export function useProductSubResources({
     }
   }, [fetcher.state, fetcher.data, selectedItem]);
 
+  // Handle translateAllFetcher responses (used by translateAllSubResources and translateAllSubResourcesToAllLocales)
+  useEffect(() => {
+    if (translateAllFetcher.state !== "idle" || !translateAllFetcher.data) return;
+    const data = translateAllFetcher.data as any;
+    if (data === lastProcessedTranslateAllDataRef.current) return;
+    lastProcessedTranslateAllDataRef.current = data;
+
+    if (!data.success) return;
+
+    if (data.actionType === "translateSubResources" || data.actionType === "translateSubResourceToAllLocales") {
+      setTranslatingFieldIds(prev => {
+        const newSet = new Set(prev);
+        for (const id of newSet) {
+          if (id.includes(":name") || id.includes(":value") || id === "all:subresources") {
+            newSet.delete(id);
+          }
+        }
+        return newSet;
+      });
+
+      // For translateSubResourceToAllLocales, trigger revalidation to refresh locale pulsing state
+      if (data.actionType === "translateSubResourceToAllLocales" && revalidator && revalidator.state === "idle") {
+        revalidator.revalidate();
+      }
+
+      const translations = data.translations as Record<string, Record<string, string>>;
+      if (selectedItem) {
+        setOptionTranslations(prev => {
+          const updated = { ...prev };
+          for (const opt of selectedItem.options || []) {
+            const optTrans = translations[opt.id];
+            if (optTrans?.name) {
+              if (!updated[opt.id]) updated[opt.id] = { name: "", values: [] };
+              updated[opt.id] = { ...updated[opt.id], name: optTrans.name };
+            }
+            const valueTranslations = [...(updated[opt.id]?.values || [])];
+            for (let i = 0; i < opt.values.length; i++) {
+              const valTrans = translations[opt.values[i].id];
+              if (valTrans?.name) valueTranslations[i] = valTrans.name;
+            }
+            if (updated[opt.id]) updated[opt.id] = { ...updated[opt.id], values: valueTranslations };
+          }
+          return updated;
+        });
+        setMetafieldTranslations(prev => {
+          const updated = { ...prev };
+          for (const mf of selectedItem.metafields || []) {
+            const mfTrans = translations[mf.id];
+            if (mfTrans?.value) updated[mf.id] = mfTrans.value;
+          }
+          return updated;
+        });
+      }
+      setHasChanges(false);
+    }
+  }, [translateAllFetcher.state, translateAllFetcher.data, selectedItem, revalidator]);
+
   // ============================================================================
   // Handlers
   // ============================================================================
@@ -752,7 +816,7 @@ export function useProductSubResources({
     // Add all fieldIds to the translating set
     setTranslatingFieldIds(prev => new Set([...prev, ...fieldIds]));
 
-    fetcher.submit(
+    translateAllFetcher.submit(
       {
         action: "translateSubResources",
         targetLocale: currentLanguage,
@@ -763,7 +827,42 @@ export function useProductSubResources({
       },
       { method: "POST", action: "/app/products" }
     );
-  }, [isPrimaryLocale, buildSourceData, currentLanguage, primaryLocale, fetcher, selectedItem]);
+  }, [isPrimaryLocale, buildSourceData, currentLanguage, primaryLocale, translateAllFetcher, selectedItem]);
+
+  // Translate ALL sub-resources to ALL foreign locales (called from primary locale "Translate All")
+  const translateAllSubResourcesToAllLocales = useCallback(() => {
+    if (!isPrimaryLocale || !selectedItem) return;
+
+    const sourceData = buildSourceData();
+    if (sourceData.length === 0) return;
+
+    // Mark all fields as translating
+    const fieldIds = new Set<string>();
+    for (const opt of selectedItem.options || []) {
+      fieldIds.add(`${opt.id}:name`);
+      if (!opt.isLinked) {
+        for (let i = 0; i < opt.values.length; i++) {
+          if (opt.values[i].id) fieldIds.add(`${opt.id}:value:${i}`);
+        }
+      }
+    }
+    for (const mf of selectedItem.metafields || []) {
+      fieldIds.add(`${mf.id}:value`);
+    }
+    fieldIds.add("all:subresources");
+    setTranslatingFieldIds(prev => new Set([...prev, ...fieldIds]));
+
+    translateAllFetcher.submit(
+      {
+        action: "translateSubResourceToAllLocales",
+        sourceData: JSON.stringify(sourceData),
+        itemId: selectedItem.id,
+        primaryLocale,
+        fieldId: "all:subresources",
+      },
+      { method: "POST", action: "/app/products" }
+    );
+  }, [isPrimaryLocale, buildSourceData, selectedItem, primaryLocale, translateAllFetcher]);
 
   // Unified save handler - automatically detects primary vs foreign locale
   const saveSubResources = useCallback(() => {
@@ -942,6 +1041,7 @@ export function useProductSubResources({
       translateOptionField,
       translateMetafield,
       translateAllSubResources,
+      translateAllSubResourcesToAllLocales,
       saveSubResources,
       resetChanges,
       resetForReload,
