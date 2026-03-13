@@ -216,6 +216,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   useEffect(() => {
     if (!selectedItemId) return;
 
+    // Clear any loading state left over from the previously selected item.
+    // The poll below will re-seed keys for tasks that are actually running on this item.
+    setLoadingFieldKeys(new Set());
+
     let cancelled = false;
 
     const run = async () => {
