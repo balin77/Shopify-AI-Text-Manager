@@ -133,6 +133,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
   const [selectedItemId, setSelectedItemId] = useState<string | null>(initialItemId || null);
   const [currentLanguage, setCurrentLanguage] = useState(primaryLocale);
+  const currentLanguageRef = useLatestRef(currentLanguage);
   const [editableValues, setEditableValues] = useState<Record<string, string>>({});
   const [aiSuggestions, setAiSuggestions] = useState<Record<string, string>>({});
   const [htmlModes, setHtmlModes] = useState<Record<string, 'html' | 'rendered'>>({});
@@ -205,6 +206,104 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // Track which fields have AI actions currently running (for per-field loading states)
   // This allows multiple AI actions to run in parallel on different fields
   const [loadingFieldKeys, setLoadingFieldKeys] = useState<Set<string>>(new Set());
+
+  // ============================================================================
+  // RESTORE SPINNER STATE AFTER NAVIGATION
+  // When the user navigates away while tasks are running, then comes back,
+  // we re-seed loadingFieldKeys from the DB so buttons show spinners again.
+  // ============================================================================
+
+  useEffect(() => {
+    if (!selectedItemId) return;
+
+    // Clear any loading state left over from the previously selected item.
+    // The poll below will re-seed keys for tasks that are actually running on this item.
+    setLoadingFieldKeys(new Set());
+
+    let cancelled = false;
+
+    const run = async () => {
+      try {
+        const response = await fetch(
+          `/api/running-field-tasks?resourceId=${encodeURIComponent(selectedItemId)}`
+        );
+        if (!response.ok || cancelled) return;
+        const data = await response.json();
+
+        const lang = currentLanguageRef.current;
+        const activeTasks: Array<{ id: string; fieldType: string | null; targetLocale: string | null; type: string }> =
+          (data.tasks || []).filter((task: any) => {
+            if (!task.fieldType) return false;
+            // For locale-specific tasks, only restore if the user is on that locale
+            if (task.targetLocale && task.targetLocale !== lang) return false;
+            return true;
+          });
+
+        if (activeTasks.length === 0 || cancelled) return;
+
+        const fieldKeys = activeTasks.map((t) =>
+          t.fieldType === "all" ? "__translateAll__" : t.fieldType!
+        );
+
+        // Seed the spinners
+        setLoadingFieldKeys((prev) => {
+          const next = new Set(prev);
+          fieldKeys.forEach((k) => next.add(k));
+          return next;
+        });
+
+        // Poll until all seeded tasks finish
+        const pollUntilDone = async (remaining: Set<string>) => {
+          if (cancelled || remaining.size === 0) return;
+          await new Promise((res) => setTimeout(res, 2000));
+          if (cancelled) return;
+
+          try {
+            const r2 = await fetch(
+              `/api/running-field-tasks?resourceId=${encodeURIComponent(selectedItemId)}`
+            );
+            if (!r2.ok || cancelled) return;
+            const d2 = await r2.json();
+
+            const stillRunning = new Set(
+              (d2.tasks || [])
+                .filter((t: any) => t.fieldType)
+                .map((t: any) => t.fieldType === "all" ? "__translateAll__" : t.fieldType)
+            );
+
+            const nowDone = [...remaining].filter((k) => !stillRunning.has(k));
+            if (nowDone.length > 0) {
+              setLoadingFieldKeys((prev) => {
+                const next = new Set(prev);
+                nowDone.forEach((k) => next.delete(k));
+                return next;
+              });
+              // Refresh page data to show completed results
+              if (revalidatorRef.current.state === "idle") {
+                try { revalidatorRef.current.revalidate(); } catch {}
+              }
+            }
+
+            const newRemaining = new Set([...remaining].filter((k) => stillRunning.has(k)));
+            await pollUntilDone(newRemaining);
+          } catch {
+            // Network error during polling — retry after a longer delay
+            if (!cancelled) {
+              await new Promise((res) => setTimeout(res, 5000));
+              await pollUntilDone(remaining);
+            }
+          }
+        };
+
+        await pollUntilDone(new Set(fieldKeys));
+      } catch {
+        // Silently ignore — spinner simply won't be restored on this navigation
+      }
+    };
+
+    run();
+    return () => { cancelled = true; };
+  }, [selectedItemId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Track if initial data load was successful - disables retry mechanism after successful load
   // Reset when item or language changes, allowing retry during new load cycles
@@ -510,6 +609,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const prevTranslationSignalRef = useRef<number>(0);
 
   const selectedItemRef = useLatestRef(selectedItem);
+  const selectedItemIdRef = useLatestRef(selectedItemId);
 
   // Stable signal that changes when translations arrive for the selected item.
   // When the loader delivers fresh data after lazy-load / revalidation, the
@@ -518,7 +618,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const selectedItemTranslationSignal = useMemo(() => {
     if (!selectedItemId) return 0;
     const item = items.find(i => i.id === selectedItemId);
-    return item?.translations?.length ?? 0;
+    const translations = item?.translations ?? [];
+    // Content-aware fingerprint instead of plain count: detects re-translations
+    // (same count, different values) after background task polling + revalidation.
+    // Multiplier ensures count changes always dominate value-length sum changes.
+    return translations.reduce(
+      (acc, t) => acc + (t.value?.length ?? 0),
+      translations.length * 1_000_000
+    );
   }, [items, selectedItemId]);
 
   useEffect(() => {
@@ -1018,10 +1125,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   useEffect(() => {
     if (fetcher.data?.success && (fetcher.data.actionType === "generateAIText" || fetcher.data.actionType === "formatAIText")) {
       const { fieldType, generatedContent } = fetcher.data as GeneratedContentResponse;
-      setAiSuggestions((prev) => ({
-        ...prev,
-        [fieldType]: generatedContent,
-      }));
+      if (generatedContent && generatedContent.trim()) {
+        setAiSuggestions((prev) => ({
+          ...prev,
+          [fieldType]: generatedContent,
+        }));
+      }
     }
   }, [fetcher.data]);
 
@@ -2022,6 +2131,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const handleGenerateAI = (fieldKey: string) => {
     if (!selectedItemId || !selectedItem) return;
 
+    const requestItemId = selectedItemId;
     const currentValue = editableValues[fieldKey] || "";
     const contextTitle = editableValues.title || "";
     const contextDescription = editableValues.description || editableValues.body || "";
@@ -2056,7 +2166,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       },
       fieldKey,
       (result) => {
-        // Handle success - set AI suggestion for this field
+        // Guard: discard if user has switched to a different item since the request was made
+        if (selectedItemIdRef.current !== requestItemId) return;
         setAiSuggestions((prev) => ({
           ...prev,
           [fieldKey]: result.generatedContent as string,
@@ -2068,6 +2179,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const handleFormatAI = (fieldKey: string) => {
     if (!selectedItemId || !selectedItem) return;
 
+    const requestItemId = selectedItemId;
     const currentValue = editableValues[fieldKey] || "";
     if (!currentValue) {
       showInfoBox(
@@ -2111,7 +2223,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       },
       fieldKey,
       (result) => {
-        // Handle success - set AI suggestion for format
+        // Guard: discard if user has switched to a different item since the request was made
+        if (selectedItemIdRef.current !== requestItemId) return;
         setAiSuggestions((prev) => ({
           ...prev,
           [fieldKey]: result.generatedContent as string,
@@ -2123,6 +2236,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const handleTranslateField = (fieldKey: string) => {
     if (!selectedItemId || !selectedItem) return;
 
+    const requestItemId = selectedItemId;
     const field = effectiveFieldDefinitions.find((f) => f.key === fieldKey);
     if (!field) return;
 
@@ -2149,6 +2263,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       },
       fieldKey,
       (result) => {
+        // Guard: discard UI updates if user switched to a different item during the request.
+        // The server-side save already used the correct itemId captured above.
+        if (selectedItemIdRef.current !== requestItemId) return;
         // Handle success - update the field with translated value
         const translatedValue = result.translatedValue as string;
         if (field.translationKey) {
@@ -2235,6 +2352,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const handleTranslateFieldToAllLocales = (fieldKey: string) => {
     if (!selectedItemId || !selectedItem) return;
 
+    const requestItemId = selectedItemId;
+
     // Filter out primary locale and disabled languages
     const targetLocales = enabledLanguages.filter(l => l !== primaryLocale);
     if (targetLocales.length === 0) {
@@ -2273,10 +2392,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       },
       fieldKey,
       (result) => {
+        // Guard: discard UI updates if user switched to a different item during the request.
+        // The server-side save already used the correct itemId captured above.
+        if (selectedItemIdRef.current !== requestItemId) return;
         // Handle success - translations is Record<locale, translatedText>
         const translations = result.translations as Record<string, string> || {};
         const shopifyKey = field.translationKey;
-        const item = selectedItemRef.current;
         const translationCount = Object.keys(translations).length;
 
         // Delegate ref mutations to transition method
@@ -2376,6 +2497,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const handleTranslateAll = () => {
     if (!selectedItemId || !selectedItem) return;
 
+    const requestItemId = selectedItemId;
+
     // Filter out primary locale and disabled languages
     const targetLocales = enabledLanguages.filter(l => l !== primaryLocale);
     if (targetLocales.length === 0) {
@@ -2427,6 +2550,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           },
           "allAltTextsTranslate",
           (result) => {
+            // Guard: discard UI updates if user switched to a different item during the request.
+            if (selectedItemIdRef.current !== requestItemId) return;
             const translatedCount = (result.translatedCount as number) || 0;
             const imageCount = (result.imageCount as number) || 0;
             const failedImages: number[] = (result.failedImages as number[]) || [];
@@ -2849,6 +2974,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const handleTranslateAllForLocale = () => {
     if (!selectedItemId || !selectedItem || currentLanguage === primaryLocale) return;
 
+    const requestItemId = selectedItemId;
+
     const formDataObj: Record<string, string> = {
       action: "translateAllForLocale",
       itemId: selectedItemId,
@@ -2889,6 +3016,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           },
           `allAltTextsTranslate_${currentLanguage}`,
           (result) => {
+            // Guard: discard UI updates if user switched to a different item during the request.
+            if (selectedItemIdRef.current !== requestItemId) return;
             const failedImages: number[] = (result.failedImages as number[]) || [];
 
             // Only accept translations that were successfully saved to Shopify
@@ -2940,6 +3069,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const handleGenerateAltText = (imageIndex: number) => {
     if (!selectedItem || !selectedItem.images || !selectedItem.images[imageIndex]) return;
 
+    const requestItemId = selectedItem.id;
     const image = selectedItem.images[imageIndex];
     const productTitle = getItemFieldValue(selectedItem, 'title', primaryLocale, config);
     const mainLanguage = shopLocales.find((l: ShopLocale) => l.locale === primaryLocale)?.name || primaryLocale;
@@ -2957,7 +3087,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       },
       `altText_${imageIndex}`,
       (result) => {
-        // Handle success - set AI suggestion for this alt-text
+        // Guard: discard if user switched to a different item during the request.
+        if (selectedItemIdRef.current !== requestItemId) return;
         if (result.altText) {
           setAltTextSuggestions((prev) => ({
             ...prev,
@@ -2971,6 +3102,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const handleGenerateAllAltTexts = () => {
     if (!selectedItem || !selectedItem.images || selectedItem.images.length === 0) return;
 
+    const requestItemId = selectedItem.id;
     const productTitle = getItemFieldValue(selectedItem, 'title', primaryLocale, config);
     const mainLanguage = shopLocales.find((l: ShopLocale) => l.locale === primaryLocale)?.name || primaryLocale;
     const imagesData = selectedItem.images.map((img: ContentImage) => ({ url: img.url }));
@@ -2987,6 +3119,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       },
       "allAltTextsGenerate",
       (result) => {
+        // Guard: discard if user switched to a different item during the request.
+        if (selectedItemIdRef.current !== requestItemId) return;
         if (result.generatedAltTexts) {
           const newAltTexts = {
             ...imageAltTexts,
@@ -3470,11 +3604,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     setSendImageToAI(prev => !prev);
   }, []);
 
-  // Reset alt-text state when product changes
+  // Reset alt-text and AI suggestion state when selected item changes
   useEffect(() => {
     setImageAltTexts({});
     setAltTextSuggestions({});
     setOriginalAltTexts({});
+    setAiSuggestions({});
   }, [selectedItemId]);
 
   // Load translated alt-texts when language changes

@@ -710,6 +710,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
         data: {
           prompt: JSON.stringify(promptHistory),
           provider: this.provider, // Save provider for recovery after server restart
+          aiModel: this.getModel(),
         },
       });
     } catch (error) {
@@ -764,7 +765,10 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
         max_tokens: 2000,
         temperature: 0.7,
       });
-      return response.choices[0].message.content || '';
+      if (!response.choices[0]) throw new Error('HuggingFace returned empty response');
+      const hfContent = response.choices[0].message.content;
+      if (!hfContent || !hfContent.trim()) throw new Error('HuggingFace returned empty content');
+      return hfContent;
     } else if (this.provider === 'gemini' && this.gemini) {
       // Gemini: supports vision with URL
       if (imageUrl) {
@@ -779,18 +783,24 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
             },
           ]);
           const response = await result.response;
-          return response.text();
+          const geminiText = response.text();
+          if (!geminiText || !geminiText.trim()) throw new Error('Gemini returned empty response');
+          return geminiText;
         } catch (error) {
           loggers.ai('warn', '[AI-SERVICE] Gemini vision failed, falling back to text-only', { error });
           // Fallback to text-only
           const result = await this.gemini.generateContent(prompt);
           const response = await result.response;
-          return response.text();
+          const geminiTextFallback = response.text();
+          if (!geminiTextFallback || !geminiTextFallback.trim()) throw new Error('Gemini returned empty response');
+          return geminiTextFallback;
         }
       } else {
         const result = await this.gemini.generateContent(prompt);
         const response = await result.response;
-        return response.text();
+        const geminiTextOnly = response.text();
+        if (!geminiTextOnly || !geminiTextOnly.trim()) throw new Error('Gemini returned empty response');
+        return geminiTextOnly;
       }
     } else if (this.provider === 'claude' && this.anthropic) {
       // Claude: supports vision with URL
@@ -808,7 +818,9 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
         });
         const content = message.content[0];
         if (!content) throw new Error('Claude returned empty response');
-        return content.type === 'text' ? content.text : '';
+        if (content.type !== 'text') throw new Error(`Claude returned non-text content type: ${content.type}`);
+        if (!content.text.trim()) throw new Error('Claude returned empty text');
+        return content.text;
       } else {
         const message = await this.anthropic.messages.create({
           model: this.getModel(),
@@ -817,7 +829,9 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
         });
         const content = message.content[0];
         if (!content) throw new Error('Claude returned empty response');
-        return content.type === 'text' ? content.text : '';
+        if (content.type !== 'text') throw new Error(`Claude returned non-text content type: ${content.type}`);
+        if (!content.text.trim()) throw new Error('Claude returned empty text');
+        return content.text;
       }
     } else if (this.provider === 'openai' && this.openai) {
       // GPT-4o: supports vision with URL
@@ -834,7 +848,9 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
           max_tokens: 2000,
         });
         if (!completion.choices[0]) throw new Error('OpenAI returned empty response');
-        return completion.choices[0].message.content || '';
+        const openaiVisionContent = completion.choices[0].message.content;
+        if (!openaiVisionContent || !openaiVisionContent.trim()) throw new Error(`OpenAI returned empty content (finish_reason: ${completion.choices[0].finish_reason})`);
+        return openaiVisionContent;
       } else {
         const completion = await this.openai.chat.completions.create({
           model: this.getModel(),
@@ -842,7 +858,9 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
           max_tokens: 2000,
         });
         if (!completion.choices[0]) throw new Error('OpenAI returned empty response');
-        return completion.choices[0].message.content || '';
+        const openaiContent = completion.choices[0].message.content;
+        if (!openaiContent || !openaiContent.trim()) throw new Error(`OpenAI returned empty content (finish_reason: ${completion.choices[0].finish_reason})`);
+        return openaiContent;
       }
     } else if (this.provider === 'grok' && this.grok) {
       // Grok: supports vision with URL (similar to GPT-4o)
@@ -860,7 +878,9 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
           temperature: 0.7,
         });
         if (!completion.choices[0]) throw new Error('Grok returned empty response');
-        return completion.choices[0].message.content || '';
+        const grokVisionContent = completion.choices[0].message.content;
+        if (!grokVisionContent || !grokVisionContent.trim()) throw new Error(`Grok returned empty content (finish_reason: ${completion.choices[0].finish_reason})`);
+        return grokVisionContent;
       } else {
         const completion = await this.grok.chat.completions.create({
           model: this.getModel(),
@@ -869,7 +889,9 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
           temperature: 0.7,
         });
         if (!completion.choices[0]) throw new Error('Grok returned empty response');
-        return completion.choices[0].message.content || '';
+        const grokContent = completion.choices[0].message.content;
+        if (!grokContent || !grokContent.trim()) throw new Error(`Grok returned empty content (finish_reason: ${completion.choices[0].finish_reason})`);
+        return grokContent;
       }
     } else if (this.provider === 'deepseek' && this.deepseek) {
       // DeepSeek: text-only (no vision support)
@@ -880,7 +902,9 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
         temperature: 0.7,
       });
       if (!completion.choices[0]) throw new Error('DeepSeek returned empty response');
-      return completion.choices[0].message.content || '';
+      const deepseekContent = completion.choices[0].message.content;
+      if (!deepseekContent || !deepseekContent.trim()) throw new Error(`DeepSeek returned empty content (finish_reason: ${completion.choices[0].finish_reason})`);
+      return deepseekContent;
     }
 
     throw new Error('No AI provider configured');
