@@ -710,6 +710,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
         data: {
           prompt: JSON.stringify(promptHistory),
           provider: this.provider, // Save provider for recovery after server restart
+          aiModel: this.getModel(),
         },
       });
     } catch (error) {
