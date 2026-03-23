@@ -34,6 +34,12 @@ export function ReloadButton({
   // Monitor fetcher state
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Track whether we've actually seen revalidator.state === 'loading' before accepting 'idle'.
+  // Without this, the effect below fires immediately when waitingForRevalidation becomes true
+  // (revalidator.state is still 'idle' at that point), causing onReloadComplete to be called
+  // before fresh data has arrived in React — a race condition that leaves the UI stale.
+  const revalidationStartedRef = useRef(false);
+
   useEffect(() => {
     if (fetcher.state === "idle" && fetcher.data && isLoading) {
       const data = fetcher.data as any;
@@ -84,8 +90,18 @@ export function ReloadButton({
   useEffect(() => {
     if (!waitingForRevalidation || !revalidatorRef.current) return;
 
-    // Revalidation completed
-    if (revalidatorRef.current.state === 'idle') {
+    if (revalidatorRef.current.state === 'loading') {
+      // Revalidation has actually started — mark it so we don't fire too early
+      revalidationStartedRef.current = true;
+      return;
+    }
+
+    // Only fire onReloadComplete after we've confirmed revalidation started AND completed.
+    // This prevents the race condition where this effect fires when waitingForRevalidation
+    // first becomes true but revalidator.state is still 'idle' (Remix hasn't processed
+    // revalidate() yet), which would call onReloadComplete before fresh data arrives.
+    if (revalidationStartedRef.current && revalidatorRef.current.state === 'idle') {
+      revalidationStartedRef.current = false;
       setWaitingForRevalidation(false);
       setIsLoading(false);
 

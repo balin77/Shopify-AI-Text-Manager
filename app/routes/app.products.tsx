@@ -480,6 +480,24 @@ export default function ProductsPage() {
     showInfoBox,
   });
 
+  // Wrap translate-all handlers to also translate product options and metafields.
+  // Uses a separate internal fetcher in useProductSubResources to avoid conflicting
+  // with the shared fetcher used by the main editor.
+  const editorWithSubResources = {
+    ...editor,
+    handlers: {
+      ...editor.handlers,
+      handleTranslateAll: () => {
+        editor.handlers.handleTranslateAll();
+        subResources.handlers.translateAllSubResourcesToAllLocales();
+      },
+      handleTranslateAllForLocale: () => {
+        editor.handlers.handleTranslateAllForLocale();
+        subResources.handlers.translateAllSubResources();
+      },
+    },
+  };
+
   // Get selected product AFTER editor is initialized
   const selectedProductId = editor.state.selectedItemId;
   const selectedProduct = editor.selectedItem;
@@ -717,7 +735,7 @@ export default function ProductsPage() {
           items={products as ContentItem[]}
           shopLocales={shopLocales}
           primaryLocale={primaryLocale}
-          editor={editor}
+          editor={editorWithSubResources}
           fetcherState={fetcher.state}
           fetcherFormData={fetcher.formData}
           t={t}

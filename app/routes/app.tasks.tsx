@@ -469,6 +469,11 @@ export default function TasksPage() {
                             {t.tasks.duration}: {formatDuration(task.startedAt)}
                           </Text>
                         )}
+                        {task.aiModel && (
+                          <Text as="p" variant="bodySm" tone="subdued">
+                            {task.aiModel}
+                          </Text>
+                        )}
                       </InlineStack>
                     )}
 
