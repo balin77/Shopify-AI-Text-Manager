@@ -1125,10 +1125,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   useEffect(() => {
     if (fetcher.data?.success && (fetcher.data.actionType === "generateAIText" || fetcher.data.actionType === "formatAIText")) {
       const { fieldType, generatedContent } = fetcher.data as GeneratedContentResponse;
-      setAiSuggestions((prev) => ({
-        ...prev,
-        [fieldType]: generatedContent,
-      }));
+      if (generatedContent && generatedContent.trim()) {
+        setAiSuggestions((prev) => ({
+          ...prev,
+          [fieldType]: generatedContent,
+        }));
+      }
     }
   }, [fetcher.data]);
 

@@ -257,6 +257,7 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
 
         prompt += `\n\nIMPORTANT: Return ONLY the ${field.label}, nothing else. Output in ${mainLanguage}.`;
         generatedContent = await aiServiceWithTask.generateProductTitle(prompt);
+        if (!generatedContent || !generatedContent.trim()) throw new Error("AI returned empty response");
 
         if (field.type === "slug") {
           generatedContent = sanitizeSlug(generatedContent);
@@ -318,6 +319,7 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
 
         prompt += `\n\nIMPORTANT: Return ONLY the ${field.label}, nothing else. Output in ${mainLanguage}.`;
         generatedContent = await aiServiceWithTask.generateProductDescription(sanitizedContextTitle, prompt);
+        if (!generatedContent || !generatedContent.trim()) throw new Error("AI returned empty response");
       }
 
       // Update task to completed
@@ -462,6 +464,7 @@ Allowed formatting changes:
         }
 
         formattedContent = await aiServiceWithTask.generateProductTitle(prompt);
+        if (!formattedContent || !formattedContent.trim()) throw new Error("AI returned empty response");
 
         if (field.type === "slug") {
           formattedContent = sanitizeSlug(formattedContent);
@@ -488,6 +491,7 @@ Allowed formatting changes:
 
         prompt += `\n\nReturn ONLY the formatted HTML ${field.label}. Keep the original language and all original content. Do NOT add new sentences or rewrite existing ones. Output the result in ${mainLanguage}.`;
         formattedContent = await aiServiceWithTask.generateProductDescription(currentValue, prompt);
+        if (!formattedContent || !formattedContent.trim()) throw new Error("AI returned empty response");
       }
 
       // Update task to completed
@@ -577,6 +581,9 @@ Allowed formatting changes:
         translateInstructions || undefined
       );
       const translatedValue = translations[targetLocale]?.[fieldType] || "";
+      if (!translatedValue || !translatedValue.trim()) {
+        throw new Error(`AI returned empty translation for field "${fieldType}"`);
+      }
 
       await db.task.update({
         where: { id: task.id },
