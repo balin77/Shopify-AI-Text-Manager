@@ -460,6 +460,7 @@ export const es: Translation = {
     maxTokensPerMinuteShort: "Máx Tokens/Min",
     maxRequestsPerMinute: "Máx Peticiones / Minuto",
     maxRequestsPerMinuteShort: "Máx Peticiones/Min",
+    seoSettings: "SEO",
     seoTitleSuffix: "Sufijo del nombre de tienda en SEO",
     seoTitleSuffixDescription: "Activa esta opción si Shopify agrega automáticamente el nombre de la tienda a los títulos SEO (p. ej., ' \u2013 Mi Tienda'). La IA generará títulos más cortos para que la longitud total no supere 60 caracteres.",
     seoTitleSuffixLabel: "Shopify agrega el nombre de la tienda a los títulos SEO",

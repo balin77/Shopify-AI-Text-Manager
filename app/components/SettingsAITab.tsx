@@ -11,7 +11,6 @@ import {
   Icon,
   Banner,
   Spinner,
-  Checkbox,
 } from "@shopify/polaris";
 import { ViewIcon, HideIcon } from "@shopify/polaris-icons";
 import { SaveDiscardButtons } from "./SaveDiscardButtons";
@@ -53,8 +52,9 @@ interface Settings {
   grokMaxRequestsPerMinute: number;
   deepseekMaxTokensPerMinute: number;
   deepseekMaxRequestsPerMinute: number;
-  seoTitleSuffixEnabled: boolean;
-  seoTitleSuffix: string;
+  // SEO fields are saved via SettingsSEOTab, but still included in full save payload
+  seoTitleSuffixEnabled?: boolean;
+  seoTitleSuffix?: string;
 }
 
 interface SettingsAITabProps {
@@ -62,10 +62,9 @@ interface SettingsAITabProps {
   fetcher: FetcherWithComponents<any>;
   t: any; // i18n translations
   onHasChangesChange?: (hasChanges: boolean) => void;
-  shopDisplayName?: string;
 }
 
-export function SettingsAITab({ settings, fetcher, t, onHasChangesChange, shopDisplayName = "" }: SettingsAITabProps) {
+export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: SettingsAITabProps) {
   const AI_PROVIDERS = [
     { label: t.settings.providers.openai, value: "openai" },
     { label: t.settings.providers.gemini, value: "gemini" },
@@ -139,10 +138,6 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange, shopDi
   const [deepseekMaxTokensPerMinute, setDeepseekMaxTokensPerMinute] = useState(String(settings.deepseekMaxTokensPerMinute));
   const [deepseekMaxRequestsPerMinute, setDeepseekMaxRequestsPerMinute] = useState(String(settings.deepseekMaxRequestsPerMinute));
 
-  // SEO title suffix states
-  const [seoTitleSuffixEnabled, setSeoTitleSuffixEnabled] = useState(settings.seoTitleSuffixEnabled ?? false);
-  const [seoTitleSuffix, setSeoTitleSuffix] = useState(settings.seoTitleSuffix || '');
-
   // Password visibility states
   const [showHuggingfaceKey, setShowHuggingfaceKey] = useState(false);
   const [showGeminiKey, setShowGeminiKey] = useState(false);
@@ -174,9 +169,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange, shopDi
       grokMaxTokensPerMinute !== String(settings.grokMaxTokensPerMinute) ||
       grokMaxRequestsPerMinute !== String(settings.grokMaxRequestsPerMinute) ||
       deepseekMaxTokensPerMinute !== String(settings.deepseekMaxTokensPerMinute) ||
-      deepseekMaxRequestsPerMinute !== String(settings.deepseekMaxRequestsPerMinute) ||
-      seoTitleSuffixEnabled !== (settings.seoTitleSuffixEnabled ?? false) ||
-      seoTitleSuffix !== (settings.seoTitleSuffix || '');
+      deepseekMaxRequestsPerMinute !== String(settings.deepseekMaxRequestsPerMinute);
     setHasChanges(changed);
     if (onHasChangesChange) {
       onHasChangesChange(changed);
@@ -189,7 +182,6 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange, shopDi
     openaiMaxTokensPerMinute, openaiMaxRequestsPerMinute,
     grokMaxTokensPerMinute, grokMaxRequestsPerMinute,
     deepseekMaxTokensPerMinute, deepseekMaxRequestsPerMinute,
-    seoTitleSuffixEnabled, seoTitleSuffix,
     settings,
     onHasChangesChange
   ]);
@@ -221,8 +213,6 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange, shopDi
         grokMaxRequestsPerMinute,
         deepseekMaxTokensPerMinute,
         deepseekMaxRequestsPerMinute,
-        seoTitleSuffixEnabled: String(seoTitleSuffixEnabled),
-        seoTitleSuffix,
       },
       { method: "POST" }
     );
@@ -249,8 +239,6 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange, shopDi
     setGrokMaxRequestsPerMinute(String(settings.grokMaxRequestsPerMinute));
     setDeepseekMaxTokensPerMinute(String(settings.deepseekMaxTokensPerMinute));
     setDeepseekMaxRequestsPerMinute(String(settings.deepseekMaxRequestsPerMinute));
-    setSeoTitleSuffixEnabled(settings.seoTitleSuffixEnabled ?? false);
-    setSeoTitleSuffix(settings.seoTitleSuffix || '');
   };
 
   // Check if the preferred provider has an API key
@@ -801,49 +789,6 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange, shopDi
             </div>
           </BlockStack>
         </div>
-      </BlockStack>
-    </Card>
-
-    <Card>
-      <BlockStack gap="400">
-        <Text as="h2" variant="headingMd">
-          {t.settings.seoTitleSuffix || "SEO-Titel Shop-Suffix"}
-        </Text>
-        <Text as="p" variant="bodyMd" tone="subdued">
-          {t.settings.seoTitleSuffixDescription || "Aktiviere diese Option wenn Shopify automatisch den Shop-Namen an SEO-Titel anhängt. Die KI generiert dann kürzere Titel damit die Gesamtlänge 60 Zeichen nicht überschreitet."}
-        </Text>
-        <Checkbox
-          label={t.settings.seoTitleSuffixLabel || "Shopify hängt Shop-Namen an SEO-Titel an"}
-          checked={seoTitleSuffixEnabled}
-          onChange={(checked) => {
-            setSeoTitleSuffixEnabled(checked);
-            if (checked && !seoTitleSuffix && shopDisplayName) {
-              setSeoTitleSuffix(` \u2013 ${shopDisplayName}`);
-            }
-          }}
-        />
-        {seoTitleSuffixEnabled && (
-          <BlockStack gap="200">
-            <TextField
-              label={t.settings.seoTitleSuffixField || "Angefügter Text (inkl. Trennzeichen)"}
-              value={seoTitleSuffix}
-              onChange={setSeoTitleSuffix}
-              placeholder={shopDisplayName ? ` \u2013 ${shopDisplayName}` : " – Shop Name"}
-              helpText={
-                seoTitleSuffix
-                  ? (t.settings.seoTitleSuffixHint || "Effektives Zeichenlimit: {limit} Zeichen").replace("{limit}", String(60 - seoTitleSuffix.length))
-                  : undefined
-              }
-              autoComplete="off"
-              maxLength={60}
-            />
-            <Banner tone="info">
-              <Text as="p">
-                {t.settings.seoTitleSuffixNote || "Dieser Text wird von Shopify angefügt und wird nicht im SEO-Titel gespeichert. Er dient nur zur Berechnung des effektiven Zeichenlimits."}
-              </Text>
-            </Banner>
-          </BlockStack>
-        )}
       </BlockStack>
     </Card>
   </>

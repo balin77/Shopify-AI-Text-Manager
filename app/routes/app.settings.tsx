@@ -21,6 +21,7 @@ import { AIInstructionsTabs } from "../components/AIInstructionsTabs";
 import { SettingsSetupTab } from "../components/SettingsSetupTab";
 import { SettingsAITab } from "../components/SettingsAITab";
 import { SettingsLanguageTab } from "../components/SettingsLanguageTab";
+import { SettingsSEOTab } from "../components/SettingsSEOTab";
 import { SettingsUsageLimitsTab } from "../components/SettingsUsageLimitsTab";
 import { db } from "../db.server";
 import { useI18n } from "../contexts/I18nContext";
@@ -532,6 +533,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
 
       return json({ success: true });
+    } else if (actionType === "saveSeoSettings") {
+      const enabled = formData.get("seoTitleSuffixEnabled") === "true";
+      const suffix = String(formData.get("seoTitleSuffix") || "").slice(0, 60) || null;
+
+      await db.aISettings.upsert({
+        where: { shop: session.shop },
+        update: { seoTitleSuffixEnabled: enabled, seoTitleSuffix: suffix },
+        create: { shop: session.shop, seoTitleSuffixEnabled: enabled, seoTitleSuffix: suffix },
+      });
+
+      return json({ success: true });
     } else {
       // Validate and save AI settings
       const validationResult = parseFormData(formData, AISettingsSchema);
@@ -622,15 +634,15 @@ export default function SettingsPage() {
   const aiInstructionsReadOnly = isFreePlan || isBasicPlan;
 
   // Get initial tab from URL parameter (e.g., ?tab=plan)
-  const getInitialSection = (): "setup" | "ai" | "instructions" | "language" | "plan" | "feedback" => {
+  const getInitialSection = (): "setup" | "ai" | "instructions" | "language" | "seo" | "plan" | "feedback" => {
     const tabParam = searchParams.get("tab");
-    if (tabParam && ["setup", "ai", "instructions", "language", "plan", "feedback"].includes(tabParam)) {
-      return tabParam as "setup" | "ai" | "instructions" | "language" | "plan" | "feedback";
+    if (tabParam && ["setup", "ai", "instructions", "language", "seo", "plan", "feedback"].includes(tabParam)) {
+      return tabParam as "setup" | "ai" | "instructions" | "language" | "seo" | "plan" | "feedback";
     }
     return "setup";
   };
 
-  const [selectedSection, setSelectedSection] = useState<"setup" | "ai" | "instructions" | "language" | "plan" | "feedback">(getInitialSection);
+  const [selectedSection, setSelectedSection] = useState<"setup" | "ai" | "instructions" | "language" | "seo" | "plan" | "feedback">(getInitialSection);
   const [hasAIChanges, setHasAIChanges] = useState(false);
   const [hasLanguageChanges, setHasLanguageChanges] = useState(false);
   const [hasInstructionsChanges, setHasInstructionsChanges] = useState(false);
@@ -705,7 +717,7 @@ export default function SettingsPage() {
   };
 
   // Handle section navigation with unsaved changes warning
-  const handleSectionChange = (newSection: "setup" | "ai" | "instructions" | "language" | "plan" | "feedback") => {
+  const handleSectionChange = (newSection: "setup" | "ai" | "instructions" | "language" | "seo" | "plan" | "feedback") => {
     if (hasUnsavedChanges) {
       const message = t.settings?.unsavedChangesMessage ||
         "You have unsaved changes. Do you really want to continue? Your changes will be lost.";
@@ -731,9 +743,11 @@ export default function SettingsPage() {
   }, [fetcher.data]);
 
   // Show global InfoBox when fetcher returns success or error
+  // Also revalidate root loader so SeoSettingsContext picks up new suffix immediately
   useEffect(() => {
     if (fetcher.data?.success) {
       showInfoBox(t.common.settingsSaved, "success", t.common.success);
+      revalidator.revalidate();
     } else if (fetcher.data && !fetcher.data.success && 'error' in fetcher.data) {
       showInfoBox(fetcher.data.error as string, "critical", t.common.error);
     }
@@ -746,6 +760,7 @@ export default function SettingsPage() {
       { id: "ai", title: t.settings.aiApiAccess },
       { id: "instructions", title: t.settings.aiInstructions },
       { id: "language", title: t.settings.appLanguage },
+      { id: "seo", title: t.settings.seoSettings || "SEO" },
       { id: "plan", title: t.settings.plan },
       { id: "feedback", title: t.settings.feedback },
     ];
@@ -856,6 +871,25 @@ export default function SettingsPage() {
                 </Text>
               </button>
               <button
+                onClick={() => handleSectionChange("seo")}
+                style={{
+                  width: "100%",
+                  padding: "1rem",
+                  background: selectedSection === "seo" ? "#f1f8f5" : "white",
+                  borderTop: "1px solid #e1e3e5",
+                  borderRight: "none",
+                  borderBottom: "none",
+                  borderLeft: selectedSection === "seo" ? "3px solid #008060" : "3px solid transparent",
+                  textAlign: "left",
+                  cursor: "pointer",
+                  transition: "all 0.2s",
+                }}
+              >
+                <Text as="p" variant="bodyMd" fontWeight={selectedSection === "seo" ? "semibold" : "regular"}>
+                  {t.settings.seoSettings || "SEO"}
+                </Text>
+              </button>
+              <button
                 onClick={() => handleSectionChange("plan")}
                 style={{
                   width: "100%",
@@ -919,7 +953,6 @@ export default function SettingsPage() {
                   fetcher={fetcher}
                   t={t}
                   onHasChangesChange={setHasAIChanges}
-                  shopDisplayName={shopDisplayName}
                 />
               )}
 
@@ -952,6 +985,17 @@ export default function SettingsPage() {
                   fetcher={fetcher}
                   t={t}
                   onHasChangesChange={setHasLanguageChanges}
+                />
+              )}
+
+              {/* SEO Settings */}
+              {selectedSection === "seo" && (
+                <SettingsSEOTab
+                  settings={settings}
+                  fetcher={fetcher}
+                  t={t}
+                  shopDisplayName={shopDisplayName}
+                  onHasChangesChange={setHasAIChanges}
                 />
               )}
 

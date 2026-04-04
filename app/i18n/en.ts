@@ -460,6 +460,7 @@ export const en: Translation = {
     maxTokensPerMinuteShort: "Max Tokens/Min",
     maxRequestsPerMinute: "Max Requests / Minute",
     maxRequestsPerMinuteShort: "Max Requests/Min",
+    seoSettings: "SEO",
     seoTitleSuffix: "SEO Title Shop Suffix",
     seoTitleSuffixDescription: "Enable this option if Shopify automatically appends the shop name to SEO titles (e.g., ' \u2013 My Shop'). The AI will then generate shorter titles so the total length does not exceed 60 characters.",
     seoTitleSuffixLabel: "Shopify appends shop name to SEO titles",

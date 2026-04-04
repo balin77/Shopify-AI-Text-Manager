@@ -458,6 +458,7 @@ export const de = {
     maxTokensPerMinuteShort: "Max Tokens/Min",
     maxRequestsPerMinute: "Max Requests / Minute",
     maxRequestsPerMinuteShort: "Max Requests/Min",
+    seoSettings: "SEO",
     seoTitleSuffix: "SEO-Titel Shop-Suffix",
     seoTitleSuffixDescription: "Aktiviere diese Option wenn Shopify automatisch den Shop-Namen an SEO-Titel anhängt (z.B. ' \u2013 Mein Shop'). Die KI generiert dann kürzere Titel, damit die Gesamtlänge 60 Zeichen nicht überschreitet.",
     seoTitleSuffixLabel: "Shopify hängt Shop-Namen an SEO-Titel an",
