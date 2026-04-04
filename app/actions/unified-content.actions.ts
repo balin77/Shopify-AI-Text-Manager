@@ -260,6 +260,11 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
           prompt += `\n\nGuidelines:\n${fieldInstructions}`;
         }
 
+        // Hard length override — placed last so it wins over any conflicting instruction above
+        if (charLimit) {
+          prompt += `\n\nCRITICAL LENGTH CONSTRAINT: The output MUST be ${charLimit}. This overrides any other length or character count instruction in this prompt.`;
+        }
+
         prompt += `\n\nIMPORTANT: Return ONLY the ${field.label}, nothing else. Output in ${mainLanguage}.`;
         generatedContent = await aiServiceWithTask.generateProductTitle(prompt);
         if (!generatedContent || !generatedContent.trim()) throw new Error("AI returned empty response");
@@ -320,6 +325,11 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
         // Add field-specific instructions (compact)
         if (fieldInstructions) {
           prompt += `\n\nGuidelines:\n${fieldInstructions}`;
+        }
+
+        // Hard length override — placed last so it wins over any conflicting instruction above
+        if (charLimitHtml) {
+          prompt += `\n\nCRITICAL LENGTH CONSTRAINT: The output MUST be ${charLimitHtml}. This overrides any other length or character count instruction in this prompt.`;
         }
 
         prompt += `\n\nIMPORTANT: Return ONLY the ${field.label}, nothing else. Output in ${mainLanguage}.`;

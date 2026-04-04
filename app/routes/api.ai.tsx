@@ -1420,6 +1420,11 @@ Return only the formatted text, without explanations.`;
           prompt += `\n\nGuidelines:\n${fieldInstructions}`;
         }
 
+        // Hard length override — placed last so it wins over any conflicting instruction above
+        if (charLimit) {
+          prompt += `\n\nCRITICAL LENGTH CONSTRAINT: The output MUST be ${charLimit}. This overrides any other length or character count instruction in this prompt.`;
+        }
+
         prompt += `\n\nIMPORTANT: Return ONLY the ${genFieldLabel}, nothing else. Output in ${mainLanguage}.`;
 
         // Create task entry (prompt is saved by AI service via savePromptToTask)
