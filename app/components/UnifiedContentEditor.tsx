@@ -980,18 +980,26 @@ function FieldRenderer(props: FieldRendererProps & { state?: any; handlers?: any
   const translatedFieldLabel = fieldLabelMap[field.key] || field.label;
   const label = `${translatedFieldLabel} (${localeName})`;
 
-  // Build help text
+  // Build help text (centralized i18n'd counters — config helpText is reserved for non-standard fields)
   let helpText = "";
   if (typeof field.helpText === "function") {
     helpText = field.helpText(value);
   } else if (field.helpText) {
     helpText = field.helpText;
   } else if (field.type === "text" || field.type === "textarea") {
-    if (field.key === "seoTitle" && seoTitleSuffix) {
-      const combined = value.length + seoTitleSuffix.length;
-      helpText = `${combined} / 60 ${t.content?.characters || "characters"}`;
+    const chars = t.content?.characters || "characters";
+    const rec = t.content?.recommended || "recommended";
+    if (field.key === "seoTitle") {
+      if (seoTitleSuffix) {
+        const combined = value.length + seoTitleSuffix.length;
+        helpText = `${combined} / 60 ${chars}`;
+      } else {
+        helpText = `${value.length} / 60 ${chars} (${rec}: 50-60)`;
+      }
+    } else if (field.key === "metaDescription") {
+      helpText = `${value.length} ${chars} (${rec}: 150-160)`;
     } else {
-      helpText = `${value.length} ${t.content?.characters || "characters"}`;
+      helpText = `${value.length} ${chars}`;
     }
   }
 

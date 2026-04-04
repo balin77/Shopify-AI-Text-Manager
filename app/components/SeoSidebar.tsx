@@ -231,30 +231,6 @@ export function SeoSidebar({
           <ProgressBar progress={analysis.score} tone={getScoreColor(analysis.score) as any} size="small" />
         </div>
 
-        {/* SEO Title preview with suffix */}
-        {seoTitleSuffix && seoTitle && (
-          <div
-            style={{
-              padding: "0.5rem 0.75rem",
-              background: "#f6f6f7",
-              borderRadius: "6px",
-              border: "1px solid #e1e3e5",
-              wordBreak: "break-word",
-            }}
-          >
-            <Text as="p" variant="bodySm" tone="subdued">
-              {t.seo.suffixPreviewLabel || "Vorschau (vollständiger Titel in Suchergebnissen):"}
-            </Text>
-            <div style={{ marginTop: "0.25rem" }}>
-              <Text as="span" variant="bodySm">{seoTitle}</Text>
-              <Text as="span" variant="bodySm" tone="subdued">{seoTitleSuffix}</Text>
-            </div>
-            <Text as="p" variant="bodySm" tone="subdued">
-              {(t.seo.suffixEffectiveLimit || "Effektives Limit: {limit} von 60 Zeichen").replace("{limit}", String(seoTitleEffectiveLimit))}
-            </Text>
-          </div>
-        )}
-
         {/* Issues Summary */}
         <BlockStack gap="200">
           <Text as="p" variant="headingSm" fontWeight="semibold">
