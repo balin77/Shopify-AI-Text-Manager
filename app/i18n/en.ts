@@ -460,6 +460,12 @@ export const en: Translation = {
     maxTokensPerMinuteShort: "Max Tokens/Min",
     maxRequestsPerMinute: "Max Requests / Minute",
     maxRequestsPerMinuteShort: "Max Requests/Min",
+    seoTitleSuffix: "SEO Title Shop Suffix",
+    seoTitleSuffixDescription: "Enable this option if Shopify automatically appends the shop name to SEO titles (e.g., ' \u2013 My Shop'). The AI will then generate shorter titles so the total length does not exceed 60 characters.",
+    seoTitleSuffixLabel: "Shopify appends shop name to SEO titles",
+    seoTitleSuffixField: "Appended text (including separator)",
+    seoTitleSuffixHint: "Effective character limit: {limit} characters (of 60)",
+    seoTitleSuffixNote: "This text is appended by Shopify and is not stored in the SEO title. It is only used to calculate the effective character limit.",
     providers: {
       huggingface: "Hugging Face",
       gemini: "Google Gemini",
@@ -679,6 +685,8 @@ export const en: Translation = {
     points: "pts.",
     showDetails: "Show details",
     hideDetails: "Hide details",
+    suffixPreviewLabel: "Preview (full title in search results):",
+    suffixEffectiveLimit: "Effective limit: {limit} of 60 characters",
     scoreLabels: {
       good: "Very good",
       medium: "Needs improvement",

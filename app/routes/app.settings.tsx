@@ -53,19 +53,23 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       await checkAndSyncSubscription(admin, session.shop);
     }
 
-    // Fetch shop's primary locale
+    // Fetch shop's primary locale and display name
     const localesResponse = await admin.graphql(
       `#graphql
-        query getShopLocales {
+        query getShopInfo {
           shopLocales {
             locale
             primary
+          }
+          shop {
+            name
           }
         }`
     );
 
     const localesData = await localesResponse.json();
     const primaryShopLocale = localesData.data.shopLocales.find((l: any) => l.primary)?.locale || "en";
+    const shopDisplayName: string = localesData.data.shop?.name || "";
 
     let settings = await db.aISettings.findUnique({
       where: { shop: session.shop },
@@ -323,6 +327,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
     return json({
       shop: session.shop,
+      shopDisplayName,
       productCount,
       translationCount,
       webhookCount,
@@ -353,6 +358,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         grokMaxRequestsPerMinute: settings.grokMaxRequestsPerMinute || 60,
         deepseekMaxTokensPerMinute: settings.deepseekMaxTokensPerMinute || 100000,
         deepseekMaxRequestsPerMinute: settings.deepseekMaxRequestsPerMinute || 60,
+
+        // SEO title suffix
+        seoTitleSuffixEnabled: settings.seoTitleSuffixEnabled ?? false,
+        seoTitleSuffix: settings.seoTitleSuffix || '',
       },
       instructions: {
         // General (Writing Style Instructions)
@@ -557,6 +566,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           grokMaxRequestsPerMinute: data.grokMaxRequestsPerMinute,
           deepseekMaxTokensPerMinute: data.deepseekMaxTokensPerMinute,
           deepseekMaxRequestsPerMinute: data.deepseekMaxRequestsPerMinute,
+          seoTitleSuffixEnabled: data.seoTitleSuffixEnabled ?? false,
+          seoTitleSuffix: data.seoTitleSuffix || null,
         },
         create: {
           shop: session.shop,
@@ -581,6 +592,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           grokMaxRequestsPerMinute: data.grokMaxRequestsPerMinute,
           deepseekMaxTokensPerMinute: data.deepseekMaxTokensPerMinute,
           deepseekMaxRequestsPerMinute: data.deepseekMaxRequestsPerMinute,
+          seoTitleSuffixEnabled: data.seoTitleSuffixEnabled ?? false,
+          seoTitleSuffix: data.seoTitleSuffix || null,
         },
       });
 
@@ -597,7 +610,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function SettingsPage() {
-  const { shop, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, localeCount, subscriptionPlan, isTestStore, isDevMode } = useLoaderData<typeof loader>();
+  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, localeCount, subscriptionPlan, isTestStore, isDevMode } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
   const [searchParams] = useSearchParams();
@@ -906,6 +919,7 @@ export default function SettingsPage() {
                   fetcher={fetcher}
                   t={t}
                   onHasChangesChange={setHasAIChanges}
+                  shopDisplayName={shopDisplayName}
                 />
               )}
 

@@ -1,6 +1,7 @@
 import { Card, BlockStack, Text, InlineStack, Badge, Button, ProgressBar } from "@shopify/polaris";
 import { useState, useMemo } from "react";
 import { useI18n } from "../contexts/I18nContext";
+import { useSeoSettings } from "../contexts/SeoSettingsContext";
 
 interface SeoIssue {
   type: "error" | "warning" | "success";
@@ -34,7 +35,11 @@ export function SeoSidebar({
   totalImages = 0,
 }: SeoSidebarProps) {
   const { t } = useI18n();
+  const { seoTitleSuffix } = useSeoSettings();
   const [showDetails, setShowDetails] = useState(false);
+
+  // Effective limit accounts for the suffix Shopify appends (e.g., " – Shop Name")
+  const seoTitleEffectiveLimit = seoTitleSuffix ? 60 - seoTitleSuffix.length : 60;
 
   const analysis = useMemo((): SeoAnalysis => {
     const issues: SeoIssue[] = [];
@@ -63,9 +68,9 @@ export function SeoSidebar({
       });
     }
 
-    // 2. SEO Title (15 points max)
+    // 2. SEO Title (15 points max) — limit adjusted for shop name suffix
     const seoTitleLength = seoTitle.length;
-    if (seoTitleLength > 0 && seoTitleLength <= 60) {
+    if (seoTitleLength > 0 && seoTitleLength <= seoTitleEffectiveLimit) {
       score += 15;
       issues.push({
         type: "success",
@@ -163,7 +168,7 @@ export function SeoSidebar({
     if (titleLength < 30) recommendations.push(t.seo.recommendations.expandTitle);
     if (titleLength > 70) recommendations.push(t.seo.recommendations.shortenTitle);
     if (seoTitleLength === 0) recommendations.push(t.seo.recommendations.addSeoTitle);
-    if (seoTitleLength > 60) recommendations.push(t.seo.recommendations.shortenSeoTitle);
+    if (seoTitleLength > seoTitleEffectiveLimit) recommendations.push(t.seo.recommendations.shortenSeoTitle);
     if (descriptionLength < 150) recommendations.push(t.seo.recommendations.expandDescription);
     if (metaDescLength === 0) recommendations.push(t.seo.recommendations.addMetaDescription);
     if (metaDescLength < 120) recommendations.push(t.seo.recommendations.expandMetaDescription);
@@ -175,7 +180,7 @@ export function SeoSidebar({
       issues,
       recommendations,
     };
-  }, [title, description, handle, seoTitle, metaDescription, imagesWithAlt, totalImages, t]);
+  }, [title, description, handle, seoTitle, metaDescription, imagesWithAlt, totalImages, t, seoTitleEffectiveLimit]);
 
   const getScoreColor = (scoreValue: number): "success" | "warning" | "critical" => {
     if (scoreValue >= 70) return "success";
@@ -225,6 +230,30 @@ export function SeoSidebar({
         <div>
           <ProgressBar progress={analysis.score} tone={getScoreColor(analysis.score) as any} size="small" />
         </div>
+
+        {/* SEO Title preview with suffix */}
+        {seoTitleSuffix && seoTitle && (
+          <div
+            style={{
+              padding: "0.5rem 0.75rem",
+              background: "#f6f6f7",
+              borderRadius: "6px",
+              border: "1px solid #e1e3e5",
+              wordBreak: "break-word",
+            }}
+          >
+            <Text as="p" variant="bodySm" tone="subdued">
+              {t.seo.suffixPreviewLabel || "Vorschau (vollständiger Titel in Suchergebnissen):"}
+            </Text>
+            <div style={{ marginTop: "0.25rem" }}>
+              <Text as="span" variant="bodySm">{seoTitle}</Text>
+              <Text as="span" variant="bodySm" tone="subdued">{seoTitleSuffix}</Text>
+            </div>
+            <Text as="p" variant="bodySm" tone="subdued">
+              {(t.seo.suffixEffectiveLimit || "Effektives Limit: {limit} von 60 Zeichen").replace("{limit}", String(seoTitleEffectiveLimit))}
+            </Text>
+          </div>
+        )}
 
         {/* Issues Summary */}
         <BlockStack gap="200">

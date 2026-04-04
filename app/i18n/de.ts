@@ -458,6 +458,12 @@ export const de = {
     maxTokensPerMinuteShort: "Max Tokens/Min",
     maxRequestsPerMinute: "Max Requests / Minute",
     maxRequestsPerMinuteShort: "Max Requests/Min",
+    seoTitleSuffix: "SEO-Titel Shop-Suffix",
+    seoTitleSuffixDescription: "Aktiviere diese Option wenn Shopify automatisch den Shop-Namen an SEO-Titel anhängt (z.B. ' \u2013 Mein Shop'). Die KI generiert dann kürzere Titel, damit die Gesamtlänge 60 Zeichen nicht überschreitet.",
+    seoTitleSuffixLabel: "Shopify hängt Shop-Namen an SEO-Titel an",
+    seoTitleSuffixField: "Angefügter Text (inkl. Trennzeichen)",
+    seoTitleSuffixHint: "Effektives Zeichenlimit: {limit} Zeichen (von 60)",
+    seoTitleSuffixNote: "Dieser Text wird von Shopify angefügt und wird nicht im SEO-Titel gespeichert. Er dient nur zur Berechnung des effektiven Zeichenlimits.",
     providers: {
       huggingface: "Hugging Face",
       gemini: "Google Gemini",
@@ -677,6 +683,8 @@ export const de = {
     points: "Pkt.",
     showDetails: "Details anzeigen",
     hideDetails: "Details ausblenden",
+    suffixPreviewLabel: "Vorschau (vollständiger Titel in Suchergebnissen):",
+    suffixEffectiveLimit: "Effektives Limit: {limit} von 60 Zeichen",
     scoreLabels: {
       good: "Sehr gut",
       medium: "Verbesserungsfähig",
