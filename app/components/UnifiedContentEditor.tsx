@@ -10,6 +10,7 @@ import { Page, Card, Text, BlockStack, InlineStack, Button, Modal, TextContainer
 import { SearchIcon, ChevronLeftIcon, ChevronRightIcon } from "@shopify/polaris-icons";
 import { AIEditableField } from "./AIEditableField";
 import { AIEditableHTMLField } from "./AIEditableHTMLField";
+import { useSeoSettings } from "../contexts/SeoSettingsContext";
 import { UnifiedItemList } from "./unified/UnifiedItemList";
 import { UnifiedLanguageBar } from "./unified/UnifiedLanguageBar";
 import { MobileToolbar } from "./unified/MobileToolbar";
@@ -971,6 +972,7 @@ function FieldRenderer(props: FieldRendererProps & { state?: any; handlers?: any
 
   // Get locale name for label (localized to app language)
   const { locale: appLocale } = useI18n();
+  const { seoTitleSuffix } = useSeoSettings();
   const localeName = getLocalizedLanguageName(currentLanguage, appLocale, shopLocales.find((l: any) => l.locale === currentLanguage)?.name);
 
   // Build label (use i18n field label if available, fallback to config label)
@@ -985,7 +987,12 @@ function FieldRenderer(props: FieldRendererProps & { state?: any; handlers?: any
   } else if (field.helpText) {
     helpText = field.helpText;
   } else if (field.type === "text" || field.type === "textarea") {
-    helpText = `${value.length} ${t.content?.characters || "characters"}`;
+    if (field.key === "seoTitle" && seoTitleSuffix) {
+      const combined = value.length + seoTitleSuffix.length;
+      helpText = `${combined} / 60 ${t.content?.characters || "characters"}`;
+    } else {
+      helpText = `${value.length} ${t.content?.characters || "characters"}`;
+    }
   }
 
   // Map field keys to help tooltip keys
@@ -1160,6 +1167,7 @@ function FieldRenderer(props: FieldRendererProps & { state?: any; handlers?: any
       isFallbackValue={isFallbackValue}
       readOnly={readOnly}
       requiredIndicator={requiredIndicator}
+      seoSuffix={field.key === "seoTitle" && seoTitleSuffix ? seoTitleSuffix : undefined}
       onGenerateAI={field.supportsAI !== false && isPrimaryLocale ? onGenerateAI : undefined}
       onFormatAI={field.supportsFormatting !== false && isPrimaryLocale ? onFormatAI : undefined}
       onTranslate={field.supportsTranslation !== false ? onTranslate : undefined}
