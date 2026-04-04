@@ -735,6 +735,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // Use longer timeout to ensure React render cycle is complete
       // This prevents the yellow "untranslated" flash on initial load
       const timer = setTimeout(() => {
+        // Don't clear loading state while a revalidation is in progress —
+        // the revalidation will bring fresh item.translations and trigger
+        // this effect again once complete.
+        if (revalidatorRef.current.state !== 'idle') return;
         setIsLoadingData(false);
         setIsInitialDataReady(true);
       }, 10);
@@ -1688,6 +1692,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           },
           fieldKey,
           (result) => {
+            // Guard: discard stale callback if user navigated to a different item
+            if (selectedItemRef.current?.id !== itemId) return;
+
             // Handle success - update translations
             const translations = result.translations as Record<string, string>;
             const field = effectiveFieldDefinitions.find((f) => f.key === fieldKey);
@@ -1806,10 +1813,16 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             }
 
             setIsLoadingData(true);
+            // Trigger revalidation so Remix fetches fresh item.translations from Shopify.
+            // The 10ms loading-cleanup timer will wait for this revalidation to finish
+            // before clearing isLoadingData, ensuring buttons only stop pulsing once
+            // the server has confirmed the saved translations.
+            try { revalidatorRef.current.revalidate(); } catch {}
           }
         );
 
-        // Don't revalidate yet - wait for translation to complete
+        // Don't revalidate here — translation is still in flight; the callback above
+        // triggers revalidation once the translations are confirmed saved on Shopify.
         return;
       }
 
