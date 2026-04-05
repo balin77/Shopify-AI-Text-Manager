@@ -1,13 +1,13 @@
 # Technical Debt & Future Improvements
 
-**Last Updated:** 2026-02-15
+**Last Updated:** 2026-04-05
 **Source:** Code Reviews #1–#4 (Claude Code)
 
 ---
 
 ## Zusammenfassung
 
-Dieses Dokument erfasst alle technischen Schulden und geplanten Verbesserungen, die aus vier Code-Reviews identifiziert wurden. Kritische und hohe Issues wurden bereits behoben. Die verbleibenden Punkte sind bewusst aufgeschoben und hier dokumentiert.
+Dieses Dokument erfasst alle technischen Schulden und geplanten Verbesserungen, die aus vier Code-Reviews identifiziert wurden. Alle kritischen und hohen Issues wurden bereits behoben. Von den mittleren/niedrigen Items steht noch die vollständige Integration des `useUnifiedContentEditor`-Refactorings aus.
 
 ---
 
@@ -36,99 +36,65 @@ Dieses Dokument erfasst alle technischen Schulden und geplanten Verbesserungen, 
 | GID-Format Validierung | `4c0a5f0` | Behoben |
 | Failed Locales als Warnings | `d9b1724` | Behoben |
 | Batch DB Deletes | `9244c38` | Behoben |
+| Defense-in-Depth: `shop`-Spalte auf ContentTranslation | `7c388c9`, `9c50dba` | Behoben |
+| Product-Sync: Error-Heuristik (absolut → prozentual) | `7c388c9` | Behoben |
+| Theme-Sync: Health-Check gegen API-Ausfall | `7c388c9` | Behoben |
+| DB-Only Translations: Warning an UI zurückgeben | `7c388c9` | Behoben |
+| useEditorAutoSave aus useUnifiedContentEditor extrahiert | `7c388c9` | Datei erstellt |
+| useEditorAltText aus useUnifiedContentEditor extrahiert | `9c50dba` | Datei erstellt |
 
 ---
 
 ## Offene Items
 
-### 1. Defense-in-Depth: `shop`-Spalte auf ContentTranslation ✅ ERLEDIGT
-
-**Priorität:** Mittel  
-**Status:** Behoben (2026-04-05)
-
-`shop String` wurde zu `ContentTranslation` hinzugefügt. Unique Constraint auf `[shop, resourceId, key, locale]` erweitert. Migration `20260405000000_add_shop_to_content_translation` erstellt (safe backfill aus Product/Collection/Article/Page/ShopPolicy-Tabellen). Alle ~40 contentTranslation-Queries in 14 Dateien um `shop`-Filter erweitert.
-
----
-
-### 2. Refactoring: useUnifiedContentEditor.ts
+### 1. Refactoring: useUnifiedContentEditor.ts — Integration der Sub-Hooks
 
 **Priorität:** Mittel
-**Aufwand:** ~1–2 Tage (Rest: ~0.5 Tage)
+**Aufwand:** ~0.5 Tage
 **Risiko aktuell:** Wartbarkeit (keine funktionalen Bugs)
 
-#### Problem
+#### Kontext
 
-Die Datei hat 3.400+ Zeilen und verwaltet 25+ Verantwortlichkeiten:
-- Editor State Management
-- AI Actions (Generate, Translate, Alt-Text)
-- Translation Workflows (Accept & Translate, Translate All)
-- Change Detection & Auto-Save
-- Image Alt-Text Management
-- Locale Navigation
-- Fallback Field Handling
+`useUnifiedContentEditor.ts` hat 3.864 Zeilen und verwaltet 25+ Verantwortlichkeiten. Die Sub-Hooks wurden bereits extrahiert und stehen als eigenständige Dateien bereit. Ausstehend ist die Verdrahtung in den Main-Hook.
 
-#### Empfohlene Aufteilung
+#### Stand der extrahierten Hooks
 
-| Neuer Hook | Verantwortung | Geschätzte Zeilen | Status |
-|------------|---------------|-------------------|--------|
-| `useEditorState` | State, Refs, Initialisierung | ~400 | Ausstehend |
-| `useEditorTranslations` | Translate, Accept & Translate, Translate All | ~800 | Ausstehend |
-| `useEditorAI` | AI Generate, AI Instructions | ~400 | Ausstehend |
-| `useEditorAltText` | Alt-Text Generate, Translate, Save | ~500 | **Datei erstellt** ✅ |
-| `useEditorAutoSave` | Change Detection, Debounced Save | ~300 | **Datei erstellt** ✅ |
-| `useEditorLocale` | Locale Navigation, Dirty Check | ~200 | Ausstehend |
-| `useUnifiedContentEditor` | Orchestrator (kombiniert die Hooks) | ~300 | Ausstehend |
+| Hook | Datei | Zeilen | Status |
+|------|-------|--------|--------|
+| `useEditorAutoSave` | `app/hooks/useEditorAutoSave.ts` | 296 | Datei erstellt, **nicht integriert** |
+| `useEditorAltText` | `app/hooks/useEditorAltText.ts` | 747 | Datei erstellt, **nicht integriert** |
+| `useEditorState` | — | ~400 | Ausstehend |
+| `useEditorTranslations` | — | ~800 | Ausstehend |
+| `useEditorAI` | — | ~400 | Ausstehend |
+| `useEditorLocale` | — | ~200 | Ausstehend |
 
-#### Aktueller Stand (2026-04-05)
+#### Blockierendes Problem für Integration von `useEditorAltText`
 
-`useEditorAutoSave.ts` und `useEditorAltText.ts` wurden extrahiert und stehen als eigenständige Hooks bereit. Die Integration in `useUnifiedContentEditor.ts` steht noch aus.
+Der Alt-Text-State (`imageAltTexts`, `originalAltTexts`) wird bereits bei `hasAltTextChanges` (Zeile ~572) benötigt. `useEditorAltText` seinerseits braucht `buildFieldsForSave`, `safeSubmit` und `submitAIAction`, die erst bei Zeile ~850–1006 definiert sind. Direktes Aufrufen des Sub-Hooks nach Zeile 1006 erzeugt einen JavaScript-Scoping-Fehler für Zeile 572.
 
-**Blockierendes Problem für Integration:** Die Sub-Hooks benötigen Refs wie `savedLocaleRef`, `editableValuesRef`, `isSavePendingRef` (aktuell Zeile ~1163–1195) sowie Callbacks wie `buildFieldsForSave`, `safeSubmit`, `submitAIAction` (Zeile ~850–1006). Diese sind im Main-Hook nach der `hasAltTextChanges`-Berechnung definiert (Zeile 572), die ihrerseits schon `imageAltTexts`-State aus dem Sub-Hook braucht.
+#### Lösung: Ref-Forwarding-Pattern
 
-**Lösung für Integration:**
-1. Refs (`savedLocaleRef`, `isSavePendingRef`, `isSaveFromTranslateRef`, `editableValuesRef`) in den STATE MANAGEMENT Block (vor Zeile 160) verschieben
-2. Forwarding-Refs (`buildFieldsForSaveRef`, `safeSubmitRef`, `submitAIActionRef`) als `useRef(() => {})` früh erstellen
-3. `useEditorAltText` direkt nach STATE MANAGEMENT aufrufen, Forwarding-Refs übergeben
-4. Nach Definition von `buildFieldsForSave` / `safeSubmit` / `submitAIAction` diese den Forwarding-Refs zuweisen
-5. Die duplizierten Abschnitte (ALT-TEXT HANDLERS, Zeile 3075–3651) aus dem Main-Hook entfernen
+1. Diese Refs früh in den STATE MANAGEMENT Block (vor Zeile 160) verschieben:
+   - `savedLocaleRef`, `isSavePendingRef`, `isSaveFromTranslateRef`, `editableValuesRef`
+2. Forwarding-Refs als Platzhalter direkt nach STATE MANAGEMENT anlegen:
+   ```typescript
+   const buildFieldsForSaveRef = useRef<(v: Record<string,string>, l: string) => Record<string,string>>(() => ({}));
+   const safeSubmitRef = useRef<(data: Record<string,any>, opts?: any) => void>(() => {});
+   const submitAIActionRef = useRef<(...args: any[]) => void>(async () => {});
+   ```
+3. `useEditorAltText` direkt nach STATE MANAGEMENT aufrufen und die Forwarding-Refs übergeben (statt der Funktionen direkt)
+4. Nach Definition der echten Funktionen (`buildFieldsForSave`, `safeSubmit`, `submitAIAction`) Refs befüllen:
+   ```typescript
+   buildFieldsForSaveRef.current = buildFieldsForSave;
+   safeSubmitRef.current = safeSubmit;
+   submitAIActionRef.current = submitAIAction;
+   ```
+5. Duplikate aus dem Main-Hook entfernen:
+   - STATE MANAGEMENT: Alt-Text-State-Deklarationen (Zeile ~161–174)
+   - ALT-TEXT HANDLERS Section (Zeile ~3075–3611)
+   - SEND IMAGE TO AI HANDLERS Section (Zeile ~3612–3651)
 
-#### Voraussetzungen
-
-- Alle aktuellen Bugs müssen vorher behoben sein (erledigt)
-- `useLatestRef` Pattern ist bereits extrahiert (erledigt)
-- State/Ref Duplizierung ist reduziert (erledigt)
-- `useEditorAutoSave.ts` und `useEditorAltText.ts` existieren (erledigt)
-
----
-
-### 3. Product-Sync: Error-Heuristik verbessern ✅ ERLEDIGT
-
-**Priorität:** Niedrig  
-**Status:** Behoben in `app/services/product-sync.service.ts`
-
-Prozentualer Schwellenwert (≥ 50% Fehler) ersetzt absoluten Grenzwert (`>= 2`):
-```typescript
-const failureRate = translationResult.errorCount / publishedLocales.length;
-if (publishedLocales.length >= 2 && failureRate >= 0.5) { ... }
-```
-
----
-
-### 4. Theme-Sync: Health-Check fehlt ✅ ERLEDIGT
-
-**Priorität:** Niedrig  
-**Status:** Behoben in `app/services/background-sync.service.ts`
-
-`syncAllThemes()` prüft jetzt vor dem Cleanup: wenn Shopify 0 Theme-Ressourcen liefert, aber lokal Daten existieren → Abbruch (gleiche Pattern wie Pages/Policies).
-
----
-
-### 5. DB-Only Translations: User-Feedback ✅ ERLEDIGT
-
-**Priorität:** Niedrig  
-**Status:** Behoben in `src/services/shopify-content.service.ts`
-
-`updateContent()` gibt `{ success: true, warning: "..." }` zurück wenn Felder keinen Digest hatten und nur lokal gespeichert wurden. Das bestehende Warning-Banner im UI zeigt diese Meldung automatisch an.
+Für `useEditorAutoSave` analog: Hooks-Interface erwartet bereits `saveQueueRef` etc. als Props — die Refs früh definieren und übergeben, danach den AUTO-SAVE FUNCTION Block (Zeile ~835–1122) entfernen.
 
 ---
 
@@ -137,4 +103,4 @@ if (publishedLocales.length >= 2 && failureRate >= 0.5) { ... }
 | Datum | Änderung |
 |-------|----------|
 | 2026-02-15 | Initiales Dokument aus Code Reviews #1–#4 erstellt |
-| 2026-04-05 | Items 1, 3, 4, 5 abgeschlossen; Item 2 teilweise (Sub-Hooks erstellt) |
+| 2026-04-05 | Items 1, 3, 4, 5 vollständig abgeschlossen; Item 2 Sub-Hooks (`useEditorAutoSave`, `useEditorAltText`) erstellt; Integrationsplan dokumentiert |
