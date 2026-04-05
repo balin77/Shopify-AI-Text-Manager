@@ -25,11 +25,12 @@ import { useNavigationHeight } from "../contexts/NavigationHeightContext";
 import { usePlan } from "../contexts/PlanContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { useItemSelector } from "../contexts/ItemSelectorContext";
-import { contentEditorStyles, getLocalizedLanguageName, hasPrimaryContentMissing, getLocaleButtonTooltip } from "../utils/contentEditor.utils";
+import { getLocalizedLanguageName, hasPrimaryContentMissing, getLocaleButtonTooltip } from "../utils/contentEditor.utils";
 import { useI18n } from "../contexts/I18nContext";
 import { ENABLE_THEME_PRIMARY_EDIT } from "../config/constants";
 import { isMetaobjectLabelField } from "../constants/shopifyFields";
 import "../styles/UnifiedContentEditor.css";
+import "../styles/content-editor-global.css";
 import type { ContentEditorConfig, UseContentEditorReturn, FieldDefinition } from "../types/content-editor.types";
 import type { UnifiedItem, SortOption } from "./unified/UnifiedItemList";
 
@@ -331,8 +332,6 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
 
   return (
     <Page fullWidth>
-      <style>{contentEditorStyles}</style>
-
       <div
         className="unified-content-editor-layout"
         style={{

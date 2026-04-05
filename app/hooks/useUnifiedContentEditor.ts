@@ -6,8 +6,10 @@
  */
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { useRevalidator, useFetcher } from "@remix-run/react";
-import { useNavigationGuard, useChangeTracking, getTranslatedValue } from "../utils/contentEditor.utils";
+import { useRevalidator } from "@remix-run/react";
+import { useNavigationGuard, getTranslatedValue } from "../utils/contentEditor.utils";
+import { useEditorImageManagement } from "./useEditorImageManagement";
+import { useEditorChangeDetection } from "./useEditorChangeDetection";
 import { useItemFocus } from "./useFocusManagement";
 import { useLatestRef } from "./useLatestRef";
 import { useUiDataLoader, getItemFieldValue } from "./useUiDataLoader";
@@ -35,80 +37,7 @@ import { debugLog } from "../utils/debug";
 import { markRecentlySaved } from "../utils/translation-timing";
 import { extractReadableName } from "../utils/templates-field-factory";
 import { useTaskCount } from "../contexts/TaskCountContext";
-
-/**
- * Translates server error messages to localized strings
- * Maps technical error messages from server to i18n translation keys
- */
-function translateErrorMessage(errorMessage: string, t: TranslationStrings): string {
-  const errors = t.errors as Record<string, string> | undefined;
-  if (!errorMessage) return errors?.unknownError || "Unknown error";
-
-  const lowerError = errorMessage.toLowerCase();
-
-  // Map common error patterns to translation keys
-  if (lowerError.includes("graphql error")) {
-    return errors?.graphqlError || errorMessage;
-  }
-  if (lowerError.includes("invalid field type")) {
-    return errors?.invalidFieldType || errorMessage;
-  }
-  if (lowerError.includes("no fields to translate")) {
-    return errors?.noFieldsToTranslate || errorMessage;
-  }
-  if (lowerError.includes("no source text") && !lowerError.includes("alt")) {
-    return errors?.noSourceText || errorMessage;
-  }
-  if (lowerError.includes("no source alt-text") || lowerError.includes("no source alt text")) {
-    return errors?.noSourceAltText || errorMessage;
-  }
-  if (lowerError.includes("no target locale") && lowerError.includes("image")) {
-    return errors?.noTargetLocalesOrImages || errorMessage;
-  }
-  if (lowerError.includes("no target locale")) {
-    return errors?.noTargetLocales || errorMessage;
-  }
-  if (lowerError.includes("no images data") || lowerError.includes("no image data")) {
-    return errors?.noImagesData || errorMessage;
-  }
-  if (lowerError.includes("no images to process")) {
-    return errors?.noImagesToProcess || errorMessage;
-  }
-  if (lowerError.includes("no alt-text data") || lowerError.includes("no alt text data")) {
-    return errors?.noAltTextData || errorMessage;
-  }
-  if (lowerError.includes("unknown action")) {
-    return errors?.unknownAction || errorMessage;
-  }
-  if (lowerError.includes("invalid url slug") || lowerError.includes("invalid handle") || lowerError.includes("alphanumeric character")) {
-    return errors?.invalidUrlSlug || errorMessage;
-  }
-  if (lowerError.includes("network") || lowerError.includes("fetch")) {
-    return errors?.networkError || errorMessage;
-  }
-  if (lowerError.includes("quota") || lowerError.includes("limit exceeded")) {
-    return errors?.quotaExceeded || errorMessage;
-  }
-  if (lowerError.includes("rate limit") || lowerError.includes("too many requests")) {
-    return errors?.rateLimitExceeded || errorMessage;
-  }
-  if (lowerError.includes("translation") && lowerError.includes("failed")) {
-    return errors?.translationFailed || errorMessage;
-  }
-  if (lowerError.includes("generation") && lowerError.includes("failed")) {
-    return errors?.generationFailed || errorMessage;
-  }
-  if (lowerError.includes("save") && lowerError.includes("failed")) {
-    return errors?.saveFailed || errorMessage;
-  }
-  if (lowerError.includes("load") && lowerError.includes("failed")) {
-    return errors?.loadFailed || errorMessage;
-  }
-
-  // If no specific translation found, return the original error message
-  // (it might be a descriptive message that's already helpful)
-  return errorMessage;
-}
+import { translateErrorMessage } from "../utils/editor-error-messages";
 
 export function useUnifiedContentEditor(props: UseContentEditorProps): UseContentEditorReturn {
   const { config, items, shopLocales, primaryLocale, fetcher, showInfoBox, t, onTranslateToAllLocalesComplete, initialItemId } = props;
@@ -150,12 +79,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const [isInitialDataReady, setIsInitialDataReady] = useState(false);
   // Track if clear all confirmation modal is open
   const [isClearAllModalOpen, setIsClearAllModalOpen] = useState(false);
-
-  // On-demand images loading (for products - images are loaded from Shopify API)
-  const [onDemandImages, setOnDemandImages] = useState<ContentImage[]>([]);
-  const [isLoadingImages, setIsLoadingImages] = useState(false);
-  const imageFetcher = useFetcher<{ success: boolean; images: Array<{ url: string; altText?: string }>; error?: string }>();
-  const loadedImagesForProductRef = useRef<string | null>(null);
 
   // Alt-text state for images (indexed by image position)
   const [imageAltTexts, setImageAltTexts] = useState<Record<number, string>>({});
@@ -360,114 +283,20 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     }
   }, [selectedItemId, isLoadingData, setItemFocus]);
 
-  // IMPORTANT: Memoize selectedItem to prevent infinite re-renders
+  // IMPORTANT: Memoize baseSelectedItem to prevent infinite re-renders.
   // Without this, items.find() returns a new object reference on every revalidation,
-  // which triggers useChangeTracking and other effects, causing an infinite loop
+  // which triggers useChangeTracking and other effects, causing an infinite loop.
   const baseSelectedItem = useMemo(() => {
-    const found = items.find((item) => item.id === selectedItemId);
-    return found;
+    return items.find((item) => item.id === selectedItemId);
   }, [items, selectedItemId]);
 
-  // Hybrid image loading + image cloning:
-  // - If images exist in DB -> clone for alt-text mutations
-  // - If no images in DB -> merge on-demand images from Shopify API
-  //
-  // Items are now READ-ONLY (Phase 4) — translations, seo, translatableContent are never
-  // mutated. Only image alt-texts are still mutated in-place, so only images need cloning.
-  const selectedItem = useMemo(() => {
-    if (!baseSelectedItem) return undefined;
-
-    const hasDbImages = baseSelectedItem.images && baseSelectedItem.images.length > 0;
-
-    // Only create a shallow copy when images need cloning or merging
-    if (hasDbImages) {
-      return {
-        ...baseSelectedItem,
-        images: baseSelectedItem.images!.map((img: ContentImage) => ({
-          ...img,
-          altTextTranslations: img.altTextTranslations
-            ? img.altTextTranslations.map((t: AltTextTranslation) => ({ ...t }))
-            : [],
-        })),
-      };
-    }
-
-    if (
-      onDemandImages.length > 0 &&
-      loadedImagesForProductRef.current === selectedItemId
-    ) {
-      return { ...baseSelectedItem, images: onDemandImages };
-    }
-
-    // No image handling needed — use item directly
-    return baseSelectedItem;
-  }, [baseSelectedItem, onDemandImages, selectedItemId]);
-
-  // ============================================================================
-  // ON-DEMAND IMAGE LOADING (hybrid fallback)
-  // Only loads from Shopify API if no images in DB
-  // ============================================================================
-
-  // Track previous product ID to detect changes
-  const prevSelectedItemIdRef = useRef<string | null>(null);
-
-  // Trigger on-demand image loading only if DB has no images
-  useEffect(() => {
-    // Only for products content type
-    if (config.contentType !== 'products') return;
-
-    // Detect product change - clear on-demand state
-    if (prevSelectedItemIdRef.current !== selectedItemId) {
-      setOnDemandImages([]);
-      loadedImagesForProductRef.current = null;
-      prevSelectedItemIdRef.current = selectedItemId;
-    }
-
-    // Skip if no product selected
-    if (!selectedItemId || !baseSelectedItem) {
-      return;
-    }
-
-    // Skip if DB already has images (no need for on-demand loading)
-    const hasDbImages = baseSelectedItem.images && baseSelectedItem.images.length > 0;
-    if (hasDbImages) {
-      return;
-    }
-
-    // Skip if already loaded for this product
-    if (loadedImagesForProductRef.current === selectedItemId) {
-      return;
-    }
-
-    // No DB images - load from Shopify API as fallback
-    setIsLoadingImages(true);
-    imageFetcher.load(`/api/product-images?productId=${encodeURIComponent(selectedItemId)}`);
-  }, [selectedItemId, baseSelectedItem, config.contentType]);
-
-  // Handle on-demand image fetcher response
-  useEffect(() => {
-    if (imageFetcher.state === "idle" && imageFetcher.data && selectedItemId) {
-      setIsLoadingImages(false);
-
-      // Only apply if still on the same product
-      if (prevSelectedItemIdRef.current !== selectedItemId) {
-        return;
-      }
-
-      if (imageFetcher.data.success && imageFetcher.data.images) {
-        const images: ContentImage[] = imageFetcher.data.images.map((img) => ({
-          url: img.url,
-          altText: img.altText,
-          altTextTranslations: [],
-        }));
-
-        setOnDemandImages(images);
-        loadedImagesForProductRef.current = selectedItemId;
-      } else if (imageFetcher.data.error) {
-        loadedImagesForProductRef.current = selectedItemId;
-      }
-    }
-  }, [imageFetcher.state, imageFetcher.data, selectedItemId]);
+  // Image management: on-demand loading + image cloning for alt-text mutations
+  const {
+    selectedItem,
+    onDemandImages,
+    isLoadingImages,
+    prevSelectedItemIdRef,
+  } = useEditorImageManagement({ config, selectedItemId, baseSelectedItem });
 
   // Compute effective field definitions (supports dynamic fields for templates)
   const effectiveFieldDefinitions = useMemo(() => {
@@ -500,97 +329,21 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     clearPendingNavigation,
   } = useNavigationGuard();
 
-  // Change tracking - only track changes if we're not currently loading data
-  // For templates and metaobjects, use custom dynamic field comparison
-  const standardHasFieldChanges = useChangeTracking(
-    isLoadingData ? null : (config.contentType !== 'templates' && config.contentType !== 'metaobjects' ? (selectedItem || null) : null), // Skip for templates & metaobjects
+  // Change detection — unified across standard, template, and metaobject content types
+  const { hasChanges, hasFieldChanges, hasAltTextChanges } = useEditorChangeDetection({
+    config,
+    isLoadingData,
+    selectedItem,
     currentLanguage,
     primaryLocale,
     editableValues,
-    config.contentType,
-    fallbackFields
-  );
-
-  // Template-specific change detection: compare editableValues with originalTemplateValuesRef
-  const templateHasFieldChanges = useMemo(() => {
-    if (config.contentType !== 'templates' || isLoadingData || !selectedItem) {
-      return false;
-    }
-
-    const originalValues = originalTemplateValuesRef.current;
-    if (Object.keys(originalValues).length === 0) {
-      return false; // No original values yet
-    }
-
-    // Compare only the current page's fields (originalValues keys) with editable values.
-    // editableValues may contain stale keys from previous pages, so we must iterate
-    // over originalValues to avoid false positives after pagination changes.
-    const diffs: Array<{ key: string; original: string; current: string }> = [];
-    for (const [key, originalValue] of Object.entries(originalValues)) {
-      const currentValue = editableValues[key] ?? "";
-      if (currentValue !== originalValue) {
-        diffs.push({ key, original: originalValue.slice(0, 60), current: currentValue.slice(0, 60) });
-      }
-    }
-    if (diffs.length > 0) {
-      return true;
-    }
-    return false;
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- templateValuesVersion forces recalc when ref updates
-  }, [config.contentType, isLoadingData, selectedItem, editableValues, templateValuesVersion]);
-
-  // Metaobjects-specific change detection: compare editableValues with originalLoadedValuesRef
-  // Metaobject field keys are dynamic IDs (e.g. "gid://shopify/Metaobject/123") that
-  // useChangeTracking doesn't know about, so we compare against the loaded baseline directly.
-  const metaobjectsHasFieldChanges = useMemo(() => {
-    if (config.contentType !== 'metaobjects' || isLoadingData || !selectedItem) {
-      return false;
-    }
-
-    const originalValues = originalLoadedValuesRef.current;
-    if (!originalValues || Object.keys(originalValues).length === 0) {
-      return false;
-    }
-
-    for (const [key, originalValue] of Object.entries(originalValues)) {
-      const currentValue = editableValues[key] ?? "";
-      if (currentValue !== originalValue) {
-        return true;
-      }
-    }
-    return false;
-  }, [config.contentType, isLoadingData, selectedItem, editableValues]);
-
-  // Combined field changes: use type-specific logic for templates/metaobjects, standard for others
-  const hasFieldChanges = config.contentType === 'templates'
-    ? templateHasFieldChanges
-    : config.contentType === 'metaobjects'
-      ? metaobjectsHasFieldChanges
-      : standardHasFieldChanges;
-
-  // Check for alt-text changes
-  const hasAltTextChanges = useMemo(() => {
-    const originalKeys = Object.keys(originalAltTexts);
-    const currentKeys = Object.keys(imageAltTexts);
-
-    // If no alt-texts at all, no changes
-    if (originalKeys.length === 0 && currentKeys.length === 0) return false;
-
-    // Check if any values differ
-    // Important: Don't use || "" fallback - we need to distinguish undefined from ""
-    const allKeys = new Set([...originalKeys, ...currentKeys]);
-    for (const key of allKeys) {
-      const numKey = Number(key);
-      const original = originalAltTexts[numKey];
-      const current = imageAltTexts[numKey];
-      // undefined !== "" should return true (user cleared the field)
-      if (original !== current) return true;
-    }
-    return false;
-  }, [imageAltTexts, originalAltTexts]);
-
-  // Combined hasChanges
-  const hasChanges = hasFieldChanges || hasAltTextChanges;
+    fallbackFields,
+    imageAltTexts,
+    originalAltTexts,
+    originalLoadedValuesRef,
+    originalTemplateValuesRef,
+    templateValuesVersion,
+  });
 
   // ============================================================================
   // LOAD ITEM DATA (when item or language changes)
