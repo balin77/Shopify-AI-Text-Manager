@@ -460,6 +460,13 @@ export const es: Translation = {
     maxTokensPerMinuteShort: "Máx Tokens/Min",
     maxRequestsPerMinute: "Máx Peticiones / Minuto",
     maxRequestsPerMinuteShort: "Máx Peticiones/Min",
+    seoSettings: "SEO",
+    seoTitleSuffix: "Sufijo del nombre de tienda en SEO",
+    seoTitleSuffixDescription: "Activa esta opción si Shopify agrega automáticamente el nombre de la tienda a los títulos SEO (p. ej., ' \u2013 Mi Tienda'). La IA generará títulos más cortos para que la longitud total no supere 60 caracteres.",
+    seoTitleSuffixLabel: "Shopify agrega el nombre de la tienda a los títulos SEO",
+    seoTitleSuffixField: "Texto agregado (incluido el separador)",
+    seoTitleSuffixHint: "Límite efectivo de caracteres: {limit} (de 60)",
+    seoTitleSuffixNote: "Este texto es agregado por Shopify y no se almacena en el título SEO. Solo se usa para calcular el límite efectivo de caracteres.",
     providers: {
       huggingface: "Hugging Face",
       gemini: "Google Gemini",
@@ -679,6 +686,8 @@ export const es: Translation = {
     points: "ptos.",
     showDetails: "Mostrar detalles",
     hideDetails: "Ocultar detalles",
+    suffixPreviewLabel: "Vista previa (título completo en resultados de búsqueda):",
+    suffixEffectiveLimit: "Límite efectivo: {limit} de 60 caracteres",
     scoreLabels: {
       good: "Muy bien",
       medium: "Necesita mejoras",

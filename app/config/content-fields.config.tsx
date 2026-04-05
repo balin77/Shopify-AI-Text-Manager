@@ -42,7 +42,6 @@ export const PRODUCTS_CONFIG: ContentEditorConfig = {
       supportsFormatting: true,
       supportsTranslation: true,
       aiInstructionsKey: "productTitle",
-      helpText: (value) => `${(value || '').length} characters`,
     },
     // Description
     {
@@ -86,7 +85,6 @@ export const PRODUCTS_CONFIG: ContentEditorConfig = {
       supportsFormatting: true,
       supportsTranslation: true,
       aiInstructionsKey: "productSeoTitle",
-      helpText: (value) => `${(value || '').length} characters (recommended: 50-60)`,
     },
     // Meta Description
     {
@@ -99,7 +97,6 @@ export const PRODUCTS_CONFIG: ContentEditorConfig = {
       supportsFormatting: true,
       supportsTranslation: true,
       aiInstructionsKey: "productMetaDesc",
-      helpText: (value) => `${(value || '').length} characters (recommended: 150-160)`,
     },
   ],
 };
@@ -136,7 +133,6 @@ export const COLLECTIONS_CONFIG: ContentEditorConfig = {
       supportsFormatting: true,
       supportsTranslation: true,
       aiInstructionsKey: "collectionTitle",
-      helpText: (value) => `${(value || '').length} characters`,
     },
     {
       key: "description",
@@ -167,7 +163,6 @@ export const COLLECTIONS_CONFIG: ContentEditorConfig = {
       supportsFormatting: true,
       supportsTranslation: true,
       aiInstructionsKey: "collectionSeoTitle",
-      helpText: (value) => `${(value || '').length} characters (recommended: 50-60)`,
     },
     {
       key: "metaDescription",
@@ -179,7 +174,6 @@ export const COLLECTIONS_CONFIG: ContentEditorConfig = {
       supportsFormatting: true,
       supportsTranslation: true,
       aiInstructionsKey: "collectionMetaDesc",
-      helpText: (value) => `${(value || '').length} characters (recommended: 150-160)`,
     },
   ],
 };
@@ -216,7 +210,6 @@ export const BLOGS_CONFIG: ContentEditorConfig = {
       supportsFormatting: true,
       supportsTranslation: true,
       aiInstructionsKey: "blogTitle",
-      helpText: (value) => `${(value || '').length} characters`,
     },
     {
       key: "body",
@@ -257,7 +250,6 @@ export const BLOGS_CONFIG: ContentEditorConfig = {
       supportsFormatting: true,
       supportsTranslation: true,
       aiInstructionsKey: "blogSeoTitle",
-      helpText: (value) => `${(value || '').length} characters (recommended: 50-60)`,
     },
     {
       key: "metaDescription",
@@ -269,7 +261,6 @@ export const BLOGS_CONFIG: ContentEditorConfig = {
       supportsFormatting: true,
       supportsTranslation: true,
       aiInstructionsKey: "blogMetaDesc",
-      helpText: (value) => `${(value || '').length} characters (recommended: 150-160)`,
     },
   ],
 };
@@ -297,7 +288,6 @@ export const PAGES_CONFIG: ContentEditorConfig = {
       supportsFormatting: true,
       supportsTranslation: true,
       aiInstructionsKey: "pageTitle",
-      helpText: (value) => `${(value || '').length} characters`,
     },
     {
       key: "body",
