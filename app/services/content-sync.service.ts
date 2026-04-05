@@ -454,6 +454,7 @@ export class ContentSyncService {
         if (validTranslations.length > 0) {
           await tx.contentTranslation.createMany({
             data: validTranslations.map(t => ({
+              shop: this.shop,
               resourceId: collectionData.id,
               resourceType: "Collection",
               key: t.key,
@@ -541,6 +542,7 @@ export class ContentSyncService {
         if (validTranslations.length > 0) {
           await tx.contentTranslation.createMany({
             data: validTranslations.map(t => ({
+              shop: this.shop,
               resourceId: articleData.id,
               resourceType: "Article",
               key: t.key,
@@ -786,6 +788,7 @@ export class ContentSyncService {
 
     const translations = await db.contentTranslation.findMany({
       where: {
+        shop: this.shop,
         resourceId: gid,
         resourceType: "Collection",
       },
@@ -819,6 +822,7 @@ export class ContentSyncService {
 
     const translations = await db.contentTranslation.findMany({
       where: {
+        shop: this.shop,
         resourceId: gid,
         resourceType: "Article",
       },

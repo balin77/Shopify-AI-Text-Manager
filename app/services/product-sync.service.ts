@@ -435,6 +435,7 @@ export class ProductSyncService {
             if (allTranslations.length > 0) {
               await db.contentTranslation.createMany({
                 data: allTranslations.map(t => ({
+                  shop: this.shop,
                   resourceId: t.resourceId,
                   resourceType: "Product",
                   key: t.key,
@@ -547,6 +548,7 @@ export class ProductSyncService {
               if (subTranslations.length > 0) {
                 await db.contentTranslation.createMany({
                   data: subTranslations.map(t => ({
+                    shop: this.shop,
                     resourceId: t.resourceId,
                     resourceType: t.resourceType,
                     key: t.key,
@@ -743,9 +745,11 @@ export class ProductSyncService {
         });
 
         // Check if this might be a complete API failure
-        // If we have multiple locales AND had errors, this is likely an API failure
-        if (publishedLocales.length >= 2 && translationResult.errorCount >= 2) {
-          logger.error(`[ProductSync] 🔴 ABORTING SYNC: ${translationResult.errorCount}/${publishedLocales.length} locales failed - refusing to delete existing translations`);
+        // Use a percentage-based threshold: abort if ≥50% of locales failed.
+        // Absolute counts (e.g. >= 2) are misleading: 2/3 (67%) and 2/10 (20%) are very different.
+        const failureRate = translationResult.errorCount / publishedLocales.length;
+        if (publishedLocales.length >= 2 && failureRate >= 0.5) {
+          logger.error(`[ProductSync] 🔴 ABORTING SYNC: ${translationResult.errorCount}/${publishedLocales.length} locales failed (${Math.round(failureRate * 100)}%) - refusing to delete existing translations`);
           throw new Error(`Translation fetch failed for ${translationResult.errorCount}/${publishedLocales.length} locales - aborting to prevent data loss`);
         } else if (translationResult.hadErrors) {
           logger.warn(`[ProductSync] ⚠️ Some locales failed (${translationResult.errorCount}), but continuing with partial data`);
@@ -1409,6 +1413,7 @@ export class ProductSyncService {
 
           await tx.contentTranslation.createMany({
             data: validTranslations.map(t => ({
+              shop: this.shop,
               resourceId: productData.id,
               resourceType: "Product",
               key: t.key,
@@ -1436,6 +1441,7 @@ export class ProductSyncService {
 
           await tx.contentTranslation.createMany({
             data: subResourceTranslations.map(t => ({
+              shop: this.shop,
               resourceId: t.resourceId,
               resourceType: t.resourceType,
               key: t.key,

@@ -320,10 +320,9 @@ export class BackgroundSyncService {
       },
     });
 
-    // No shop filter needed: ContentTranslation has no shop column;
-    // resourceId (Shopify GID) is globally unique across shops.
     const translations = await db.contentTranslation.findMany({
       where: {
+        shop: this.shop,
         resourceId: gid,
         resourceType: "Page",
       },
@@ -384,13 +383,15 @@ export class BackgroundSyncService {
       for (const t of allTranslations) {
         await tx.contentTranslation.upsert({
           where: {
-            resourceId_key_locale: {
+            shop_resourceId_key_locale: {
+              shop: this.shop,
               resourceId: pageData.id,
               key: t.key,
               locale: t.locale,
             },
           },
           create: {
+            shop: this.shop,
             resourceId: pageData.id,
             resourceType: "Page",
             key: t.key,
@@ -613,10 +614,9 @@ export class BackgroundSyncService {
       },
     });
 
-    // No shop filter needed: ContentTranslation has no shop column;
-    // resourceId (Shopify GID) is globally unique across shops.
     const translations = await db.contentTranslation.findMany({
       where: {
+        shop: this.shop,
         resourceId: policyData.id,
         resourceType: "ShopPolicy",
       },
@@ -677,13 +677,15 @@ export class BackgroundSyncService {
       for (const t of allTranslations) {
         await tx.contentTranslation.upsert({
           where: {
-            resourceId_key_locale: {
+            shop_resourceId_key_locale: {
+              shop: this.shop,
               resourceId: policyData.id,
               key: t.key,
               locale: t.locale,
             },
           },
           create: {
+            shop: this.shop,
             resourceId: policyData.id,
             resourceType: "ShopPolicy",
             key: t.key,
@@ -1352,6 +1354,18 @@ export class BackgroundSyncService {
         } catch (error) {
           logger.error(`[BackgroundSync] Error syncing theme type ${resourceTypeConfig.type}`, { error });
         }
+      }
+
+      // Health check: refuse to wipe local data when Shopify returns 0 theme resources.
+      // Same pattern as syncAllPages / syncAllPolicies.
+      if (syncedCombinations.size === 0) {
+        const localThemeCount = await db.themeContent.count({ where: { shop: this.shop } });
+        if (localThemeCount > 0) {
+          logger.error(`[BackgroundSync] 🔴 ABORTING theme sync: Shopify returned 0 theme resources but ${localThemeCount} exist locally. Possible API outage.`);
+          throw new Error(`Shopify returned 0 theme resources but ${localThemeCount} exist locally - aborting to prevent data loss`);
+        }
+        logger.debug(`[BackgroundSync] No theme resources from Shopify and none locally - nothing to do`);
+        return 0;
       }
 
       // AGGRESSIVE CLEANUP: Delete theme content that no longer exists in Shopify
