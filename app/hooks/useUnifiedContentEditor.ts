@@ -7,7 +7,9 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useRevalidator, useFetcher } from "@remix-run/react";
-import { useNavigationGuard, useChangeTracking, getTranslatedValue } from "../utils/contentEditor.utils";
+import { useNavigationGuard } from "./useNavigationGuard";
+import { useChangeTracking } from "./useChangeTracking";
+import { getTranslatedValue } from "../utils/contentEditor.utils";
 import { useItemFocus } from "./useFocusManagement";
 import { useLatestRef } from "./useLatestRef";
 import { useUiDataLoader, getItemFieldValue } from "./useUiDataLoader";

@@ -112,6 +112,12 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
     selectedModel: aiSettings?.selectedModel || undefined,
   };
 
+  // Service factories — capture provider/serviceConfig/shop to avoid repeating all args
+  const createAIService = (taskId: string) =>
+    new AIService(provider, serviceConfig, session.shop, taskId);
+  const createTranslationService = (taskId: string) =>
+    new TranslationService(provider, serviceConfig, session.shop, taskId);
+
   // Update queue rate limits from settings
   const { AIQueueService } = await import("../../src/services/ai-queue.service");
   const queue = AIQueueService.getInstance();
@@ -182,7 +188,7 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
       }
 
       // Create AI service with shop and taskId for queue management
-      const aiServiceWithTask = new AIService(provider, serviceConfig, session.shop, task.id);
+      const aiServiceWithTask = createAIService(task.id);
 
       let generatedContent = "";
 
@@ -403,7 +409,7 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
       }
 
       // Create AI service with shop and taskId for queue management
-      const aiServiceWithTask = new AIService(provider, serviceConfig, session.shop, task.id);
+      const aiServiceWithTask = createAIService(task.id);
 
       let formattedContent = "";
 
@@ -561,7 +567,7 @@ Allowed formatting changes:
 
     try {
       // Create translation service with shop and taskId for queue management
-      const translationServiceWithTask = new TranslationService(provider, serviceConfig, session.shop, task.id);
+      const translationServiceWithTask = createTranslationService(task.id);
 
       const changedFields: Record<string, string> = {};
       changedFields[fieldType] = sourceText;
@@ -672,7 +678,7 @@ Allowed formatting changes:
       }
 
       // Create translation service with shop and taskId for queue management
-      const translationServiceWithTask = new TranslationService(provider, serviceConfig, session.shop, task.id);
+      const translationServiceWithTask = createTranslationService(task.id);
 
       await db.task.update({
         where: { id: task.id },
@@ -819,7 +825,7 @@ Allowed formatting changes:
       }
 
       // Create translation service with shop and taskId for queue management
-      const translationServiceWithTask = new TranslationService(provider, serviceConfig, session.shop, task.id);
+      const translationServiceWithTask = createTranslationService(task.id);
 
       await db.task.update({
         where: { id: task.id },
@@ -953,7 +959,7 @@ Allowed formatting changes:
       }
 
       // Create translation service with shop and taskId for queue management
-      const translationServiceWithTask = new TranslationService(provider, serviceConfig, session.shop, task.id);
+      const translationServiceWithTask = createTranslationService(task.id);
 
       await db.task.update({
         where: { id: task.id },
@@ -1365,7 +1371,7 @@ Allowed formatting changes:
     });
 
     try {
-      const aiServiceWithTask = new AIService(provider, serviceConfig, session.shop, task.id);
+      const aiServiceWithTask = createAIService(task.id);
 
       await db.task.update({
         where: { id: task.id },
@@ -1452,7 +1458,7 @@ Image URL: ${imageUrl}`;
         data: { status: "queued", progress: 10 },
       });
 
-      const aiServiceWithTask = new AIService(provider, serviceConfig, session.shop, task.id);
+      const aiServiceWithTask = createAIService(task.id);
 
       for (let i = 0; i < imagesData.length; i++) {
         const image = imagesData[i];
@@ -1541,7 +1547,7 @@ Image URL: ${image.url}`;
     });
 
     try {
-      const translationServiceWithTask = new TranslationService(provider, serviceConfig, session.shop, task.id);
+      const translationServiceWithTask = createTranslationService(task.id);
 
       const changedFields: Record<string, string> = {};
       changedFields[`altText_${imageIndex}`] = sourceAltText;
@@ -1617,7 +1623,7 @@ Image URL: ${image.url}`;
     });
 
     try {
-      const translationServiceWithTask = new TranslationService(provider, serviceConfig, session.shop, task.id);
+      const translationServiceWithTask = createTranslationService(task.id);
 
       const changedFields: Record<string, string> = {};
       changedFields[`altText_${imageIndex}`] = sourceAltText;
@@ -2099,7 +2105,7 @@ Image URL: ${image.url}`;
       });
 
       // Create AI service with shop and taskId for queue management
-      const aiService = new AIService(provider, serviceConfig, session.shop, task.id);
+      const aiService = createAIService(task.id);
 
       // Group by small batches for AI translation
       const translations: Record<string, Record<string, string>> = {};
@@ -2274,7 +2280,7 @@ Image URL: ${image.url}`;
       });
 
       // Create AI service with shop and taskId for queue management
-      const aiService = new AIService(provider, serviceConfig, session.shop, task.id);
+      const aiService = createAIService(task.id);
 
       // Translate to each target locale
       const allTranslations: Record<string, Record<string, Record<string, string>>> = {}; // locale → resourceId → { key: value }
