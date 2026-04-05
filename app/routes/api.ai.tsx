@@ -6,13 +6,10 @@
 
 import { json, type ActionFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
-import { AIService, type AIProvider, toValidProvider } from "../../src/services/ai.service";
-import { decryptApiKey } from "../utils/encryption.server";
 import { getTaskExpirationDate } from "~/config/constants";
 import { logger } from "~/utils/logger.server";
 import { TRANSLATE_CONTENT } from "../graphql/content.mutations";
 import { sanitizeSlug } from "../utils/slug.utils";
-import { PRODUCTS_CONFIG, COLLECTIONS_CONFIG, BLOGS_CONFIG, PAGES_CONFIG, POLICIES_CONFIG } from "../config/content-fields.config";
 import type { ContentEditorConfig } from "../types/content-editor.types";
 import { getFormString, getFormJSON } from "~/utils/form-data.utils";
 import { safeJsonParse } from "~/utils/validation";
@@ -21,59 +18,15 @@ import { extractReadableName } from "~/utils/templates-field-factory";
 import { getInstructionWithDefault, getWritingStyleInstructions } from "~/utils/ai-instructions.utils";
 import { METAOBJECT_LABEL_FIELD_KEYS } from "~/constants/shopifyFields";
 import { getCharacterLimitRequirement } from "~/utils/character-limits";
-
-// Map contentType to its config for looking up field definitions
-const CONTENT_CONFIGS: Record<string, ContentEditorConfig> = {
-  products: PRODUCTS_CONFIG,
-  collections: COLLECTIONS_CONFIG,
-  blogs: BLOGS_CONFIG,
-  pages: PAGES_CONFIG,
-  policies: POLICIES_CONFIG,
-};
-
-const VALID_CONTENT_TYPES = new Set([
-  ...Object.keys(CONTENT_CONFIGS),
-  'templates',
-  'metaobjects',
-]);
-
-
-/** Shape of a single item from Shopify's translatableContent array. */
-interface TranslatableContentItem {
-  key: string;
-  digest: string;
-  value?: string;
-}
-
-/** Shape of a Shopify GraphQL response with potential data/errors. */
-interface ShopifyGraphQLResponse {
-  data?: {
-    translatableResource?: {
-      resourceId: string;
-      translatableContent: TranslatableContentItem[];
-    };
-    translationsRegister?: {
-      userErrors: Array<{ field?: string; message: string }>;
-      translations: Array<{ locale: string; key: string; value: string }>;
-    };
-  };
-  errors?: Array<{ message: string }>;
-}
-
-/** Safely extract an error message from an unknown thrown value. */
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
-
-/** Safely extract an error stack from an unknown thrown value. */
-function errorStack(err: unknown): string | undefined {
-  return err instanceof Error ? err.stack : undefined;
-}
-
-/** Check if an unknown error is a Prisma error with a specific code. */
-function isPrismaError(err: unknown, code: string): boolean {
-  return typeof err === "object" && err !== null && "code" in err && (err as { code: string }).code === code;
-}
+import {
+  CONTENT_CONFIGS,
+  VALID_CONTENT_TYPES,
+  errorMessage,
+  errorStack,
+  isPrismaError,
+  createAIService,
+} from "./api-ai-handlers/shared";
+import type { TranslatableContentItem, ShopifyGraphQLResponse } from "./api-ai-handlers/shared";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
@@ -139,20 +92,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             data: { status: "running", progress: 20 },
           });
 
-          const aiService = new AIService(
-            toValidProvider(settings?.preferredProvider),
-            {
-              huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
-              geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
-              claudeApiKey: decryptApiKey(settings?.claudeApiKey) || undefined,
-              openaiApiKey: decryptApiKey(settings?.openaiApiKey) || undefined,
-              grokApiKey: decryptApiKey(settings?.grokApiKey) || undefined,
-              deepseekApiKey: decryptApiKey(settings?.deepseekApiKey) || undefined,
-              selectedModel: settings?.selectedModel || undefined,
-            },
-            session.shop,
-            task.id
-          );
+          const aiService = createAIService(settings, session.shop, task.id);
 
           logger.debug("[API-AI] Translating field", {
             context: "AI",
@@ -254,20 +194,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             data: { status: "running", progress: 10 },
           });
 
-          const aiService = new AIService(
-            toValidProvider(settings?.preferredProvider),
-            {
-              huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
-              geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
-              claudeApiKey: decryptApiKey(settings?.claudeApiKey) || undefined,
-              openaiApiKey: decryptApiKey(settings?.openaiApiKey) || undefined,
-              grokApiKey: decryptApiKey(settings?.grokApiKey) || undefined,
-              deepseekApiKey: decryptApiKey(settings?.deepseekApiKey) || undefined,
-              selectedModel: settings?.selectedModel || undefined,
-            },
-            session.shop,
-            task.id
-          );
+          const aiService = createAIService(settings, session.shop, task.id);
 
           logger.debug("[API-AI] Translating field to all locales", {
             context: "AI",
@@ -1243,20 +1170,7 @@ Return only the formatted text, without explanations.`;
             data: { status: "running", progress: 20 },
           });
 
-          const aiService = new AIService(
-            toValidProvider(settings?.preferredProvider),
-            {
-              huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
-              geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
-              claudeApiKey: decryptApiKey(settings?.claudeApiKey) || undefined,
-              openaiApiKey: decryptApiKey(settings?.openaiApiKey) || undefined,
-              grokApiKey: decryptApiKey(settings?.grokApiKey) || undefined,
-              deepseekApiKey: decryptApiKey(settings?.deepseekApiKey) || undefined,
-              selectedModel: settings?.selectedModel || undefined,
-            },
-            session.shop,
-            task.id
-          );
+          const aiService = createAIService(settings, session.shop, task.id);
 
           logger.debug("[API-AI] Formatting field", {
             context: "AI",
@@ -1408,20 +1322,7 @@ Return only the formatted text, without explanations.`;
             data: { status: "running", progress: 20 },
           });
 
-          const aiService = new AIService(
-            toValidProvider(settings?.preferredProvider),
-            {
-              huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
-              geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
-              claudeApiKey: decryptApiKey(settings?.claudeApiKey) || undefined,
-              openaiApiKey: decryptApiKey(settings?.openaiApiKey) || undefined,
-              grokApiKey: decryptApiKey(settings?.grokApiKey) || undefined,
-              deepseekApiKey: decryptApiKey(settings?.deepseekApiKey) || undefined,
-              selectedModel: settings?.selectedModel || undefined,
-            },
-            session.shop,
-            task.id
-          );
+          const aiService = createAIService(settings, session.shop, task.id);
 
           logger.debug("[API-AI] Generating AI text", {
             context: "AI",
@@ -1629,20 +1530,7 @@ Do NOT:
             data: { status: "running", progress: 20 },
           });
 
-          const aiService = new AIService(
-            toValidProvider(settings?.preferredProvider),
-            {
-              huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
-              geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
-              claudeApiKey: decryptApiKey(settings?.claudeApiKey) || undefined,
-              openaiApiKey: decryptApiKey(settings?.openaiApiKey) || undefined,
-              grokApiKey: decryptApiKey(settings?.grokApiKey) || undefined,
-              deepseekApiKey: decryptApiKey(settings?.deepseekApiKey) || undefined,
-              selectedModel: settings?.selectedModel || undefined,
-            },
-            session.shop,
-            task.id
-          );
+          const aiService = createAIService(settings, session.shop, task.id);
 
           logger.debug("[API-AI] Formatting AI text", {
             context: "AI",
@@ -1734,20 +1622,7 @@ Do NOT:
             data: { status: "running", progress: 20 },
           });
 
-          const aiService = new AIService(
-            toValidProvider(settings?.preferredProvider),
-            {
-              huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
-              geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
-              claudeApiKey: decryptApiKey(settings?.claudeApiKey) || undefined,
-              openaiApiKey: decryptApiKey(settings?.openaiApiKey) || undefined,
-              grokApiKey: decryptApiKey(settings?.grokApiKey) || undefined,
-              deepseekApiKey: decryptApiKey(settings?.deepseekApiKey) || undefined,
-              selectedModel: settings?.selectedModel || undefined,
-            },
-            session.shop,
-            task.id
-          );
+          const aiService = createAIService(settings, session.shop, task.id);
 
           logger.debug("[API-AI] Generating alt-text for image", {
             context: "AI",
@@ -1861,20 +1736,7 @@ Image URL: ${imageUrl}${mainLanguage ? `\nLanguage: ${mainLanguage}` : ''}`;
             data: { status: "running", progress: 10 },
           });
 
-          const bulkAiService = new AIService(
-            toValidProvider(settings?.preferredProvider),
-            {
-              huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
-              geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
-              claudeApiKey: decryptApiKey(settings?.claudeApiKey) || undefined,
-              openaiApiKey: decryptApiKey(settings?.openaiApiKey) || undefined,
-              grokApiKey: decryptApiKey(settings?.grokApiKey) || undefined,
-              deepseekApiKey: decryptApiKey(settings?.deepseekApiKey) || undefined,
-              selectedModel: settings?.selectedModel || undefined,
-            },
-            session.shop,
-            bulkTask.id
-          );
+          const bulkAiService = createAIService(settings, session.shop, bulkTask.id);
 
           const generatedAltTexts: Record<number, string> = {};
 
@@ -1983,20 +1845,7 @@ Image URL: ${image.url}${mainLanguage ? `\nLanguage: ${mainLanguage}` : ''}`;
             data: { status: "running", progress: 20 },
           });
 
-          const aiService = new AIService(
-            toValidProvider(settings?.preferredProvider),
-            {
-              huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
-              geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
-              claudeApiKey: decryptApiKey(settings?.claudeApiKey) || undefined,
-              openaiApiKey: decryptApiKey(settings?.openaiApiKey) || undefined,
-              grokApiKey: decryptApiKey(settings?.grokApiKey) || undefined,
-              deepseekApiKey: decryptApiKey(settings?.deepseekApiKey) || undefined,
-              selectedModel: settings?.selectedModel || undefined,
-            },
-            session.shop,
-            task.id
-          );
+          const aiService = createAIService(settings, session.shop, task.id);
 
           logger.debug("[API-AI] Translating alt-text", {
             context: "AI",
@@ -2077,20 +1926,7 @@ Image URL: ${image.url}${mainLanguage ? `\nLanguage: ${mainLanguage}` : ''}`;
             data: { status: "running", progress: 10 },
           });
 
-          const aiService = new AIService(
-            toValidProvider(settings?.preferredProvider),
-            {
-              huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
-              geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
-              claudeApiKey: decryptApiKey(settings?.claudeApiKey) || undefined,
-              openaiApiKey: decryptApiKey(settings?.openaiApiKey) || undefined,
-              grokApiKey: decryptApiKey(settings?.grokApiKey) || undefined,
-              deepseekApiKey: decryptApiKey(settings?.deepseekApiKey) || undefined,
-              selectedModel: settings?.selectedModel || undefined,
-            },
-            session.shop,
-            task.id
-          );
+          const aiService = createAIService(settings, session.shop, task.id);
 
           logger.debug("[API-AI] Translating alt-text to all locales", {
             context: "AI",
@@ -2325,20 +2161,7 @@ Image URL: ${image.url}${mainLanguage ? `\nLanguage: ${mainLanguage}` : ''}`;
             data: { status: "running", progress: 5 },
           });
 
-          const aiService = new AIService(
-            toValidProvider(settings?.preferredProvider),
-            {
-              huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
-              geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
-              claudeApiKey: decryptApiKey(settings?.claudeApiKey) || undefined,
-              openaiApiKey: decryptApiKey(settings?.openaiApiKey) || undefined,
-              grokApiKey: decryptApiKey(settings?.grokApiKey) || undefined,
-              deepseekApiKey: decryptApiKey(settings?.deepseekApiKey) || undefined,
-              selectedModel: settings?.selectedModel || undefined,
-            },
-            session.shop,
-            bulkAllTask.id
-          );
+          const aiService = createAIService(settings, session.shop, bulkAllTask.id);
 
           // Batch translate all alt-texts to all locales in a single AI request
           let translatedResults: Record<string, Record<string, string>> = {};
@@ -2571,20 +2394,7 @@ Image URL: ${image.url}${mainLanguage ? `\nLanguage: ${mainLanguage}` : ''}`;
             data: { status: "running", progress: 10 },
           });
 
-          const aiService = new AIService(
-            toValidProvider(settings?.preferredProvider),
-            {
-              huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
-              geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
-              claudeApiKey: decryptApiKey(settings?.claudeApiKey) || undefined,
-              openaiApiKey: decryptApiKey(settings?.openaiApiKey) || undefined,
-              grokApiKey: decryptApiKey(settings?.grokApiKey) || undefined,
-              deepseekApiKey: decryptApiKey(settings?.deepseekApiKey) || undefined,
-              selectedModel: settings?.selectedModel || undefined,
-            },
-            session.shop,
-            localeTask.id
-          );
+          const aiService = createAIService(settings, session.shop, localeTask.id);
 
           // Batch translate all alt-texts for this locale in a single AI request
           const translatedAltTexts: Record<number, string> = {};
