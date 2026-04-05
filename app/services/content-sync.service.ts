@@ -445,6 +445,7 @@ export class ContentSyncService {
         // Delete old translations
         await tx.contentTranslation.deleteMany({
           where: {
+            shop: this.shop,
             resourceId: collectionData.id,
             resourceType: "Collection",
           },
@@ -533,6 +534,7 @@ export class ContentSyncService {
         // Delete old translations
         await tx.contentTranslation.deleteMany({
           where: {
+            shop: this.shop,
             resourceId: articleData.id,
             resourceType: "Article",
           },

@@ -1840,6 +1840,7 @@ Image URL: ${image.url}`;
       // Batch: load from local DB first (faster)
       const dbTranslations = await db.contentTranslation.findMany({
         where: {
+          shop: session.shop,
           resourceId: { in: resourceIds },
           locale,
         },

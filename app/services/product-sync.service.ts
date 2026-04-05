@@ -1394,7 +1394,7 @@ export class ProductSyncService {
       } else {
         // Delete old translations and recreate from Shopify
         const deletedTranslations = await tx.contentTranslation.deleteMany({
-          where: { resourceId: productData.id, resourceType: "Product" }
+          where: { shop: this.shop, resourceId: productData.id, resourceType: "Product" }
         });
         logger.debug(`[ProductSync] Deleted ${deletedTranslations.count} old translations from database`);
 
@@ -1433,6 +1433,7 @@ export class ProductSyncService {
 
           const deletedSubTrans = await tx.contentTranslation.deleteMany({
             where: {
+              shop: this.shop,
               resourceId: { in: subResourceIds },
               resourceType: { in: ["ProductOption", "ProductOptionValue", "Metafield"] },
             },

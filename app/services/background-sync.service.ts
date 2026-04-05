@@ -221,11 +221,9 @@ export class BackgroundSyncService {
 
           let translationsCount = 0;
           if (stalePageIds.length > 0) {
-            // No shop filter needed: ContentTranslation has no shop column.
-            // stalePageIds are already shop-scoped (from the findMany above),
-            // and Shopify GIDs are globally unique across shops.
             const deletedTranslations = await tx.contentTranslation.deleteMany({
               where: {
+                shop: this.shop,
                 resourceType: "Page",
                 resourceId: { in: stalePageIds }
               }
@@ -411,6 +409,7 @@ export class BackgroundSyncService {
       if (currentKeys.length > 0) {
         await tx.contentTranslation.deleteMany({
           where: {
+            shop: this.shop,
             resourceId: pageData.id,
             resourceType: "Page",
             NOT: {
@@ -422,6 +421,7 @@ export class BackgroundSyncService {
         // No translations from Shopify - delete all
         await tx.contentTranslation.deleteMany({
           where: {
+            shop: this.shop,
             resourceId: pageData.id,
             resourceType: "Page",
           },
@@ -510,11 +510,9 @@ export class BackgroundSyncService {
 
           let translationsCount = 0;
           if (stalePolicyIds.length > 0) {
-            // No shop filter needed: ContentTranslation has no shop column.
-            // stalePolicyIds are already shop-scoped (from the findMany above),
-            // and Shopify GIDs are globally unique across shops.
             const deletedTranslations = await tx.contentTranslation.deleteMany({
               where: {
+                shop: this.shop,
                 resourceType: "ShopPolicy",
                 resourceId: { in: stalePolicyIds }
               }
@@ -705,6 +703,7 @@ export class BackgroundSyncService {
       if (currentKeys.length > 0) {
         await tx.contentTranslation.deleteMany({
           where: {
+            shop: this.shop,
             resourceId: policyData.id,
             resourceType: "ShopPolicy",
             NOT: {
@@ -716,6 +715,7 @@ export class BackgroundSyncService {
         // No translations from Shopify - delete all
         await tx.contentTranslation.deleteMany({
           where: {
+            shop: this.shop,
             resourceId: policyData.id,
             resourceType: "ShopPolicy",
           },
