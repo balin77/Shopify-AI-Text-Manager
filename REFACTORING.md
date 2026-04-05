@@ -151,60 +151,65 @@ Beide Funktionen sind reine Utilities ohne Framework-Abhängigkeiten und damit j
 
 ---
 
-## Gesamtergebnis
+## Gesamtergebnis (Phasen 1–4 + Priorität 1 + Priorität 2)
 
 | Datei | Vorher | Nachher | Reduktion |
 |---|---|---|---|
-| `useUnifiedContentEditor.ts` | 3864 | 3617 | -247 |
-| `api.ai.tsx` | 2825 | 2593 | -232 |
-| `app.templates.tsx` | 2546 | 2459 | -87 |
+| `useUnifiedContentEditor.ts` | 3864 | 2166 | -1698 |
+| `api.ai.tsx` | 2825 | 110 | -2715 |
+| `unified-content.actions.ts` | 2778 | 705 | -2073 |
+| `app.templates.tsx` | 2546 | 1094 | -1452 |
+| `app/components/UnifiedContentEditor.tsx` | 1241 | 916 | -325 |
+| `app/routes/app.settings.tsx` | 1252 | 984 | -268 |
 | `contentEditor.utils.ts` | 1157 | 1060 | -97 |
-| **Summe** | **10392** | **9729** | **-663** |
+| **Summe** | **15663** | **7035** | **-8628** |
 
-Neu erstellt: 7 Dateien mit zusammen ~630 Zeilen fokussierter, einzelverantwortlicher Logik.
+Neu erstellt: 30+ Dateien mit zusammen ~8000 Zeilen fokussierter, einzelverantwortlicher Logik.
+
+---
+
+### Phase 5 — Priorität 1 (abgeschlossen)
+
+#### `useUnifiedContentEditor.ts` weiter aufgeteilt
+- **`app/hooks/useFieldHandlers.ts`** (1299 Zeilen) — 22 Handler-Funktionen (handleSave, handleDiscard, handleGenerateAI, handleTranslateField, etc.)
+- **`app/hooks/useAltTextHandlers.ts`** (~430 Zeilen) — 10 Alt-Text-Handler
+
+#### `api.ai.tsx` Handler-Extraktion (2593 → 110 Zeilen)
+- **`api-ai-handlers/text-translation.handler.ts`** — handleTranslateField, handleTranslateFieldToAllLocales
+- **`api-ai-handlers/alt-text.handler.ts`** — handleGenerateAltText, handleGenerateAllAltTexts, handleTranslateAltText, handleTranslateAltTextToAllLocales, handleTranslateAllAltTextsToAllLocales, handleTranslateAllAltTextsForLocale
+- **`api-ai-handlers/text-generation.handler.ts`** — handleFormatField, handleGenerateAIText, handleFormatAIText
+
+#### `unified-content.actions.ts` Handler-Extraktion (2778 → 705 Zeilen)
+- **`app/actions/content/alt-text.action.ts`** — ContentActionHandlerContext + Alt-Text-Handler
+- **`app/actions/content/translation.action.ts`** — handleTranslateField, handleTranslateAll, handleTranslateAllForLocale, handleTranslateFieldToAllLocales
+- **`app/actions/content/content-update.action.ts`** — handleUpdateContent
+- **`app/actions/content/sub-resources.action.ts`** — handleLoadSubResourceTranslations, handleSaveSubResourceTranslations, handleTranslateSubResources, handleTranslateSubResourceToAllLocales, handleSavePrimarySubResources
+
+---
+
+### Phase 6 — Priorität 2 (abgeschlossen)
+
+#### `app.templates.tsx` Action-Handler ausgelagert (2459 → 1094 Zeilen)
+```
+app/actions/templates/
+├── shared.ts                          (TemplatesActionContext, TranslatableField)
+├── templates-load.action.ts           (loadTranslations)
+├── templates-generate.action.ts       (generateAIText)
+├── templates-translate-field.action.ts (translateField, translateFieldToAllLocales)
+├── templates-translate-all.action.ts   (translateAll, translateAllForLocale)
+└── templates-update.action.ts          (updateContent — 618 Zeilen)
+```
+
+#### `app/components/UnifiedContentEditor.tsx` aufgeteilt (1241 → 916 Zeilen)
+- **`UnifiedFieldRenderer.tsx`** extrahiert (316 Zeilen) — vollständige Feld-Render-Logik
+- AI-Action-Konstanten in **`constants/ai-actions.ts`** zentralisiert (ALL_LOCALES_AI_ACTIONS, PER_LOCALE_AI_ACTIONS, IMAGE_ALL_LOCALES_AI_ACTIONS, IMAGE_PER_LOCALE_AI_ACTIONS)
+
+#### `app/routes/app.settings.tsx` aufgeteilt (1252 → 984 Zeilen)
+- **`SettingsPlanTab.tsx`** extrahiert (320 Zeilen) — Plan-State, handleSelectPlan, Plan-Karten-JSX
 
 ---
 
 ## Offene Refactoring-Aufgaben (Next Steps)
-
-Die folgenden Aufgaben wurden identifiziert, aber noch nicht umgesetzt. Sie erfordern mehr Zeit und sorgfältige Planung, da sie große Code-Blöcke betreffen.
-
-### Priorität 1 — Hoch (größter Effekt)
-
-#### `useUnifiedContentEditor.ts` weiter aufteilen (~2000 Zeilen Potential)
-- **`useFieldHandlers.ts`** — 16+ Handler-Funktionen (handleSave, handleDiscard, handleGenerateAI, handleTranslateField, etc.) → ca. 800 Zeilen
-- **`useAltTextHandlers.ts`** — 10 zusammenhängende Alt-Text-Handler → ca. 280 Zeilen
-- **`useAITranslationHandlers.ts`** — submitAIAction + Response-Effekte → ca. 200 Zeilen
-
-#### `api.ai.tsx` Handler-Extraktion (~2300 Zeilen Potential)
-- **`api-ai-handlers/text-translation.handler.ts`** — translateField, translateFieldToAllLocales (inkl. ~1000-Zeilen-Mega-Handler), translateAll, translateAllForLocale
-- **`api-ai-handlers/alt-text.handler.ts`** — generateAltText, generateAllAltTexts, translateAltText, translateAltTextToAllLocales, translateAllAltTextsToAllLocales, translateAllAltTextsForLocale
-- **`api-ai-handlers/text-generation.handler.ts`** — generateAIText, formatAIText, formatField
-
-#### `unified-content.actions.ts` Handler-Extraktion (~2500 Zeilen Potential)
-Gleiche Struktur wie api.ai.tsx — viele der Handler sind inhaltlich identisch (alt-text, sub-resources). Idealerweise sollten beide Dateien auf dieselben Handler-Module zurückgreifen.
-
-### Priorität 2 — Mittel
-
-#### `app.templates.tsx` Action-Handler auslagern
-Die `action()` Funktion ist noch ~1400 Zeilen lang und enthält 8 verschiedene Action-Types. Vorschlag:
-```
-app/actions/templates/
-├── templates-load.action.ts
-├── templates-generate.action.ts
-├── templates-translate-field.action.ts
-├── templates-translate-all.action.ts
-└── templates-update.action.ts
-```
-
-#### `app/components/UnifiedContentEditor.tsx` aufteilen
-- `UnifiedFieldRenderer.tsx` extrahieren (Zeilen 900-1189, ~290 Zeilen)
-- `UnifiedEditorToolbar.tsx` extrahieren (Desktop-Toolbar)
-- AI-Action-Konstanten in `constants/ai-actions.ts` zentralisieren (aktuell in 2 Dateien dupliziert)
-
-#### `app/routes/app.settings.tsx` aufteilen
-- `SettingsPlanTab.tsx` extrahieren (~400 Zeilen Plan-Billing-Logik)
-- Server-Loader in separates `settings-loader.server.ts`
 
 ### Priorität 3 — Nice-to-have
 
