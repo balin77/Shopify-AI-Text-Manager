@@ -101,12 +101,13 @@ export function createContentLoader<T extends { id: string }>(
         aiSettings,
         ...extra,
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
       if (error instanceof Response) throw error;
+      const errorMessage = error instanceof Error ? error.message : String(error);
       logger.error(`[${config.logPrefix}-LOADER] Error`, {
         context: config.logPrefix,
-        error: error instanceof Error ? error.message : String(error),
-        stack: error.stack,
+        error: errorMessage,
+        stack: error instanceof Error ? error.stack : undefined,
       });
       return json(
         {
@@ -114,7 +115,7 @@ export function createContentLoader<T extends { id: string }>(
           shop: session.shop,
           shopLocales: [],
           primaryLocale: "en",
-          error: error.message,
+          error: errorMessage,
           aiSettings: null,
           ...(config.errorFallback || {}),
         },

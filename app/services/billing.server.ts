@@ -11,11 +11,30 @@ import { BILLING_PLANS, type BillingPlan, isPaidPlan } from '~/config/billing';
 import { db as prisma } from '~/db.server';
 import { logger } from '~/utils/logger.server';
 
+interface ShopifyAdminClient {
+  graphql: (query: string, options?: { variables?: Record<string, unknown> }) => Promise<{ json: () => Promise<unknown> }>;
+}
+
+interface AppSubscription {
+  id: string;
+  name: string;
+  status: string;
+  test: boolean;
+  currentPeriodEnd?: string;
+  trialDays?: number;
+  lineItems?: Array<{ id: string; plan: { pricingDetails: { __typename: string; price?: { amount: string; currencyCode: string }; interval?: string } } }>;
+}
+
+interface UserError {
+  field?: string;
+  message: string;
+}
+
 /**
  * Checks if the shop is a development/partner test store.
  * Development stores should use test billing (no real charges).
  */
-async function isDevStore(admin: any): Promise<boolean> {
+async function isDevStore(admin: ShopifyAdminClient): Promise<boolean> {
   try {
     const response = await admin.graphql(
       `#graphql
@@ -41,7 +60,7 @@ async function isDevStore(admin: any): Promise<boolean> {
  * Automatically uses test mode for development stores and dev environments.
  */
 export async function createSubscription(
-  admin: any,
+  admin: ShopifyAdminClient,
   session: Session,
   plan: Exclude<BillingPlan, 'free'>,
   returnUrl: string
@@ -106,7 +125,7 @@ export async function createSubscription(
 
   if (result.data?.appSubscriptionCreate?.userErrors?.length > 0) {
     throw new Error(
-      `Failed to create subscription: ${result.data.appSubscriptionCreate.userErrors.map((e: any) => e.message).join(', ')}`
+      `Failed to create subscription: ${(result.data.appSubscriptionCreate.userErrors as UserError[]).map((e) => e.message).join(', ')}`
     );
   }
 
@@ -120,7 +139,7 @@ export async function createSubscription(
 /**
  * Cancels an active subscription
  */
-export async function cancelSubscription(admin: any, subscriptionId: string) {
+export async function cancelSubscription(admin: ShopifyAdminClient, subscriptionId: string) {
   const response = await admin.graphql(
     `#graphql
       mutation AppSubscriptionCancel($id: ID!) {
@@ -147,7 +166,7 @@ export async function cancelSubscription(admin: any, subscriptionId: string) {
 
   if (result.data?.appSubscriptionCancel?.userErrors?.length > 0) {
     throw new Error(
-      `Failed to cancel subscription: ${result.data.appSubscriptionCancel.userErrors.map((e: any) => e.message).join(', ')}`
+      `Failed to cancel subscription: ${(result.data.appSubscriptionCancel.userErrors as UserError[]).map((e) => e.message).join(', ')}`
     );
   }
 
@@ -157,7 +176,7 @@ export async function cancelSubscription(admin: any, subscriptionId: string) {
 /**
  * Gets the current active subscription for a shop
  */
-export async function getCurrentSubscription(admin: any) {
+export async function getCurrentSubscription(admin: ShopifyAdminClient): Promise<AppSubscription | null> {
   const response = await admin.graphql(
     `#graphql
       query {
@@ -190,7 +209,7 @@ export async function getCurrentSubscription(admin: any) {
     `
   );
 
-  const result = await response.json();
+  const result = await response.json() as { data?: { currentAppInstallation?: { activeSubscriptions?: AppSubscription[] } } };
   const subscriptions = result.data?.currentAppInstallation?.activeSubscriptions || [];
 
   // Return the first active subscription
@@ -200,7 +219,7 @@ export async function getCurrentSubscription(admin: any) {
 /**
  * Checks if the shop has an active paid subscription
  */
-export async function hasActiveSubscription(admin: any): Promise<boolean> {
+export async function hasActiveSubscription(admin: ShopifyAdminClient): Promise<boolean> {
   const subscription = await getCurrentSubscription(admin);
   return subscription?.status === 'ACTIVE';
 }
@@ -208,7 +227,7 @@ export async function hasActiveSubscription(admin: any): Promise<boolean> {
 /**
  * Gets the plan from the subscription name or defaults to free
  */
-export function getPlanFromSubscription(subscription: any): BillingPlan {
+export function getPlanFromSubscription(subscription: AppSubscription | null): BillingPlan {
   if (!subscription) return 'free';
 
   const name = subscription.name.toLowerCase();
@@ -239,7 +258,7 @@ export async function syncSubscriptionToDatabase(shop: string, plan: BillingPlan
 /**
  * Checks subscription status and updates database accordingly
  */
-export async function checkAndSyncSubscription(admin: any, shop: string): Promise<BillingPlan> {
+export async function checkAndSyncSubscription(admin: ShopifyAdminClient, shop: string): Promise<BillingPlan> {
   try {
     const subscription = await getCurrentSubscription(admin);
 
@@ -265,7 +284,7 @@ export async function checkAndSyncSubscription(admin: any, shop: string): Promis
  * Redirects to billing page if no active subscription
  */
 export async function requireSubscription(
-  admin: any,
+  admin: ShopifyAdminClient,
   session: Session,
   requiredPlan?: Exclude<BillingPlan, 'free'>
 ) {

@@ -1,8 +1,8 @@
 # Code Review Progress - ContentPilot
 
-**Branch:** `claude/continue-code-review-progress-1Tlrw`
+**Branch:** `claude/continue-code-review-cleanup-1xkQF`
 **Started:** 2026-04-06
-**Based on:** CODE_IMPROVEMENTS.md recommendations
+**Based on:** CODE_IMPROVEMENTS.md recommendations + previous branch `claude/continue-code-review-progress-1Tlrw`
 
 ---
 
@@ -22,6 +22,11 @@
 | 10. Route Scan (5 routes) | ✅ Done | No issues found; all routes use `authenticate.admin`; no `catch (error: any)` |
 | 11. useUnifiedContentEditor.ts Inspection | ✅ Done | No `catch (error: any)` remaining; race conditions properly guarded |
 | 12. Unit Tests (gdpr + validation) | ✅ Done | 2 new test files written |
+| 13. catch(error:any) in Components/Utils | ✅ Done | 4 remaining blocks fixed |
+| 14. console.log in content.service.ts | ✅ N/A | All 24 calls are inside a block comment (dead code) |
+| 15. Zod validation on 4 routes | ✅ N/A | Validation is centralized in `handleUnifiedContentActions`; routes just pass formData through |
+| 16. any-Types in Services (top 10) | ✅ Done | `billing.server.ts`, `webhook-registration.service.ts`, `content.service.ts` |
+| 17. Unit Tests (billing + webhook) | ✅ Done | 2 new test files written |
 
 ---
 
@@ -233,6 +238,97 @@ The FIFO queue (`saveQueueRef`) plus `justSubmittedRef` guard correctly prevents
 
 ---
 
+## 13. catch(error: any) – Components & Utils (Branch: cleanup-1xkQF)
+
+**Status:** ✅ Done (2026-04-06)
+
+Last 4 `catch (error: any)` blocks cleaned up:
+
+| File | Location | Change |
+|------|----------|--------|
+| `app/components/SettingsSetupTab.tsx` | line 65 | `catch (error: unknown)`; `error.message` → guarded |
+| `app/components/SyncProgressBar.tsx` | line 184 | `catch (error: unknown)`; extracted `errorMessage` var; `onError?.(errorMessage)` |
+| `app/components/SyncProgressBar.tsx` | line 403 | `catch (error: unknown)`; `error.message` → guarded |
+| `app/utils/loader-factory.server.ts` | line 104 | `catch (error: unknown)`; `error.stack` + `error.message` guarded |
+
+Zero `catch (error: any)` now remain in `app/` (confirmed by grep).
+
+---
+
+## 14. console.log in content.service.ts
+
+**Status:** ✅ N/A (2026-04-06)
+
+All 24 `console.log` calls in the Menus function are inside a multi-line block comment
+(`/* ... */`) that starts at line 235. The live code path at line 230–233 already uses `logger.debug`.
+No changes needed.
+
+---
+
+## 15. Zod Validation – 4 additional routes
+
+**Status:** ✅ N/A (2026-04-06)
+
+Routes `app.blog.tsx`, `app.collections.tsx`, `app.pages.tsx`, `app.metaobjects.tsx` all delegate
+directly to `handleUnifiedContentActions()` in `app/actions/unified-content.actions.ts`.
+That handler already validates:
+- `action` field (via `getFormString`)
+- `itemId` (validated as Shopify GID via `isValidShopifyGID`)
+- `locale` (validated via `isValidLocale`)
+- Returns 400 for missing required fields
+
+No route-level Zod schemas needed — validation is centralized and complete.
+
+---
+
+## 16. any-Types in Services (top 10 fixes)
+
+**Status:** ✅ Done (2026-04-06)
+
+### billing.server.ts
+Added 3 interfaces (`ShopifyAdminClient`, `AppSubscription`, `UserError`):
+- All 7x `admin: any` → `admin: ShopifyAdminClient`
+- `getPlanFromSubscription(subscription: any)` → `(subscription: AppSubscription | null)`
+- `getCurrentSubscription()` → explicit return type `Promise<AppSubscription | null>`
+- `response.json()` cast to typed structure
+- `userErrors.map((e: any) => e.message)` → `(errors as UserError[]).map((e) => e.message)` (×2)
+
+### webhook-registration.service.ts
+Added `WebhookUserError` and `WebhookSubscription` interfaces:
+- `variables?: any` → `variables?: Record<string, unknown>`
+- `Promise<any>` return types → `Promise<{ json: () => Promise<unknown> }>`
+- `getExistingWebhook()` → `Promise<WebhookSubscription | null>`
+- `listWebhooks()` → `Promise<WebhookSubscription[]>`
+- `(e: any) => e.message` → `(errors as WebhookUserError[])` (×2)
+- `(e: any) => e.node` → `(e: { node: WebhookSubscription })` 
+
+### content.service.ts
+- `const data: any` → typed cast with inline interface
+- `const shop: any` → inferred from cast
+- `const metafieldsConnection: any` → inferred from cast
+
+---
+
+## 17. Unit Tests – billing + webhook-registration
+
+**Status:** ✅ Done (2026-04-06)
+
+### tests/unit/billing.server.test.ts (14 tests)
+- `getPlanFromSubscription()`: null → free, Pro, Max, Basic, unknown name
+- `getCurrentSubscription()`: with subscription, without, graphql call count
+- `checkAndSyncSubscription()`: active Pro, active Max, no subscription, PENDING subscription, graphql error → defaults to free, missing aISettings → no DB update
+
+### tests/unit/webhook-registration.service.test.ts (6 tests)
+- Throws when `SHOPIFY_APP_URL` not set; no graphql calls made
+- Creates all 3 webhooks (PRODUCTS_CREATE/UPDATE/DELETE) when none exist
+- Updates (not re-creates) an existing webhook
+- Continues registering remaining webhooks when one create returns `userErrors`
+- Continues registering remaining webhooks when one graphql call throws (resilience)
+
+All 139 unit tests pass (9 test files).
+
+---
+
 ## Files Modified
 
 | File | Change |
@@ -269,3 +365,11 @@ The FIFO queue (`saveQueueRef`) plus `justSubmittedRef` guard correctly prevents
 | `app/services/shopify-api-gateway.service.ts` | 1x `catch (error: any)` → `unknown`; `error.status` / `error.message` guarded |
 | `tests/unit/gdpr.service.test.ts` | New: unit tests for `logGDPRRequest` |
 | `tests/unit/validation.test.ts` | New: unit tests for `parseJsonBody` |
+| `app/components/SettingsSetupTab.tsx` | `catch (error: any)` → `unknown`; `error.message` guarded |
+| `app/components/SyncProgressBar.tsx` | 2x `catch (error: any)` → `unknown`; `error.message` guarded; `onError` call uses extracted variable |
+| `app/utils/loader-factory.server.ts` | `catch (error: any)` → `unknown`; `error.stack` / `error.message` guarded |
+| `app/services/billing.server.ts` | Added `ShopifyAdminClient`, `AppSubscription`, `UserError` interfaces; all `admin: any` → typed; `getPlanFromSubscription` param typed; `userErrors.map((e:any))` → `(errors as UserError[])` |
+| `app/services/webhook-registration.service.ts` | Added `WebhookUserError`, `WebhookSubscription` interfaces; `variables?: any` → `Record<string,unknown>`; `(e:any)` inline casts removed; return types tightened |
+| `app/services/content.service.ts` | `const data: any` / `const shop: any` / `const metafieldsConnection: any` replaced with typed cast |
+| `tests/unit/billing.server.test.ts` | New: unit tests for `checkAndSyncSubscription` |
+| `tests/unit/webhook-registration.service.test.ts` | New: unit tests for `registerProductWebhooks` + retry behaviour |

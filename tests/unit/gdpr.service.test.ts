@@ -11,7 +11,9 @@ import { logGDPRRequest } from '~/services/gdpr.service';
 
 // ── Mocks ────────────────────────────────────────────────────────────────────
 
-const mockGdprAuditLogCreate = vi.fn().mockResolvedValue({ id: 'audit-1' });
+const { mockGdprAuditLogCreate } = vi.hoisted(() => ({
+  mockGdprAuditLogCreate: vi.fn().mockResolvedValue({ id: 'audit-1' }),
+}));
 
 vi.mock('~/db.server', () => ({
   db: {
