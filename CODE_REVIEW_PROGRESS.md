@@ -17,6 +17,11 @@
 | 5. GDPR Audit Log | ✅ Done | `GdprAuditLog` DB table + persistent logging in `gdpr.service.ts` |
 | 6. Template Handlers | ✅ Done | AI/translate handlers in `app.content.tsx` submit to `/app/templates` action |
 | 7. any-Type Cleanup | ✅ Done | 23x `catch (error: any)` → `unknown` in routes; `UnifiedContentEditor` props typed |
+| 8. Service `catch (error: any)` Cleanup | ✅ Done | Fixed 4 remaining catch blocks in service files |
+| 9. Promise.all Review | ✅ Done | Both sites analysed; no changes needed (see below) |
+| 10. Route Scan (5 routes) | ✅ Done | No issues found; all routes use `authenticate.admin`; no `catch (error: any)` |
+| 11. useUnifiedContentEditor.ts Inspection | ✅ Done | No `catch (error: any)` remaining; race conditions properly guarded |
+| 12. Unit Tests (gdpr + validation) | ✅ Done | 2 new test files written |
 
 ---
 
@@ -166,6 +171,68 @@ isFreePlan={plan === 'free'}
 
 ---
 
+---
+
+## 8. Service `catch (error: any)` Cleanup
+
+**Status:** ✅ Done (2026-04-06)
+
+**Files changed:**
+- `app/services/webhook-registration.service.ts` – 3x `catch (error: any)` → `unknown`; `error.message` → `error instanceof Error ? error.message : String(error)`
+- `app/services/shopify-api-gateway.service.ts` – 1x `catch (error: any)` → `unknown`; `error.status` → `(error as { status?: number }).status`; `error.message.includes(...)` guarded with `instanceof Error`
+
+---
+
+## 9. Promise.all Review
+
+**Status:** ✅ Done (2026-04-06) – No changes needed
+
+### product-sync.service.ts:1473
+`Promise.all` runs inside a Prisma transaction (`tx.productImage.create` per image). If one image insertion fails the transaction rolls back entirely – that is the correct all-or-nothing behaviour. **Keep as `Promise.all`.**
+
+### background-sync.service.ts:1438
+`Promise.all` already has a per-item `.catch()` handler that returns `0` if a single content-type sync fails. Individual failures are isolated and logged; the overall sync still completes. **Already safe – no change needed.**
+
+---
+
+## 10. Route Scan (5 routes)
+
+**Status:** ✅ Done (2026-04-06) – No issues found
+
+| Route | Auth | `catch (error: any)` | Hardcoded values | Notes |
+|-------|------|----------------------|-----------------|-------|
+| `app.blog.tsx` | `authenticate.admin` ✅ | None | None | Clean |
+| `app.collections.tsx` | `authenticate.admin` ✅ | None | `"free"` as DB fallback | Acceptable default |
+| `app.pages.tsx` | `authenticate.admin` ✅ | None | None | Clean |
+| `app.metaobjects.tsx` | `authenticate.admin` ✅ | None | None | Clean |
+| `app.billing.callback.tsx` | `authenticate.admin` ✅ | None (uses `catch (error)` with proper guard) | None | Clean |
+
+---
+
+## 11. useUnifiedContentEditor.ts Inspection
+
+**Status:** ✅ Done (2026-04-06) – No changes needed
+
+### submitAIAction (lines 897–956)
+Uses `fetch` directly (not the Remix fetcher), so parallel AI requests are independent – no race condition. Loading state is tracked per-field via a `Set<string>`. The `finally` block always clears the field key. **No issues.**
+
+### Fetcher-Pending Guard (lines 1165–1172)
+The FIFO queue (`saveQueueRef`) plus `justSubmittedRef` guard correctly prevents concurrent `fetcher.submit()` calls from aborting in-flight saves. The guard checks both `fetcherRef.current.state !== 'idle'` and `justSubmittedRef.current`. **Guard is complete.**
+
+### Remaining `catch (error: any)` blocks
+`grep` found **0** occurrences – already fully cleaned up in Task 7.
+
+---
+
+## 12. Unit Tests
+
+**Status:** ✅ Done (2026-04-06)
+
+- `tests/unit/gdpr.service.test.ts` – Tests for `logGDPRRequest` (happy path, error-status path, customerId BigInt conversion, DB failure resilience)
+- `tests/unit/validation.test.ts` – Tests for `parseJsonBody` (valid body, invalid body, malformed JSON, UpdatePlanSchema, SyncContentQuerySchema)
+
+---
+
 ## Files Modified
 
 | File | Change |
@@ -198,3 +265,7 @@ isFreePlan={plan === 'free'}
 | `app/routes/app.metadata.tsx` | `catch (error: any)` → `unknown` |
 | `app/routes/app.policies.tsx` | `catch (error: any)` → `unknown` |
 | `app/routes/app.settings.tsx` | `catch (error: any)` → `unknown` |
+| `app/services/webhook-registration.service.ts` | 3x `catch (error: any)` → `unknown`; `error.message` guarded |
+| `app/services/shopify-api-gateway.service.ts` | 1x `catch (error: any)` → `unknown`; `error.status` / `error.message` guarded |
+| `tests/unit/gdpr.service.test.ts` | New: unit tests for `logGDPRRequest` |
+| `tests/unit/validation.test.ts` | New: unit tests for `parseJsonBody` |
