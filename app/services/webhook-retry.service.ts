@@ -23,7 +23,7 @@
  * ```
  */
 
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient, type WebhookRetry } from "@prisma/client";
 import { logger } from "../utils/logger.server";
 import { WEBHOOK_CONFIG } from "../config/constants";
 
@@ -33,14 +33,14 @@ export interface WebhookRetryJob {
   id: string;
   shop: string;
   topic: string;
-  payload: any;
+  payload: Record<string, unknown>;
   attempt: number;
   maxAttempts: number;
   nextRetry: Date;
   lastError?: string;
 }
 
-export type WebhookHandler = (payload: any, shop: string) => Promise<void>;
+export type WebhookHandler = (payload: Record<string, unknown>, shop: string) => Promise<void>;
 
 class WebhookRetryService {
   private handlers: Map<string, WebhookHandler> = new Map();
@@ -68,7 +68,7 @@ class WebhookRetryService {
   async scheduleRetry(
     shop: string,
     topic: string,
-    payload: any,
+    payload: Record<string, unknown>,
     error?: Error
   ): Promise<void> {
     try {
@@ -179,7 +179,7 @@ class WebhookRetryService {
   /**
    * Process a single retry attempt
    */
-  private async processRetry(retry: any): Promise<void> {
+  private async processRetry(retry: WebhookRetry): Promise<void> {
     const handler = this.handlers.get(retry.topic);
 
     if (!handler) {

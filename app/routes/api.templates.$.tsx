@@ -254,8 +254,11 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
       }
 
       case "translateAll": {
-        const primaryLocale = formData.get("primaryLocale") as string;
-        const targetLocale = formData.get("targetLocale") as string;
+        const primaryLocale = getFormString(formData, "primaryLocale");
+        const targetLocale = getFormString(formData, "targetLocale");
+        if (!primaryLocale || !targetLocale) {
+          return json({ success: false, error: "Missing required field: primaryLocale or targetLocale" }, { status: 400 });
+        }
 
         // Get all translatable content
         const allContent = themeGroups.flatMap((group) => group.translatableContent as any[]);
@@ -315,13 +318,16 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
       }
 
       case "updateContent": {
-        const locale = formData.get("locale") as string;
-        const primaryLocale = formData.get("primaryLocale") as string;
-        const updatedFieldsJson = formData.get("updatedFields") as string;
+        const locale = getFormString(formData, "locale");
+        const primaryLocale = getFormString(formData, "primaryLocale");
+        const updatedFieldsJson = getFormString(formData, "updatedFields");
+        if (!locale || !primaryLocale || !updatedFieldsJson) {
+          return json({ success: false, error: "Missing required field: locale, primaryLocale, or updatedFields" }, { status: 400 });
+        }
         const updatedFields = safeJsonParse<Record<string, string>>(updatedFieldsJson, {});
 
         // Parse changedFields if present (for translation deletion when primary locale changes)
-        const changedFieldsStr = formData.get("changedFields") as string;
+        const changedFieldsStr = getFormString(formData, "changedFields");
         const changedFields = changedFieldsStr ? safeJsonParse<string[]>(changedFieldsStr, []) : [];
 
         // STEP 1: Register translations with Shopify (only for foreign locales)

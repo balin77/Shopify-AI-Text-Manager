@@ -10,20 +10,30 @@
  */
 
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
+import { PrismaClient } from "@prisma/client";
+import type { AISettings } from "@prisma/client";
 import { authenticate } from "../shopify.server";
 import { logger } from "./logger.server";
+import type { ShopifyGraphQLClient } from "../services/sync-types";
+import type { ShopLocale } from "../types/content-editor.types";
 
 // ============================================================================
 // Types
 // ============================================================================
 
+/** Minimal Prisma model delegate used by incrementalSync */
+interface PrismaModelDelegate {
+  findMany: (args: { where: Record<string, unknown>; select: Record<string, unknown> }) => Promise<{ id: string }[]>;
+  deleteMany: (args: { where: Record<string, unknown> }) => Promise<unknown>;
+}
+
 export interface LoaderContext {
-  admin: any;
-  session: { shop: string; [key: string]: any };
-  db: any;
-  shopLocales: any[];
+  admin: ShopifyGraphQLClient;
+  session: { shop: string; [key: string]: unknown };
+  db: PrismaClient;
+  shopLocales: ShopLocale[];
   primaryLocale: string;
-  aiSettings: any;
+  aiSettings: AISettings | null;
 }
 
 export interface ContentLoaderConfig<T> {
@@ -40,10 +50,10 @@ export interface ContentLoaderConfig<T> {
   loadData: (ctx: LoaderContext) => Promise<{ items: T[]; ids: string[] }>;
 
   /** Optional: extra data to include in the response (e.g. plan, maxProducts) */
-  extraData?: (ctx: LoaderContext) => Promise<Record<string, any>>;
+  extraData?: (ctx: LoaderContext) => Promise<Record<string, unknown>>;
 
   /** Optional: extra fields for the error fallback response */
-  errorFallback?: Record<string, any>;
+  errorFallback?: Record<string, unknown>;
 }
 
 // ============================================================================
@@ -65,7 +75,7 @@ export function createContentLoader<T extends { id: string }>(
         getCachedShopLocales(admin, session.shop),
         loadAISettingsForValidation(db, session.shop),
       ]);
-      const primaryLocale = shopLocales.find((l: any) => l.primary)?.locale || "en";
+      const primaryLocale = shopLocales.find((l: ShopLocale) => l.primary)?.locale || "en";
 
       const ctx: LoaderContext = { admin, session, db, shopLocales, primaryLocale, aiSettings };
 
@@ -73,7 +83,7 @@ export function createContentLoader<T extends { id: string }>(
       const { items, ids } = await config.loadData(ctx);
 
       // Common: load + group translations
-      let translationsByResource: Record<string, any[]> = {};
+      let translationsByResource: Record<string, unknown[]> = {};
       if (config.resourceType && ids.length > 0) {
         const allTranslations = await db.contentTranslation.findMany({
           where: { resourceType: config.resourceType, resourceId: { in: ids } },
@@ -86,7 +96,7 @@ export function createContentLoader<T extends { id: string }>(
       // preserve them. Otherwise, use DB translations.
       const itemsWithTranslations = items.map((item) => ({
         ...item,
-        translations: (item as any).translations || translationsByResource[item.id] || [],
+        translations: (item as { translations?: unknown }).translations || translationsByResource[item.id] || [],
       }));
 
       // Optional: extra data
@@ -133,7 +143,7 @@ export async function incrementalSync(
   ctx: LoaderContext,
   options: {
     shopifyIds: Set<string>;
-    dbModel: any;
+    dbModel: PrismaModelDelegate;
     resourceType: string;
     syncFn: (id: string) => Promise<void>;
     logPrefix: string;
@@ -147,7 +157,7 @@ export async function incrementalSync(
     where: { shop: ctx.session.shop },
     select: { id: true },
   });
-  const localIds = new Set<string>(local.map((r: any) => r.id));
+  const localIds = new Set<string>(local.map((r: { id: string }) => r.id));
 
   // Sync missing items (in Shopify but not in DB)
   const missing = [...options.shopifyIds].filter((id) => !localIds.has(id));

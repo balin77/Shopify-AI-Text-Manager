@@ -16,13 +16,14 @@ export async function action({ request }: ActionFunctionArgs) {
 
   try {
     const formData = await request.formData();
-    const resourceId = formData.get("resourceId") as string;
-    const resourceType = formData.get("resourceType") as string;
-    const locale = formData.get("locale") as string;
+    const { getFormString } = await import("../utils/form-data.utils");
+    const resourceId = getFormString(formData, "resourceId");
+    const resourceType = getFormString(formData, "resourceType");
+    const locale = getFormString(formData, "locale");
 
     if (!resourceId || !resourceType) {
       return json(
-        { success: false, error: "Missing resourceId or resourceType" },
+        { success: false, error: "Missing required field: resourceId or resourceType" },
         { status: 400 }
       );
     }

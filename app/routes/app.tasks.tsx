@@ -20,6 +20,7 @@ import { useI18n } from "../contexts/I18nContext";
 import { getTaskDateRange } from "~/config/constants";
 import { extractReadableName } from "~/utils/templates-field-factory";
 import { logger } from "~/utils/logger.server";
+import { getFormString } from "~/utils/form-data.utils";
 
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -102,7 +103,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const formData = await request.formData();
   const action = formData.get("action");
-  const taskId = formData.get("taskId") as string;
+  const taskId = getFormString(formData, "taskId");
+  if (!taskId) {
+    return json({ success: false, error: "Missing required field: taskId" }, { status: 400 });
+  }
 
   const { db } = await import("../db.server");
 
