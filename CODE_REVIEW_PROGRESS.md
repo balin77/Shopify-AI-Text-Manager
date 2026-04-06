@@ -1,8 +1,8 @@
 # Code Review Progress - ContentPilot
 
-**Branch:** `claude/continue-code-review-cleanup-1xkQF`
+**Branch:** `claude/continue-code-review-cleanup-NWLyp`
 **Started:** 2026-04-06
-**Based on:** CODE_IMPROVEMENTS.md recommendations + previous branch `claude/continue-code-review-progress-1Tlrw`
+**Based on:** prior branch `claude/continue-code-review-cleanup-1xkQF` (Tasks 1–17 completed there)
 
 ---
 
@@ -27,6 +27,11 @@
 | 15. Zod validation on 4 routes | ✅ N/A | Validation is centralized in `handleUnifiedContentActions`; routes just pass formData through |
 | 16. any-Types in Services (top 10) | ✅ Done | `billing.server.ts`, `webhook-registration.service.ts`, `content.service.ts` |
 | 17. Unit Tests (billing + webhook) | ✅ Done | 2 new test files written |
+| 18. any-Types in loader-factory.server.ts | ✅ Done | 8 remaining `: any` replaced with proper types |
+| 19. any-Types in contentEditor.utils.ts | ✅ Done | 11 metaobject-branch `any` patterns replaced via MetaobjectEntry interface |
+| 20. Null-Safety: formData.get() as string | ✅ Done | 12 unsafe casts replaced with getFormString() + 400 guards in 5 routes |
+| 21. any-Types in Gateway + Retry Services | ✅ Done | QueuedRequest typed; WebhookHandler payload typed; processRetry uses Prisma type |
+| 22. Unit Tests (background-sync + gateway) | ✅ Done | 9 new tests across 2 files; all 148 tests pass |
 
 ---
 
@@ -373,3 +378,35 @@ All 139 unit tests pass (9 test files).
 | `app/services/content.service.ts` | `const data: any` / `const shop: any` / `const metafieldsConnection: any` replaced with typed cast |
 | `tests/unit/billing.server.test.ts` | New: unit tests for `checkAndSyncSubscription` |
 | `tests/unit/webhook-registration.service.test.ts` | New: unit tests for `registerProductWebhooks` + retry behaviour |
+| `app/utils/loader-factory.server.ts` | `LoaderContext` typed with `ShopifyGraphQLClient`, `PrismaClient`, `ShopLocale[]`, `AISettings\|null`; `PrismaModelDelegate` interface; `(l:any)`/`(r:any)` removed; `Record<string,any>` → `Record<string,unknown>` |
+| `app/utils/contentEditor.utils.ts` | Added `MetaobjectEntry` interface; replaced 11 `any` usages across 5 metaobject code blocks (selectedItem cast, filter/map callbacks, field access) |
+| `app/routes/api.templates.$.tsx` | 5x `formData.get() as string` → `getFormString()` + 400 guard for `translateAll` and `updateContent` cases |
+| `app/routes/api.sync-single-resource.tsx` | 3x `formData.get() as string` → `getFormString()` + updated error message |
+| `app/routes/api.sync-single-product.tsx` | 1x `formData.get() as string` → `getFormString()` |
+| `app/routes/app.settings.tsx` | `actionType` → `getFormString()` + 400 guard; `getFormString` imported |
+| `app/routes/app.tasks.tsx` | `taskId` → `getFormString()` + 400 guard; `getFormString` imported |
+| `app/services/shopify-api-gateway.service.ts` | `QueuedRequest.variables` → `Record<string,unknown>`; `resolve`/`reject` typed; `graphql()` return → `GraphQLResponse`; `isRateLimitError(data:any)` → `(data:Record<string,unknown>)` with proper element narrowing; `data.errors` cast tightened |
+| `app/services/webhook-retry.service.ts` | `WebhookRetryJob.payload` + `WebhookHandler` param → `Record<string,unknown>`; `scheduleRetry` payload typed; `processRetry(retry:any)` → `(retry:WebhookRetry)` (Prisma type) |
+| `tests/unit/background-sync.service.test.ts` | New: 4 tests for `syncAll()` error isolation — `.catch()` returns 0, never throws |
+| `tests/unit/shopify-api-gateway.service.test.ts` | New: 5 tests — THROTTLED detection + retry, rate-limit message detection, sequential queue processing, MAX_RETRIES rejection |
+
+---
+
+## 22. Unit Tests — background-sync + gateway (Branch: NWLyp)
+
+**Status:** ✅ Done (2026-04-06)
+
+### tests/unit/background-sync.service.test.ts (4 tests)
+- All four content types succeed → totals aggregated correctly
+- One type (pages) fails → `pages: 0`, rest still complete, no throw
+- Multiple types fail simultaneously → all → 0, remaining type's count preserved
+- `stats.duration` is a non-negative number
+
+### tests/unit/shopify-api-gateway.service.test.ts (5 tests)
+- THROTTLED extension code detected → request retried (2 admin.graphql calls)
+- "rate limit" in error message → request retried (2 calls)
+- No rate-limit error → resolves on first call
+- Sequential queue: 3 requests called in order [1, 2, 3], never concurrently
+- MAX_RETRIES (3) exhausted on persistent error → rejects; 4 total calls (1+3)
+
+**All 148 unit tests pass.**
