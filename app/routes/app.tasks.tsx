@@ -19,6 +19,7 @@ import { MainNavigation } from "../components/MainNavigation";
 import { useI18n } from "../contexts/I18nContext";
 import { getTaskDateRange } from "~/config/constants";
 import { extractReadableName } from "~/utils/templates-field-factory";
+import { logger } from "~/utils/logger.server";
 
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -86,7 +87,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       }
     });
   } catch (error: any) {
-    console.error("Failed to load tasks:", error);
+    logger.error("Failed to load tasks", { context: "TasksRoute", error: (error as Error).message });
     return json({
       tasks: [],
       shop: session.shop,
@@ -113,7 +114,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
       return json({ success: true });
     } catch (error: any) {
-      console.error("Failed to cancel task:", error);
+      logger.error("Failed to cancel task", { context: "TasksRoute", taskId, error: (error as Error).message });
       return json({ success: false, error: "An internal error occurred" }, { status: 500 });
     }
   }
@@ -125,7 +126,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
       return json({ success: true });
     } catch (error: any) {
-      console.error("Failed to delete task:", error);
+      logger.error("Failed to delete task", { context: "TasksRoute", taskId, error: (error as Error).message });
       return json({ success: false, error: "An internal error occurred" }, { status: 500 });
     }
   }

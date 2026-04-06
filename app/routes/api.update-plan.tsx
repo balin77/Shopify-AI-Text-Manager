@@ -6,13 +6,10 @@
 import { type ActionFunctionArgs, json } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
-import { isValidPlan, type Plan, getPlanLimits } from "../utils/planUtils";
+import { type Plan, getPlanLimits } from "../utils/planUtils";
 import { cleanupCacheForPlan, getCacheStats, type CleanupStats } from "../utils/planCacheCleanup";
 import { logger } from "~/utils/logger.server";
-
-interface UpdatePlanRequest {
-  plan: string;
-}
+import { parseJsonBody, UpdatePlanSchema } from "~/utils/validation";
 
 interface UpdatePlanResponse {
   success: boolean;
@@ -29,20 +26,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   try {
     const { session, admin } = await authenticate.admin(request);
 
-    const body = (await request.json()) as UpdatePlanRequest;
-    const { plan: newPlan } = body;
-
-    // Validate plan
-    if (!isValidPlan(newPlan)) {
-      logger.error("[API/UpdatePlan] Invalid plan", { context: "UpdatePlan", plan: newPlan });
-      return json(
-        {
-          success: false,
-          error: `Invalid plan: ${newPlan}. Must be one of: free, basic, pro, max`,
-        },
-        { status: 400 }
-      );
+    const parsed = await parseJsonBody(request, UpdatePlanSchema);
+    if (!parsed.success) {
+      logger.error("[API/UpdatePlan] Invalid request body", { context: "UpdatePlan", error: parsed.error });
+      return json({ success: false, error: parsed.error }, { status: parsed.status });
     }
+    const { plan: newPlan } = parsed.data;
 
     // Get current plan and product count
     const currentSettings = await db.aISettings.findUnique({
