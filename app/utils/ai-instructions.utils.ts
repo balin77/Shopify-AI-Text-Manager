@@ -101,6 +101,50 @@ export function getInstructionWithDefault(
 }
 
 /**
+ * Get character limit requirements for a field based on its aiInstructionsKey.
+ * Used to inject length constraints into AI prompts.
+ */
+export function getCharacterLimitRequirement(aiInstructionsKey: string): string | null {
+  const limits: Record<string, string> = {
+    // Titles: 30-70 characters
+    productTitle: "30-70 characters",
+    collectionTitle: "30-70 characters",
+    blogTitle: "30-70 characters",
+    pageTitle: "30-70 characters",
+
+    // Descriptions: minimum 150 characters
+    productDescription: "minimum 150 characters",
+    collectionDescription: "minimum 150 characters",
+    blogDescription: "minimum 150 characters",
+    pageDescription: "minimum 150 characters",
+    policyDescription: "minimum 150 characters",
+
+    // SEO Titles: max 60 characters
+    productSeoTitle: "maximum 60 characters",
+    collectionSeoTitle: "maximum 60 characters",
+    blogSeoTitle: "maximum 60 characters",
+    pageSeoTitle: "maximum 60 characters",
+
+    // Meta Descriptions: 120-160 characters
+    productMetaDesc: "120-160 characters",
+    collectionMetaDesc: "120-160 characters",
+    blogMetaDesc: "120-160 characters",
+    pageMetaDesc: "120-160 characters",
+
+    // URL Handles (slugs): 50-70 characters
+    productHandle: "50-70 characters",
+    collectionHandle: "50-70 characters",
+    blogHandle: "50-70 characters",
+    pageHandle: "50-70 characters",
+
+    // Alt Text: 100-125 characters (optimal for screen readers)
+    productAltText: "100-125 characters",
+  };
+
+  return limits[aiInstructionsKey] || null;
+}
+
+/**
  * Convenience helper to get writing style instructions with default fallback.
  * This is the most commonly used instruction that should ALWAYS be included in prompts.
  *

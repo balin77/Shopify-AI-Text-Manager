@@ -111,6 +111,7 @@ export class AIQueueService {
    * Update rate limits from database settings
    */
   async updateRateLimits(settings: any) {
+    if (!settings) return;
     if (settings.hfMaxTokensPerMinute && settings.hfMaxRequestsPerMinute) {
       this.rateLimits.set('huggingface', {
         maxTokensPerMinute: settings.hfMaxTokensPerMinute,
