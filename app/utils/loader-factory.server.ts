@@ -76,7 +76,7 @@ export function createContentLoader<T extends { id: string }>(
       let translationsByResource: Record<string, any[]> = {};
       if (config.resourceType && ids.length > 0) {
         const allTranslations = await db.contentTranslation.findMany({
-          where: { resourceType: config.resourceType, resourceId: { in: ids } },
+          where: { shop: session.shop, resourceType: config.resourceType, resourceId: { in: ids } },
         });
         translationsByResource = groupBy(allTranslations, "resourceId");
       }

@@ -1,17 +1,19 @@
 # Technical Debt & Future Improvements
 
-**Last Updated:** 2026-02-15
-**Source:** Code Reviews #1–#4 (Claude Code)
+**Last Updated:** 2026-04-05
+**Source:** Code Reviews #1–#5 (Claude Code)
 
 ---
 
 ## Zusammenfassung
 
-Dieses Dokument erfasst alle technischen Schulden und geplanten Verbesserungen, die aus vier Code-Reviews identifiziert wurden. Kritische und hohe Issues wurden bereits behoben. Die verbleibenden Punkte sind bewusst aufgeschoben und hier dokumentiert.
+Dieses Dokument erfasst alle technischen Schulden und geplanten Verbesserungen aus fünf Code-Reviews. Kritische Security-Issues, alle hohen und mittleren Prioritäten wurden vollständig behoben. Von den mittleren Refactoring-Items steht noch die vollständige Integration des `useUnifiedContentEditor`-Refactorings aus (Sub-Hooks wurden extrahiert und werden gerade eingebunden).
 
 ---
 
-## Erledigte Issues (Reviews #1–#4)
+## Erledigte Issues
+
+### Reviews #1–#4 (Architektur & Datenintegrität)
 
 | Issue | Commit | Status |
 |-------|--------|--------|
@@ -37,151 +39,85 @@ Dieses Dokument erfasst alle technischen Schulden und geplanten Verbesserungen, 
 | Failed Locales als Warnings | `d9b1724` | Behoben |
 | Batch DB Deletes | `9244c38` | Behoben |
 
+### Review #5 (Security, Performance & Refactoring)
+
+| Issue | Commit | Status |
+|-------|--------|--------|
+| XSS: `dangerouslySetInnerHTML` ohne Sanitization (5 Dateien) | — | Behoben |
+| TypeScript: `any`-Typen durch Interfaces ersetzt (15+ Stellen) | — | Behoben |
+| Neue Typdatei `src/types/shopify-graphql.types.ts` erstellt | — | Behoben |
+| `Promise.all` → `Promise.allSettled` in ai-queue.service.ts | — | Behoben |
+| TODOs/Hardcoded Plan-Werte in UnifiedContentEditor.tsx | — | Behoben |
+| Memory Leak: Unbegrenzte Shop-Queue in ai-queue.service.ts | — | Behoben |
+| Adaptive Queue-Polling (100ms fix → 100ms/1s adaptiv) | — | Behoben |
+| Regex-Berechnungen ohne useMemo (AISuggestionBanner, AISuggestionBox) | — | Behoben |
+| Cursor-Wiederherstellung nach Sanitization (AIEditableHTMLField) | — | Behoben |
+| Defense-in-Depth: `shop`-Spalte auf ContentTranslation | `7c388c9`, `9c50dba` | Behoben |
+| Product-Sync: Error-Heuristik (absolut → prozentual) | `7c388c9` | Behoben |
+| Theme-Sync: Health-Check gegen API-Ausfall | `7c388c9` | Behoben |
+| DB-Only Translations: Warning an UI zurückgeben | `7c388c9` | Behoben |
+| useEditorAutoSave extrahiert und in useUnifiedContentEditor integriert | `7c388c9`, aktuell | Behoben |
+| useEditorAltText extrahiert und in useUnifiedContentEditor integriert | `9c50dba`, aktuell | Behoben |
+
 ---
 
 ## Offene Items
 
-### 1. Defense-in-Depth: `shop`-Spalte auf ContentTranslation
+### 1. Refactoring: useUnifiedContentEditor.ts — Integration der Sub-Hooks
 
 **Priorität:** Mittel
-**Aufwand:** ~2–4 Stunden (Schema-Migration + Code-Anpassungen)
-**Risiko aktuell:** Gering (Shopify GIDs sind plattformweit einzigartig)
-
-#### Problem
-
-Das `ContentTranslation`-Model hat keine `shop`-Spalte. Die Multi-Tenant-Isolation erfolgt ausschliesslich über `resourceId` (Shopify GID). Laut Shopify-Community sind GIDs "unique across the platform" ([Quelle](https://community.shopify.com/c/Shopify-APIs-and-SDKs/Uniqueness-of-ID-data-across-multiple-shopify-stores/m-p/1302048)), es gibt aber **keine offizielle Garantie** für alle Ressourcentypen (Pages, ShopPolicies).
-
-> "if you didn't build the system just assume they aren't because 'should be' isn't engineering"
-> — Shopify Community
-
-#### Aktueller Stand
-
-- `ContentTranslation` hat: `resourceId`, `resourceType`, `key`, `value`, `locale`, `digest`
-- Kein `shop`-Feld vorhanden
-- Alle Queries die `stalePageIds`/`stalePolicyIds` verwenden sind indirekt shop-scoped (IDs kommen aus vorherigen shop-gefilterten Queries)
-- Kommentare im Code dokumentieren diese Design-Entscheidung
-
-#### Empfohlene Umsetzung
-
-1. Prisma-Schema erweitern:
-   ```prisma
-   model ContentTranslation {
-     // ... bestehende Felder
-     shop String  // NEU
-
-     @@unique([resourceId, key, locale])
-     @@index([shop, resourceType])  // NEU
-   }
-   ```
-2. Migration ausführen mit Default-Wert aus Parent-Ressource
-3. Alle `contentTranslation`-Queries um `shop`-Filter erweitern
-4. Unique Constraint anpassen: `@@unique([shop, resourceId, key, locale])`
-
-#### Quellen
-
-- [Global IDs in Shopify APIs — Offizielle Doku](https://shopify.dev/docs/api/usage/gids)
-- [Uniqueness of ID data across multiple stores](https://community.shopify.com/c/Shopify-APIs-and-SDKs/Uniqueness-of-ID-data-across-multiple-shopify-stores/m-p/1302048)
-- [Are product IDs universally unique?](https://community.shopify.com/c/technical-q-a/are-product-ids-universally-unique/m-p/1201549)
-
----
-
-### 2. Refactoring: useUnifiedContentEditor.ts
-
-**Priorität:** Mittel
-**Aufwand:** ~1–2 Tage
+**Aufwand:** ~0.5 Tage
 **Risiko aktuell:** Wartbarkeit (keine funktionalen Bugs)
 
-#### Problem
+#### Stand der extrahierten Hooks
 
-Die Datei hat 3.400+ Zeilen und verwaltet 25+ Verantwortlichkeiten:
-- Editor State Management
-- AI Actions (Generate, Translate, Alt-Text)
-- Translation Workflows (Accept & Translate, Translate All)
-- Change Detection & Auto-Save
-- Image Alt-Text Management
-- Locale Navigation
-- Fallback Field Handling
+| Hook | Datei | Zeilen | Status |
+|------|-------|--------|--------|
+| `useEditorAutoSave` | `app/hooks/useEditorAutoSave.ts` | 296 | ✅ Extrahiert und integriert |
+| `useEditorAltText` | `app/hooks/useEditorAltText.ts` | 747 | ✅ Extrahiert und integriert |
+| `useEditorState` | — | ~400 | Ausstehend |
+| `useEditorTranslations` | — | ~800 | Ausstehend |
+| `useEditorAI` | — | ~400 | Ausstehend |
+| `useEditorLocale` | — | ~200 | Ausstehend |
 
-#### Empfohlene Aufteilung
+#### Integrationsstrategie (Ref-Forwarding-Pattern)
 
-| Neuer Hook | Verantwortung | Geschätzte Zeilen |
-|------------|---------------|-------------------|
-| `useEditorState` | State, Refs, Initialisierung | ~400 |
-| `useEditorTranslations` | Translate, Accept & Translate, Translate All | ~800 |
-| `useEditorAI` | AI Generate, AI Instructions | ~400 |
-| `useEditorAltText` | Alt-Text Generate, Translate, Save | ~500 |
-| `useEditorAutoSave` | Change Detection, Debounced Save | ~300 |
-| `useEditorLocale` | Locale Navigation, Dirty Check | ~200 |
-| `useUnifiedContentEditor` | Orchestrator (kombiniert die Hooks) | ~300 |
-
-#### Voraussetzungen
-
-- Alle aktuellen Bugs müssen vorher behoben sein (erledigt)
-- `useLatestRef` Pattern ist bereits extrahiert (erledigt)
-- State/Ref Duplizierung ist reduziert (erledigt)
-
----
-
-### 3. Product-Sync: Error-Heuristik verbessern
-
-**Priorität:** Niedrig
-**Aufwand:** ~30 Minuten
-**Risiko aktuell:** Gering
-
-#### Problem
-
-`product-sync.service.ts` Zeile ~174 verwendet eine hardcodierte Heuristik:
+Da `useEditorAltText` `buildFieldsForSave`/`safeSubmit` benötigt, diese aber erst nach dem Hook-Aufruf definiert werden können, werden Forwarding-Refs als Platzhalter eingesetzt:
 
 ```typescript
-if (publishedLocales.length >= 2 && translationResult.errorCount >= 2) {
-  throw new Error(...);
-}
+const buildFieldsForSaveRef = useRef<(v: Record<string,string>, l: string) => Record<string,string>>(() => ({}));
+const safeSubmitRef = useRef<(data: Record<string,any>, opts?: any) => void>(() => {});
+const submitAIActionRef = useRef<(...args: any[]) => void>(async () => {});
 ```
 
-Dieses Abbruch-Kriterium basiert auf absoluten Zahlen statt auf Prozenten. Bei 10 Locales und 2 Fehlern (20%) wird abgebrochen, bei 3 Locales und 2 Fehlern (67%) ebenfalls — obwohl die Situationen sehr unterschiedlich sind.
-
-#### Empfohlene Lösung
-
-Prozentualen Schwellenwert verwenden (z.B. 50% der Locales fehlgeschlagen = Abbruch):
-
+Nach Definition der echten Funktionen werden die Refs befüllt:
 ```typescript
-const failureRate = translationResult.errorCount / publishedLocales.length;
-if (publishedLocales.length >= 2 && failureRate >= 0.5) {
-  throw new Error(...);
-}
+buildFieldsForSaveRef.current = buildFieldsForSave;
+safeSubmitRef.current = safeSubmit;
+submitAIActionRef.current = submitAIAction;
 ```
 
----
+#### Noch ausstehende Hooks
 
-### 4. Theme-Sync: Health-Check fehlt
-
-**Priorität:** Niedrig
-**Aufwand:** ~15 Minuten
-
-#### Problem
-
-Pages und Policies haben Health-Checks die verhindern, dass bei einem API-Ausfall alle lokalen Daten gelöscht werden. `syncAllThemes()` hat diesen Schutz noch **nicht**.
-
-#### Empfohlene Lösung
-
-Gleiche Pattern wie bei Pages/Policies implementieren:
-- Prüfen ob Shopify-API Fehler zurückgibt → abbrechen
-- Prüfen ob 0 Themes zurückkommen aber lokal welche existieren → abbrechen
+Für die verbleibenden Hooks (`useEditorState`, `useEditorTranslations`, `useEditorAI`, `useEditorLocale`) ist eine ähnliche Extraktion geplant. Voraussetzung: Die Integration von `useEditorAutoSave` und `useEditorAltText` muss stabil laufen.
 
 ---
 
-### 5. DB-Only Translations: User-Feedback
+### 2. Logging Konsolidierung
 
 **Priorität:** Niedrig
-**Aufwand:** ~30 Minuten
+**Aufwand:** ~2–4 Stunden
 
-#### Problem
+467 `console.*`-Aufrufe sollten durch einen zentralen Logger ersetzt werden (strukturierte Logs, Log-Level-Kontrolle).
 
-Wenn `shopify-content.service.ts` keine Shopify-Digest für ein Feld hat, wird die Übersetzung nur lokal in der DB gespeichert, aber **nicht** an Shopify gesendet. Der User sieht die Übersetzung im UI (aus der DB), aber beim nächsten Sync geht sie verloren.
+---
 
-#### Empfohlene Lösung
+### 3. Input Validation mit Zod
 
-`updateContent()` sollte im Response markieren, welche Felder nur lokal gespeichert wurden, damit das UI eine Warnung anzeigen kann.
+**Priorität:** Niedrig
+**Aufwand:** ~1 Tag
+
+Alle API-Routen sollten Zod-Schemas für Input-Validierung erhalten.
 
 ---
 
@@ -190,3 +126,6 @@ Wenn `shopify-content.service.ts` keine Shopify-Digest für ein Feld hat, wird d
 | Datum | Änderung |
 |-------|----------|
 | 2026-02-15 | Initiales Dokument aus Code Reviews #1–#4 erstellt |
+| 2026-04-05 | Items 1, 3, 4, 5 (Review #5) abgeschlossen; Sub-Hooks extrahiert; Integrationsplan dokumentiert |
+| 2026-04-05 | CODE_IMPROVEMENTS.md zusammengeführt; Review #5 Items in Erledigte-Tabelle aufgenommen |
+| 2026-04-06 | `useEditorAutoSave` und `useEditorAltText` in `useUnifiedContentEditor` integriert (Ref-Forwarding-Pattern) |

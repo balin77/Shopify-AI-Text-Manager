@@ -44,6 +44,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     const translations = await db.contentTranslation.findMany({
       where: {
+        shop: session.shop,
         resourceId: productId,
         resourceType: "Product",
       },

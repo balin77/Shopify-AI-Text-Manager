@@ -64,7 +64,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         // Delete in transaction for consistency
         await db.$transaction([
           db.contentTranslation.deleteMany({
-            where: { resourceId: { in: productIds }, resourceType: "Product" },
+            where: { shop, resourceId: { in: productIds }, resourceType: "Product" },
           }),
           db.productImage.deleteMany({
             where: { productId: { in: productIds } },

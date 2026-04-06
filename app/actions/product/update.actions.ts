@@ -738,8 +738,9 @@ async function updateTranslatedProduct(
       for (const translation of [...translationsInput, ...dbOnlyTranslations]) {
         await tx.contentTranslation.upsert({
           where: {
-            // Unique constraint is: @@unique([resourceId, key, locale])
-            resourceId_key_locale: {
+            // Unique constraint is: @@unique([shop, resourceId, key, locale])
+            shop_resourceId_key_locale: {
+              shop: product.shop,
               resourceId: productId,
               key: translation.key,
               locale: translation.locale,
@@ -751,6 +752,7 @@ async function updateTranslatedProduct(
             resourceType: "Product", // Update resourceType in case it changed
           },
           create: {
+            shop: product.shop,
             resourceId: productId,
             resourceType: "Product",
             key: translation.key,
