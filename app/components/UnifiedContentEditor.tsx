@@ -22,6 +22,7 @@ import { HelpTooltip } from "./HelpTooltip";
 import { SeoSidebar } from "./SeoSidebar";
 import { useNavigationHeight } from "../contexts/NavigationHeightContext";
 import { usePlan } from "../contexts/PlanContext";
+import { getPlanDisplayName as getPlanDisplayNameUtil } from "../utils/planUtils";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { useItemSelector } from "../contexts/ItemSelectorContext";
 import { contentEditorStyles, getLocalizedLanguageName, hasPrimaryContentMissing, getLocaleButtonTooltip } from "../utils/contentEditor.utils";
@@ -151,7 +152,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   }, [fieldPagination?.search]);
 
   const { state, handlers, selectedItem, navigationGuard, helpers, effectiveFieldDefinitions } = editor;
-  const { getMaxProducts } = usePlan();
+  const { plan, getMaxProducts, getNextPlanUpgrade } = usePlan();
   const { showInfoBox } = useInfoBox();
   const { registerItems, clearItems } = useItemSelector();
 
@@ -250,11 +251,12 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
 
   // Plan limit configuration
   const maxItems = getMaxProducts(); // This works for all content types
+  const nextPlan = getNextPlanUpgrade();
   const defaultPlanLimit = {
     isAtLimit: items.length >= maxItems && maxItems !== Infinity,
     maxItems,
-    currentPlan: "current", // TODO: Get from plan context
-    nextPlan: "Pro", // TODO: Get from plan context
+    currentPlan: getPlanDisplayNameUtil(plan),
+    nextPlan: nextPlan ? getPlanDisplayNameUtil(nextPlan) : undefined,
   };
   const finalPlanLimit = planLimit || defaultPlanLimit;
 
@@ -946,6 +948,7 @@ function FieldRenderer(props: FieldRendererProps & { state?: any; handlers?: any
     fetcherState,
     fetcherFormData,
   } = props;
+  const { plan } = usePlan();
 
   // Image AI actions: split into "all locales" vs "per locale" (same pattern as text fields)
   const IMAGE_ALL_LOCALES_ACTIONS = [
@@ -1055,7 +1058,7 @@ function FieldRenderer(props: FieldRendererProps & { state?: any; handlers?: any
         currentLanguage={currentLanguage}
         primaryLocale={primaryLocale}
         isPrimaryLocale={isPrimaryLocale}
-        isFreePlan={false} // TODO: Get from plan context
+        isFreePlan={plan === 'free'}
         altTexts={state.imageAltTexts}
         onAltTextChange={handlers.handleAltTextChange}
         onGenerateAltText={handlers.handleGenerateAltText}

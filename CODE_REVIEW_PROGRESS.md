@@ -84,6 +84,44 @@
 
 ---
 
+---
+
+## 4. Bug Fix: Hardcoded Plan Values in UnifiedContentEditor
+
+**Status:** ✅ Fixed (2026-04-06)
+
+**Issue:** `CODE_IMPROVEMENTS.md` listed this as fixed, but the 3 hardcoded TODO values were still present in production code. This caused:
+- Plan limit dialogs always showing "current" as plan name instead of the real plan
+- Upgrade prompts always suggesting "Pro" regardless of the user's actual plan
+- `isFreePlan` always `false`, bypassing free-plan feature gates for image alt-text generation
+
+**Root cause:** `FieldRenderer` is a separate component inside `UnifiedContentEditor.tsx` and does not inherit the parent's `usePlan()` call.
+
+**Files fixed:**
+- `app/components/UnifiedContentEditor.tsx`
+
+**Changes:**
+```tsx
+// BEFORE (broken)
+currentPlan: "current",      // TODO: Get from plan context
+nextPlan: "Pro",             // TODO: Get from plan context
+isFreePlan={false}           // TODO: Get from plan context
+
+// AFTER (correct)
+import { getPlanDisplayName as getPlanDisplayNameUtil } from "../utils/planUtils";
+
+// In UnifiedContentEditor:
+const { plan, getMaxProducts, getNextPlanUpgrade } = usePlan();
+currentPlan: getPlanDisplayNameUtil(plan),
+nextPlan: nextPlan ? getPlanDisplayNameUtil(nextPlan) : undefined,
+
+// In FieldRenderer (separate component):
+const { plan } = usePlan();
+isFreePlan={plan === 'free'}
+```
+
+---
+
 ## Files Modified
 
 | File | Change |
@@ -95,3 +133,4 @@
 | `app/routes/api.sync-content.tsx` | Replaced raw string split with `SyncContentQuerySchema.safeParse()` |
 | `vitest.config.ts` | Added `coverage` configuration with v8 provider and thresholds |
 | `package.json` / `package-lock.json` | Added `@vitest/coverage-v8` devDependency |
+| `app/components/UnifiedContentEditor.tsx` | Fixed 3 hardcoded plan values; added `usePlan()` to `FieldRenderer` |
