@@ -30,7 +30,8 @@ import { useI18n } from "../contexts/I18nContext";
 import { ENABLE_THEME_PRIMARY_EDIT } from "../config/constants";
 import { isMetaobjectLabelField } from "../constants/shopifyFields";
 import "../styles/UnifiedContentEditor.css";
-import type { ContentEditorConfig, UseContentEditorReturn, FieldDefinition } from "../types/content-editor.types";
+import type { ContentEditorConfig, UseContentEditorReturn, FieldDefinition, TranslatableContentItem, ShopLocale } from "../types/content-editor.types";
+import type { Translation as I18nTranslation } from "~/i18n/de";
 import type { UnifiedItem, SortOption } from "./unified/UnifiedItemList";
 
 interface UnifiedContentEditorProps {
@@ -38,10 +39,10 @@ interface UnifiedContentEditorProps {
   config: ContentEditorConfig;
 
   /** Items to display in the list */
-  items: any[];
+  items: TranslatableContentItem[];
 
   /** Shop locales */
-  shopLocales: any[];
+  shopLocales: ShopLocale[];
 
   /** Primary locale */
   primaryLocale: string;
@@ -56,13 +57,13 @@ interface UnifiedContentEditorProps {
   fetcherFormData: FormData | undefined;
 
   /** Translation function */
-  t: any;
+  t: I18nTranslation;
 
   /** Optional: Custom render for sidebar */
-  renderSidebar?: (item: any, editableValues: Record<string, string>) => React.ReactNode;
+  renderSidebar?: (item: TranslatableContentItem, editableValues: Record<string, string>) => React.ReactNode;
 
   /** Optional: Custom render for list item */
-  renderListItem?: (item: any, isSelected: boolean) => React.ReactNode;
+  renderListItem?: (item: TranslatableContentItem, isSelected: boolean) => React.ReactNode;
 
   /** Optional: Hide images in item list */
   hideItemListImages?: boolean;
@@ -905,12 +906,12 @@ interface FieldRendererProps {
   onClear?: () => void;
   htmlMode: "html" | "rendered";
   onToggleHtmlMode: () => void;
-  shopLocales: any[];
+  shopLocales: ShopLocale[];
   currentLanguage: string;
   primaryLocale: string;
-  selectedItem: any;
+  selectedItem: TranslatableContentItem;
   contentType: string;
-  t: any;
+  t: I18nTranslation;
 }
 
 function FieldRenderer(props: FieldRendererProps & { state?: any; handlers?: any; fetcherState?: string; fetcherFormData?: FormData }) {

@@ -308,8 +308,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         grokApiKey: decryptApiKey(settings.grokApiKey) || "",
         deepseekApiKey: decryptApiKey(settings.deepseekApiKey) || "",
       };
-    } catch (error: any) {
-      logger.error("[SETTINGS LOADER] Decryption error", { context: "Settings", error: error?.message });
+    } catch (error: unknown) {
+      logger.error("[SETTINGS LOADER] Decryption error", { context: "Settings", error: error instanceof Error ? error.message : String(error) });
       // If decryption fails, return empty keys
       decryptedKeys = {
         huggingfaceApiKey: "",

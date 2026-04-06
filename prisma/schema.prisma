@@ -509,3 +509,22 @@ model MetaobjectTranslation {
   @@index([shop, type, locale]) // For efficient type-specific locale queries
   @@index([locale])
 }
+
+/// Persistent audit trail for GDPR compliance requests.
+/// Entries must be retained for at least 3 years (Art. 5(2) GDPR accountability).
+model GdprAuditLog {
+  id              String   @id @default(cuid())
+  shop            String
+  requestType     String   // "data_request" | "customer_redact" | "shop_redact"
+  customerId      BigInt?
+  customerEmail   String?
+  status          String   // "completed" | "failed"
+  dataExported    String?  @db.Text // JSON summary, truncated to 500 chars
+  error           String?  @db.Text
+  requestedAt     DateTime @default(now())
+  completedAt     DateTime @default(now())
+
+  @@index([shop])
+  @@index([shop, requestType])
+  @@index([requestedAt])
+}

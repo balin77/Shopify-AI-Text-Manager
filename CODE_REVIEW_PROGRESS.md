@@ -1,6 +1,6 @@
 # Code Review Progress - ContentPilot
 
-**Branch:** `claude/continue-code-review-progress-PHSBB`
+**Branch:** `claude/continue-code-review-progress-1Tlrw`
 **Started:** 2026-04-06
 **Based on:** CODE_IMPROVEMENTS.md recommendations
 
@@ -13,6 +13,10 @@
 | 1. Logging Consolidation | ✅ Done | Replaced server-side `console.*` in `app.tasks.tsx` |
 | 2. Input Validation (Zod) | ✅ Done | Schemas + `parseJsonBody` helper; applied to `api.update-plan.tsx` and `api.sync-content.tsx` |
 | 3. Test Coverage Config | ✅ Done | `@vitest/coverage-v8` installed; thresholds set at 20% |
+| 4. Bug Fix: Hardcoded Plan Values | ✅ Done | Fixed in `UnifiedContentEditor.tsx` |
+| 5. GDPR Audit Log | ✅ Done | `GdprAuditLog` DB table + persistent logging in `gdpr.service.ts` |
+| 6. Template Handlers | ✅ Done | AI/translate handlers in `app.content.tsx` submit to `/app/templates` action |
+| 7. any-Type Cleanup | ✅ Done | 23x `catch (error: any)` → `unknown` in routes; `UnifiedContentEditor` props typed |
 
 ---
 
@@ -122,15 +126,75 @@ isFreePlan={plan === 'free'}
 
 ---
 
+---
+
+## 5. GDPR Audit Log
+
+**Status:** ✅ Done (2026-04-06)
+
+**Issue:** `logGDPRRequest()` in `gdpr.service.ts:290` only logged to Winston but never persisted to the database, violating GDPR Art. 5(2) accountability requirements (3-year retention).
+
+**Changes:**
+- `prisma/schema.prisma` – Added `GdprAuditLog` model with indexes on `shop`, `requestType`, `requestedAt`
+- `prisma/migrations/20260406085834_add_gdpr_audit_log/migration.sql` – Migration SQL
+- `app/services/gdpr.service.ts` – `logGDPRRequest()` now calls `db.gdprAuditLog.create()` after logging; `dataExported` param typed as `unknown` instead of `any`
+
+---
+
+## 6. Template Handlers in app.content.tsx
+
+**Status:** ✅ Done (2026-04-06)
+
+**Issue:** `handleGenerateAI`, `handleTranslate`, `handleTranslateAll` in `app.content.tsx:231-245` were empty stubs with TODO comments.
+
+**Solution:** Implemented handlers to submit form data to the existing `/app/templates` action (which already has full AI + translation logic). Added a `useEffect` that reads `fetcher.data` to update `aiSuggestions` and `editableValues` from the action responses.
+
+**Files changed:**
+- `app/routes/app.content.tsx`
+
+---
+
+## 7. any-Type Cleanup
+
+**Status:** ✅ Done (2026-04-06)
+
+**Issue:** 23x `catch (error: any)` in route files; `UnifiedContentEditor` had `items: any[]`, `shopLocales: any[]`, `t: any` props.
+
+**Changes:**
+- All `catch (error: any)` → `catch (error: unknown)` in 19 route files; `error.message`/`error.stack` accesses wrapped with `instanceof Error` guards
+- `app/components/UnifiedContentEditor.tsx` – `items: TranslatableContentItem[]`, `shopLocales: ShopLocale[]`, `t: I18nTranslation`; same for `FieldRendererProps`; added proper imports
+
+---
+
 ## Files Modified
 
 | File | Change |
 |------|--------|
-| `CODE_REVIEW_PROGRESS.md` | Created (this file) |
-| `app/routes/app.tasks.tsx` | Replaced 3x `console.error` with `logger.error` |
+| `CODE_REVIEW_PROGRESS.md` | Created + updated (this file) |
+| `app/routes/app.tasks.tsx` | Replaced `console.error` with `logger.error`; `catch (error: any)` → `unknown` |
 | `app/utils/validation.ts` | Added `AIRequestBaseSchema`, `AITranslateFieldSchema`, `SyncContentQuerySchema`, `UpdatePlanSchema`, `parseJsonBody()` |
 | `app/routes/api.update-plan.tsx` | Replaced manual plan validation with `parseJsonBody(request, UpdatePlanSchema)` |
-| `app/routes/api.sync-content.tsx` | Replaced raw string split with `SyncContentQuerySchema.safeParse()` |
+| `app/routes/api.sync-content.tsx` | Replaced raw string split with `SyncContentQuerySchema.safeParse()`; `catch` → `unknown` |
 | `vitest.config.ts` | Added `coverage` configuration with v8 provider and thresholds |
 | `package.json` / `package-lock.json` | Added `@vitest/coverage-v8` devDependency |
-| `app/components/UnifiedContentEditor.tsx` | Fixed 3 hardcoded plan values; added `usePlan()` to `FieldRenderer` |
+| `app/components/UnifiedContentEditor.tsx` | Fixed hardcoded plan values; `usePlan()` in `FieldRenderer`; typed props |
+| `prisma/schema.prisma` | Added `GdprAuditLog` model |
+| `prisma/migrations/20260406085834_add_gdpr_audit_log/migration.sql` | Migration for `GdprAuditLog` table |
+| `app/services/gdpr.service.ts` | `logGDPRRequest()` persists to DB; typed `error` param |
+| `app/routes/app.content.tsx` | Implemented template AI/translate handlers; `catch` → `unknown` |
+| `app/routes/api.metaobjects.$.tsx` | `catch (error: any)` → `unknown` |
+| `app/routes/api.templates.$.tsx` | `catch (error: any)` → `unknown` |
+| `app/routes/api.sync-single-product.tsx` | `catch (error: any)` → `unknown` |
+| `app/routes/api.sync-products.tsx` | `catch (error: any)` → `unknown` |
+| `app/routes/api.sync-missing-products.tsx` | `catch (error: any)` → `unknown` (3 blocks) |
+| `app/routes/api.sync-all-stream.tsx` | `catch (error: any)` → `unknown` |
+| `app/routes/api.sync-single-resource.tsx` | `catch (error: any)` → `unknown` |
+| `app/routes/api.product-images.tsx` | `catch (error: any)` → `unknown` |
+| `app/routes/api.setup-webhooks.tsx` | `catch (error: any)` → `unknown` |
+| `app/routes/webhooks.products.tsx` | `catch (error: any)` → `unknown` |
+| `app/routes/webhooks.collections.tsx` | `catch (error: any)` → `unknown` |
+| `app/routes/webhooks.menus.tsx` | `catch (error: any)` → `unknown` |
+| `app/routes/webhooks.articles.tsx` | `catch (error: any)` → `unknown` |
+| `app/routes/app.metadata.tsx` | `catch (error: any)` → `unknown` |
+| `app/routes/app.policies.tsx` | `catch (error: any)` → `unknown` |
+| `app/routes/app.settings.tsx` | `catch (error: any)` → `unknown` |

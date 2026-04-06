@@ -438,8 +438,9 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
       default:
         return json({ success: false, error: "Unknown action" }, { status: 400 });
     }
-  } catch (error: any) {
-    logger.error("[API-TEMPLATES-ACTION] Error", { context: "Templates", error: error.message, stack: error.stack });
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+    logger.error("[API-TEMPLATES-ACTION] Error", { context: "Templates", error: msg, stack: error instanceof Error ? error.stack : undefined });
     return json({ success: false, error: "Template operation failed" }, { status: 500 });
   }
 };

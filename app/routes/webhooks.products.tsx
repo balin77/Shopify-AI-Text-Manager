@@ -71,22 +71,23 @@ async function processWebhookAsync(
       where: { id: logId },
       data: { processed: true },
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
     logger.error("[WEBHOOK-ASYNC] Error processing webhook", {
       context: "Webhook",
       logId,
       shop,
       productId,
       topic,
-      error: error.message,
-      ...(process.env.NODE_ENV !== 'production' && { stack: error.stack }),
+      error: msg,
+      ...(process.env.NODE_ENV !== 'production' && { stack: error instanceof Error ? error.stack : undefined }),
     });
 
     await db.webhookLog.update({
       where: { id: logId },
       data: {
         processed: true,
-        error: error.message,
+        error: msg,
       },
     });
 

@@ -120,8 +120,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           data: { productType: product.productType },
         });
         repaired++;
-      } catch (error: any) {
-        logger.error("[SYNC-MISSING] Failed to repair productType", { context: "SyncMissing", productId: product.id, error: error.message });
+      } catch (error: unknown) {
+        logger.error("[SYNC-MISSING] Failed to repair productType", { context: "SyncMissing", productId: product.id, error: error instanceof Error ? error.message : String(error) });
       }
     }
 
@@ -198,8 +198,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         if (synced % 10 === 0) {
           logger.debug("[SYNC-MISSING] Progress", { context: "SyncMissing", synced, total: missingProducts.length });
         }
-      } catch (error: any) {
-        logger.error("[SYNC-MISSING] Failed to save product", { context: "SyncMissing", productId: product.id, error: error.message });
+      } catch (error: unknown) {
+        logger.error("[SYNC-MISSING] Failed to save product", { context: "SyncMissing", productId: product.id, error: error instanceof Error ? error.message : String(error) });
         failed++;
       }
     }
@@ -216,8 +216,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       total: existingProducts.length + synced,
       message: `Synced ${synced} products${repaired > 0 ? `, repaired ${repaired} productTypes` : ""}`,
     });
-  } catch (error: any) {
-    logger.error("[SYNC-MISSING] Error", { context: "SyncMissing", error: error.message, stack: error.stack });
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+    logger.error("[SYNC-MISSING] Error", { context: "SyncMissing", error: msg, stack: error instanceof Error ? error.stack : undefined });
     return json(
       {
         success: false,

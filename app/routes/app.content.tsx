@@ -105,8 +105,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       requestedType,
       error: null
     });
-  } catch (error: any) {
-    logger.error("[CONTENT-LOADER] Error", { context: "Content", error: error.message, stack: error.stack });
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+    logger.error("[CONTENT-LOADER] Error", { context: "Content", error: msg, stack: error instanceof Error ? error.stack : undefined });
     return json({
       metadata: {},
       menus: [],
@@ -228,21 +229,71 @@ export default function ContentHub() {
     }
   }, [selectedItem, currentLanguage, primaryLocale, selectedType]);
 
-  // Template handlers (placeholder for now - TODO: implement full functionality)
   const handleValueChange = (key: string, value: string) => {
     setEditableValues(prev => ({ ...prev, [key]: value }));
   };
 
+  // Apply fetcher results from /app/templates action to local state
+  useEffect(() => {
+    const data = fetcher.data as Record<string, unknown> | undefined;
+    if (!data?.success) return;
+
+    if (typeof data.generatedContent === "string" && typeof data.fieldType === "string") {
+      // generateAIText result → show as suggestion
+      setAiSuggestions(prev => ({ ...prev, [data.fieldType as string]: data.generatedContent as string }));
+    } else if (typeof data.translatedValue === "string" && typeof data.fieldType === "string") {
+      // translateField result → apply directly
+      setEditableValues(prev => ({ ...prev, [data.fieldType as string]: data.translatedValue as string }));
+    } else if (data.actionType === "translateAllForLocale" && typeof data.translations === "object" && data.translations !== null) {
+      // translateAllForLocale result → bulk-apply translated values
+      setEditableValues(prev => ({ ...prev, ...(data.translations as Record<string, string>) }));
+    }
+  }, [fetcher.data]);
+
   const handleGenerateAI = (fieldKey: string) => {
-    // TODO: Implement AI generation
+    if (!selectedItem) return;
+    const mainLanguage = shopLocales.find((l: any) => l.locale === primaryLocale)?.name || primaryLocale;
+    fetcher.submit(
+      {
+        action: "generateAIText",
+        groupId: selectedItem.groupId,
+        fieldType: fieldKey,
+        currentValue: editableValues[fieldKey] || "",
+        mainLanguage,
+      },
+      { method: "post", action: "/app/templates" }
+    );
   };
 
   const handleTranslate = (fieldKey: string) => {
-    // TODO: Implement translation
+    if (!selectedItem) return;
+    const sourceItem = selectedItem.translatableContent?.find((item: any) => item.key === fieldKey);
+    const sourceText: string = sourceItem?.value || "";
+    if (!sourceText) return;
+    fetcher.submit(
+      {
+        action: "translateField",
+        groupId: selectedItem.groupId,
+        fieldType: fieldKey,
+        sourceText,
+        targetLocale: currentLanguage,
+        primaryLocale,
+      },
+      { method: "post", action: "/app/templates" }
+    );
   };
 
   const handleTranslateAll = () => {
-    // TODO: Implement translate all
+    if (!selectedItem) return;
+    fetcher.submit(
+      {
+        action: "translateAllForLocale",
+        groupId: selectedItem.groupId,
+        targetLocale: currentLanguage,
+        primaryLocale,
+      },
+      { method: "post", action: "/app/templates" }
+    );
   };
 
   const handleAcceptSuggestion = (fieldKey: string) => {

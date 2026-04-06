@@ -118,8 +118,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         total,
       },
     });
-  } catch (error: any) {
-    logger.error("[SYNC-CONTENT] Error", { context: "SyncContent", error: error.message, stack: error.stack });
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+    logger.error("[SYNC-CONTENT] Error", { context: "SyncContent", error: msg, stack: error instanceof Error ? error.stack : undefined });
     return json(
       {
         success: false,

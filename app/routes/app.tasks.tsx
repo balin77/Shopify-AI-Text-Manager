@@ -86,8 +86,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         hours: hoursFilter,
       }
     });
-  } catch (error: any) {
-    logger.error("Failed to load tasks", { context: "TasksRoute", error: (error as Error).message });
+  } catch (error: unknown) {
+    logger.error("Failed to load tasks", { context: "TasksRoute", error: error instanceof Error ? error.message : String(error) });
     return json({
       tasks: [],
       shop: session.shop,
@@ -113,8 +113,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         data: { status: "cancelled", completedAt: new Date() },
       });
       return json({ success: true });
-    } catch (error: any) {
-      logger.error("Failed to cancel task", { context: "TasksRoute", taskId, error: (error as Error).message });
+    } catch (error: unknown) {
+      logger.error("Failed to cancel task", { context: "TasksRoute", taskId, error: error instanceof Error ? error.message : String(error) });
       return json({ success: false, error: "An internal error occurred" }, { status: 500 });
     }
   }
@@ -125,8 +125,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         where: { id: taskId, shop: session.shop },
       });
       return json({ success: true });
-    } catch (error: any) {
-      logger.error("Failed to delete task", { context: "TasksRoute", taskId, error: (error as Error).message });
+    } catch (error: unknown) {
+      logger.error("Failed to delete task", { context: "TasksRoute", taskId, error: error instanceof Error ? error.message : String(error) });
       return json({ success: false, error: "An internal error occurred" }, { status: 500 });
     }
   }

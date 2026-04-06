@@ -165,8 +165,9 @@ export async function action({ request }: ActionFunctionArgs) {
       plan,
       imageMode: planLimits.cacheEnabled.productImages ? "all" : "featured-only",
     });
-  } catch (error: any) {
-    logger.error("[Manual Sync] Error", { context: "ManualSync", error: error.message, stack: error.stack });
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+    logger.error("[Manual Sync] Error", { context: "ManualSync", error: msg, stack: error instanceof Error ? error.stack : undefined });
     return json(
       {
         success: false,

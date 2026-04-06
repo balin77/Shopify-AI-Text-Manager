@@ -29,8 +29,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         callbackUrl: w.endpoint?.callbackUrl,
       })),
     });
-  } catch (error: any) {
-    logger.error("[SETUP-WEBHOOKS] Error", { context: "SetupWebhooks", error: error.message, stack: error.stack });
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+    logger.error("[SETUP-WEBHOOKS] Error", { context: "SetupWebhooks", error: msg, stack: error instanceof Error ? error.stack : undefined });
     return json(
       {
         success: false,

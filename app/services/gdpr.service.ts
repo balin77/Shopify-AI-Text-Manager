@@ -262,31 +262,42 @@ export async function redactShopData(
 }
 
 /**
- * Log GDPR request for compliance audit trail
+ * Log GDPR request for compliance audit trail.
+ *
+ * Persists every GDPR webhook event to the GdprAuditLog table so that
+ * the mandatory 3-year retention period (Art. 5(2) GDPR) can be enforced
+ * at the database level (e.g. via a scheduled cleanup job that only removes
+ * rows where requestedAt < NOW() - INTERVAL '3 years').
  */
 export async function logGDPRRequest(
   shop: string,
   requestType: 'data_request' | 'customer_redact' | 'shop_redact',
   customerId?: number,
   customerEmail?: string,
-  dataExported?: any,
+  dataExported?: unknown,
   error?: string
 ): Promise<void> {
-  // For now, just log to console
-  // In production, you might want to store this in a separate audit log table
-  const logEntry = {
-    timestamp: new Date().toISOString(),
-    shop,
-    requestType,
+  const status = error ? 'failed' : 'completed';
+  const dataExportedSnippet = dataExported
+    ? JSON.stringify(dataExported).substring(0, 500)
+    : null;
+
+  logger.info(`[GDPR] ${requestType} for shop=${shop} status=${status}`, {
     customerId,
     customerEmail,
-    dataExported: dataExported ? JSON.stringify(dataExported).substring(0, 500) + '...' : null,
     error,
-    status: error ? 'failed' : 'completed',
-  };
+  });
 
-  logger.info(`[GDPR LOG]`, JSON.stringify(logEntry, null, 2));
-
-  // TODO: Store in dedicated GDPR audit log table for compliance
-  // This log must be kept for at least 3 years for GDPR compliance
+  await db.gdprAuditLog.create({
+    data: {
+      shop,
+      requestType,
+      customerId: customerId != null ? BigInt(customerId) : null,
+      customerEmail: customerEmail ?? null,
+      status,
+      dataExported: dataExportedSnippet,
+      error: error ?? null,
+      completedAt: new Date(),
+    },
+  });
 }
