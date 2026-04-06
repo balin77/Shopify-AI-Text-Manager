@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
 import { Card, Text, BlockStack, InlineStack, Spinner } from "@shopify/polaris";
+import type { Translation as I18nTranslation } from "~/i18n/de";
 
 export interface StorageData {
   label: string;
@@ -11,7 +12,7 @@ interface StoragePieChartProps {
   data: StorageData[];
   title: string;
   loading?: boolean;
-  t: any;
+  t: I18nTranslation;
 }
 
 // Format bytes to human-readable string

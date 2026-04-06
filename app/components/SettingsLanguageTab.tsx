@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import type { Translation as I18nTranslation } from "~/i18n/de";
 import type { FetcherWithComponents } from "@remix-run/react";
 import {
   Card,
@@ -16,7 +17,7 @@ interface SettingsLanguageTabProps {
     [key: string]: any;
   };
   fetcher: FetcherWithComponents<any>;
-  t: any; // i18n translations
+  t: I18nTranslation;
   onHasChangesChange?: (hasChanges: boolean) => void;
 }
 

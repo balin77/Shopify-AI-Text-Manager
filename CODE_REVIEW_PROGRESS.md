@@ -1,8 +1,8 @@
 # Code Review Progress - ContentPilot
 
-**Branch:** `claude/continue-code-review-cleanup-NWLyp`
+**Branch:** `claude/continue-code-review-cleanup-AYUbc`
 **Started:** 2026-04-06
-**Based on:** prior branch `claude/continue-code-review-cleanup-1xkQF` (Tasks 1–17 completed there)
+**Based on:** prior branch `claude/continue-code-review-cleanup-NWLyp` (Tasks 1–22 completed there)
 
 ---
 
@@ -32,6 +32,14 @@
 | 20. Null-Safety: formData.get() as string | ✅ Done | 12 unsafe casts replaced with getFormString() + 400 guards in 5 routes |
 | 21. any-Types in Gateway + Retry Services | ✅ Done | QueuedRequest typed; WebhookHandler payload typed; processRetry uses Prisma type |
 | 22. Unit Tests (background-sync + gateway) | ✅ Done | 9 new tests across 2 files; all 148 tests pass |
+| 23. any-Types in product-sync.service.ts | ✅ Done | ~20 any removed: BulkProductsQueryResponse + TranslatableResourcesByIdsResponse interfaces; `Prisma.TransactionClient`; catch blocks → unknown |
+| 24. MetaobjectEntry in 3 files | ✅ Done | Exported MetaobjectEntry from contentEditor.utils.ts; fixed content-fields.config.tsx, useUiDataLoader.ts, UnifiedContentEditor.tsx |
+| 25. ShopLocale + I18n any-types in UI | ✅ Done | OptionsField, ThemeContentViewer, UnifiedContentEditor → ShopLocale; StoragePieChart, SettingsUsageLimitsTab, SettingsSetupTab, SettingsAITab, ApiKeyWarningBanner, SettingsLanguageTab → I18nTranslation |
+| 26. any-Types in useUnifiedContentEditor.ts | ✅ Done | TaskData interface; filter/map callbacks typed |
+| 27. any-Types in SettingsSetupTab.tsx | ✅ Done | WebhookEntry interface; all `(w: any)` replaced |
+| 28. Smaller remaining any-casts | ✅ Done | ReloadButton, useProductSubResources (SubResourceFetcherData), MobileToolbar (ContentImage), content-sync.service.ts (Prisma.InputJsonValue), LocaleNavigationButtons |
+
+**Final any-count:** 0 in app/services/ (outside catch blocks); 9 in app/components/ (all unavoidable Framework/Polaris limitations)
 
 ---
 
@@ -410,3 +418,36 @@ All 139 unit tests pass (9 test files).
 - MAX_RETRIES (3) exhausted on persistent error → rejects; 4 total calls (1+3)
 
 **All 148 unit tests pass.**
+
+---
+
+## 23–28. any-Type Cleanup — Final Pass (Branch: AYUbc)
+
+**Status:** ✅ Done (2026-04-06)
+
+### Task 23: product-sync.service.ts
+Added `BulkProductsQueryResponse` and `TranslatableResourcesByIdsResponse` interfaces inline; `allProducts: any[]` → `ShopifyProductData[]`; `tx: any` → `Prisma.TransactionClient`; all filter/map callbacks typed; 6x `catch (err: any)` → `unknown` with `instanceof Error` guards; `import type { Prisma } from '@prisma/client'` added.
+
+### Task 24: MetaobjectEntry export + 3 files
+Exported `MetaobjectEntry` from `contentEditor.utils.ts`; imported in `useUiDataLoader.ts` and `UnifiedContentEditor.tsx`; added to `content-fields.config.tsx` via import; all `(metaobj: any)`, `(m: any)`, `(f: any)` callbacks replaced; `getSourceText(item: any)` → `(item: TranslatableContentItem)`.
+
+### Task 25: ShopLocale + I18nTranslation in UI components
+- `OptionsField.tsx`: `shopLocales: any[]` → `ShopLocale[]`; `(l: any)` → `(l: ShopLocale)`
+- `ThemeContentViewer.tsx`: Added `ThemeResource` + `ThemeTranslatableContent` interfaces; `shopLocales: any[]` → `ShopLocale[]`; item callbacks inferred
+- `StoragePieChart.tsx`, `SettingsUsageLimitsTab.tsx`, `SettingsSetupTab.tsx`, `SettingsAITab.tsx`, `ApiKeyWarningBanner.tsx`, `SettingsLanguageTab.tsx`: `t: any` → `t: I18nTranslation`
+- `UnifiedContentEditor.tsx`: `(t as any).common?.` → direct access (common is in Translation type); `defaultRenderSidebar(item: any)` → `TranslatableContentItem`
+
+### Task 26: useUnifiedContentEditor.ts
+Added `TaskData` interface `{ id, fieldType, targetLocale, type? }`; both filter/map callbacks on `/api/running-field-tasks` response now use `TaskData` instead of `any`.
+
+### Task 27: SettingsSetupTab.tsx
+Added `WebhookEntry { topic, callbackUrl? }` interface; all 6x `(w: any)` in webhook filter/map → `(w: WebhookEntry)`.
+
+### Task 28: Smaller remaining any-casts
+- `ReloadButton.tsx`: `fetcher.data as any` → `{ success?, error?, reloadRequired? } | undefined`
+- `useProductSubResources.ts`: Added `SubResourceFetcherData` interface; 2x `fetcher.data as any` → typed
+- `MobileToolbar.tsx`: `images?: any[]; featuredImage?: any` → `ContentImage[]` / `ContentImage`
+- `content-sync.service.ts`: `items: ... as any` → `as Prisma.InputJsonValue`; `import type { Prisma }` added
+- `LocaleNavigationButtons.tsx`: `resourceType as any` → narrowed union cast
+
+**All 148 unit tests pass after all changes.**

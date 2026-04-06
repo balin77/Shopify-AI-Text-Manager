@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { Card, Text, BlockStack, Banner, ProgressBar, InlineStack, Button } from "@shopify/polaris";
+import type { Translation as I18nTranslation } from "~/i18n/de";
 import { usePlan } from "../contexts/PlanContext";
 import type { ResourceType } from "../utils/planUtils";
 import { useNavigate, useFetcher } from "@remix-run/react";
@@ -13,7 +14,7 @@ interface SettingsUsageLimitsTabProps {
   articleCount: number;
   pageCount: number;
   themeTranslationCount: number;
-  t: any;
+  t: I18nTranslation;
   hideUpgradeCard?: boolean;
 }
 
@@ -26,7 +27,7 @@ interface UsageRowProps {
   isAtLimit: boolean;
   disabled?: boolean;
   helpKey?: string;
-  t: any;
+  t: I18nTranslation;
 }
 
 function UsageRow({ label, current, max, percentage, isApproaching, isAtLimit, disabled, helpKey, t }: UsageRowProps) {

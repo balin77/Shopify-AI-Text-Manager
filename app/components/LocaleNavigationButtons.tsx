@@ -106,7 +106,7 @@ export function LocaleNavigationButtons({
       {selectedItem && (
         <ReloadButton
           resourceId={selectedItem.id}
-          resourceType={resourceType as any}
+          resourceType={resourceType as "product" | "collection" | "article" | "page" | "policy" | "templates"}
           locale={currentLanguage}
         />
       )}

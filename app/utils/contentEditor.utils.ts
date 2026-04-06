@@ -17,7 +17,7 @@ import { TIMING } from "~/constants/timing";
 import { extractReadableName } from "~/utils/templates-field-factory";
 
 /** Minimal shape of a metaobject entry as stored on TranslatableItem */
-interface MetaobjectEntry {
+export interface MetaobjectEntry {
   id: string;
   handle?: string;
   displayName?: string;

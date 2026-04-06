@@ -26,6 +26,7 @@ import { getPlanDisplayName as getPlanDisplayNameUtil } from "../utils/planUtils
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { useItemSelector } from "../contexts/ItemSelectorContext";
 import { contentEditorStyles, getLocalizedLanguageName, hasPrimaryContentMissing, getLocaleButtonTooltip } from "../utils/contentEditor.utils";
+import type { MetaobjectEntry } from "../utils/contentEditor.utils";
 import { useI18n } from "../contexts/I18nContext";
 import { ENABLE_THEME_PRIMARY_EDIT } from "../config/constants";
 import { isMetaobjectLabelField } from "../constants/shopifyFields";
@@ -203,9 +204,9 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   // Transform items to UnifiedItem format (memoized to prevent re-render cascades)
   const unifiedItems: UnifiedItem[] = useMemo(() => {
     const tooltipI18n = {
-      missingContent: (t as any).common?.missingContent ?? "Missing content:",
-      missingTranslations: (t as any).common?.missingTranslations ?? "Missing translations:",
-      fieldLabels: ((t as any).common?.fieldLabels ?? {}) as Record<string, string>,
+      missingContent: t.common?.missingContent ?? "Missing content:",
+      missingTranslations: t.common?.missingTranslations ?? "Missing translations:",
+      fieldLabels: (t.common?.fieldLabels ?? {}) as Record<string, string>,
     };
     const primaryLocaleObj = shopLocales.find((l) => l.primary) ?? { locale: primaryLocale, primary: true };
     const foreignLocales = shopLocales.filter((l) => !l.primary);
@@ -278,13 +279,13 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   };
 
   // Default sidebar renderer
-  const defaultRenderSidebar = (item: any, editableValues: Record<string, string>) => {
+  const defaultRenderSidebar = (item: TranslatableContentItem, editableValues: Record<string, string>) => {
     if (!config.showSeoSidebar) return null;
 
     // Calculate image alt text stats for SEO score
-    const images = item.images || [];
+    const images = (item as TranslatableContentItem & { images?: Array<{ altText?: string | null }> }).images ?? [];
     const totalImages = images.length;
-    const imagesWithAlt = images.filter((img: any, index: number) => {
+    const imagesWithAlt = images.filter((img, index) => {
       // Check both local edits (state.imageAltTexts) and original altText
       const localAltText = state.imageAltTexts?.[index];
       const originalAltText = img.altText;
@@ -975,7 +976,7 @@ function FieldRenderer(props: FieldRendererProps & { state?: any; handlers?: any
 
   // Get locale name for label (localized to app language)
   const { locale: appLocale } = useI18n();
-  const localeName = getLocalizedLanguageName(currentLanguage, appLocale, shopLocales.find((l: any) => l.locale === currentLanguage)?.name);
+  const localeName = getLocalizedLanguageName(currentLanguage, appLocale, shopLocales.find((l: ShopLocale) => l.locale === currentLanguage)?.name);
 
   // Build label (use i18n field label if available, fallback to config label)
   const fieldLabelMap: Record<string, string> = t.content?.fieldLabels || {};
@@ -1180,7 +1181,7 @@ function FieldRenderer(props: FieldRendererProps & { state?: any; handlers?: any
 // UTILITIES
 // ============================================================================
 
-function getSourceText(item: any, fieldKey: string, primaryLocale: string): string {
+function getSourceText(item: TranslatableContentItem, fieldKey: string, primaryLocale: string): string {
   const fieldMappings: Record<string, string> = {
     title: item.title || "",
     description: item.descriptionHtml || item.body || "",
@@ -1198,17 +1199,18 @@ function getSourceText(item: any, fieldKey: string, primaryLocale: string): stri
 
   // For dynamic fields (e.g., templates), check translatableContent
   if (item.translatableContent && Array.isArray(item.translatableContent)) {
-    const contentItem = item.translatableContent.find((c: any) => c != null && c.key === fieldKey);
+    const contentItem = item.translatableContent.find((c: { key: string; value: string | null }) => c != null && c.key === fieldKey);
     if (contentItem?.value) {
       return contentItem.value;
     }
   }
 
   // For metaobjects: fieldKey is a metaobject GID, look up the label field value
-  if (fieldKey.startsWith("gid://shopify/Metaobject/") && item.metaobjects && Array.isArray(item.metaobjects)) {
-    const metaobj = item.metaobjects.find((m: any) => m.id === fieldKey);
+  const itemWithMetaobjects = item as TranslatableContentItem & { metaobjects?: MetaobjectEntry[] };
+  if (fieldKey.startsWith("gid://shopify/Metaobject/") && itemWithMetaobjects.metaobjects && Array.isArray(itemWithMetaobjects.metaobjects)) {
+    const metaobj = itemWithMetaobjects.metaobjects.find((m) => m.id === fieldKey);
     if (metaobj) {
-      const labelField = metaobj.fields?.find((f: any) => isMetaobjectLabelField(f.key));
+      const labelField = metaobj.fields?.find((f) => isMetaobjectLabelField(f.key));
       return labelField?.value || metaobj.displayName || "";
     }
   }

@@ -7,6 +7,7 @@
  * Note: Pages and Policies are NOT cached as they don't have webhook support and are rarely modified.
  */
 
+import type { Prisma } from '@prisma/client';
 import { logger } from '~/utils/logger.server';
 import { isTranslationRecentlySaved } from '~/utils/translation-save-lock.server';
 import type { ShopifyGraphQLClient, ShopLocale, GraphQLEdge, ResolvedTranslation, ProgressCallback } from './sync-types';
@@ -575,15 +576,13 @@ export class ContentSyncService {
         shop: this.shop,
         title: menuData.title,
         handle: menuData.handle,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Prisma JSON column
-        items: (menuData.items || []) as any,
+        items: (menuData.items || []) as Prisma.InputJsonValue,
         lastSyncedAt: new Date(),
       },
       update: {
         title: menuData.title,
         handle: menuData.handle,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Prisma JSON column
-        items: (menuData.items || []) as any,
+        items: (menuData.items || []) as Prisma.InputJsonValue,
         lastSyncedAt: new Date(),
       },
     });

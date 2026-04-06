@@ -17,7 +17,7 @@ import { useLocaleButtonStyle, getLocaleButtonTooltip } from "../../utils/conten
 import { ReloadButton } from "../ReloadButton";
 import { HelpTooltip } from "../HelpTooltip";
 import { useI18n } from "../../contexts/I18nContext";
-import type { ShopLocale, TranslatableItem, ContentType } from "../../types/content-editor.types";
+import type { ShopLocale, TranslatableItem, ContentType, ContentImage } from "../../types/content-editor.types";
 
 interface MobileToolbarProps {
   shopLocales: ShopLocale[];
@@ -39,8 +39,8 @@ interface MobileToolbarProps {
 
   // Send image to AI feature
   sendImageToAI?: boolean;
-  images?: any[];
-  featuredImage?: any;
+  images?: ContentImage[];
+  featuredImage?: ContentImage;
 
   // Fetcher state for loading indicators
   fetcherState: string;

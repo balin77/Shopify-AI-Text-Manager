@@ -2,6 +2,7 @@ import { Banner } from "@shopify/polaris";
 import { Link } from "@remix-run/react";
 import { hasPreferredProviderKey, getProviderDisplayName, type AIProvider, type AISettings } from "../utils/api-key-validation";
 import { decryptApiKey } from "../utils/encryption.server";
+import type { Translation as I18nTranslation } from "~/i18n/de";
 
 interface ApiKeyWarningBannerProps {
   aiSettings: {
@@ -13,7 +14,7 @@ interface ApiKeyWarningBannerProps {
     deepseekApiKey?: string | null;
     preferredProvider?: string | null;
   } | null;
-  t: any; // i18n translations
+  t: I18nTranslation;
 }
 
 /**

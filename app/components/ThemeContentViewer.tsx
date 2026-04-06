@@ -1,12 +1,24 @@
 import { Card, Text, BlockStack, Badge, TextField, InlineStack, Banner, Button, Pagination } from "@shopify/polaris";
 import { useState, useMemo } from "react";
+import type { ShopLocale } from "../types/content-editor.types";
+
+interface ThemeTranslatableContent {
+  key: string;
+  value: string | null;
+}
+
+interface ThemeResource {
+  resourceTypeLabel: string;
+  contentCount: number;
+  translatableContent: ThemeTranslatableContent[];
+}
 import { AIEditableField } from "./AIEditableField";
 import { AIEditableHTMLField } from "./AIEditableHTMLField";
 
 interface ThemeContentViewerProps {
-  themeResource: any;
+  themeResource: ThemeResource;
   currentLanguage: string;
-  shopLocales: any[];
+  shopLocales: ShopLocale[];
   primaryLocale: string;
   editableValues: Record<string, string>;
   onValueChange: (key: string, value: string) => void;
@@ -104,7 +116,7 @@ export function ThemeContentViewer({
 
   // Filter translatable content by search term - use useMemo for performance
   const filteredContent = useMemo(() => {
-    return themeResource.translatableContent.filter((item: any) =>
+    return themeResource.translatableContent.filter((item) =>
       item.key.toLowerCase().includes(searchTerm.toLowerCase()) ||
       item.value?.toLowerCase().includes(searchTerm.toLowerCase())
     );
@@ -132,11 +144,11 @@ export function ThemeContentViewer({
 
   // Helper to get source text (from primary locale)
   const getSourceText = (key: string) => {
-    const item = themeResource.translatableContent.find((item: any) => item.key === key);
+    const item = themeResource.translatableContent.find((item) => item.key === key);
     return item?.value || "";
   };
 
-  const currentLocaleName = shopLocales.find((l: any) => l.locale === currentLanguage)?.name || currentLanguage;
+  const currentLocaleName = shopLocales.find((l: ShopLocale) => l.locale === currentLanguage)?.name || currentLanguage;
 
   return (
     <BlockStack gap="400">
@@ -192,7 +204,7 @@ export function ThemeContentViewer({
       <div style={{ maxHeight: "600px", overflowY: "auto" }}>
         <BlockStack gap="300">
           {paginatedContent.length > 0 ? (
-            paginatedContent.map((item: any, index: number) => {
+            paginatedContent.map((item, index) => {
               const readableName = extractReadableName(item.key);
               const fieldKey = item.key;
               const sourceText = getSourceText(fieldKey);
