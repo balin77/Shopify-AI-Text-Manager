@@ -338,4 +338,76 @@ describe('ProductSyncService', () => {
       });
     });
   });
+
+  // ── syncAllProducts ───────────────────────────────────────────────────────
+
+  describe('syncAllProducts()', () => {
+    /** Helper: make an admin whose graphql returns multiple product pages */
+    function makeAdminWithPages(pages: Array<{ edges: unknown[]; hasNextPage: boolean; endCursor?: string | null }>) {
+      let call = 0;
+      return {
+        graphql: vi.fn().mockImplementation(async () => {
+          const page = pages[Math.min(call++, pages.length - 1)];
+          return {
+            json: async () => ({
+              data: {
+                products: {
+                  pageInfo: { hasNextPage: page.hasNextPage, endCursor: page.endCursor ?? null },
+                  edges: page.edges,
+                },
+              },
+            }),
+          };
+        }),
+      };
+    }
+
+    const defaultOptions = { maxProducts: 50, cacheProductImages: false };
+
+    it('returns 0 when Shopify returns no products (single page)', async () => {
+      const admin = makeAdminWithPages([{ edges: [], hasNextPage: false }]);
+      const svc = new ProductSyncService(admin as never, testShop);
+
+      const count = await svc.syncAllProducts(defaultOptions);
+
+      expect(count).toBe(0);
+      expect(admin.graphql).toHaveBeenCalledTimes(1);
+    });
+
+    it('throws DOMException("AbortError") when signal is already aborted', async () => {
+      const admin = makeAdminWithPages([{ edges: [], hasNextPage: false }]);
+      const svc = new ProductSyncService(admin as never, testShop);
+
+      const controller = new AbortController();
+      controller.abort();
+
+      await expect(
+        svc.syncAllProducts({ ...defaultOptions, signal: controller.signal })
+      ).rejects.toMatchObject({ name: 'AbortError' });
+
+      // graphql must NOT have been called — abort fires before the network request
+      expect(admin.graphql).toHaveBeenCalledTimes(0);
+    });
+
+    it('makes a second graphql call when hasNextPage=true on first page', async () => {
+      const admin = makeAdminWithPages([
+        { edges: [], hasNextPage: true, endCursor: 'cursor-abc' },
+        { edges: [], hasNextPage: false },
+      ]);
+      const svc = new ProductSyncService(admin as never, testShop);
+
+      const count = await svc.syncAllProducts(defaultOptions);
+
+      // Both pages returned empty edges → still 0 products
+      expect(count).toBe(0);
+      // Two graphql calls: page 1 (hasNextPage=true) + page 2 (hasNextPage=false)
+      expect(admin.graphql).toHaveBeenCalledTimes(2);
+      // Second call must forward the cursor from page 1
+      expect(admin.graphql).toHaveBeenNthCalledWith(
+        2,
+        expect.any(String),
+        { variables: { first: expect.any(Number), after: 'cursor-abc' } }
+      );
+    });
+  });
 });

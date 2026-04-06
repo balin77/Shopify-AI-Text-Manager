@@ -1,8 +1,8 @@
 # Code Review Progress - ContentPilot
 
-**Branch:** `claude/continue-code-review-cleanup-AYUbc`
+**Branch:** `claude/continue-code-review-cleanup-r7AfX`
 **Started:** 2026-04-06
-**Based on:** prior branch `claude/continue-code-review-cleanup-NWLyp` (Tasks 1–22 completed there)
+**Based on:** prior branch `claude/continue-code-review-cleanup-AYUbc` (Tasks 1–28 completed there)
 
 ---
 
@@ -38,6 +38,13 @@
 | 26. any-Types in useUnifiedContentEditor.ts | ✅ Done | TaskData interface; filter/map callbacks typed |
 | 27. any-Types in SettingsSetupTab.tsx | ✅ Done | WebhookEntry interface; all `(w: any)` replaced |
 | 28. Smaller remaining any-casts | ✅ Done | ReloadButton, useProductSubResources (SubResourceFetcherData), MobileToolbar (ContentImage), content-sync.service.ts (Prisma.InputJsonValue), LocaleNavigationButtons |
+| 29. TypeScript strict-Mode | ✅ N/A | `"strict": true` already present in tsconfig.json; zero strict-mode code errors |
+| 30. Test Coverage 40% | ✅ Done | Added 6 new tests (syncAllProducts ×3, syncMenu ×3); threshold raised to statements:40, functions:35, branches:30, lines:40; 154 tests total |
+| 31. Webhook Security Audit | ✅ Done | All 6 webhook routes verified: `authenticate.webhook(request)` is first call before any data access |
+| 32. API Route Authorization Audit | ✅ Done | All 21 `api.*` routes call `authenticate.admin(request)`; no unauthenticated exposure found |
+| 33. Dead Code Removal | ✅ Done | Removed unused `logPerformance` + `logApiCall` exports from `logger.server.ts` |
+| 34. Prisma N+1 Scan | ✅ Done | One suboptimal query in `sync-scheduler.service.ts:269`; no classic N+1 found; documented |
+| 35. console.* Cleanup | ✅ N/A | All remaining `console.*` in routes are client-side (useEffect/ErrorBoundary); content.service.ts calls are inside block comment; `debug.ts` is dev-only guard |
 
 **Final any-count:** 0 in app/services/ (outside catch blocks); 9 in app/components/ (all unavoidable Framework/Polaris limitations)
 
@@ -451,3 +458,147 @@ Added `WebhookEntry { topic, callbackUrl? }` interface; all 6x `(w: any)` in web
 - `LocaleNavigationButtons.tsx`: `resourceType as any` → narrowed union cast
 
 **All 148 unit tests pass after all changes.**
+
+---
+
+## 29. TypeScript strict-Mode (Branch: r7AfX)
+
+**Status:** ✅ N/A (2026-04-06) — `"strict": true` was already present in `tsconfig.json`
+
+**Findings:**
+- `tsconfig.json` already contains `"strict": true` (covers `strictNullChecks`, `noImplicitAny`, `strictFunctionTypes`, `strictPropertyInitialization`, etc.)
+- `npx tsc --noEmit` emits **0 code errors** — only 3 environment diagnostics:
+  - `TS2688`: Cannot find type definition file for `@remix-run/node` and `vite/client` (missing `node_modules` type packages in test environment — not a code issue)
+  - `TS5101`: `baseUrl` deprecated in TS 7.0 (cosmetic, no behaviour change)
+- Tasks 7–28 had already eliminated virtually all `any` types, so strict mode causes zero regressions.
+
+**Decision:** No code changes needed. `tsconfig.json` is already optimal.
+
+---
+
+## 30. Test Coverage 40% (Branch: r7AfX)
+
+**Status:** ✅ Done (2026-04-06)
+
+### New tests added
+
+**`tests/unit/product-sync.service.test.ts`** — 3 new tests appended to existing file:
+- `syncAllProducts()` returns `0` when Shopify returns no products (1 graphql call)
+- `syncAllProducts()` throws `DOMException("AbortError")` when signal is already aborted (0 graphql calls)
+- `syncAllProducts()` makes a second graphql call when `hasNextPage=true`; cursor forwarded correctly
+
+**`tests/unit/content-sync.service.test.ts`** — new file, 3 tests:
+- `syncMenu()` returns early (no `db.menu.upsert`) when menu is not found (null)
+- `syncMenu()` calls `db.menu.upsert` with correct shape when menu is found
+- `syncMenu()` propagates GraphQL errors from `fetchMenuData`
+
+**Threshold update in `vitest.config.ts`:**
+| Metric | Before | After |
+|--------|--------|-------|
+| statements | 20% | 40% |
+| lines | 20% | 40% |
+| functions | 20% | 35% |
+| branches | 20% | 30% |
+
+**Result:** 154 tests pass (12 test files).
+
+---
+
+## 31. Webhook Security Audit (Branch: r7AfX)
+
+**Status:** ✅ Done (2026-04-06) — All routes verified clean
+
+| Route | First operation | HMAC verified | Notes |
+|-------|----------------|---------------|-------|
+| `webhooks.compliance.tsx` | `authenticate.webhook(request)` ✅ | Yes (auto 401 on invalid sig) | GDPR dispatcher |
+| `webhooks.products.tsx` | `authenticate.webhook(request)` ✅ | Yes | Async background processing after auth |
+| `webhooks.collections.tsx` | `authenticate.webhook(request)` ✅ | Yes | Async background processing |
+| `webhooks.menus.tsx` | `authenticate.webhook(request)` ✅ | Yes | Async background processing |
+| `webhooks.articles.tsx` | `authenticate.webhook(request)` ✅ | Yes | Async background processing |
+| `webhooks.subscription.tsx` | `authenticate.webhook(request)` ✅ | Yes | `admin` null-checked before use |
+
+**Finding:** Zero issues. Every handler calls `authenticate.webhook()` as the first line before reading payload data. Shopify's middleware automatically returns `401` for invalid HMAC signatures. No fix needed.
+
+---
+
+## 32. API Route Authorization Audit (Branch: r7AfX)
+
+**Status:** ✅ Done (2026-04-06) — All 21 routes verified
+
+| Route | Auth | Exposure Risk | Notes |
+|-------|------|---------------|-------|
+| `api.ai-models.tsx` | `authenticate.admin` ✅ | None | Session required for AI model list |
+| `api.ai.tsx` | `authenticate.admin` ✅ | None | AI generation behind session |
+| `api.billing.cancel-subscription.tsx` | `authenticate.admin` ✅ | None | Admin session required |
+| `api.billing.create-subscription.tsx` | `authenticate.admin` ✅ | None | Admin session required |
+| `api.billing.status.tsx` | `authenticate.admin` ✅ | None | Returns subscription data behind auth |
+| `api.clear-session.tsx` | `authenticate.admin` ✅ | None | Two auth calls: try-block + catch fallback |
+| `api.metaobjects.$.tsx` | `authenticate.admin` ✅ | None | Auth in both loader and action |
+| `api.product-images.tsx` | `authenticate.admin` ✅ | None | |
+| `api.recently-completed-tasks.tsx` | `authenticate.admin` ✅ | None | |
+| `api.running-field-tasks.tsx` | `authenticate.admin` ✅ | None | |
+| `api.running-tasks-count.tsx` | `authenticate.admin` ✅ | None | |
+| `api.setup-webhooks.tsx` | `authenticate.admin` ✅ | None | |
+| `api.storage-stats.tsx` | `authenticate.admin` ✅ | None | |
+| `api.sync-all-stream.tsx` | `authenticate.admin` ✅ | None | SSE stream, auth first |
+| `api.sync-content.tsx` | `authenticate.admin` ✅ | None | |
+| `api.sync-missing-products.tsx` | `authenticate.admin` ✅ | None | |
+| `api.sync-products.tsx` | `authenticate.admin` ✅ | None | |
+| `api.sync-single-product.tsx` | `authenticate.admin` ✅ | None | |
+| `api.sync-single-resource.tsx` | `authenticate.admin` ✅ | None | |
+| `api.templates.$.tsx` | `authenticate.admin` ✅ | None | Auth in both loader and action |
+| `api.update-plan.tsx` | `authenticate.admin` ✅ | None | |
+
+**Finding:** Zero issues. No unauthenticated endpoints, no sensitive data leakage without a valid Shopify session.
+
+---
+
+## 33. Dead Code Removal (Branch: r7AfX)
+
+**Status:** ✅ Done (2026-04-06)
+
+### Removed: `logPerformance` and `logApiCall` from `app/utils/logger.server.ts`
+
+Both functions were exported but never imported anywhere in `app/` (confirmed by `grep`).
+Removed 33 lines of dead code including JSDoc comments.
+
+### Retained (intentional):
+- `app/services/content.service.ts` block comment (lines 235–end): Explicitly marked `DO NOT DELETE THIS CODE!` — preserved for when Shopify fixes MenuItem translation API. Not dead code.
+- `app/utils/debug.ts` `console.log`: Dev-only conditional guard (`NODE_ENV === 'development'`). Intentional.
+
+---
+
+## 34. Prisma N+1 Pattern Scan (Branch: r7AfX)
+
+**Status:** ✅ Done (2026-04-06) — No classic N+1 found
+
+### Findings
+
+| Location | Pattern | Assessment |
+|----------|---------|------------|
+| `sync-scheduler.service.ts:269` | `await db.productImage.findMany(...)` inside `notIn` | Single extra query (not N queries). Unavoidable: Prisma lacks native subquery support for `deleteMany` with `NOT IN`. Documented. |
+| `content-sync.service.ts:635,709,751` | `for (const x of items) { await this.syncX(id) }` | Sequential sync — inherent to design (each item needs its own Shopify graphql call). Not an N+1. |
+| `product-sync.service.ts:254` | `for (const product of allProducts) { await db.$transaction(...) }` | One transaction per product — inherent to transactional integrity. Not an N+1. |
+| `webhook-retry.service.ts:168` | `for (const retry of dueRetries) { await this.processRetry(retry) }` | Sequential retry processing — intentional (avoid parallel webhook storms). Not an N+1. |
+
+**Recommendation for `sync-scheduler.service.ts:269`:** Could be replaced with a raw SQL `DELETE FROM ... WHERE id NOT IN (SELECT id FROM ...)` via `db.$executeRaw`, but the current approach (load IDs → deleteMany) is safe and only runs during periodic maintenance. Left as-is.
+
+---
+
+## 35. console.* Cleanup — Final Check (Branch: r7AfX)
+
+**Status:** ✅ N/A (2026-04-06) — No server-side production console.* calls remain
+
+### Scan results (`grep -rn "console\." app/routes/ app/services/ app/utils/`)
+
+| Location | Type | Verdict |
+|----------|------|---------|
+| `app/routes/app._index.tsx:129` | `.catch()` in `useEffect` | **Client-side** — browser-only React hook. Appropriate. |
+| `app/routes/app.templates.tsx:2502` | `.catch()` in `useEffect` | **Client-side** — browser-only React hook. Appropriate. |
+| `app/routes/app.tsx:282` | `ErrorBoundary` guarded by `typeof window !== 'undefined'` | **Client-side** — explicitly guards against SSR. Appropriate. |
+| `app/services/content.service.ts:254–403` | Inside `/* ... */` block comment | **Dead code** — intentionally commented out (Shopify API limitation). |
+| `app/utils/debug.ts:17` | Conditional on `NODE_ENV === 'development'` | **Dev-only** — stripped in production. Appropriate. |
+| `app/utils/performance.client.ts` | `.client.ts` extension | **Client-only file** — never imported server-side. Appropriate. |
+| `app/utils/encryption.server.ts` | Inside JSDoc/example comments | **Not real code** — documentation strings. Appropriate. |
+
+**Conclusion:** All remaining `console.*` calls are either client-side browser code, dev-only guards, or inside code comments. No server-side production logging issues remain.
