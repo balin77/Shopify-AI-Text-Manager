@@ -3,7 +3,7 @@ import type { AIActionContext, TranslatableContentItem, ShopifyGraphQLResponse }
 import { errorMessage, errorStack, createAIService } from "./shared";
 import { getFormString } from "~/utils/form-data.utils";
 import { safeJsonParse } from "~/utils/validation";
-import { sanitizeSlug } from "../utils/slug.utils";
+import { sanitizeSlug } from "~/utils/slug.utils";
 import { sanitizePromptInput } from "~/utils/prompt-sanitizer";
 import { extractReadableName } from "~/utils/templates-field-factory";
 import { getInstructionWithDefault, getWritingStyleInstructions } from "~/utils/ai-instructions.utils";

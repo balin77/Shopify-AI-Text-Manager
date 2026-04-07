@@ -41,7 +41,6 @@ import { extractReadableName } from "../utils/templates-field-factory";
 import { useTaskCount } from "../contexts/TaskCountContext";
 import { translateErrorMessage } from "../utils/editor-error-messages";
 import { useFieldHandlers } from "./useFieldHandlers";
-import { useAltTextHandlers } from "./useAltTextHandlers";
 
 export function useUnifiedContentEditor(props: UseContentEditorProps): UseContentEditorReturn {
   const { config, items, shopLocales, primaryLocale, fetcher, showInfoBox, t, onTranslateToAllLocalesComplete, initialItemId } = props;
@@ -83,27 +82,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const [isInitialDataReady, setIsInitialDataReady] = useState(false);
   // Track if clear all confirmation modal is open
   const [isClearAllModalOpen, setIsClearAllModalOpen] = useState(false);
-
-  // On-demand images loading (for products - images are loaded from Shopify API)
-  const [onDemandImages, setOnDemandImages] = useState<ContentImage[]>([]);
-  const [isLoadingImages, setIsLoadingImages] = useState(false);
-  const imageFetcher = useFetcher<{ success: boolean; images: Array<{ url: string; altText?: string }>; error?: string }>();
-  const loadedImagesForProductRef = useRef<string | null>(null);
-
-  // Alt-text state for images (indexed by image position)
-  const [imageAltTexts, setImageAltTexts] = useState<Record<number, string>>({});
-  const [altTextSuggestions, setAltTextSuggestions] = useState<Record<number, string>>({});
-  // Track original alt-texts to detect changes (using state to trigger re-renders)
-  const [originalAltTexts, setOriginalAltTexts] = useState<Record<number, string>>({});
-  const imageAltTextsRef = useLatestRef(imageAltTexts);
-  const originalAltTextsRef = useLatestRef(originalAltTexts);
-
-  // Track pending auto-save for alt-texts (set by bulk generation and translation effects)
-  const pendingAltTextAutoSaveRef = useRef<Record<number, string> | null>(null);
-
-  // Send Image to AI feature state
-  const [sendImageToAI, setSendImageToAI] = useState(false);
-  const [selectedImageIndex, setSelectedImageIndex] = useState(0);
 
   // Retry mechanism for empty fields
   const retryCountRef = useRef(0);
@@ -1744,93 +1722,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     setFallbackFields,
     setTemplateValuesVersion,
   });
-
-  // ============================================================================
-  // ALT-TEXT HANDLERS (extracted to useAltTextHandlers)
-  // ============================================================================
-
-  const {
-    handleAltTextChange,
-    handleGenerateAltText,
-    handleGenerateAllAltTexts,
-    handleTranslateAltText,
-    handleTranslateAltTextToAllLocales,
-    handleTranslateAllAltTexts,
-    handleTranslateAllAltTextsForLocale,
-    handleAcceptAltTextSuggestion,
-    handleAcceptAndTranslateAltText,
-    handleRejectAltTextSuggestion,
-  } = useAltTextHandlers({
-    primaryLocale,
-    currentLanguage,
-    enabledLanguages,
-    config,
-    shopLocales,
-    t,
-    selectedItemId,
-    selectedItem,
-    imageAltTexts,
-    altTextSuggestions,
-    editableValues,
-    sendImageToAI,
-    selectedItemRef,
-    selectedItemIdRef,
-    editableValuesRef,
-    revalidatorRef,
-    savedLocaleRef,
-    isSavePendingRef,
-    isSaveFromTranslateRef,
-    pendingAltTextAutoSaveRef,
-    submitAIAction,
-    safeSubmit,
-    buildFieldsForSave,
-    showInfoBox,
-    setImageAltTexts,
-    setAltTextSuggestions,
-    setOriginalAltTexts,
-  });
-
-
-  // ============================================================================
-  // SEND IMAGE TO AI HANDLERS
-  // ============================================================================
-
-  const handleToggleSendImageToAI = useCallback(() => {
-    setSendImageToAI(prev => !prev);
-  }, []);
-
-  // Reset alt-text and AI suggestion state when selected item changes
-  useEffect(() => {
-    setImageAltTexts({});
-    setAltTextSuggestions({});
-    setOriginalAltTexts({});
-    setAiSuggestions({});
-  }, [selectedItemId]);
-
-  // Load translated alt-texts when language changes
-  useEffect(() => {
-    const item = selectedItemRef.current;
-    if (!item || !item.images) return;
-
-    if (currentLanguage === primaryLocale) {
-      // Reset to primary locale alt-texts - fallback will use images[i].altText
-      setImageAltTexts({});
-      setOriginalAltTexts({});
-    } else {
-      // Load translated alt-texts from DB
-      const translatedAltTexts: Record<number, string> = {};
-      item.images.forEach((img: ContentImage, index: number) => {
-        const translation = img.altTextTranslations?.find(
-          (t: { locale: string }) => t.locale === currentLanguage
-        );
-        if (translation) {
-          translatedAltTexts[index] = translation.altText;
-        }
-      });
-      setImageAltTexts(translatedAltTexts);
-      setOriginalAltTexts({ ...translatedAltTexts });
-    }
-  }, [currentLanguage, selectedItemId, primaryLocale]);
 
   // ============================================================================
   // HELPER FUNCTIONS

@@ -9,7 +9,7 @@ import { METAOBJECT_LABEL_FIELD_KEYS } from "~/constants/shopifyFields";
 import { extractReadableName } from "~/utils/templates-field-factory";
 import { getTaskExpirationDate } from "~/config/constants";
 import { logger } from "~/utils/logger.server";
-import { sanitizeSlug } from "../utils/slug.utils";
+import { sanitizeSlug } from "~/utils/slug.utils";
 
 export async function handleFormatField(ctx: AIActionContext): Promise<Response> {
   const { session, db, settings, contentType, itemId } = ctx;
