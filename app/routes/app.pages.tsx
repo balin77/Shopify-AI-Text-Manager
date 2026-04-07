@@ -44,6 +44,10 @@ export const loader = createContentLoader({
                 title
                 handle
                 body
+                seo {
+                  title
+                  description
+                }
               }
             }
           }
@@ -58,6 +62,7 @@ export const loader = createContentLoader({
         title: p.title,
         handle: p.handle,
         body: p.body,
+        seo: p.seo ?? null,
       })),
       ids: pages.map((p: any) => p.id),
     };
@@ -135,7 +140,7 @@ export default function PagesPage() {
       <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
         <UnifiedContentEditor
           config={PAGES_CONFIG}
-          items={pages}
+          items={pages as ContentItem[]}
           shopLocales={shopLocales}
           primaryLocale={primaryLocale}
           editor={editor}

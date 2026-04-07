@@ -39,6 +39,10 @@ export const UPDATE_PAGE = `#graphql
         title
         handle
         body
+        seo {
+          title
+          description
+        }
       }
       userErrors {
         field

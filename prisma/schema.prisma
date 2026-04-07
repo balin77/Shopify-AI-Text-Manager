@@ -352,6 +352,10 @@ model Page {
   body   String? @db.Text
   handle String
 
+  // SEO fields (optional — only present if set in Shopify admin)
+  seoTitle       String?
+  seoDescription String? @db.Text
+
   // Shopify Metadata
   shopifyUpdatedAt DateTime
   lastSyncedAt     DateTime @default(now())

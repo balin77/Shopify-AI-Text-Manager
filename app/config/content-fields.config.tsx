@@ -275,7 +275,7 @@ export const PAGES_CONFIG: ContentEditorConfig = {
   resourceType: "Page",
   displayName: "Pages",
   displayNameSingular: "Page",
-  showSeoSidebar: false,
+  showSeoSidebar: true,
   idPrefix: "ID:",
 
   fieldDefinitions: [
@@ -309,6 +309,27 @@ export const PAGES_CONFIG: ContentEditorConfig = {
       supportsFormatting: true,
       supportsTranslation: true,
       aiInstructionsKey: "pageHandle",
+    },
+    {
+      key: "seoTitle",
+      type: "text",
+      label: "SEO Title",
+      translationKey: "meta_title",
+      supportsAI: true,
+      supportsFormatting: true,
+      supportsTranslation: true,
+      aiInstructionsKey: "pageSeoTitle",
+    },
+    {
+      key: "metaDescription",
+      type: "textarea",
+      label: "Meta Description",
+      translationKey: "meta_description",
+      multiline: 3,
+      supportsAI: true,
+      supportsFormatting: true,
+      supportsTranslation: true,
+      aiInstructionsKey: "pageMetaDesc",
     },
   ],
 };

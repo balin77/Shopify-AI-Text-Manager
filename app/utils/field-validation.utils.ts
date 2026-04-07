@@ -119,8 +119,12 @@ function getRequiredFieldsForContentType(contentType: ContentType): string[] {
     return ["title", "body_html", "summary_html", "handle", "meta_title", "meta_description"];
   } else if (contentType === 'policies') {
     return ["body"];
+  } else if (contentType === 'pages') {
+    // meta_title and meta_description are optional (only present if set in Shopify),
+    // but included here so translations are flagged when the primary locale has them.
+    // The primaryHasFieldContent guard in the caller skips them when empty.
+    return ["title", "body_html", "handle", "meta_title", "meta_description"];
   } else {
-    // pages and other content types
     return ["title", "body_html", "handle"];
   }
 }

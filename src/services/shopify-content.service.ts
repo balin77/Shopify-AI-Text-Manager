@@ -117,7 +117,7 @@ export class ShopifyContentService {
   /**
    * Update a page
    */
-  async updatePage(id: string, page: { title?: string; handle?: string; body?: string }) {
+  async updatePage(id: string, page: { title?: string; handle?: string; body?: string; seo?: { title?: string; description?: string } }) {
     const response = await this.admin.graphql(UPDATE_PAGE, {
       variables: { id, page }
     });
@@ -529,11 +529,16 @@ export class ShopifyContentService {
       let updatedResource;
 
       if (resourceType === 'Page') {
-        // Note: Pages do NOT have SEO fields (seoTitle/seoDescription) in Shopify's API — this is by design, not a bug.
+        // Build seo input only when at least one SEO field is provided
+        const seoInput = (updates.seoTitle !== undefined || updates.metaDescription !== undefined)
+          ? { title: updates.seoTitle ?? undefined, description: updates.metaDescription ?? undefined }
+          : undefined;
+
         updatedResource = await this.updatePage(resourceId, {
           title: updates.title,
           handle: updates.handle,
           body: updates.description || updates.body,
+          ...(seoInput ? { seo: seoInput } : {}),
         });
 
         // Update database
@@ -545,6 +550,8 @@ export class ShopifyContentService {
             title: updates.title,
             handle: updates.handle,
             body: updates.description || updates.body,
+            ...(updates.seoTitle !== undefined ? { seoTitle: updates.seoTitle } : {}),
+            ...(updates.metaDescription !== undefined ? { seoDescription: updates.metaDescription } : {}),
             lastSyncedAt: new Date(),
           },
         });
