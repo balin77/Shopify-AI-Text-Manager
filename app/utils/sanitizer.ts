@@ -18,6 +18,13 @@ import DOMPurify from 'isomorphic-dompurify';
  * - Links: a (with href attribute)
  * - Other: span, div
  */
+// Enforce rel="noopener noreferrer" on any <a target="..."> to prevent tab-napping
+DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+  if (node.tagName === 'A' && node.getAttribute('target')) {
+    node.setAttribute('rel', 'noopener noreferrer');
+  }
+});
+
 export function sanitizeHTML(html: string): string {
   if (!html) return '';
 
@@ -31,8 +38,6 @@ export function sanitizeHTML(html: string): string {
     ],
     ALLOWED_ATTR: ['href', 'target', 'rel', 'class'],
     ALLOW_DATA_ATTR: false,
-    // Force target="_blank" for external links to have rel="noopener noreferrer"
-    SAFE_FOR_TEMPLATES: true,
   });
 }
 
