@@ -6,16 +6,20 @@
  */
 
 import { BillingInterval, BillingReplacementBehavior, shopifyApp } from '@shopify/shopify-app-remix/server';
+import type { AdminApiContext } from '@shopify/shopify-app-remix/server';
 import type { Session } from '@shopify/shopify-api';
 import { BILLING_PLANS, type BillingPlan, isPaidPlan } from '~/config/billing';
 import { db as prisma } from '~/db.server';
 import { logger } from '~/utils/logger.server';
 
+/** The admin object from authenticate.admin() — only the graphql method is used here */
+type AdminGraphQL = AdminApiContext['admin'];
+
 /**
  * Checks if the shop is a development/partner test store.
  * Development stores should use test billing (no real charges).
  */
-async function isDevStore(admin: any): Promise<boolean> {
+async function isDevStore(admin: AdminGraphQL): Promise<boolean> {
   try {
     const response = await admin.graphql(
       `#graphql
@@ -41,7 +45,7 @@ async function isDevStore(admin: any): Promise<boolean> {
  * Automatically uses test mode for development stores and dev environments.
  */
 export async function createSubscription(
-  admin: any,
+  admin: AdminGraphQL,
   session: Session,
   plan: Exclude<BillingPlan, 'free'>,
   returnUrl: string
@@ -106,7 +110,7 @@ export async function createSubscription(
 
   if (result.data?.appSubscriptionCreate?.userErrors?.length > 0) {
     throw new Error(
-      `Failed to create subscription: ${result.data.appSubscriptionCreate.userErrors.map((e: any) => e.message).join(', ')}`
+      `Failed to create subscription: ${result.data.appSubscriptionCreate.userErrors.map((e: { message: string }) => e.message).join(', ')}`
     );
   }
 
@@ -120,7 +124,7 @@ export async function createSubscription(
 /**
  * Cancels an active subscription
  */
-export async function cancelSubscription(admin: any, subscriptionId: string) {
+export async function cancelSubscription(admin: AdminGraphQL, subscriptionId: string) {
   const response = await admin.graphql(
     `#graphql
       mutation AppSubscriptionCancel($id: ID!) {
@@ -147,7 +151,7 @@ export async function cancelSubscription(admin: any, subscriptionId: string) {
 
   if (result.data?.appSubscriptionCancel?.userErrors?.length > 0) {
     throw new Error(
-      `Failed to cancel subscription: ${result.data.appSubscriptionCancel.userErrors.map((e: any) => e.message).join(', ')}`
+      `Failed to cancel subscription: ${result.data.appSubscriptionCancel.userErrors.map((e: { message: string }) => e.message).join(', ')}`
     );
   }
 
@@ -157,7 +161,7 @@ export async function cancelSubscription(admin: any, subscriptionId: string) {
 /**
  * Gets the current active subscription for a shop
  */
-export async function getCurrentSubscription(admin: any) {
+export async function getCurrentSubscription(admin: AdminGraphQL) {
   const response = await admin.graphql(
     `#graphql
       query {
@@ -200,7 +204,7 @@ export async function getCurrentSubscription(admin: any) {
 /**
  * Checks if the shop has an active paid subscription
  */
-export async function hasActiveSubscription(admin: any): Promise<boolean> {
+export async function hasActiveSubscription(admin: AdminGraphQL): Promise<boolean> {
   const subscription = await getCurrentSubscription(admin);
   return subscription?.status === 'ACTIVE';
 }
@@ -208,7 +212,7 @@ export async function hasActiveSubscription(admin: any): Promise<boolean> {
 /**
  * Gets the plan from the subscription name or defaults to free
  */
-export function getPlanFromSubscription(subscription: any): BillingPlan {
+export function getPlanFromSubscription(subscription: { name: string } | null): BillingPlan {
   if (!subscription) return 'free';
 
   const name = subscription.name.toLowerCase();
@@ -239,7 +243,7 @@ export async function syncSubscriptionToDatabase(shop: string, plan: BillingPlan
 /**
  * Checks subscription status and updates database accordingly
  */
-export async function checkAndSyncSubscription(admin: any, shop: string): Promise<BillingPlan> {
+export async function checkAndSyncSubscription(admin: AdminGraphQL, shop: string): Promise<BillingPlan> {
   try {
     const subscription = await getCurrentSubscription(admin);
 
@@ -265,7 +269,7 @@ export async function checkAndSyncSubscription(admin: any, shop: string): Promis
  * Redirects to billing page if no active subscription
  */
 export async function requireSubscription(
-  admin: any,
+  admin: AdminGraphQL,
   session: Session,
   requiredPlan?: Exclude<BillingPlan, 'free'>
 ) {

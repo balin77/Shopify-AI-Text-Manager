@@ -7,7 +7,16 @@
 import { logger } from '~/utils/logger.server';
 
 interface ShopifyGraphQLClient {
-  graphql: (query: string, options?: { variables?: any }) => Promise<any>;
+  graphql: (query: string, options?: { variables?: Record<string, unknown> }) => Promise<Response>;
+}
+
+interface WebhookSubscriptionNode {
+  id: string;
+  topic: string;
+  endpoint?: {
+    __typename: string;
+    callbackUrl?: string;
+  };
 }
 
 export class WebhookRegistrationService {
@@ -197,7 +206,7 @@ export class WebhookRegistrationService {
 
     if (data.data?.webhookSubscriptionCreate?.userErrors?.length > 0) {
       const errors = data.data.webhookSubscriptionCreate.userErrors;
-      throw new Error(`Webhook creation failed: ${errors.map((e: any) => e.message).join(", ")}`);
+      throw new Error(`Webhook creation failed: ${errors.map((e: { message: string }) => e.message).join(", ")}`);
     }
 
     logger.info(`[WebhookRegistration] Created webhook ${topic}`);
@@ -206,7 +215,7 @@ export class WebhookRegistrationService {
   /**
    * Get existing webhook subscription
    */
-  private async getExistingWebhook(topic: string): Promise<any> {
+  private async getExistingWebhook(topic: string): Promise<WebhookSubscriptionNode | null> {
     const response = await this.admin.graphql(
       `#graphql
         query getWebhookSubscriptions {
@@ -271,14 +280,14 @@ export class WebhookRegistrationService {
 
     if (data.data?.webhookSubscriptionUpdate?.userErrors?.length > 0) {
       const errors = data.data.webhookSubscriptionUpdate.userErrors;
-      throw new Error(`Webhook update failed: ${errors.map((e: any) => e.message).join(", ")}`);
+      throw new Error(`Webhook update failed: ${errors.map((e: { message: string }) => e.message).join(", ")}`);
     }
   }
 
   /**
    * List all registered webhooks (for debugging)
    */
-  async listWebhooks(): Promise<any[]> {
+  async listWebhooks(): Promise<WebhookSubscriptionNode[]> {
     const response = await this.admin.graphql(
       `#graphql
         query getWebhookSubscriptions {
@@ -300,6 +309,7 @@ export class WebhookRegistrationService {
     );
 
     const data = await response.json();
-    return data.data?.webhookSubscriptions?.edges?.map((e: any) => e.node) || [];
+    const edges: Array<{ node: WebhookSubscriptionNode }> = data.data?.webhookSubscriptions?.edges || [];
+    return edges.map((e) => e.node);
   }
 }

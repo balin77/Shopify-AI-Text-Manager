@@ -57,6 +57,7 @@
 | 45. npm audit — production vulns | ✅ Done | 18 HIGH → 0 HIGH; 6 moderate remain (all in @remix-run/dev build tooling, no prod risk) |
 | 46. catch(error:any) routes + Zod | ✅ Done | 40+ instances across 23 route files fixed; Zod schema added to sync-single-resource |
 | 47. catch(error:any) in Services, Components, Utils | ✅ Done | 15 instances in 6 files fixed (see below) |
+| 48. Verbleibende any-Typen in Services | ✅ Done | billing.server.ts admin→AdminGraphQL; product-sync response interfaces; webhook-retry payload→unknown; (see below) |
 
 ---
 
@@ -304,5 +305,44 @@ Returns structured 400 with field-level Zod error messages on invalid input.
 - `error.stack` → `error instanceof Error ? error.stack : undefined`
 - `error.status` → `(error as { status?: number }).status` (gateway only; HTTP-error object pattern)
 - `loader-factory.server.ts`: `error.message` in the JSON response body also updated
+
+100 tests pass.
+
+---
+
+## 48. Verbleibende any-Typen in Services (Branch: Fg9tj)
+
+**Status:** ✅ Done (2026-04-07)
+
+### billing.server.ts
+
+- Added `type AdminGraphQL = AdminApiContext['admin']` (imported from `@shopify/shopify-app-remix/server`)
+- Replaced `admin: any` → `admin: AdminGraphQL` in all 7 functions: `isDevStore`, `createSubscription`, `cancelSubscription`, `getCurrentSubscription`, `hasActiveSubscription`, `checkAndSyncSubscription`, `requireSubscription`
+- `subscription: any` → `{ name: string } | null` in `getPlanFromSubscription`
+- `(e: any) => e.message` ×2 in `userErrors.map(...)` → `(e: { message: string }) => e.message`
+
+### product-sync.service.ts
+
+- Added `BulkProductsQueryResponse` interface (products pageInfo + edges)
+- Added `TranslatableResourceNode` + `TranslatableResourcesResponse` interfaces
+- `allProducts: any[]` → `ShopifyProductData[]`
+- 4× `const data: any` → `BulkProductsQueryResponse` / `TranslatableResourcesResponse`
+- `(e: any) => e.node` in products map → implicit type via typed edge
+
+### webhook-registration.service.ts (bonus — same file as Task 47)
+
+- `ShopifyGraphQLClient.graphql` tightened: `variables?: any` → `variables?: Record<string, unknown>`, return `Promise<Response>`
+- Added `WebhookSubscriptionNode` interface
+- `getExistingWebhook` return type: `Promise<any>` → `Promise<WebhookSubscriptionNode | null>`
+- `listWebhooks` return type: `Promise<any[]>` → `Promise<WebhookSubscriptionNode[]>`
+- `(e: any) => e.node` in listWebhooks → explicit edge type + inferred map callback
+- `errors.map((e: any) => e.message)` ×2 → `(e: { message: string }) => e.message`
+
+### webhook-retry.service.ts
+
+- `WebhookRetryJob.payload: any` → `unknown`
+- `WebhookHandler = (payload: any, ...)` → `(payload: unknown, ...)`
+- `scheduleRetry(..., payload: any, ...)` → `payload: unknown`
+- `processRetry(retry: any)` → typed inline object matching Prisma model shape
 
 100 tests pass.

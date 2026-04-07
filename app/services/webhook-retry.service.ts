@@ -33,14 +33,14 @@ export interface WebhookRetryJob {
   id: string;
   shop: string;
   topic: string;
-  payload: any;
+  payload: unknown;
   attempt: number;
   maxAttempts: number;
   nextRetry: Date;
   lastError?: string;
 }
 
-export type WebhookHandler = (payload: any, shop: string) => Promise<void>;
+export type WebhookHandler = (payload: unknown, shop: string) => Promise<void>;
 
 class WebhookRetryService {
   private handlers: Map<string, WebhookHandler> = new Map();
@@ -68,7 +68,7 @@ class WebhookRetryService {
   async scheduleRetry(
     shop: string,
     topic: string,
-    payload: any,
+    payload: unknown,
     error?: Error
   ): Promise<void> {
     try {
@@ -179,7 +179,16 @@ class WebhookRetryService {
   /**
    * Process a single retry attempt
    */
-  private async processRetry(retry: any): Promise<void> {
+  private async processRetry(retry: {
+    id: string;
+    shop: string;
+    topic: string;
+    payload: string;
+    attempt: number;
+    maxAttempts: number;
+    nextRetry: Date;
+    lastError: string | null;
+  }): Promise<void> {
     const handler = this.handlers.get(retry.topic);
 
     if (!handler) {

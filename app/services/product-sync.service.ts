@@ -80,6 +80,34 @@ interface ShopifyProductData {
   } | null;
 }
 
+/** Response shape for the bulk products query */
+interface BulkProductsQueryResponse {
+  data?: {
+    products?: {
+      pageInfo: { hasNextPage: boolean; endCursor: string | null };
+      edges: GraphQLEdge<ShopifyProductData>[];
+    };
+  };
+  errors?: GraphQLError[];
+}
+
+/** Node shape inside translatableResourcesByIds edges */
+interface TranslatableResourceNode {
+  resourceId: string;
+  translatableContent?: Array<{ key: string; digest: string }>;
+  translations?: Array<{ key: string; value: string; locale: string }>;
+}
+
+/** Response shape for translatableResourcesByIds queries */
+interface TranslatableResourcesResponse {
+  data?: {
+    translatableResourcesByIds?: {
+      edges: Array<{ node: TranslatableResourceNode }>;
+    };
+  };
+  errors?: GraphQLError[];
+}
+
 export class ProductSyncService {
   constructor(
     private admin: ShopifyGraphQLClient,
@@ -117,7 +145,7 @@ export class ProductSyncService {
     // ==========================================
     // Phase 1: Fetch all products (0-20%)
     // ==========================================
-    let allProducts: any[] = [];
+    let allProducts: ShopifyProductData[] = [];
     let hasNextPage = true;
     let cursor: string | null = null;
 
@@ -198,14 +226,14 @@ export class ProductSyncService {
         { variables: { first: batchSize, after: cursor } }
       );
 
-      const data: any = await response.json();
+      const data: BulkProductsQueryResponse = await response.json();
 
       if (data.errors) {
         throw new Error(data.errors[0]?.message || "GraphQL error");
       }
 
-      const pageInfo: any = data.data?.products?.pageInfo;
-      const products = data.data?.products?.edges?.map((e: any) => e.node) || [];
+      const pageInfo = data.data?.products?.pageInfo;
+      const products = data.data?.products?.edges?.map((e) => e.node) || [];
 
       allProducts = [...allProducts, ...products];
       hasNextPage = pageInfo?.hasNextPage || false;
@@ -398,7 +426,7 @@ export class ProductSyncService {
                   { variables: { resourceIds: batch, locale: locale.locale } }
                 );
 
-                const data: any = await response.json();
+                const data: TranslatableResourcesResponse = await response.json();
 
                 if (data.errors) {
                   logger.warn(`[ProductSync] GraphQL error fetching translations for locale ${locale.locale}:`, data.errors[0]?.message);
@@ -515,7 +543,7 @@ export class ProductSyncService {
                     { variables: { resourceIds: batch, locale: locale.locale } }
                   );
 
-                  const data: any = await response.json();
+                  const data: TranslatableResourcesResponse = await response.json();
 
                   if (data.errors) {
                     logger.warn(`[ProductSync] GraphQL error fetching sub-resource translations for locale ${locale.locale}:`, data.errors[0]?.message);
@@ -620,7 +648,7 @@ export class ProductSyncService {
                     { variables: { resourceIds: batch, locale: locale.locale } }
                   );
 
-                  const data: any = await response.json();
+                  const data: TranslatableResourcesResponse = await response.json();
                   if (data.errors) {
                     logger.warn(`[ProductSync] GraphQL error fetching alt-text for locale ${locale.locale}:`, data.errors[0]?.message);
                     continue;
