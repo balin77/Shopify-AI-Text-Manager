@@ -216,18 +216,17 @@ export function useProductSubResources({
     setOptionTranslations(dbOpts);
     setMetafieldTranslations(dbMfs);
 
-    // Phase 2: Only fetch from Shopify if Phase 1 found NO data for this locale.
-    // After syncProduct saves sub-resource translations to DB, Phase 1 has
-    // everything and this becomes unnecessary.
-    const hasAnyDbData = Object.keys(dbMap).length > 0;
+    // Phase 2: Fetch from Shopify for any sub-resources missing from DB.
+    // This catches translations made via Translate & Adapt or partial syncs.
+    const missingFromDb = subResourceIds.filter(id => !dbMap[id]);
 
-    if (!hasAnyDbData) {
+    if (missingFromDb.length > 0) {
       setIsLoading(true);
       fetcher.submit(
         {
           action: "loadSubResourceTranslations",
           locale: currentLanguage,
-          resourceIds: JSON.stringify(subResourceIds),
+          resourceIds: JSON.stringify(missingFromDb),
           itemId,
         },
         { method: "POST", action: "/app/products" }
