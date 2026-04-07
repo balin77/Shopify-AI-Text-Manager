@@ -137,9 +137,3 @@ export const PLAN_DISPLAY_NAMES: Record<Plan, string> = {
   max: "Max",
 };
 
-export const PLAN_COLORS: Record<Plan, string> = {
-  free: "#8c8c8c", // gray
-  basic: "#2c6ecb", // blue
-  pro: "#9333ea", // purple
-  max: "#eab308", // gold
-};
