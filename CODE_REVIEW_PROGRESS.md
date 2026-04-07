@@ -53,6 +53,9 @@
 | 41. config/constants.ts + plans.ts | ✅ Done | Removed 7 dead config exports + PLAN_COLORS; 100 tests pass |
 | 42. useFocusManagement.ts | ✅ Done | Removed 5 dead accessibility hooks; `useItemFocus` kept (used); 100 tests pass |
 | 43. i18n/index.ts | ✅ Done | Removed `availableLocales`; `getTranslation` kept (used in 2 files); 100 tests pass |
+| 44. rate-limit-cjs.cjs bugs + upgrade | ✅ Done | 5 bugs fixed; express-rate-limit 8.2.1 → 8.3.2 (IPv4-mapped IPv6 bypass resolved) |
+| 45. npm audit — production vulns | ✅ Done | 18 HIGH → 0 HIGH; 6 moderate remain (all in @remix-run/dev build tooling, no prod risk) |
+| 46. catch(error:any) routes + Zod | ✅ Done | 40+ instances across 23 route files fixed; Zod schema added to sync-single-resource |
 
 ---
 
@@ -193,3 +196,84 @@ The `.server.ts` version is the newer, better-typed replacement for `.middleware
 | **Total** | **15 files** | **47 exports** |
 
 All 100 tests pass after each change.
+
+---
+
+## 44. rate-limit-cjs.cjs — Bug Fixes + express-rate-limit Upgrade (Branch: f85Ty)
+
+**Status:** ✅ Done (2026-04-07)
+
+### Bugs Fixed in `app/middleware/rate-limit-cjs.cjs`
+
+| Bug | Old | Fix |
+|-----|-----|-----|
+| `retryAfter` was 0 when `resetTime` undefined | `(resetTime \|\| Date.now()) - Date.now()` → 0 | `resetTime.getTime() - Date.now()` with 60s fallback |
+| Shopify webhooks throttled | no `skip` option | `skip: skipVerifiedWebhook` (gates on `x-shopify-hmac-sha256`) |
+| Webhook key was IP+shop string | `ipKeyGenerator(req)-shop` | Pure `shop:` prefix key, falls back to normalised IP |
+| IPv4-mapped IPv6 bypass | used raw `ipKeyGenerator` | Added `normalizedIpKey()` that strips `::ffff:` prefix |
+| Auth limiter counted successes | no `skipSuccessfulRequests` | Added `skipSuccessfulRequests: true` |
+
+### Upgrade
+
+`express-rate-limit` 8.2.1 → 8.3.2 (pinned exact).
+The upstream IPv4-mapped IPv6 address bypass (HIGH advisory in npm audit) is resolved.
+
+---
+
+## 45. npm audit — Production Vulnerability Remediation (Branch: f85Ty)
+
+**Status:** ✅ Done (2026-04-07)
+
+### Result
+
+| Before | After |
+|--------|-------|
+| 0 critical | 0 critical |
+| 18 HIGH | **0 HIGH** ✅ |
+| 7 moderate | 6 moderate |
+| 1 low | 0 low |
+
+### Remaining 6 moderate vulnerabilities
+
+All 6 are in `@remix-run/dev` build tooling (vite, estree-util-value-to-estree).
+The suggested fix (`npm audit fix --force`) would downgrade `@remix-run/dev` from v2 to v1.14.3 —
+a major regression. These affect only the dev build pipeline, never production runtime.
+Left in place and documented.
+
+---
+
+## 46. catch(error:any) Route Cleanup + Zod on sync-single-resource (Branch: f85Ty)
+
+**Status:** ✅ Done (2026-04-07)
+
+### catch(error:any) → catch(error:unknown) — 23 files
+
+Task 7 fixed service files and some routes; 40+ instances remained in routes that were
+added/modified after that task. Now fully eliminated:
+
+**API routes (12):** api.setup-webhooks, api.sync-single-product, api.product-images,
+api.sync-content, api.sync-single-resource, api.sync-products, api.sync-missing-products,
+api.sync-all-stream (8 instances), api.metaobjects.$, api.templates.$,
+api.running-field-tasks, api.running-tasks-count, api.recently-completed-tasks
+
+**Webhook routes (4):** webhooks.products, webhooks.collections, webhooks.menus, webhooks.articles
+
+**App routes (5):** app.settings, app.policies, app.metadata, app.content, app.tasks, app.products
+
+### Special patterns handled
+
+- **authError.status pattern:** Shopify Remix adapter throws `Response` on auth failure.
+  Changed `(authError: any).status` → `authError instanceof Response ? authError.status : undefined`.
+- **err.name === "AbortError"** in sync-all-stream: guarded with `err instanceof Error &&`.
+- **Nested error in webhookLog.update:** both logger call and DB `error` field updated.
+
+### Zod schema — api.sync-single-resource.tsx
+
+Added `SyncSingleResourceSchema`:
+- `resourceType`: validated against explicit enum of 20 valid values (replaces string cast)
+- `resourceId`: min/max length bounds (1–500 chars)
+- `locale`: validated with `isValidLocale()` (format: `xx` or `xx-XX`)
+
+Returns structured 400 with field-level Zod error messages on invalid input.
+
+100 tests pass.
