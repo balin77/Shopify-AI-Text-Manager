@@ -104,7 +104,7 @@ export function getInstructionWithDefault(
  * Get character limit requirements for a field based on its aiInstructionsKey.
  * Used to inject length constraints into AI prompts.
  */
-export function getCharacterLimitRequirement(aiInstructionsKey: string): string | null {
+export function getCharacterLimitRequirement(aiInstructionsKey: string, seoTitleMaxChars = 60): string | null {
   const limits: Record<string, string> = {
     // Titles: 30-70 characters
     productTitle: "30-70 characters",
@@ -119,11 +119,11 @@ export function getCharacterLimitRequirement(aiInstructionsKey: string): string 
     pageDescription: "minimum 150 characters",
     policyDescription: "minimum 150 characters",
 
-    // SEO Titles: max 60 characters
-    productSeoTitle: "maximum 60 characters",
-    collectionSeoTitle: "maximum 60 characters",
-    blogSeoTitle: "maximum 60 characters",
-    pageSeoTitle: "maximum 60 characters",
+    // SEO Titles: adjusted for shop name suffix
+    productSeoTitle: `maximum ${seoTitleMaxChars} characters`,
+    collectionSeoTitle: `maximum ${seoTitleMaxChars} characters`,
+    blogSeoTitle: `maximum ${seoTitleMaxChars} characters`,
+    pageSeoTitle: `maximum ${seoTitleMaxChars} characters`,
 
     // Meta Descriptions: 120-160 characters
     productMetaDesc: "120-160 characters",

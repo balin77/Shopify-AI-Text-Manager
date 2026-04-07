@@ -23,7 +23,7 @@ export async function handleLoadSubResourceTranslations(
   ctx: ContentActionHandlerContext,
   formData: FormData,
 ): Promise<Response> {
-  const { db, shopifyContentService } = ctx;
+  const { db, session, shopifyContentService } = ctx;
 
   const locale = getFormString(formData, "locale");
   if (!locale || !isValidLocale(locale)) {
@@ -87,8 +87,8 @@ export async function handleLoadSubResourceTranslations(
               // Persist to DB so next navigation finds it via the loader pipeline
               dbWrites.push(
                 db.contentTranslation.upsert({
-                  where: { resourceId_key_locale: { resourceId: rid, key: t.key, locale } },
-                  create: { resourceId: rid, resourceType, key: t.key, value: t.value, locale },
+                  where: { shop_resourceId_key_locale: { shop: session.shop, resourceId: rid, key: t.key, locale } },
+                  create: { shop: session.shop, resourceId: rid, resourceType, key: t.key, value: t.value, locale },
                   update: { value: t.value },
                 })
               );
@@ -229,8 +229,8 @@ export async function handleSaveSubResourceTranslations(
           } else {
             // For all other cases, save to DB
             await db.contentTranslation.upsert({
-              where: { resourceId_key_locale: { resourceId, key, locale } },
-              create: { resourceId, resourceType, key, value, locale },
+              where: { shop_resourceId_key_locale: { shop: session.shop, resourceId, key, locale } },
+              create: { shop: session.shop, resourceId, resourceType, key, value, locale },
               update: { value },
             });
           }
@@ -386,8 +386,8 @@ export async function handleTranslateSubResources(
         const resourceType = sourceItem?.resourceType || "Unknown";
         for (const [key, value] of Object.entries(fields)) {
           await db.contentTranslation.upsert({
-            where: { resourceId_key_locale: { resourceId, key, locale: targetLocale } },
-            create: { resourceId, resourceType, key, value, locale: targetLocale },
+            where: { shop_resourceId_key_locale: { shop: session.shop, resourceId, key, locale: targetLocale } },
+            create: { shop: session.shop, resourceId, resourceType, key, value, locale: targetLocale },
             update: { value },
           });
         }
@@ -581,8 +581,8 @@ export async function handleTranslateSubResourceToAllLocales(
           const resourceType = sourceItem?.resourceType || "Unknown";
           for (const [key, value] of Object.entries(fields)) {
             await db.contentTranslation.upsert({
-              where: { resourceId_key_locale: { resourceId, key, locale } },
-              create: { resourceId, resourceType, key, value, locale },
+              where: { shop_resourceId_key_locale: { shop: session.shop, resourceId, key, locale } },
+              create: { shop: session.shop, resourceId, resourceType, key, value, locale },
               update: { value },
             });
           }
