@@ -35,18 +35,20 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         { tasks },
         { headers: { "Cache-Control": "no-store" } }
       );
-    } catch (dbError: any) {
+    } catch (dbError: unknown) {
       logger.error("Database error in running-field-tasks", {
         error: dbError instanceof Error ? dbError.message : String(dbError),
       });
       return json({ tasks: [], error: "Database error" }, { status: 500 });
     }
-  } catch (authError: any) {
+  } catch (authError: unknown) {
     logger.error("Authentication error in running-field-tasks", {
       error: authError instanceof Error ? authError.message : String(authError),
     });
 
-    if (authError.status === 429) {
+    const errStatus = authError instanceof Response ? authError.status : undefined;
+
+    if (errStatus === 429) {
       logger.warn("Rate limit hit on running-field-tasks, returning empty tasks");
       return json(
         { tasks: [], warning: "Rate limited" },
@@ -56,7 +58,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
     return json(
       { tasks: [], error: "Authentication failed" },
-      { status: authError.status || 401 }
+      { status: errStatus || 401 }
     );
   }
 };

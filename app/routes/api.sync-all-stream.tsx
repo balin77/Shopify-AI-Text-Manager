@@ -263,8 +263,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             current: 100,
             total: 100
           });
-        } catch (err: any) {
-          if (err.name === "AbortError") throw err;
+        } catch (err: unknown) {
+          if (err instanceof Error && err.name === "AbortError") throw err;
           sendEvent({
             type: 'progress',
             phase: 'collections',
@@ -308,8 +308,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             current: 100,
             total: 100
           });
-        } catch (err: any) {
-          if (err.name === "AbortError") throw err;
+        } catch (err: unknown) {
+          if (err instanceof Error && err.name === "AbortError") throw err;
           sendEvent({
             type: 'progress',
             phase: 'articles',
@@ -353,8 +353,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             current: 100,
             total: 100
           });
-        } catch (err: any) {
-          if (err.name === "AbortError") throw err;
+        } catch (err: unknown) {
+          if (err instanceof Error && err.name === "AbortError") throw err;
           sendEvent({
             type: 'progress',
             phase: 'pages',
@@ -398,8 +398,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             current: 100,
             total: 100
           });
-        } catch (err: any) {
-          if (err.name === "AbortError") throw err;
+        } catch (err: unknown) {
+          if (err instanceof Error && err.name === "AbortError") throw err;
           sendEvent({
             type: 'progress',
             phase: 'policies',
@@ -443,8 +443,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             current: 100,
             total: 100
           });
-        } catch (err: any) {
-          if (err.name === "AbortError") throw err;
+        } catch (err: unknown) {
+          if (err instanceof Error && err.name === "AbortError") throw err;
           sendEvent({
             type: 'progress',
             phase: 'themes',
@@ -490,8 +490,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             current: 100,
             total: 100
           });
-        } catch (err: any) {
-          if (err.name === "AbortError") throw err;
+        } catch (err: unknown) {
+          if (err instanceof Error && err.name === "AbortError") throw err;
           sendEvent({
             type: 'progress',
             phase: 'metaobjects',

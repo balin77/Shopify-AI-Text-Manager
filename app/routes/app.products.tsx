@@ -229,8 +229,8 @@ export const loader = createContentLoader({
           if (product === shopifyProducts[0]) {
             logger.info(`[PRODUCTS-LOADER] Options saved OK for ${product.id}`);
           }
-        } catch (optErr: any) {
-          logger.error(`[PRODUCTS-LOADER] OPTIONS SAVE FAILED for ${product.id}: ${optErr.message}`);
+        } catch (optErr: unknown) {
+          logger.error(`[PRODUCTS-LOADER] OPTIONS SAVE FAILED for ${product.id}: ${optErr instanceof Error ? optErr.message : String(optErr)}`);
           // If the column doesn't exist, createMany fails — try without linkedMetafieldKey
           try {
             await ctx.db.productOption.createMany({
@@ -245,8 +245,8 @@ export const loader = createContentLoader({
               })),
             });
             logger.info(`[PRODUCTS-LOADER] Options saved (without linkedMetafieldKey) for ${product.id}`);
-          } catch (fallbackErr: any) {
-            logger.error(`[PRODUCTS-LOADER] OPTIONS FALLBACK ALSO FAILED for ${product.id}: ${fallbackErr.message}`);
+          } catch (fallbackErr: unknown) {
+            logger.error(`[PRODUCTS-LOADER] OPTIONS FALLBACK ALSO FAILED for ${product.id}: ${fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)}`);
           }
         }
       }
