@@ -31,31 +31,6 @@ export function getLocalizedLanguageName(localeCode: string, appLocale: string, 
   return fallbackName || localeCode;
 }
 
-export interface ContentEditorState {
-  editableTitle: string;
-  setEditableTitle: (value: string) => void;
-  editableDescription: string;
-  setEditableDescription: (value: string) => void;
-  editableHandle: string;
-  setEditableHandle: (value: string) => void;
-  editableSeoTitle: string;
-  setEditableSeoTitle: (value: string) => void;
-  editableMetaDescription: string;
-  setEditableMetaDescription: (value: string) => void;
-  hasChanges: boolean;
-  setHasChanges: (value: boolean) => void;
-  descriptionMode: "html" | "rendered";
-  setDescriptionMode: (value: "html" | "rendered") => void;
-}
-
-export interface NavigationState {
-  pendingNavigation: (() => void) | null;
-  setPendingNavigation: (action: (() => void) | null) => void;
-  highlightSaveButton: boolean;
-  setHighlightSaveButton: (value: boolean) => void;
-  saveButtonRef: React.RefObject<HTMLDivElement>;
-}
-
 // ============================================================================
 // Helper Functions
 // ============================================================================
@@ -453,97 +428,6 @@ export function useChangeTracking(
 }
 
 /**
- * Load item data when item or language changes
- */
-export function useItemDataLoader(
-  selectedItem: TranslatableItem | null,
-  currentLanguage: string,
-  primaryLocale: string,
-  contentType: ContentType,
-  setEditableFields: (fields: {
-    title: string;
-    description: string;
-    handle: string;
-    seoTitle: string;
-    metaDescription: string;
-  }) => void,
-  selectedItemId: string | null
-) {
-  useEffect(() => {
-    if (!selectedItem) return;
-
-    if (currentLanguage === primaryLocale) {
-      // Load primary locale data
-      const title = selectedItem.title || "";
-      let description = "";
-      let handle = selectedItem.handle || "";
-      let seoTitle = "";
-      let metaDescription = "";
-
-      if (contentType === 'blogs') {
-        description = selectedItem.body || "";
-      } else if (contentType === 'collections') {
-        description = selectedItem.descriptionHtml || "";
-        seoTitle = selectedItem.seo?.title || "";
-        metaDescription = selectedItem.seo?.description || "";
-      } else if (contentType === 'pages') {
-        description = selectedItem.body || "";
-      } else if (contentType === 'policies') {
-        description = selectedItem.body || "";
-        handle = "";
-      }
-
-      setEditableFields({
-        title,
-        description,
-        handle,
-        seoTitle,
-        metaDescription
-      });
-    } else {
-      // Load translation data (translations are already loaded in item.translations)
-      const descKey = CONTENT_TYPE_DESCRIPTION_KEY[contentType];
-
-      const title = contentType !== 'policies'
-        ? getTranslatedValue(selectedItem, SHOPIFY_TRANSLATION_KEYS.TITLE, currentLanguage, "", primaryLocale)
-        : "";
-      const description = getTranslatedValue(selectedItem, descKey, currentLanguage, "", primaryLocale);
-      const handle = getTranslatedValue(selectedItem, SHOPIFY_TRANSLATION_KEYS.HANDLE, currentLanguage, "", primaryLocale);
-      const seoTitle = getTranslatedValue(selectedItem, SHOPIFY_TRANSLATION_KEYS.META_TITLE, currentLanguage, "", primaryLocale);
-      const metaDescription = getTranslatedValue(selectedItem, SHOPIFY_TRANSLATION_KEYS.META_DESCRIPTION, currentLanguage, "", primaryLocale);
-
-      setEditableFields({
-        title,
-        description,
-        handle,
-        seoTitle,
-        metaDescription
-      });
-    }
-  }, [selectedItemId, currentLanguage, selectedItem, contentType, primaryLocale]);
-}
-
-/**
- * Check if field is translated
- */
-export function isFieldTranslated(
-  selectedItem: TranslatableItem | null,
-  key: string,
-  currentLanguage: string,
-  primaryLocale: string
-): boolean {
-  if (currentLanguage === primaryLocale) return true;
-  if (!selectedItem) return false;
-
-  const translations = selectedItem.translations || [];
-  const translation = translations.find(
-    (t) => t.key === key && t.locale === currentLanguage
-  );
-
-  return !!translation && !!translation.value;
-}
-
-/**
  * Check if primary locale has any missing content
  * For templates: checks if any translatableContent entry has empty value
  */
@@ -918,97 +802,11 @@ export function getLocaleButtonTooltip(
   return `${prefix} ${unique.join(', ')}`;
 }
 
-/**
- * Check if any foreign locale has missing translations
- */
-export function hasMissingTranslations(
-  selectedItem: TranslatableItem | null,
-  shopLocales: ShopLocale[],
-  contentType: ContentType
-): boolean {
-  if (!selectedItem) return false;
-
-  const primaryLocale = shopLocales.find(l => l.primary)?.locale || "en";
-  const foreignLocales = shopLocales.filter(l => !l.primary);
-
-  return foreignLocales.some(locale =>
-    hasLocaleMissingTranslations(selectedItem, locale.locale, primaryLocale, contentType)
-  );
-}
-
-/**
- * Check if a specific field has missing translations in any foreign locale
- * Only returns true if:
- * 1. The primary locale has content for this field
- * 2. At least one foreign locale is missing translation for this field
- */
-export function hasFieldMissingTranslations(
-  selectedItem: TranslatableItem | null,
-  fieldKey: string,
-  shopLocales: ShopLocale[],
-  primaryLocale: string,
-  contentType: ContentType
-): boolean {
-  if (!selectedItem) return false;
-
-  // Skip handle field - Shopify often doesn't return translations for handles
-  // that are identical to the primary locale, so we ignore it in validation
-  if (fieldKey === 'handle') {
-    return false;
-  }
-
-  // Map UI field names to translation keys
-  const translationKey = UI_FIELD_TO_TRANSLATION_KEY[fieldKey] || fieldKey;
-
-  // Check if primary locale has content for this field
-  if (!primaryHasFieldContent(selectedItem, translationKey, contentType)) {
-    return false;
-  }
-
-  // Check if any foreign locale is missing this specific translation
-  const foreignLocales = shopLocales.filter(l => !l.primary);
-
-  return foreignLocales.some(locale => {
-    return !hasTranslationForField(selectedItem, translationKey, locale.locale);
-  });
-}
-
 // Module-level reference point for synchronizing all pulse animations across buttons.
 // A negative animation-delay calculated from this epoch ensures every button starts
 // at the correct phase of the shared pulse cycle, even when animations restart at
 // different times (e.g., after editing a field briefly removes the "missing" state).
 const PULSE_SYNC_EPOCH = Date.now();
-
-/**
- * Get button style for locale navigation
- * Shows pulsing border animation when translations are missing
- * @deprecated Use useLocaleButtonStyle hook instead for better performance
- */
-export function getLocaleButtonStyle(
-  locale: ShopLocale,
-  selectedItem: TranslatableItem | null,
-  primaryLocale: string,
-  contentType: ContentType
-): React.CSSProperties {
-  const primaryContentMissing = locale.primary && hasPrimaryContentMissing(selectedItem, contentType);
-  const foreignTranslationMissing = !locale.primary && hasLocaleMissingTranslations(selectedItem, locale.locale, primaryLocale, contentType);
-
-  if (primaryContentMissing || foreignTranslationMissing) {
-    const pulseDuration = TIMING.HIGHLIGHT_DURATION_MS;
-    const syncOffset = (Date.now() - PULSE_SYNC_EPOCH) % pulseDuration;
-    const isOrange = primaryContentMissing;
-    const fadeIn = isOrange ? 'pulseFadeIn' : 'pulseBlueFadeIn';
-    const pulse = isOrange ? 'pulse' : 'pulseBlue';
-
-    return {
-      animation: `${fadeIn} 500ms ease-out forwards, ${pulse} ${pulseDuration}ms ease-in-out infinite`,
-      animationDelay: `0s, -${syncOffset}ms`,
-      borderRadius: "8px",
-    };
-  }
-
-  return {};
-}
 
 /**
  * Hook: Get button style for locale navigation with memoization
