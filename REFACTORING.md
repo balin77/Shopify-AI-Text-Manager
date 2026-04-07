@@ -151,7 +151,7 @@ Beide Funktionen sind reine Utilities ohne Framework-Abhängigkeiten und damit j
 
 ---
 
-## Gesamtergebnis (Phasen 1–4 + Priorität 1 + Priorität 2)
+## Gesamtergebnis (Phasen 1–4 + Priorität 1–3)
 
 | Datei | Vorher | Nachher | Reduktion |
 |---|---|---|---|
@@ -161,10 +161,10 @@ Beide Funktionen sind reine Utilities ohne Framework-Abhängigkeiten und damit j
 | `app.templates.tsx` | 2546 | 1094 | -1452 |
 | `app/components/UnifiedContentEditor.tsx` | 1241 | 916 | -325 |
 | `app/routes/app.settings.tsx` | 1252 | 984 | -268 |
-| `contentEditor.utils.ts` | 1157 | 1060 | -97 |
-| **Summe** | **15663** | **7035** | **-8628** |
+| `contentEditor.utils.ts` | 1157 | 155 | -1002 |
+| **Summe** | **15663** | **6130** | **-9533** |
 
-Neu erstellt: 30+ Dateien mit zusammen ~8000 Zeilen fokussierter, einzelverantwortlicher Logik.
+Neu erstellt: 34+ Dateien mit zusammen ~9000 Zeilen fokussierter, einzelverantwortlicher Logik.
 
 ---
 
@@ -209,18 +209,26 @@ app/actions/templates/
 
 ---
 
-## Offene Refactoring-Aufgaben (Next Steps)
+## Abgeschlossene Refactoring-Aufgaben
 
-### Priorität 3 — Nice-to-have
+### Priorität 3 — abgeschlossen
 
-#### Shared Service-Context
-`AIService` + `TranslationService` Initialisierung in `unified-content.actions.ts` ist noch 15 Zeilen lang und könnte in die `shared.ts` wandern (analog zu `createAIService`).
+#### Shared Service-Context ✅
+`createAIService(taskId)` + `createTranslationService(taskId)` Factories in `unified-content.actions.ts` ersetzen 12 duplizierte Instantiierungen von `new AIService(provider, serviceConfig, session.shop, task.id)`.
 
-#### `app/utils/contentEditor.utils.ts` weiter aufteilen
+#### `app/utils/contentEditor.utils.ts` aufgeteilt ✅ (1157 → 155 Zeilen)
 - `useNavigationGuard` → `app/hooks/useNavigationGuard.ts`
-- `useChangeTracking` → `app/hooks/useChangeTracking.ts`  
+- `useChangeTracking` → `app/hooks/useChangeTracking.ts`
 - `useItemDataLoader` → `app/hooks/useItemDataLoader.ts`
-- Field-Validation-Funktionen (16 Exports) → `app/utils/field-validation.utils.ts`
+- Field-Validation-Funktionen (10 Exports) → `app/utils/field-validation.utils.ts`
+
+`contentEditor.utils.ts` enthält jetzt nur noch: `getTranslatedValue`, `contentEditorStyles`, `ContentEditorState`/`NavigationState` Interfaces + Re-Exports für Backwards-Compat.
+
+---
+
+## Offene Refactoring-Aufgaben
+
+Keine. Alle Prioritäten abgeschlossen.
 
 ---
 
