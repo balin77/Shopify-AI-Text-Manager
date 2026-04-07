@@ -202,6 +202,7 @@ async function deleteArticles(shop: string): Promise<{ articles: number; transla
     // Delete content translations for articles
     const translationResult = await tx.contentTranslation.deleteMany({
       where: {
+        shop,
         resourceType: "Article",
         resourceId: { in: articleIds },
       },
@@ -239,6 +240,7 @@ async function deletePages(shop: string): Promise<{ pages: number; translations:
   const { translationsCount, pagesCount } = await db.$transaction(async (tx) => {
     const translationResult = await tx.contentTranslation.deleteMany({
       where: {
+        shop,
         resourceType: "Page",
         resourceId: { in: pageIds },
       },
@@ -275,6 +277,7 @@ async function deletePolicies(shop: string): Promise<{ policies: number; transla
   const { translationsCount, policiesCount } = await db.$transaction(async (tx) => {
     const translationResult = await tx.contentTranslation.deleteMany({
       where: {
+        shop,
         resourceType: "ShopPolicy",
         resourceId: { in: policyIds },
       },
@@ -344,6 +347,7 @@ async function deleteCollectionsOverLimit(shop: string, maxCollections: number):
   const { translationsCount, collectionsCount } = await db.$transaction(async (tx) => {
     const translationResult = await tx.contentTranslation.deleteMany({
       where: {
+        shop,
         resourceType: "Collection",
         resourceId: { in: collectionIds },
       },
@@ -388,6 +392,7 @@ async function deleteArticlesOverLimit(shop: string, maxArticles: number): Promi
   const { translationsCount, articlesCount } = await db.$transaction(async (tx) => {
     const translationResult = await tx.contentTranslation.deleteMany({
       where: {
+        shop,
         resourceType: "Article",
         resourceId: { in: articleIds },
       },
@@ -432,6 +437,7 @@ async function deletePagesOverLimit(shop: string, maxPages: number): Promise<{ p
   const { translationsCount, pagesCount } = await db.$transaction(async (tx) => {
     const translationResult = await tx.contentTranslation.deleteMany({
       where: {
+        shop,
         resourceType: "Page",
         resourceId: { in: pageIds },
       },

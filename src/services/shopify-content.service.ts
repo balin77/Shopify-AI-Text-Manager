@@ -424,7 +424,8 @@ export class ShopifyContentService {
           for (const translation of translationsInput) {
             await tx.contentTranslation.upsert({
               where: {
-                resourceId_key_locale: {
+                shop_resourceId_key_locale: {
+                  shop,
                   resourceId,
                   key: translation.key,
                   locale: translation.locale,
@@ -436,6 +437,7 @@ export class ShopifyContentService {
                 resourceType,
               },
               create: {
+                shop,
                 resourceId,
                 resourceType,
                 key: translation.key,
@@ -450,7 +452,8 @@ export class ShopifyContentService {
           for (const translation of dbOnlyTranslations) {
             await tx.contentTranslation.upsert({
               where: {
-                resourceId_key_locale: {
+                shop_resourceId_key_locale: {
+                  shop,
                   resourceId,
                   key: translation.key,
                   locale: translation.locale,
@@ -462,6 +465,7 @@ export class ShopifyContentService {
                 resourceType,
               },
               create: {
+                shop,
                 resourceId,
                 resourceType,
                 key: translation.key,
@@ -476,6 +480,7 @@ export class ShopifyContentService {
           if (translationsToDelete.length > 0) {
             await tx.contentTranslation.deleteMany({
               where: {
+                shop,
                 resourceId,
                 resourceType,
                 locale,
@@ -508,6 +513,14 @@ export class ShopifyContentService {
             error: 'Translation saved to Shopify but local database update failed. Reload to sync.',
           };
         }
+      }
+
+      if (dbOnlyTranslations.length > 0) {
+        const fieldNames = dbOnlyTranslations.map((t) => t.key).join(", ");
+        return {
+          success: true,
+          warning: `Some fields (${fieldNames}) could not be sent to Shopify because no digest was available and were saved locally only. They may be overwritten on the next sync — please re-save after a page refresh.`,
+        };
       }
 
       return { success: true };
@@ -651,6 +664,7 @@ export class ShopifyContentService {
             // Delete from database (single batch call instead of N×M loop)
             await db.contentTranslation.deleteMany({
               where: {
+                shop,
                 resourceId,
                 resourceType,
                 key: { in: translationKeysToDelete },
@@ -954,9 +968,9 @@ export class ShopifyContentService {
         await db.$transaction(async (tx: PrismaClient) => {
           for (const p of saved) {
             await tx.contentTranslation.upsert({
-              where: { resourceId_key_locale: { resourceId, key: p.translationKey, locale: p.locale } },
+              where: { shop_resourceId_key_locale: { shop, resourceId, key: p.translationKey, locale: p.locale } },
               update: { value: p.value, digest: p.digest, resourceType },
-              create: { resourceId, resourceType, key: p.translationKey, value: p.value, locale: p.locale, digest: p.digest },
+              create: { shop, resourceId, resourceType, key: p.translationKey, value: p.value, locale: p.locale, digest: p.digest },
             });
           }
         });

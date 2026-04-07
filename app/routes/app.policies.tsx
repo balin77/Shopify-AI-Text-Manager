@@ -79,7 +79,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // Fetch translations scoped to this shop's policy IDs
     const policyIds = policies.map((p: any) => p.id);
     const allTranslations = await db.contentTranslation.findMany({
-      where: { resourceType: 'ShopPolicy', resourceId: { in: policyIds } }
+      where: { shop: session.shop, resourceType: 'ShopPolicy', resourceId: { in: policyIds } }
     });
 
     // Group translations by resourceId

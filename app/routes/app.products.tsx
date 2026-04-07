@@ -266,7 +266,7 @@ export const loader = createContentLoader({
         await ctx.db.productImage.deleteMany({ where: { productId: { in: removedIds } } });
         await ctx.db.product.deleteMany({ where: { shop: ctx.session.shop, id: { in: removedIds } } });
         await ctx.db.contentTranslation.deleteMany({
-          where: { resourceType: "Product", resourceId: { in: removedIds } },
+          where: { shop: ctx.session.shop, resourceType: "Product", resourceId: { in: removedIds } },
         });
       }
     }
@@ -304,7 +304,7 @@ export const loader = createContentLoader({
     let subTransByResource: Record<string, any[]> = {};
     if (allSubResourceIds.length > 0) {
       const subTrans = await ctx.db.contentTranslation.findMany({
-        where: { resourceId: { in: allSubResourceIds } },
+        where: { shop: ctx.session.shop, resourceId: { in: allSubResourceIds } },
       });
       // Group by resourceId
       subTransByResource = subTrans.reduce((acc: Record<string, any[]>, t: any) => {

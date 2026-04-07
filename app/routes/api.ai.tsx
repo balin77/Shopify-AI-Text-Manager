@@ -581,7 +581,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                       };
                       await db.contentTranslation.upsert({
                         where: {
-                          resourceId_key_locale: {
+                          shop_resourceId_key_locale: {
+                            shop: session.shop,
                             resourceId: itemId,
                             key: shopifyKey,
                             locale,
@@ -589,6 +590,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                         },
                         update: { value: translatedValue, digest, resourceType: resourceTypeMap[contentType] || "Product" },
                         create: {
+                          shop: session.shop,
                           resourceId: itemId,
                           resourceType: resourceTypeMap[contentType] || "Product",
                           key: shopifyKey,
@@ -980,7 +982,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                     };
                     await db.contentTranslation.upsert({
                       where: {
-                        resourceId_key_locale: {
+                        shop_resourceId_key_locale: {
+                          shop: session.shop,
                           resourceId: itemId,
                           key: shopifyKey,
                           locale,
@@ -988,6 +991,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                       },
                       update: { value: translatedValue, digest, resourceType: resourceTypeMap[contentType] || "Product" },
                       create: {
+                        shop: session.shop,
                         resourceId: itemId,
                         resourceType: resourceTypeMap[contentType] || "Product",
                         key: shopifyKey,

@@ -254,6 +254,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const translationCount = resourceIds.length > 0
       ? await db.contentTranslation.count({
           where: {
+            shop: session.shop,
             resourceId: { in: resourceIds },
           },
         })

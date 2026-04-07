@@ -400,6 +400,7 @@ model ContentTranslation {
   // NOTE: No foreign key constraints - we handle this polymorphically in code
   resourceId   String // The GID of the parent resource
   resourceType String // "Product", "Collection", "Article", "Page", or "ShopPolicy"
+  shop         String  // Defense-in-depth: explicit shop scope for multi-tenant isolation
 
   key    String // "title", "body_html", "body", "description", "handle", "meta_title", "meta_description"
   value  String  @db.Text
@@ -409,10 +410,11 @@ model ContentTranslation {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([resourceId, key, locale])
+  @@unique([shop, resourceId, key, locale])
   @@index([resourceId, locale])
   @@index([resourceType])
   @@index([locale])
+  @@index([shop, resourceType])
   @@index([resourceType, resourceId]) // For bulk joins in loaders - improves query performance by 40-60%
 }
 

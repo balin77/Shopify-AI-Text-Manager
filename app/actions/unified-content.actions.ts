@@ -1812,6 +1812,7 @@ Image URL: ${image.url}`;
       // Batch: load from local DB first (faster)
       const dbTranslations = await db.contentTranslation.findMany({
         where: {
+          shop: session.shop,
           resourceId: { in: resourceIds },
           locale,
         },
@@ -1844,8 +1845,8 @@ Image URL: ${image.url}`;
                 // Persist to DB so next navigation finds it via the loader pipeline
                 dbWrites.push(
                   db.contentTranslation.upsert({
-                    where: { resourceId_key_locale: { resourceId: rid, key: t.key, locale } },
-                    create: { resourceId: rid, resourceType, key: t.key, value: t.value, locale },
+                    where: { shop_resourceId_key_locale: { shop: session.shop, resourceId: rid, key: t.key, locale } },
+                    create: { shop: session.shop, resourceId: rid, resourceType, key: t.key, value: t.value, locale },
                     update: { value: t.value },
                   })
                 );
@@ -1975,8 +1976,8 @@ Image URL: ${image.url}`;
             } else {
               // For all other cases, save to DB
               await db.contentTranslation.upsert({
-                where: { resourceId_key_locale: { resourceId, key, locale } },
-                create: { resourceId, resourceType, key, value, locale },
+                where: { shop_resourceId_key_locale: { shop: session.shop, resourceId, key, locale } },
+                create: { shop: session.shop, resourceId, resourceType, key, value, locale },
                 update: { value },
               });
             }
@@ -2127,8 +2128,8 @@ Image URL: ${image.url}`;
           const resourceType = sourceItem?.resourceType || "Unknown";
           for (const [key, value] of Object.entries(fields)) {
             await db.contentTranslation.upsert({
-              where: { resourceId_key_locale: { resourceId, key, locale: targetLocale } },
-              create: { resourceId, resourceType, key, value, locale: targetLocale },
+              where: { shop_resourceId_key_locale: { shop: session.shop, resourceId, key, locale: targetLocale } },
+              create: { shop: session.shop, resourceId, resourceType, key, value, locale: targetLocale },
               update: { value },
             });
           }
@@ -2314,8 +2315,8 @@ Image URL: ${image.url}`;
             const resourceType = sourceItem?.resourceType || "Unknown";
             for (const [key, value] of Object.entries(fields)) {
               await db.contentTranslation.upsert({
-                where: { resourceId_key_locale: { resourceId, key, locale } },
-                create: { resourceId, resourceType, key, value, locale },
+                where: { shop_resourceId_key_locale: { shop: session.shop, resourceId, key, locale } },
+                create: { shop: session.shop, resourceId, resourceType, key, value, locale },
                 update: { value },
               });
             }

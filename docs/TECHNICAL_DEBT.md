@@ -1,13 +1,13 @@
 # Technical Debt & Future Improvements
 
-**Last Updated:** 2026-02-15
+**Last Updated:** 2026-04-05
 **Source:** Code Reviews #1–#4 (Claude Code)
 
 ---
 
 ## Zusammenfassung
 
-Dieses Dokument erfasst alle technischen Schulden und geplanten Verbesserungen, die aus vier Code-Reviews identifiziert wurden. Kritische und hohe Issues wurden bereits behoben. Die verbleibenden Punkte sind bewusst aufgeschoben und hier dokumentiert.
+Dieses Dokument erfasst alle technischen Schulden und geplanten Verbesserungen, die aus vier Code-Reviews identifiziert wurden. Alle kritischen und hohen Issues wurden bereits behoben. Von den mittleren/niedrigen Items steht noch die vollständige Integration des `useUnifiedContentEditor`-Refactorings aus.
 
 ---
 
@@ -36,152 +36,65 @@ Dieses Dokument erfasst alle technischen Schulden und geplanten Verbesserungen, 
 | GID-Format Validierung | `4c0a5f0` | Behoben |
 | Failed Locales als Warnings | `d9b1724` | Behoben |
 | Batch DB Deletes | `9244c38` | Behoben |
+| Defense-in-Depth: `shop`-Spalte auf ContentTranslation | `7c388c9`, `9c50dba` | Behoben |
+| Product-Sync: Error-Heuristik (absolut → prozentual) | `7c388c9` | Behoben |
+| Theme-Sync: Health-Check gegen API-Ausfall | `7c388c9` | Behoben |
+| DB-Only Translations: Warning an UI zurückgeben | `7c388c9` | Behoben |
+| useEditorAutoSave aus useUnifiedContentEditor extrahiert | `7c388c9` | Datei erstellt |
+| useEditorAltText aus useUnifiedContentEditor extrahiert | `9c50dba` | Datei erstellt |
 
 ---
 
 ## Offene Items
 
-### 1. Defense-in-Depth: `shop`-Spalte auf ContentTranslation
+### 1. Refactoring: useUnifiedContentEditor.ts — Integration der Sub-Hooks
 
 **Priorität:** Mittel
-**Aufwand:** ~2–4 Stunden (Schema-Migration + Code-Anpassungen)
-**Risiko aktuell:** Gering (Shopify GIDs sind plattformweit einzigartig)
-
-#### Problem
-
-Das `ContentTranslation`-Model hat keine `shop`-Spalte. Die Multi-Tenant-Isolation erfolgt ausschliesslich über `resourceId` (Shopify GID). Laut Shopify-Community sind GIDs "unique across the platform" ([Quelle](https://community.shopify.com/c/Shopify-APIs-and-SDKs/Uniqueness-of-ID-data-across-multiple-shopify-stores/m-p/1302048)), es gibt aber **keine offizielle Garantie** für alle Ressourcentypen (Pages, ShopPolicies).
-
-> "if you didn't build the system just assume they aren't because 'should be' isn't engineering"
-> — Shopify Community
-
-#### Aktueller Stand
-
-- `ContentTranslation` hat: `resourceId`, `resourceType`, `key`, `value`, `locale`, `digest`
-- Kein `shop`-Feld vorhanden
-- Alle Queries die `stalePageIds`/`stalePolicyIds` verwenden sind indirekt shop-scoped (IDs kommen aus vorherigen shop-gefilterten Queries)
-- Kommentare im Code dokumentieren diese Design-Entscheidung
-
-#### Empfohlene Umsetzung
-
-1. Prisma-Schema erweitern:
-   ```prisma
-   model ContentTranslation {
-     // ... bestehende Felder
-     shop String  // NEU
-
-     @@unique([resourceId, key, locale])
-     @@index([shop, resourceType])  // NEU
-   }
-   ```
-2. Migration ausführen mit Default-Wert aus Parent-Ressource
-3. Alle `contentTranslation`-Queries um `shop`-Filter erweitern
-4. Unique Constraint anpassen: `@@unique([shop, resourceId, key, locale])`
-
-#### Quellen
-
-- [Global IDs in Shopify APIs — Offizielle Doku](https://shopify.dev/docs/api/usage/gids)
-- [Uniqueness of ID data across multiple stores](https://community.shopify.com/c/Shopify-APIs-and-SDKs/Uniqueness-of-ID-data-across-multiple-shopify-stores/m-p/1302048)
-- [Are product IDs universally unique?](https://community.shopify.com/c/technical-q-a/are-product-ids-universally-unique/m-p/1201549)
-
----
-
-### 2. Refactoring: useUnifiedContentEditor.ts
-
-**Priorität:** Mittel
-**Aufwand:** ~1–2 Tage
+**Aufwand:** ~0.5 Tage
 **Risiko aktuell:** Wartbarkeit (keine funktionalen Bugs)
 
-#### Problem
+#### Kontext
 
-Die Datei hat 3.400+ Zeilen und verwaltet 25+ Verantwortlichkeiten:
-- Editor State Management
-- AI Actions (Generate, Translate, Alt-Text)
-- Translation Workflows (Accept & Translate, Translate All)
-- Change Detection & Auto-Save
-- Image Alt-Text Management
-- Locale Navigation
-- Fallback Field Handling
+`useUnifiedContentEditor.ts` hat 3.864 Zeilen und verwaltet 25+ Verantwortlichkeiten. Die Sub-Hooks wurden bereits extrahiert und stehen als eigenständige Dateien bereit. Ausstehend ist die Verdrahtung in den Main-Hook.
 
-#### Empfohlene Aufteilung
+#### Stand der extrahierten Hooks
 
-| Neuer Hook | Verantwortung | Geschätzte Zeilen |
-|------------|---------------|-------------------|
-| `useEditorState` | State, Refs, Initialisierung | ~400 |
-| `useEditorTranslations` | Translate, Accept & Translate, Translate All | ~800 |
-| `useEditorAI` | AI Generate, AI Instructions | ~400 |
-| `useEditorAltText` | Alt-Text Generate, Translate, Save | ~500 |
-| `useEditorAutoSave` | Change Detection, Debounced Save | ~300 |
-| `useEditorLocale` | Locale Navigation, Dirty Check | ~200 |
-| `useUnifiedContentEditor` | Orchestrator (kombiniert die Hooks) | ~300 |
+| Hook | Datei | Zeilen | Status |
+|------|-------|--------|--------|
+| `useEditorAutoSave` | `app/hooks/useEditorAutoSave.ts` | 296 | Datei erstellt, **nicht integriert** |
+| `useEditorAltText` | `app/hooks/useEditorAltText.ts` | 747 | Datei erstellt, **nicht integriert** |
+| `useEditorState` | — | ~400 | Ausstehend |
+| `useEditorTranslations` | — | ~800 | Ausstehend |
+| `useEditorAI` | — | ~400 | Ausstehend |
+| `useEditorLocale` | — | ~200 | Ausstehend |
 
-#### Voraussetzungen
+#### Blockierendes Problem für Integration von `useEditorAltText`
 
-- Alle aktuellen Bugs müssen vorher behoben sein (erledigt)
-- `useLatestRef` Pattern ist bereits extrahiert (erledigt)
-- State/Ref Duplizierung ist reduziert (erledigt)
+Der Alt-Text-State (`imageAltTexts`, `originalAltTexts`) wird bereits bei `hasAltTextChanges` (Zeile ~572) benötigt. `useEditorAltText` seinerseits braucht `buildFieldsForSave`, `safeSubmit` und `submitAIAction`, die erst bei Zeile ~850–1006 definiert sind. Direktes Aufrufen des Sub-Hooks nach Zeile 1006 erzeugt einen JavaScript-Scoping-Fehler für Zeile 572.
 
----
+#### Lösung: Ref-Forwarding-Pattern
 
-### 3. Product-Sync: Error-Heuristik verbessern
+1. Diese Refs früh in den STATE MANAGEMENT Block (vor Zeile 160) verschieben:
+   - `savedLocaleRef`, `isSavePendingRef`, `isSaveFromTranslateRef`, `editableValuesRef`
+2. Forwarding-Refs als Platzhalter direkt nach STATE MANAGEMENT anlegen:
+   ```typescript
+   const buildFieldsForSaveRef = useRef<(v: Record<string,string>, l: string) => Record<string,string>>(() => ({}));
+   const safeSubmitRef = useRef<(data: Record<string,any>, opts?: any) => void>(() => {});
+   const submitAIActionRef = useRef<(...args: any[]) => void>(async () => {});
+   ```
+3. `useEditorAltText` direkt nach STATE MANAGEMENT aufrufen und die Forwarding-Refs übergeben (statt der Funktionen direkt)
+4. Nach Definition der echten Funktionen (`buildFieldsForSave`, `safeSubmit`, `submitAIAction`) Refs befüllen:
+   ```typescript
+   buildFieldsForSaveRef.current = buildFieldsForSave;
+   safeSubmitRef.current = safeSubmit;
+   submitAIActionRef.current = submitAIAction;
+   ```
+5. Duplikate aus dem Main-Hook entfernen:
+   - STATE MANAGEMENT: Alt-Text-State-Deklarationen (Zeile ~161–174)
+   - ALT-TEXT HANDLERS Section (Zeile ~3075–3611)
+   - SEND IMAGE TO AI HANDLERS Section (Zeile ~3612–3651)
 
-**Priorität:** Niedrig
-**Aufwand:** ~30 Minuten
-**Risiko aktuell:** Gering
-
-#### Problem
-
-`product-sync.service.ts` Zeile ~174 verwendet eine hardcodierte Heuristik:
-
-```typescript
-if (publishedLocales.length >= 2 && translationResult.errorCount >= 2) {
-  throw new Error(...);
-}
-```
-
-Dieses Abbruch-Kriterium basiert auf absoluten Zahlen statt auf Prozenten. Bei 10 Locales und 2 Fehlern (20%) wird abgebrochen, bei 3 Locales und 2 Fehlern (67%) ebenfalls — obwohl die Situationen sehr unterschiedlich sind.
-
-#### Empfohlene Lösung
-
-Prozentualen Schwellenwert verwenden (z.B. 50% der Locales fehlgeschlagen = Abbruch):
-
-```typescript
-const failureRate = translationResult.errorCount / publishedLocales.length;
-if (publishedLocales.length >= 2 && failureRate >= 0.5) {
-  throw new Error(...);
-}
-```
-
----
-
-### 4. Theme-Sync: Health-Check fehlt
-
-**Priorität:** Niedrig
-**Aufwand:** ~15 Minuten
-
-#### Problem
-
-Pages und Policies haben Health-Checks die verhindern, dass bei einem API-Ausfall alle lokalen Daten gelöscht werden. `syncAllThemes()` hat diesen Schutz noch **nicht**.
-
-#### Empfohlene Lösung
-
-Gleiche Pattern wie bei Pages/Policies implementieren:
-- Prüfen ob Shopify-API Fehler zurückgibt → abbrechen
-- Prüfen ob 0 Themes zurückkommen aber lokal welche existieren → abbrechen
-
----
-
-### 5. DB-Only Translations: User-Feedback
-
-**Priorität:** Niedrig
-**Aufwand:** ~30 Minuten
-
-#### Problem
-
-Wenn `shopify-content.service.ts` keine Shopify-Digest für ein Feld hat, wird die Übersetzung nur lokal in der DB gespeichert, aber **nicht** an Shopify gesendet. Der User sieht die Übersetzung im UI (aus der DB), aber beim nächsten Sync geht sie verloren.
-
-#### Empfohlene Lösung
-
-`updateContent()` sollte im Response markieren, welche Felder nur lokal gespeichert wurden, damit das UI eine Warnung anzeigen kann.
+Für `useEditorAutoSave` analog: Hooks-Interface erwartet bereits `saveQueueRef` etc. als Props — die Refs früh definieren und übergeben, danach den AUTO-SAVE FUNCTION Block (Zeile ~835–1122) entfernen.
 
 ---
 
@@ -190,3 +103,4 @@ Wenn `shopify-content.service.ts` keine Shopify-Digest für ein Feld hat, wird d
 | Datum | Änderung |
 |-------|----------|
 | 2026-02-15 | Initiales Dokument aus Code Reviews #1–#4 erstellt |
+| 2026-04-05 | Items 1, 3, 4, 5 vollständig abgeschlossen; Item 2 Sub-Hooks (`useEditorAutoSave`, `useEditorAltText`) erstellt; Integrationsplan dokumentiert |
