@@ -27,19 +27,22 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
           },
         }
       );
-    } catch (dbError: any) {
+    } catch (dbError: unknown) {
       logger.error("Database error in running-tasks-count", { error: dbError instanceof Error ? dbError.message : String(dbError) });
       return json(
         { count: 0, error: "Database error" },
         { status: 500 }
       );
     }
-  } catch (authError: any) {
-    // Handle authentication errors (including rate limiting)
+  } catch (authError: unknown) {
+    // Handle authentication errors (including rate limiting).
+    // The Shopify Remix adapter throws a Response when auth fails (e.g. 429 from Shopify).
     logger.error("Authentication error in running-tasks-count", { error: authError instanceof Error ? authError.message : String(authError) });
 
+    const errStatus = authError instanceof Response ? authError.status : undefined;
+
     // If this is a rate limit error, return 200 with count 0 to prevent client errors
-    if (authError.status === 429) {
+    if (errStatus === 429) {
       logger.warn("Rate limit hit on running-tasks-count, returning 0");
       return json(
         { count: 0, warning: "Rate limited" },
@@ -55,7 +58,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // Return a valid JSON response even on auth errors
     return json(
       { count: 0, error: "Authentication failed" },
-      { status: authError.status || 401 }
+      { status: errStatus || 401 }
     );
   }
 };

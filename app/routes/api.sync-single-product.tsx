@@ -63,8 +63,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       translationsCount: translations.length,
       translationsByLocale,
     });
-  } catch (error: any) {
-    logger.error("[SYNC-SINGLE-PRODUCT] Error", { context: "SyncSingleProduct", error: error.message, stack: error.stack });
+  } catch (error: unknown) {
+    logger.error("[SYNC-SINGLE-PRODUCT] Error", { context: "SyncSingleProduct", error: error instanceof Error ? error.message : String(error), stack: error instanceof Error ? error.stack : undefined });
     return json(
       {
         success: false,

@@ -1,4 +1,5 @@
 import { json, type ActionFunctionArgs } from "@remix-run/node";
+import { z } from "zod";
 import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
 import { ProductSyncService } from "../services/product-sync.service";
@@ -6,26 +7,50 @@ import { ContentSyncService } from "../services/content-sync.service";
 import { BackgroundSyncService } from "../services/background-sync.service";
 import { getPlanLimits } from "../utils/planUtils";
 import { logger } from "~/utils/logger.server";
-import { isValidShopifyGID } from "~/utils/validation";
+import { isValidShopifyGID, isValidLocale } from "~/utils/validation";
+
+const VALID_RESOURCE_TYPES = [
+  "product", "products",
+  "collection", "collections",
+  "article", "articles",
+  "blog", "blogs",
+  "page", "pages",
+  "policy", "policies",
+  "template", "templates",
+  "theme", "themes",
+  "menu", "menus",
+  "metaobject", "metaobjects",
+] as const;
 
 // Resource types whose resourceId must be a valid Shopify GID
 const GID_RESOURCE_TYPES = new Set(["product", "products", "collection", "collections", "article", "page"]);
+
+const SyncSingleResourceSchema = z.object({
+  resourceId: z.string().min(1).max(500),
+  resourceType: z.enum(VALID_RESOURCE_TYPES),
+  locale: z.string().refine(
+    v => !v || isValidLocale(v),
+    { message: "Invalid locale format (expected e.g. 'de' or 'de-AT')" }
+  ).optional(),
+});
 
 export async function action({ request }: ActionFunctionArgs) {
   const { admin, session } = await authenticate.admin(request);
 
   try {
     const formData = await request.formData();
-    const resourceId = formData.get("resourceId") as string;
-    const resourceType = formData.get("resourceType") as string;
-    const locale = formData.get("locale") as string;
+    const parsed = SyncSingleResourceSchema.safeParse({
+      resourceId: formData.get("resourceId"),
+      resourceType: formData.get("resourceType"),
+      locale: formData.get("locale") ?? undefined,
+    });
 
-    if (!resourceId || !resourceType) {
-      return json(
-        { success: false, error: "Missing resourceId or resourceType" },
-        { status: 400 }
-      );
+    if (!parsed.success) {
+      const issues = parsed.error.issues.map(i => `${i.path.join(".")}: ${i.message}`).join(", ");
+      return json({ success: false, error: `Invalid request: ${issues}` }, { status: 400 });
     }
+
+    const { resourceId, resourceType, locale } = parsed.data;
 
     // Validate GID format for resource types that use Shopify GIDs
     if (GID_RESOURCE_TYPES.has(resourceType) && resourceId.includes("gid://") && !isValidShopifyGID(resourceId)) {
@@ -165,8 +190,8 @@ export async function action({ request }: ActionFunctionArgs) {
       plan,
       imageMode: planLimits.cacheEnabled.productImages ? "all" : "featured-only",
     });
-  } catch (error: any) {
-    logger.error("[Manual Sync] Error", { context: "ManualSync", error: error.message, stack: error.stack });
+  } catch (error: unknown) {
+    logger.error("[Manual Sync] Error", { context: "ManualSync", error: error instanceof Error ? error.message : String(error), stack: error instanceof Error ? error.stack : undefined });
     return json(
       {
         success: false,

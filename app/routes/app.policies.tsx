@@ -109,7 +109,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       error: null,
       aiSettings,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     if (error instanceof Response) throw error;
     logger.error("[POLICIES-LOADER] Error", { error: error instanceof Error ? error.message : String(error) });
     return json({

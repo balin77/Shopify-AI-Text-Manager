@@ -105,8 +105,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       requestedType,
       error: null
     });
-  } catch (error: any) {
-    logger.error("[CONTENT-LOADER] Error", { context: "Content", error: error.message, stack: error.stack });
+  } catch (error: unknown) {
+    logger.error("[CONTENT-LOADER] Error", { context: "Content", error: error instanceof Error ? error.message : String(error), stack: error instanceof Error ? error.stack : undefined });
     return json({
       metadata: {},
       menus: [],

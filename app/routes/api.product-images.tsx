@@ -116,8 +116,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       images: mediaImages,
       count: mediaImages.length,
     }, { headers: { "Cache-Control": "no-store" } });
-  } catch (error: any) {
-    logger.error("[API:ProductImages] Error", { context: "ProductImages", error: error.message, stack: error.stack });
+  } catch (error: unknown) {
+    logger.error("[API:ProductImages] Error", { context: "ProductImages", error: error instanceof Error ? error.message : String(error), stack: error instanceof Error ? error.stack : undefined });
     return json({ success: false, error: "Failed to load product images." }, { status: 500 });
   }
 };

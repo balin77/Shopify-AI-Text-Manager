@@ -308,7 +308,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         grokApiKey: decryptApiKey(settings.grokApiKey) || "",
         deepseekApiKey: decryptApiKey(settings.deepseekApiKey) || "",
       };
-    } catch (error: any) {
+    } catch (error: unknown) {
       logger.error("[SETTINGS LOADER] Decryption error", { context: "Settings", error: error?.message });
       // If decryption fails, return empty keys
       decryptedKeys = {

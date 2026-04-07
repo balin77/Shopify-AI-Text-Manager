@@ -85,7 +85,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         hours: hoursFilter,
       }
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Failed to load tasks:", error);
     return json({
       tasks: [],
@@ -112,7 +112,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         data: { status: "cancelled", completedAt: new Date() },
       });
       return json({ success: true });
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Failed to cancel task:", error);
       return json({ success: false, error: "An internal error occurred" }, { status: 500 });
     }
@@ -124,7 +124,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         where: { id: taskId, shop: session.shop },
       });
       return json({ success: true });
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Failed to delete task:", error);
       return json({ success: false, error: "An internal error occurred" }, { status: 500 });
     }

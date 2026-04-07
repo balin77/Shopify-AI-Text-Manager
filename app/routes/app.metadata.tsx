@@ -53,7 +53,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       primaryLocale,
       error: null
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error("[METADATA-LOADER] Error", { error: error instanceof Error ? error.message : String(error) });
     return json({
       metadata: { metafields: [] },

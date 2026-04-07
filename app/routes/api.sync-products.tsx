@@ -275,8 +275,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                   linkedMetafieldKey: opt.linkedMetafield ? `${opt.linkedMetafield.namespace}--${opt.linkedMetafield.key}` : null,
                 })),
               });
-            } catch (optErr: any) {
-              logger.error(`[SYNC-PRODUCTS] OPTIONS createMany FAILED: ${optErr.message}`);
+            } catch (optErr: unknown) {
+              logger.error(`[SYNC-PRODUCTS] OPTIONS createMany FAILED: ${optErr instanceof Error ? optErr.message : String(optErr)}`);
               await tx.productOption.createMany({
                 data: product.options.map((opt: any) => ({
                   id: opt.id,
@@ -302,8 +302,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         if (synced % 50 === 0) {
           logger.debug("[SYNC-PRODUCTS] Progress", { context: "SyncProducts", synced, total: allProducts.length });
         }
-      } catch (err: any) {
-        logger.error("[SYNC-PRODUCTS] Failed to save product", { context: "SyncProducts", productId: product.id, error: err.message });
+      } catch (err: unknown) {
+        logger.error("[SYNC-PRODUCTS] Failed to save product", { context: "SyncProducts", productId: product.id, error: err instanceof Error ? err.message : String(err) });
         failed++;
         errors.push(`${product.id}: Failed to sync products`);
       }
@@ -318,8 +318,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       failed,
       errors: errors.slice(0, 10), // Only return first 10 errors
     });
-  } catch (error: any) {
-    logger.error("[SYNC-PRODUCTS] Error", { context: "SyncProducts", error: error.message, stack: error.stack });
+  } catch (error: unknown) {
+    logger.error("[SYNC-PRODUCTS] Error", { context: "SyncProducts", error: error instanceof Error ? error.message : String(error), stack: error instanceof Error ? error.stack : undefined });
     return json(
       {
         success: false,

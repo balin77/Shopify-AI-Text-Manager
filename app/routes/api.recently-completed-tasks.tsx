@@ -46,18 +46,20 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
           },
         }
       );
-    } catch (dbError: any) {
+    } catch (dbError: unknown) {
       logger.error("Database error in recently-completed-tasks", { error: dbError instanceof Error ? dbError.message : String(dbError) });
       return json(
         { tasks: [], error: "Database error" },
         { status: 500 }
       );
     }
-  } catch (authError: any) {
+  } catch (authError: unknown) {
     logger.error("Authentication error in recently-completed-tasks", { error: authError instanceof Error ? authError.message : String(authError) });
 
+    const errStatus = authError instanceof Response ? authError.status : undefined;
+
     // If this is a rate limit error, return 200 with empty tasks to prevent client errors
-    if (authError.status === 429) {
+    if (errStatus === 429) {
       logger.warn("Rate limit hit on recently-completed-tasks, returning empty result");
       return json(
         { tasks: [], warning: "Rate limited" },
@@ -72,7 +74,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
     return json(
       { tasks: [], error: "Authentication failed" },
-      { status: authError.status || 401 }
+      { status: errStatus || 401 }
     );
   }
 };

@@ -263,8 +263,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             current: 100,
             total: 100
           });
-        } catch (err: any) {
-          if (err.name === "AbortError") throw err;
+        } catch (err: unknown) {
+          if (err instanceof Error && err.name === "AbortError") throw err;
           sendEvent({
             type: 'progress',
             phase: 'collections',
@@ -308,8 +308,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             current: 100,
             total: 100
           });
-        } catch (err: any) {
-          if (err.name === "AbortError") throw err;
+        } catch (err: unknown) {
+          if (err instanceof Error && err.name === "AbortError") throw err;
           sendEvent({
             type: 'progress',
             phase: 'articles',
@@ -353,8 +353,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             current: 100,
             total: 100
           });
-        } catch (err: any) {
-          if (err.name === "AbortError") throw err;
+        } catch (err: unknown) {
+          if (err instanceof Error && err.name === "AbortError") throw err;
           sendEvent({
             type: 'progress',
             phase: 'pages',
@@ -398,8 +398,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             current: 100,
             total: 100
           });
-        } catch (err: any) {
-          if (err.name === "AbortError") throw err;
+        } catch (err: unknown) {
+          if (err instanceof Error && err.name === "AbortError") throw err;
           sendEvent({
             type: 'progress',
             phase: 'policies',
@@ -443,8 +443,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             current: 100,
             total: 100
           });
-        } catch (err: any) {
-          if (err.name === "AbortError") throw err;
+        } catch (err: unknown) {
+          if (err instanceof Error && err.name === "AbortError") throw err;
           sendEvent({
             type: 'progress',
             phase: 'themes',
@@ -490,8 +490,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             current: 100,
             total: 100
           });
-        } catch (err: any) {
-          if (err.name === "AbortError") throw err;
+        } catch (err: unknown) {
+          if (err instanceof Error && err.name === "AbortError") throw err;
           sendEvent({
             type: 'progress',
             phase: 'metaobjects',
@@ -511,11 +511,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           stats
         });
 
-      } catch (error: any) {
-        if (error.name === "AbortError") {
+      } catch (error: unknown) {
+        if (error instanceof Error && error.name === "AbortError") {
           logger.info("[SYNC-STREAM] Sync aborted due to client disconnection", { shop });
         } else {
-          logger.error("[SYNC-STREAM] Sync failed", { error: error.message, shop });
+          logger.error("[SYNC-STREAM] Sync failed", { error: error instanceof Error ? error.message : String(error), shop });
           sendEvent({
             type: 'error',
             phase: 'error',
