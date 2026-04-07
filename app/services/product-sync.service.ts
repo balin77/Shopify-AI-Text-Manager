@@ -300,8 +300,8 @@ export class ProductSyncService {
             }));
             try {
               await tx.productOption.createMany({ data: optCreateData });
-            } catch (optErr: any) {
-              logger.error(`[ProductSync] OPTIONS createMany FAILED for ${product.id}: ${optErr.message}`);
+            } catch (optErr: unknown) {
+              logger.error(`[ProductSync] OPTIONS createMany FAILED for ${product.id}: ${optErr instanceof Error ? optErr.message : String(optErr)}`);
               // Fallback: save without linkedMetafieldKey if column doesn't exist yet
               await tx.productOption.createMany({
                 data: realOptions.map((opt: any) => ({
@@ -328,9 +328,9 @@ export class ProductSyncService {
           const progress = Math.round(20 + (synced / total) * 40);
           onProgress?.({ overallPercent: progress, detailCurrent: synced, detailTotal: total, message: `Saving products: ${synced}/${total}` });
         }
-      } catch (err: any) {
-        if (err.name === "AbortError") throw err;
-        logger.error(`[ProductSync] Failed to save product ${product.id}`, { error: err.message });
+      } catch (err: unknown) {
+        if (err instanceof Error && err.name === "AbortError") throw err;
+        logger.error(`[ProductSync] Failed to save product ${product.id}`, { error: err instanceof Error ? err.message : String(err) });
       }
     }
 
@@ -426,9 +426,9 @@ export class ProductSyncService {
                     }
                   }
                 }
-              } catch (batchErr: any) {
-                if (batchErr.name === "AbortError") throw batchErr;
-                logger.warn(`[ProductSync] Failed to fetch translation batch for locale ${locale.locale}:`, batchErr.message);
+              } catch (batchErr: unknown) {
+                if (batchErr instanceof Error && batchErr.name === "AbortError") throw batchErr;
+                logger.warn(`[ProductSync] Failed to fetch translation batch for locale ${locale.locale}:`, batchErr instanceof Error ? batchErr.message : String(batchErr));
               }
             }
 
@@ -538,9 +538,9 @@ export class ProductSyncService {
                       }
                     }
                   }
-                } catch (batchErr: any) {
-                  if (batchErr.name === "AbortError") throw batchErr;
-                  logger.warn(`[ProductSync] Failed to fetch sub-resource translation batch for locale ${locale.locale}:`, batchErr.message);
+                } catch (batchErr: unknown) {
+                  if (batchErr instanceof Error && batchErr.name === "AbortError") throw batchErr;
+                  logger.warn(`[ProductSync] Failed to fetch sub-resource translation batch for locale ${locale.locale}:`, batchErr instanceof Error ? batchErr.message : String(batchErr));
                 }
               }
 
@@ -642,9 +642,9 @@ export class ProductSyncService {
                       }
                     }
                   }
-                } catch (batchErr: any) {
-                  if (batchErr.name === "AbortError") throw batchErr;
-                  logger.warn(`[ProductSync] Failed to fetch alt-text batch for locale ${locale.locale}:`, batchErr.message);
+                } catch (batchErr: unknown) {
+                  if (batchErr instanceof Error && batchErr.name === "AbortError") throw batchErr;
+                  logger.warn(`[ProductSync] Failed to fetch alt-text batch for locale ${locale.locale}:`, batchErr instanceof Error ? batchErr.message : String(batchErr));
                 }
               }
             }
@@ -665,9 +665,9 @@ export class ProductSyncService {
             }
           }
         }
-      } catch (translationErr: any) {
-        if (translationErr.name === "AbortError") throw translationErr;
-        logger.error(`[ProductSync] Failed to fetch product translations:`, translationErr.message);
+      } catch (translationErr: unknown) {
+        if (translationErr instanceof Error && translationErr.name === "AbortError") throw translationErr;
+        logger.error(`[ProductSync] Failed to fetch product translations:`, translationErr instanceof Error ? translationErr.message : String(translationErr));
         // Non-fatal: products are synced, translations can be loaded on-demand
       }
     }
@@ -1544,8 +1544,8 @@ export class ProductSyncService {
               linkedMetafieldKey: opt.linkedMetafield ? `${opt.linkedMetafield.namespace}--${opt.linkedMetafield.key}` : null,
             })),
           });
-        } catch (optErr: any) {
-          logger.error(`[ProductSync] saveToDatabase OPTIONS createMany FAILED: ${optErr.message}`);
+        } catch (optErr: unknown) {
+          logger.error(`[ProductSync] saveToDatabase OPTIONS createMany FAILED: ${optErr instanceof Error ? optErr.message : String(optErr)}`);
           // Fallback: save without linkedMetafieldKey if column doesn't exist yet
           await tx.productOption.createMany({
             data: productData.options.map((opt) => ({

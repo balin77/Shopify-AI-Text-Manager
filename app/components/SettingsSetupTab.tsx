@@ -62,8 +62,8 @@ export function SettingsSetupTab({
       } else {
         setWebhookStatus(`✗ Error: ${data.error}`);
       }
-    } catch (error: any) {
-      setWebhookStatus(`✗ Error: ${error.message}`);
+    } catch (error: unknown) {
+      setWebhookStatus(`✗ Error: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       setWebhookLoading(false);
     }

@@ -44,8 +44,8 @@ export class WebhookRegistrationService {
       try {
         await this.registerWebhook(webhook.topic, webhook.address);
         logger.info(`[WebhookRegistration] Registered ${webhook.topic}`);
-      } catch (error: any) {
-        logger.error(`[WebhookRegistration] Failed to register ${webhook.topic}:`, error.message);
+      } catch (error: unknown) {
+        logger.error(`[WebhookRegistration] Failed to register ${webhook.topic}:`, error instanceof Error ? error.message : String(error));
         // Continue with other webhooks even if one fails
       }
     }
@@ -98,8 +98,8 @@ export class WebhookRegistrationService {
       try {
         await this.registerWebhook(webhook.topic, webhook.address);
         logger.info(`[WebhookRegistration] Registered ${webhook.topic}`);
-      } catch (error: any) {
-        logger.error(`[WebhookRegistration] Failed to register ${webhook.topic}:`, error.message);
+      } catch (error: unknown) {
+        logger.error(`[WebhookRegistration] Failed to register ${webhook.topic}:`, error instanceof Error ? error.message : String(error));
         // Continue with other webhooks even if one fails
       }
     }
@@ -130,8 +130,8 @@ export class WebhookRegistrationService {
       try {
         await this.registerWebhook(webhook.topic, webhook.address);
         logger.info(`[WebhookRegistration] Registered ${webhook.topic}`);
-      } catch (error: any) {
-        logger.error(`[WebhookRegistration] Failed to register ${webhook.topic}:`, error.message);
+      } catch (error: unknown) {
+        logger.error(`[WebhookRegistration] Failed to register ${webhook.topic}:`, error instanceof Error ? error.message : String(error));
         // Continue with other webhooks even if one fails
       }
     }

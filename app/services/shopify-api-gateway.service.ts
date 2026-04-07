@@ -129,9 +129,11 @@ export class ShopifyApiGateway {
         // Success - resolve the promise with a Response-like object
         request.resolve({ ok: true, status: 200, json: async () => data });
 
-      } catch (error: any) {
+      } catch (error: unknown) {
         // Check if it's a rate limit error from HTTP status
-        if (error.status === 429 || error.message?.includes('rate limit')) {
+        const errStatus = (error as { status?: number }).status;
+        const errMsg = error instanceof Error ? error.message : undefined;
+        if (errStatus === 429 || errMsg?.includes('rate limit')) {
           logger.debug(`[ShopifyGateway] HTTP 429 rate limit error`);
           await this.handleRateLimitError(request);
         } else {

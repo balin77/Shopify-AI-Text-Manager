@@ -181,10 +181,11 @@ export function SyncProgressBar({
       if (!finalStats && !syncProgress) {
         setSyncStatus("Sync completed");
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       setSyncProgress(null);
-      setSyncStatus(`Error: ${error.message}`);
-      onError?.(error.message);
+      const errMsg = error instanceof Error ? error.message : String(error);
+      setSyncStatus(`Error: ${errMsg}`);
+      onError?.(errMsg);
     } finally {
       isSyncingRef.current = false;
       setSyncLoading(false);
@@ -400,9 +401,9 @@ export function useSyncProgress() {
       }
 
       return finalStats;
-    } catch (error: any) {
+    } catch (error: unknown) {
       setSyncProgress(null);
-      setSyncStatus(`Error: ${error.message}`);
+      setSyncStatus(`Error: ${error instanceof Error ? error.message : String(error)}`);
       return null;
     } finally {
       setSyncLoading(false);
