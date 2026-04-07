@@ -6,8 +6,10 @@
  */
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { useRevalidator, useFetcher } from "@remix-run/react";
-import { useNavigationGuard, useChangeTracking, getTranslatedValue } from "../utils/contentEditor.utils";
+import { useRevalidator } from "@remix-run/react";
+import { useNavigationGuard, getTranslatedValue } from "../utils/contentEditor.utils";
+import { useEditorImageManagement } from "./useEditorImageManagement";
+import { useEditorChangeDetection } from "./useEditorChangeDetection";
 import { useItemFocus } from "./useFocusManagement";
 import { useLatestRef } from "./useLatestRef";
 import { useUiDataLoader, getItemFieldValue } from "./useUiDataLoader";
@@ -37,88 +39,9 @@ import { debugLog } from "../utils/debug";
 import { markRecentlySaved } from "../utils/translation-timing";
 import { extractReadableName } from "../utils/templates-field-factory";
 import { useTaskCount } from "../contexts/TaskCountContext";
-
-/** Shape of a running field-task as returned by /api/running-field-tasks */
-interface TaskData {
-  id: string;
-  fieldType: string | null;
-  targetLocale: string | null;
-  type?: string;
-}
-
-/**
- * Translates server error messages to localized strings
- * Maps technical error messages from server to i18n translation keys
- */
-function translateErrorMessage(errorMessage: string, t: TranslationStrings): string {
-  const errors = t.errors as Record<string, string> | undefined;
-  if (!errorMessage) return errors?.unknownError || "Unknown error";
-
-  const lowerError = errorMessage.toLowerCase();
-
-  // Map common error patterns to translation keys
-  if (lowerError.includes("graphql error")) {
-    return errors?.graphqlError || errorMessage;
-  }
-  if (lowerError.includes("invalid field type")) {
-    return errors?.invalidFieldType || errorMessage;
-  }
-  if (lowerError.includes("no fields to translate")) {
-    return errors?.noFieldsToTranslate || errorMessage;
-  }
-  if (lowerError.includes("no source text") && !lowerError.includes("alt")) {
-    return errors?.noSourceText || errorMessage;
-  }
-  if (lowerError.includes("no source alt-text") || lowerError.includes("no source alt text")) {
-    return errors?.noSourceAltText || errorMessage;
-  }
-  if (lowerError.includes("no target locale") && lowerError.includes("image")) {
-    return errors?.noTargetLocalesOrImages || errorMessage;
-  }
-  if (lowerError.includes("no target locale")) {
-    return errors?.noTargetLocales || errorMessage;
-  }
-  if (lowerError.includes("no images data") || lowerError.includes("no image data")) {
-    return errors?.noImagesData || errorMessage;
-  }
-  if (lowerError.includes("no images to process")) {
-    return errors?.noImagesToProcess || errorMessage;
-  }
-  if (lowerError.includes("no alt-text data") || lowerError.includes("no alt text data")) {
-    return errors?.noAltTextData || errorMessage;
-  }
-  if (lowerError.includes("unknown action")) {
-    return errors?.unknownAction || errorMessage;
-  }
-  if (lowerError.includes("invalid url slug") || lowerError.includes("invalid handle") || lowerError.includes("alphanumeric character")) {
-    return errors?.invalidUrlSlug || errorMessage;
-  }
-  if (lowerError.includes("network") || lowerError.includes("fetch")) {
-    return errors?.networkError || errorMessage;
-  }
-  if (lowerError.includes("quota") || lowerError.includes("limit exceeded")) {
-    return errors?.quotaExceeded || errorMessage;
-  }
-  if (lowerError.includes("rate limit") || lowerError.includes("too many requests")) {
-    return errors?.rateLimitExceeded || errorMessage;
-  }
-  if (lowerError.includes("translation") && lowerError.includes("failed")) {
-    return errors?.translationFailed || errorMessage;
-  }
-  if (lowerError.includes("generation") && lowerError.includes("failed")) {
-    return errors?.generationFailed || errorMessage;
-  }
-  if (lowerError.includes("save") && lowerError.includes("failed")) {
-    return errors?.saveFailed || errorMessage;
-  }
-  if (lowerError.includes("load") && lowerError.includes("failed")) {
-    return errors?.loadFailed || errorMessage;
-  }
-
-  // If no specific translation found, return the original error message
-  // (it might be a descriptive message that's already helpful)
-  return errorMessage;
-}
+import { translateErrorMessage } from "../utils/editor-error-messages";
+import { useFieldHandlers } from "./useFieldHandlers";
+import { useAltTextHandlers } from "./useAltTextHandlers";
 
 export function useUnifiedContentEditor(props: UseContentEditorProps): UseContentEditorReturn {
   const { config, items, shopLocales, primaryLocale, fetcher, showInfoBox, t, onTranslateToAllLocalesComplete, initialItemId } = props;
@@ -166,6 +89,21 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const [isLoadingImages, setIsLoadingImages] = useState(false);
   const imageFetcher = useFetcher<{ success: boolean; images: Array<{ url: string; altText?: string }>; error?: string }>();
   const loadedImagesForProductRef = useRef<string | null>(null);
+
+  // Alt-text state for images (indexed by image position)
+  const [imageAltTexts, setImageAltTexts] = useState<Record<number, string>>({});
+  const [altTextSuggestions, setAltTextSuggestions] = useState<Record<number, string>>({});
+  // Track original alt-texts to detect changes (using state to trigger re-renders)
+  const [originalAltTexts, setOriginalAltTexts] = useState<Record<number, string>>({});
+  const imageAltTextsRef = useLatestRef(imageAltTexts);
+  const originalAltTextsRef = useLatestRef(originalAltTexts);
+
+  // Track pending auto-save for alt-texts (set by bulk generation and translation effects)
+  const pendingAltTextAutoSaveRef = useRef<Record<number, string> | null>(null);
+
+  // Send Image to AI feature state
+  const [sendImageToAI, setSendImageToAI] = useState(false);
+  const [selectedImageIndex, setSelectedImageIndex] = useState(0);
 
   // Retry mechanism for empty fields
   const retryCountRef = useRef(0);
@@ -355,114 +293,20 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     }
   }, [selectedItemId, isLoadingData, setItemFocus]);
 
-  // IMPORTANT: Memoize selectedItem to prevent infinite re-renders
+  // IMPORTANT: Memoize baseSelectedItem to prevent infinite re-renders.
   // Without this, items.find() returns a new object reference on every revalidation,
-  // which triggers useChangeTracking and other effects, causing an infinite loop
+  // which triggers useChangeTracking and other effects, causing an infinite loop.
   const baseSelectedItem = useMemo(() => {
-    const found = items.find((item) => item.id === selectedItemId);
-    return found;
+    return items.find((item) => item.id === selectedItemId);
   }, [items, selectedItemId]);
 
-  // Hybrid image loading + image cloning:
-  // - If images exist in DB -> clone for alt-text mutations
-  // - If no images in DB -> merge on-demand images from Shopify API
-  //
-  // Items are now READ-ONLY (Phase 4) — translations, seo, translatableContent are never
-  // mutated. Only image alt-texts are still mutated in-place, so only images need cloning.
-  const selectedItem = useMemo(() => {
-    if (!baseSelectedItem) return undefined;
-
-    const hasDbImages = baseSelectedItem.images && baseSelectedItem.images.length > 0;
-
-    // Only create a shallow copy when images need cloning or merging
-    if (hasDbImages) {
-      return {
-        ...baseSelectedItem,
-        images: baseSelectedItem.images!.map((img: ContentImage) => ({
-          ...img,
-          altTextTranslations: img.altTextTranslations
-            ? img.altTextTranslations.map((t: AltTextTranslation) => ({ ...t }))
-            : [],
-        })),
-      };
-    }
-
-    if (
-      onDemandImages.length > 0 &&
-      loadedImagesForProductRef.current === selectedItemId
-    ) {
-      return { ...baseSelectedItem, images: onDemandImages };
-    }
-
-    // No image handling needed — use item directly
-    return baseSelectedItem;
-  }, [baseSelectedItem, onDemandImages, selectedItemId]);
-
-  // ============================================================================
-  // ON-DEMAND IMAGE LOADING (hybrid fallback)
-  // Only loads from Shopify API if no images in DB
-  // ============================================================================
-
-  // Track previous product ID to detect changes
-  const prevSelectedItemIdRef = useRef<string | null>(null);
-
-  // Trigger on-demand image loading only if DB has no images
-  useEffect(() => {
-    // Only for products content type
-    if (config.contentType !== 'products') return;
-
-    // Detect product change - clear on-demand state
-    if (prevSelectedItemIdRef.current !== selectedItemId) {
-      setOnDemandImages([]);
-      loadedImagesForProductRef.current = null;
-      prevSelectedItemIdRef.current = selectedItemId;
-    }
-
-    // Skip if no product selected
-    if (!selectedItemId || !baseSelectedItem) {
-      return;
-    }
-
-    // Skip if DB already has images (no need for on-demand loading)
-    const hasDbImages = baseSelectedItem.images && baseSelectedItem.images.length > 0;
-    if (hasDbImages) {
-      return;
-    }
-
-    // Skip if already loaded for this product
-    if (loadedImagesForProductRef.current === selectedItemId) {
-      return;
-    }
-
-    // No DB images - load from Shopify API as fallback
-    setIsLoadingImages(true);
-    imageFetcher.load(`/api/product-images?productId=${encodeURIComponent(selectedItemId)}`);
-  }, [selectedItemId, baseSelectedItem, config.contentType]);
-
-  // Handle on-demand image fetcher response
-  useEffect(() => {
-    if (imageFetcher.state === "idle" && imageFetcher.data && selectedItemId) {
-      setIsLoadingImages(false);
-
-      // Only apply if still on the same product
-      if (prevSelectedItemIdRef.current !== selectedItemId) {
-        return;
-      }
-
-      if (imageFetcher.data.success && imageFetcher.data.images) {
-        const images: ContentImage[] = imageFetcher.data.images.map((img) => ({
-          url: img.url,
-          altText: img.altText,
-          altTextTranslations: [],
-        }));
-
-        setOnDemandImages(images);
-        loadedImagesForProductRef.current = selectedItemId;
-      } else if (imageFetcher.data.error) {
-        loadedImagesForProductRef.current = selectedItemId;
-      }
-    }
-  }, [imageFetcher.state, imageFetcher.data, selectedItemId]);
+  // Image management: on-demand loading + image cloning for alt-text mutations
+  const {
+    selectedItem,
+    onDemandImages,
+    isLoadingImages,
+    prevSelectedItemIdRef,
+  } = useEditorImageManagement({ config, selectedItemId, baseSelectedItem });
 
   // Compute effective field definitions (supports dynamic fields for templates)
   const effectiveFieldDefinitions = useMemo(() => {
@@ -495,97 +339,21 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     clearPendingNavigation,
   } = useNavigationGuard();
 
-  // Change tracking - only track changes if we're not currently loading data
-  // For templates and metaobjects, use custom dynamic field comparison
-  const standardHasFieldChanges = useChangeTracking(
-    isLoadingData ? null : (config.contentType !== 'templates' && config.contentType !== 'metaobjects' ? (selectedItem || null) : null), // Skip for templates & metaobjects
+  // Change detection — unified across standard, template, and metaobject content types
+  const { hasChanges, hasFieldChanges, hasAltTextChanges } = useEditorChangeDetection({
+    config,
+    isLoadingData,
+    selectedItem,
     currentLanguage,
     primaryLocale,
     editableValues,
-    config.contentType,
-    fallbackFields
-  );
-
-  // Template-specific change detection: compare editableValues with originalTemplateValuesRef
-  const templateHasFieldChanges = useMemo(() => {
-    if (config.contentType !== 'templates' || isLoadingData || !selectedItem) {
-      return false;
-    }
-
-    const originalValues = originalTemplateValuesRef.current;
-    if (Object.keys(originalValues).length === 0) {
-      return false; // No original values yet
-    }
-
-    // Compare only the current page's fields (originalValues keys) with editable values.
-    // editableValues may contain stale keys from previous pages, so we must iterate
-    // over originalValues to avoid false positives after pagination changes.
-    const diffs: Array<{ key: string; original: string; current: string }> = [];
-    for (const [key, originalValue] of Object.entries(originalValues)) {
-      const currentValue = editableValues[key] ?? "";
-      if (currentValue !== originalValue) {
-        diffs.push({ key, original: originalValue.slice(0, 60), current: currentValue.slice(0, 60) });
-      }
-    }
-    if (diffs.length > 0) {
-      return true;
-    }
-    return false;
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- templateValuesVersion forces recalc when ref updates
-  }, [config.contentType, isLoadingData, selectedItem, editableValues, templateValuesVersion]);
-
-  // Metaobjects-specific change detection: compare editableValues with originalLoadedValuesRef
-  // Metaobject field keys are dynamic IDs (e.g. "gid://shopify/Metaobject/123") that
-  // useChangeTracking doesn't know about, so we compare against the loaded baseline directly.
-  const metaobjectsHasFieldChanges = useMemo(() => {
-    if (config.contentType !== 'metaobjects' || isLoadingData || !selectedItem) {
-      return false;
-    }
-
-    const originalValues = originalLoadedValuesRef.current;
-    if (!originalValues || Object.keys(originalValues).length === 0) {
-      return false;
-    }
-
-    for (const [key, originalValue] of Object.entries(originalValues)) {
-      const currentValue = editableValues[key] ?? "";
-      if (currentValue !== originalValue) {
-        return true;
-      }
-    }
-    return false;
-  }, [config.contentType, isLoadingData, selectedItem, editableValues]);
-
-  // Combined field changes: use type-specific logic for templates/metaobjects, standard for others
-  const hasFieldChanges = config.contentType === 'templates'
-    ? templateHasFieldChanges
-    : config.contentType === 'metaobjects'
-      ? metaobjectsHasFieldChanges
-      : standardHasFieldChanges;
-
-  // Check for alt-text changes
-  const hasAltTextChanges = useMemo(() => {
-    const originalKeys = Object.keys(originalAltTexts);
-    const currentKeys = Object.keys(imageAltTexts);
-
-    // If no alt-texts at all, no changes
-    if (originalKeys.length === 0 && currentKeys.length === 0) return false;
-
-    // Check if any values differ
-    // Important: Don't use || "" fallback - we need to distinguish undefined from ""
-    const allKeys = new Set([...originalKeys, ...currentKeys]);
-    for (const key of allKeys) {
-      const numKey = Number(key);
-      const original = originalAltTexts[numKey];
-      const current = imageAltTexts[numKey];
-      // undefined !== "" should return true (user cleared the field)
-      if (original !== current) return true;
-    }
-    return false;
-  }, [imageAltTexts, originalAltTexts]);
-
-  // Combined hasChanges
-  const hasChanges = hasFieldChanges || hasAltTextChanges;
+    fallbackFields,
+    imageAltTexts,
+    originalAltTexts,
+    originalLoadedValuesRef,
+    originalTemplateValuesRef,
+    templateValuesVersion,
+  });
 
   // ============================================================================
   // LOAD ITEM DATA (when item or language changes)
@@ -1882,1058 +1650,188 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     }
   }, [fetcher.state]);
 
+
   // ============================================================================
-  // EVENT HANDLERS
+  // FIELD EVENT HANDLERS (extracted to useFieldHandlers)
   // ============================================================================
 
-  // Wrapper for performAutoSave with default locale
-  const performSaveWithValues = (valuesToSave: Record<string, string>, locale: string = currentLanguage) => {
-    performAutoSave(valuesToSave, locale);
-  };
+  const {
+    handleSave,
+    handleDiscard,
+    handleGenerateAI,
+    handleFormatAI,
+    handleTranslateField,
+    handleTranslateFieldToAllLocales,
+    handleTranslateAll,
+    handleAcceptSuggestion,
+    handleAcceptAndTranslate,
+    handleRejectSuggestion,
+    handleLanguageChange,
+    handleToggleLanguage,
+    handleItemSelect,
+    handleValueChange,
+    handleToggleHtmlMode,
+    handleClearField,
+    handleClearAllClick,
+    handleClearAllConfirm,
+    handleClearAllCancel,
+    handleClearAllForLocaleClick,
+    handleClearAllForLocaleConfirm,
+    handleTranslateAllForLocale,
+  } = useFieldHandlers({
+    config,
+    primaryLocale,
+    effectiveFieldDefinitions,
+    shopLocales,
+    t,
+    onTranslateToAllLocalesComplete,
+    selectedItemId,
+    selectedItem,
+    currentLanguage,
+    hasChanges,
+    hasAltTextChanges,
+    enabledLanguages,
+    editableValues,
+    aiSuggestions,
+    imageAltTexts,
+    originalAltTexts,
+    sendImageToAI,
+    selectedImageIndex,
+    fallbackFields,
+    selectedItemIdRef,
+    selectedItemRef,
+    editableValuesRef,
+    imageAltTextsRef,
+    originalAltTextsRef,
+    fallbackFieldsRef,
+    isAcceptAndTranslateFlowRef,
+    deletedTranslationKeysRef,
+    localTranslationsRef,
+    savedPrimaryValuesRef,
+    originalLoadedValuesRef,
+    originalTemplateValuesRef,
+    revalidatorRef,
+    savedLocaleRef,
+    isSavePendingRef,
+    isSaveFromTranslateRef,
+    pendingTranslationAfterSaveRef,
+    acceptedPrimaryValueRef,
+    initialLoadSuccessfulRef,
+    retryCountRef,
+    submitAIAction,
+    performAutoSave,
+    safeSubmit,
+    buildFieldsForSave,
+    getChangedFields,
+    getChangedAltTextIndices,
+    resolveFieldLabel,
+    showInfoBox,
+    handleNavigationAttempt,
+    clearPendingNavigation,
+    dataLoader,
+    setSelectedItemId,
+    setCurrentLanguage,
+    setEditableValues,
+    setAiSuggestions,
+    setHtmlModes,
+    setEnabledLanguages,
+    setIsAcceptAndTranslateFlow,
+    setIsLoadingData,
+    setIsClearAllModalOpen,
+    setImageAltTexts,
+    setAltTextSuggestions,
+    setOriginalAltTexts,
+    setFallbackFields,
+    setTemplateValuesVersion,
+  });
 
-  const handleSave = () => {
-    if (!selectedItemId || !hasChanges) {
-      return;
-    }
+  // ============================================================================
+  // ALT-TEXT HANDLERS (extracted to useAltTextHandlers)
+  // ============================================================================
 
-    // Compute changed fields BEFORE the save submit so getChangedFields
-    // compares against the correct current values.
-    let changedFields: string[] = [];
-    let changedAltTextIndices: number[] = [];
+  const {
+    handleAltTextChange,
+    handleGenerateAltText,
+    handleGenerateAllAltTexts,
+    handleTranslateAltText,
+    handleTranslateAltTextToAllLocales,
+    handleTranslateAllAltTexts,
+    handleTranslateAllAltTextsForLocale,
+    handleAcceptAltTextSuggestion,
+    handleAcceptAndTranslateAltText,
+    handleRejectAltTextSuggestion,
+  } = useAltTextHandlers({
+    primaryLocale,
+    currentLanguage,
+    enabledLanguages,
+    config,
+    shopLocales,
+    t,
+    selectedItemId,
+    selectedItem,
+    imageAltTexts,
+    altTextSuggestions,
+    editableValues,
+    sendImageToAI,
+    selectedItemRef,
+    selectedItemIdRef,
+    editableValuesRef,
+    revalidatorRef,
+    savedLocaleRef,
+    isSavePendingRef,
+    isSaveFromTranslateRef,
+    pendingAltTextAutoSaveRef,
+    submitAIAction,
+    safeSubmit,
+    buildFieldsForSave,
+    showInfoBox,
+    setImageAltTexts,
+    setAltTextSuggestions,
+    setOriginalAltTexts,
+  });
+
+
+  // ============================================================================
+  // SEND IMAGE TO AI HANDLERS
+  // ============================================================================
+
+  const handleToggleSendImageToAI = useCallback(() => {
+    setSendImageToAI(prev => !prev);
+  }, []);
+
+  // Reset alt-text and AI suggestion state when selected item changes
+  useEffect(() => {
+    setImageAltTexts({});
+    setAltTextSuggestions({});
+    setOriginalAltTexts({});
+    setAiSuggestions({});
+  }, [selectedItemId]);
+
+  // Load translated alt-texts when language changes
+  useEffect(() => {
+    const item = selectedItemRef.current;
+    if (!item || !item.images) return;
+
     if (currentLanguage === primaryLocale) {
-      changedFields = getChangedFields(editableValues);
-      changedAltTextIndices = getChangedAltTextIndices();
-    }
-
-    // If we're saving in the primary locale, clear all translations for changed fields
-    // and update in-memory item values so navigation back shows correct data
-    if (currentLanguage === primaryLocale && selectedItem) {
-      effectiveFieldDefinitions.forEach((field) => {
-        const currentValue = editableValues[field.key] || "";
-        const originalValue = getItemFieldValue(selectedItem, field.key, primaryLocale, config);
-
-        // Only clear translations if the value actually changed
-        if (currentValue !== originalValue && field.translationKey) {
-          const translationKey = field.translationKey;
-
-          // Track deleted translation keys for immediate UI update
-          // This ensures that even if revalidation brings back old data, we show empty fields
-          deletedTranslationKeysRef.current.add(translationKey);
-          debugLog.translationClear(`Marked translations for field "${field.key}" (key: ${translationKey}) as deleted`);
-        }
-      });
-
-      // Cache the saved values in a ref that survives revalidation.
-      // resolve() checks savedPrimaryValuesRef first for primary locale.
-      savedPrimaryValuesRef.current[selectedItemId] = { ...editableValues };
-    }
-
-    const formDataObj: Record<string, string> = {
-      action: "updateContent",
-      itemId: selectedItemId,
-      locale: currentLanguage,
-      primaryLocale,
-    };
-
-    // Pass policyType for ShopPolicy primary locale updates (required by Shopify API)
-    if (config.resourceType === "ShopPolicy" && selectedItem?.type) {
-      formDataObj.policyType = selectedItem.type;
-    }
-
-    // Add field values - for foreign locales, only send fields that actually changed
-    Object.assign(formDataObj, buildFieldsForSave(editableValues, currentLanguage));
-
-    // Add image alt-texts ONLY if they actually changed (avoid sending unchanged alt-texts
-    // which would trigger unnecessary Shopify API calls that fail when primary alt-text has no digest)
-    if (hasAltTextChanges && Object.keys(imageAltTexts).length > 0) {
-      // Filter to only include alt-texts that actually differ from the original
-      const changedAltTexts: Record<number, string> = {};
-      for (const [key, value] of Object.entries(imageAltTexts)) {
-        const numKey = Number(key);
-        if (originalAltTexts[numKey] !== value) {
-          changedAltTexts[numKey] = value;
-        }
-      }
-      if (Object.keys(changedAltTexts).length > 0) {
-        formDataObj.imageAltTexts = JSON.stringify(changedAltTexts);
-        debugLog.save(' 🖼️ imageAltTexts being sent (changed only):', JSON.stringify(changedAltTexts));
-      }
-    }
-
-    // If saving primary locale, include pre-computed changed fields for server-side translation deletion
-    if (currentLanguage === primaryLocale) {
-      if (changedFields.length > 0) {
-        formDataObj.changedFields = JSON.stringify(changedFields);
-        debugLog.save(' Changed fields (translations will be deleted on server):', changedFields);
-      }
-
-      if (changedAltTextIndices.length > 0) {
-        formDataObj.changedAltTextIndices = JSON.stringify(changedAltTextIndices);
-        debugLog.save(' Changed alt-text indices (translations will be deleted):', changedAltTextIndices);
-      }
-    }
-
-    // Skip next data load to prevent revalidation from overwriting cleared/saved values.
-    savedLocaleRef.current = currentLanguage; // Track which locale we're saving
-    isSavePendingRef.current = true; // Track that a save was initiated
-    safeSubmit(formDataObj, { method: "POST" });
-    clearPendingNavigation();
-  };
-
-  const handleDiscard = () => {
-    if (!selectedItem) return;
-
-    const newValues: Record<string, string> = {};
-
-    if (currentLanguage === primaryLocale) {
-      // Reset to primary locale values
-      effectiveFieldDefinitions.forEach((field) => {
-        newValues[field.key] = getItemFieldValue(selectedItem, field.key, primaryLocale, config);
-      });
+      // Reset to primary locale alt-texts - fallback will use images[i].altText
+      setImageAltTexts({});
+      setOriginalAltTexts({});
     } else {
-      // Reset to translated values
-      effectiveFieldDefinitions.forEach((field) => {
-        const translatedValue = getTranslatedValue(
-          selectedItem,
-          field.translationKey,
-          currentLanguage,
-          "",
-          primaryLocale
-        );
-        newValues[field.key] = translatedValue;
-      });
-    }
-
-    setEditableValues(newValues);
-    clearPendingNavigation();
-  };
-
-  const handleGenerateAI = (fieldKey: string) => {
-    if (!selectedItemId || !selectedItem) return;
-
-    const requestItemId = selectedItemId;
-    const currentValue = editableValues[fieldKey] || "";
-    const contextTitle = editableValues.title || "";
-    const contextDescription = editableValues.description || editableValues.body || "";
-    const mainLanguage = shopLocales.find((l: ShopLocale) => l.locale === primaryLocale)?.name || primaryLocale;
-
-    // Determine which image to send based on content type and sendImageToAI state
-    let imageUrl: string | undefined;
-    if (sendImageToAI) {
-      if (config.contentType === "products") {
-        // For products: use currently selected image or fallback to featured image
-        const images = selectedItem.images || [];
-        const featuredImage = selectedItem.featuredImage;
-        imageUrl = images[selectedImageIndex]?.url || featuredImage?.url;
-      } else if (config.contentType === "collections" || config.contentType === "blogs") {
-        // For collections/blogs: use featured image only
-        const featuredImage = selectedItem.featuredImage;
-        imageUrl = featuredImage?.url;
-      }
-    }
-
-    submitAIAction(
-      {
-        action: "generateAIText",
-        itemId: selectedItemId,
-        fieldType: fieldKey,
-        currentValue,
-        contextTitle,
-        contextDescription,
-        mainLanguage,
-        sendImageToAI: sendImageToAI.toString(),
-        ...(imageUrl && { imageUrl }),
-      },
-      fieldKey,
-      (result) => {
-        // Guard: discard if user has switched to a different item since the request was made
-        if (selectedItemIdRef.current !== requestItemId) return;
-        setAiSuggestions((prev) => ({
-          ...prev,
-          [fieldKey]: result.generatedContent as string,
-        }));
-      }
-    );
-  };
-
-  const handleFormatAI = (fieldKey: string) => {
-    if (!selectedItemId || !selectedItem) return;
-
-    const requestItemId = selectedItemId;
-    const currentValue = editableValues[fieldKey] || "";
-    if (!currentValue) {
-      showInfoBox(
-        t.common?.noContentToFormat || "No content available to format",
-        "warning",
-        t.common?.warning || "Warning"
-      );
-      return;
-    }
-
-    const contextTitle = editableValues.title || "";
-    const contextDescription = editableValues.description || editableValues.body || "";
-    const mainLanguage = shopLocales.find((l: ShopLocale) => l.locale === primaryLocale)?.name || primaryLocale;
-
-    // Determine which image to send based on content type and sendImageToAI state
-    let imageUrl: string | undefined;
-    if (sendImageToAI) {
-      if (config.contentType === "products") {
-        // For products: use currently selected image or fallback to featured image
-        const images = selectedItem.images || [];
-        const featuredImage = selectedItem.featuredImage;
-        imageUrl = images[selectedImageIndex]?.url || featuredImage?.url;
-      } else if (config.contentType === "collections" || config.contentType === "blogs") {
-        // For collections/blogs: use featured image only
-        const featuredImage = selectedItem.featuredImage;
-        imageUrl = featuredImage?.url;
-      }
-    }
-
-    submitAIAction(
-      {
-        action: "formatAIText",
-        itemId: selectedItemId,
-        fieldType: fieldKey,
-        currentValue,
-        contextTitle,
-        contextDescription,
-        mainLanguage,
-        sendImageToAI: sendImageToAI.toString(),
-        ...(imageUrl && { imageUrl }),
-      },
-      fieldKey,
-      (result) => {
-        // Guard: discard if user has switched to a different item since the request was made
-        if (selectedItemIdRef.current !== requestItemId) return;
-        setAiSuggestions((prev) => ({
-          ...prev,
-          [fieldKey]: result.generatedContent as string,
-        }));
-      }
-    );
-  };
-
-  const handleTranslateField = (fieldKey: string) => {
-    if (!selectedItemId || !selectedItem) return;
-
-    const requestItemId = selectedItemId;
-    const field = effectiveFieldDefinitions.find((f) => f.key === fieldKey);
-    if (!field) return;
-
-    const sourceText = getItemFieldValue(selectedItem, fieldKey, primaryLocale, config);
-    if (!sourceText) {
-      showInfoBox(
-        t.content?.noSourceText || "Kein Text in der Hauptsprache vorhanden zum Übersetzen",
-        "warning",
-        "Warnung"
-      );
-      return;
-    }
-
-    const targetLocale = currentLanguage;
-
-    submitAIAction(
-      {
-        action: "translateField",
-        itemId: selectedItemId,
-        fieldType: fieldKey,
-        sourceText,
-        targetLocale,
-        primaryLocale,
-      },
-      fieldKey,
-      (result) => {
-        // Guard: discard UI updates if user switched to a different item during the request.
-        // The server-side save already used the correct itemId captured above.
-        if (selectedItemIdRef.current !== requestItemId) return;
-        // Handle success - update the field with translated value
-        const translatedValue = result.translatedValue as string;
-        if (field.translationKey) {
-          // Delegate ref mutations to transition method
-          const transResult = dataLoader.onTranslateFieldComplete(
-            fieldKey,
-            field.translationKey,
-            translatedValue,
-            targetLocale,
-            editableValuesRef.current
-          );
-
-          // Apply UI updates
-          if (transResult.updatedValues) {
-            setEditableValues(transResult.updatedValues);
-          }
-          if (transResult.clearedFallbackKeys.length > 0) {
-            setFallbackFields((prev) => {
-              const newSet = new Set(prev);
-              transResult.clearedFallbackKeys.forEach((key) => newSet.delete(key));
-              return newSet;
-            });
-            transResult.clearedFallbackKeys.forEach((key) =>
-              fallbackFieldsRef.current.delete(key)
-            );
-          }
-        }
-
-        // Auto-save the translation immediately
-        if (selectedItemId) {
-          const newValues = {
-            ...editableValuesRef.current,
-            [fieldKey]: translatedValue,
-          };
-
-          const formDataObj: Record<string, string> = {
-            action: "updateContent",
-            itemId: selectedItemId,
-            locale: targetLocale,
-            primaryLocale,
-          };
-          Object.assign(formDataObj, buildFieldsForSave(newValues, targetLocale));
-
-          // Ensure the translated field is always included in the save.
-          // buildFieldsForSave may filter it out due to stale fallbackFieldsRef
-          // or originalLoadedValuesRef timing issues during async AI callbacks.
-          if (translatedValue && translatedValue.trim()) {
-            formDataObj[fieldKey] = translatedValue;
-          }
-
-          savedLocaleRef.current = targetLocale;
-          isSavePendingRef.current = true;
-          isSaveFromTranslateRef.current = true;
-          safeSubmit(formDataObj, { method: "POST" });
-
-          // Reset the baseline so the just-saved translated field isn't re-sent on the next save.
-          originalLoadedValuesRef.current = { ...newValues };
-        }
-
-        // Show explicit success toast for the translation
-        const fieldLabel = resolveFieldLabel(fieldKey);
-        showInfoBox(
-          t.common?.fieldTranslatedAndSaved
-            ?.replace("{fieldType}", fieldLabel)
-            || `${fieldLabel} translated and saved successfully`,
-          "success",
-          t.common?.success || "Success"
-        );
-
-        // For templates: Update original values so templateHasFieldChanges becomes false
-        if (config.contentType === 'templates') {
-          originalTemplateValuesRef.current = {
-            ...originalTemplateValuesRef.current,
-            [fieldKey]: translatedValue,
-          };
-          setTemplateValuesVersion(v => v + 1);
-        }
-
-        setIsLoadingData(true);
-      }
-    );
-  };
-
-  const handleTranslateFieldToAllLocales = (fieldKey: string) => {
-    if (!selectedItemId || !selectedItem) return;
-
-    const requestItemId = selectedItemId;
-
-    // Filter out primary locale and disabled languages
-    const targetLocales = enabledLanguages.filter(l => l !== primaryLocale);
-    if (targetLocales.length === 0) {
-      showInfoBox(
-        t.common?.noTargetLanguagesSelected || "No target languages selected",
-        "warning",
-        t.common?.warning || "Warning"
-      );
-      return;
-    }
-
-    const field = effectiveFieldDefinitions.find((f) => f.key === fieldKey);
-    if (!field) return;
-
-    const sourceText = getItemFieldValue(selectedItem, fieldKey, primaryLocale, config);
-    if (!sourceText) {
-      showInfoBox(
-        t.content?.noSourceText || "Kein Text in der Hauptsprache vorhanden zum Übersetzen",
-        "warning",
-        "Warnung"
-      );
-      return;
-    }
-
-    const contextTitle = getItemFieldValue(selectedItem, 'title', primaryLocale, config) || selectedItem.id || "";
-
-    submitAIAction(
-      {
-        action: "translateFieldToAllLocales",
-        itemId: selectedItemId,
-        fieldType: fieldKey,
-        sourceText,
-        targetLocales: JSON.stringify(targetLocales),
-        contextTitle,
-        primaryLocale,
-      },
-      fieldKey,
-      (result) => {
-        // Guard: discard UI updates if user switched to a different item during the request.
-        // The server-side save already used the correct itemId captured above.
-        if (selectedItemIdRef.current !== requestItemId) return;
-        // Handle success - translations is Record<locale, translatedText>
-        const translations = result.translations as Record<string, string> || {};
-        const shopifyKey = field.translationKey;
-        const translationCount = Object.keys(translations).length;
-
-        // Delegate ref mutations to transition method
-        if (shopifyKey) {
-          dataLoader.onTranslateFieldToAllLocalesComplete(
-            shopifyKey,
-            translations,
-            currentLanguage
-          );
-
-          // If the current language is one of the translated languages, update editableValues immediately
-          if (translations[currentLanguage]) {
-            setEditableValues(prev => ({
-              ...prev,
-              [fieldKey]: translations[currentLanguage]
-            }));
-          }
-        }
-
-        // Always show feedback — even if item ref was cleared during the async call.
-        // The translations were saved server-side regardless.
-        const failedFieldLocales2 = (result.failedLocales as string[]) || [];
-        const rejected2 = (result.rejectedFields as Record<string, string[]>) || {};
-        const rejectedLocales2 = Object.keys(rejected2);
-        const skipped2 = (result.skippedFields as Record<string, string[]>) || {};
-        const skippedLocales2 = Object.keys(skipped2);
-
-        if (failedFieldLocales2.length > 0 || rejectedLocales2.length > 0 || skippedLocales2.length > 0) {
-          const messages: string[] = [];
-
-          if (failedFieldLocales2.length > 0) {
-            const failedList = failedFieldLocales2.join(", ");
-            messages.push(
-              String(t.content?.translatePartialLocales || "Translation partially completed: {successCount}/{totalCount} language(s) succeeded. Language(s) {failedLocales} failed.")
-                .replace("{successCount}", String(translationCount))
-                .replace("{totalCount}", String(translationCount + failedFieldLocales2.length))
-                .replace("{failedLocales}", failedList)
-            );
-          }
-
-          if (rejectedLocales2.length > 0) {
-            const details = rejectedLocales2
-              .map(locale => `${locale}: ${rejected2[locale].map(k => resolveFieldLabel(k)).join(", ")}`)
-              .join("; ");
-            messages.push(
-              String(t.content?.translateRejectedFields || "Some fields could not be saved to Shopify: {details}. The translated content was generated but Shopify rejected it.")
-                .replace("{details}", details)
-            );
-          }
-
-          if (skippedLocales2.length > 0) {
-            const details = skippedLocales2
-              .map(locale => `${locale}: ${skipped2[locale].map(k => resolveFieldLabel(k)).join(", ")}`)
-              .join("; ");
-            messages.push(
-              String(t.content?.translateSkippedFields || "Some fields were skipped because the translated value is identical to the primary locale: {details}.")
-                .replace("{details}", details)
-            );
-          }
-
-          showInfoBox(
-            messages.join(" "),
-            "warning",
-            t.common?.warning || "Warning"
-          );
-        } else {
-          const fieldLabel2 = resolveFieldLabel(fieldKey);
-          const toastMsg = t.common?.fieldTranslatedToLanguages
-              ?.replace("{fieldType}", fieldLabel2)
-              .replace("{count}", String(translationCount))
-              || `${fieldLabel2} translated to ${translationCount} language(s)`;
-          showInfoBox(toastMsg, "success", t.common?.success || "Success");
-        }
-
-        // For templates: Update original value so hasChanges becomes false after translation
-        if (config.contentType === 'templates' && translations[currentLanguage]) {
-          originalTemplateValuesRef.current = {
-            ...originalTemplateValuesRef.current,
-            [fieldKey]: translations[currentLanguage]
-          };
-          setTemplateValuesVersion(v => v + 1);
-        }
-
-        // Call callback to update cache if provided
-        if (onTranslateToAllLocalesComplete) {
-          onTranslateToAllLocalesComplete(fieldKey, translations as Record<string, string>);
-        }
-
-        // Revalidate to fetch fresh data with the new translations
-        if (revalidatorRef.current.state === 'idle') {
-          revalidatorRef.current.revalidate();
-        }
-      }
-    );
-  };
-
-  const handleTranslateAll = () => {
-    if (!selectedItemId || !selectedItem) return;
-
-    const requestItemId = selectedItemId;
-
-    // Filter out primary locale and disabled languages
-    const targetLocales = enabledLanguages.filter(l => l !== primaryLocale);
-    if (targetLocales.length === 0) {
-      showInfoBox(
-        t.common?.noTargetLanguagesSelected || "No target languages selected",
-        "warning",
-        t.common?.warning || "Warning"
-      );
-      return;
-    }
-
-    const formDataObj: Record<string, string> = {
-      action: "translateAll",
-      itemId: selectedItemId,
-      targetLocales: JSON.stringify(targetLocales),
-    };
-
-    // Add all field values from primary locale
-    effectiveFieldDefinitions.forEach((field) => {
-      const value = getItemFieldValue(selectedItem, field.key, primaryLocale, config);
-      if (value) {
-        formDataObj[field.key] = value;
-      }
-    });
-
-    safeSubmit(formDataObj, { method: "POST" });
-
-    // Also translate all image alt-texts to all locales in parallel (via fetch API)
-    if (selectedItem?.images && selectedItem.images.length > 0) {
-      const altTextsData: Record<number, string> = {};
-      let hasAnyAltText = false;
-      selectedItem.images.forEach((img: ContentImage, index: number) => {
-        const altText = imageAltTexts[index] || img.altText || "";
-        if (altText) {
-          altTextsData[index] = altText;
-          hasAnyAltText = true;
-        }
-      });
-
-      if (hasAnyAltText) {
-        submitAIAction(
-          {
-            action: "translateAllAltTextsToAllLocales",
-            itemId: selectedItem.id,
-            productId: selectedItem.id,
-            altTextsData: JSON.stringify(altTextsData),
-            targetLocales: JSON.stringify(targetLocales),
-            primaryLocale
-          },
-          "allAltTextsTranslate",
-          (result) => {
-            // Guard: discard UI updates if user switched to a different item during the request.
-            if (selectedItemIdRef.current !== requestItemId) return;
-            const translatedCount = (result.translatedCount as number) || 0;
-            const imageCount = (result.imageCount as number) || 0;
-            const failedImages: number[] = (result.failedImages as number[]) || [];
-
-            if (failedImages.length > 0) {
-              const failedList = failedImages.map((i: number) => i + 1).join(", ");
-              showInfoBox(
-                String(t.content?.altTextTranslateAllPartialImages || "Alt-texts saved for {successCount}/{totalCount} image(s) in {languageCount} language(s). Image(s) {failedImages} could not be saved to Shopify. Please sync the product again.")
-                  .replace("{successCount}", String(imageCount - failedImages.length))
-                  .replace("{totalCount}", String(imageCount))
-                  .replace("{languageCount}", String(translatedCount))
-                  .replace("{failedImages}", failedList),
-                "warning",
-                t.common?.warning || "Warning"
-              );
-            } else {
-              showInfoBox(
-                String(t.content?.altTextTranslateAllSuccess || "Alt-texts for {totalCount} image(s) translated to {languageCount} language(s)")
-                  .replace("{totalCount}", String(imageCount))
-                  .replace("{languageCount}", String(translatedCount)),
-                "success",
-                t.common?.success || "Success"
-              );
-            }
-            // Update UI state with translated alt texts for current language
-            if (result.translatedResults && currentLanguage !== primaryLocale) {
-              const translatedForCurrentLocale: Record<number, string> = {};
-              const results = result.translatedResults as Record<string, Record<string, string>>;
-              for (const [imgIdxStr, localeMap] of Object.entries(results)) {
-                const idx = parseInt(imgIdxStr, 10);
-                if (!failedImages.includes(idx) && localeMap[currentLanguage]) {
-                  translatedForCurrentLocale[idx] = localeMap[currentLanguage];
-                }
-              }
-              if (Object.keys(translatedForCurrentLocale).length > 0) {
-                setImageAltTexts(prev => {
-                  const updated = { ...prev, ...translatedForCurrentLocale };
-                  setOriginalAltTexts(updated);
-                  return updated;
-                });
-              }
-            }
-            if (revalidatorRef.current.state === 'idle') {
-              try { revalidatorRef.current.revalidate(); } catch {}
-            }
-          }
-        );
-      }
-    }
-  };
-
-  const handleAcceptSuggestion = (fieldKey: string) => {
-    const suggestion = aiSuggestions[fieldKey];
-    if (!suggestion) return;
-
-    // Force isLoadingData to false to ensure change detection works
-    setIsLoadingData(false);
-
-    // If this field was a fallback, remove it since user accepted an AI value
-    if (fallbackFields.has(fieldKey)) {
-      setFallbackFields((prev) => {
-        const newSet = new Set(prev);
-        newSet.delete(fieldKey);
-        return newSet;
-      });
-    }
-
-    // Create the new values with the accepted suggestion
-    const newValues = {
-      ...editableValues,
-      [fieldKey]: suggestion,
-    };
-
-    // Update the UI state
-    setEditableValues(newValues);
-
-    setAiSuggestions((prev) => {
-      const newSuggestions = { ...prev };
-      delete newSuggestions[fieldKey];
-      return newSuggestions;
-    });
-
-
-
-    // Auto-save immediately after accepting AI suggestion
-    // IMPORTANT: Always save to primary locale since AI suggestions are generated for primary content
-    performSaveWithValues(newValues, primaryLocale);
-  };
-
-  const handleAcceptAndTranslate = (fieldKey: string) => {
-    const suggestion = aiSuggestions[fieldKey];
-    if (!suggestion || !selectedItemId) return;
-
-    // Set flag to prevent translation deletion during this flow
-    setIsAcceptAndTranslateFlow(true);
-
-    // If this field was a fallback, remove it since user accepted an AI value
-    if (fallbackFields.has(fieldKey)) {
-      setFallbackFields((prev) => {
-        const newSet = new Set(prev);
-        newSet.delete(fieldKey);
-        return newSet;
-      });
-    }
-
-    // Create the new values with the accepted suggestion
-    const newValues = {
-      ...editableValues,
-      [fieldKey]: suggestion,
-    };
-
-    // Accept the suggestion in the primary locale
-    setEditableValues(newValues);
-
-    setAiSuggestions((prev) => {
-      const newSuggestions = { ...prev };
-      delete newSuggestions[fieldKey];
-      return newSuggestions;
-    });
-
-    // Check target locales first
-    const targetLocales = enabledLanguages.filter(l => l !== primaryLocale);
-    if (targetLocales.length === 0) {
-      showInfoBox(
-        t.common?.noTargetLanguagesEnabled || "No target languages enabled",
-        "warning",
-        t.common?.warning || "Warning"
-      );
-      setIsAcceptAndTranslateFlow(false);
-      // No translations needed, just save the primary text directly
-      performSaveWithValues(newValues, primaryLocale);
-      return;
-    }
-
-    // Get context title for translation
-    const contextTitle = getItemFieldValue(selectedItem!, 'title', primaryLocale, config) || selectedItem!.id || "";
-
-    // Step 1: Set up pending translation (will be triggered AFTER save completes)
-    pendingTranslationAfterSaveRef.current = {
-      fieldKey,
-      sourceText: suggestion,
-      targetLocales,
-      contextTitle,
-      itemId: selectedItemId
-    };
-
-    // Store the accepted value so we can restore it after translation completes
-    // (pendingTranslationAfterSaveRef is cleared after save, but we need the value for the translation response)
-    acceptedPrimaryValueRef.current = {
-      fieldKey,
-      value: suggestion
-    };
-
-
-
-    // Step 2: Save the primary text first
-    // After save completes, the useEffect will trigger the translation
-    debugLog.acceptAndTranslate(' Saving primary text first, then will translate');
-    performSaveWithValues(newValues, primaryLocale);
-  };
-
-  const handleRejectSuggestion = useCallback((fieldKey: string) => {
-    setAiSuggestions((prev) => {
-      const newSuggestions = { ...prev };
-      delete newSuggestions[fieldKey];
-      return newSuggestions;
-    });
-  }, []);
-
-  const handleLanguageChange = (locale: string) => {
-    handleNavigationAttempt(() => setCurrentLanguage(locale), hasChanges);
-  };
-
-  const handleToggleLanguage = (locale: string) => {
-    // Don't allow disabling the primary locale
-    if (locale === primaryLocale) return;
-
-    setEnabledLanguages((prev) => {
-      if (prev.includes(locale)) {
-        // Disable this language
-        return prev.filter((l) => l !== locale);
-      } else {
-        // Enable this language
-        return [...prev, locale];
-      }
-    });
-  };
-
-  const handleItemSelect = (itemId: string) => {
-    handleNavigationAttempt(() => setSelectedItemId(itemId), hasChanges);
-  };
-
-  const handleValueChange = useCallback((fieldKey: string, value: string) => {
-    // Force isLoadingData to false to ensure change detection works for manual changes
-    setIsLoadingData(false);
-
-    // If this field was a fallback, remove it from fallback fields since user is editing
-    if (fallbackFieldsRef.current.has(fieldKey)) {
-      setFallbackFields((prev) => {
-        const newSet = new Set(prev);
-        newSet.delete(fieldKey);
-        return newSet;
-      });
-    }
-
-    // Update the state immediately without any side effects
-    // This ensures the input field responds instantly to user typing
-    setEditableValues((prev) => ({
-      ...prev,
-      [fieldKey]: value,
-    }));
-  }, [fallbackFieldsRef]);
-
-  const handleToggleHtmlMode = useCallback((fieldKey: string) => {
-    setHtmlModes((prev) => ({
-      ...prev,
-      [fieldKey]: prev[fieldKey] === "html" ? "rendered" : "html",
-    }));
-  }, []);
-
-  const handleClearField = useCallback((fieldKey: string) => {
-    // Force isLoadingData to false to ensure change detection works
-    setIsLoadingData(false);
-
-    // If this field was a fallback, remove it from fallback fields
-    if (fallbackFieldsRef.current.has(fieldKey)) {
-      setFallbackFields((prev) => {
-        const newSet = new Set(prev);
-        newSet.delete(fieldKey);
-        return newSet;
-      });
-    }
-
-    // Clear the field value
-    setEditableValues((prev) => ({
-      ...prev,
-      [fieldKey]: "",
-    }));
-
-    // Update validation refs so isFieldTranslated / hasLocaleMissingTranslations
-    // reflect the cleared state immediately (yellow highlight + button blinking)
-    if (currentLanguage !== primaryLocale) {
-      const field = effectiveFieldDefinitions.find(f => f.key === fieldKey);
-      if (field) {
-        const tKey = field.translationKey;
-        if (localTranslationsRef.current[tKey]) {
-          delete localTranslationsRef.current[tKey][currentLanguage];
-        }
-        // Mark as deleted so resolve() returns empty even if item.translations has old data
-        deletedTranslationKeysRef.current.add(tKey);
-      }
-    }
-  }, [fallbackFieldsRef, currentLanguage, primaryLocale, effectiveFieldDefinitions]);
-
-  const handleClearAllClick = useCallback(() => {
-    setIsClearAllModalOpen(true);
-  }, []);
-
-  const handleClearAllConfirm = () => {
-    // Force isLoadingData to false to ensure change detection works
-    setIsLoadingData(false);
-
-    // Prevent retry mechanism from restoring old values after intentional clear
-    initialLoadSuccessfulRef.current = true;
-    retryCountRef.current = 0;
-
-    // Clear all field values except title (title should never be empty in primary locale)
-    const clearedValues: Record<string, string> = {};
-    effectiveFieldDefinitions.forEach((field) => {
-      if (field.key === "title") {
-        // Keep the current title value
-        clearedValues[field.key] = editableValues[field.key] || "";
-      } else {
-        // Clear all other fields
-        clearedValues[field.key] = "";
-      }
-    });
-    setEditableValues(clearedValues);
-
-    // Update validation refs so isFieldTranslated / hasLocaleMissingTranslations
-    // reflect the cleared state immediately (yellow highlight + button blinking)
-    if (currentLanguage !== primaryLocale) {
-      effectiveFieldDefinitions.forEach((field) => {
-        if (field.key === "title") return; // title was kept
-        const tKey = field.translationKey;
-        if (localTranslationsRef.current[tKey]) {
-          delete localTranslationsRef.current[tKey][currentLanguage];
-        }
-        // Mark as deleted so resolve() returns empty even if item.translations has old data
-        deletedTranslationKeysRef.current.add(tKey);
-      });
-    }
-
-    // Clear image alt texts - set each to "" explicitly so the UI doesn't fall back to original image.altText
-    if (selectedItem?.images && selectedItem.images.length > 0) {
-      const clearedAltTexts: Record<number, string> = {};
-      selectedItem.images.forEach((_: ContentImage, index: number) => {
-        clearedAltTexts[index] = "";
-      });
-      setImageAltTexts(clearedAltTexts);
-      setOriginalAltTexts({});
-    }
-    setAltTextSuggestions({});
-
-    // Close modal
-    setIsClearAllModalOpen(false);
-  };
-
-  const handleClearAllCancel = useCallback(() => {
-    setIsClearAllModalOpen(false);
-  }, []);
-
-  const handleClearAllForLocaleClick = useCallback(() => {
-    setIsClearAllModalOpen(true);
-  }, []);
-
-  const handleClearAllForLocaleConfirm = () => {
-    if (!selectedItemId || !selectedItem || currentLanguage === primaryLocale) return;
-
-    // Force isLoadingData to false to ensure change detection works
-    setIsLoadingData(false);
-
-    // Prevent retry mechanism from restoring old values after intentional clear
-    initialLoadSuccessfulRef.current = true;
-    retryCountRef.current = 0;
-
-    // Clear all field values for the current foreign language
-    const clearedValues: Record<string, string> = {};
-    effectiveFieldDefinitions.forEach((field) => {
-      clearedValues[field.key] = "";
-    });
-    setEditableValues(clearedValues);
-
-    // Update validation refs so isFieldTranslated / hasLocaleMissingTranslations
-    // reflect the cleared state immediately (yellow highlight + button blinking)
-    effectiveFieldDefinitions.forEach((field) => {
-      const tKey = field.translationKey;
-      if (localTranslationsRef.current[tKey]) {
-        delete localTranslationsRef.current[tKey][currentLanguage];
-      }
-      // Mark as deleted so resolve() returns empty even if item.translations has old data
-      deletedTranslationKeysRef.current.add(tKey);
-    });
-
-    // Clear image alt texts - set each to "" explicitly so the UI doesn't fall back to original image.altText
-    const clearedAltTexts: Record<number, string> = {};
-    if (selectedItem?.images && selectedItem.images.length > 0) {
-      selectedItem.images.forEach((_: ContentImage, index: number) => {
-        clearedAltTexts[index] = "";
-      });
-      setImageAltTexts(clearedAltTexts);
-      setOriginalAltTexts({});
-    }
-    setAltTextSuggestions({});
-
-    // Close modal
-    setIsClearAllModalOpen(false);
-
-    // ── Persist the clear: submit save to server so translations are deleted ──
-    // Without this, navigating away and back would reload stale translations from the DB.
-
-    // Build formData with all translated fields set to "" (to trigger server-side deletion)
-    const formDataObj: Record<string, string> = {
-      action: "updateContent",
-      itemId: selectedItemId,
-      locale: currentLanguage,
-      primaryLocale,
-    };
-
-    // Send only fields that had a non-empty translated value (those need deletion)
-    effectiveFieldDefinitions.forEach((field) => {
-      if (fallbackFieldsRef.current.has(field.key)) return; // no translation to delete
-      const originalValue = originalLoadedValuesRef.current[field.key] || "";
-      if (originalValue) {
-        formDataObj[field.key] = "";
-      }
-    });
-
-    // Send alt-texts that had translations
-    const altTextsToDelete: Record<number, string> = {};
-    let hasAltTextsToDelete = false;
-    if (selectedItem?.images) {
-      selectedItem.images.forEach((img: ContentImage, index: number) => {
-        const hasTranslation = img.altTextTranslations?.some(
+      // Load translated alt-texts from DB
+      const translatedAltTexts: Record<number, string> = {};
+      item.images.forEach((img: ContentImage, index: number) => {
+        const translation = img.altTextTranslations?.find(
           (t: { locale: string }) => t.locale === currentLanguage
         );
-        if (hasTranslation) {
-          altTextsToDelete[index] = "";
-          hasAltTextsToDelete = true;
+        if (translation) {
+          translatedAltTexts[index] = translation.altText;
         }
       });
+      setImageAltTexts(translatedAltTexts);
+      setOriginalAltTexts({ ...translatedAltTexts });
     }
-    if (hasAltTextsToDelete) {
-      formDataObj.imageAltTexts = JSON.stringify(altTextsToDelete);
-    }
+  }, [currentLanguage, selectedItemId, primaryLocale]);
 
-    // No item.translations mutation needed — deletedTranslationKeysRef (set above)
-    // ensures resolve() returns empty even if item.translations has stale data.
-
-    if (selectedItem.images) {
-      selectedItem.images.forEach((img: ContentImage) => {
-        if (img.altTextTranslations) {
-          img.altTextTranslations = img.altTextTranslations.filter(
-            (t: { locale: string }) => t.locale !== currentLanguage
-          );
-        }
-      });
-    }
-
-    // Update originalLoadedValues so change detection reflects the cleared state
-    originalLoadedValuesRef.current = { ...clearedValues };
-
-    // Submit save and set tracking refs
-
-    savedLocaleRef.current = currentLanguage;
-    isSavePendingRef.current = true;
-    safeSubmit(formDataObj, { method: "POST" });
-  };
-
-  const handleTranslateAllForLocale = () => {
-    if (!selectedItemId || !selectedItem || currentLanguage === primaryLocale) return;
-
-    const requestItemId = selectedItemId;
-
-    const formDataObj: Record<string, string> = {
-      action: "translateAllForLocale",
-      itemId: selectedItemId,
-      targetLocale: currentLanguage,
-    };
-
-    // Add all field values from primary locale
-    effectiveFieldDefinitions.forEach((field) => {
-      const value = getItemFieldValue(selectedItem, field.key, primaryLocale, config);
-      if (value) {
-        formDataObj[field.key] = value;
-      }
-    });
-
-    safeSubmit(formDataObj, { method: "POST" });
-
-    // Also translate all image alt-texts for this locale in parallel (via fetch API)
-    if (selectedItem?.images && selectedItem.images.length > 0) {
-      const altTextsData: Record<number, string> = {};
-      let hasAnyAltText = false;
-      selectedItem.images.forEach((img: ContentImage, index: number) => {
-        const altText = img.altText || "";
-        if (altText) {
-          altTextsData[index] = altText;
-          hasAnyAltText = true;
-        }
-      });
-
-      if (hasAnyAltText) {
-        submitAIAction(
-          {
-            action: "translateAllAltTextsForLocale",
-            itemId: selectedItem.id,
-            productId: selectedItem.id,
-            altTextsData: JSON.stringify(altTextsData),
-            targetLocale: currentLanguage,
-            primaryLocale
-          },
-          `allAltTextsTranslate_${currentLanguage}`,
-          (result) => {
-            // Guard: discard UI updates if user switched to a different item during the request.
-            if (selectedItemIdRef.current !== requestItemId) return;
-            const failedImages: number[] = (result.failedImages as number[]) || [];
-
-            // Only accept translations that were successfully saved to Shopify
-            if (result.translatedAltTexts) {
-              const translated: Record<number, string> = {};
-              Object.entries(result.translatedAltTexts as Record<string, string>).forEach(([indexStr, text]) => {
-                const idx = parseInt(indexStr, 10);
-                if (!failedImages.includes(idx)) {
-                  translated[idx] = String(text);
-                }
-              });
-
-              if (Object.keys(translated).length > 0) {
-                setImageAltTexts(prev => {
-                  const updated = { ...prev, ...translated };
-                  setOriginalAltTexts(updated);
-                  return updated;
-                });
-                // No auto-save needed - server already saved to Shopify and DB
-              }
-            }
-
-            if (failedImages.length > 0) {
-              const failedList = failedImages.map((i: number) => i + 1).join(", ");
-              showInfoBox(
-                String(t.content?.altTextTranslatePartialImages || "Alt-texts partially saved. Image(s) {failedImages} could not be saved to Shopify. Please sync the product again.")
-                  .replace("{failedImages}", failedList),
-                "warning",
-                t.common?.warning || "Warning"
-              );
-            }
-          }
-        );
-      }
-    }
-  };
   // ============================================================================
   // HELPER FUNCTIONS
   // ============================================================================

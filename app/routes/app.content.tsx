@@ -36,7 +36,6 @@ import { ThemeContentViewer } from "../components/ThemeContentViewer";
 import { useI18n } from "../contexts/I18nContext";
 import { useNavigationHeight } from "../contexts/NavigationHeightContext";
 import { ContentService } from "../services/content.service";
-import { contentEditorStyles } from "../utils/contentEditor.utils";
 import { CONTENT_MAX_HEIGHT } from "../constants/layout";
 import { logger } from "~/utils/logger.server";
 
