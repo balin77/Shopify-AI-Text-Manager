@@ -112,27 +112,3 @@ export function getWritingStyleInstructions(
 ): string {
   return getInstructionWithDefault(dbInstructions, "writingStyleInstructions");
 }
-
-/**
- * Convenience helper to get format preserve instructions with default fallback.
- *
- * @param dbInstructions - AI instructions object from database (can be null)
- * @returns Format preserve instructions (from DB or default)
- */
-export function getFormatPreserveInstructions(
-  dbInstructions: AIInstructions | Record<string, string | null> | null
-): string {
-  return getInstructionWithDefault(dbInstructions, "formatPreserveInstructions");
-}
-
-/**
- * Convenience helper to get translate instructions with default fallback.
- *
- * @param dbInstructions - AI instructions object from database (can be null)
- * @returns Translate instructions (from DB or default)
- */
-export function getTranslateInstructions(
-  dbInstructions: AIInstructions | Record<string, string | null> | null
-): string {
-  return getInstructionWithDefault(dbInstructions, "translateInstructions");
-}

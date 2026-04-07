@@ -217,14 +217,6 @@ export async function getCurrentSubscription(admin: ShopifyAdminClient): Promise
 }
 
 /**
- * Checks if the shop has an active paid subscription
- */
-export async function hasActiveSubscription(admin: ShopifyAdminClient): Promise<boolean> {
-  const subscription = await getCurrentSubscription(admin);
-  return subscription?.status === 'ACTIVE';
-}
-
-/**
  * Gets the plan from the subscription name or defaults to free
  */
 export function getPlanFromSubscription(subscription: AppSubscription | null): BillingPlan {
@@ -279,46 +271,3 @@ export async function checkAndSyncSubscription(admin: ShopifyAdminClient, shop: 
   }
 }
 
-/**
- * Requires an active subscription for paid plans
- * Redirects to billing page if no active subscription
- */
-export async function requireSubscription(
-  admin: ShopifyAdminClient,
-  session: Session,
-  requiredPlan?: Exclude<BillingPlan, 'free'>
-) {
-  const subscription = await getCurrentSubscription(admin);
-
-  if (!subscription || subscription.status !== 'ACTIVE') {
-    return {
-      hasSubscription: false,
-      currentPlan: 'free' as BillingPlan,
-      subscription: null,
-    };
-  }
-
-  const currentPlan = getPlanFromSubscription(subscription);
-
-  // If a specific plan is required, check if current plan meets the requirement
-  if (requiredPlan) {
-    const planHierarchy: BillingPlan[] = ['free', 'basic', 'pro', 'max'];
-    const currentIndex = planHierarchy.indexOf(currentPlan);
-    const requiredIndex = planHierarchy.indexOf(requiredPlan);
-
-    if (currentIndex < requiredIndex) {
-      return {
-        hasSubscription: false,
-        currentPlan,
-        subscription,
-        upgradeRequired: true,
-      };
-    }
-  }
-
-  return {
-    hasSubscription: true,
-    currentPlan,
-    subscription,
-  };
-}

@@ -43,19 +43,6 @@ export interface GDPRShopRedactRequest {
   shop_domain: string;
 }
 
-export interface GDPRLogEntry {
-  id: string;
-  shop: string;
-  requestType: string;
-  customerId?: number;
-  customerEmail?: string;
-  requestedAt: Date;
-  completedAt?: Date;
-  status: string;
-  dataExported?: any;
-  error?: string;
-}
-
 /**
  * Export all data we have stored for a specific customer
  */

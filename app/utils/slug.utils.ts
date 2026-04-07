@@ -85,17 +85,3 @@ export function isValidSlug(slug: string): boolean {
 
   return slugPattern.test(slug);
 }
-
-/**
- * Validates and sanitizes a slug
- * If the slug is invalid, it sanitizes it
- * Returns the sanitized slug and a boolean indicating if sanitization was needed
- */
-export function validateAndSanitizeSlug(slug: string): { slug: string; wasSanitized: boolean } {
-  if (isValidSlug(slug)) {
-    return { slug, wasSanitized: false };
-  }
-
-  const sanitized = sanitizeSlug(slug);
-  return { slug: sanitized, wasSanitized: true };
-}

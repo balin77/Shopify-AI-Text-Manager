@@ -244,16 +244,6 @@ export const AIRequestBaseSchema = z.object({
 });
 
 /**
- * Schema for translateField / rewriteField actions in api.ai.tsx
- */
-export const AITranslateFieldSchema = AIRequestBaseSchema.extend({
-  fieldType: z.string().min(1).max(100),
-  sourceText: z.string().min(1).max(50000),
-  targetLocale: LocaleSchema,
-  primaryLocale: LocaleSchema,
-});
-
-/**
  * Schema for query parameters in api.sync-content.tsx
  */
 const VALID_SYNC_TYPES = ['collections', 'articles', 'pages', 'policies', 'themes'] as const;

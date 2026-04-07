@@ -66,13 +66,6 @@ export function getConfiguredProviders(settings: AISettings): AIProvider[] {
 }
 
 /**
- * Check if at least one AI provider has an API key configured
- */
-export function hasAnyApiKey(settings: AISettings): boolean {
-  return getConfiguredProviders(settings).length > 0;
-}
-
-/**
  * Get the provider name in a human-readable format
  */
 export function getProviderDisplayName(provider: AIProvider): string {
