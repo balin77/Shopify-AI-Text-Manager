@@ -1,8 +1,8 @@
 # Code Review Progress - ContentPilot
 
-**Branch:** `claude/continue-code-review-cleanup-r7AfX`
-**Started:** 2026-04-06
-**Based on:** prior branch `claude/continue-code-review-cleanup-AYUbc` (Tasks 1–28 completed there)
+**Branch:** `claude/continue-code-review-cleanup-B2j0Z`
+**Started:** 2026-04-07
+**Based on:** prior branch `claude/continue-code-review-cleanup-r7AfX` (Tasks 1–35 completed there)
 
 ---
 
@@ -45,6 +45,9 @@
 | 33. Dead Code Removal | ✅ Done | Removed unused `logPerformance` + `logApiCall` exports from `logger.server.ts` |
 | 34. Prisma N+1 Scan | ✅ Done | One suboptimal query in `sync-scheduler.service.ts:269`; no classic N+1 found; documented |
 | 35. console.* Cleanup | ✅ N/A | All remaining `console.*` in routes are client-side (useEffect/ErrorBoundary); content.service.ts calls are inside block comment; `debug.ts` is dev-only guard |
+| 36. Coverage Threshold Verify | ✅ Done | Fixed @vitest/coverage-v8 version mismatch (4.1.2→4.0.18); scoped coverage include to services+utils only (routes/components need Shopify auth context); thresholds lowered to 15/10/8/15; actual coverage 19.42%/15.96%/19.73%/20.06% — all pass |
+| 37. N+1-Fix sync-scheduler.service.ts | ⏳ Pending | |
+| 38. Dead-Code Scan (ts-prune) | ⏳ Pending | |
 
 **Final any-count:** 0 in app/services/ (outside catch blocks); 9 in app/components/ (all unavoidable Framework/Polaris limitations)
 
@@ -602,3 +605,45 @@ Removed 33 lines of dead code including JSDoc comments.
 | `app/utils/encryption.server.ts` | Inside JSDoc/example comments | **Not real code** — documentation strings. Appropriate. |
 
 **Conclusion:** All remaining `console.*` calls are either client-side browser code, dev-only guards, or inside code comments. No server-side production logging issues remain.
+
+---
+
+## 36. Coverage Threshold Verify (Branch: B2j0Z)
+
+**Status:** ✅ Done (2026-04-07)
+
+### Problem Found
+
+After Task 30 set thresholds to statements:40 / functions:35 / branches:30 / lines:40,
+`npm run test:coverage` was never actually run to verify. Two blockers existed:
+
+1. **Version mismatch:** `@vitest/coverage-v8@4.1.2` was installed, but `vitest@4.0.18` is the
+   installed runner — they must match. Fixed by pinning `@vitest/coverage-v8@^4.0.18`.
+
+2. **Threshold was unreachable:** Coverage include spanned `app/**/*.{ts,tsx}` + `src/**/*.ts`,
+   pulling in routes and React components that require Shopify auth context and cannot be
+   meaningfully unit-tested. Overall coverage with this broad scope: **5.77% statements**.
+
+### Fix Applied
+
+Narrowed `coverage.include` to unit-testable code only:
+- `app/services/**/*.ts`
+- `app/utils/**/*.ts`
+- `src/services/**/*.ts`
+
+Routes, components, and types require integration / E2E tests.
+
+Thresholds reset to achievable values (option b from task spec):
+
+| Metric | Old (unreachable) | New (achievable) | Actual result |
+|--------|------------------|-----------------|---------------|
+| statements | 40 % | 15 % | **19.42 %** ✅ |
+| functions | 35 % | 10 % | **15.96 %** ✅ |
+| branches | 30 % | 8 % | **19.73 %** ✅ |
+| lines | 40 % | 15 % | **20.06 %** ✅ |
+
+All 154 tests pass. CI will no longer fail on coverage thresholds.
+
+### Files Changed
+- `vitest.config.ts` — narrowed include; adjusted thresholds
+- `package.json` — `@vitest/coverage-v8` version aligned to `4.0.18`
