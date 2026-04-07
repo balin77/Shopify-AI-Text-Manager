@@ -470,12 +470,11 @@ export default function ProductsPage() {
   });
 
   // Initialize sub-resources hook for options + metafields translations
-  // Uses the same fetcher as the main editor for consistent loading states
+  // Uses its own internal fetcher to avoid race conditions with the main editor
   const subResources = useProductSubResources({
     selectedItem: editor.selectedItem,
     currentLanguage: editor.state.currentLanguage,
     primaryLocale,
-    fetcher,
     revalidator,
     showInfoBox,
   });

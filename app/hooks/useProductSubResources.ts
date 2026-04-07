@@ -68,7 +68,8 @@ interface UseProductSubResourcesProps {
   selectedItem: TranslatableContentItem | null;
   currentLanguage: string;
   primaryLocale: string;
-  fetcher: FetcherWithComponents<any>;
+  /** @deprecated No longer used — hook creates its own fetcher to avoid shared-fetcher race conditions */
+  fetcher?: FetcherWithComponents<any>;
   revalidator?: { revalidate: () => void; state: string };
   showInfoBox?: (message: string, tone?: "success" | "info" | "warning" | "critical", title?: string) => void;
 }
@@ -139,7 +140,6 @@ export function useProductSubResources({
   selectedItem,
   currentLanguage,
   primaryLocale,
-  fetcher,
   revalidator,
   showInfoBox,
 }: UseProductSubResourcesProps): { state: SubResourceState; handlers: SubResourceHandlers } {
@@ -156,8 +156,13 @@ export function useProductSubResources({
   const [hasChanges, setHasChanges] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
 
+  // Own fetcher for load/save/individual-translate operations.
+  // Must NOT be shared with the main editor to avoid race conditions
+  // (main editor's safeSubmit queue vs. direct submit here).
+  const fetcher = useFetcher<any>();
+
   // Separate fetcher for translate-all operations to avoid conflicting with
-  // the shared fetcher used for load/save/individual-translate operations.
+  // the load/save fetcher above.
   const translateAllFetcher = useFetcher<any>();
   const lastProcessedTranslateAllDataRef = useRef<any>(null);
 
@@ -234,7 +239,8 @@ export function useProductSubResources({
     } else {
       setIsLoading(false);
     }
-  }, [itemId, currentLanguage, isPrimaryLocale, subResourceIds, selectedItem, fetcher]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- fetcher is hook-internal and stable
+  }, [itemId, currentLanguage, isPrimaryLocale, subResourceIds, selectedItem]);
 
   // ============================================================================
   // Handle fetcher responses (load + translate + save)
