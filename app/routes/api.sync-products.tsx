@@ -318,8 +318,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       failed,
       errors: errors.slice(0, 10), // Only return first 10 errors
     });
-  } catch (error: any) {
-    logger.error("[SYNC-PRODUCTS] Error", { context: "SyncProducts", error: error.message, stack: error.stack });
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+    logger.error("[SYNC-PRODUCTS] Error", { context: "SyncProducts", error: msg, stack: error instanceof Error ? error.stack : undefined });
     return json(
       {
         success: false,

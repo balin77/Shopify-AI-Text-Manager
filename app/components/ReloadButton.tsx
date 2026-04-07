@@ -42,7 +42,7 @@ export function ReloadButton({
 
   useEffect(() => {
     if (fetcher.state === "idle" && fetcher.data && isLoading) {
-      const data = fetcher.data as any;
+      const data = fetcher.data as { success?: boolean; error?: string; reloadRequired?: boolean } | undefined;
       if (data.success) {
         if (revalidatorRef.current) {
           // Use revalidation approach (non-destructive)

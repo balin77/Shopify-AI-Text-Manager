@@ -1,6 +1,12 @@
 import { useState } from "react";
 import { Card, Text, BlockStack, Button, Banner, ProgressBar, InlineStack, Box } from "@shopify/polaris";
 import { useSyncProgress, type SyncProgress } from "./SyncProgressBar";
+import type { Translation as I18nTranslation } from "~/i18n/de";
+
+interface WebhookEntry {
+  topic: string;
+  callbackUrl?: string;
+}
 
 interface SettingsSetupTabProps {
   shop: string;
@@ -9,7 +15,7 @@ interface SettingsSetupTabProps {
   articleCount: number;
   translationCount: number;
   webhookCount: number;
-  t: any; // i18n translations
+  t: I18nTranslation;
 }
 
 const phaseKeys: Record<string, string> = {
@@ -62,8 +68,8 @@ export function SettingsSetupTab({
       } else {
         setWebhookStatus(`✗ Error: ${data.error}`);
       }
-    } catch (error: any) {
-      setWebhookStatus(`✗ Error: ${error.message}`);
+    } catch (error: unknown) {
+      setWebhookStatus(`✗ Error: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       setWebhookLoading(false);
     }
@@ -142,21 +148,21 @@ export function SettingsSetupTab({
               </Text>
               <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
                 <BlockStack gap="100">
-                  {webhookData.webhooks.filter((w: any) => w.topic.includes('PRODUCTS')).length > 0 && (
-                    <Text as="p" fontWeight="semibold">{t.settings.phaseProducts}: {t.settings.webhooksCount.replace('{count}', webhookData.webhooks.filter((w: any) => w.topic.includes('PRODUCTS')).length)}</Text>
+                  {webhookData.webhooks.filter((w: WebhookEntry) => w.topic.includes('PRODUCTS')).length > 0 && (
+                    <Text as="p" fontWeight="semibold">{t.settings.phaseProducts}: {t.settings.webhooksCount.replace('{count}', webhookData.webhooks.filter((w: WebhookEntry) => w.topic.includes('PRODUCTS')).length)}</Text>
                   )}
-                  {webhookData.webhooks.filter((w: any) => w.topic.includes('COLLECTIONS')).length > 0 && (
-                    <Text as="p" fontWeight="semibold">{t.settings.phaseCollections}: {t.settings.webhooksCount.replace('{count}', webhookData.webhooks.filter((w: any) => w.topic.includes('COLLECTIONS')).length)}</Text>
+                  {webhookData.webhooks.filter((w: WebhookEntry) => w.topic.includes('COLLECTIONS')).length > 0 && (
+                    <Text as="p" fontWeight="semibold">{t.settings.phaseCollections}: {t.settings.webhooksCount.replace('{count}', webhookData.webhooks.filter((w: WebhookEntry) => w.topic.includes('COLLECTIONS')).length)}</Text>
                   )}
-                  {webhookData.webhooks.filter((w: any) => w.topic.includes('ARTICLES')).length > 0 && (
-                    <Text as="p" fontWeight="semibold">{t.settings.phaseArticles}: {t.settings.webhooksCount.replace('{count}', webhookData.webhooks.filter((w: any) => w.topic.includes('ARTICLES')).length)}</Text>
+                  {webhookData.webhooks.filter((w: WebhookEntry) => w.topic.includes('ARTICLES')).length > 0 && (
+                    <Text as="p" fontWeight="semibold">{t.settings.phaseArticles}: {t.settings.webhooksCount.replace('{count}', webhookData.webhooks.filter((w: WebhookEntry) => w.topic.includes('ARTICLES')).length)}</Text>
                   )}
                 </BlockStack>
               </div>
               <details>
                 <summary style={{ cursor: "pointer", padding: "0.5rem 0" }}>{t.settings.showWebhookDetails}</summary>
                 <BlockStack gap="100" >
-                  {webhookData.webhooks.map((w: any, i: number) => (
+                  {webhookData.webhooks.map((w: WebhookEntry, i: number) => (
                     <Text as="p" key={i} tone="subdued">
                       • {w.topic}
                     </Text>

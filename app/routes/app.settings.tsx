@@ -29,6 +29,7 @@ import { useInfoBox } from "../contexts/InfoBoxContext";
 import { useItemSelector } from "../contexts/ItemSelectorContext";
 import { sanitizeHTML } from "../utils/sanitizer";
 import { AISettingsSchema, AIInstructionsSchema, parseFormData } from "../utils/validation";
+import { getFormString } from "../utils/form-data.utils";
 import { toSafeErrorResponse } from "../utils/error-handler";
 import { encryptApiKey, decryptApiKey } from "../utils/encryption.server";
 import {
@@ -314,8 +315,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         grokApiKey: decryptApiKey(settings.grokApiKey) || "",
         deepseekApiKey: decryptApiKey(settings.deepseekApiKey) || "",
       };
-    } catch (error: any) {
-      logger.error("[SETTINGS LOADER] Decryption error", { context: "Settings", error: error?.message });
+    } catch (error: unknown) {
+      logger.error("[SETTINGS LOADER] Decryption error", { context: "Settings", error: error instanceof Error ? error.message : String(error) });
       // If decryption fails, return empty keys
       decryptedKeys = {
         huggingfaceApiKey: "",
@@ -447,7 +448,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const formData = await request.formData();
-  const actionType = formData.get("actionType") as string;
+  const actionType = getFormString(formData, "actionType");
+  if (!actionType) {
+    return json({ success: false, error: "Missing required field: actionType" }, { status: 400 });
+  }
 
   try {
     if (actionType === "saveInstructions") {

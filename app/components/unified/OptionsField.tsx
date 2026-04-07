@@ -15,6 +15,7 @@ import { DeleteIcon } from "@shopify/polaris-icons";
 import { useI18n } from "../../contexts/I18nContext";
 import { useAppNavigation } from "../../hooks/useAppNavigation";
 import { getLocalizedLanguageName } from "../../utils/contentEditor.utils";
+import type { ShopLocale } from "../../types/content-editor.types";
 import "../../styles/AIEditableField.css";
 
 export interface OptionValueData {
@@ -48,7 +49,7 @@ interface OptionsFieldProps {
   currentLanguage: string;
 
   /** Shop locales array for language name resolution */
-  shopLocales: any[];
+  shopLocales: ShopLocale[];
 
   /** Translation data (indexed by option ID) */
   translations: Record<string, OptionTranslation>;
@@ -135,7 +136,7 @@ export function OptionsField({
   const localeName = getLocalizedLanguageName(
     currentLanguage,
     appLocale,
-    shopLocales.find((l: any) => l.locale === currentLanguage)?.name
+    shopLocales.find((l: ShopLocale) => l.locale === currentLanguage)?.name
   );
 
   if (!options || options.length === 0) {

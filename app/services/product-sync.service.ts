@@ -5,6 +5,7 @@
  * including all translations for all available locales.
  */
 
+import type { Prisma } from '@prisma/client';
 import { logger } from '~/utils/logger.server';
 import { isTranslationRecentlySaved } from '~/utils/translation-save-lock.server';
 import type { ShopifyGraphQLClient, ShopLocale, GraphQLEdge, ShopifyTranslation, ResolvedTranslation, ProgressCallback } from './sync-types';
@@ -14,6 +15,31 @@ import { isDefaultTitleOption } from '~/utils/shopify-product.utils';
 /** GraphQL error shape */
 interface GraphQLError {
   message: string;
+}
+
+/** Response shape for bulk products query */
+interface BulkProductsQueryResponse {
+  data?: {
+    products?: {
+      pageInfo: { hasNextPage: boolean; endCursor: string | null };
+      edges: GraphQLEdge<ShopifyProductData>[];
+    };
+  };
+  errors?: GraphQLError[];
+}
+
+/** Response shape for translatableResourcesByIds queries */
+interface TranslatableResourcesByIdsResponse {
+  data?: {
+    translatableResourcesByIds?: {
+      edges: GraphQLEdge<{
+        resourceId: string;
+        translatableContent?: Array<{ key: string; digest: string | null }>;
+        translations: Array<{ key: string; value: string; locale?: string }>;
+      }>;
+    };
+  };
+  errors?: GraphQLError[];
 }
 
 /** Product media image from Shopify */
@@ -117,7 +143,7 @@ export class ProductSyncService {
     // ==========================================
     // Phase 1: Fetch all products (0-20%)
     // ==========================================
-    let allProducts: any[] = [];
+    let allProducts: ShopifyProductData[] = [];
     let hasNextPage = true;
     let cursor: string | null = null;
 
@@ -198,14 +224,14 @@ export class ProductSyncService {
         { variables: { first: batchSize, after: cursor } }
       );
 
-      const data: any = await response.json();
+      const data = await response.json() as BulkProductsQueryResponse;
 
       if (data.errors) {
         throw new Error(data.errors[0]?.message || "GraphQL error");
       }
 
-      const pageInfo: any = data.data?.products?.pageInfo;
-      const products = data.data?.products?.edges?.map((e: any) => e.node) || [];
+      const pageInfo = data.data?.products?.pageInfo;
+      const products = data.data?.products?.edges?.map((e) => e.node) ?? [];
 
       allProducts = [...allProducts, ...products];
       hasNextPage = pageInfo?.hasNextPage || false;
@@ -228,7 +254,7 @@ export class ProductSyncService {
     for (const product of allProducts) {
       checkAborted();
       try {
-        await db.$transaction(async (tx: any) => {
+        await db.$transaction(async (tx: Prisma.TransactionClient) => {
           // Upsert product
           await tx.product.upsert({
             where: {
@@ -267,13 +293,13 @@ export class ProductSyncService {
           // Save images
           if (cacheProductImages) {
             const mediaImages = product.media?.edges
-              ?.filter((edge: any) => edge.node.id && edge.node.image?.url)
-              .map((edge: any) => edge.node) || [];
+              ?.filter((edge) => edge.node.id && edge.node.image?.url)
+              .map((edge) => edge.node) ?? [];
 
             if (mediaImages.length > 0) {
               await tx.productImage.deleteMany({ where: { productId: product.id } });
               await tx.productImage.createMany({
-                data: mediaImages.map((media: any, index: number) => ({
+                data: mediaImages.map((media, index) => ({
                   productId: product.id,
                   url: media.image.url,
                   altText: media.alt || null,
@@ -285,40 +311,41 @@ export class ProductSyncService {
           }
 
           // Save options (filter out Shopify's internal "Default Title" placeholder)
-          const realOptions = (product.options || []).filter((opt: any) => !isDefaultTitleOption(opt));
+          const realOptions = (product.options ?? []).filter((opt) => !isDefaultTitleOption(opt));
           if (realOptions.length > 0) {
             await tx.productOption.deleteMany({ where: { productId: product.id } });
-            const optCreateData = realOptions.map((opt: any) => ({
+            const optCreateData = realOptions.map((opt) => ({
               id: opt.id,
               productId: product.id,
               name: opt.name,
               position: opt.position,
               values: opt.optionValues
-                ? JSON.stringify(opt.optionValues.map((v: any) => ({ id: v.id, name: v.name, linked: !!v.linkedMetafieldValue, linkedValue: v.linkedMetafieldValue || undefined })))
-                : JSON.stringify(opt.values),
+                ? JSON.stringify(opt.optionValues.map((v) => ({ id: v.id, name: v.name, linked: !!v.linkedMetafieldValue, linkedValue: v.linkedMetafieldValue || undefined })))
+                : JSON.stringify((opt as { values?: string[] }).values),
               linkedMetafieldKey: opt.linkedMetafield ? `${opt.linkedMetafield.namespace}--${opt.linkedMetafield.key}` : null,
             }));
             try {
               await tx.productOption.createMany({ data: optCreateData });
-            } catch (optErr: any) {
-              logger.error(`[ProductSync] OPTIONS createMany FAILED for ${product.id}: ${optErr.message}`);
+            } catch (optErr: unknown) {
+              const optErrMsg = optErr instanceof Error ? optErr.message : String(optErr);
+              logger.error(`[ProductSync] OPTIONS createMany FAILED for ${product.id}: ${optErrMsg}`);
               // Fallback: save without linkedMetafieldKey if column doesn't exist yet
               await tx.productOption.createMany({
-                data: realOptions.map((opt: any) => ({
+                data: realOptions.map((opt) => ({
                   id: opt.id,
                   productId: product.id,
                   name: opt.name,
                   position: opt.position,
                   values: opt.optionValues
-                    ? JSON.stringify(opt.optionValues.map((v: any) => ({ id: v.id, name: v.name, linked: !!v.linkedMetafieldValue, linkedValue: v.linkedMetafieldValue || undefined })))
-                    : JSON.stringify(opt.values),
+                    ? JSON.stringify(opt.optionValues.map((v) => ({ id: v.id, name: v.name, linked: !!v.linkedMetafieldValue, linkedValue: v.linkedMetafieldValue || undefined })))
+                    : JSON.stringify((opt as { values?: string[] }).values),
                 })),
               });
             }
           }
 
           // Upsert metafields (idempotent — safe under concurrent execution)
-          const metafields = product.metafields?.edges?.map((edge: any) => edge.node) || [];
+          const metafields = product.metafields?.edges?.map((edge) => edge.node) ?? [];
           await upsertProductMetafields(tx, product.id, metafields);
         });
 
@@ -328,9 +355,9 @@ export class ProductSyncService {
           const progress = Math.round(20 + (synced / total) * 40);
           onProgress?.({ overallPercent: progress, detailCurrent: synced, detailTotal: total, message: `Saving products: ${synced}/${total}` });
         }
-      } catch (err: any) {
-        if (err.name === "AbortError") throw err;
-        logger.error(`[ProductSync] Failed to save product ${product.id}`, { error: err.message });
+      } catch (err: unknown) {
+        if (err instanceof DOMException && err.name === "AbortError") throw err;
+        logger.error(`[ProductSync] Failed to save product ${product.id}`, { error: err instanceof Error ? err.message : String(err) });
       }
     }
 
@@ -346,7 +373,7 @@ export class ProductSyncService {
         const nonPrimaryLocales = shopLocales.filter((l) => !l.primary && l.published);
 
         if (nonPrimaryLocales.length > 0) {
-          const productIds = allProducts.map((p: any) => p.id);
+          const productIds = allProducts.map((p) => p.id);
           const BATCH_SIZE = 100;
           const batches: string[][] = [];
           for (let i = 0; i < productIds.length; i += BATCH_SIZE) {
@@ -398,37 +425,37 @@ export class ProductSyncService {
                   { variables: { resourceIds: batch, locale: locale.locale } }
                 );
 
-                const data: any = await response.json();
+                const data = await response.json() as TranslatableResourcesByIdsResponse;
 
                 if (data.errors) {
                   logger.warn(`[ProductSync] GraphQL error fetching translations for locale ${locale.locale}:`, data.errors[0]?.message);
                   continue;
                 }
 
-                const resources = data.data?.translatableResourcesByIds?.edges || [];
+                const resources = data.data?.translatableResourcesByIds?.edges ?? [];
                 for (const edge of resources) {
                   const node = edge.node;
                   const digestMap = new Map<string, string>();
-                  for (const content of node.translatableContent || []) {
+                  for (const content of node.translatableContent ?? []) {
                     if (content.digest) {
                       digestMap.set(content.key, content.digest);
                     }
                   }
-                  for (const t of node.translations || []) {
+                  for (const t of node.translations ?? []) {
                     if (t.value) {
                       allTranslations.push({
                         resourceId: node.resourceId,
                         key: t.key,
                         value: t.value,
-                        locale: t.locale,
-                        digest: digestMap.get(t.key) || null,
+                        locale: t.locale ?? locale.locale,
+                        digest: digestMap.get(t.key) ?? null,
                       });
                     }
                   }
                 }
-              } catch (batchErr: any) {
-                if (batchErr.name === "AbortError") throw batchErr;
-                logger.warn(`[ProductSync] Failed to fetch translation batch for locale ${locale.locale}:`, batchErr.message);
+              } catch (batchErr: unknown) {
+                if (batchErr instanceof DOMException && batchErr.name === "AbortError") throw batchErr;
+                logger.warn(`[ProductSync] Failed to fetch translation batch for locale ${locale.locale}:`, batchErr instanceof Error ? batchErr.message : String(batchErr));
               }
             }
 
@@ -516,18 +543,18 @@ export class ProductSyncService {
                     { variables: { resourceIds: batch, locale: locale.locale } }
                   );
 
-                  const data: any = await response.json();
+                  const data = await response.json() as TranslatableResourcesByIdsResponse;
 
                   if (data.errors) {
                     logger.warn(`[ProductSync] GraphQL error fetching sub-resource translations for locale ${locale.locale}:`, data.errors[0]?.message);
                     continue;
                   }
 
-                  const resources = data.data?.translatableResourcesByIds?.edges || [];
+                  const resources = data.data?.translatableResourcesByIds?.edges ?? [];
                   for (const edge of resources) {
                     const resourceId = edge.node.resourceId;
-                    const resourceType = typeMap.get(resourceId) || "Unknown";
-                    for (const t of edge.node.translations || []) {
+                    const resourceType = typeMap.get(resourceId) ?? "Unknown";
+                    for (const t of edge.node.translations ?? []) {
                       if (t.value) {
                         subTranslations.push({
                           resourceId,
@@ -539,9 +566,9 @@ export class ProductSyncService {
                       }
                     }
                   }
-                } catch (batchErr: any) {
-                  if (batchErr.name === "AbortError") throw batchErr;
-                  logger.warn(`[ProductSync] Failed to fetch sub-resource translation batch for locale ${locale.locale}:`, batchErr.message);
+                } catch (batchErr: unknown) {
+                  if (batchErr instanceof DOMException && batchErr.name === "AbortError") throw batchErr;
+                  logger.warn(`[ProductSync] Failed to fetch sub-resource translation batch for locale ${locale.locale}:`, batchErr instanceof Error ? batchErr.message : String(batchErr));
                 }
               }
 
@@ -568,8 +595,8 @@ export class ProductSyncService {
           const allMediaIds: string[] = [];
           for (const product of allProducts) {
             const mediaImages = product.media?.edges
-              ?.filter((edge: any) => edge.node.id)
-              .map((edge: any) => edge.node.id) || [];
+              ?.filter((edge) => edge.node.id)
+              .map((edge) => edge.node.id) ?? [];
             allMediaIds.push(...mediaImages);
           }
 
@@ -622,17 +649,17 @@ export class ProductSyncService {
                     { variables: { resourceIds: batch, locale: locale.locale } }
                   );
 
-                  const data: any = await response.json();
+                  const data = await response.json() as TranslatableResourcesByIdsResponse;
                   if (data.errors) {
                     logger.warn(`[ProductSync] GraphQL error fetching alt-text for locale ${locale.locale}:`, data.errors[0]?.message);
                     continue;
                   }
 
-                  const resources = data.data?.translatableResourcesByIds?.edges || [];
+                  const resources = data.data?.translatableResourcesByIds?.edges ?? [];
                   for (const edge of resources) {
                     const mediaId = edge.node.resourceId;
-                    const translations: Array<{ key: string; value: string }> = edge.node.translations || [];
-                    const altTranslation = translations.find((t: any) => t.key === "alt");
+                    const translations = edge.node.translations ?? [];
+                    const altTranslation = translations.find((t) => t.key === "alt");
                     if (altTranslation?.value) {
                       const dbId = mediaIdToDbId.get(mediaId);
                       if (dbId) {
@@ -644,9 +671,9 @@ export class ProductSyncService {
                       }
                     }
                   }
-                } catch (batchErr: any) {
-                  if (batchErr.name === "AbortError") throw batchErr;
-                  logger.warn(`[ProductSync] Failed to fetch alt-text batch for locale ${locale.locale}:`, batchErr.message);
+                } catch (batchErr: unknown) {
+                  if (batchErr instanceof DOMException && batchErr.name === "AbortError") throw batchErr;
+                  logger.warn(`[ProductSync] Failed to fetch alt-text batch for locale ${locale.locale}:`, batchErr instanceof Error ? batchErr.message : String(batchErr));
                 }
               }
             }
@@ -667,9 +694,9 @@ export class ProductSyncService {
             }
           }
         }
-      } catch (translationErr: any) {
-        if (translationErr.name === "AbortError") throw translationErr;
-        logger.error(`[ProductSync] Failed to fetch product translations:`, translationErr.message);
+      } catch (translationErr: unknown) {
+        if (translationErr instanceof DOMException && translationErr.name === "AbortError") throw translationErr;
+        logger.error(`[ProductSync] Failed to fetch product translations:`, translationErr instanceof Error ? translationErr.message : String(translationErr));
         // Non-fatal: products are synced, translations can be loaded on-demand
       }
     }
@@ -1551,8 +1578,8 @@ export class ProductSyncService {
               linkedMetafieldKey: opt.linkedMetafield ? `${opt.linkedMetafield.namespace}--${opt.linkedMetafield.key}` : null,
             })),
           });
-        } catch (optErr: any) {
-          logger.error(`[ProductSync] saveToDatabase OPTIONS createMany FAILED: ${optErr.message}`);
+        } catch (optErr: unknown) {
+          logger.error(`[ProductSync] saveToDatabase OPTIONS createMany FAILED: ${optErr instanceof Error ? optErr.message : String(optErr)}`);
           // Fallback: save without linkedMetafieldKey if column doesn't exist yet
           await tx.productOption.createMany({
             data: productData.options.map((opt) => ({

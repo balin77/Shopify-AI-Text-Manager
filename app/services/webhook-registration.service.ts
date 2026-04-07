@@ -6,8 +6,22 @@
 
 import { logger } from '~/utils/logger.server';
 
+interface WebhookUserError {
+  field?: string;
+  message: string;
+}
+
+interface WebhookSubscription {
+  id: string;
+  topic: string;
+  endpoint?: {
+    __typename: string;
+    callbackUrl?: string;
+  };
+}
+
 interface ShopifyGraphQLClient {
-  graphql: (query: string, options?: { variables?: any }) => Promise<any>;
+  graphql: (query: string, options?: { variables?: Record<string, unknown> }) => Promise<{ json: () => Promise<unknown> }>;
 }
 
 export class WebhookRegistrationService {
@@ -44,8 +58,8 @@ export class WebhookRegistrationService {
       try {
         await this.registerWebhook(webhook.topic, webhook.address);
         logger.info(`[WebhookRegistration] Registered ${webhook.topic}`);
-      } catch (error: any) {
-        logger.error(`[WebhookRegistration] Failed to register ${webhook.topic}:`, error.message);
+      } catch (error: unknown) {
+        logger.error(`[WebhookRegistration] Failed to register ${webhook.topic}:`, error instanceof Error ? error.message : String(error));
         // Continue with other webhooks even if one fails
       }
     }
@@ -98,8 +112,8 @@ export class WebhookRegistrationService {
       try {
         await this.registerWebhook(webhook.topic, webhook.address);
         logger.info(`[WebhookRegistration] Registered ${webhook.topic}`);
-      } catch (error: any) {
-        logger.error(`[WebhookRegistration] Failed to register ${webhook.topic}:`, error.message);
+      } catch (error: unknown) {
+        logger.error(`[WebhookRegistration] Failed to register ${webhook.topic}:`, error instanceof Error ? error.message : String(error));
         // Continue with other webhooks even if one fails
       }
     }
@@ -130,8 +144,8 @@ export class WebhookRegistrationService {
       try {
         await this.registerWebhook(webhook.topic, webhook.address);
         logger.info(`[WebhookRegistration] Registered ${webhook.topic}`);
-      } catch (error: any) {
-        logger.error(`[WebhookRegistration] Failed to register ${webhook.topic}:`, error.message);
+      } catch (error: unknown) {
+        logger.error(`[WebhookRegistration] Failed to register ${webhook.topic}:`, error instanceof Error ? error.message : String(error));
         // Continue with other webhooks even if one fails
       }
     }
@@ -197,7 +211,7 @@ export class WebhookRegistrationService {
 
     if (data.data?.webhookSubscriptionCreate?.userErrors?.length > 0) {
       const errors = data.data.webhookSubscriptionCreate.userErrors;
-      throw new Error(`Webhook creation failed: ${errors.map((e: any) => e.message).join(", ")}`);
+      throw new Error(`Webhook creation failed: ${(errors as WebhookUserError[]).map((e) => e.message).join(", ")}`);
     }
 
     logger.info(`[WebhookRegistration] Created webhook ${topic}`);
@@ -206,7 +220,7 @@ export class WebhookRegistrationService {
   /**
    * Get existing webhook subscription
    */
-  private async getExistingWebhook(topic: string): Promise<any> {
+  private async getExistingWebhook(topic: string): Promise<WebhookSubscription | null> {
     const response = await this.admin.graphql(
       `#graphql
         query getWebhookSubscriptions {
@@ -271,14 +285,14 @@ export class WebhookRegistrationService {
 
     if (data.data?.webhookSubscriptionUpdate?.userErrors?.length > 0) {
       const errors = data.data.webhookSubscriptionUpdate.userErrors;
-      throw new Error(`Webhook update failed: ${errors.map((e: any) => e.message).join(", ")}`);
+      throw new Error(`Webhook update failed: ${(errors as WebhookUserError[]).map((e) => e.message).join(", ")}`);
     }
   }
 
   /**
    * List all registered webhooks (for debugging)
    */
-  async listWebhooks(): Promise<any[]> {
+  async listWebhooks(): Promise<WebhookSubscription[]> {
     const response = await this.admin.graphql(
       `#graphql
         query getWebhookSubscriptions {
@@ -300,6 +314,6 @@ export class WebhookRegistrationService {
     );
 
     const data = await response.json();
-    return data.data?.webhookSubscriptions?.edges?.map((e: any) => e.node) || [];
+    return (data.data?.webhookSubscriptions?.edges as Array<{ node: WebhookSubscription }> || []).map((e) => e.node);
   }
 }

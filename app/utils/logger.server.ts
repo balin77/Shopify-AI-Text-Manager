@@ -140,39 +140,6 @@ export const loggers = {
     logger.log(level, message, { context: 'Auth', ...meta }),
 };
 
-/**
- * Helper to log performance metrics
- */
-export const logPerformance = (operation: string, startTime: number, meta?: Record<string, any>) => {
-  const duration = Date.now() - startTime;
-  logger.info(`Performance: ${operation}`, {
-    context: 'Performance',
-    duration: `${duration}ms`,
-    ...meta,
-  });
-};
-
-/**
- * Helper to log API calls
- */
-export const logApiCall = (
-  provider: string,
-  endpoint: string,
-  status: 'success' | 'error',
-  duration?: number,
-  meta?: Record<string, any>
-) => {
-  const level = status === 'error' ? 'error' : 'info';
-  logger.log(level, `API Call: ${provider} ${endpoint}`, {
-    context: 'API',
-    provider,
-    endpoint,
-    status,
-    duration: duration ? `${duration}ms` : undefined,
-    ...meta,
-  });
-};
-
 // Log when logger is initialized
 logger.info('Logger initialized', {
   context: 'System',

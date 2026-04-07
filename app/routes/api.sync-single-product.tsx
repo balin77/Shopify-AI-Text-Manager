@@ -18,10 +18,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   try {
     const { admin, session } = await authenticate.admin(request);
     const formData = await request.formData();
-    const productId = formData.get("productId") as string;
+    const { getFormString } = await import("../utils/form-data.utils");
+    const productId = getFormString(formData, "productId");
 
     if (!productId) {
-      return json({ success: false, error: "Missing productId parameter" }, { status: 400 });
+      return json({ success: false, error: "Missing required field: productId" }, { status: 400 });
     }
 
     if (!isValidShopifyGID(productId)) {
@@ -64,8 +65,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       translationsCount: translations.length,
       translationsByLocale,
     });
-  } catch (error: any) {
-    logger.error("[SYNC-SINGLE-PRODUCT] Error", { context: "SyncSingleProduct", error: error.message, stack: error.stack });
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+    logger.error("[SYNC-SINGLE-PRODUCT] Error", { context: "SyncSingleProduct", error: msg, stack: error instanceof Error ? error.stack : undefined });
     return json(
       {
         success: false,

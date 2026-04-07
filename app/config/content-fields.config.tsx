@@ -5,6 +5,7 @@
  */
 
 import type { ContentEditorConfig } from "../types/content-editor.types";
+import type { MetaobjectEntry } from "../utils/contentEditor.utils";
 import { createTemplateFieldDefinitions, getTemplateFieldValue } from "../utils/templates-field-factory";
 import { isMetaobjectLabelField } from "../constants/shopifyFields";
 
@@ -395,9 +396,9 @@ export const METAOBJECTS_CONFIG: ContentEditorConfig = {
     if (!item?.metaobjects || !Array.isArray(item.metaobjects)) return [];
 
     // Create one field per metaobject, showing only the display_name/name
-    return item.metaobjects.map((metaobj: any) => {
+    return (item.metaobjects as MetaobjectEntry[]).map((metaobj) => {
       // Find the display_name or name field
-      const labelField = metaobj.fields?.find((f: any) => isMetaobjectLabelField(f.key));
+      const labelField = metaobj.fields?.find((f) => isMetaobjectLabelField(f.key));
 
       return {
         key: metaobj.id, // Use metaobject ID as field key
@@ -418,11 +419,11 @@ export const METAOBJECTS_CONFIG: ContentEditorConfig = {
     if (!item?.metaobjects || !Array.isArray(item.metaobjects)) return "";
 
     // fieldKey is the metaobject ID
-    const metaobj = item.metaobjects.find((m: any) => m.id === fieldKey);
+    const metaobj = (item.metaobjects as MetaobjectEntry[]).find((m) => m.id === fieldKey);
     if (!metaobj) return "";
 
     // Find the label field value
-    const labelField = metaobj.fields?.find((f: any) => isMetaobjectLabelField(f.key));
+    const labelField = metaobj.fields?.find((f) => isMetaobjectLabelField(f.key));
 
     return labelField?.value || metaobj.displayName || "";
   },

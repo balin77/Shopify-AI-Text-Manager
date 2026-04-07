@@ -6,6 +6,7 @@ import { BackgroundSyncService } from "../services/background-sync.service";
 import { db } from "../db.server";
 import { getPlanLimits, type Plan } from "../utils/planUtils";
 import { logger } from "~/utils/logger.server";
+import { SyncContentQuerySchema } from "~/utils/validation";
 
 /**
  * API Route: Sync Content
@@ -23,10 +24,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   try {
     const { admin, session } = await authenticate.admin(request);
 
-    // Parse query params for selective sync
+    // Parse and validate query params for selective sync
     const url = new URL(request.url);
-    const typesParam = url.searchParams.get('types');
-    const types = typesParam ? typesParam.split(',').map(t => t.trim()) : ['collections', 'articles', 'pages', 'policies', 'themes'];
+    const queryParsed = SyncContentQuerySchema.safeParse({ types: url.searchParams.get('types') ?? undefined });
+    if (!queryParsed.success) {
+      const issues = queryParsed.error.issues.map(i => i.message).join(', ');
+      return json({ success: false, error: `Invalid query parameters: ${issues}` }, { status: 400 });
+    }
+    const types = queryParsed.data.types;
 
     // Load plan limits
     const settings = await db.aISettings.findUnique({
@@ -113,8 +118,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         total,
       },
     });
-  } catch (error: any) {
-    logger.error("[SYNC-CONTENT] Error", { context: "SyncContent", error: error.message, stack: error.stack });
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+    logger.error("[SYNC-CONTENT] Error", { context: "SyncContent", error: msg, stack: error instanceof Error ? error.stack : undefined });
     return json(
       {
         success: false,

@@ -159,15 +159,15 @@ export class ContentService {
             metafieldsAfter: cursor
           }
         });
-        const data: any = await response.json();
+        const data = await response.json() as { data?: { shop?: { metafields?: { edges?: Array<GraphQLEdge<Record<string, unknown>>>; pageInfo?: { hasNextPage: boolean; endCursor?: string } } } } };
 
-        const shop: any = data.data?.shop;
+        const shop = data.data?.shop;
         if (!shop) {
           logger.warn('No shop data returned', { context: 'ContentService' });
           break;
         }
 
-        const metafieldsConnection: any = shop.metafields;
+        const metafieldsConnection = shop.metafields;
         const metafields = metafieldsConnection?.edges?.map((edge: GraphQLEdge<Record<string, unknown>>) => ({
           ...edge.node,
           translations: []

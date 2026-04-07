@@ -21,6 +21,15 @@ import type { FetcherWithComponents } from "@remix-run/react";
 import type { OptionTranslation } from "../components/unified/OptionsField";
 import type { TranslatableContentItem } from "../types/content-editor.types";
 
+/** Response shape from sub-resource API actions */
+interface SubResourceFetcherData {
+  success: boolean;
+  actionType?: string;
+  translations?: Record<string, Record<string, string>>;
+  fieldId?: string;
+  failedResources?: string[];
+}
+
 export interface SubResourceState {
   /** Option translations keyed by option GID → { name, values[] } */
   optionTranslations: Record<string, OptionTranslation>;
@@ -234,7 +243,7 @@ export function useProductSubResources({
   useEffect(() => {
     if (fetcher.state !== "idle" || !fetcher.data) return;
 
-    const data = fetcher.data as any;
+    const data = fetcher.data as SubResourceFetcherData;
 
     // Skip if we've already processed this exact response
     if (data === lastProcessedDataRef.current) return;
@@ -489,7 +498,7 @@ export function useProductSubResources({
   // Handle translateAllFetcher responses (used by translateAllSubResources and translateAllSubResourcesToAllLocales)
   useEffect(() => {
     if (translateAllFetcher.state !== "idle" || !translateAllFetcher.data) return;
-    const data = translateAllFetcher.data as any;
+    const data = translateAllFetcher.data as SubResourceFetcherData;
     if (data === lastProcessedTranslateAllDataRef.current) return;
     lastProcessedTranslateAllDataRef.current = data;
 

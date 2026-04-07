@@ -11,6 +11,7 @@
 
 import { useRef, useState, useCallback } from "react";
 import { getTranslatedValue } from "../utils/contentEditor.utils";
+import type { MetaobjectEntry } from "../utils/contentEditor.utils";
 import { debugLog } from "../utils/debug";
 import { isMetaobjectLabelField } from "../constants/shopifyFields";
 import type {
@@ -177,11 +178,12 @@ export function getItemFieldValue(
 
   // Metaobjects: Check metaobjects array
   // fieldKey is the metaobject ID, find the metaobject and get its label field
-  if ((item as any)?.metaobjects && Array.isArray((item as any).metaobjects)) {
-    const metaobject = (item as any).metaobjects.find((m: any) => m.id === fieldKey);
+  const itemWithMetaobjects = item as { metaobjects?: MetaobjectEntry[] };
+  if (itemWithMetaobjects.metaobjects && Array.isArray(itemWithMetaobjects.metaobjects)) {
+    const metaobject = itemWithMetaobjects.metaobjects.find((m) => m.id === fieldKey);
     if (metaobject) {
       // Find the label field (display_name, name, or label)
-      const labelField = metaobject.fields?.find((f: any) => isMetaobjectLabelField(f.key));
+      const labelField = metaobject.fields?.find((f) => isMetaobjectLabelField(f.key));
       return labelField?.value || metaobject.displayName || "";
     }
   }

@@ -38,6 +38,14 @@ import { markRecentlySaved } from "../utils/translation-timing";
 import { extractReadableName } from "../utils/templates-field-factory";
 import { useTaskCount } from "../contexts/TaskCountContext";
 
+/** Shape of a running field-task as returned by /api/running-field-tasks */
+interface TaskData {
+  id: string;
+  fieldType: string | null;
+  targetLocale: string | null;
+  type?: string;
+}
+
 /**
  * Translates server error messages to localized strings
  * Maps technical error messages from server to i18n translation keys
@@ -218,8 +226,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         const data = await response.json();
 
         const lang = currentLanguageRef.current;
-        const activeTasks: Array<{ id: string; fieldType: string | null; targetLocale: string | null; type: string }> =
-          (data.tasks || []).filter((task: any) => {
+        const activeTasks: TaskData[] =
+          (data.tasks as TaskData[] || []).filter((task) => {
             if (!task.fieldType) return false;
             // For locale-specific tasks, only restore if the user is on that locale
             if (task.targetLocale && task.targetLocale !== lang) return false;
@@ -253,9 +261,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             const d2 = await r2.json();
 
             const stillRunning = new Set(
-              (d2.tasks || [])
-                .filter((t: any) => t.fieldType)
-                .map((t: any) => t.fieldType === "all" ? "__translateAll__" : t.fieldType)
+              ((d2.tasks as TaskData[]) || [])
+                .filter((t) => t.fieldType)
+                .map((t) => t.fieldType === "all" ? "__translateAll__" : t.fieldType)
             );
 
             const nowDone = [...remaining].filter((k) => !stillRunning.has(k));

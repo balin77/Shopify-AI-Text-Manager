@@ -432,11 +432,12 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       default:
         return json({ success: false, error: "Unknown action" }, { status: 400 });
     }
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
     logger.error("[API-METAOBJECTS-ACTION] Error", {
       context: "Metaobjects",
-      error: error.message,
-      stack: error.stack
+      error: msg,
+      stack: error instanceof Error ? error.stack : undefined
     });
     return json({ success: false, error: "Metaobject operation failed" }, { status: 500 });
   }

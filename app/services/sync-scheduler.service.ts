@@ -260,16 +260,13 @@ class SyncSchedulerService {
         });
       }
 
-      // 4. Delete orphaned image alt-text translations (images that no longer exist)
-      // Note: Cascading delete should handle orphaned translations automatically
-      // This is a safety cleanup that uses isNot to find records where the image relation doesn't exist
-      const orphanedAltTexts = await db.productImageAltTranslation.deleteMany({
-        where: {
-          imageId: {
-            notIn: (await db.productImage.findMany({ select: { id: true } })).map(img => img.id)
-          }
-        }
-      });
+      // 4. Delete orphaned image alt-text translations (images that no longer exist).
+      // Use a single atomic SQL statement instead of fetching all image IDs into Node
+      // memory first — avoids OOM on shops with >10 000 images (N+1 pattern fix).
+      await db.$executeRaw`
+        DELETE FROM "ProductImageAltTranslation"
+        WHERE "imageId" NOT IN (SELECT id FROM "ProductImage")
+      `;
 
       logger.debug(`[SyncScheduler] Cleanup complete: ${expiredTasks.count} tasks, ${webhookLogs.count} logs, ${excessImages.count} excess images (free-plan only)`);
       logger.debug(`[SyncScheduler] Note: Theme data cleanup is now handled by aggressive sync (every 40s)`);

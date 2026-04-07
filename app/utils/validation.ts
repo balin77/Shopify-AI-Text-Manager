@@ -225,3 +225,68 @@ export function isValidLocale(locale: string): boolean {
 export function isValidShopifyGID(gid: string): boolean {
   return /^gid:\/\/shopify\/[A-Z][a-zA-Z]*\/\d+$/.test(gid);
 }
+
+// ---------------------------------------------------------------------------
+// API Route Schemas
+// ---------------------------------------------------------------------------
+
+const LocaleSchema = z.string()
+  .min(2)
+  .max(10)
+  .regex(/^[a-z]{2}(-[A-Z]{2})?$/, 'Invalid locale format (expected: xx or xx-XX)');
+
+const ShopifyGIDSchema = z.string()
+  .regex(/^gid:\/\/shopify\/[A-Z][a-zA-Z]*\/\d+$/, 'Invalid Shopify GID format');
+
+/**
+ * Schema for the common fields shared by all action types in api.ai.tsx
+ */
+export const AIRequestBaseSchema = z.object({
+  action: z.enum(['translateField', 'rewriteField', 'generateField', 'translateAll']),
+  contentType: z.string().min(1).max(50),
+  itemId: z.string().max(500).optional(),
+});
+
+/**
+ * Schema for query parameters in api.sync-content.tsx
+ */
+const VALID_SYNC_TYPES = ['collections', 'articles', 'pages', 'policies', 'themes'] as const;
+export const SyncContentQuerySchema = z.object({
+  types: z
+    .string()
+    .optional()
+    .transform((val) => (val ? val.split(',').map((t) => t.trim()) : [...VALID_SYNC_TYPES]))
+    .pipe(
+      z.array(z.enum(VALID_SYNC_TYPES))
+    ),
+});
+
+/**
+ * Schema for plan update requests in api.update-plan.tsx
+ */
+export const UpdatePlanSchema = z.object({
+  plan: z.enum(['free', 'basic', 'pro', 'max']),
+});
+
+/**
+ * Helper to parse and validate a JSON request body with a Zod schema.
+ * Returns either the typed data or a 400 Response-compatible error object.
+ */
+export async function parseJsonBody<T>(
+  request: Request,
+  schema: z.ZodSchema<T>
+): Promise<{ success: true; data: T } | { success: false; error: string; status: 400 }> {
+  try {
+    const body = await request.json();
+    const result = schema.safeParse(body);
+    if (!result.success) {
+      const issues = result.error.issues
+        .map((i) => `${i.path.join('.') || 'body'}: ${i.message}`)
+        .join(', ');
+      return { success: false, error: `Validation failed: ${issues}`, status: 400 };
+    }
+    return { success: true, data: result.data };
+  } catch {
+    return { success: false, error: 'Invalid JSON body', status: 400 };
+  }
+}

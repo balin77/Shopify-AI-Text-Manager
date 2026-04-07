@@ -181,27 +181,6 @@ function getStatusCodeForType(type: ErrorType): number {
 }
 
 /**
- * Create a validation error
- */
-export function createValidationError(message: string, details?: any): SafeError {
-  return new SafeError('validation', message, 400, details);
-}
-
-/**
- * Create a not found error
- */
-export function createNotFoundError(resource: string): SafeError {
-  return new SafeError('notFound', `${resource} not found`, 404);
-}
-
-/**
- * Create a rate limit error
- */
-export function createRateLimitError(retryAfter?: number): SafeError {
-  return new SafeError('rateLimit', 'Rate limit exceeded', 429, { retryAfter });
-}
-
-/**
  * Extract the full error message including the cause chain.
  *
  * Shopify's GraphQL client often loses the underlying network error reason
@@ -239,23 +218,3 @@ export function getFullErrorMessage(error: unknown): string {
   return msg;
 }
 
-/**
- * Wrap an async function with error handling
- */
-export function withErrorHandling<T extends (...args: any[]) => Promise<any>>(
-  fn: T,
-  context?: Record<string, any>
-): T {
-  return (async (...args: any[]) => {
-    try {
-      return await fn(...args);
-    } catch (error) {
-      const safeError = toSafeErrorResponse(error, context);
-      throw new SafeError(
-        safeError.type || 'unknown',
-        error instanceof Error ? error.message : 'Unknown error',
-        safeError.statusCode
-      );
-    }
-  }) as T;
-}

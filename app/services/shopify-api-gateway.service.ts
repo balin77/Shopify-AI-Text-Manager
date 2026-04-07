@@ -12,11 +12,17 @@ import { logger } from '~/utils/logger.server';
 import { getFullErrorMessage } from '~/utils/error-handler';
 import type { ShopifyGraphQLClient } from './sync-types';
 
+interface GraphQLResponse {
+  ok: boolean;
+  status: number;
+  json: () => Promise<unknown>;
+}
+
 interface QueuedRequest {
   query: string;
-  variables?: any;
-  resolve: (value: any) => void;
-  reject: (reason: any) => void;
+  variables?: Record<string, unknown>;
+  resolve: (value: GraphQLResponse) => void;
+  reject: (reason: unknown) => void;
   retryCount: number;
 }
 
@@ -45,7 +51,7 @@ export class ShopifyApiGateway {
   /**
    * Execute a GraphQL query with rate limiting and retry logic
    */
-  async graphql(query: string, options?: { variables?: any }): Promise<any> {
+  async graphql(query: string, options?: { variables?: Record<string, unknown> }): Promise<GraphQLResponse> {
     return new Promise((resolve, reject) => {
       this.requestQueue.push({
         query,
@@ -102,7 +108,7 @@ export class ShopifyApiGateway {
         this.requestCount++;
 
         // Parse response to check for rate limit errors
-        const data = await response.json();
+        const data = await response.json() as Record<string, unknown>;
 
         // Check for rate limit errors in the response
         if (this.isRateLimitError(data)) {
@@ -112,8 +118,8 @@ export class ShopifyApiGateway {
         }
 
         // Check for other GraphQL errors
-        if (data.errors && data.errors.length > 0) {
-          const error = data.errors[0];
+        if (Array.isArray(data.errors) && data.errors.length > 0) {
+          const error = data.errors[0] as { extensions?: { code?: string }; message?: string };
 
           // If it's a throttle error, retry
           if (error.extensions?.code === 'THROTTLED') {
@@ -129,9 +135,9 @@ export class ShopifyApiGateway {
         // Success - resolve the promise with a Response-like object
         request.resolve({ ok: true, status: 200, json: async () => data });
 
-      } catch (error: any) {
+      } catch (error: unknown) {
         // Check if it's a rate limit error from HTTP status
-        if (error.status === 429 || error.message?.includes('rate limit')) {
+        if ((error as { status?: number }).status === 429 || (error instanceof Error && error.message.includes('rate limit'))) {
           logger.debug(`[ShopifyGateway] HTTP 429 rate limit error`);
           await this.handleRateLimitError(request);
         } else {
@@ -188,14 +194,18 @@ export class ShopifyApiGateway {
   /**
    * Check if response contains rate limit error
    */
-  private isRateLimitError(data: any): boolean {
-    if (!data.errors) return false;
+  private isRateLimitError(data: Record<string, unknown>): boolean {
+    if (!data.errors || !Array.isArray(data.errors)) return false;
 
-    return data.errors.some((error: any) =>
-      error.extensions?.code === 'THROTTLED' ||
-      error.message?.toLowerCase().includes('throttled') ||
-      error.message?.toLowerCase().includes('rate limit')
-    );
+    return data.errors.some((error: unknown) => {
+      if (typeof error !== 'object' || error === null) return false;
+      const e = error as { extensions?: { code?: string }; message?: string };
+      return (
+        e.extensions?.code === 'THROTTLED' ||
+        e.message?.toLowerCase().includes('throttled') ||
+        e.message?.toLowerCase().includes('rate limit')
+      );
+    });
   }
 
   /**

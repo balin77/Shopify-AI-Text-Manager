@@ -19,6 +19,8 @@ import { MainNavigation } from "../components/MainNavigation";
 import { useI18n } from "../contexts/I18nContext";
 import { getTaskDateRange } from "~/config/constants";
 import { extractReadableName } from "~/utils/templates-field-factory";
+import { logger } from "~/utils/logger.server";
+import { getFormString } from "~/utils/form-data.utils";
 
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -85,8 +87,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         hours: hoursFilter,
       }
     });
-  } catch (error: any) {
-    console.error("Failed to load tasks:", error);
+  } catch (error: unknown) {
+    logger.error("Failed to load tasks", { context: "TasksRoute", error: error instanceof Error ? error.message : String(error) });
     return json({
       tasks: [],
       shop: session.shop,
@@ -101,7 +103,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const formData = await request.formData();
   const action = formData.get("action");
-  const taskId = formData.get("taskId") as string;
+  const taskId = getFormString(formData, "taskId");
+  if (!taskId) {
+    return json({ success: false, error: "Missing required field: taskId" }, { status: 400 });
+  }
 
   const { db } = await import("../db.server");
 
@@ -112,8 +117,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         data: { status: "cancelled", completedAt: new Date() },
       });
       return json({ success: true });
-    } catch (error: any) {
-      console.error("Failed to cancel task:", error);
+    } catch (error: unknown) {
+      logger.error("Failed to cancel task", { context: "TasksRoute", taskId, error: error instanceof Error ? error.message : String(error) });
       return json({ success: false, error: "An internal error occurred" }, { status: 500 });
     }
   }
@@ -124,8 +129,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         where: { id: taskId, shop: session.shop },
       });
       return json({ success: true });
-    } catch (error: any) {
-      console.error("Failed to delete task:", error);
+    } catch (error: unknown) {
+      logger.error("Failed to delete task", { context: "TasksRoute", taskId, error: error instanceof Error ? error.message : String(error) });
       return json({ success: false, error: "An internal error occurred" }, { status: 500 });
     }
   }

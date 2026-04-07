@@ -511,11 +511,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           stats
         });
 
-      } catch (error: any) {
-        if (error.name === "AbortError") {
+      } catch (error: unknown) {
+        if (error instanceof Error && error.name === "AbortError") {
           logger.info("[SYNC-STREAM] Sync aborted due to client disconnection", { shop });
         } else {
-          logger.error("[SYNC-STREAM] Sync failed", { error: error.message, shop });
+          logger.error("[SYNC-STREAM] Sync failed", { error: error instanceof Error ? error.message : String(error), shop });
           sendEvent({
             type: 'error',
             phase: 'error',
