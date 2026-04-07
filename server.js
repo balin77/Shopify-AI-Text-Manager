@@ -5,7 +5,7 @@ import express from "express";
 import morgan from "morgan";
 import { createRequire } from "module";
 
-// Import rate limiters from CommonJS module
+// Import CommonJS modules (rate limiters + server logger)
 const require = createRequire(import.meta.url);
 const {
   apiRateLimit,
@@ -15,6 +15,7 @@ const {
   strictRateLimit,
   bulkOperationRateLimit,
 } = require("./app/middleware/rate-limit-cjs.cjs");
+const { serverLogger } = require("./app/middleware/server-logger.cjs");
 
 installGlobals();
 
@@ -132,7 +133,7 @@ app.get("/health", async (req, res) => {
 
     res.status(200).json({ status: "ok", timestamp: new Date().toISOString() });
   } catch (error) {
-    console.error("Health check failed:", error.message);
+    serverLogger.error("Health check failed: " + error.message);
     res.status(503).json({ status: "not ready", error: "Service not ready" });
   }
 });
@@ -152,16 +153,16 @@ const port = process.env.PORT || 8080;
 const host = process.env.HOST || '0.0.0.0';
 
 const server = app.listen(port, host, async () => {
-  console.log(`Express server listening at http://${host}:${port}`);
+  serverLogger.info(`Express server listening at http://${host}:${port}`);
 
   // Start task cleanup service
   try {
     const { TaskCleanupService } = await import("./task-cleanup.service.js");
     const cleanupService = TaskCleanupService.getInstance();
     cleanupService.start();
-    console.log("✅ Task cleanup service started");
+    serverLogger.info("Task cleanup service started");
   } catch (error) {
-    console.error("❌ Failed to start task cleanup service:", error);
+    serverLogger.error("Failed to start task cleanup service", { error: String(error) });
   }
 
   // Recover pending tasks after server restart and start stuck task monitoring
@@ -169,32 +170,32 @@ const server = app.listen(port, host, async () => {
     const { TaskRecoveryService } = await import("./task-recovery.service.js");
     const recoveryService = TaskRecoveryService.getInstance();
     const result = await recoveryService.recoverPendingTasks();
-    console.log(`✅ Task recovery: ${result.recovered} recovered, ${result.failed} marked as failed`);
+    serverLogger.info(`Task recovery: ${result.recovered} recovered, ${result.failed} marked as failed`);
 
     // Start periodic monitoring for stuck tasks
     recoveryService.startStuckTaskMonitoring();
-    console.log('✅ Stuck task monitoring started');
+    serverLogger.info("Stuck task monitoring started");
   } catch (error) {
-    console.error("❌ Failed to recover tasks:", error);
+    serverLogger.error("Failed to recover tasks", { error: String(error) });
   }
 });
 
 // Graceful shutdown handler
 async function gracefulShutdown(signal) {
-  console.log(`\n${signal} received. Starting graceful shutdown...`);
+  serverLogger.info(`${signal} received. Starting graceful shutdown...`);
 
   // Stop accepting new connections
   server.close(async () => {
-    console.log('HTTP server closed');
+    serverLogger.info("HTTP server closed");
 
     try {
       // Stop task cleanup service
       const { TaskCleanupService } = await import("./task-cleanup.service.js");
       const cleanupService = TaskCleanupService.getInstance();
       cleanupService.stop();
-      console.log('✅ Task cleanup service stopped');
+      serverLogger.info("Task cleanup service stopped");
     } catch (error) {
-      console.error('Error stopping task cleanup service:', error);
+      serverLogger.error("Error stopping task cleanup service", { error: String(error) });
     }
 
     try {
@@ -202,27 +203,27 @@ async function gracefulShutdown(signal) {
       const { TaskRecoveryService } = await import("./task-recovery.service.js");
       const recoveryService = TaskRecoveryService.getInstance();
       recoveryService.stopStuckTaskMonitoring();
-      console.log('✅ Stuck task monitoring stopped');
+      serverLogger.info("Stuck task monitoring stopped");
     } catch (error) {
-      console.error('Error stopping stuck task monitoring:', error);
+      serverLogger.error("Error stopping stuck task monitoring", { error: String(error) });
     }
 
     try {
       // Close Prisma connections
       const { db } = await import("./app/db.server.js");
       await db.$disconnect();
-      console.log('✅ Database connections closed');
+      serverLogger.info("Database connections closed");
     } catch (error) {
-      console.error('Error closing database connections:', error);
+      serverLogger.error("Error closing database connections", { error: String(error) });
     }
 
-    console.log('Graceful shutdown complete');
+    serverLogger.info("Graceful shutdown complete");
     process.exit(0);
   });
 
   // Force shutdown after 10 seconds
   setTimeout(() => {
-    console.error('Forced shutdown after timeout');
+    serverLogger.error("Forced shutdown after timeout");
     process.exit(1);
   }, 10000);
 }

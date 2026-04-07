@@ -35,8 +35,6 @@ export default defineConfig({
         'src/examples/**',
       ],
       thresholds: {
-        // Achievable with current test suite (~20 % statements across
-        // services/utils).  Raise incrementally as new tests are added.
         lines: 15,
         functions: 10,
         branches: 8,
