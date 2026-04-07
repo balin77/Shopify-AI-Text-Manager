@@ -317,22 +317,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     clearPendingNavigation,
   } = useNavigationGuard();
 
-  // Change detection — unified across standard, template, and metaobject content types
-  const { hasChanges, hasFieldChanges, hasAltTextChanges } = useEditorChangeDetection({
-    config,
-    isLoadingData,
-    selectedItem,
-    currentLanguage,
-    primaryLocale,
-    editableValues,
-    fallbackFields,
-    imageAltTexts,
-    originalAltTexts,
-    originalLoadedValuesRef,
-    originalTemplateValuesRef,
-    templateValuesVersion,
-  });
-
   // ============================================================================
   // LOAD ITEM DATA (when item or language changes)
   // ============================================================================
@@ -425,6 +409,22 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     showInfoBox,
     t,
     setAiSuggestions,
+  });
+
+  // Change detection — unified across standard, template, and metaobject content types
+  const { hasChanges, hasFieldChanges, hasAltTextChanges } = useEditorChangeDetection({
+    config,
+    isLoadingData,
+    selectedItem,
+    currentLanguage,
+    primaryLocale,
+    editableValues,
+    fallbackFields,
+    imageAltTexts,
+    originalAltTexts,
+    originalLoadedValuesRef,
+    originalTemplateValuesRef,
+    templateValuesVersion,
   });
 
   // ============================================================================
