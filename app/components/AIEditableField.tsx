@@ -32,6 +32,8 @@ interface AIEditableFieldProps {
   readOnly?: boolean;
   /** If true, show required indicator (red asterisk) */
   requiredIndicator?: boolean;
+  /** Suffix appended by Shopify (e.g. " – Shop Name"). Displayed inside the field non-editable, and counted in char limit. */
+  seoSuffix?: string;
   onGenerateAI?: () => void;
   onFormatAI?: () => void;
   onTranslate?: () => void;
@@ -65,6 +67,7 @@ export function AIEditableField({
   isFallbackValue = false,
   readOnly = false,
   requiredIndicator = false,
+  seoSuffix,
   onGenerateAI,
   onFormatAI,
   onTranslate,
@@ -140,6 +143,9 @@ export function AIEditableField({
           maxLength={maxLength}
           placeholder={placeholder}
           showCharacterCount={!!maxLength}
+          suffix={seoSuffix ? (
+            <span style={{ color: "#6d7175", whiteSpace: "nowrap" }}>{seoSuffix}</span>
+          ) : undefined}
         />
       </div>
 

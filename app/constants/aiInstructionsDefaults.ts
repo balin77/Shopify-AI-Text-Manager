@@ -71,7 +71,7 @@ export const DEFAULT_PRODUCT_INSTRUCTIONS: EntityInstructions = {
   handleInstructions: 'You are an SEO expert. Create an SEO-friendly URL slug (handle) with 3-5 relevant keywords. Use only lowercase letters (a-z), digits (0-9), and hyphens (-) as separators. No umlauts - convert them (ä→ae, ö→oe, ü→ue, ß→ss). No spaces, underscores, or special characters. Return only the finished slug.',
 
   seoTitleFormat: 'Premium Leather Wallet | Handcrafted & Durable',
-  seoTitleInstructions: 'You are an SEO expert. Create an optimized SEO title of 50-60 characters. Place the main keyword at the beginning. Use pipe (|) as a separator. Include a call-to-action word (buy, shop, discover). Add brand name at the end if available. Return only the finished SEO title without explanations.',
+  seoTitleInstructions: 'You are an SEO expert. Create an optimized SEO title. Place the main keyword at the beginning. Use pipe (|) as a separator. Include a call-to-action word (buy, shop, discover). Add brand name at the end if available. Return only the finished SEO title without explanations.',
 
   metaDescFormat: 'Handcrafted premium leather wallet made from full-grain leather. Timeless, durable, and stylish. Sustainable craftsmanship for the highest standards. Discover now!',
   metaDescInstructions: 'You are an SEO expert. Create a compelling meta description of 150-160 characters. Integrate 2-3 relevant keywords naturally. Clearly communicate the value proposition. End with a call-to-action. Use active language without filler words. Return only the finished meta description without explanations.',
@@ -92,7 +92,7 @@ export const DEFAULT_COLLECTION_INSTRUCTIONS: EntityInstructions = {
   handleInstructions: 'You are an SEO expert. Create an SEO-friendly URL slug (handle) with 3-5 relevant keywords. Use only lowercase letters (a-z), digits (0-9), and hyphens (-). No umlauts - convert them (ä→ae, ö→oe, ü→ue, ß→ss). Return only the finished slug.',
 
   seoTitleFormat: 'Handcrafted Leather Accessories | Sustainable & Premium',
-  seoTitleInstructions: 'You are an SEO expert. Create an optimized SEO title of 50-60 characters. Place the category keyword at the beginning. Add a differentiating feature (handcrafted, organic, premium). Use a call-to-action if possible. Use pipe (|) as separator. Return only the finished SEO title without explanations.',
+  seoTitleInstructions: 'You are an SEO expert. Create an optimized SEO title. Place the category keyword at the beginning. Add a differentiating feature (handcrafted, organic, premium). Use a call-to-action if possible. Use pipe (|) as separator. Return only the finished SEO title without explanations.',
 
   metaDescFormat: 'High-quality leather accessories from traditional craftsmanship. Wallets, belts & more made from sustainable full-grain leather. Fair & sustainable. Discover now!',
   metaDescInstructions: 'You are an SEO expert. Create a compelling meta description of 150-160 characters. Describe the product category. Mention 2-3 product examples. Communicate USPs. Integrate keywords naturally. End with a call-to-action. Return only the finished meta description without explanations.',
@@ -110,7 +110,7 @@ export const DEFAULT_BLOG_INSTRUCTIONS: EntityInstructions = {
   handleInstructions: 'You are an SEO expert. Create an SEO-friendly URL slug (handle) with 3-5 relevant keywords. Use only lowercase letters (a-z), digits (0-9), and hyphens (-). No umlauts - convert them (ä→ae, ö→oe, ü→ue, ß→ss). Return only the finished slug.',
 
   seoTitleFormat: 'Leather Care: 5 Tips for Lasting Beauty',
-  seoTitleInstructions: 'You are an SEO expert. Create an optimized SEO title of 50-60 characters. Place the main keyword at the beginning. Use numbers when possible. Add words like "Guide", "Tips", "Tutorial" for higher click-through rate. Communicate expertise. Return only the finished SEO title without explanations.',
+  seoTitleInstructions: 'You are an SEO expert. Create an optimized SEO title. Place the main keyword at the beginning. Use numbers when possible. Add words like "Guide", "Tips", "Tutorial" for higher click-through rate. Communicate expertise. Return only the finished SEO title without explanations.',
 
   metaDescFormat: 'Leather care made easy: 5 proven tips for proper care of your leather products. From cleaning to waterproofing - keep leather beautiful for decades.',
   metaDescInstructions: 'You are an SEO expert. Create an appealing meta description of 150-160 characters. Summarize the article benefit. Use the main keyword. Spark curiosity. Address the reader directly. Avoid clickbait. Return only the finished meta description without explanations.',
@@ -128,7 +128,7 @@ export const DEFAULT_PAGE_INSTRUCTIONS: EntityInstructions = {
   handleInstructions: 'You are an SEO expert. Create an SEO-friendly URL slug (handle) with 3-5 relevant keywords. Use only lowercase letters (a-z), digits (0-9), and hyphens (-). No umlauts - convert them (ä→ae, ö→oe, ü→ue, ß→ss). Return only the finished slug.',
 
   seoTitleFormat: 'About Us - Traditional Leather Processing Since 1970',
-  seoTitleInstructions: 'You are an SEO expert. Create an optimized SEO title of 50-60 characters. Start with the page type (About Us, Contact, etc.). Add USP or unique selling point. Include brand name if space allows. Avoid keyword stuffing. Return only the finished SEO title without explanations.',
+  seoTitleInstructions: 'You are an SEO expert. Create an optimized SEO title. Start with the page type (About Us, Contact, etc.). Add USP or unique selling point. Include brand name if space allows. Avoid keyword stuffing. Return only the finished SEO title without explanations.',
 
   metaDescFormat: 'Get to know us: Since 1970, we have been crafting high-quality leather products using traditional craftsmanship. Learn more about our story & values.',
   metaDescInstructions: 'You are an SEO expert. Create an informative meta description of 150-160 characters. Describe the page content. Communicate the benefit to the visitor. Write personally for "About Us" pages, objectively for legal pages. Use natural language. Return only the finished meta description without explanations.',

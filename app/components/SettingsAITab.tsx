@@ -52,6 +52,9 @@ interface Settings {
   grokMaxRequestsPerMinute: number;
   deepseekMaxTokensPerMinute: number;
   deepseekMaxRequestsPerMinute: number;
+  // SEO fields are saved via SettingsSEOTab, but still included in full save payload
+  seoTitleSuffixEnabled?: boolean;
+  seoTitleSuffix?: string;
 }
 
 interface SettingsAITabProps {
@@ -252,6 +255,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
   );
 
   return (
+    <>
     <Card>
       <BlockStack gap="500">
         <InlineStack align="space-between" blockAlign="center" wrap={false}>
@@ -787,5 +791,6 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
         </div>
       </BlockStack>
     </Card>
+  </>
   );
 }

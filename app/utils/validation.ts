@@ -80,6 +80,10 @@ export const AISettingsSchema = z.object({
 
   deepseekMaxTokensPerMinute: z.number().int().min(1000).max(10000000).optional(),
   deepseekMaxRequestsPerMinute: z.number().int().min(1).max(1000).optional(),
+
+  // SEO title suffix (form sends "true"/"false" strings)
+  seoTitleSuffixEnabled: z.preprocess(val => val === "true" || val === true, z.boolean()).optional().default(false),
+  seoTitleSuffix: z.string().max(60).optional().or(z.literal('')),
 });
 
 /**
