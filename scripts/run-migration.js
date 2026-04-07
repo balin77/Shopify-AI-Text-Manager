@@ -81,6 +81,20 @@ async function main() {
     runSilent(`npx prisma migrate resolve --rolled-back ${name}`);
   }
 
+  // 2b. Resolve failed migrations so new migrations can run
+  //     These migrations were already applied to the DB (via db push or manually)
+  //     but may be marked as "failed" in _prisma_migrations, blocking migrate deploy.
+  const failedMigrations = [
+    '00000000000000_baseline',
+    '20260204113149_add_contenttranslation_compound_index',
+    '20260204123052_add_image_fields_to_article_and_collection',
+    '20260224141738_add_metaobjects_and_missing_columns',
+  ];
+  for (const name of failedMigrations) {
+    runSilent(`npx prisma migrate resolve --applied ${name}`);
+  }
+  log('✅ Resolved migration status for previously applied migrations', 'green');
+
   // 3. Run Prisma Schema Migrations (applies all migration files)
   const migrateSuccess = runCommand(
     'npx prisma migrate deploy',
