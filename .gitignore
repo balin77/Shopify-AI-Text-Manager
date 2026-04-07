@@ -33,3 +33,6 @@ psd/
 
 # Videos
 Videos/
+
+# Test coverage
+coverage/
