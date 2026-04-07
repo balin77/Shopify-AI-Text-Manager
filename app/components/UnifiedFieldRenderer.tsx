@@ -269,8 +269,8 @@ export function UnifiedFieldRenderer(
         disableGeneration={disableGeneration}
         readOnly={readOnly}
         requiredIndicator={requiredIndicator}
-        onGenerateAI={field.supportsAI !== false && isPrimaryLocale ? onGenerateAI : undefined}
-        onFormatAI={field.supportsFormatting !== false && isPrimaryLocale ? onFormatAI : undefined}
+        onGenerateAI={field.supportsAI !== false ? onGenerateAI : undefined}
+        onFormatAI={field.supportsFormatting !== false ? onFormatAI : undefined}
         onTranslate={field.supportsTranslation !== false ? onTranslate : undefined}
         onTranslateToAllLocales={field.supportsTranslation !== false ? onTranslateToAllLocales : undefined}
         onAcceptSuggestion={onAcceptSuggestion}
@@ -303,8 +303,8 @@ export function UnifiedFieldRenderer(
       readOnly={readOnly}
       requiredIndicator={requiredIndicator}
       seoSuffix={field.key === "seoTitle" && seoTitleSuffix ? seoTitleSuffix : undefined}
-      onGenerateAI={field.supportsAI !== false && isPrimaryLocale ? onGenerateAI : undefined}
-      onFormatAI={field.supportsFormatting !== false && isPrimaryLocale ? onFormatAI : undefined}
+      onGenerateAI={field.supportsAI !== false ? onGenerateAI : undefined}
+      onFormatAI={field.supportsFormatting !== false ? onFormatAI : undefined}
       onTranslate={field.supportsTranslation !== false ? onTranslate : undefined}
       onTranslateToAllLocales={field.supportsTranslation !== false ? onTranslateToAllLocales : undefined}
       onAcceptSuggestion={onAcceptSuggestion}

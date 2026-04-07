@@ -352,7 +352,7 @@ const handleGenerateAI = (fieldKey: string) => {
   const currentValue = editableValues[fieldKey] || "";
   const contextTitle = editableValues.title || "";
   const contextDescription = editableValues.description || editableValues.body || "";
-  const mainLanguage = shopLocales.find((l: ShopLocale) => l.locale === primaryLocale)?.name || primaryLocale;
+  const mainLanguage = shopLocales.find((l: ShopLocale) => l.locale === currentLanguage)?.name || currentLanguage;
 
   // Determine which image to send based on content type and sendImageToAI state
   let imageUrl: string | undefined;
@@ -409,7 +409,7 @@ const handleFormatAI = (fieldKey: string) => {
 
   const contextTitle = editableValues.title || "";
   const contextDescription = editableValues.description || editableValues.body || "";
-  const mainLanguage = shopLocales.find((l: ShopLocale) => l.locale === primaryLocale)?.name || primaryLocale;
+  const mainLanguage = shopLocales.find((l: ShopLocale) => l.locale === currentLanguage)?.name || currentLanguage;
 
   // Determine which image to send based on content type and sendImageToAI state
   let imageUrl: string | undefined;
