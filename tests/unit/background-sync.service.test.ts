@@ -59,8 +59,8 @@ function spyAllMethods(
 ) {
   function mockMethod(name: string, value: SyncResult) {
     return value instanceof Error
-      ? vi.spyOn(service as never, name as never).mockRejectedValue(value)
-      : vi.spyOn(service as never, name as never).mockResolvedValue(value);
+      ? vi.spyOn(service as any, name as any).mockRejectedValue(value)
+      : vi.spyOn(service as any, name as any).mockResolvedValue(value);
   }
 
   return {

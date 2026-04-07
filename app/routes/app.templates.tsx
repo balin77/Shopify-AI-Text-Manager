@@ -19,7 +19,7 @@ import { TEMPLATES_CONFIG } from "../config/content-fields.config";
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { PlanAccessGate } from "../components/PlanAccessGate";
-import type { FetcherData } from "~/types/content-editor.types";
+import type { FetcherData, TranslatableContentItem } from "~/types/content-editor.types";
 import { getFormString } from "~/utils/form-data.utils";
 import { handleLoadTranslations } from "~/actions/templates/templates-load.action";
 import { handleGenerateAIText } from "~/actions/templates/templates-generate.action";
@@ -73,7 +73,7 @@ export const loader = createContentLoader({
     const groupMap = new Map<string, { groupName: string; groupIcon: string; uniqueKeys: Set<string> }>();
     for (const row of allGroupRows) {
       const existing = groupMap.get(row.groupId);
-      const items = Array.isArray(row.translatableContent) ? (row.translatableContent as TranslatableField[]) : [];
+      const items = Array.isArray(row.translatableContent) ? (row.translatableContent as unknown as TranslatableField[]) : [];
       if (existing) {
         for (const item of items) {
           if (item.key) existing.uniqueKeys.add(item.key);
@@ -453,7 +453,7 @@ export default function TemplatesPage() {
   // Create editor with dynamic config
   const editor = useUnifiedContentEditor({
     config: TEMPLATES_CONFIG,
-    items,
+    items: items as unknown as TranslatableContentItem[],
     shopLocales: loaderShopLocales,
     primaryLocale,
     fetcher,
@@ -1069,7 +1069,7 @@ export default function TemplatesPage() {
       <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
         <UnifiedContentEditor
           config={TEMPLATES_CONFIG}
-          items={items}
+          items={items as unknown as TranslatableContentItem[]}
           shopLocales={loaderShopLocales}
           primaryLocale={primaryLocale}
           editor={editor}

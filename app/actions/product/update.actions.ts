@@ -118,7 +118,7 @@ export async function handleUpdateProduct(
 
     // If alt-text saves failed, merge warning into the response
     if (failedAltTextIndices.length > 0) {
-      const responseData = await response.json();
+      const responseData = await response.json() as any;
       return json({
         ...responseData,
         failedAltTextIndices,
@@ -178,7 +178,7 @@ async function updateImageAltTexts(
     { variables: { id: productId } }
   );
 
-  const productData = await productResponse.json();
+  const productData = await productResponse.json() as any;
 
   // Filter to only include valid MediaImage nodes (exclude videos, 3D models, etc.)
   const mediaEdges = (productData.data?.product?.media?.edges || [])
@@ -264,7 +264,7 @@ async function updateImageAltTexts(
             },
           }
         );
-        const updateMediaData = await updateMediaResponse.json();
+        const updateMediaData = await updateMediaResponse.json() as any;
         const mediaUserErrors = updateMediaData.data?.productUpdateMedia?.mediaUserErrors || [];
         const returnedAlt = updateMediaData.data?.productUpdateMedia?.media?.[0]?.alt;
         logger.debug(`[ProductUpdate] [SHOPIFY-RESPONSE] mediaId: ${mediaImageId}, sent alt: "${altText}", returned alt: "${returnedAlt}"`);
@@ -309,7 +309,7 @@ async function updateImageAltTexts(
             }
           );
 
-          const removeData = await removeResponse.json();
+          const removeData = await removeResponse.json() as any;
           const userErrors = removeData.data?.translationsRemove?.userErrors || [];
           if (userErrors.length > 0) {
             loggers.product("error", "Failed to remove alt-text translation", { index, locale: params.locale, errors: userErrors });
@@ -339,7 +339,7 @@ async function updateImageAltTexts(
             { variables: { resourceId: mediaImageId } }
           );
 
-          const translatableData = await translatableResponse.json();
+          const translatableData = await translatableResponse.json() as any;
           const translatableContent = translatableData.data?.translatableResource?.translatableContent || [];
           altDigest = translatableContent.find((c: { key: string; digest?: string }) => c.key === "alt")?.digest;
         } catch (err: unknown) {
@@ -382,7 +382,7 @@ async function updateImageAltTexts(
               }
             );
 
-            const translateData = await translateResponse.json();
+            const translateData = await translateResponse.json() as any;
             const userErrors = translateData.data?.translationsRegister?.userErrors || [];
             if (userErrors.length > 0) {
               loggers.product("error", "Failed to translate alt-text", { index, locale: params.locale, errors: userErrors });
@@ -484,7 +484,7 @@ async function updateTranslatedProduct(
     { variables: { resourceId: productId } }
   );
 
-  const translatableData = await translatableResponse.json();
+  const translatableData = await translatableResponse.json() as any;
   const translatableContent = translatableData.data?.translatableResource?.translatableContent || [];
 
   // Log ALL entries from Shopify (including those without digest)
@@ -593,7 +593,7 @@ async function updateTranslatedProduct(
         }`,
       { variables: { resourceId: productId } }
     );
-    const retryData = await retryResponse.json();
+    const retryData = await retryResponse.json() as any;
     const retryContent = retryData.data?.translatableResource?.translatableContent || [];
 
     // Update digest map with freshly fetched digests
@@ -655,7 +655,7 @@ async function updateTranslatedProduct(
       }
     );
 
-    const responseData = await response.json();
+    const responseData = await response.json() as any;
     if (responseData.data?.translationsRegister?.userErrors?.length > 0) {
       logger.error("Shopify translation API error", {
         context: "UpdateProduct",
@@ -702,7 +702,7 @@ async function updateTranslatedProduct(
       }
     );
 
-    const responseData = await response.json();
+    const responseData = await response.json() as any;
     if (responseData.data?.translationsRemove?.userErrors?.length > 0) {
       logger.error("Shopify translationsRemove API error", {
         context: "UpdateProduct",
@@ -862,7 +862,7 @@ async function updatePrimaryProduct(
     }
   );
 
-  const data = await response.json();
+  const data = await response.json() as any;
 
   if (data.data.productUpdate.userErrors.length > 0) {
     logger.error("Shopify product update error", {
@@ -943,7 +943,7 @@ async function updatePrimaryProduct(
               }
             }`
         );
-        const localesData = await localesResponse.json();
+        const localesData = await localesResponse.json() as any;
         const shopLocales = localesData.data?.shopLocales || [];
 
         // Filter out the primary locale, only keep published foreign locales
@@ -983,7 +983,7 @@ async function updatePrimaryProduct(
             }
           );
 
-          const responseData = await response.json();
+          const responseData = await response.json() as any;
           if (responseData.data?.translationsRemove?.userErrors?.length > 0) {
             logger.error("Shopify translationsRemove API error (primary update)", {
               context: "UpdateProduct",
@@ -1045,7 +1045,7 @@ async function updatePrimaryProduct(
             }
           }`
       );
-      const localesData = await localesResponse.json();
+      const localesData = await localesResponse.json() as any;
       const shopLocales = localesData.data?.shopLocales || [];
 
       // Filter out the primary locale, only keep published foreign locales
@@ -1110,7 +1110,7 @@ async function updatePrimaryProduct(
                     }
                   );
 
-                  const responseData = await response.json();
+                  const responseData = await response.json() as any;
                   if (responseData.data?.translationsRemove?.userErrors?.length > 0) {
                     logger.error("Shopify translationsRemove API error (alt-text)", {
                       context: "UpdateProduct",

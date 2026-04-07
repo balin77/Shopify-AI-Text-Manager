@@ -217,7 +217,7 @@ export function SettingsSetupTab({
                         fontWeight={isCurrent ? "semibold" : "regular"}
                       >
                         {isCompleted ? "✓ " : isCurrent ? "● " : "○ "}
-                        {t.settings[phaseKeys[phase]] || phase}
+                        {(t.settings as unknown as Record<string, string>)[phaseKeys[phase]] || phase}
                       </Text>
                     );
                   })}

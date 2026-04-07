@@ -21,7 +21,8 @@ interface WebhookSubscription {
 }
 
 interface ShopifyGraphQLClient {
-  graphql: (query: string, options?: { variables?: Record<string, unknown> }) => Promise<{ json: () => Promise<unknown> }>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  graphql: (query: string, options?: { variables?: Record<string, unknown> }) => Promise<{ json: () => Promise<any> }>;
 }
 
 export class WebhookRegistrationService {

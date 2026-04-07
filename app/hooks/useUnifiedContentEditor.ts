@@ -42,6 +42,11 @@ import { useTaskCount } from "../contexts/TaskCountContext";
 import { translateErrorMessage } from "../utils/editor-error-messages";
 import { useFieldHandlers } from "./useFieldHandlers";
 
+interface TaskData {
+  fieldType?: string | null;
+  targetLocale?: string | null;
+}
+
 export function useUnifiedContentEditor(props: UseContentEditorProps): UseContentEditorReturn {
   const { config, items, shopLocales, primaryLocale, fetcher, showInfoBox, t, onTranslateToAllLocalesComplete, initialItemId } = props;
   const { refresh: refreshTaskCount } = useTaskCount();

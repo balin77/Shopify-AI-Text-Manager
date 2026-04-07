@@ -346,6 +346,7 @@ export async function handleTranslateAll(
     const result = await shopifyContentService.translateAllContent({
       resourceId: itemId,
       resourceType: contentConfig.resourceType,
+      shop: session.shop,
       fields: changedFields,
       translationService: translationServiceWithTask,
       db,
@@ -496,6 +497,7 @@ export async function handleTranslateAllForLocale(
     const result = await shopifyContentService.translateAllContent({
       resourceId: itemId,
       resourceType: contentConfig.resourceType,
+      shop: session.shop,
       fields: changedFields,
       translationService: translationServiceWithTask,
       db,
@@ -609,6 +611,7 @@ export async function handleTranslateFieldToAllLocales(
     const result = await shopifyContentService.translateAllContent({
       resourceId: itemId,
       resourceType: contentConfig.resourceType,
+      shop: session.shop,
       fields: changedFields,
       translationService: translationServiceWithTask,
       db,

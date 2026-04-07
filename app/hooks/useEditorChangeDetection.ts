@@ -9,14 +9,12 @@
 
 import { useMemo } from "react";
 import { useChangeTracking } from "../utils/contentEditor.utils";
-import type { ContentEditorConfig } from "../types/content-editor.types";
-
-type AnyItem = { [key: string]: unknown };
+import type { ContentEditorConfig, TranslatableContentItem } from "../types/content-editor.types";
 
 interface UseEditorChangeDetectionProps {
   config: ContentEditorConfig;
   isLoadingData: boolean;
-  selectedItem: AnyItem | undefined;
+  selectedItem: TranslatableContentItem | undefined;
   currentLanguage: string;
   primaryLocale: string;
   editableValues: Record<string, string>;

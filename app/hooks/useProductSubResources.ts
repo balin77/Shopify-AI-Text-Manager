@@ -28,6 +28,8 @@ interface SubResourceFetcherData {
   translations?: Record<string, Record<string, string>>;
   fieldId?: string;
   failedResources?: string[];
+  failedOptions?: string[];
+  failedMetafields?: string[];
 }
 
 export interface SubResourceState {

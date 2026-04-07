@@ -175,9 +175,9 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   const fetcherTargetLocale = fetcherFormData?.get("targetLocale") as string | null;
   const fetcherItemId = fetcherFormData?.get("itemId") as string | null;
   const isSameItem = fetcherItemId === state.selectedItemId;
-  const isAllLocalesActionRunning = fetcherState !== "idle" && isSameItem && ALL_LOCALES_AI_ACTIONS.includes(currentAction as string);
+  const isAllLocalesActionRunning = fetcherState !== "idle" && isSameItem && ALL_LOCALES_AI_ACTIONS.includes(currentAction as "translateAll" | "translateAllAltTextsToAllLocales");
   const isPerLocaleActionRunning = fetcherState !== "idle" && isSameItem
-    && PER_LOCALE_AI_ACTIONS.includes(currentAction as string)
+    && PER_LOCALE_AI_ACTIONS.includes(currentAction as "translateAllForLocale" | "translateAllAltTextsForLocale")
     && fetcherTargetLocale === state.currentLanguage;
   // Get the set of fields with loading AI actions (for per-field loading states)
   const loadingFieldKeys = state.loadingFieldKeys;
@@ -186,7 +186,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     || loadingFieldKeys.has("__translateAll__");
 
   // Translated resource names for the item list
-  const resourceNames = t.content?.resourceNames || {};
+  const resourceNames = (t.content?.resourceNames || {}) as Record<string, string>;
   const translatedResourceName = {
     singular: resourceNames[config.contentType === "pages" ? "pageSingular" : config.displayNameSingular.toLowerCase()] || config.displayNameSingular,
     plural: resourceNames[config.contentType] || config.displayName,
@@ -226,14 +226,15 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
         ? `${tooltipI18n.missingTranslations} ${foreignMissingParts.join(" • ")}`
         : null;
 
+      const itemAny = item as any;
       return {
         ...item,
         id: item.id,
         title: config.getPrimaryField ? config.getPrimaryField(item, t) : item.title,
         subtitle,
-        category: item.blogTitle || item.category,
-        status: item.status,
-        image: item.featuredImage || item.image,
+        category: item.blogTitle || itemAny.category,
+        status: itemAny.status,
+        image: item.featuredImage || itemAny.image,
         hasMissingPrimary,
         hasMissingTranslations,
         missingPrimaryTooltip,
@@ -345,7 +346,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           selectedItemId={state.selectedItemId}
           onItemSelect={handlers.handleItemSelect}
           resourceName={translatedResourceName}
-          renderItem={renderListItem}
+          renderItem={renderListItem ? (item, isSelected) => renderListItem(item as TranslatableContentItem, isSelected) : undefined}
           showSearch={true}
           showPagination={true}
           showStatusStripe={!hideItemListStatusBars}
@@ -395,7 +396,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   onToggleSendImageToAI={handlers.handleToggleSendImageToAI}
                   sendImageToAI={state.sendImageToAI}
                   images={state.images}
-                  featuredImage={state.featuredImage}
+                  featuredImage={state.featuredImage ?? undefined}
                   fetcherState={fetcherState}
                   fetcherFormData={fetcherFormData}
                   highlightSaveButton={navigationGuard.highlightSaveButton}

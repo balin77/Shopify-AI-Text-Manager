@@ -166,7 +166,7 @@ describe('planUtils (extended)', () => {
     });
 
     it('returns a plan string or null for all known content types', () => {
-      for (const ct of ['products', 'collections', 'articles', 'pages', 'policies', 'themes', 'metaobjects', 'menus'] as const) {
+      for (const ct of ['products', 'collections', 'articles', 'pages', 'policies', 'metaobjects', 'menus'] as const) {
         const result = getMinimumPlanForContentType(ct);
         expect(result === null || ['free', 'basic', 'pro', 'max'].includes(result as string)).toBe(true);
       }

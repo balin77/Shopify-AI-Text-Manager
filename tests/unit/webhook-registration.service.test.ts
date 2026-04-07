@@ -11,7 +11,7 @@
  * - Resilience: failure on one webhook does NOT abort the others
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { WebhookRegistrationService } from '~/services/webhook-registration.service';
 
 // ── Mocks ────────────────────────────────────────────────────────────────────
@@ -126,13 +126,13 @@ describe('WebhookRegistrationService.registerProductWebhooks()', () => {
 
     await service.registerProductWebhooks();
 
-    const createCalls = admin.graphql.mock.calls.filter(([q]: [string]) =>
-      q.includes('webhookSubscriptionCreate')
+    const createCalls = admin.graphql.mock.calls.filter((args: unknown[]) =>
+      (args[0] as string).includes('webhookSubscriptionCreate')
     );
 
     expect(createCalls).toHaveLength(3);
 
-    const topics = createCalls.map(([, opts]: [string, { variables?: Record<string, unknown> }]) => opts?.variables?.topic);
+    const topics = createCalls.map((args: unknown[]) => (args[1] as { variables?: Record<string, unknown> })?.variables?.topic);
     expect(topics).toContain('PRODUCTS_CREATE');
     expect(topics).toContain('PRODUCTS_UPDATE');
     expect(topics).toContain('PRODUCTS_DELETE');
@@ -150,11 +150,11 @@ describe('WebhookRegistrationService.registerProductWebhooks()', () => {
 
     await service.registerProductWebhooks();
 
-    const updateCalls = admin.graphql.mock.calls.filter(([q]: [string]) =>
-      q.includes('webhookSubscriptionUpdate')
+    const updateCalls = admin.graphql.mock.calls.filter((args: unknown[]) =>
+      (args[0] as string).includes('webhookSubscriptionUpdate')
     );
-    const createCalls = admin.graphql.mock.calls.filter(([q]: [string]) =>
-      q.includes('webhookSubscriptionCreate')
+    const createCalls = admin.graphql.mock.calls.filter((args: unknown[]) =>
+      (args[0] as string).includes('webhookSubscriptionCreate')
     );
 
     // PRODUCTS_CREATE should be updated, the other 2 should be created
@@ -170,8 +170,8 @@ describe('WebhookRegistrationService.registerProductWebhooks()', () => {
     await expect(service.registerProductWebhooks()).resolves.toBeUndefined();
 
     // PRODUCTS_UPDATE and PRODUCTS_DELETE should still be attempted
-    const createCalls = admin.graphql.mock.calls.filter(([q]: [string]) =>
-      q.includes('webhookSubscriptionCreate')
+    const createCalls = admin.graphql.mock.calls.filter((args: unknown[]) =>
+      (args[0] as string).includes('webhookSubscriptionCreate')
     );
     expect(createCalls).toHaveLength(3);
   });
@@ -184,8 +184,8 @@ describe('WebhookRegistrationService.registerProductWebhooks()', () => {
     await expect(service.registerProductWebhooks()).resolves.toBeUndefined();
 
     // All 3 create calls are attempted – 1 throws, 2 succeed
-    const createCalls = admin.graphql.mock.calls.filter(([q]: [string]) =>
-      q.includes('webhookSubscriptionCreate')
+    const createCalls = admin.graphql.mock.calls.filter((args: unknown[]) =>
+      (args[0] as string).includes('webhookSubscriptionCreate')
     );
     expect(createCalls).toHaveLength(3);
   });

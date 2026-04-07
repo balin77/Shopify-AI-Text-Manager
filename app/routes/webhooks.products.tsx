@@ -96,7 +96,7 @@ async function processWebhookAsync(
       shop,
       topic,
       { productId, logId },
-      error
+      error instanceof Error ? error : undefined
     );
 
     throw error;

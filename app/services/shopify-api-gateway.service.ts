@@ -15,7 +15,8 @@ import type { ShopifyGraphQLClient } from './sync-types';
 interface GraphQLResponse {
   ok: boolean;
   status: number;
-  json: () => Promise<unknown>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  json: () => Promise<any>;
 }
 
 interface QueuedRequest {

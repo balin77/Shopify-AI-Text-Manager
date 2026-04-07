@@ -218,3 +218,21 @@ export function getFullErrorMessage(error: unknown): string {
   return msg;
 }
 
+/** Factory: create a validation SafeError (400) */
+export function createValidationError(message: string, details?: Record<string, unknown>): SafeError {
+  return new SafeError('validation', message, 400, details);
+}
+
+/** Factory: create a not-found SafeError (404) */
+export function createNotFoundError(resourceName: string): SafeError {
+  return new SafeError('notFound', `${resourceName} not found`, 404);
+}
+
+/** Factory: create a rate-limit SafeError (429) */
+export function createRateLimitError(retryAfterSeconds?: number): SafeError {
+  const msg = retryAfterSeconds
+    ? `Rate limit exceeded. Retry after ${retryAfterSeconds} seconds`
+    : 'Rate limit exceeded';
+  return new SafeError('rateLimit', msg, 429);
+}
+

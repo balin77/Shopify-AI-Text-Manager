@@ -116,7 +116,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       shopLocales: [],
       primaryLocale: "en",
       requestedType: null,
-      error: error.message
+      error: msg
     }, { status: 500 });
   }
 };

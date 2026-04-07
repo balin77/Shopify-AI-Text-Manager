@@ -36,7 +36,7 @@ interface TranslatableResourcesByIdsResponse {
         resourceId: string;
         translatableContent?: Array<{ key: string; digest: string | null }>;
         translations: Array<{ key: string; value: string; locale?: string }>;
-      }>;
+      }>[];
     };
   };
   errors?: GraphQLError[];
@@ -153,7 +153,7 @@ export class ProductSyncService {
       checkAborted();
       const batchSize = Math.min(250, maxProducts - allProducts.length);
 
-      const response: Response = await this.admin.graphql(
+      const response = await this.admin.graphql(
         `#graphql
           query getProductsBulk($first: Int!, $after: String) {
             products(first: $first, after: $after) {
@@ -402,7 +402,7 @@ export class ProductSyncService {
               checkAborted();
               onProgress?.({ overallPercent: localeProgress, detailCurrent: batchIndex, detailTotal: batches.length, message: `Fetching translations: ${locale.name || locale.locale} (${localeIndex}/${nonPrimaryLocales.length})` });
               try {
-                const response: Response = await this.admin.graphql(
+                const response = await this.admin.graphql(
                   `#graphql
                     query getBulkProductTranslations($resourceIds: [ID!]!, $locale: String!) {
                       translatableResourcesByIds(first: ${BATCH_SIZE}, resourceIds: $resourceIds) {
@@ -525,7 +525,7 @@ export class ProductSyncService {
                 checkAborted();
                 onProgress?.({ overallPercent: subProgress, detailCurrent: subBatchIndex, detailTotal: subBatches.length, message: `Fetching sub-resource translations: ${locale.name || locale.locale} (${subLocaleIndex}/${nonPrimaryLocales.length})` });
                 try {
-                  const response: Response = await this.admin.graphql(
+                  const response = await this.admin.graphql(
                     `#graphql
                       query getSubResourceTranslationsBulk($resourceIds: [ID!]!, $locale: String!) {
                         translatableResourcesByIds(first: 250, resourceIds: $resourceIds) {
@@ -631,7 +631,7 @@ export class ProductSyncService {
                 checkAborted();
                 onProgress?.({ overallPercent: Math.round(90 + (mediaLocaleIndex / nonPrimaryLocales.length) * 7), detailCurrent: mediaBatchIndex, detailTotal: mediaBatches.length, message: `Fetching image translations: ${locale.name || locale.locale} (${mediaLocaleIndex}/${nonPrimaryLocales.length})` });
                 try {
-                  const response: Response = await this.admin.graphql(
+                  const response = await this.admin.graphql(
                     `#graphql
                       query getBulkImageAltTranslations($resourceIds: [ID!]!, $locale: String!) {
                         translatableResourcesByIds(first: 250, resourceIds: $resourceIds) {
@@ -659,7 +659,7 @@ export class ProductSyncService {
                   for (const edge of resources) {
                     const mediaId = edge.node.resourceId;
                     const translations = edge.node.translations ?? [];
-                    const altTranslation = translations.find((t) => t.key === "alt");
+                    const altTranslation = translations.find((t: { key: string; value?: string }) => t.key === "alt");
                     if (altTranslation?.value) {
                       const dbId = mediaIdToDbId.get(mediaId);
                       if (dbId) {

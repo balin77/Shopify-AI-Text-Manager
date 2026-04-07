@@ -5,16 +5,24 @@
  * and shopify-api-gateway services to eliminate duplication.
  */
 
+/** Minimal response interface shared by Shopify admin.graphql and ShopifyApiGateway.graphql */
+export interface GraphQLResponseLike {
+  ok: boolean;
+  status: number;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  json(): Promise<any>;
+}
+
 /** Shopify Admin GraphQL client interface */
 export interface ShopifyGraphQLClient {
-  graphql: (query: string, options?: { variables?: Record<string, unknown> }) => Promise<Response>;
+  graphql: (query: string, options?: { variables?: Record<string, unknown> }) => Promise<GraphQLResponseLike>;
 }
 
 /** Generic GraphQL function type (abstracts admin.graphql vs gateway.graphql) */
 export type GraphQLFunction = (
   query: string,
   options?: { variables?: Record<string, unknown> }
-) => Promise<Response>;
+) => Promise<GraphQLResponseLike>;
 
 /** Locale info returned by shopLocales query */
 export interface ShopLocale {

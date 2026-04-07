@@ -23,20 +23,32 @@ import type { ShopLocale } from "../types/content-editor.types";
 
 /** Minimal Prisma model delegate used by incrementalSync */
 interface PrismaModelDelegate {
-  findMany: (args: { where: Record<string, unknown>; select: Record<string, unknown> }) => Promise<{ id: string }[]>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  findMany: (args?: { where?: Record<string, unknown>; select?: Record<string, unknown>; orderBy?: any }) => Promise<{ id: string }[]>;
   deleteMany: (args: { where: Record<string, unknown> }) => Promise<unknown>;
+}
+
+/** AI settings shape returned by loadAISettingsForValidation */
+export interface AISettingsForValidation {
+  hasHuggingfaceApiKey: boolean;
+  hasGeminiApiKey: boolean;
+  hasClaudeApiKey: boolean;
+  hasOpenaiApiKey: boolean;
+  hasGrokApiKey: boolean;
+  hasDeepseekApiKey: boolean;
+  preferredProvider: string | null;
 }
 
 export interface LoaderContext {
   admin: ShopifyGraphQLClient;
-  session: { shop: string; [key: string]: unknown };
+  session: { shop: string };
   db: PrismaClient;
   shopLocales: ShopLocale[];
   primaryLocale: string;
-  aiSettings: AISettings | null;
+  aiSettings: AISettingsForValidation | null;
 }
 
-export interface ContentLoaderConfig<T> {
+export interface ContentLoaderConfig<T, K extends string = string, E extends Record<string, unknown> = Record<string, unknown>> {
   /** Used for log messages, e.g. "PRODUCTS", "COLLECTIONS" */
   logPrefix: string;
 
@@ -44,24 +56,24 @@ export interface ContentLoaderConfig<T> {
   resourceType: string | null;
 
   /** Key name in the JSON response, e.g. "products", "collections" */
-  itemsKey: string;
+  itemsKey: K;
 
   /** Sync + Load + Transform. Returns items (without translations) and their IDs. */
   loadData: (ctx: LoaderContext) => Promise<{ items: T[]; ids: string[] }>;
 
   /** Optional: extra data to include in the response (e.g. plan, maxProducts) */
-  extraData?: (ctx: LoaderContext) => Promise<Record<string, unknown>>;
+  extraData?: (ctx: LoaderContext) => Promise<E>;
 
   /** Optional: extra fields for the error fallback response */
-  errorFallback?: Record<string, unknown>;
+  errorFallback?: Partial<E>;
 }
 
 // ============================================================================
 // Factory
 // ============================================================================
 
-export function createContentLoader<T extends { id: string }>(
-  config: ContentLoaderConfig<T>,
+export function createContentLoader<T extends { id: string }, K extends string, E extends Record<string, unknown>>(
+  config: ContentLoaderConfig<T, K, E>,
 ) {
   return async ({ request }: LoaderFunctionArgs) => {
     const { admin, session } = await authenticate.admin(request);
@@ -100,7 +112,15 @@ export function createContentLoader<T extends { id: string }>(
       }));
 
       // Optional: extra data
-      const extra = config.extraData ? await config.extraData(ctx) : {};
+      const extra = config.extraData ? await config.extraData(ctx) : ({} as E);
+
+      type LoaderData = Record<K, (T & { translations: unknown[] })[]> & {
+        shop: string;
+        shopLocales: ShopLocale[];
+        primaryLocale: string;
+        error: string | null;
+        aiSettings: AISettingsForValidation | null;
+      } & E;
 
       return json({
         [config.itemsKey]: itemsWithTranslations,
@@ -110,7 +130,7 @@ export function createContentLoader<T extends { id: string }>(
         error: null,
         aiSettings,
         ...extra,
-      });
+      } as unknown as LoaderData);
     } catch (error: unknown) {
       if (error instanceof Response) throw error;
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -119,18 +139,24 @@ export function createContentLoader<T extends { id: string }>(
         error: errorMessage,
         stack: error instanceof Error ? error.stack : undefined,
       });
-      return json(
-        {
-          [config.itemsKey]: [],
-          shop: session.shop,
-          shopLocales: [],
-          primaryLocale: "en",
-          error: errorMessage,
-          aiSettings: null,
-          ...(config.errorFallback || {}),
-        },
-        { status: 500 },
-      );
+
+      type LoaderData = Record<K, (T & { translations: unknown[] })[]> & {
+        shop: string;
+        shopLocales: ShopLocale[];
+        primaryLocale: string;
+        error: string | null;
+        aiSettings: AISettingsForValidation | null;
+      } & E;
+
+      return json({
+        [config.itemsKey]: [],
+        shop: session.shop,
+        shopLocales: [],
+        primaryLocale: "en",
+        error: errorMessage,
+        aiSettings: null,
+        ...(config.errorFallback || {}),
+      } as unknown as LoaderData, { status: 500 });
     }
   };
 }

@@ -6,21 +6,16 @@
 
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useFetcher } from "@remix-run/react";
-import type { ContentImage, AltTextTranslation, ContentEditorConfig } from "../types/content-editor.types";
-
-type AnyItem = {
-  images?: ContentImage[];
-  [key: string]: unknown;
-};
+import type { ContentImage, AltTextTranslation, ContentEditorConfig, TranslatableContentItem } from "../types/content-editor.types";
 
 interface UseEditorImageManagementProps {
   config: ContentEditorConfig;
   selectedItemId: string | null;
-  baseSelectedItem: AnyItem | undefined;
+  baseSelectedItem: TranslatableContentItem | undefined;
 }
 
 interface UseEditorImageManagementReturn {
-  selectedItem: AnyItem | undefined;
+  selectedItem: TranslatableContentItem | undefined;
   onDemandImages: ContentImage[];
   isLoadingImages: boolean;
   prevSelectedItemIdRef: React.MutableRefObject<string | null>;

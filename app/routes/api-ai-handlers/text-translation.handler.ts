@@ -472,7 +472,8 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
                 };
                 await db.contentTranslation.upsert({
                   where: {
-                    resourceId_key_locale: {
+                    shop_resourceId_key_locale: {
+                      shop: session.shop,
                       resourceId: itemId,
                       key: shopifyKey,
                       locale,
@@ -480,6 +481,7 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
                   },
                   update: { value: translatedValue, digest, resourceType: resourceTypeMap[contentType] || "Product" },
                   create: {
+                    shop: session.shop,
                     resourceId: itemId,
                     resourceType: resourceTypeMap[contentType] || "Product",
                     key: shopifyKey,
@@ -871,7 +873,8 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
                 };
                 await db.contentTranslation.upsert({
                   where: {
-                    resourceId_key_locale: {
+                    shop_resourceId_key_locale: {
+                      shop: session.shop,
                       resourceId: itemId,
                       key: shopifyKey,
                       locale,
@@ -879,6 +882,7 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
                   },
                   update: { value: translatedValue, digest, resourceType: resourceTypeMap[contentType] || "Product" },
                   create: {
+                    shop: session.shop,
                     resourceId: itemId,
                     resourceType: resourceTypeMap[contentType] || "Product",
                     key: shopifyKey,

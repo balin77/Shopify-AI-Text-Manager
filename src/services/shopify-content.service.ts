@@ -697,6 +697,7 @@ export class ShopifyContentService {
   async translateAllContent(params: {
     resourceId: string;
     resourceType: string;
+    shop: string;
     fields: Record<string, string>;
     translationService: {
       translateProduct: (fields: Record<string, string>, locales: string[], contentType?: string, instructions?: string) => Promise<Record<string, Record<string, string>>>;
@@ -709,7 +710,7 @@ export class ShopifyContentService {
     customInstructions?: string;
     sourceLocale?: string;
   }) {
-    const { resourceId, resourceType, fields, translationService, db, targetLocales: customTargetLocales, contentType, customInstructions, sourceLocale = 'en' } = params;
+    const { resourceId, resourceType, shop, fields, translationService, db, targetLocales: customTargetLocales, contentType, customInstructions, sourceLocale = 'en' } = params;
 
     // Fetch digest map once for all translations
     const { digestMap } = await this.loadTranslatableContent(resourceId);

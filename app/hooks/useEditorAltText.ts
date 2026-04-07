@@ -48,7 +48,7 @@ interface UseEditorAltTextProps {
     onSuccess?: (result: Record<string, unknown>) => void,
     onError?: (error: string) => void
   ) => void;
-  showInfoBox: (message: string, type: string, title: string) => void;
+  showInfoBox: (message: string, tone?: import("../types/content-editor.types").InfoBoxTone, title?: string) => void;
   t: TranslationStrings;
   setAiSuggestions: React.Dispatch<React.SetStateAction<Record<string, string>>>;
 }

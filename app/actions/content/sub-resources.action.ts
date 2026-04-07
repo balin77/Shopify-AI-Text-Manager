@@ -473,7 +473,7 @@ export async function handleTranslateSubResourceToAllLocales(
         }
       }`
   );
-  const localesData = await localesResponse.json();
+  const localesData = await localesResponse.json() as any;
   const shopLocales = localesData.data?.shopLocales || [];
   const targetLocales = shopLocales
     .filter((l: { locale: string; primary: boolean; published: boolean }) => !l.primary && l.published)
@@ -694,7 +694,7 @@ export async function handleSavePrimarySubResources(
           { variables }
         );
 
-        const updateData = await updateResponse.json();
+        const updateData = await updateResponse.json() as any;
 
         if (updateData.data?.productOptionUpdate?.userErrors?.length > 0) {
           logger.error("[UnifiedContent] productOptionUpdate userErrors", {
@@ -729,7 +729,7 @@ export async function handleSavePrimarySubResources(
           }
         );
 
-        const metafieldsData = await metafieldsResponse.json();
+        const metafieldsData = await metafieldsResponse.json() as any;
         if (metafieldsData.data?.metafieldsSet?.userErrors?.length > 0) {
           logger.error("[UnifiedContent] metafieldsSet userErrors", {
             context: "UnifiedContent", errors: metafieldsData.data.metafieldsSet.userErrors,
@@ -763,7 +763,7 @@ export async function handleSavePrimarySubResources(
               }
             }`
         );
-        const localesData = await localesResponse.json();
+        const localesData = await localesResponse.json() as any;
         const shopLocales = localesData.data?.shopLocales || [];
 
         // Filter out the primary locale, only keep published foreign locales

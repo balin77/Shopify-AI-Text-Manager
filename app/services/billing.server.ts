@@ -12,7 +12,8 @@ import { db as prisma } from '~/db.server';
 import { logger } from '~/utils/logger.server';
 
 interface ShopifyAdminClient {
-  graphql: (query: string, options?: { variables?: Record<string, unknown> }) => Promise<{ json: () => Promise<unknown> }>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  graphql: (query: string, options?: { variables?: Record<string, unknown> }) => Promise<{ json: () => Promise<any> }>;
 }
 
 interface AppSubscription {

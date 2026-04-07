@@ -126,6 +126,7 @@ export async function createTestFixtures() {
   await testDb.contentTranslation.createMany({
     data: [
       {
+        shop,
         resourceId: product.id,
         resourceType: 'Product',
         key: 'title',
@@ -133,6 +134,7 @@ export async function createTestFixtures() {
         locale: 'en',
       },
       {
+        shop,
         resourceId: product.id,
         resourceType: 'Product',
         key: 'body_html',

@@ -93,18 +93,19 @@ async function main() {
     runSilent(`npx prisma migrate resolve --applied ${name}`);
   }
 
-  // Direct SQL fallback: clear any remaining "failed" rows in _prisma_migrations
-  // (covers edge cases where prisma migrate resolve doesn't work)
+  // Direct SQL fallback: clear only "failed" rows (finished_at IS NULL AND rolled_back_at IS NULL)
+  // NOTE: Do NOT touch rows where rolled_back_at IS NOT NULL — those are intentionally rolled back
+  // and must be re-applied by prisma migrate deploy, not silently marked as done.
   try {
     const { PrismaClient } = await import('@prisma/client');
     const prisma = new PrismaClient();
     const fixed = await prisma.$executeRawUnsafe(`
       UPDATE "_prisma_migrations"
       SET "finished_at" = NOW(),
-          "rolled_back_at" = NULL,
           "logs" = 'Resolved by migration runner'
       WHERE "finished_at" IS NULL
-        OR "rolled_back_at" IS NOT NULL
+        AND "rolled_back_at" IS NULL
+        AND "started_at" IS NOT NULL
     `);
     if (fixed > 0) log(`  ↳ Fixed ${fixed} stuck migration rows via SQL`, 'green');
     await prisma.$disconnect();

@@ -69,6 +69,16 @@ export function sanitizeSlug(input: string): string {
 }
 
 /**
+ * Validates and sanitizes a slug in one step.
+ * Returns the (potentially sanitized) slug and a flag indicating if sanitization was needed.
+ */
+export function validateAndSanitizeSlug(input: string): { slug: string; wasSanitized: boolean } {
+  const sanitized = sanitizeSlug(input);
+  const wasSanitized = sanitized !== input;
+  return { slug: sanitized, wasSanitized };
+}
+
+/**
  * Validates if a string is a valid URL slug
  * Returns true if the slug only contains lowercase letters, numbers, and hyphens
  * and doesn't start or end with a hyphen

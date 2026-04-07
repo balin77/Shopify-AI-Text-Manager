@@ -413,7 +413,7 @@ export async function handleTranslateAltTextToAllLocales(
             }`,
           { variables: { resourceId: dbImage.mediaId } }
         );
-        const translatableData = await translatableResponse.json();
+        const translatableData = await translatableResponse.json() as any;
         const translatableContent = translatableData.data?.translatableResource?.translatableContent || [];
         altDigest = translatableContent.find((c: { key: string; digest: string }) => c.key === "alt")?.digest;
       } catch (err: unknown) {
@@ -455,7 +455,7 @@ export async function handleTranslateAltTextToAllLocales(
                 },
               }
             );
-            const shopifyData = await shopifyResult.json();
+            const shopifyData = await shopifyResult.json() as any;
             const userErrors = shopifyData.data?.translationsRegister?.userErrors || [];
             if (userErrors.length === 0) {
               shopifySaved = true;

@@ -54,13 +54,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       error: null
     });
   } catch (error: unknown) {
-    logger.error("[METADATA-LOADER] Error", { error: error instanceof Error ? error.message : String(error) });
+    const msg = error instanceof Error ? error.message : String(error);
+    logger.error("[METADATA-LOADER] Error", { error: msg });
     return json({
       metadata: { metafields: [] },
       shop: session.shop,
       shopLocales: [],
       primaryLocale: "en",
-      error: error.message
+      error: msg
     }, { status: 500 });
   }
 };
