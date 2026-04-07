@@ -9,7 +9,7 @@
  *   - SEND IMAGE TO AI HANDLERS section (including reset effects)
  */
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useLatestRef } from "./useLatestRef";
 import { getItemFieldValue } from "./useUiDataLoader";
 import type {
@@ -126,7 +126,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
   const originalAltTextsRef = useLatestRef(originalAltTexts);
 
   // Track pending auto-save for alt-texts (set by bulk generation and translation effects)
-  const pendingAltTextAutoSaveRef = React.useRef<Record<number, string> | null>(null);
+  const pendingAltTextAutoSaveRef = useRef<Record<number, string> | null>(null);
 
   // Send Image to AI feature state
   const [sendImageToAI, setSendImageToAI] = useState(false);
