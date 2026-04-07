@@ -25,6 +25,7 @@ export class ShopifyApiGateway {
   private shop: string;
   private requestQueue: QueuedRequest[] = [];
   private isProcessing: boolean = false;
+  private activeRequest: QueuedRequest | null = null;
   private requestCount: number = 0;
   private windowStart: number = Date.now();
 
@@ -93,6 +94,8 @@ export class ShopifyApiGateway {
       const request = this.requestQueue.shift();
       if (!request) break;
 
+      this.activeRequest = request;
+
       try {
         // Execute the request
         const response = await this.admin.graphql(request.query, {
@@ -154,6 +157,8 @@ export class ShopifyApiGateway {
           }
         }
       }
+
+      this.activeRequest = null;
 
       // Small delay between requests (20ms = smooth distribution, ~50 req/sec max)
       await this.sleep(20);
@@ -227,6 +232,10 @@ export class ShopifyApiGateway {
       req.reject(new Error('Queue cleared'))
     );
     this.requestQueue = [];
+    if (this.activeRequest) {
+      this.activeRequest.reject(new Error('Queue cleared'));
+      this.activeRequest = null;
+    }
     logger.debug(`[ShopifyGateway] Cleared ${clearedCount} queued requests`);
   }
 }
