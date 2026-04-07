@@ -58,6 +58,7 @@
 | 46. catch(error:any) routes + Zod | ✅ Done | 40+ instances across 23 route files fixed; Zod schema added to sync-single-resource |
 | 47. catch(error:any) in Services, Components, Utils | ✅ Done | 15 instances in 6 files fixed (see below) |
 | 48. Verbleibende any-Typen in Services | ✅ Done | billing.server.ts admin→AdminGraphQL; product-sync response interfaces; webhook-retry payload→unknown; (see below) |
+| 49. server.js console.* → Logger-Migration | ✅ Done | Created server-logger.cjs (Winston CJS wrapper); all 17 console.* calls migrated (see below) |
 
 ---
 
@@ -344,5 +345,53 @@ Returns structured 400 with field-level Zod error messages on invalid input.
 - `WebhookHandler = (payload: any, ...)` → `(payload: unknown, ...)`
 - `scheduleRetry(..., payload: any, ...)` → `payload: unknown`
 - `processRetry(retry: any)` → typed inline object matching Prisma model shape
+
+100 tests pass.
+
+---
+
+## 49. server.js console.* → Logger-Migration (Branch: Fg9tj)
+
+**Status:** ✅ Done (2026-04-07)
+
+### Approach
+
+Created `app/middleware/server-logger.cjs` — a CommonJS Winston logger loaded via
+`createRequire(import.meta.url)` in server.js. This follows the same pattern as the
+existing `rate-limit-cjs.cjs` (which is already loaded the same way).
+
+**Why not use `app/utils/logger.server.ts` directly?**
+server.js is an ESM module that runs at process startup, before the Vite/Remix build.
+The TypeScript source in `app/` is not importable at this stage; only CJS/native-ESM
+modules in `node_modules` are available. A standalone `.cjs` wrapper is the correct
+pattern for this project (precedent: `rate-limit-cjs.cjs`).
+
+### Logger Configuration
+
+- Winston `combine(timestamp, printf)` format — matches app logger style
+- `stderrLevels: ['error', 'warn']` — errors go to stderr, info to stdout
+- `level` from `LOG_LEVEL` env var, defaults to `info`
+
+### Migrated Calls (17 total)
+
+| Old | New | Location |
+|-----|-----|----------|
+| `console.error("Health check failed:", ...)` | `serverLogger.error(...)` | `/health` handler |
+| `console.log(\`Express server listening...\`)` | `serverLogger.info(...)` | startup |
+| `console.log("✅ Task cleanup service started")` | `serverLogger.info(...)` | startup |
+| `console.error("❌ Failed to start task cleanup service:", ...)` | `serverLogger.error(...)` | startup |
+| `console.log(\`✅ Task recovery: ...\`)` | `serverLogger.info(...)` | startup |
+| `console.log('✅ Stuck task monitoring started')` | `serverLogger.info(...)` | startup |
+| `console.error("❌ Failed to recover tasks:", ...)` | `serverLogger.error(...)` | startup |
+| `console.log(\`${signal} received...\`)` | `serverLogger.info(...)` | shutdown |
+| `console.log('HTTP server closed')` | `serverLogger.info(...)` | shutdown |
+| `console.log('✅ Task cleanup service stopped')` | `serverLogger.info(...)` | shutdown |
+| `console.error('Error stopping task cleanup service:', ...)` | `serverLogger.error(...)` | shutdown |
+| `console.log('✅ Stuck task monitoring stopped')` | `serverLogger.info(...)` | shutdown |
+| `console.error('Error stopping stuck task monitoring:', ...)` | `serverLogger.error(...)` | shutdown |
+| `console.log('✅ Database connections closed')` | `serverLogger.info(...)` | shutdown |
+| `console.error('Error closing database connections:', ...)` | `serverLogger.error(...)` | shutdown |
+| `console.log('Graceful shutdown complete')` | `serverLogger.info(...)` | shutdown |
+| `console.error('Forced shutdown after timeout')` | `serverLogger.error(...)` | shutdown |
 
 100 tests pass.
