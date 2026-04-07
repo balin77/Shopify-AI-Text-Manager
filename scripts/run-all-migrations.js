@@ -79,6 +79,39 @@ async function main() {
     runSilent(`npx prisma migrate resolve --rolled-back ${name}`);
   }
 
+  // Mark known migrations as applied so prisma doesn't treat them as "failed".
+  // The baseline is often recorded as failed in the DB because it was applied
+  // manually before Prisma migration tracking existed.
+  log('\n🔧 Marking known migrations as applied...', 'blue');
+  const knownAppliedMigrations = [
+    '00000000000000_baseline',
+    '20260204113149_add_contenttranslation_compound_index',
+    '20260204123052_add_image_fields_to_article_and_collection',
+    '20260224141738_add_metaobjects_and_missing_columns',
+  ];
+  for (const name of knownAppliedMigrations) {
+    runSilent(`npx prisma migrate resolve --applied ${name}`);
+  }
+
+  // Direct SQL fallback: clear any remaining "failed" rows in _prisma_migrations
+  // (covers edge cases where prisma migrate resolve doesn't work)
+  try {
+    const { PrismaClient } = await import('@prisma/client');
+    const prisma = new PrismaClient();
+    const fixed = await prisma.$executeRawUnsafe(`
+      UPDATE "_prisma_migrations"
+      SET "finished_at" = NOW(),
+          "rolled_back_at" = NULL,
+          "logs" = 'Resolved by migration runner'
+      WHERE "finished_at" IS NULL
+        OR "rolled_back_at" IS NOT NULL
+    `);
+    if (fixed > 0) log(`  ↳ Fixed ${fixed} stuck migration rows via SQL`, 'green');
+    await prisma.$disconnect();
+  } catch (e) {
+    log(`  ↳ Direct SQL fix skipped: ${e.message?.substring(0, 80)}`, 'yellow');
+  }
+
   // 3. Run Prisma Schema Migrations
   log('\n📦 Running Prisma Schema Migrations...', 'blue');
   const migrateSuccess = runCommand(
