@@ -7,6 +7,26 @@ import { createRequire } from "module";
 
 // Import CommonJS modules (rate limiters + server logger)
 const require = createRequire(import.meta.url);
+
+let serverLogger;
+try {
+  ({ serverLogger } = require("./app/middleware/server-logger.cjs"));
+} catch (e) {
+  // Fallback to console if Winston/server-logger fails to load
+  serverLogger = { info: console.log, error: console.error, warn: console.warn };
+  console.error("[server.js] Failed to load server-logger.cjs:", e.message);
+}
+
+let rateLimiters;
+try {
+  rateLimiters = require("./app/middleware/rate-limit-cjs.cjs");
+} catch (e) {
+  serverLogger.error("[server.js] Failed to load rate-limit-cjs.cjs: " + e.message);
+  // Provide no-op middleware so server can still start
+  const noop = (req, res, next) => next();
+  rateLimiters = { apiRateLimit: noop, aiActionRateLimit: noop, webhookRateLimit: noop, authRateLimit: noop, strictRateLimit: noop, bulkOperationRateLimit: noop };
+}
+
 const {
   apiRateLimit,
   aiActionRateLimit,
@@ -14,8 +34,7 @@ const {
   authRateLimit,
   strictRateLimit,
   bulkOperationRateLimit,
-} = require("./app/middleware/rate-limit-cjs.cjs");
-const { serverLogger } = require("./app/middleware/server-logger.cjs");
+} = rateLimiters;
 
 installGlobals();
 
@@ -118,33 +137,48 @@ app.use(morgan("tiny"));
 // Health check endpoint for Railway deployment
 // This endpoint is called by Railway to determine if the app is ready to receive traffic
 // Returns 503 until the app is fully ready to handle requests
-let remixBuild = null;
+let remixBuildForHealth = null;
 app.get("/health", async (req, res) => {
   try {
     // In production, verify the Remix build is loaded and cached
     if (process.env.NODE_ENV === "production") {
-      if (!remixBuild) {
-        remixBuild = await import("./build/server/index.js");
+      if (!remixBuildForHealth) {
+        serverLogger.info("[health] Loading Remix build for health check...");
+        remixBuildForHealth = await import("./build/server/index.js");
+        serverLogger.info("[health] Remix build loaded, entry exists: " + !!remixBuildForHealth?.entry);
       }
-      if (!remixBuild || !remixBuild.entry) {
-        throw new Error("Remix build not fully loaded");
+      if (!remixBuildForHealth || !remixBuildForHealth.entry) {
+        throw new Error("Remix build not fully loaded (entry=" + !!remixBuildForHealth?.entry + ")");
       }
     }
 
     res.status(200).json({ status: "ok", timestamp: new Date().toISOString() });
   } catch (error) {
-    serverLogger.error("Health check failed: " + error.message);
-    res.status(503).json({ status: "not ready", error: "Service not ready" });
+    serverLogger.error("[health] Health check failed: " + error.message);
+    if (error.stack) serverLogger.error("[health] Stack: " + error.stack.substring(0, 500));
+    res.status(503).json({ status: "not ready", error: error.message });
   }
 });
 
 // handle SSR requests
+serverLogger.info("[server.js] Loading Remix build...");
+let remixServerBuild;
+try {
+  remixServerBuild = viteDevServer
+    ? null
+    : await import("./build/server/index.js");
+  serverLogger.info("[server.js] Remix build loaded successfully");
+} catch (e) {
+  serverLogger.error("[server.js] Failed to load Remix build: " + e.message);
+  serverLogger.error("[server.js] Stack: " + (e.stack || "no stack"));
+}
+
 app.all(
   "*",
   createRequestHandler({
     build: viteDevServer
       ? () => viteDevServer.ssrLoadModule("virtual:remix/server-build")
-      : await import("./build/server/index.js"),
+      : remixServerBuild,
     mode: process.env.NODE_ENV,
   })
 );

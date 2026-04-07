@@ -22,9 +22,10 @@ const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
  * @returns {string}
  */
 function normalizedIpKey(req) {
-  const raw = ipKeyGenerator(req);
+  // ipKeyGenerator expects an IP string, not a request object
+  const raw = req.ip ? ipKeyGenerator(req.ip) : 'unknown';
   // Strip ::ffff: prefix from IPv4-mapped IPv6 addresses
-  return raw.startsWith('::ffff:') ? raw.slice(7) : raw;
+  return typeof raw === 'string' && raw.startsWith('::ffff:') ? raw.slice(7) : String(raw);
 }
 
 /**
