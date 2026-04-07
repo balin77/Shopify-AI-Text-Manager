@@ -1,16 +1,14 @@
 import { Prisma, PrismaClient } from "@prisma/client";
 
 declare global {
-  var prisma: PrismaClient | undefined;
+  var __db: PrismaClient | undefined;
 }
 
-const prismaClientInstance = global.prisma ?? new PrismaClient();
-
-if (process.env.NODE_ENV !== "production") {
-  if (!global.prisma) {
-    global.prisma = prismaClientInstance;
-  }
-}
+// Single shared PrismaClient instance across the entire process.
+// Uses globalThis so standalone services (task-cleanup, task-recovery)
+// can reuse the same instance instead of creating their own.
+const prismaClientInstance = globalThis.__db ?? new PrismaClient();
+globalThis.__db = prismaClientInstance;
 
 // Named export as 'db'
 export const db = prismaClientInstance;

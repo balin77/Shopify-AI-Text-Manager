@@ -243,10 +243,11 @@ async function gracefulShutdown(signal) {
     }
 
     try {
-      // Close Prisma connections
-      const { db } = await import("./app/db.server.js");
-      await db.$disconnect();
-      serverLogger.info("Database connections closed");
+      // Close the shared PrismaClient (used by Remix app + background services)
+      if (globalThis.__db) {
+        await globalThis.__db.$disconnect();
+        serverLogger.info("Database connections closed");
+      }
     } catch (error) {
       serverLogger.error("Error closing database connections", { error: String(error) });
     }

@@ -6,13 +6,16 @@
 
 import { PrismaClient } from "@prisma/client";
 
-const prisma = new PrismaClient();
+// Reuse the global PrismaClient shared with the Remix app (db.server.ts)
+// instead of creating a separate instance with its own connection pool.
+const prisma = globalThis.__db ?? new PrismaClient();
+if (!globalThis.__db) globalThis.__db = prisma;
 
 // Timeout for stuck tasks (10 minutes)
 const STUCK_TASK_TIMEOUT_MS = 10 * 60 * 1000;
 
-// Check for stuck tasks every 2 minutes
-const STUCK_CHECK_INTERVAL_MS = 2 * 60 * 1000;
+// Check for stuck tasks every 5 minutes (configurable via env)
+const STUCK_CHECK_INTERVAL_MS = parseInt(process.env.STUCK_CHECK_INTERVAL_MS || String(5 * 60 * 1000), 10);
 
 export class TaskRecoveryService {
   static instance = null;

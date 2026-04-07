@@ -6,7 +6,10 @@
 
 import { PrismaClient } from "@prisma/client";
 
-const prisma = new PrismaClient();
+// Reuse the global PrismaClient shared with the Remix app (db.server.ts)
+// instead of creating a separate instance with its own connection pool.
+const prisma = globalThis.__db ?? new PrismaClient();
+if (!globalThis.__db) globalThis.__db = prisma;
 
 export class TaskCleanupService {
   static instance = null;

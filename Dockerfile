@@ -1,34 +1,54 @@
-# Use Node 22 Alpine (required for jsdom@27, isomorphic-dompurify 2.35+)
-FROM node:22-alpine
+# ── Stage 1: Build ────────────────────────────────────────────────
+FROM node:22-alpine AS builder
 
-# Install dependencies for Prisma and build tools
 RUN apk add --no-cache openssl libc6-compat
 
-# Set working directory
 WORKDIR /app
 
-# Copy package files
-COPY package.json ./
+# Copy package files and prisma schema
+COPY package.json package-lock.json ./
 COPY prisma ./prisma/
 
-# Install dependencies with proper platform support
-# Use --ignore-scripts to skip problematic postinstall hooks (like husky)
-RUN npm install --legacy-peer-deps --ignore-scripts
+# Install ALL dependencies (including dev) for the build
+RUN npm ci --legacy-peer-deps --ignore-scripts
 
-# Manually run prisma generate (normally done in postinstall)
+# Generate Prisma Client
 RUN npx prisma generate
 
-# Explicitly install the Alpine Linux rollup binary
+# Install Alpine-specific rollup binary
 RUN npm install --no-save @rollup/rollup-linux-x64-musl
 
-# Copy application code
+# Copy source code and build
 COPY . .
-
-# Build the application
 RUN npm run build
 
-# Expose port
+# ── Stage 2: Production ──────────────────────────────────────────
+FROM node:22-alpine
+
+RUN apk add --no-cache openssl libc6-compat
+
+WORKDIR /app
+
+# Copy package files and install production deps only
+COPY package.json package-lock.json ./
+COPY prisma ./prisma/
+
+RUN npm ci --legacy-peer-deps --omit=dev --ignore-scripts
+
+# Re-generate Prisma Client in production image
+RUN npx prisma generate
+
+# Copy built application from builder stage
+COPY --from=builder /app/build ./build
+
+# Copy runtime files
+COPY server.js start.js remix.config.js ./
+COPY task-cleanup.service.js task-recovery.service.js ./
+COPY scripts ./scripts/
+
+# Copy middleware and other app files needed at runtime by server.js
+COPY app/middleware ./app/middleware/
+
 EXPOSE 3000
 
-# Start command (runs migrations then starts server)
 CMD ["npm", "run", "start"]

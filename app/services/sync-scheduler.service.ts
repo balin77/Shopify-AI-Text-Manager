@@ -22,7 +22,7 @@ interface SyncTimer {
 class SyncSchedulerService {
   private activeTimers: Map<string, SyncTimer> = new Map();
   private cleanupTimer: NodeJS.Timeout | null = null;
-  private readonly SYNC_INTERVAL_MS = 40000; // 40 seconds
+  private readonly SYNC_INTERVAL_MS = parseInt(process.env.SYNC_INTERVAL_MS || "60000", 10); // default 60s, configurable
   private readonly INACTIVITY_THRESHOLD_MINUTES = 5;
   private readonly CLEANUP_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
   private lastCleanup: Date | null = null;

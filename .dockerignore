@@ -1,0 +1,16 @@
+node_modules
+.git
+.gitignore
+*.md
+.env*
+.vscode
+.idea
+test-*.js
+test-*.cjs
+*.test.ts
+*.test.tsx
+*.spec.ts
+*.spec.tsx
+coverage
+.railway-force-deploy
+Dockerfile.lockgen
