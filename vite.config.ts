@@ -30,6 +30,12 @@ export default defineConfig({
       "react-router-dom",
     ],
   },
+  build: {
+    // Use a modern target to avoid esbuild failing to transpile Polaris
+    // destructuring patterns to legacy browser targets (chrome87/es2020).
+    // The app runs in Shopify Admin which always uses a modern browser.
+    target: "esnext",
+  },
   server: {
     port: 3000,
     allowedHosts: [

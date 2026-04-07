@@ -8,6 +8,7 @@ import { authenticate } from "../shopify.server";
 import { I18nProvider } from "../contexts/I18nContext";
 import { InfoBoxProvider } from "../contexts/InfoBoxContext";
 import { PlanProvider } from "../contexts/PlanContext";
+import { SeoSettingsProvider } from "../contexts/SeoSettingsContext";
 import { NavigationHeightProvider } from "../contexts/NavigationHeightContext";
 import { ItemSelectorProvider } from "../contexts/ItemSelectorContext";
 import { TaskCountProvider } from "../contexts/TaskCountContext";
@@ -58,6 +59,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       appLanguage: "en" as Locale,
       subscriptionPlan: "free" as Plan,
       aiSettings: null,
+      seoTitleSuffix: "",
     });
   }
 
@@ -87,6 +89,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         grokApiKey: true,
         deepseekApiKey: true,
         preferredProvider: true,
+        seoTitleSuffixEnabled: true,
+        seoTitleSuffix: true,
       },
     });
 
@@ -101,10 +105,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       aiSettings = buildAiSettingsFlags(null, decryptApiKey);
     }
 
+    const seoTitleSuffix = settings?.seoTitleSuffixEnabled && settings.seoTitleSuffix
+      ? settings.seoTitleSuffix
+      : "";
+
     return json({
       appLanguage,
       subscriptionPlan,
       aiSettings,
+      seoTitleSuffix,
     });
   } catch (error) {
     // Check if this is a redirect response (e.g., to /auth/login)
@@ -126,6 +135,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       appLanguage: "en" as Locale,
       subscriptionPlan: "free" as Plan,
       aiSettings: null,
+      seoTitleSuffix: "",
       loaderError: true,
     });
   }
@@ -182,12 +192,13 @@ function AppContent() {
 }
 
 export default function App() {
-  const { appLanguage, subscriptionPlan } = useLoaderData<typeof loader>();
+  const { appLanguage, subscriptionPlan, seoTitleSuffix } = useLoaderData<typeof loader>();
 
   return (
     <AppProvider i18n={{}}>
       <I18nProvider locale={appLanguage}>
         <PlanProvider plan={subscriptionPlan}>
+          <SeoSettingsProvider seoTitleSuffix={seoTitleSuffix ?? ""}>
           <InfoBoxProvider>
             <TaskCountProvider>
             <NavigationHeightProvider>
@@ -197,6 +208,7 @@ export default function App() {
             </NavigationHeightProvider>
             </TaskCountProvider>
           </InfoBoxProvider>
+          </SeoSettingsProvider>
         </PlanProvider>
       </I18nProvider>
     </AppProvider>
