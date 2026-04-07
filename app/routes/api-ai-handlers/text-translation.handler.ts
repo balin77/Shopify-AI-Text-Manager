@@ -413,7 +413,7 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
             const fieldKeyMap: Record<string, string> = {
               title: "title",
               description: "body_html",
-              body: "body_html",
+              body: contentType === 'policies' ? "body" : "body_html",
               handle: "handle",
               seoTitle: "meta_title",
               metaDescription: "meta_description",
@@ -811,7 +811,7 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
             const fieldKeyMap: Record<string, string> = {
               title: "title",
               description: "body_html",
-              body: "body_html",
+              body: contentType === 'policies' ? "body" : "body_html",
               handle: "handle",
               seoTitle: "meta_title",
               metaDescription: "meta_description",
