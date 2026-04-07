@@ -24,7 +24,7 @@ import { METAOBJECT_LABEL_FIELD_KEYS } from "~/constants/shopifyFields";
 /**
  * Get character limit requirements for a field based on its aiInstructionsKey
  */
-function getCharacterLimitRequirement(aiInstructionsKey: string): string | null {
+function getCharacterLimitRequirement(aiInstructionsKey: string, seoTitleMaxChars = 60): string | null {
   const limits: Record<string, string> = {
     // Titles: 30-70 characters
     productTitle: "30-70 characters",
@@ -39,11 +39,11 @@ function getCharacterLimitRequirement(aiInstructionsKey: string): string | null 
     pageDescription: "minimum 150 characters",
     policyDescription: "minimum 150 characters",
 
-    // SEO Titles: max 60 characters
-    productSeoTitle: "maximum 60 characters",
-    collectionSeoTitle: "maximum 60 characters",
-    blogSeoTitle: "maximum 60 characters",
-    pageSeoTitle: "maximum 60 characters",
+    // SEO Titles: adjusted for shop name suffix
+    productSeoTitle: `maximum ${seoTitleMaxChars} characters`,
+    collectionSeoTitle: `maximum ${seoTitleMaxChars} characters`,
+    blogSeoTitle: `maximum ${seoTitleMaxChars} characters`,
+    pageSeoTitle: `maximum ${seoTitleMaxChars} characters`,
 
     // Meta Descriptions: 120-160 characters
     productMetaDesc: "120-160 characters",
@@ -136,6 +136,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const settings = await db.aISettings.findUnique({
       where: { shop: session.shop }
     });
+
+    // Compute effective SEO title limit (accounts for shop name suffix appended by Shopify)
+    const seoTitleMaxChars = settings?.seoTitleSuffixEnabled && settings.seoTitleSuffix
+      ? 60 - settings.seoTitleSuffix.length
+      : 60;
 
     switch (actionType) {
       case "translateField": {
@@ -1380,7 +1385,7 @@ Return only the formatted text, without explanations.`;
         prompt += `\n\nRequirements:`;
 
         // Add character limit if available
-        const charLimit = genInstructionsKey ? getCharacterLimitRequirement(genInstructionsKey) : null;
+        const charLimit = genInstructionsKey ? getCharacterLimitRequirement(genInstructionsKey, seoTitleMaxChars) : null;
         if (charLimit) {
           prompt += `\n- Length: ${charLimit}`;
         }
@@ -1413,6 +1418,11 @@ Return only the formatted text, without explanations.`;
         // Add field-specific instructions (compact)
         if (fieldInstructions) {
           prompt += `\n\nGuidelines:\n${fieldInstructions}`;
+        }
+
+        // Hard length override — placed last so it wins over any conflicting instruction above
+        if (charLimit) {
+          prompt += `\n\nCRITICAL LENGTH CONSTRAINT: The output MUST be ${charLimit}. This overrides any other length or character count instruction in this prompt.`;
         }
 
         prompt += `\n\nIMPORTANT: Return ONLY the ${genFieldLabel}, nothing else. Output in ${mainLanguage}.`;

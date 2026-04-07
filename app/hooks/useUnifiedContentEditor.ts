@@ -745,7 +745,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       return () => clearTimeout(timer);
     }
     // Use selectedItemId instead of selectedItem to prevent re-runs on reference changes
-  }, [editableValues, selectedItemId, isLoadingData]);
+  }, [editableValues, selectedItemId, isLoadingData, revalidator.state]);
 
   // Retry mechanism: If all fields are empty but item has data, retry loading
   // NOTE: Disabled for templates because users can intentionally clear all fields

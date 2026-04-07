@@ -30,7 +30,7 @@ import type { AISettings, AIInstructions } from "@prisma/client";
 /**
  * Get character limit requirements for a field based on its aiInstructionsKey
  */
-function getCharacterLimitRequirement(aiInstructionsKey: string): string | null {
+function getCharacterLimitRequirement(aiInstructionsKey: string, seoTitleMaxChars = 60): string | null {
   const limits: Record<string, string> = {
     // Titles: 30-70 characters
     productTitle: "30-70 characters",
@@ -45,11 +45,11 @@ function getCharacterLimitRequirement(aiInstructionsKey: string): string | null 
     pageDescription: "minimum 150 characters",
     policyDescription: "minimum 150 characters",
 
-    // SEO Titles: max 60 characters
-    productSeoTitle: "maximum 60 characters",
-    collectionSeoTitle: "maximum 60 characters",
-    blogSeoTitle: "maximum 60 characters",
-    pageSeoTitle: "maximum 60 characters",
+    // SEO Titles: adjusted for shop name suffix
+    productSeoTitle: `maximum ${seoTitleMaxChars} characters`,
+    collectionSeoTitle: `maximum ${seoTitleMaxChars} characters`,
+    blogSeoTitle: `maximum ${seoTitleMaxChars} characters`,
+    pageSeoTitle: `maximum ${seoTitleMaxChars} characters`,
 
     // Meta Descriptions: 120-160 characters
     productMetaDesc: "120-160 characters",
@@ -119,6 +119,11 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
 
   const gateway = new ShopifyApiGateway(admin, session.shop);
   const shopifyContentService = new ShopifyContentService(gateway as any);
+
+  // Effective SEO title limit (accounts for shop name suffix appended by Shopify)
+  const seoTitleMaxChars = aiSettings?.seoTitleSuffixEnabled && aiSettings.seoTitleSuffix
+    ? 60 - aiSettings.seoTitleSuffix.length
+    : 60;
 
   // ============================================================================
   // LOAD TRANSLATIONS
@@ -221,7 +226,7 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
         prompt += `\n\nRequirements:`;
 
         // Add character limit if available
-        const charLimit = getCharacterLimitRequirement(instructionsKey || "");
+        const charLimit = getCharacterLimitRequirement(instructionsKey || "", seoTitleMaxChars);
         if (charLimit) {
           prompt += `\n- Length: ${charLimit}`;
         }
@@ -255,6 +260,11 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
           prompt += `\n\nGuidelines:\n${fieldInstructions}`;
         }
 
+        // Hard length override — placed last so it wins over any conflicting instruction above
+        if (charLimit) {
+          prompt += `\n\nCRITICAL LENGTH CONSTRAINT: The output MUST be ${charLimit}. This overrides any other length or character count instruction in this prompt.`;
+        }
+
         prompt += `\n\nIMPORTANT: Return ONLY the ${field.label}, nothing else. Output in ${mainLanguage}.`;
         generatedContent = await aiServiceWithTask.generateProductTitle(prompt);
         if (!generatedContent || !generatedContent.trim()) throw new Error("AI returned empty response");
@@ -286,7 +296,7 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
         prompt += `\n\nRequirements:`;
 
         // Add character limit if available
-        const charLimitHtml = getCharacterLimitRequirement(instructionsKey || "");
+        const charLimitHtml = getCharacterLimitRequirement(instructionsKey || "", seoTitleMaxChars);
         if (charLimitHtml) {
           prompt += `\n- Length: ${charLimitHtml}`;
         }
@@ -315,6 +325,11 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
         // Add field-specific instructions (compact)
         if (fieldInstructions) {
           prompt += `\n\nGuidelines:\n${fieldInstructions}`;
+        }
+
+        // Hard length override — placed last so it wins over any conflicting instruction above
+        if (charLimitHtml) {
+          prompt += `\n\nCRITICAL LENGTH CONSTRAINT: The output MUST be ${charLimitHtml}. This overrides any other length or character count instruction in this prompt.`;
         }
 
         prompt += `\n\nIMPORTANT: Return ONLY the ${field.label}, nothing else. Output in ${mainLanguage}.`;

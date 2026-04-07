@@ -66,6 +66,10 @@ model AISettings {
   deepseekMaxTokensPerMinute   Int? @default(100000)
   deepseekMaxRequestsPerMinute Int? @default(60)
 
+  // SEO Title suffix (shop name appended by Shopify theme)
+  seoTitleSuffixEnabled Boolean @default(false)
+  seoTitleSuffix        String? // e.g., " – Patis Universe"
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
