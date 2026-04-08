@@ -67,6 +67,8 @@ export interface TranslatableContentItem {
   definitionName?: string; // For metaobjects
   fields?: Array<{ key: string; value: string | null; type?: string }>; // For metaobjects
   metaobjects?: Array<{ id: string; handle?: string; displayName?: string; fields?: Array<{ key: string; value: string | null }> }>; // For metaobject types
+  /** Flattened menu links with their Shopify resource IDs (for menu translation) */
+  menuLinks?: Array<{ resourceId: string; title: string; menuItemId: string }>;
   options?: Array<{
     id: string;           // gid://shopify/ProductOption/...
     name: string;
@@ -199,7 +201,7 @@ export interface TranslationStrings {
   [key: string]: Record<string, TranslationValue> | Record<string, HelpContent> | undefined;
 }
 
-export type ContentType = 'products' | 'collections' | 'blogs' | 'pages' | 'policies' | 'templates' | 'metaobjects';
+export type ContentType = 'products' | 'collections' | 'blogs' | 'pages' | 'policies' | 'templates' | 'menus' | 'metaobjects';
 
 export type FieldType = 'text' | 'html' | 'slug' | 'textarea' | 'number' | 'image-gallery' | 'options';
 

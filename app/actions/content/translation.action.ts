@@ -156,6 +156,143 @@ async function translateMetaobjectEntries(params: {
 }
 
 // ============================================================================
+// MENU TRANSLATION HELPER
+// ============================================================================
+
+/**
+ * Translate menu links (and optionally the menu title) to target locales.
+ *
+ * Each menu link is a separate LINK resource in Shopify's translation system.
+ * The menu title itself is a MENU resource. All share the same translatable
+ * key: "title".
+ *
+ * Uses short keys (menu_title, link_0, link_1, ...) for the AI prompt, then
+ * maps back to the real resource GIDs when saving to Shopify.
+ */
+async function translateMenuEntries(params: {
+  admin: AdminApiContext;
+  session: Session;
+  db: PrismaClient;
+  menuId: string;
+  menuFields: Record<string, string>; // resourceId → primary-locale title
+  targetLocales: string[];
+  translationService: TranslationService;
+  customInstructions?: string;
+}): Promise<{ translations: Record<string, Record<string, string>>; failedLocales: string[] }> {
+  const { admin, session, db, menuId, menuFields, targetLocales, translationService, customInstructions } = params;
+  const { TRANSLATE_CONTENT } = await import("../../graphql/content.mutations");
+  const { GET_TRANSLATABLE_CONTENT } = await import("../../graphql/content.queries");
+
+  // Build short-key mapping for cleaner AI prompts
+  const resourceIds = Object.keys(menuFields);
+  const gidToShort: Record<string, string> = {};
+  const shortToGid: Record<string, string> = {};
+  const shortFields: Record<string, string> = {};
+
+  resourceIds.forEach((resourceId, i) => {
+    const isMenuTitle = resourceId === menuId;
+    const short = isMenuTitle ? "menu_title" : `link_${i}`;
+    gidToShort[resourceId] = short;
+    shortToGid[short] = resourceId;
+    shortFields[short] = menuFields[resourceId];
+  });
+
+  // AI translation (all entries × all locales in one request)
+  const aiResult = await translationService.translateProduct(
+    shortFields,
+    targetLocales,
+    "menu",
+    customInstructions,
+  );
+
+  // Map AI results back to resource ID keys
+  const allTranslations: Record<string, Record<string, string>> = {};
+  const failedLocales: string[] = [];
+
+  for (const locale of targetLocales) {
+    const localeResult = aiResult[locale];
+    if (!localeResult || Object.keys(localeResult).length === 0) {
+      failedLocales.push(locale);
+      continue;
+    }
+    allTranslations[locale] = {};
+    for (const [shortKey, value] of Object.entries(localeResult)) {
+      const resourceId = shortToGid[shortKey];
+      if (resourceId && value) {
+        allTranslations[locale][resourceId] = String(value);
+      }
+    }
+  }
+
+  // Save translations to Shopify + DB for each resource × locale
+  for (const [locale, fieldMap] of Object.entries(allTranslations)) {
+    for (const [resourceId, translatedValue] of Object.entries(fieldMap)) {
+      try {
+        // Fetch digest for this resource's "title" field
+        const digestResponse = await admin.graphql(GET_TRANSLATABLE_CONTENT, {
+          variables: { resourceId },
+        });
+        const digestData = await digestResponse.json();
+        const tc: Array<{ key: string; digest: string }> =
+          digestData.data?.translatableResource?.translatableContent || [];
+        const digestEntry = tc.find((c) => c.key === "title");
+        if (!digestEntry?.digest) {
+          logger.warn("[translateMenuEntries] No digest for title", { resourceId, locale });
+          continue;
+        }
+
+        // Register translation
+        await admin.graphql(TRANSLATE_CONTENT, {
+          variables: {
+            resourceId,
+            translations: [{
+              key: "title",
+              value: translatedValue,
+              locale,
+              translatableContentDigest: digestEntry.digest,
+            }],
+          },
+        });
+
+        // Upsert DB
+        const resourceType = resourceId === menuId ? "Menu" : "Link";
+        await db.contentTranslation.upsert({
+          where: {
+            shop_resourceId_key_locale: {
+              shop: session.shop,
+              resourceId,
+              key: "title",
+              locale,
+            },
+          },
+          create: {
+            shop: session.shop,
+            resourceId,
+            resourceType,
+            key: "title",
+            value: translatedValue,
+            locale,
+            digest: digestEntry.digest,
+          },
+          update: {
+            value: translatedValue,
+            resourceType,
+            digest: digestEntry.digest,
+          },
+        });
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        logger.error("[translateMenuEntries] Error saving translation", {
+          context: "Menus", resourceId, locale, error: errMsg,
+        });
+      }
+    }
+  }
+
+  return { translations: allTranslations, failedLocales };
+}
+
+// ============================================================================
 // TRANSLATE FIELD
 // ============================================================================
 
@@ -276,10 +413,18 @@ export async function handleTranslateAll(
   try {
     const changedFields: Record<string, string> = {};
 
-    // Collect field values - for metaobjects, extract GID-based keys from formData
+    // Collect field values — metaobjects and menus use GID-based keys
     if (contentConfig.resourceType === "Metaobject") {
       for (const [key, value] of formData.entries()) {
         if (key.startsWith("gid://shopify/Metaobject/") && String(value).trim()) {
+          changedFields[key] = String(value);
+        }
+      }
+    } else if (contentConfig.resourceType === "Menu") {
+      const menuTitle = getFormString(formData, "title");
+      if (menuTitle) changedFields[itemId] = menuTitle;
+      for (const [key, value] of formData.entries()) {
+        if (key.startsWith("gid://shopify/") && key !== itemId && String(value).trim()) {
           changedFields[key] = String(value);
         }
       }
@@ -321,6 +466,34 @@ export async function handleTranslateAll(
       const result = await translateMetaobjectEntries({
         admin, session, db, itemId,
         metaobjectFields: changedFields,
+        targetLocales,
+        translationService: translationServiceWithTask,
+        customInstructions: translateInstructionsAll || undefined,
+      });
+
+      await db.task.update({
+        where: { id: task.id },
+        data: {
+          status: result.failedLocales.length > 0 ? "completed_with_errors" : "completed",
+          progress: 100,
+          completedAt: new Date(),
+          result: JSON.stringify({
+            success: true,
+            locales: Object.keys(result.translations),
+            failedLocales: result.failedLocales,
+          }),
+        },
+      });
+
+      return json({ actionType: "translateAll", success: true, translations: result.translations, failedLocales: result.failedLocales, rejectedFields: {}, skippedFields: {} });
+    }
+
+    // Menus need custom translation flow: menu title + each link is a separate Shopify resource
+    if (contentConfig.resourceType === "Menu") {
+      const targetLocales = targetLocalesStr ? safeJsonParse<string[]>(targetLocalesStr, []) : [];
+      const result = await translateMenuEntries({
+        admin, session, db, menuId: itemId,
+        menuFields: changedFields,
         targetLocales,
         translationService: translationServiceWithTask,
         customInstructions: translateInstructionsAll || undefined,
@@ -429,10 +602,18 @@ export async function handleTranslateAllForLocale(
   try {
     const changedFields: Record<string, string> = {};
 
-    // Collect field values - for metaobjects, extract GID-based keys from formData
+    // Collect field values — metaobjects and menus use GID-based keys
     if (contentConfig.resourceType === "Metaobject") {
       for (const [key, value] of formData.entries()) {
         if (key.startsWith("gid://shopify/Metaobject/") && String(value).trim()) {
+          changedFields[key] = String(value);
+        }
+      }
+    } else if (contentConfig.resourceType === "Menu") {
+      const menuTitle = getFormString(formData, "title");
+      if (menuTitle) changedFields[itemId] = menuTitle;
+      for (const [key, value] of formData.entries()) {
+        if (key.startsWith("gid://shopify/") && key !== itemId && String(value).trim()) {
           changedFields[key] = String(value);
         }
       }
@@ -473,6 +654,31 @@ export async function handleTranslateAllForLocale(
       const result = await translateMetaobjectEntries({
         admin, session, db, itemId,
         metaobjectFields: changedFields,
+        targetLocales: [targetLocale],
+        translationService: translationServiceWithTask,
+        customInstructions: translateInstructionsForLocale || undefined,
+      });
+
+      const translations = result.translations[targetLocale] || {};
+
+      await db.task.update({
+        where: { id: task.id },
+        data: {
+          status: result.failedLocales.length > 0 ? "completed_with_errors" : "completed",
+          progress: 100,
+          completedAt: new Date(),
+          result: JSON.stringify({ success: true, targetLocale, translations, failedLocales: result.failedLocales }),
+        },
+      });
+
+      return json({ actionType: "translateAllForLocale", success: true, translations, targetLocale, failedLocales: result.failedLocales, rejectedFields: {}, skippedFields: {} });
+    }
+
+    // Menus need custom translation flow
+    if (contentConfig.resourceType === "Menu") {
+      const result = await translateMenuEntries({
+        admin, session, db, menuId: itemId,
+        menuFields: changedFields,
         targetLocales: [targetLocale],
         translationService: translationServiceWithTask,
         customInstructions: translateInstructionsForLocale || undefined,

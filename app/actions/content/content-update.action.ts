@@ -274,6 +274,142 @@ export async function handleUpdateContent(
       return json({ success: true, actionType: "updateContent" });
     }
 
+    // Special handling for Menus
+    // Menu title is a MENU resource; each link is a separate LINK resource.
+    // We handle them individually, similar to Metaobjects.
+    if (contentConfig.resourceType === "Menu") {
+      const { TRANSLATE_CONTENT, REMOVE_TRANSLATIONS } = await import("../../graphql/content.mutations");
+      const { GET_TRANSLATABLE_CONTENT } = await import("../../graphql/content.queries");
+
+      // The "title" field maps to the menu's own GID. All other fields are link GIDs.
+      const menuUpdates: Array<{ resourceId: string; value: string; isMenuTitle: boolean }> = [];
+
+      for (const [key, rawValue] of formData.entries()) {
+        const value = String(rawValue);
+        if (key === "title") {
+          menuUpdates.push({ resourceId: itemId, value, isMenuTitle: true });
+        } else if (key.startsWith("gid://shopify/")) {
+          menuUpdates.push({ resourceId: key, value, isMenuTitle: false });
+        }
+      }
+
+      if (menuUpdates.length === 0) {
+        return json({ success: true, actionType: "updateContent" });
+      }
+
+      const errors: string[] = [];
+
+      for (const update of menuUpdates) {
+        try {
+          if (locale === primaryLocale) {
+            // Primary locale: Menu titles and link titles are read-only in Shopify
+            // (no mutation to update them). Skip silently.
+            logger.debug("[UnifiedContent] Skipping primary-locale menu update (read-only)", {
+              context: "Menus", resourceId: update.resourceId,
+            });
+            continue;
+          }
+
+          if (update.value.trim() === "") {
+            // Empty value → remove translation
+            const removeResponse = await admin.graphql(REMOVE_TRANSLATIONS, {
+              variables: {
+                resourceId: update.resourceId,
+                translationKeys: ["title"],
+                locales: [locale],
+              },
+            });
+            const removeData = await removeResponse.json();
+            if (removeData.data?.translationsRemove?.userErrors?.length > 0) {
+              errors.push(removeData.data.translationsRemove.userErrors[0].message);
+            } else {
+              await db.contentTranslation.deleteMany({
+                where: {
+                  shop: session.shop,
+                  resourceId: update.resourceId,
+                  key: "title",
+                  locale,
+                },
+              });
+            }
+          } else {
+            // Non-empty value → fetch digest and register translation
+            const digestResponse = await admin.graphql(GET_TRANSLATABLE_CONTENT, {
+              variables: { resourceId: update.resourceId },
+            });
+            const digestData = await digestResponse.json();
+            const translatableContent: Array<{ key: string; digest: string }> =
+              digestData.data?.translatableResource?.translatableContent || [];
+            const digestEntry = translatableContent.find((c) => c.key === "title");
+
+            if (!digestEntry?.digest) {
+              errors.push(`No digest found for ${update.resourceId} title`);
+              continue;
+            }
+
+            const translateResponse = await admin.graphql(TRANSLATE_CONTENT, {
+              variables: {
+                resourceId: update.resourceId,
+                translations: [{
+                  key: "title",
+                  value: update.value,
+                  locale,
+                  translatableContentDigest: digestEntry.digest,
+                }],
+              },
+            });
+            const translateData = await translateResponse.json();
+            if (translateData.data?.translationsRegister?.userErrors?.length > 0) {
+              errors.push(translateData.data.translationsRegister.userErrors[0].message);
+            } else {
+              const resourceType = update.isMenuTitle ? "Menu" : "Link";
+              await db.contentTranslation.upsert({
+                where: {
+                  shop_resourceId_key_locale: {
+                    shop: session.shop,
+                    resourceId: update.resourceId,
+                    key: "title",
+                    locale,
+                  },
+                },
+                create: {
+                  shop: session.shop,
+                  resourceId: update.resourceId,
+                  resourceType,
+                  key: "title",
+                  value: update.value,
+                  locale,
+                  digest: digestEntry.digest,
+                },
+                update: {
+                  value: update.value,
+                  resourceType,
+                  digest: digestEntry.digest,
+                },
+              });
+            }
+          }
+        } catch (err) {
+          const errMsg = err instanceof Error ? err.message : String(err);
+          errors.push(`${update.resourceId}: ${errMsg}`);
+        }
+      }
+
+      if (errors.length > 0) {
+        logger.error("[UnifiedContent] Menu update errors", { context: "Menus", errors });
+        return json({
+          success: false,
+          error: `Some updates failed: ${errors.join("; ")}`,
+          actionType: "updateContent",
+        }, { status: 500 });
+      }
+
+      logger.info("[UnifiedContent] Menu translations updated successfully", {
+        context: "Menus", count: menuUpdates.length, locale,
+      });
+      return json({ success: true, actionType: "updateContent" });
+    }
+
     // For other content types (Collections, Pages, Blogs, Policies), use unified service
     // Determine the actual resource type — for blogs, the config says "Article" but
     // Blog container items have GIDs like gid://shopify/Blog/123.

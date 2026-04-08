@@ -57,7 +57,26 @@ interface ShopifyMenuData {
   id: string;
   title: string;
   handle: string;
-  items: unknown[];
+  items: ShopifyMenuItem[];
+}
+
+/** A single menu item (link) from Shopify */
+interface ShopifyMenuItem {
+  id: string;
+  title: string;
+  url: string | null;
+  type: string;
+  items?: ShopifyMenuItem[];
+}
+
+/** Link resource mapping discovered via translatableResources API */
+interface MenuLinkResource {
+  /** Shopify resource ID for this link (used with translationsRegister) */
+  resourceId: string;
+  /** The link's title in the primary locale */
+  title: string;
+  /** Digest required for translationsRegister */
+  digest: string | null;
 }
 
 export class ContentSyncService {
@@ -191,9 +210,13 @@ export class ContentSyncService {
   // ============================================
 
   /**
-   * Sync a single menu with its items structure
+   * Sync a single menu with its items structure and translations.
+   *
+   * Menu translations use Shopify's MENU/LINK translatable resource types.
+   * The menu title is a MENU resource, each menu item is a LINK resource.
+   * Link resource IDs are stored alongside menu data for translation support.
    */
-  async syncMenu(menuId: string): Promise<void> {
+  async syncMenu(menuId: string, forceSync = false): Promise<void> {
     logger.debug(`[ContentSync] Starting sync for menu: ${menuId}`);
 
     try {
@@ -205,8 +228,34 @@ export class ContentSyncService {
         return;
       }
 
-      // 2. Save to database (menus don't have translations via API)
-      await this.saveMenuToDatabase(menuData);
+      // 2. Fetch all available locales
+      const locales = await fetchShopLocales(this.graphqlFn());
+
+      // 3. Discover link resource IDs via translatableResources API
+      const linkResources = await this.fetchMenuLinkResources(menuId);
+
+      // 4. Fetch translations for the menu title (MENU resource)
+      const menuTranslations = await fetchAllTranslations(
+        this.graphqlFn(), menuId, locales.filter((l) => !l.primary), "Menu"
+      );
+
+      // 5. Fetch translations for each link (LINK resource)
+      // Each link is a separate resource — we must preserve the mapping.
+      const linkTranslationsByResource: Array<{ resourceId: string; translations: ResolvedTranslation[] }> = [];
+      for (const link of linkResources) {
+        const translations = await fetchAllTranslations(
+          this.graphqlFn(), link.resourceId, locales.filter((l) => !l.primary), "Link"
+        );
+        if (translations.length > 0) {
+          linkTranslationsByResource.push({ resourceId: link.resourceId, translations });
+        }
+      }
+
+      const totalLinkTranslations = linkTranslationsByResource.reduce((sum, lt) => sum + lt.translations.length, 0);
+      logger.debug(`[ContentSync] Menu translations: ${menuTranslations.length}, Link translations: ${totalLinkTranslations}`);
+
+      // 6. Save to database
+      await this.saveMenuToDatabase(menuData, linkResources, menuTranslations, linkTranslationsByResource, forceSync);
 
       logger.debug(`[ContentSync] Successfully synced menu: ${menuId}`);
     } catch (error) {
@@ -379,6 +428,58 @@ export class ContentSyncService {
       throw new Error(`GraphQL error in fetchMenuData: ${data.errors[0].message}`);
     }
     return data.data?.menu || null;
+  }
+
+  /**
+   * Discover link resource IDs for a menu via translatableResource API.
+   *
+   * Uses the menu's GID to fetch nested LINK resources. Each link's resourceId
+   * is the GID needed for translationsRegister calls.
+   */
+  private async fetchMenuLinkResources(menuId: string): Promise<MenuLinkResource[]> {
+    try {
+      const response = await this.admin.graphql(
+        `#graphql
+          query getMenuLinks($id: ID!) {
+            translatableResource(resourceId: $id) {
+              nestedTranslatableResources(first: 250, resourceType: LINK) {
+                edges {
+                  node {
+                    resourceId
+                    translatableContent {
+                      key
+                      value
+                      digest
+                    }
+                  }
+                }
+              }
+            }
+          }`,
+        { variables: { id: menuId } }
+      );
+
+      const data = await response.json();
+      if (data.errors?.length > 0) {
+        logger.warn(`[ContentSync] GraphQL error fetching menu link resources: ${data.errors[0].message}`);
+        return [];
+      }
+
+      const edges: Array<{ node: { resourceId: string; translatableContent: Array<{ key: string; value: string; digest: string }> } }>
+        = data.data?.translatableResource?.nestedTranslatableResources?.edges || [];
+
+      return edges.map((edge) => {
+        const titleContent = edge.node.translatableContent.find((c) => c.key === "title");
+        return {
+          resourceId: edge.node.resourceId,
+          title: titleContent?.value || "",
+          digest: titleContent?.digest || null,
+        };
+      });
+    } catch (error) {
+      logger.warn(`[ContentSync] Error fetching menu link resources for ${menuId}:`, error);
+      return [];
+    }
   }
 
 
@@ -562,33 +663,101 @@ export class ContentSyncService {
     logger.debug(`[ContentSync] ✓ Transaction completed successfully for article ${articleData.id}`);
   }
 
-  private async saveMenuToDatabase(menuData: ShopifyMenuData) {
+  private async saveMenuToDatabase(
+    menuData: ShopifyMenuData,
+    linkResources: MenuLinkResource[] = [],
+    menuTranslations: ResolvedTranslation[] = [],
+    linkTranslationsByResource: Array<{ resourceId: string; translations: ResolvedTranslation[] }> = [],
+    forceSync = false,
+  ) {
     const { db } = await import("../db.server");
 
     logger.debug(`[ContentSync] Saving menu to database: ${menuData.id}`);
 
-    // Upsert menu
-    await db.menu.upsert({
-      where: {
-        shop_id: {
-          shop: this.shop,
-          id: menuData.id,
+    // Build link resource map as JSON for storage alongside items
+    const linkResourceMap: Record<string, { resourceId: string; title: string }> = {};
+    for (const link of linkResources) {
+      linkResourceMap[link.resourceId] = {
+        resourceId: link.resourceId,
+        title: link.title,
+      };
+    }
+
+    await db.$transaction(async (tx) => {
+      // Upsert menu with link resource map
+      await tx.menu.upsert({
+        where: {
+          shop_id: {
+            shop: this.shop,
+            id: menuData.id,
+          },
         },
-      },
-      create: {
-        id: menuData.id,
-        shop: this.shop,
-        title: menuData.title,
-        handle: menuData.handle,
-        items: (menuData.items || []) as Prisma.InputJsonValue,
-        lastSyncedAt: new Date(),
-      },
-      update: {
-        title: menuData.title,
-        handle: menuData.handle,
-        items: (menuData.items || []) as Prisma.InputJsonValue,
-        lastSyncedAt: new Date(),
-      },
+        create: {
+          id: menuData.id,
+          shop: this.shop,
+          title: menuData.title,
+          handle: menuData.handle,
+          items: JSON.parse(JSON.stringify(menuData.items || [])) as Prisma.InputJsonValue,
+          linkResources: linkResourceMap as unknown as Prisma.InputJsonValue,
+          lastSyncedAt: new Date(),
+        },
+        update: {
+          title: menuData.title,
+          handle: menuData.handle,
+          items: JSON.parse(JSON.stringify(menuData.items || [])) as Prisma.InputJsonValue,
+          linkResources: linkResourceMap as unknown as Prisma.InputJsonValue,
+          lastSyncedAt: new Date(),
+        },
+      });
+
+      // Sync translations
+      if (!forceSync && isTranslationRecentlySaved(menuData.id)) {
+        logger.info(`[ContentSync] Skipping translation sync for menu - recently saved by user`, { menuId: menuData.id });
+      } else {
+        // Delete old translations for the menu title
+        await tx.contentTranslation.deleteMany({
+          where: { shop: this.shop, resourceId: menuData.id, resourceType: "Menu" },
+        });
+
+        // Delete old translations for all links in this menu
+        const linkResourceIds = linkResources.map((l) => l.resourceId);
+        if (linkResourceIds.length > 0) {
+          await tx.contentTranslation.deleteMany({
+            where: { shop: this.shop, resourceId: { in: linkResourceIds }, resourceType: "Link" },
+          });
+        }
+
+        // Build flat list of ContentTranslation records with correct resourceIds
+        const translationRecords: Array<{
+          shop: string; resourceId: string; resourceType: string;
+          key: string; value: string; locale: string; digest: string | null;
+        }> = [];
+
+        // Menu title translations → resourceId = menu GID
+        for (const t of menuTranslations) {
+          if (t.value == null) continue;
+          translationRecords.push({
+            shop: this.shop, resourceId: menuData.id, resourceType: "Menu",
+            key: t.key, value: t.value, locale: t.locale, digest: t.digest || null,
+          });
+        }
+
+        // Link translations → resourceId = link GID
+        for (const { resourceId, translations } of linkTranslationsByResource) {
+          for (const t of translations) {
+            if (t.value == null) continue;
+            translationRecords.push({
+              shop: this.shop, resourceId, resourceType: "Link",
+              key: t.key, value: t.value, locale: t.locale, digest: t.digest || null,
+            });
+          }
+        }
+
+        if (translationRecords.length > 0) {
+          await tx.contentTranslation.createMany({ data: translationRecords });
+          logger.debug(`[ContentSync] ✓ Saved ${translationRecords.length} menu/link translations`);
+        }
+      }
     });
 
     logger.debug(`[ContentSync] ✓ Menu saved successfully`);

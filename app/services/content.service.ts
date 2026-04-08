@@ -215,7 +215,7 @@ export class ContentService {
 
   async getMenus(first: number = 50) {
     try {
-      logger.debug('Fetching menus (simplified - no translations)', { context: 'ContentService' });
+      logger.debug('Fetching menus (translations handled via MENU/LINK resource types)', { context: 'ContentService' });
 
       const response = await this.admin.graphql(GET_MENUS, {
         variables: { first }
@@ -224,7 +224,7 @@ export class ContentService {
 
       const menus = data.data?.menus?.edges?.map((edge: GraphQLEdge<Record<string, unknown>>) => ({
         ...edge.node,
-        translations: [] // Menus cannot be translated via API
+        translations: [] // Translations loaded separately via Menu/Link resource types
       })) || [];
 
       logger.debug('Menus fetched', { context: 'ContentService', count: menus.length });
