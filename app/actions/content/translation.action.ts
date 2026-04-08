@@ -178,7 +178,7 @@ export async function handleTranslateField(
       shop: session.shop,
       type: "translation",
       status: "pending",
-      resourceType: contentConfig.resourceType,
+      resourceType: getEffectiveResourceType(itemId, contentConfig.resourceType),
       resourceId: itemId,
       fieldType,
       targetLocale,
@@ -264,7 +264,7 @@ export async function handleTranslateAll(
       shop: session.shop,
       type: "bulkTranslation",
       status: "pending",
-      resourceType: contentConfig.resourceType,
+      resourceType: getEffectiveResourceType(itemId, contentConfig.resourceType),
       resourceId: itemId,
       resourceTitle: contextTitle,
       fieldType: "all",
@@ -345,7 +345,7 @@ export async function handleTranslateAll(
 
     const result = await shopifyContentService.translateAllContent({
       resourceId: itemId,
-      resourceType: contentConfig.resourceType,
+      resourceType: getEffectiveResourceType(itemId, contentConfig.resourceType),
       shop: session.shop,
       fields: changedFields,
       translationService: translationServiceWithTask,
@@ -416,7 +416,7 @@ export async function handleTranslateAllForLocale(
       shop: session.shop,
       type: "bulkTranslation",
       status: "pending",
-      resourceType: contentConfig.resourceType,
+      resourceType: getEffectiveResourceType(itemId, contentConfig.resourceType),
       resourceId: itemId,
       resourceTitle: contextTitle,
       targetLocale,
@@ -496,7 +496,7 @@ export async function handleTranslateAllForLocale(
     // Translate to only ONE specific locale
     const result = await shopifyContentService.translateAllContent({
       resourceId: itemId,
-      resourceType: contentConfig.resourceType,
+      resourceType: getEffectiveResourceType(itemId, contentConfig.resourceType),
       shop: session.shop,
       fields: changedFields,
       translationService: translationServiceWithTask,
@@ -572,7 +572,7 @@ export async function handleTranslateFieldToAllLocales(
       shop: session.shop,
       type: "bulkTranslation",
       status: "pending",
-      resourceType: contentConfig.resourceType,
+      resourceType: getEffectiveResourceType(itemId, contentConfig.resourceType),
       resourceId: itemId,
       resourceTitle: contextTitle,
       fieldType,
@@ -610,7 +610,7 @@ export async function handleTranslateFieldToAllLocales(
 
     const result = await shopifyContentService.translateAllContent({
       resourceId: itemId,
-      resourceType: contentConfig.resourceType,
+      resourceType: getEffectiveResourceType(itemId, contentConfig.resourceType),
       shop: session.shop,
       fields: changedFields,
       translationService: translationServiceWithTask,

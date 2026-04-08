@@ -330,11 +330,30 @@ export function UnifiedItemList({
         {/* Thumbnail with optional Category Badge overlay */}
         {showThumbnails && (
           <div style={{ position: "relative", flexShrink: 0 }}>
+            {item.featuredImage?.url ? (
             <Thumbnail
-              source={item.featuredImage?.url || ""}
-              alt={item.featuredImage?.altText || item.title || ""}
+              source={item.featuredImage.url}
+              alt={item.featuredImage.altText || item.title || ""}
               size="small"
             />
+            ) : (
+              <div
+                style={{
+                  width: "40px",
+                  height: "40px",
+                  borderRadius: "8px",
+                  backgroundColor: "#f1f1f1",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: "10px",
+                  color: "#8c9196",
+                  fontWeight: 500,
+                }}
+              >
+                Title
+              </div>
+            )}
             {/* Category Badge overlay on thumbnail */}
             {showCategoryBadge && item.category && (
               <div
