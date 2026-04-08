@@ -114,6 +114,53 @@ export const loader = createContentLoader({
       }
     }
 
+    // Sync translations for blog containers that have none yet.
+    // Blog containers are not stored in a dedicated DB model, but their
+    // translations are stored in contentTranslation with resourceType "Blog".
+    if (blogs.length > 0 && ctx.shopLocales.length > 1) {
+      try {
+        const blogIds = blogs.map((b) => b.id);
+        const existingBlogTranslations = await ctx.db.contentTranslation.groupBy({
+          by: ["resourceId"],
+          where: { shop: ctx.session.shop, resourceType: "Blog", resourceId: { in: blogIds } },
+        });
+        const blogIdsWithTranslations = new Set(existingBlogTranslations.map((g: { resourceId: string }) => g.resourceId));
+        const blogIdsWithoutTranslations = blogIds.filter((id) => !blogIdsWithTranslations.has(id));
+        if (blogIdsWithoutTranslations.length > 0) {
+          const { logger } = await import("../utils/logger.server");
+          const { fetchAllTranslations } = await import("../services/sync-utils");
+          logger.info(`[BLOG-LOADER] Backfilling translations for ${blogIdsWithoutTranslations.length} blog container(s)`);
+          const nonPrimaryLocales = ctx.shopLocales
+            .filter((l) => !l.primary)
+            .map((l) => ({ ...l, published: true }));
+          await Promise.allSettled(blogIdsWithoutTranslations.map(async (blogId) => {
+            const translations = await fetchAllTranslations(
+              ctx.admin.graphql.bind(ctx.admin),
+              blogId,
+              nonPrimaryLocales,
+              "Blog",
+            );
+            const valid = translations.filter((t) => t.value != null && t.value !== undefined);
+            if (valid.length > 0) {
+              await ctx.db.contentTranslation.createMany({
+                data: valid.map((t) => ({
+                  shop: ctx.session.shop,
+                  resourceId: blogId,
+                  resourceType: "Blog",
+                  key: t.key,
+                  value: t.value,
+                  locale: t.locale,
+                  digest: t.digest || null,
+                })),
+              });
+            }
+          }));
+        }
+      } catch {
+        // Non-fatal: translations will be loaded on next reload
+      }
+    }
+
     interface ArticleRow {
       id: string;
       blogId: string;
@@ -129,6 +176,8 @@ export const loader = createContentLoader({
     }
 
     // Build Blog container items (appear as section headers in the list)
+    // NOTE: Do NOT set translations here — the loader factory attaches them
+    // from the DB. Setting translations: [] would prevent that ([] is truthy).
     const blogItems = blogs.map((blog) => ({
       id: blog.id,
       title: blog.title,
@@ -139,7 +188,6 @@ export const loader = createContentLoader({
         title: blog.seoTitle?.value ?? null,
         description: blog.seoDescription?.value ?? null,
       },
-      translations: [],
       images: [],
     }));
 
