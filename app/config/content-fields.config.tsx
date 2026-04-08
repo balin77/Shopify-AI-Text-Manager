@@ -410,6 +410,73 @@ export const TEMPLATES_CONFIG: ContentEditorConfig = {
 };
 
 // ============================================================================
+// MENUS
+// ============================================================================
+
+/** Represents a flattened menu link used for dynamic field generation */
+interface MenuLink {
+  resourceId: string;
+  title: string;
+  menuItemId: string;
+}
+
+export const MENUS_CONFIG: ContentEditorConfig = {
+  contentType: "menus",
+  resourceType: "Menu",
+  displayName: "Menus",
+  displayNameSingular: "Menu",
+  showSeoSidebar: false,
+  idPrefix: "ID:",
+  getSubtitle: (item) => {
+    const count = item.menuLinks?.length ?? 0;
+    return `${count} ${count === 1 ? 'link' : 'links'}`;
+  },
+
+  // Menus use dynamic fields — menu title + one field per link
+  fieldDefinitions: [],
+  dynamicFields: true,
+
+  getFieldDefinitions: (item) => {
+    const fields: import("../types/content-editor.types").FieldDefinition[] = [
+      {
+        key: "title",
+        type: "text",
+        label: "Menu Title",
+        translationKey: "title",
+        supportsAI: false,
+        supportsFormatting: false,
+        supportsTranslation: true,
+      },
+    ];
+
+    if (!item?.menuLinks || !Array.isArray(item.menuLinks)) return fields;
+
+    for (const link of item.menuLinks as MenuLink[]) {
+      fields.push({
+        key: link.resourceId,
+        type: "text",
+        label: link.title || link.resourceId.split("/").pop() || "Link",
+        translationKey: link.resourceId,
+        supportsAI: false,
+        supportsFormatting: false,
+        supportsTranslation: true,
+      });
+    }
+
+    return fields;
+  },
+
+  getFieldValue: (item, fieldKey) => {
+    if (fieldKey === "title") return item.title || "";
+
+    if (!item?.menuLinks || !Array.isArray(item.menuLinks)) return "";
+
+    const link = (item.menuLinks as MenuLink[]).find((l) => l.resourceId === fieldKey);
+    return link?.title || "";
+  },
+};
+
+// ============================================================================
 // METAOBJECTS
 // ============================================================================
 
