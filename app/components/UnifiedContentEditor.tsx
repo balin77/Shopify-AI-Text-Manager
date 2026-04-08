@@ -825,7 +825,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
         </div>
 
         {/* Right: Optional Sidebar (Fixed) - Hidden on narrow screens via CSS */}
-        {selectedItem && config.showSeoSidebar && (
+        {selectedItem && config.showSeoSidebar && !selectedItem.isBlogContainer && (
           <div className="seo-sidebar-container" style={{ width: "320px", flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
             <div style={{ flex: 1, overflowY: "auto" }}>
               {sidebarRenderer(selectedItem, state.editableValues)}

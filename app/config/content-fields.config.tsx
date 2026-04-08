@@ -4,7 +4,7 @@
  * Defines the editable fields for each content type
  */
 
-import type { ContentEditorConfig } from "../types/content-editor.types";
+import type { ContentEditorConfig, FieldDefinition } from "../types/content-editor.types";
 import type { MetaobjectEntry } from "../utils/contentEditor.utils";
 import { createTemplateFieldDefinitions, getTemplateFieldValue } from "../utils/templates-field-factory";
 import { isMetaobjectLabelField } from "../constants/shopifyFields";
@@ -180,90 +180,136 @@ export const COLLECTIONS_CONFIG: ContentEditorConfig = {
 };
 
 // ============================================================================
-// BLOGS (ARTICLES)
+// BLOGS (ARTICLES + BLOG CONTAINERS)
 // ============================================================================
+
+/** Field definitions for Blog containers (title + handle only) */
+const BLOG_CONTAINER_FIELDS: FieldDefinition[] = [
+  {
+    key: "title",
+    type: "text",
+    label: "Blog Title",
+    translationKey: "title",
+    required: true,
+    supportsAI: true,
+    supportsFormatting: true,
+    supportsTranslation: true,
+    aiInstructionsKey: "blogTitle",
+  },
+  {
+    key: "handle",
+    type: "slug",
+    label: "URL Slug",
+    translationKey: "handle",
+    supportsAI: true,
+    supportsFormatting: true,
+    supportsTranslation: true,
+    aiInstructionsKey: "blogHandle",
+  },
+];
+
+/** Field definitions for Articles (full set) */
+const ARTICLE_FIELDS: FieldDefinition[] = [
+  {
+    key: "images",
+    type: "image-gallery",
+    label: "Featured Image",
+    translationKey: "images",
+    supportsAI: true,
+    supportsTranslation: true,
+    aiInstructionsKey: "blogAltText",
+  },
+  {
+    key: "title",
+    type: "text",
+    label: "Title",
+    translationKey: "title",
+    required: true,
+    supportsAI: true,
+    supportsFormatting: true,
+    supportsTranslation: true,
+    aiInstructionsKey: "blogTitle",
+  },
+  {
+    key: "body",
+    type: "html",
+    label: "Body",
+    translationKey: "body_html",
+    supportsAI: true,
+    supportsFormatting: true,
+    supportsTranslation: true,
+    aiInstructionsKey: "blogDescription",
+  },
+  {
+    key: "summary",
+    type: "html",
+    label: "Excerpt",
+    translationKey: "summary_html",
+    supportsAI: true,
+    supportsFormatting: true,
+    supportsTranslation: true,
+    aiInstructionsKey: "blogSummary",
+  },
+  {
+    key: "handle",
+    type: "slug",
+    label: "URL Slug",
+    translationKey: "handle",
+    supportsAI: true,
+    supportsFormatting: true,
+    supportsTranslation: true,
+    aiInstructionsKey: "blogHandle",
+  },
+  {
+    key: "seoTitle",
+    type: "text",
+    label: "SEO Title",
+    translationKey: "meta_title",
+    supportsAI: true,
+    supportsFormatting: true,
+    supportsTranslation: true,
+    aiInstructionsKey: "blogSeoTitle",
+  },
+  {
+    key: "metaDescription",
+    type: "textarea",
+    label: "Meta Description",
+    translationKey: "meta_description",
+    multiline: 3,
+    supportsAI: true,
+    supportsFormatting: true,
+    supportsTranslation: true,
+    aiInstructionsKey: "blogMetaDesc",
+  },
+];
 
 export const BLOGS_CONFIG: ContentEditorConfig = {
   contentType: "blogs",
   resourceType: "Article",
-  displayName: "Articles",
+  displayName: "Articles & Blogs",
   displayNameSingular: "Article",
   showSeoSidebar: true,
   idPrefix: "ID:",
+  dynamicFields: true,
 
-  fieldDefinitions: [
-    {
-      key: "images",
-      type: "image-gallery",
-      label: "Featured Image",
-      translationKey: "images",
-      supportsAI: true,
-      supportsTranslation: true,
-      aiInstructionsKey: "blogAltText",
-    },
-    {
-      key: "title",
-      type: "text",
-      label: "Title",
-      translationKey: "title",
-      required: true,
-      supportsAI: true,
-      supportsFormatting: true,
-      supportsTranslation: true,
-      aiInstructionsKey: "blogTitle",
-    },
-    {
-      key: "body",
-      type: "html",
-      label: "Body",
-      translationKey: "body_html",
-      supportsAI: true,
-      supportsFormatting: true,
-      supportsTranslation: true,
-      aiInstructionsKey: "blogDescription",
-    },
-    {
-      key: "summary",
-      type: "html",
-      label: "Excerpt",
-      translationKey: "summary_html",
-      supportsAI: true,
-      supportsFormatting: true,
-      supportsTranslation: true,
-      aiInstructionsKey: "blogSummary",
-    },
-    {
-      key: "handle",
-      type: "slug",
-      label: "URL Slug",
-      translationKey: "handle",
-      supportsAI: true,
-      supportsFormatting: true,
-      supportsTranslation: true,
-      aiInstructionsKey: "blogHandle",
-    },
-    {
-      key: "seoTitle",
-      type: "text",
-      label: "SEO Title",
-      translationKey: "meta_title",
-      supportsAI: true,
-      supportsFormatting: true,
-      supportsTranslation: true,
-      aiInstructionsKey: "blogSeoTitle",
-    },
-    {
-      key: "metaDescription",
-      type: "textarea",
-      label: "Meta Description",
-      translationKey: "meta_description",
-      multiline: 3,
-      supportsAI: true,
-      supportsFormatting: true,
-      supportsTranslation: true,
-      aiInstructionsKey: "blogMetaDesc",
-    },
-  ],
+  // Return Blog-specific or Article-specific fields based on the selected item
+  getFieldDefinitions: (item) => {
+    if (item?.isBlogContainer) {
+      return BLOG_CONTAINER_FIELDS;
+    }
+    return ARTICLE_FIELDS;
+  },
+
+  // Show "Blog" subtitle for blog containers to distinguish them from articles
+  getSubtitle: (item) => {
+    if (item?.isBlogContainer) {
+      return "Blog";
+    }
+    return undefined;
+  },
+
+  // Default field definitions (used when no item is selected)
+  fieldDefinitions: ARTICLE_FIELDS,
 };
 
 // ============================================================================

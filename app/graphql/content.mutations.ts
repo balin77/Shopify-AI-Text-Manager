@@ -31,6 +31,22 @@ export const REMOVE_TRANSLATIONS = `#graphql
   }
 `;
 
+export const UPDATE_BLOG = `#graphql
+  mutation updateBlog($id: ID!, $blog: BlogUpdateInput!) {
+    blogUpdate(id: $id, blog: $blog) {
+      blog {
+        id
+        title
+        handle
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
 export const UPDATE_PAGE = `#graphql
   mutation updatePage($id: ID!, $page: PageUpdateInput!) {
     pageUpdate(id: $id, page: $page) {

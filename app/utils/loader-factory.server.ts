@@ -52,8 +52,8 @@ export interface ContentLoaderConfig<T, K extends string = string, E extends Rec
   /** Used for log messages, e.g. "PRODUCTS", "COLLECTIONS" */
   logPrefix: string;
 
-  /** Resource type for ContentTranslation lookup, e.g. "Product". null = skip translations. */
-  resourceType: string | null;
+  /** Resource type for ContentTranslation lookup, e.g. "Product". Array for mixed types (e.g. ["Article", "Blog"]). null = skip translations. */
+  resourceType: string | string[] | null;
 
   /** Key name in the JSON response, e.g. "products", "collections" */
   itemsKey: K;
@@ -97,8 +97,11 @@ export function createContentLoader<T extends { id: string }, K extends string, 
       // Common: load + group translations
       let translationsByResource: Record<string, unknown[]> = {};
       if (config.resourceType && ids.length > 0) {
+        const resourceTypeFilter = Array.isArray(config.resourceType)
+          ? { in: config.resourceType }
+          : config.resourceType;
         const allTranslations = await db.contentTranslation.findMany({
-          where: { shop: session.shop, resourceType: config.resourceType, resourceId: { in: ids } },
+          where: { shop: session.shop, resourceType: resourceTypeFilter, resourceId: { in: ids } },
         });
         translationsByResource = groupBy(allTranslations, "resourceId");
       }

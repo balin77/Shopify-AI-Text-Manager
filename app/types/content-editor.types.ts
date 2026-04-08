@@ -57,6 +57,7 @@ export interface TranslatableContentItem {
   translatableContent?: Array<{ key: string; value: string }>;
   // Additional properties for specific content types
   blogTitle?: string; // For articles
+  isBlogContainer?: boolean; // True for Blog items (vs Article items) in the blog editor
   type?: string; // For policies
   groupName?: string; // For templates
   contentCount?: number; // For templates

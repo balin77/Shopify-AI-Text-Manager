@@ -3,7 +3,7 @@
  * Centralized service for managing Shopify content via GraphQL API
  */
 
-import { TRANSLATE_CONTENT, UPDATE_PAGE, UPDATE_ARTICLE, UPDATE_SHOP_POLICY, UPDATE_COLLECTION } from "../../app/graphql/content.mutations";
+import { TRANSLATE_CONTENT, UPDATE_PAGE, UPDATE_ARTICLE, UPDATE_SHOP_POLICY, UPDATE_COLLECTION, UPDATE_BLOG } from "../../app/graphql/content.mutations";
 import { GET_TRANSLATIONS, GET_TRANSLATABLE_CONTENT } from "../../app/graphql/content.queries";
 import { loggers } from '../../app/utils/logger.server';
 import { markTranslationSaved } from '../../app/utils/translation-save-lock.server';
@@ -151,6 +151,26 @@ export class ShopifyContentService {
     }
 
     return data.data?.pageUpdate?.page;
+  }
+
+  /**
+   * Update a blog (container, not article)
+   */
+  async updateBlog(id: string, blog: { title?: string; handle?: string }) {
+    const response = await this.admin.graphql(UPDATE_BLOG, {
+      variables: { id, blog }
+    });
+
+    const data = await response.json();
+
+    if (data.errors?.length > 0) {
+      throw new Error(`GraphQL error in updateBlog: ${data.errors[0].message}`);
+    }
+    if (data.data?.blogUpdate?.userErrors?.length > 0) {
+      throw new Error(data.data.blogUpdate.userErrors[0].message);
+    }
+
+    return data.data?.blogUpdate?.blog;
   }
 
   /**
@@ -570,6 +590,19 @@ export class ShopifyContentService {
             lastSyncedAt: new Date(),
           },
         });
+      } else if (resourceType === 'Blog') {
+        updatedResource = await this.updateBlog(resourceId, {
+          title: updates.title,
+          handle: updates.handle,
+        });
+
+        // Update blogTitle on all articles belonging to this blog
+        if (updates.title) {
+          await db.article.updateMany({
+            where: { shop, blogId: resourceId },
+            data: { blogTitle: updates.title },
+          });
+        }
       } else if (resourceType === 'Article') {
         updatedResource = await this.updateArticle(resourceId, {
           title: updates.title,

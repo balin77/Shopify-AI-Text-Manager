@@ -28,14 +28,14 @@ import { createContentLoader, incrementalSync } from "~/utils/loader-factory.ser
 
 export const loader = createContentLoader({
   logPrefix: "BLOG",
-  resourceType: "Article",
+  resourceType: ["Article", "Blog"],
   itemsKey: "articles",
 
   async loadData(ctx) {
     const { ContentSyncService } = await import("../services/content-sync.service");
     const syncService = new ContentSyncService(ctx.admin, ctx.session.shop);
 
-    // Fetch article IDs from Shopify (nested under blogs)
+    // Fetch blogs with their titles and article IDs from Shopify
     const blogsResponse = await ctx.admin.graphql(
       `#graphql
         query getBlogs {
@@ -43,6 +43,8 @@ export const loader = createContentLoader({
             edges {
               node {
                 id
+                title
+                handle
                 articles(first: 250) {
                   edges { node { id } }
                 }
@@ -52,7 +54,18 @@ export const loader = createContentLoader({
         }`,
     );
     const blogsData = await blogsResponse.json();
-    const blogs = blogsData.data?.blogs?.edges?.map((e: any) => e.node) || [];
+
+    interface BlogNode {
+      id: string;
+      title: string;
+      handle: string;
+      articles?: { edges: Array<{ node: { id: string } }> };
+    }
+
+    const blogs: BlogNode[] = blogsData.data?.blogs?.edges?.map(
+      (e: { node: BlogNode }) => e.node
+    ) || [];
+
     const shopifyIds = new Set<string>();
     for (const blog of blogs) {
       for (const edge of blog.articles?.edges || []) {
@@ -69,28 +82,59 @@ export const loader = createContentLoader({
       syncFn: (id) => syncService.syncArticle(id),
     });
 
-    // Load from database
+    // Load articles from database
     const articles = await ctx.db.article.findMany({
       where: { shop: ctx.session.shop },
       orderBy: { blogTitle: "asc" },
     });
 
+    interface ArticleRow {
+      id: string;
+      blogId: string;
+      blogTitle: string;
+      title: string;
+      handle: string;
+      body: string | null;
+      summary: string | null;
+      imageUrl: string | null;
+      imageAltText: string | null;
+      seoTitle: string | null;
+      seoDescription: string | null;
+    }
+
+    // Build Blog container items (appear as section headers in the list)
+    const blogItems = blogs.map((blog) => ({
+      id: blog.id,
+      title: blog.title,
+      handle: blog.handle,
+      isBlogContainer: true as const,
+      blogTitle: blog.title, // Used for category badge
+      translations: [],
+      images: [],
+    }));
+
+    // Build Article items
+    const articleItems = (articles as ArticleRow[]).map((a) => ({
+      id: a.id,
+      blogId: a.blogId,
+      blogTitle: a.blogTitle,
+      title: a.title,
+      handle: a.handle,
+      body: a.body,
+      summary: a.summary,
+      featuredImage: a.imageUrl
+        ? { url: a.imageUrl, altText: a.imageAltText || "" }
+        : undefined,
+      images: [],
+      seo: { title: a.seoTitle, description: a.seoDescription },
+    }));
+
+    // Combine: blog containers first, then articles (sorted by blog title)
+    const allItems = [...blogItems, ...articleItems];
+
     return {
-      items: articles.map((a: any) => ({
-        id: a.id,
-        blogId: a.blogId,
-        blogTitle: a.blogTitle,
-        title: a.title,
-        handle: a.handle,
-        body: a.body,
-        summary: a.summary,
-        featuredImage: a.imageUrl
-          ? { url: a.imageUrl, altText: a.imageAltText || "" }
-          : undefined,
-        images: [],
-        seo: { title: a.seoTitle, description: a.seoDescription },
-      })),
-      ids: articles.map((a: any) => a.id),
+      items: allItems,
+      ids: allItems.map((item) => item.id),
     };
   },
 });

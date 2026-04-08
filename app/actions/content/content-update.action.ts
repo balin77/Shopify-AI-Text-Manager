@@ -275,11 +275,17 @@ export async function handleUpdateContent(
     }
 
     // For other content types (Collections, Pages, Blogs, Policies), use unified service
+    // Determine the actual resource type — for blogs, the config says "Article" but
+    // Blog container items have GIDs like gid://shopify/Blog/123.
+    const effectiveResourceType = itemId.includes("/Blog/") ? "Blog" : contentConfig.resourceType;
+
     // Only include fields that were actually sent by the client.
     // buildFieldsForSave only includes changed fields for foreign locales,
     // so absent fields mean "not changed" — NOT "clear this field".
+    // Use the full field definitions list (covers both Blog and Article fields for dynamic configs).
+    const allFieldDefs = contentConfig.fieldDefinitions;
     const updates: Record<string, string> = {};
-    contentConfig.fieldDefinitions.forEach((field) => {
+    allFieldDefs.forEach((field) => {
       if (!formData.has(field.key)) return;
       let value = getFormString(formData, field.key);
 
@@ -322,7 +328,7 @@ export async function handleUpdateContent(
     // Use unified content service
     const result = await shopifyContentService.updateContent({
       resourceId: itemId,
-      resourceType: contentConfig.resourceType,
+      resourceType: effectiveResourceType,
       locale,
       primaryLocale,
       updates,
