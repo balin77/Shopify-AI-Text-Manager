@@ -143,11 +143,22 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     }));
   }, []);
 
+  /**
+   * Get image at index, falling back to featuredImage when images array is empty.
+   * This supports articles which store only a featuredImage without an images array.
+   */
+  const getImageAtIndex = (item: any, index: number): ContentImage | null => {
+    if (item?.images && item.images[index]) return item.images[index];
+    if (index === 0 && item?.featuredImage) return item.featuredImage;
+    return null;
+  };
+
   const handleGenerateAltText = (imageIndex: number) => {
-    if (!selectedItem || !selectedItem.images || !selectedItem.images[imageIndex]) return;
+    if (!selectedItem) return;
+    const image = getImageAtIndex(selectedItem, imageIndex);
+    if (!image) return;
 
     const requestItemId = selectedItem.id;
-    const image = selectedItem.images[imageIndex];
     const productTitle = getItemFieldValue(selectedItem, 'title', primaryLocale, config);
     const mainLanguage = shopLocales.find((l: ShopLocale) => l.locale === primaryLocale)?.name || primaryLocale;
 
@@ -177,12 +188,15 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
   };
 
   const handleGenerateAllAltTexts = () => {
-    if (!selectedItem || !selectedItem.images || selectedItem.images.length === 0) return;
+    const allImages: ContentImage[] = selectedItem?.images?.length > 0
+      ? selectedItem.images
+      : selectedItem?.featuredImage ? [selectedItem.featuredImage] : [];
+    if (!selectedItem || allImages.length === 0) return;
 
     const requestItemId = selectedItem.id;
     const productTitle = getItemFieldValue(selectedItem, 'title', primaryLocale, config);
     const mainLanguage = shopLocales.find((l: ShopLocale) => l.locale === primaryLocale)?.name || primaryLocale;
-    const imagesData = selectedItem.images.map((img: ContentImage) => ({ url: img.url }));
+    const imagesData = allImages.map((img: ContentImage) => ({ url: img.url }));
 
     submitAIAction(
       {
@@ -212,9 +226,10 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
   };
 
   const handleTranslateAltText = (imageIndex: number) => {
-    if (!selectedItem || !selectedItem.images || !selectedItem.images[imageIndex]) return;
+    if (!selectedItem) return;
+    const image = getImageAtIndex(selectedItem, imageIndex);
+    if (!image) return;
 
-    const image = selectedItem.images[imageIndex];
     const sourceAltText = image.altText || "";
 
     if (!sourceAltText) {
@@ -287,7 +302,9 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
   };
 
   const handleTranslateAltTextToAllLocales = (imageIndex: number) => {
-    if (!selectedItem || !selectedItem.images || !selectedItem.images[imageIndex]) return;
+    if (!selectedItem) return;
+    const image = getImageAtIndex(selectedItem, imageIndex);
+    if (!image) return;
 
     // Filter out primary locale and disabled languages
     const targetLocales = enabledLanguages.filter(l => l !== primaryLocale);
@@ -300,7 +317,6 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
       return;
     }
 
-    const image = selectedItem.images[imageIndex];
     const sourceAltText = imageAltTexts[imageIndex] || image.altText || "";
 
     if (!sourceAltText) {
@@ -362,7 +378,10 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
 
   // Translate ALL image alt-texts to ALL foreign languages (primary locale button)
   const handleTranslateAllAltTexts = () => {
-    if (!selectedItem || !selectedItem.images || selectedItem.images.length === 0) return;
+    const allImages: ContentImage[] = selectedItem?.images?.length > 0
+      ? selectedItem.images
+      : selectedItem?.featuredImage ? [selectedItem.featuredImage] : [];
+    if (!selectedItem || allImages.length === 0) return;
 
     const targetLocales = enabledLanguages.filter(l => l !== primaryLocale);
     if (targetLocales.length === 0) {
@@ -377,7 +396,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     // Collect all source alt texts
     const altTextsData: Record<number, string> = {};
     let hasAnyAltText = false;
-    selectedItem.images.forEach((img: ContentImage, index: number) => {
+    allImages.forEach((img: ContentImage, index: number) => {
       const altText = imageAltTexts[index] || img.altText || "";
       if (altText) {
         altTextsData[index] = altText;
@@ -461,12 +480,15 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
 
   // Translate ALL image alt-texts into ONE foreign language (foreign locale button)
   const handleTranslateAllAltTextsForLocale = () => {
-    if (!selectedItem || !selectedItem.images || selectedItem.images.length === 0) return;
+    const allImages: ContentImage[] = selectedItem?.images?.length > 0
+      ? selectedItem.images
+      : selectedItem?.featuredImage ? [selectedItem.featuredImage] : [];
+    if (!selectedItem || allImages.length === 0) return;
 
     // Collect all source alt texts from primary locale
     const altTextsData: Record<number, string> = {};
     let hasAnyAltText = false;
-    selectedItem.images.forEach((img: ContentImage, index: number) => {
+    allImages.forEach((img: ContentImage, index: number) => {
       const altText = img.altText || "";
       if (altText) {
         altTextsData[index] = altText;
@@ -546,8 +568,12 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     // (images[index]?.altText) shows the correct value even if imageAltTexts
     // state gets cleared during revalidation cycles.
     const item = selectedItemRef.current;
-    if (item?.images?.[imageIndex] && currentLanguage === primaryLocale) {
-      item.images[imageIndex].altText = suggestion;
+    if (currentLanguage === primaryLocale) {
+      if (item?.images?.[imageIndex]) {
+        item.images[imageIndex].altText = suggestion;
+      } else if (imageIndex === 0 && item?.featuredImage) {
+        item.featuredImage.altText = suggestion;
+      }
     }
 
     setAltTextSuggestions(prev => {
@@ -692,7 +718,12 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
   // Load translated alt-texts when language changes
   useEffect(() => {
     const item = selectedItemRef.current;
-    if (!item || !item.images) return;
+    if (!item) return;
+
+    const allImages: ContentImage[] = item.images?.length > 0
+      ? item.images
+      : item.featuredImage ? [item.featuredImage] : [];
+    if (allImages.length === 0) return;
 
     if (currentLanguage === primaryLocale) {
       // Reset to primary locale alt-texts - fallback will use images[i].altText
@@ -701,7 +732,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     } else {
       // Load translated alt-texts from DB
       const translatedAltTexts: Record<number, string> = {};
-      item.images.forEach((img: ContentImage, index: number) => {
+      allImages.forEach((img: ContentImage, index: number) => {
         const translation = img.altTextTranslations?.find(
           (t: { locale: string }) => t.locale === currentLanguage
         );
