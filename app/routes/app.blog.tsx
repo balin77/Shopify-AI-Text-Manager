@@ -92,6 +92,28 @@ export const loader = createContentLoader({
       orderBy: { blogTitle: "asc" },
     });
 
+    // Sync translations for articles that have none yet (one-time backfill).
+    // Articles synced before translation support may be missing translations.
+    if (articles.length > 0 && ctx.shopLocales.length > 1) {
+      try {
+        const articleIds = articles.map((a: { id: string }) => a.id);
+        const existingTranslations = await ctx.db.contentTranslation.groupBy({
+          by: ["resourceId"],
+          where: { shop: ctx.session.shop, resourceType: "Article", resourceId: { in: articleIds } },
+        });
+        const idsWithTranslations = new Set(existingTranslations.map((g: { resourceId: string }) => g.resourceId));
+        const idsWithoutTranslations = articleIds.filter((id: string) => !idsWithTranslations.has(id));
+        if (idsWithoutTranslations.length > 0) {
+          const { logger } = await import("../utils/logger.server");
+          logger.info(`[BLOG-LOADER] Backfilling translations for ${idsWithoutTranslations.length} article(s)`);
+          // Sync individually so one failure doesn't block others
+          await Promise.allSettled(idsWithoutTranslations.map((id: string) => syncService.syncArticle(id)));
+        }
+      } catch {
+        // Non-fatal: translations will be loaded on next reload
+      }
+    }
+
     interface ArticleRow {
       id: string;
       blogId: string;
