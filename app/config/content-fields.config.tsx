@@ -183,7 +183,7 @@ export const COLLECTIONS_CONFIG: ContentEditorConfig = {
 // BLOGS (ARTICLES + BLOG CONTAINERS)
 // ============================================================================
 
-/** Field definitions for Blog containers (title + handle only) */
+/** Field definitions for Blog containers (title, handle, SEO) */
 const BLOG_CONTAINER_FIELDS: FieldDefinition[] = [
   {
     key: "title",
@@ -205,6 +205,27 @@ const BLOG_CONTAINER_FIELDS: FieldDefinition[] = [
     supportsFormatting: true,
     supportsTranslation: true,
     aiInstructionsKey: "blogHandle",
+  },
+  {
+    key: "seoTitle",
+    type: "text",
+    label: "SEO Title",
+    translationKey: "meta_title",
+    supportsAI: true,
+    supportsFormatting: true,
+    supportsTranslation: true,
+    aiInstructionsKey: "blogSeoTitle",
+  },
+  {
+    key: "metaDescription",
+    type: "textarea",
+    label: "Meta Description",
+    translationKey: "meta_description",
+    multiline: 3,
+    supportsAI: true,
+    supportsFormatting: true,
+    supportsTranslation: true,
+    aiInstructionsKey: "blogMetaDesc",
   },
 ];
 

@@ -155,10 +155,27 @@ export class ShopifyContentService {
 
   /**
    * Update a blog (container, not article)
+   * Note: Like Pages, Blog SEO data is stored in metafields (global.title_tag, global.description_tag).
    */
-  async updateBlog(id: string, blog: { title?: string; handle?: string }) {
+  async updateBlog(id: string, blog: { title?: string; handle?: string; seoTitle?: string; seoDescription?: string }) {
+    const { seoTitle, seoDescription, ...blogInput } = blog;
+
+    const metafields: Array<{ namespace: string; key: string; value: string; type: string }> = [];
+    if (seoTitle !== undefined) {
+      metafields.push({ namespace: "global", key: "title_tag", value: seoTitle, type: "single_line_text_field" });
+    }
+    if (seoDescription !== undefined) {
+      metafields.push({ namespace: "global", key: "description_tag", value: seoDescription, type: "single_line_text_field" });
+    }
+
     const response = await this.admin.graphql(UPDATE_BLOG, {
-      variables: { id, blog }
+      variables: {
+        id,
+        blog: {
+          ...blogInput,
+          ...(metafields.length > 0 ? { metafields } : {}),
+        },
+      }
     });
 
     const data = await response.json();
@@ -594,6 +611,8 @@ export class ShopifyContentService {
         updatedResource = await this.updateBlog(resourceId, {
           title: updates.title,
           handle: updates.handle,
+          ...(updates.seoTitle !== undefined ? { seoTitle: updates.seoTitle } : {}),
+          ...(updates.metaDescription !== undefined ? { seoDescription: updates.metaDescription } : {}),
         });
 
         // Update blogTitle on all articles belonging to this blog

@@ -45,6 +45,8 @@ export const loader = createContentLoader({
                 id
                 title
                 handle
+                seoTitle: metafield(namespace: "global", key: "title_tag") { value }
+                seoDescription: metafield(namespace: "global", key: "description_tag") { value }
                 articles(first: 250) {
                   edges { node { id } }
                 }
@@ -59,6 +61,8 @@ export const loader = createContentLoader({
       id: string;
       title: string;
       handle: string;
+      seoTitle?: { value: string } | null;
+      seoDescription?: { value: string } | null;
       articles?: { edges: Array<{ node: { id: string } }> };
     }
 
@@ -109,6 +113,10 @@ export const loader = createContentLoader({
       handle: blog.handle,
       isBlogContainer: true as const,
       blogTitle: blog.title, // Used for category badge
+      seo: {
+        title: blog.seoTitle?.value ?? null,
+        description: blog.seoDescription?.value ?? null,
+      },
       translations: [],
       images: [],
     }));
