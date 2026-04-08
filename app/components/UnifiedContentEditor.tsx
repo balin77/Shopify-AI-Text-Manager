@@ -274,15 +274,27 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   const defaultRenderSidebar = (item: TranslatableContentItem, editableValues: Record<string, string>) => {
     if (!config.showSeoSidebar) return null;
 
+    const itemAny = item as any;
+    const isBlogContainer = !!itemAny.isBlogContainer;
+
     // Calculate image alt text stats for SEO score
+    // Include featured image if no gallery images exist (e.g. articles)
     const images = (item as TranslatableContentItem & { images?: Array<{ altText?: string | null }> }).images ?? [];
-    const totalImages = images.length;
-    const imagesWithAlt = images.filter((img, index) => {
-      // Check both local edits (state.imageAltTexts) and original altText
+    const featuredImg = (item as TranslatableContentItem & { featuredImage?: { altText?: string | null } }).featuredImage;
+    let totalImages = images.length;
+    let imagesWithAlt = images.filter((img, index) => {
       const localAltText = state.imageAltTexts?.[index];
       const originalAltText = img.altText;
       return !!(localAltText || originalAltText);
     }).length;
+
+    // Count featured image when no gallery images exist
+    if (totalImages === 0 && featuredImg) {
+      totalImages = 1;
+      const localAltText = state.imageAltTexts?.[0];
+      const originalAltText = featuredImg.altText;
+      imagesWithAlt = !!(localAltText || originalAltText) ? 1 : 0;
+    }
 
     return (
       <SeoSidebar
@@ -293,6 +305,8 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
         metaDescription={editableValues.metaDescription || ""}
         totalImages={totalImages}
         imagesWithAlt={imagesWithAlt}
+        excludeDescription={isBlogContainer}
+        excludeImages={isBlogContainer}
       />
     );
   };

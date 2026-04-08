@@ -23,6 +23,10 @@ interface SeoSidebarProps {
   metaDescription: string;
   imagesWithAlt?: number;
   totalImages?: number;
+  /** Skip description from SEO evaluation (e.g. blog containers have no body) */
+  excludeDescription?: boolean;
+  /** Skip image alt text from SEO evaluation (e.g. blog containers have no images) */
+  excludeImages?: boolean;
 }
 
 export function SeoSidebar({
@@ -33,6 +37,8 @@ export function SeoSidebar({
   metaDescription,
   imagesWithAlt = 0,
   totalImages = 0,
+  excludeDescription = false,
+  excludeImages = false,
 }: SeoSidebarProps) {
   const { t } = useI18n();
   const { seoTitleSuffix } = useSeoSettings();
@@ -44,8 +50,10 @@ export function SeoSidebar({
   const analysis = useMemo((): SeoAnalysis => {
     const issues: SeoIssue[] = [];
     let score = 0;
+    let maxScore = 0;
 
     // 1. Title length (15 points max)
+    maxScore += 15;
     const titleLength = title.length;
     if (titleLength >= 30 && titleLength <= 70) {
       score += 15;
@@ -69,6 +77,7 @@ export function SeoSidebar({
     }
 
     // 2. SEO Title (15 points max) — limit adjusted for shop name suffix
+    maxScore += 15;
     const seoTitleLength = seoTitle.length;
     if (seoTitleLength > 0 && seoTitleLength <= seoTitleEffectiveLimit) {
       score += 15;
@@ -91,31 +100,35 @@ export function SeoSidebar({
       });
     }
 
-    // 3. Description length (20 points max)
-    const descriptionText = description.replace(/<[^>]*>/g, "");
-    const descriptionLength = descriptionText.length;
-    if (descriptionLength >= 150) {
-      score += 20;
-      issues.push({
-        type: "success",
-        message: t.seo.issues.descriptionGood,
-        points: 20,
-      });
-    } else if (descriptionLength === 0) {
-      issues.push({
-        type: "error",
-        message: t.seo.issues.descriptionMissing,
-        points: 0,
-      });
-    } else {
-      issues.push({
-        type: "warning",
-        message: t.seo.issues.descriptionTooShort,
-        points: 0,
-      });
+    // 3. Description length (20 points max) — skipped for content without body
+    if (!excludeDescription) {
+      maxScore += 20;
+      const descriptionText = description.replace(/<[^>]*>/g, "");
+      const descriptionLength = descriptionText.length;
+      if (descriptionLength >= 150) {
+        score += 20;
+        issues.push({
+          type: "success",
+          message: t.seo.issues.descriptionGood,
+          points: 20,
+        });
+      } else if (descriptionLength === 0) {
+        issues.push({
+          type: "error",
+          message: t.seo.issues.descriptionMissing,
+          points: 0,
+        });
+      } else {
+        issues.push({
+          type: "warning",
+          message: t.seo.issues.descriptionTooShort,
+          points: 0,
+        });
+      }
     }
 
     // 4. Meta Description (20 points max)
+    maxScore += 20;
     const metaDescLength = metaDescription.length;
     if (metaDescLength >= 120 && metaDescLength <= 160) {
       score += 20;
@@ -144,8 +157,9 @@ export function SeoSidebar({
       });
     }
 
-    // 5. Image Alt Texts (30 points max)
-    if (totalImages > 0) {
+    // 5. Image Alt Texts (30 points max) — skipped for content without images
+    if (!excludeImages && totalImages > 0) {
+      maxScore += 30;
       const imageScore = Math.round((imagesWithAlt / totalImages) * 30);
       score += imageScore;
       if (imagesWithAlt === totalImages) {
@@ -163,24 +177,30 @@ export function SeoSidebar({
       }
     }
 
+    // Normalize score to 0-100 based on applicable criteria
+    const normalizedScore = maxScore > 0 ? Math.round((score / maxScore) * 100) : 0;
+
     // Generate recommendations
     const recommendations: string[] = [];
     if (titleLength < 30) recommendations.push(t.seo.recommendations.expandTitle);
     if (titleLength > 70) recommendations.push(t.seo.recommendations.shortenTitle);
     if (seoTitleLength === 0) recommendations.push(t.seo.recommendations.addSeoTitle);
     if (seoTitleLength > seoTitleEffectiveLimit) recommendations.push(t.seo.recommendations.shortenSeoTitle);
-    if (descriptionLength < 150) recommendations.push(t.seo.recommendations.expandDescription);
+    if (!excludeDescription) {
+      const descriptionText = description.replace(/<[^>]*>/g, "");
+      if (descriptionText.length < 150) recommendations.push(t.seo.recommendations.expandDescription);
+    }
     if (metaDescLength === 0) recommendations.push(t.seo.recommendations.addMetaDescription);
     if (metaDescLength < 120) recommendations.push(t.seo.recommendations.expandMetaDescription);
     if (metaDescLength > 160) recommendations.push(t.seo.recommendations.shortenMetaDescription);
-    if (totalImages > 0 && imagesWithAlt < totalImages) recommendations.push(t.seo.recommendations.addImageAlt);
+    if (!excludeImages && totalImages > 0 && imagesWithAlt < totalImages) recommendations.push(t.seo.recommendations.addImageAlt);
 
     return {
-      score: Math.round(score),
+      score: normalizedScore,
       issues,
       recommendations,
     };
-  }, [title, description, handle, seoTitle, metaDescription, imagesWithAlt, totalImages, t, seoTitleEffectiveLimit]);
+  }, [title, description, handle, seoTitle, metaDescription, imagesWithAlt, totalImages, excludeDescription, excludeImages, t, seoTitleEffectiveLimit]);
 
   const getScoreColor = (scoreValue: number): "success" | "warning" | "critical" => {
     if (scoreValue >= 70) return "success";
@@ -311,6 +331,7 @@ export function SeoSidebar({
                   </Text>
                 </InlineStack>
               </div>
+              {!excludeDescription && (
               <div>
                 <InlineStack gap="200" blockAlign="center">
                   <div style={{ width: "50px" }}>
@@ -323,6 +344,7 @@ export function SeoSidebar({
                   </Text>
                 </InlineStack>
               </div>
+              )}
               <div>
                 <InlineStack gap="200" blockAlign="center">
                   <div style={{ width: "50px" }}>
@@ -335,6 +357,7 @@ export function SeoSidebar({
                   </Text>
                 </InlineStack>
               </div>
+              {!excludeImages && (
               <div>
                 <InlineStack gap="200" blockAlign="center">
                   <div style={{ width: "50px" }}>
@@ -347,6 +370,7 @@ export function SeoSidebar({
                   </Text>
                 </InlineStack>
               </div>
+              )}
             </BlockStack>
           </div>
         )}

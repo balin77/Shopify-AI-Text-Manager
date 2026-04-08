@@ -436,8 +436,8 @@ export function ImageGalleryField({
         </InlineStack>
       )}
 
-      {/* Alt-text input for selected image - only in non-free plans */}
-      {!isFreePlan && images && images.length > 0 && (
+      {/* Alt-text input for selected image or featured image */}
+      {!isFreePlan && (images && images.length > 0 ? (
         <AIEditableField
           label={`${t.altTextForImage || "Alt-text for image"} ${selectedImageIndex + 1}`}
           value={altTexts[selectedImageIndex] !== undefined
@@ -460,7 +460,30 @@ export function ImageGalleryField({
           onRejectSuggestion={() => onRejectSuggestion(selectedImageIndex)}
           onClear={onClearAltText ? () => onClearAltText(selectedImageIndex) : undefined}
         />
-      )}
+      ) : featuredImage ? (
+        <AIEditableField
+          label={t.altTextForImage || "Alt-text for image"}
+          value={altTexts[0] !== undefined
+            ? altTexts[0]
+            : (isPrimaryLocale ? (featuredImage.altText || "") : "")}
+          onChange={(value) => onAltTextChange(0, value)}
+          fieldType="altText_0"
+          fieldKey="altText_0"
+          helpKey="altText"
+          suggestion={altTextSuggestions[0]}
+          isPrimaryLocale={isPrimaryLocale}
+          isTranslated={true}
+          placeholder={t.altTextPlaceholder}
+          isLoading={isFieldLoading ? isFieldLoading(0) : false}
+          onGenerateAI={isPrimaryLocale ? () => onGenerateAltText(0) : undefined}
+          onTranslate={() => onTranslateAltText(0)}
+          onTranslateToAllLocales={onTranslateAltTextToAllLocales ? () => onTranslateAltTextToAllLocales(0) : undefined}
+          onAcceptSuggestion={() => onAcceptSuggestion(0)}
+          onAcceptAndTranslate={onAcceptAndTranslateSuggestion ? () => onAcceptAndTranslateSuggestion(0) : undefined}
+          onRejectSuggestion={() => onRejectSuggestion(0)}
+          onClear={onClearAltText ? () => onClearAltText(0) : undefined}
+        />
+      ) : null)}
     </BlockStack>
   );
 }

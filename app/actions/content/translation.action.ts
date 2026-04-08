@@ -156,6 +156,19 @@ async function translateMetaobjectEntries(params: {
 }
 
 // ============================================================================
+// HELPERS
+// ============================================================================
+
+/**
+ * Determine the actual Shopify resource type from the item GID.
+ * For the blogs editor, the config says "Article" but Blog container items
+ * have GIDs like gid://shopify/Blog/123 and need "Blog" as resource type.
+ */
+function getEffectiveResourceType(itemId: string, configResourceType: string): string {
+  return itemId.includes("/Blog/") ? "Blog" : configResourceType;
+}
+
+// ============================================================================
 // TRANSLATE FIELD
 // ============================================================================
 
