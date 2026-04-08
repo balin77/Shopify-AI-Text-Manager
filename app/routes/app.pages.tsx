@@ -44,10 +44,6 @@ export const loader = createContentLoader({
                 title
                 handle
                 body
-                seo {
-                  title
-                  description
-                }
               }
             }
           }
@@ -62,7 +58,7 @@ export const loader = createContentLoader({
         title: p.title,
         handle: p.handle,
         body: p.body,
-        seo: p.seo ?? null,
+        seo: null,
       })),
       ids: pages.map((p: any) => p.id),
     };
