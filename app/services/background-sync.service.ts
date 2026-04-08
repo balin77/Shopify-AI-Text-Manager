@@ -25,6 +25,8 @@ interface ShopifyPageData {
   handle: string;
   body: string | null;
   updatedAt: string;
+  seoTitle?: { value: string } | null;
+  seoDescription?: { value: string } | null;
 }
 
 /** Policy data from Shopify GraphQL */
@@ -158,6 +160,8 @@ export class BackgroundSyncService {
                   handle
                   body
                   updatedAt
+                  seoTitle: metafield(namespace: "global", key: "title_tag") { value }
+                  seoDescription: metafield(namespace: "global", key: "description_tag") { value }
                 }
               }
             }
@@ -289,6 +293,8 @@ export class BackgroundSyncService {
             handle
             body
             updatedAt
+            seoTitle: metafield(namespace: "global", key: "title_tag") { value }
+            seoDescription: metafield(namespace: "global", key: "description_tag") { value }
           }
         }`,
       { variables: { id: gid } }
@@ -365,8 +371,8 @@ export class BackgroundSyncService {
           title: pageData.title,
           body: pageData.body || "",
           handle: pageData.handle,
-          seoTitle: null,
-          seoDescription: null,
+          seoTitle: pageData.seoTitle?.value ?? null,
+          seoDescription: pageData.seoDescription?.value ?? null,
           shopifyUpdatedAt: new Date(pageData.updatedAt),
           lastSyncedAt: new Date(),
         },
@@ -374,8 +380,8 @@ export class BackgroundSyncService {
           title: pageData.title,
           body: pageData.body || "",
           handle: pageData.handle,
-          seoTitle: null,
-          seoDescription: null,
+          seoTitle: pageData.seoTitle?.value ?? null,
+          seoDescription: pageData.seoDescription?.value ?? null,
           shopifyUpdatedAt: new Date(pageData.updatedAt),
           lastSyncedAt: new Date(),
         },

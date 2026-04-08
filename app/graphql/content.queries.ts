@@ -65,6 +65,8 @@ export const GET_PAGES = `#graphql
           handle
           bodySummary
           body
+          seoTitle: metafield(namespace: "global", key: "title_tag") { value }
+          seoDescription: metafield(namespace: "global", key: "description_tag") { value }
         }
       }
     }

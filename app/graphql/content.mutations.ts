@@ -39,10 +39,8 @@ export const UPDATE_PAGE = `#graphql
         title
         handle
         body
-        seo {
-          title
-          description
-        }
+        seoTitle: metafield(namespace: "global", key: "title_tag") { value }
+        seoDescription: metafield(namespace: "global", key: "description_tag") { value }
       }
       userErrors {
         field

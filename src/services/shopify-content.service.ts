@@ -116,10 +116,29 @@ export class ShopifyContentService {
 
   /**
    * Update a page
+   * Note: Shopify Admin API Page type has no `seo` field.
+   * SEO data is stored in metafields: global.title_tag and global.description_tag.
    */
-  async updatePage(id: string, page: { title?: string; handle?: string; body?: string; seo?: { title?: string; description?: string } }) {
+  async updatePage(id: string, page: { title?: string; handle?: string; body?: string; seoTitle?: string; seoDescription?: string }) {
+    // Separate SEO fields from the page input – they go as metafields
+    const { seoTitle, seoDescription, ...pageInput } = page;
+
+    const metafields: Array<{ namespace: string; key: string; value: string; type: string }> = [];
+    if (seoTitle !== undefined) {
+      metafields.push({ namespace: "global", key: "title_tag", value: seoTitle, type: "single_line_text_field" });
+    }
+    if (seoDescription !== undefined) {
+      metafields.push({ namespace: "global", key: "description_tag", value: seoDescription, type: "single_line_text_field" });
+    }
+
     const response = await this.admin.graphql(UPDATE_PAGE, {
-      variables: { id, page }
+      variables: {
+        id,
+        page: {
+          ...pageInput,
+          ...(metafields.length > 0 ? { metafields } : {}),
+        },
+      }
     });
 
     const data = await response.json();
@@ -529,16 +548,12 @@ export class ShopifyContentService {
       let updatedResource;
 
       if (resourceType === 'Page') {
-        // Build seo input only when at least one SEO field is provided
-        const seoInput = (updates.seoTitle !== undefined || updates.metaDescription !== undefined)
-          ? { title: updates.seoTitle ?? undefined, description: updates.metaDescription ?? undefined }
-          : undefined;
-
         updatedResource = await this.updatePage(resourceId, {
           title: updates.title,
           handle: updates.handle,
           body: updates.description || updates.body,
-          ...(seoInput ? { seo: seoInput } : {}),
+          ...(updates.seoTitle !== undefined ? { seoTitle: updates.seoTitle } : {}),
+          ...(updates.metaDescription !== undefined ? { seoDescription: updates.metaDescription } : {}),
         });
 
         // Update database

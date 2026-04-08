@@ -44,6 +44,8 @@ export const loader = createContentLoader({
                 title
                 handle
                 body
+                seoTitle: metafield(namespace: "global", key: "title_tag") { value }
+                seoDescription: metafield(namespace: "global", key: "description_tag") { value }
               }
             }
           }
@@ -58,7 +60,10 @@ export const loader = createContentLoader({
         title: p.title,
         handle: p.handle,
         body: p.body,
-        seo: null,
+        seo: {
+          title: p.seoTitle?.value ?? null,
+          description: p.seoDescription?.value ?? null,
+        },
       })),
       ids: pages.map((p: any) => p.id),
     };
