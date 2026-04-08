@@ -191,46 +191,6 @@ export const GET_MENUS = `#graphql
   }
 `;
 
-/**
- * Fetch all menu translatable resources with nested link resources.
- *
- * Uses Shopify's `translatableResources(resourceType: MENU)` to discover
- * menus as translatable resources, and `nestedTranslatableResources(resourceType: LINK)`
- * to discover individual menu items (links) that can be translated.
- *
- * Each link is a separate translatable resource with its own resourceId and digest.
- */
-export const GET_MENU_TRANSLATABLE_RESOURCES = `#graphql
-  query getMenuTranslatableResources($first: Int!) {
-    translatableResources(first: $first, resourceType: MENU) {
-      edges {
-        node {
-          resourceId
-          translatableContent {
-            key
-            value
-            digest
-            locale
-          }
-          nestedTranslatableResources(first: 250, resourceType: LINK) {
-            edges {
-              node {
-                resourceId
-                translatableContent {
-                  key
-                  value
-                  digest
-                  locale
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-`;
-
 export const GET_THEMES = `#graphql
   query getThemes($first: Int!) {
     themes(first: $first) {

@@ -389,10 +389,6 @@ model Menu {
   handle String
   items  Json   @db.JsonB // Store the entire menu items structure as JSON
 
-  // Link resource IDs discovered via translatableResources API.
-  // Maps link resourceId → { resourceId, title } for translation support.
-  linkResources Json? @db.JsonB
-
   // Shopify Metadata
   lastSyncedAt DateTime @default(now())
 
@@ -404,10 +400,10 @@ model Menu {
 model ContentTranslation {
   id String @id @default(cuid())
 
-  // Polymorphic relation (can belong to Product, Collection, Article, Page, ShopPolicy, Menu, or Link)
+  // Polymorphic relation (can belong to Product, Collection, Article, Page, or ShopPolicy)
   // NOTE: No foreign key constraints - we handle this polymorphically in code
-  resourceId   String // The GID of the resource (Menu GID for menu titles, Link GID for menu items)
-  resourceType String // "Product", "Collection", "Article", "Page", "ShopPolicy", "Menu", or "Link"
+  resourceId   String // The GID of the parent resource
+  resourceType String // "Product", "Collection", "Article", "Page", or "ShopPolicy"
   shop         String  // Defense-in-depth: explicit shop scope for multi-tenant isolation
 
   key    String // "title", "body_html", "body", "description", "handle", "meta_title", "meta_description"

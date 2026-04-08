@@ -197,7 +197,7 @@ export const es: Translation = {
       paragraph: "Párrafo",
       lineBreak: "Salto",
     },
-    menuLimitation: "Los títulos de menú y de enlaces se pueden traducir. Los valores en el idioma principal son de solo lectura, ya que se gestionan en el Administrador de Shopify.",
+    menuLimitation: "Los enlaces del menú no se pueden traducir a través de esta aplicación debido a una limitación de la API de Shopify. Por favor, traduce tus menús directamente en el Administrador de Shopify en \"Translate & Adapt\".",
     unsavedChanges: "Cambios sin guardar",
     discard: "Descartar",
     save: "Guardar",

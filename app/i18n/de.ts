@@ -195,7 +195,7 @@ export const de = {
       paragraph: "Absatz",
       lineBreak: "Umbruch",
     },
-    menuLimitation: "Menü-Titel und Link-Titel können übersetzt werden. Werte in der Primärsprache sind schreibgeschützt, da sie im Shopify Admin verwaltet werden.",
+    menuLimitation: "Menü-Links können aufgrund einer Shopify API-Einschränkung nicht über diese App übersetzt werden. Bitte übersetzen Sie Ihre Menüs direkt im Shopify Admin unter \"Translate & Adapt\".",
     unsavedChanges: "Ungespeicherte Änderungen",
     discard: "Verwerfen",
     save: "Speichern",
