@@ -45,12 +45,25 @@ export function ReloadButton({
   const revalidationStartedRef = useRef(false);
   const waitingForRevalidationRef = useRef(false);
 
-  // Timer ref for cleanup
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Ref to track which completedData we've already processed (avoids re-processing
+  // if the component re-renders before the data is consumed from the store).
+  const processedCompletedRef = useRef<object | null>(null);
+  const prevResourceIdRef = useRef(resourceId);
+  if (prevResourceIdRef.current !== resourceId) {
+    prevResourceIdRef.current = resourceId;
+    processedCompletedRef.current = null;
+    waitingForRevalidationRef.current = false;
+    revalidationStartedRef.current = false;
+  }
 
-  // Handle completed reload: trigger revalidation or page reload
+  // Handle completed reload: trigger revalidation or page reload.
+  // Uses a ref guard instead of depending on completedData in the dep array,
+  // because a parent re-render (e.g. unstable useRevalidator ref) can cause
+  // completedData to flip to undefined after consume, which would run the
+  // effect cleanup and cancel the pending revalidation timeout.
   useEffect(() => {
-    if (!completedData) return;
+    if (!completedData || completedData === processedCompletedRef.current) return;
+    processedCompletedRef.current = completedData;
 
     // Consume the data so it's only processed once
     consumeCompleted(resourceId);
@@ -62,7 +75,8 @@ export function ReloadButton({
 
     if (revalidatorRef.current) {
       // Use revalidation approach (non-destructive)
-      timerRef.current = setTimeout(() => {
+      // Wait 1 second for DB write to complete, then trigger revalidation
+      setTimeout(() => {
         // Cache-bust: Add timestamp to URL to force Remix to reload data
         const url = new URL(window.location.href);
         url.searchParams.set('_reload', Date.now().toString());
@@ -71,10 +85,10 @@ export function ReloadButton({
         waitingForRevalidationRef.current = true;
         revalidationStartedRef.current = false;
         revalidatorRef.current?.revalidate();
-      }, 1000); // Wait 1 second for DB write to complete
+      }, 1000);
     } else {
       // Fallback to page reload if revalidator not available
-      timerRef.current = setTimeout(() => {
+      setTimeout(() => {
         const url = new URL(window.location.href);
         url.searchParams.set('selected', resourceId);
         url.searchParams.set('_t', Date.now().toString());
@@ -85,14 +99,10 @@ export function ReloadButton({
       onReloadCompleteRef.current?.();
       onReloadSuccessRef.current?.();
     }
-
-    return () => {
-      if (timerRef.current) {
-        clearTimeout(timerRef.current);
-        timerRef.current = null;
-      }
-    };
-  }, [completedData, resourceId]);
+    // No cleanup — the timeout must survive parent re-renders.
+    // It fires once (guarded by processedCompletedRef) and is harmless if the
+    // component unmounts (revalidate on an unmounted tree is a no-op).
+  });
 
   // Monitor revalidation state
   useEffect(() => {
