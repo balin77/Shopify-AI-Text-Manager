@@ -10,6 +10,7 @@ import { useCallback } from "react";
 import { getTranslatedValue } from "../utils/contentEditor.utils";
 import { getItemFieldValue } from "./useUiDataLoader";
 import { debugLog } from "../utils/debug";
+import { markOperationActive } from "./useAIOperationsStore";
 import type {
   TranslatableContentItem,
   ContentImage,
@@ -727,6 +728,9 @@ const handleTranslateAll = () => {
     return;
   }
 
+  // Mark in global store so spinner persists across navigation
+  markOperationActive(selectedItemId, "__translateAll__", "translateAll");
+
   const formDataObj: Record<string, string> = {
     action: "translateAll",
     itemId: selectedItemId,
@@ -1192,6 +1196,9 @@ const handleTranslateAllForLocale = () => {
   if (!selectedItemId || !selectedItem || currentLanguage === primaryLocale) return;
 
   const requestItemId = selectedItemId;
+
+  // Mark in global store so spinner persists across navigation
+  markOperationActive(selectedItemId, `__translateAllForLocale__${currentLanguage}`, "translateAllForLocale", currentLanguage);
 
   const formDataObj: Record<string, string> = {
     action: "translateAllForLocale",

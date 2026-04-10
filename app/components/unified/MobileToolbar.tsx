@@ -46,6 +46,9 @@ interface MobileToolbarProps {
   fetcherState: string;
   fetcherFormData: FormData | undefined;
 
+  // Global AI action state (from global store, persists across navigation)
+  isTranslatingGlobal?: boolean;
+
   // Save button highlight
   highlightSaveButton?: boolean;
 
@@ -87,6 +90,7 @@ export function MobileToolbar({
   featuredImage,
   fetcherState,
   fetcherFormData,
+  isTranslatingGlobal = false,
   highlightSaveButton = false,
   reloadResourceId,
   reloadResourceType,
@@ -107,15 +111,8 @@ export function MobileToolbar({
   const closePopover = useCallback(() => setPopoverActive(false), []);
 
   const currentAction = fetcherFormData?.get("action");
-  const fetcherTargetLocale = fetcherFormData?.get("targetLocale") as string | null;
-  const fetcherItemId = fetcherFormData?.get("itemId") as string | null;
-  const isSameItem = fetcherItemId === selectedItem?.id;
-  // "translateAll" targets all locales → always block; "translateAllForLocale" → only block when viewing that locale
-  // Only block for the item that is actually being translated
-  const isTranslating =
-    fetcherState !== "idle" && isSameItem &&
-    (currentAction === "translateAll" ||
-     (currentAction === "translateAllForLocale" && fetcherTargetLocale === currentLanguage));
+  // Use global store state for translation (persists across navigation), fall back to fetcher state
+  const isTranslating = isTranslatingGlobal;
   const isSaving = fetcherState !== "idle" && (
     currentAction === "updateContent" ||
     currentAction === "savePrimarySubResources" ||

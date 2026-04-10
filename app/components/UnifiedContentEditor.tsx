@@ -29,7 +29,7 @@ import { getLocalizedLanguageName, hasPrimaryContentMissing, getLocaleButtonTool
 import type { MetaobjectEntry } from "../utils/contentEditor.utils";
 import { useI18n } from "../contexts/I18nContext";
 import { ENABLE_THEME_PRIMARY_EDIT } from "../config/constants";
-import { ALL_LOCALES_AI_ACTIONS, PER_LOCALE_AI_ACTIONS } from "../constants/ai-actions";
+import { useGlobalActionState, useLoadingFieldKeys } from "../hooks/useAIOperationsStore";
 import { isMetaobjectLabelField } from "../constants/shopifyFields";
 import "../styles/UnifiedContentEditor.css";
 import "../styles/content-editor-global.css";
@@ -170,17 +170,11 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   const fieldDefinitions = effectiveFieldDefinitions || config.fieldDefinitions;
 
   // Check if a global AI action is currently running (affects all fields)
-  // Only block buttons for the item that is actually being translated
-  const currentAction = fetcherFormData?.get("action");
-  const fetcherTargetLocale = fetcherFormData?.get("targetLocale") as string | null;
-  const fetcherItemId = fetcherFormData?.get("itemId") as string | null;
-  const isSameItem = fetcherItemId === state.selectedItemId;
-  const isAllLocalesActionRunning = fetcherState !== "idle" && isSameItem && ALL_LOCALES_AI_ACTIONS.includes(currentAction as "translateAll" | "translateAllAltTextsToAllLocales");
-  const isPerLocaleActionRunning = fetcherState !== "idle" && isSameItem
-    && PER_LOCALE_AI_ACTIONS.includes(currentAction as "translateAllForLocale" | "translateAllAltTextsForLocale")
-    && fetcherTargetLocale === state.currentLanguage;
+  // Uses global AI operations store — spinners persist across item navigation.
+  const { isAllLocalesRunning: isAllLocalesActionRunning, isPerLocaleRunning: isPerLocaleActionRunning } =
+    useGlobalActionState(state.selectedItemId || "", state.currentLanguage);
   // Get the set of fields with loading AI actions (for per-field loading states)
-  const loadingFieldKeys = state.loadingFieldKeys;
+  const loadingFieldKeys = useLoadingFieldKeys(state.selectedItemId || "");
 
   const isGlobalAIActionRunning = isAllLocalesActionRunning || isPerLocaleActionRunning
     || loadingFieldKeys.has("__translateAll__");
@@ -413,6 +407,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   featuredImage={state.featuredImage ?? undefined}
                   fetcherState={fetcherState}
                   fetcherFormData={fetcherFormData}
+                  isTranslatingGlobal={isAllLocalesActionRunning || isPerLocaleActionRunning}
                   highlightSaveButton={navigationGuard.highlightSaveButton}
                   reloadResourceId={selectedItem.id}
                   reloadResourceType={getResourceType(config.contentType)}
@@ -446,7 +441,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                     enabledLanguages={state.enabledLanguages}
                     onToggleLanguage={handlers.handleToggleLanguage}
                     onTranslateAll={handlers.handleTranslateAll}
-                    isTranslating={fetcherState !== "idle" && fetcherFormData?.get("action") === "translateAll"}
+                    isTranslating={isAllLocalesActionRunning}
                     showTranslateAll={true}
                     showReloadButton={true}
                     isLoadingData={state.isLoadingData}

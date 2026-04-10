@@ -18,6 +18,11 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useFetcher } from "@remix-run/react";
 import type { FetcherWithComponents } from "@remix-run/react";
+import {
+  markSubResourceActive,
+  markSubResourceCompleted,
+  useTranslatingSubResourceIds,
+} from "./useAIOperationsStore";
 import type { OptionTranslation } from "../components/unified/OptionsField";
 import type { TranslatableContentItem } from "../types/content-editor.types";
 
@@ -154,7 +159,9 @@ export function useProductSubResources({
   const [primaryMetafieldEdits, setPrimaryMetafieldEdits] = useState<Record<string, string>>({});
 
   // Shared state
-  const [translatingFieldIds, setTranslatingFieldIds] = useState<Set<string>>(new Set());
+  // translatingFieldIds is now derived from the global AI operations store
+  // so spinners persist across item navigation.
+  const translatingFieldIds = useTranslatingSubResourceIds(selectedItem?.id || "");
   const [hasChanges, setHasChanges] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
 
@@ -204,7 +211,8 @@ export function useProductSubResources({
 
     // Reset state
     setHasChanges(false);
-    setTranslatingFieldIds(new Set());
+    // Note: translatingFieldIds is now in the global AI operations store
+    // and should NOT be cleared on item change — it's resource-specific.
 
     loadedForRef.current = loadKey;
 
@@ -291,27 +299,19 @@ export function useProductSubResources({
     }
 
     if (data.actionType === "translateSubResources" || data.actionType === "translateSubResourceToAllLocales") {
-      // Remove the field IDs that were just translated from the translating set
+      // Remove the field IDs that were just translated from the global store
       const fieldId = data.fieldId as string | undefined;
-      if (fieldId) {
-        setTranslatingFieldIds(prev => {
-          const newSet = new Set(prev);
-
-          // If this was a "translate all" operation, clear ALL sub-resource fieldIds
-          if (fieldId === "all:subresources") {
-            // Remove all granular fieldIds that were added for this operation
-            for (const id of newSet) {
-              if (id.includes(":name") || id.includes(":value") || id === "all:subresources") {
-                newSet.delete(id);
-              }
-            }
-          } else {
-            // Single field translation - just remove this fieldId
-            newSet.delete(fieldId);
+      const resourceId = selectedItem?.id || "";
+      if (fieldId && resourceId) {
+        if (fieldId === "all:subresources") {
+          // Clear all sub-resource fieldIds for this resource
+          for (const id of translatingFieldIds) {
+            markSubResourceCompleted(resourceId, id);
           }
-
-          return newSet;
-        });
+          markSubResourceCompleted(resourceId, "all:subresources");
+        } else {
+          markSubResourceCompleted(resourceId, fieldId);
+        }
       }
 
       const translations = data.translations as Record<string, Record<string, string>>;
@@ -512,15 +512,13 @@ export function useProductSubResources({
     if (!data.success) return;
 
     if (data.actionType === "translateSubResources" || data.actionType === "translateSubResourceToAllLocales") {
-      setTranslatingFieldIds(prev => {
-        const newSet = new Set(prev);
-        for (const id of newSet) {
-          if (id.includes(":name") || id.includes(":value") || id === "all:subresources") {
-            newSet.delete(id);
-          }
+      // Clear all sub-resource translating states from global store
+      const resourceId = selectedItem?.id || "";
+      if (resourceId) {
+        for (const id of translatingFieldIds) {
+          markSubResourceCompleted(resourceId, id);
         }
-        return newSet;
-      });
+      }
 
       // For translateSubResourceToAllLocales, trigger revalidation to refresh locale pulsing state
       if (data.actionType === "translateSubResourceToAllLocales" && revalidator && revalidator.state === "idle") {
@@ -679,8 +677,8 @@ export function useProductSubResources({
 
     const fieldId = `${optionId}:entire`;
 
-    // Add this field to the translating set
-    setTranslatingFieldIds(prev => new Set(prev).add(fieldId));
+    // Mark in global store so spinner persists across item navigation
+    markSubResourceActive(selectedItem?.id || "", fieldId, "translateSubResource");
 
     // If primary locale, translate to all foreign locales
     if (isPrimaryLocale) {
@@ -739,8 +737,8 @@ export function useProductSubResources({
       }];
     }
 
-    // Add this field to the translating set
-    setTranslatingFieldIds(prev => new Set(prev).add(fieldId));
+    // Mark in global store so spinner persists across item navigation
+    markSubResourceActive(selectedItem?.id || "", fieldId, "translateSubResource");
 
     // If primary locale, translate to all foreign locales
     if (isPrimaryLocale) {
@@ -785,8 +783,8 @@ export function useProductSubResources({
       label: `${mf.namespace}.${mf.key}`,
     }];
 
-    // Add this field to the translating set
-    setTranslatingFieldIds(prev => new Set(prev).add(fieldId));
+    // Mark in global store so spinner persists across item navigation
+    markSubResourceActive(selectedItem?.id || "", fieldId, "translateSubResource");
 
     fetcher.submit(
       {
@@ -829,8 +827,10 @@ export function useProductSubResources({
     // Add global marker for overall operation
     fieldIds.add("all:subresources");
 
-    // Add all fieldIds to the translating set
-    setTranslatingFieldIds(prev => new Set([...prev, ...fieldIds]));
+    // Mark all in global store so spinners persist across item navigation
+    for (const fid of fieldIds) {
+      markSubResourceActive(selectedItem.id, fid, "translateSubResource");
+    }
 
     translateAllFetcher.submit(
       {
@@ -866,7 +866,9 @@ export function useProductSubResources({
       fieldIds.add(`${mf.id}:value`);
     }
     fieldIds.add("all:subresources");
-    setTranslatingFieldIds(prev => new Set([...prev, ...fieldIds]));
+    for (const fid of fieldIds) {
+      markSubResourceActive(selectedItem.id, fid, "translateSubResourceToAllLocales");
+    }
 
     translateAllFetcher.submit(
       {
@@ -1025,7 +1027,8 @@ export function useProductSubResources({
 
     // Reset flags
     setHasChanges(false);
-    setTranslatingFieldIds(new Set());
+    // Note: translatingFieldIds in global store is cleared per-resource,
+    // no need to clear here — the operation will finish naturally.
 
     // Force reload from DB/Shopify on next render
     loadedForRef.current = "";

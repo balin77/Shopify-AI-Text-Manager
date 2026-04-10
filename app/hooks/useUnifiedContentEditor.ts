@@ -41,6 +41,15 @@ import { extractReadableName } from "../utils/templates-field-factory";
 import { useTaskCount } from "../contexts/TaskCountContext";
 import { translateErrorMessage } from "../utils/editor-error-messages";
 import { useFieldHandlers } from "./useFieldHandlers";
+import {
+  markOperationActive,
+  markOperationCompleted,
+  markOperationFailed,
+  reconcileWithServer,
+  useLoadingFieldKeys as useGlobalLoadingFieldKeys,
+  useCompletedResults,
+  consumeCompletedResult,
+} from "./useAIOperationsStore";
 
 interface TaskData {
   fieldType?: string | null;
@@ -121,20 +130,19 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
   // Track which fields have AI actions currently running (for per-field loading states)
   // This allows multiple AI actions to run in parallel on different fields
-  const [loadingFieldKeys, setLoadingFieldKeys] = useState<Set<string>>(new Set());
+  // Uses the global AI operations store so spinners persist across item navigation.
+  const loadingFieldKeys = useGlobalLoadingFieldKeys(selectedItemId || "");
 
   // ============================================================================
-  // RESTORE SPINNER STATE AFTER NAVIGATION
-  // When the user navigates away while tasks are running, then comes back,
-  // we re-seed loadingFieldKeys from the DB so buttons show spinners again.
+  // RECONCILE SPINNER STATE WITH SERVER
+  // When the user navigates to an item, poll the DB for running tasks and
+  // seed/reconcile the global AI operations store. This catches tasks that
+  // completed while the user was on a different item (clears stale spinners)
+  // and tasks started by other mechanisms (seeds missing spinners).
   // ============================================================================
 
   useEffect(() => {
     if (!selectedItemId) return;
-
-    // Clear any loading state left over from the previously selected item.
-    // The poll below will re-seed keys for tasks that are actually running on this item.
-    setLoadingFieldKeys(new Set());
 
     let cancelled = false;
 
@@ -150,23 +158,26 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         const activeTasks: TaskData[] =
           (data.tasks as TaskData[] || []).filter((task) => {
             if (!task.fieldType) return false;
-            // For locale-specific tasks, only restore if the user is on that locale
             if (task.targetLocale && task.targetLocale !== lang) return false;
             return true;
           });
 
-        if (activeTasks.length === 0 || cancelled) return;
-
-        const fieldKeys = activeTasks.map((t) =>
-          t.fieldType === "all" ? "__translateAll__" : t.fieldType!
+        const serverFieldKeys = new Set(
+          activeTasks.map((t) =>
+            t.fieldType === "all" ? "__translateAll__" : t.fieldType!
+          )
         );
 
-        // Seed the spinners
-        setLoadingFieldKeys((prev) => {
-          const next = new Set(prev);
-          fieldKeys.forEach((k) => next.add(k));
-          return next;
-        });
+        // Seed any server-side tasks that aren't in the global store yet
+        for (const task of activeTasks) {
+          const fk = task.fieldType === "all" ? "__translateAll__" : task.fieldType!;
+          markOperationActive(selectedItemId, fk, "server-task", task.targetLocale || undefined);
+        }
+
+        // Clear global store entries that the server says are no longer running
+        reconcileWithServer(selectedItemId, serverFieldKeys);
+
+        if (activeTasks.length === 0 || cancelled) return;
 
         // Poll until all seeded tasks finish
         const pollUntilDone = async (remaining: Set<string>) => {
@@ -181,19 +192,17 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             if (!r2.ok || cancelled) return;
             const d2 = await r2.json();
 
-            const stillRunning = new Set(
+            const stillRunning = new Set<string>(
               ((d2.tasks as TaskData[]) || [])
-                .filter((t) => t.fieldType)
+                .filter((t): t is TaskData & { fieldType: string } => !!t.fieldType)
                 .map((t) => t.fieldType === "all" ? "__translateAll__" : t.fieldType)
             );
 
+            // Reconcile: clear anything the server says is done
+            reconcileWithServer(selectedItemId, stillRunning);
+
             const nowDone = [...remaining].filter((k) => !stillRunning.has(k));
             if (nowDone.length > 0) {
-              setLoadingFieldKeys((prev) => {
-                const next = new Set(prev);
-                nowDone.forEach((k) => next.delete(k));
-                return next;
-              });
               // Refresh page data to show completed results
               if (revalidatorRef.current.state === "idle") {
                 try { revalidatorRef.current.revalidate(); } catch {}
@@ -203,7 +212,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             const newRemaining = new Set([...remaining].filter((k) => stillRunning.has(k)));
             await pollUntilDone(newRemaining);
           } catch {
-            // Network error during polling — retry after a longer delay
             if (!cancelled) {
               await new Promise((res) => setTimeout(res, 5000));
               await pollUntilDone(remaining);
@@ -211,7 +219,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           }
         };
 
-        await pollUntilDone(new Set(fieldKeys));
+        await pollUntilDone(serverFieldKeys);
       } catch {
         // Silently ignore — spinner simply won't be restored on this navigation
       }
@@ -220,6 +228,50 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     run();
     return () => { cancelled = true; };
   }, [selectedItemId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ============================================================================
+  // PROCESS PARKED AI RESPONSES
+  // When the user navigates back to an item that had AI operations complete
+  // while they were away, consume the parked results and apply them.
+  // ============================================================================
+
+  const completedResults = useCompletedResults(selectedItemId || "");
+
+  useEffect(() => {
+    if (!selectedItemId || completedResults.length === 0) return;
+
+    for (const completed of completedResults) {
+      const result = consumeCompletedResult(completed.resourceId, completed.fieldKey);
+      if (!result) continue;
+
+      const data = result.result;
+
+      // Apply based on action type
+      if (completed.action === "generateAIText" || completed.action === "formatAIText") {
+        // Park AI suggestion for user to accept/reject
+        const generatedContent = data.generatedContent as string;
+        const fieldType = data.fieldType as string;
+        if (generatedContent && fieldType) {
+          setAiSuggestions((prev) => ({
+            ...prev,
+            [fieldType]: generatedContent,
+          }));
+        }
+      }
+      // For translate actions, the server saved the translation to DB.
+      // Trigger revalidation to pick up fresh data.
+      if (
+        completed.action === "translateField" ||
+        completed.action === "translateFieldToAllLocales" ||
+        completed.action === "translateAll" ||
+        completed.action === "translateAllForLocale"
+      ) {
+        if (revalidatorRef.current.state === "idle") {
+          try { revalidatorRef.current.revalidate(); } catch {}
+        }
+      }
+    }
+  }, [selectedItemId, completedResults]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Track if initial data load was successful - disables retry mechanism after successful load
   // Reset when item or language changes, allowing retry during new load cycles
@@ -692,15 +744,22 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   }, [editableValues, selectedItemId, isLoadingData, currentLanguage, primaryLocale, effectiveFieldDefinitions, config]);
 
   // Submit AI action using fetch API directly to allow parallel requests
-  // This enables multiple AI actions to run simultaneously on different fields
+  // This enables multiple AI actions to run simultaneously on different fields.
+  // Loading state is tracked in the global AI operations store so spinners
+  // persist when the user navigates between items.
   const submitAIAction = useCallback(async (
     data: Record<string, string>,
     fieldKey: string,
     onSuccess?: (result: Record<string, unknown>) => void,
     onError?: (error: string) => void
   ) => {
-    // Add field to loading state
-    setLoadingFieldKeys(prev => new Set(prev).add(fieldKey));
+    const itemId = selectedItemIdRef.current;
+    if (!itemId) return;
+
+    const action = data.action || "unknown";
+
+    // Mark in global store (spinner visible immediately, survives navigation)
+    markOperationActive(itemId, fieldKey, action, data.targetLocale);
 
     try {
       const formData = new FormData();
@@ -729,28 +788,34 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
       const result = await response.json();
       if (result.success) {
-        // Immediately refresh the running task count via context
         refreshTaskCount();
-        onSuccess?.(result);
+
+        // If user is still on the same item, deliver the result immediately
+        if (selectedItemIdRef.current === itemId) {
+          markOperationFailed(itemId, fieldKey); // clear from active (not really failed, just done)
+          onSuccess?.(result);
+        } else {
+          // User navigated away — park the result for later consumption
+          markOperationCompleted(itemId, fieldKey, action, result);
+        }
       } else {
-        // Always show error feedback — even if the server omitted the error field
         const errorMsg = result.error || "Unknown error";
-        onError?.(errorMsg);
-        const translatedError = translateErrorMessage(errorMsg, t);
-        showInfoBox(translatedError, "critical", t.common?.error || "Error");
+        markOperationFailed(itemId, fieldKey);
+        // Only show error if user is still on the same item
+        if (selectedItemIdRef.current === itemId) {
+          onError?.(errorMsg);
+          const translatedError = translateErrorMessage(errorMsg, t);
+          showInfoBox(translatedError, "critical", t.common?.error || "Error");
+        }
       }
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Unknown error";
-      onError?.(errorMessage);
-      const translatedError = translateErrorMessage(errorMessage, t);
-      showInfoBox(translatedError, "critical", t.common?.error || "Error");
-    } finally {
-      // Remove field from loading state
-      setLoadingFieldKeys(prev => {
-        const newSet = new Set(prev);
-        newSet.delete(fieldKey);
-        return newSet;
-      });
+      markOperationFailed(itemId, fieldKey);
+      if (selectedItemIdRef.current === itemId) {
+        const errorMessage = error instanceof Error ? error.message : "Unknown error";
+        onError?.(errorMessage);
+        const translatedError = translateErrorMessage(errorMessage, t);
+        showInfoBox(translatedError, "critical", t.common?.error || "Error");
+      }
     }
   }, [showInfoBox, t]);
 
