@@ -6,16 +6,14 @@
  * "per locale" actions only block the targeted language.
  */
 
-/** Actions that translate/generate across ALL locales at once. */
+/** Actions that translate/generate across ALL locales at once (text fields only). */
 export const ALL_LOCALES_AI_ACTIONS = [
   "translateAll",
-  "translateAllAltTextsToAllLocales",
 ] as const;
 
-/** Actions that target a single locale (block only that locale's buttons). */
+/** Actions that target a single locale (block only that locale's buttons, text fields only). */
 export const PER_LOCALE_AI_ACTIONS = [
   "translateAllForLocale",
-  "translateAllAltTextsForLocale",
 ] as const;
 
 /** Image-related actions that block across all locales (used in ImageGalleryField context). */
