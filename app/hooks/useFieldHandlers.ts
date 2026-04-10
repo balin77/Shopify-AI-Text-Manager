@@ -10,7 +10,7 @@ import { useCallback } from "react";
 import { getTranslatedValue } from "../utils/contentEditor.utils";
 import { getItemFieldValue } from "./useUiDataLoader";
 import { debugLog } from "../utils/debug";
-import { markOperationActive } from "./useAIOperationsStore";
+import { markOperationActive, isOperationActive } from "./useAIOperationsStore";
 import type {
   TranslatableContentItem,
   ContentImage,
@@ -714,6 +714,8 @@ const handleTranslateFieldToAllLocales = (fieldKey: string) => {
 
 const handleTranslateAll = () => {
   if (!selectedItemId || !selectedItem) return;
+  // Guard against double-click: if translateAll is already running, ignore
+  if (isOperationActive(selectedItemId, "__translateAll__")) return;
 
   const requestItemId = selectedItemId;
 
@@ -1194,6 +1196,8 @@ const handleClearAllForLocaleConfirm = () => {
 
 const handleTranslateAllForLocale = () => {
   if (!selectedItemId || !selectedItem || currentLanguage === primaryLocale) return;
+  // Guard against double-click: if translateAllForLocale is already running for this locale, ignore
+  if (isOperationActive(selectedItemId, `__translateAllForLocale__${currentLanguage}`)) return;
 
   const requestItemId = selectedItemId;
 

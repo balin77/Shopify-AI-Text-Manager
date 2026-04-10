@@ -782,7 +782,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // Check if response is JSON before parsing
       const contentType = response.headers.get('content-type');
       if (!contentType || !contentType.includes('application/json')) {
-        const text = await response.text();
+        await response.text(); // consume body to avoid leaking the connection
         throw new Error(`Server returned ${response.status}: Expected JSON but got ${contentType || 'unknown content type'}`);
       }
 
@@ -1075,6 +1075,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       if (fetcher.data === processedTranslateAllRef.current) return;
       processedTranslateAllRef.current = fetcher.data;
 
+      // Clear the global store spinner for translateAll
+      if (selectedItemIdRef.current) {
+        markOperationFailed(selectedItemIdRef.current, "__translateAll__");
+      }
+
       const { translations, failedLocales } = fetcher.data as TranslationsResponse;
       {
         // Delegate ref mutations to transition method
@@ -1178,6 +1183,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       processedTranslateAllForLocaleRef.current = fetcher.data;
 
       const { targetLocale, failedLocales } = fetcher.data as TranslationsResponse & { targetLocale: string };
+
+      // Clear the global store spinner for translateAllForLocale
+      if (selectedItemIdRef.current) {
+        markOperationFailed(selectedItemIdRef.current, `__translateAllForLocale__${targetLocale}`);
+      }
       const translations = (fetcher.data as TranslationsResponse).translations as Record<string, string>;
       {
         // Delegate ref mutations to transition method

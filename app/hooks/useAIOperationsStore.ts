@@ -74,6 +74,11 @@ function makeKey(resourceId: string, fieldKey: string) {
 // Stale cleanup (lazy — runs on read, not on a timer)
 // ---------------------------------------------------------------------------
 
+/**
+ * Purge stale operations and completed results older than STALE_TIMEOUT_MS.
+ * Called from imperative write paths (markOperationActive, reconcileWithServer)
+ * to avoid mutating the store during React's render phase.
+ */
 function purgeStale() {
   const now = Date.now();
   let changed = false;
@@ -97,12 +102,18 @@ function purgeStale() {
 // Public API — imperative (callable from anywhere)
 // ---------------------------------------------------------------------------
 
+/** Check if an operation is currently active (non-reactive, for imperative guards). */
+export function isOperationActive(resourceId: string, fieldKey: string): boolean {
+  return activeOps.has(makeKey(resourceId, fieldKey));
+}
+
 export function markOperationActive(
   resourceId: string,
   fieldKey: string,
   action: string,
   targetLocale?: string,
 ) {
+  purgeStale(); // opportunistic cleanup on write (safe — not in render path)
   const key = makeKey(resourceId, fieldKey);
   activeOps.set(key, { resourceId, fieldKey, action, targetLocale, startedAt: Date.now() });
   completedResults.delete(key); // clear any stale completed result for this field
@@ -167,6 +178,7 @@ export function reconcileWithServer(
   resourceId: string,
   serverActiveFieldKeys: Set<string>,
 ) {
+  purgeStale(); // opportunistic cleanup on write (safe — not in render path)
   let changed = false;
   for (const [key, op] of activeOps) {
     if (op.resourceId !== resourceId) continue;
@@ -200,7 +212,6 @@ export function clearAllForResource(resourceId: string) {
 /** True if the given field on the given resource has an active AI operation. */
 export function useIsFieldLoading(resourceId: string, fieldKey: string): boolean {
   useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
-  purgeStale();
   return activeOps.has(makeKey(resourceId, fieldKey));
 }
 
@@ -210,7 +221,6 @@ export function useIsFieldLoading(resourceId: string, fieldKey: string): boolean
  */
 export function useLoadingFieldKeys(resourceId: string): Set<string> {
   useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
-  purgeStale();
   const keys = new Set<string>();
   for (const [, op] of activeOps) {
     if (op.resourceId === resourceId) {
@@ -226,7 +236,6 @@ export function useLoadingFieldKeys(resourceId: string): Set<string> {
  */
 export function useGlobalActionState(resourceId: string, currentLocale: string) {
   useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
-  purgeStale();
 
   let isAllLocalesRunning = false;
   let isPerLocaleRunning = false;
@@ -261,7 +270,6 @@ export function useCompletedResults(resourceId: string): CompletedResult[] {
  */
 export function useIsSubResourceTranslating(resourceId: string, fieldId: string): boolean {
   useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
-  purgeStale();
   return activeOps.has(makeKey(resourceId, `sub::${fieldId}`));
 }
 
@@ -282,7 +290,6 @@ export function markSubResourceCompleted(resourceId: string, fieldId: string) {
  */
 export function useTranslatingSubResourceIds(resourceId: string): Set<string> {
   useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
-  purgeStale();
   const ids = new Set<string>();
   for (const [, op] of activeOps) {
     if (op.resourceId === resourceId && op.fieldKey.startsWith("sub::")) {
