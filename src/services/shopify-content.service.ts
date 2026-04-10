@@ -213,7 +213,7 @@ export class ShopifyContentService {
   /**
    * Update a collection
    */
-  async updateCollection(id: string, collection: { title?: string; handle?: string; descriptionHtml?: string; seo?: { title?: string; description?: string } }) {
+  async updateCollection(id: string, collection: { title?: string; handle?: string; descriptionHtml?: string; seo?: { title?: string; description?: string }; image?: { altText: string } }) {
     const response = await this.admin.graphql(UPDATE_COLLECTION, {
       variables: {
         input: {
@@ -571,6 +571,64 @@ export class ShopifyContentService {
         }
       }
 
+      // Handle collection/article image alt-text translation separately.
+      // In Shopify, collection/article image alt text is a separate translatable resource
+      // (COLLECTION_IMAGE / ARTICLE_IMAGE), not part of the main resource's translatable content.
+      // The image resource GID mirrors the parent's numeric ID:
+      //   Collection gid://shopify/Collection/123 → gid://shopify/CollectionImage/123
+      //   Article    gid://shopify/Article/123    → gid://shopify/ArticleImage/123
+      if (updates.imageAltText !== undefined && (resourceType === 'Collection' || resourceType === 'Article')) {
+        try {
+          const imageAltText = updates.imageAltText;
+          // Construct the image resource GID from the parent's numeric ID
+          const numericId = resourceId.split('/').pop();
+          const imageResourceId = `gid://shopify/${resourceType}Image/${numericId}`;
+
+          // Fetch translatable content (digest) for the image resource
+          const { digestMap: imageDigestMap } = await this.loadTranslatableContent(imageResourceId);
+          const altDigest = imageDigestMap['alt'];
+
+          if (altDigest) {
+            if (imageAltText.trim() === '') {
+              // Empty value: delete the translation
+              await this.deleteAllTranslationsForKeys({
+                resourceId: imageResourceId,
+                translationKeys: ['alt'],
+                foreignLocales: [locale],
+              });
+            } else {
+              // Register the translation
+              const translateResponse = await this.admin.graphql(TRANSLATE_CONTENT, {
+                variables: {
+                  resourceId: imageResourceId,
+                  translations: [{
+                    key: 'alt',
+                    value: imageAltText,
+                    locale,
+                    translatableContentDigest: altDigest,
+                  }],
+                },
+              });
+              const translateData = await translateResponse.json() as any;
+              if (translateData.data?.translationsRegister?.userErrors?.length > 0) {
+                loggers.translation('error', `[updateContent] Failed to translate ${resourceType} image alt text`, {
+                  errors: translateData.data.translationsRegister.userErrors,
+                });
+              }
+            }
+          } else {
+            loggers.translation('warn', `[updateContent] No digest for ${resourceType} image alt text — image may not exist`, {
+              imageResourceId,
+            });
+          }
+        } catch (imageAltError: unknown) {
+          loggers.translation('error', `[updateContent] Error translating ${resourceType} image alt text`, {
+            error: imageAltError instanceof Error ? imageAltError.message : String(imageAltError),
+          });
+          // Don't fail the whole save — image alt text translation is best-effort
+        }
+      }
+
       if (dbOnlyTranslations.length > 0) {
         const fieldNames = dbOnlyTranslations.map((t) => t.key).join(", ");
         return {
@@ -654,6 +712,7 @@ export class ShopifyContentService {
             title: updates.seoTitle,
             description: updates.metaDescription,
           },
+          ...(updates.imageAltText !== undefined ? { image: { altText: updates.imageAltText } } : {}),
         });
 
         // Update database
@@ -667,6 +726,7 @@ export class ShopifyContentService {
             descriptionHtml: updates.description,
             seoTitle: updates.seoTitle,
             seoDescription: updates.metaDescription,
+            ...(updates.imageAltText !== undefined ? { imageAltText: updates.imageAltText || null } : {}),
             lastSyncedAt: new Date(),
           },
         });
