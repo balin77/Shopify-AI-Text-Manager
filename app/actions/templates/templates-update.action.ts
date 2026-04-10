@@ -232,7 +232,6 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
   }
 
   // STEP 2: Update local database
-  const primaryShopifyErrors: string[] = [];
   if (locale === primaryLocale) {
     if (!ENABLE_THEME_PRIMARY_EDIT) {
       logger.warn("[TEMPLATES] Primary locale save rejected - ENABLE_THEME_PRIMARY_EDIT is false", {
@@ -450,11 +449,18 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
         }
 
         if (fileShopifyErrors.length > 0) {
-          logger.warn("[TEMPLATES] Some Shopify errors occurred during primary locale save", {
+          logger.error("[TEMPLATES] Shopify rejected primary locale save — aborting without local DB update", {
             context: "Templates",
             errors: fileShopifyErrors,
           });
-          primaryShopifyErrors.push(...fileShopifyErrors);
+          return json(
+            {
+              success: false,
+              error: `Shopify rejected the changes: ${fileShopifyErrors.join("; ")}`,
+              actionType: "updateContent",
+            },
+            { status: 500 }
+          );
         }
       }
     }
@@ -613,14 +619,6 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
         { status: 500 }
       );
     }
-  }
-
-  if (primaryShopifyErrors.length > 0) {
-    return json({
-      success: true,
-      actionType: "updateContent",
-      warning: `Changes saved locally, but Shopify rejected some updates: ${primaryShopifyErrors.join("; ")}`,
-    });
   }
 
   return json({ success: true, actionType: "updateContent" });
