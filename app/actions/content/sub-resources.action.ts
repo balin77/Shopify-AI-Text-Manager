@@ -194,7 +194,7 @@ export async function handleSaveSubResourceTranslations(
 
         // Delete empty translations for ProductOptionValue
         if (keysToDelete.length > 0) {
-          await gateway.graphql(
+          const deleteResponse = await gateway.graphql(
             `#graphql
               mutation removeTranslations($resourceId: ID!, $translationKeys: [String!]!, $locales: [String!]!) {
                 translationsRemove(resourceId: $resourceId, translationKeys: $translationKeys, locales: $locales) {
@@ -209,6 +209,16 @@ export async function handleSaveSubResourceTranslations(
               },
             }
           );
+          const deleteData = await deleteResponse.json() as any;
+          if (deleteData.data?.translationsRemove?.userErrors?.length > 0) {
+            logger.error(`[UnifiedContent] translationsRemove userErrors for ${resourceId}`, {
+              context: "UnifiedContent",
+              resourceId,
+              locale,
+              errors: deleteData.data.translationsRemove.userErrors,
+            });
+            throw new Error(`Shopify rejected translation deletion: ${deleteData.data.translationsRemove.userErrors[0].message}`);
+          }
           logger.info(`[UnifiedContent] Deleted translations for ${resourceId}`, {
             context: "UnifiedContent",
             resourceId,
@@ -781,7 +791,7 @@ export async function handleSavePrimarySubResources(
             try {
               // Only delete option name translation if the name was actually changed
               if (changes?.name !== undefined) {
-                await gateway.graphql(
+                const delNameResp = await gateway.graphql(
                   `#graphql
                     mutation removeTranslations($resourceId: ID!, $translationKeys: [String!]!, $locales: [String!]!) {
                       translationsRemove(resourceId: $resourceId, translationKeys: $translationKeys, locales: $locales) {
@@ -796,16 +806,23 @@ export async function handleSavePrimarySubResources(
                     },
                   }
                 );
-
-                // Delete from DB
-                await db.contentTranslation.deleteMany({
-                  where: {
-                    resourceId: optionId,
-                    resourceType: "ProductOption",
-                    key: "name",
-                    locale: { in: foreignLocales },
-                  },
-                });
+                const delNameData = await delNameResp.json() as any;
+                if (delNameData.data?.translationsRemove?.userErrors?.length > 0) {
+                  logger.error(`[UnifiedContent] translationsRemove userErrors for option name ${optionId}`, {
+                    context: "UnifiedContent", errors: delNameData.data.translationsRemove.userErrors,
+                  });
+                  // Shopify is master — skip DB deletion if Shopify rejected the removal
+                } else {
+                  // Delete from DB only if Shopify succeeded
+                  await db.contentTranslation.deleteMany({
+                    where: {
+                      resourceId: optionId,
+                      resourceType: "ProductOption",
+                      key: "name",
+                      locale: { in: foreignLocales },
+                    },
+                  });
+                }
               }
 
               // Only delete translations for values that actually changed
@@ -814,7 +831,7 @@ export async function handleSavePrimarySubResources(
                 for (const valueUpdate of changes.valueUpdates) {
                   if (!valueUpdate.id) continue;
 
-                  await gateway.graphql(
+                  const delValResp = await gateway.graphql(
                     `#graphql
                       mutation removeTranslations($resourceId: ID!, $translationKeys: [String!]!, $locales: [String!]!) {
                         translationsRemove(resourceId: $resourceId, translationKeys: $translationKeys, locales: $locales) {
@@ -829,15 +846,22 @@ export async function handleSavePrimarySubResources(
                       },
                     }
                   );
-
-                  await db.contentTranslation.deleteMany({
-                    where: {
-                      resourceId: valueUpdate.id,
-                      resourceType: "ProductOptionValue",
-                      key: "name",
-                      locale: { in: foreignLocales },
-                    },
-                  });
+                  const delValData = await delValResp.json() as any;
+                  if (delValData.data?.translationsRemove?.userErrors?.length > 0) {
+                    logger.error(`[UnifiedContent] translationsRemove userErrors for option value ${valueUpdate.id}`, {
+                      context: "UnifiedContent", errors: delValData.data.translationsRemove.userErrors,
+                    });
+                    // Shopify is master — skip DB deletion if Shopify rejected the removal
+                  } else {
+                    await db.contentTranslation.deleteMany({
+                      where: {
+                        resourceId: valueUpdate.id,
+                        resourceType: "ProductOptionValue",
+                        key: "name",
+                        locale: { in: foreignLocales },
+                      },
+                    });
+                  }
                 }
               }
             } catch (err) {
@@ -852,7 +876,7 @@ export async function handleSavePrimarySubResources(
             if (!isValidShopifyGID(metafieldId)) continue;
 
             try {
-              await gateway.graphql(
+              const delMfResp = await gateway.graphql(
                 `#graphql
                   mutation removeTranslations($resourceId: ID!, $translationKeys: [String!]!, $locales: [String!]!) {
                     translationsRemove(resourceId: $resourceId, translationKeys: $translationKeys, locales: $locales) {
@@ -867,15 +891,22 @@ export async function handleSavePrimarySubResources(
                   },
                 }
               );
-
-              await db.contentTranslation.deleteMany({
-                where: {
-                  resourceId: metafieldId,
-                  resourceType: "Metafield",
-                  key: "value",
-                  locale: { in: foreignLocales },
-                },
-              });
+              const delMfData = await delMfResp.json() as any;
+              if (delMfData.data?.translationsRemove?.userErrors?.length > 0) {
+                logger.error(`[UnifiedContent] translationsRemove userErrors for metafield ${metafieldId}`, {
+                  context: "UnifiedContent", errors: delMfData.data.translationsRemove.userErrors,
+                });
+                // Shopify is master — skip DB deletion if Shopify rejected the removal
+              } else {
+                await db.contentTranslation.deleteMany({
+                  where: {
+                    resourceId: metafieldId,
+                    resourceType: "Metafield",
+                    key: "value",
+                    locale: { in: foreignLocales },
+                  },
+                });
+              }
             } catch (err) {
               logger.error(`[UnifiedContent] Failed to delete translations for metafield ${metafieldId}`, {
                 context: "UnifiedContent", error: err instanceof Error ? err.message : String(err),
