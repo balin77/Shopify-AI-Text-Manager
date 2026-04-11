@@ -590,14 +590,17 @@ export class ShopifyContentService {
 
           if (altDigest) {
             if (imageAltText.trim() === '') {
-              // Empty value: delete the translation
+              // Empty value: delete the translation from Shopify and DB
               await this.deleteAllTranslationsForKeys({
                 resourceId: imageResourceId,
                 translationKeys: ['alt'],
                 foreignLocales: [locale],
               });
+              await db.contentTranslation.deleteMany({
+                where: { shop, resourceId, resourceType, key: 'image_alt_text', locale },
+              });
             } else {
-              // Register the translation
+              // Register the translation at Shopify
               const translateResponse = await this.admin.graphql(TRANSLATE_CONTENT, {
                 variables: {
                   resourceId: imageResourceId,
@@ -613,6 +616,15 @@ export class ShopifyContentService {
               if (translateData.data?.translationsRegister?.userErrors?.length > 0) {
                 loggers.translation('error', `[updateContent] Failed to translate ${resourceType} image alt text`, {
                   errors: translateData.data.translationsRegister.userErrors,
+                });
+              } else {
+                // Persist to DB so the UI can load it on reload
+                await db.contentTranslation.upsert({
+                  where: {
+                    shop_resourceId_key_locale: { shop, resourceId, key: 'image_alt_text', locale },
+                  },
+                  update: { value: imageAltText, digest: altDigest, resourceType },
+                  create: { shop, resourceId, resourceType, key: 'image_alt_text', value: imageAltText, locale, digest: altDigest },
                 });
               }
             }

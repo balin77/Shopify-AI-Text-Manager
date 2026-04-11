@@ -75,6 +75,28 @@ export const loader = createContentLoader({
       ...(planLimits.maxCollections !== Infinity ? { take: planLimits.maxCollections } : {}),
     });
 
+    // Load image alt-text translations from contentTranslation table
+    const collectionIds = collections.map((c: any) => c.id);
+    const imageAltTranslations = collectionIds.length > 0
+      ? await ctx.db.contentTranslation.findMany({
+          where: {
+            shop: ctx.session.shop,
+            resourceId: { in: collectionIds },
+            resourceType: "Collection",
+            key: "image_alt_text",
+          },
+        })
+      : [];
+
+    // Group translations by collection ID
+    const altTranslationsByCollection = new Map<string, Array<{ locale: string; altText: string }>>();
+    for (const t of imageAltTranslations) {
+      if (!altTranslationsByCollection.has(t.resourceId)) {
+        altTranslationsByCollection.set(t.resourceId, []);
+      }
+      altTranslationsByCollection.get(t.resourceId)!.push({ locale: t.locale, altText: t.value });
+    }
+
     return {
       items: collections.map((c: any) => ({
         id: c.id,
@@ -82,7 +104,11 @@ export const loader = createContentLoader({
         handle: c.handle,
         descriptionHtml: c.descriptionHtml,
         featuredImage: c.imageUrl
-          ? { url: c.imageUrl, altText: c.imageAltText || "" }
+          ? {
+              url: c.imageUrl,
+              altText: c.imageAltText || "",
+              altTextTranslations: altTranslationsByCollection.get(c.id) || [],
+            }
           : undefined,
         images: [],
         seo: { title: c.seoTitle, description: c.seoDescription },

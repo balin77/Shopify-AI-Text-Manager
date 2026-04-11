@@ -191,6 +191,27 @@ export const loader = createContentLoader({
       images: [],
     }));
 
+    // Load article image alt-text translations from contentTranslation table
+    const articleIds = (articles as ArticleRow[]).map((a: ArticleRow) => a.id);
+    const articleImageAltTranslations = articleIds.length > 0
+      ? await ctx.db.contentTranslation.findMany({
+          where: {
+            shop: ctx.session.shop,
+            resourceId: { in: articleIds },
+            resourceType: "Article",
+            key: "image_alt_text",
+          },
+        })
+      : [];
+
+    const altTranslationsByArticle = new Map<string, Array<{ locale: string; altText: string }>>();
+    for (const t of articleImageAltTranslations) {
+      if (!altTranslationsByArticle.has(t.resourceId)) {
+        altTranslationsByArticle.set(t.resourceId, []);
+      }
+      altTranslationsByArticle.get(t.resourceId)!.push({ locale: t.locale, altText: t.value });
+    }
+
     // Build Article items
     const articleItems = (articles as ArticleRow[]).map((a) => ({
       id: a.id,
@@ -201,7 +222,11 @@ export const loader = createContentLoader({
       body: a.body,
       summary: a.summary,
       featuredImage: a.imageUrl
-        ? { url: a.imageUrl, altText: a.imageAltText || "" }
+        ? {
+            url: a.imageUrl,
+            altText: a.imageAltText || "",
+            altTextTranslations: altTranslationsByArticle.get(a.id) || [],
+          }
         : undefined,
       images: [],
       seo: { title: a.seoTitle, description: a.seoDescription },

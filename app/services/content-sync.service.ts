@@ -97,6 +97,31 @@ export class ContentSyncService {
       );
       logger.debug(`[ContentSync] Fetched ${allTranslations.length} translations`);
 
+      // 3b. Fetch collection image alt-text translations (separate Shopify resource type)
+      if (collectionData.image) {
+        const numericId = collectionId.split('/').pop();
+        const imageResourceId = `gid://shopify/CollectionImage/${numericId}`;
+        try {
+          const imageTranslations = await fetchAllTranslations(this.graphqlFn(),
+            imageResourceId,
+            locales.filter((l) => !l.primary),
+            "Collection" // Store under Collection resourceType with the parent's resourceId
+          );
+          // Remap: store with key "image_alt_text" and use the collection's resourceId
+          for (const t of imageTranslations) {
+            if (t.key === 'alt') {
+              allTranslations.push({
+                ...t,
+                key: 'image_alt_text',
+                resourceType: 'Collection',
+              });
+            }
+          }
+        } catch (imgErr) {
+          logger.debug(`[ContentSync] Could not fetch CollectionImage translations (image may not exist)`, { collectionId });
+        }
+      }
+
       // 4. Save to database
       await this.saveCollectionToDatabase(collectionData, allTranslations, forceSync);
 
@@ -155,6 +180,30 @@ export class ContentSyncService {
         locales.filter((l) => !l.primary),
         "Article"
       );
+
+      // 3b. Fetch article image alt-text translations (separate Shopify resource type)
+      if (articleData.image) {
+        const numericId = articleId.split('/').pop();
+        const imageResourceId = `gid://shopify/ArticleImage/${numericId}`;
+        try {
+          const imageTranslations = await fetchAllTranslations(this.graphqlFn(),
+            imageResourceId,
+            locales.filter((l) => !l.primary),
+            "Article"
+          );
+          for (const t of imageTranslations) {
+            if (t.key === 'alt') {
+              allTranslations.push({
+                ...t,
+                key: 'image_alt_text',
+                resourceType: 'Article',
+              });
+            }
+          }
+        } catch (imgErr) {
+          logger.debug(`[ContentSync] Could not fetch ArticleImage translations (image may not exist)`, { articleId });
+        }
+      }
 
       // 4. Save to database
       await this.saveArticleToDatabase(articleData, allTranslations, forceSync);
