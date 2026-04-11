@@ -407,6 +407,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   featuredImage={state.featuredImage ?? undefined}
                   fetcherState={fetcherState}
                   fetcherFormData={fetcherFormData}
+                  isSubResourceSaving={subResourceState?.isSaving ?? false}
                   isTranslatingGlobal={isAllLocalesActionRunning || isPerLocaleActionRunning}
                   highlightSaveButton={navigationGuard.highlightSaveButton}
                   reloadResourceId={selectedItem.id}
@@ -542,11 +543,11 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                             subResourceHandlers?.saveSubResources?.();
                           }}
                           disabled={!(state.hasChanges || (subResourceState?.hasChanges ?? false))}
-                          loading={fetcherState !== "idle" && (
+                          loading={(fetcherState !== "idle" && (
                             fetcherFormData?.get("action") === "updateContent" ||
                             fetcherFormData?.get("action") === "savePrimarySubResources" ||
                             fetcherFormData?.get("action") === "saveSubResourceTranslations"
-                          )}
+                          )) || (subResourceState?.isSaving ?? false)}
                           size="slim"
                         >
                           {t.content?.save || "Save"}

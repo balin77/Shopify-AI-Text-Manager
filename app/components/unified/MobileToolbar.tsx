@@ -46,6 +46,9 @@ interface MobileToolbarProps {
   fetcherState: string;
   fetcherFormData: FormData | undefined;
 
+  // Sub-resource saving state (separate fetcher)
+  isSubResourceSaving?: boolean;
+
   // Global AI action state (from global store, persists across navigation)
   isTranslatingGlobal?: boolean;
 
@@ -90,6 +93,7 @@ export function MobileToolbar({
   featuredImage,
   fetcherState,
   fetcherFormData,
+  isSubResourceSaving = false,
   isTranslatingGlobal = false,
   highlightSaveButton = false,
   reloadResourceId,
@@ -113,10 +117,11 @@ export function MobileToolbar({
   const currentAction = fetcherFormData?.get("action");
   // Use global store state for translation (persists across navigation), fall back to fetcher state
   const isTranslating = isTranslatingGlobal;
-  const isSaving = fetcherState !== "idle" && (
+  const isSaving = isSubResourceSaving || (fetcherState !== "idle" && (
     currentAction === "updateContent" ||
     currentAction === "savePrimarySubResources" ||
     currentAction === "saveSubResourceTranslations"
+  )
   );
 
   const popoverActivator = (

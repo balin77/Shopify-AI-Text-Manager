@@ -52,6 +52,8 @@ export interface SubResourceState {
   hasChanges: boolean;
   /** Whether translations are loading from Shopify */
   isLoading: boolean;
+  /** Whether sub-resources are currently being saved */
+  isSaving: boolean;
 }
 
 export interface SubResourceHandlers {
@@ -1048,6 +1050,7 @@ export function useProductSubResources({
       translatingFieldIds,
       hasChanges,
       isLoading,
+      isSaving: fetcher.state !== "idle",
     },
     handlers: {
       handleOptionNameChange,
