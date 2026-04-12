@@ -155,6 +155,10 @@ export function useProductSubResources({
   // Translation state (for foreign locales)
   const [optionTranslations, setOptionTranslations] = useState<Record<string, OptionTranslation>>({});
   const [metafieldTranslations, setMetafieldTranslations] = useState<Record<string, string>>({});
+  // Track which resources the user actually modified (to avoid sending unchanged pre-loaded translations)
+  const [dirtyOptionIds, setDirtyOptionIds] = useState<Set<string>>(new Set());
+  const [dirtyOptionValueIds, setDirtyOptionValueIds] = useState<Set<string>>(new Set());
+  const [dirtyMetafieldIds, setDirtyMetafieldIds] = useState<Set<string>>(new Set());
 
   // Primary locale editing state
   const [primaryOptionEdits, setPrimaryOptionEdits] = useState<Record<string, { name: string; values: string[] }>>({});
@@ -441,6 +445,9 @@ export function useProductSubResources({
           showInfoBox("Options and metafields saved successfully", "success", "Success");
         }
         setHasChanges(false);
+        setDirtyOptionIds(new Set());
+        setDirtyOptionValueIds(new Set());
+        setDirtyMetafieldIds(new Set());
       }
     }
 
@@ -568,6 +575,7 @@ export function useProductSubResources({
       ...prev,
       [optionId]: { ...prev[optionId], name: value, values: prev[optionId]?.values || [] },
     }));
+    setDirtyOptionIds(prev => new Set(prev).add(optionId));
     setHasChanges(true);
   }, []);
 
@@ -578,11 +586,21 @@ export function useProductSubResources({
       newValues[valueIndex] = value;
       return { ...prev, [optionId]: { ...existing, values: newValues } };
     });
+    setDirtyOptionValueIds(prev => {
+      const opt = selectedItem?.options?.find(o => o.id === optionId);
+      if (opt?.values[valueIndex]?.id) {
+        const next = new Set(prev);
+        next.add(opt.values[valueIndex].id);
+        return next;
+      }
+      return prev;
+    });
     setHasChanges(true);
-  }, []);
+  }, [selectedItem]);
 
   const handleMetafieldChange = useCallback((metafieldId: string, value: string) => {
     setMetafieldTranslations(prev => ({ ...prev, [metafieldId]: value }));
+    setDirtyMetafieldIds(prev => new Set(prev).add(metafieldId));
     setHasChanges(true);
   }, []);
 
@@ -977,16 +995,16 @@ export function useProductSubResources({
 
       for (const opt of selectedItem.options || []) {
         const trans = optionTranslations[opt.id];
-        // Allow empty strings in foreign languages (user explicitly cleared the field)
-        if (trans?.name !== undefined) {
+        // Only include options the user actually modified
+        if (trans?.name !== undefined && dirtyOptionIds.has(opt.id)) {
           translationsData[opt.id] = { name: trans.name };
           resourceTypes[opt.id] = "ProductOption";
         }
         if (!opt.isLinked) {
           for (let i = 0; i < opt.values.length; i++) {
             const val = opt.values[i];
-            // Allow empty strings in foreign languages (user explicitly cleared the field)
-            if (val.id && trans?.values[i] !== undefined) {
+            // Only include option values the user actually modified
+            if (val.id && trans?.values[i] !== undefined && dirtyOptionValueIds.has(val.id)) {
               translationsData[val.id] = { name: trans.values[i] };
               resourceTypes[val.id] = "ProductOptionValue";
             }
@@ -996,8 +1014,8 @@ export function useProductSubResources({
 
       for (const mf of selectedItem.metafields || []) {
         const trans = metafieldTranslations[mf.id];
-        // Allow empty strings in foreign languages (user explicitly cleared the field)
-        if (trans !== undefined) {
+        // Only include metafields the user actually modified
+        if (trans !== undefined && dirtyMetafieldIds.has(mf.id)) {
           translationsData[mf.id] = { value: trans };
           resourceTypes[mf.id] = "Metafield";
         }
@@ -1016,12 +1034,15 @@ export function useProductSubResources({
         { method: "POST", action: "/app/products" }
       );
     }
-  }, [hasChanges, isPrimaryLocale, selectedItem, primaryOptionEdits, primaryMetafieldEdits, optionTranslations, metafieldTranslations, currentLanguage, fetcher]);
+  }, [hasChanges, isPrimaryLocale, selectedItem, primaryOptionEdits, primaryMetafieldEdits, optionTranslations, metafieldTranslations, currentLanguage, fetcher, dirtyOptionIds, dirtyOptionValueIds, dirtyMetafieldIds]);
 
   const resetChanges = useCallback(() => {
     // Reset foreign locale translations
     setOptionTranslations({});
     setMetafieldTranslations({});
+    setDirtyOptionIds(new Set());
+    setDirtyOptionValueIds(new Set());
+    setDirtyMetafieldIds(new Set());
 
     // Reset primary locale edits
     setPrimaryOptionEdits({});
