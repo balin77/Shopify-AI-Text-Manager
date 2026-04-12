@@ -407,11 +407,17 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // Ref to track the locale that was active when the save was initiated
   const savedLocaleRef = useRef<string | null>(null);
 
+  // Ref to track the ITEM ID that was active when the save was initiated.
+  // Allows response handlers to detect if the user navigated away before
+  // the save response arrived and avoid applying stale state to the wrong item.
+  const savedItemIdRef = useRef<string | null>(null);
+
   // FIFO queue for saves when the fetcher is already in-flight.
   const saveQueueRef = useRef<Array<{
     formData: FormData;
     options: { method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" };
     savedLocale: string | null;
+    savedItemId: string | null;
   }>>([]);
 
   const editableValuesRef = useLatestRef(editableValues);
@@ -508,6 +514,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     selectedItem,
     shopLocales,
     savedLocaleRef,
+    savedItemIdRef,
     isSavePendingRef,
     isSaveFromTranslateRef,
     fallbackFieldsRef,
@@ -519,7 +526,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     saveQueueRef,
     justSubmittedRef,
     fetcherRef,
-    clearPendingNavigation,
   });
 
   // Stable signal that changes when translations arrive for the selected item.
@@ -1278,6 +1284,16 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       }
       lastFetcherDataRef.current = fetcher.data;
 
+      // Guard: if the user navigated to a different item while this save was
+      // in-flight, clear refs but do NOT apply state changes to the wrong item.
+      const isSavedItemCurrent = savedItemIdRef.current === selectedItemIdRef.current;
+      if (!isSavedItemCurrent) {
+        debugLog.response(' Item changed during save — clearing refs, skipping in-memory update');
+        savedLocaleRef.current = null;
+        savedItemIdRef.current = null;
+        return;
+      }
+
       // Use the locale that was saved (tracked by savedLocaleRef), not the current language
       const savedLocale = savedLocaleRef.current;
       if (!savedLocale) {
@@ -1355,6 +1371,18 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // Mark this response as processed and clear save pending flag
       processedSaveResponseRef.current = fetcher.data;
       isSavePendingRef.current = false;
+
+      // Guard: check if the item that was saved is still the currently-selected item.
+      const isSavedItemCurrent = savedItemIdRef.current === selectedItemIdRef.current;
+      savedItemIdRef.current = null; // Always clean up — we've processed this response
+
+      if (!isSavedItemCurrent) {
+        debugLog.response(' Item changed during save — skipping response application for wrong item');
+        return;
+      }
+
+      // Only unblock deferred navigation now that the correct item's save succeeded
+      clearPendingNavigation();
 
       // Check if there's a pending translation to start after this save
       if (pendingTranslationAfterSaveRef.current) {
@@ -1607,8 +1635,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       processedSaveResponseRef.current = fetcher.data;
       isSavePendingRef.current = false;
       isSaveFromTranslateRef.current = false;
-      const translatedError = translateErrorMessage(String(fetcher.data.error || ""), t);
-      showInfoBox(translatedError, "critical", t.common?.error || "Error");
+
+      const isSavedItemCurrent = savedItemIdRef.current === selectedItemIdRef.current;
+      savedItemIdRef.current = null;
+
+      if (isSavedItemCurrent) {
+        clearPendingNavigation();
+        const translatedError = translateErrorMessage(String(fetcher.data.error || ""), t);
+        showInfoBox(translatedError, "critical", t.common?.error || "Error");
+      }
     } else if (fetcher.data && !fetcher.data.success && 'errorKey' in fetcher.data && isSavePendingRef.current) {
       // ─── Handle i18n error-key responses (e.g. emptyPrimaryFieldsError) ───
       // When the server rejects a save with an errorKey, we must:
@@ -1623,37 +1658,44 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       isSavePendingRef.current = false;
       isSaveFromTranslateRef.current = false;
 
-      const errorKey = String((fetcher.data as { errorKey?: string }).errorKey);
-      const errorMessage =
-        (t.content as Record<string, string>)?.[errorKey] ||
-        errorKey;
-      showInfoBox(errorMessage, "critical", (t.content?.error as string) || t.common?.error || "Error");
+      const isSavedItemCurrent = savedItemIdRef.current === selectedItemIdRef.current;
+      savedItemIdRef.current = null;
 
-      // Auto-restore empty fields to their original values (discard empty edits)
-      if (config.contentType === 'templates' && originalTemplateValuesRef.current) {
-        setEditableValues(prev => {
-          const restored = { ...prev };
-          let restoredCount = 0;
-          for (const [key, value] of Object.entries(restored)) {
-            if (value.trim() === "" && originalTemplateValuesRef.current[key]) {
-              restored[key] = originalTemplateValuesRef.current[key];
-              restoredCount++;
+      if (isSavedItemCurrent) {
+        clearPendingNavigation();
+
+        const errorKey = String((fetcher.data as { errorKey?: string }).errorKey);
+        const errorMessage =
+          (t.content as Record<string, string>)?.[errorKey] ||
+          errorKey;
+        showInfoBox(errorMessage, "critical", (t.content?.error as string) || t.common?.error || "Error");
+
+        // Auto-restore empty fields to their original values (discard empty edits)
+        if (config.contentType === 'templates' && originalTemplateValuesRef.current) {
+          setEditableValues(prev => {
+            const restored = { ...prev };
+            let restoredCount = 0;
+            for (const [key, value] of Object.entries(restored)) {
+              if (value.trim() === "" && originalTemplateValuesRef.current[key]) {
+                restored[key] = originalTemplateValuesRef.current[key];
+                restoredCount++;
+              }
             }
-          }
-          debugLog.submit(` Auto-restored ${restoredCount} empty fields to original values`);
-          return restored;
-        });
-      }
-      if (config.contentType === 'metaobjects' && originalLoadedValuesRef.current) {
-        setEditableValues(prev => {
-          const restored = { ...prev };
-          for (const [key, value] of Object.entries(restored)) {
-            if (value.trim() === "" && originalLoadedValuesRef.current[key]) {
-              restored[key] = originalLoadedValuesRef.current[key];
+            debugLog.submit(` Auto-restored ${restoredCount} empty fields to original values`);
+            return restored;
+          });
+        }
+        if (config.contentType === 'metaobjects' && originalLoadedValuesRef.current) {
+          setEditableValues(prev => {
+            const restored = { ...prev };
+            for (const [key, value] of Object.entries(restored)) {
+              if (value.trim() === "" && originalLoadedValuesRef.current[key]) {
+                restored[key] = originalLoadedValuesRef.current[key];
+              }
             }
-          }
-          return restored;
-        });
+            return restored;
+          });
+        }
       }
     }
   }, [fetcher.data, showInfoBox, t, safeSubmit, submitAIAction, effectiveFieldDefinitions, currentLanguage, primaryLocale]);
@@ -1690,10 +1732,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   useEffect(() => {
     if (fetcher.state === 'idle' && saveQueueRef.current.length > 0) {
       const next = saveQueueRef.current.shift()!;
-      debugLog.submit(' Processing queued save, locale:', next.savedLocale, ', remaining in queue:', saveQueueRef.current.length);
+      debugLog.submit(' Processing queued save, locale:', next.savedLocale, ', item:', next.savedItemId, ', remaining in queue:', saveQueueRef.current.length);
 
       // Restore metadata for this queued save
       savedLocaleRef.current = next.savedLocale;
+      savedItemIdRef.current = next.savedItemId;
       isSavePendingRef.current = true;
 
       try {
@@ -1708,6 +1751,17 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     }
   }, [fetcher.state]);
 
+
+  // ============================================================================
+  // DERIVED STATE: isSavingCurrentItem
+  // Must be computed BEFORE useFieldHandlers which uses it for navigation guards.
+  // True only when the fetcher is busy AND the in-flight save is for the
+  // currently-selected item (not a previously-selected one the user navigated from).
+  // ============================================================================
+
+  const isSavingCurrentItem = fetcher.state !== "idle" &&
+    (fetcher.formData?.get("itemId") === selectedItemId ||
+     (isSavePendingRef.current && savedItemIdRef.current === selectedItemId));
 
   // ============================================================================
   // FIELD EVENT HANDLERS (extracted to useFieldHandlers)
@@ -1770,7 +1824,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     originalTemplateValuesRef,
     revalidatorRef,
     savedLocaleRef,
+    savedItemIdRef,
     isSavePendingRef,
+    isSavingCurrentItem,
     isSaveFromTranslateRef,
     pendingTranslationAfterSaveRef,
     acceptedPrimaryValueRef,
@@ -1931,6 +1987,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     selectedImageIndex,
     images: selectedItem?.images || [],
     featuredImage: selectedItem?.featuredImage || null,
+    isSavingCurrentItem,
   };
 
   const handlers: EditorHandlers = {

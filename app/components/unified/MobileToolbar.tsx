@@ -46,6 +46,9 @@ interface MobileToolbarProps {
   fetcherState: string;
   fetcherFormData: FormData | undefined;
 
+  // Item-scoped saving state (true only when saving the currently-selected item)
+  isSavingCurrentItem?: boolean;
+
   // Sub-resource saving state (separate fetcher)
   isSubResourceSaving?: boolean;
 
@@ -93,6 +96,7 @@ export function MobileToolbar({
   featuredImage,
   fetcherState,
   fetcherFormData,
+  isSavingCurrentItem,
   isSubResourceSaving = false,
   isTranslatingGlobal = false,
   highlightSaveButton = false,
@@ -117,12 +121,12 @@ export function MobileToolbar({
   const currentAction = fetcherFormData?.get("action");
   // Use global store state for translation (persists across navigation), fall back to fetcher state
   const isTranslating = isTranslatingGlobal;
-  const isSaving = isSubResourceSaving || (fetcherState !== "idle" && (
+  // Use item-scoped saving state when available to prevent spinner leaking across items
+  const isSaving = isSubResourceSaving || (isSavingCurrentItem ?? (fetcherState !== "idle" && (
     currentAction === "updateContent" ||
     currentAction === "savePrimarySubResources" ||
     currentAction === "saveSubResourceTranslations"
-  )
-  );
+  )));
 
   const popoverActivator = (
     <Button icon={MenuHorizontalIcon} size="slim" onClick={togglePopover} accessibilityLabel="More actions" />
@@ -232,7 +236,7 @@ export function MobileToolbar({
                     onDiscard();
                     closePopover();
                   },
-                  disabled: !hasChanges || fetcherState !== "idle",
+                  disabled: !hasChanges || isSaving,
                 },
                 // Send image to AI checkbox (only in main language for products/collections/blogs with images)
                 ...((currentLanguage === primaryLocale &&

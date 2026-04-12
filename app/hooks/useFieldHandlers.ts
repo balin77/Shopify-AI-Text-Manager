@@ -65,7 +65,9 @@ export interface FieldHandlerProps {
   originalTemplateValuesRef: { current: Record<string, string> };
   revalidatorRef: { current: { state: string; revalidate: () => void } };
   savedLocaleRef: { current: string | null };
+  savedItemIdRef: { current: string | null };
   isSavePendingRef: { current: boolean };
+  isSavingCurrentItem: boolean;
   isSaveFromTranslateRef: { current: boolean };
   pendingTranslationAfterSaveRef: { current: { fieldKey: string; sourceText: string; targetLocales: string[]; contextTitle: string; itemId: string } | null };
   acceptedPrimaryValueRef: { current: { fieldKey: string; value: string } | null };
@@ -187,7 +189,9 @@ export function useFieldHandlers(props: FieldHandlerProps): FieldHandlers {
     originalTemplateValuesRef,
     revalidatorRef,
     savedLocaleRef,
+    savedItemIdRef,
     isSavePendingRef,
+    isSavingCurrentItem,
     isSaveFromTranslateRef,
     pendingTranslationAfterSaveRef,
     acceptedPrimaryValueRef,
@@ -313,9 +317,12 @@ const handleSave = () => {
 
   // Skip next data load to prevent revalidation from overwriting cleared/saved values.
   savedLocaleRef.current = currentLanguage; // Track which locale we're saving
+  savedItemIdRef.current = selectedItemId; // Track which item we're saving
   isSavePendingRef.current = true; // Track that a save was initiated
   safeSubmit(formDataObj, { method: "POST" });
-  clearPendingNavigation();
+  // NOTE: clearPendingNavigation is NOT called here — it is deferred to the
+  // response handler in useUnifiedContentEditor, which checks that the saved
+  // item is still the currently-selected item before unblocking navigation.
 };
 
 const handleDiscard = () => {
@@ -945,7 +952,7 @@ const handleRejectSuggestion = useCallback((fieldKey: string) => {
 }, []);
 
 const handleLanguageChange = (locale: string) => {
-  handleNavigationAttempt(() => setCurrentLanguage(locale), hasChanges);
+  handleNavigationAttempt(() => setCurrentLanguage(locale), hasChanges || isSavingCurrentItem);
 };
 
 const handleToggleLanguage = (locale: string) => {
@@ -964,7 +971,7 @@ const handleToggleLanguage = (locale: string) => {
 };
 
 const handleItemSelect = (itemId: string) => {
-  handleNavigationAttempt(() => setSelectedItemId(itemId), hasChanges);
+  handleNavigationAttempt(() => setSelectedItemId(itemId), hasChanges || isSavingCurrentItem);
 };
 
 const handleValueChange = useCallback((fieldKey: string, value: string) => {

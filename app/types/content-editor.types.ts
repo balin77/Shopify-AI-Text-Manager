@@ -342,6 +342,7 @@ export interface EditorState {
   selectedImageIndex: number; // Currently selected/viewed image index in products
   images: ContentImage[]; // All images for the current item
   featuredImage: ContentImage | null; // Featured image (for collections/blogs/products)
+  isSavingCurrentItem: boolean; // True only when fetcher is saving the currently-selected item (not a previously-selected one)
 }
 
 export interface EditorHandlers {

@@ -407,6 +407,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   featuredImage={state.featuredImage ?? undefined}
                   fetcherState={fetcherState}
                   fetcherFormData={fetcherFormData}
+                  isSavingCurrentItem={state.isSavingCurrentItem}
                   isSubResourceSaving={subResourceState?.isSaving ?? false}
                   isTranslatingGlobal={isAllLocalesActionRunning || isPerLocaleActionRunning}
                   highlightSaveButton={navigationGuard.highlightSaveButton}
@@ -525,7 +526,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                           handlers.handleDiscard();
                           subResourceHandlers?.resetChanges?.();
                         }}
-                        disabled={!(state.hasChanges || (subResourceState?.hasChanges ?? false)) || fetcherState !== "idle"}
+                        disabled={!(state.hasChanges || (subResourceState?.hasChanges ?? false)) || state.isSavingCurrentItem}
                         size="slim"
                       >
                         {t.content?.discardChanges || "Discard"}
@@ -542,8 +543,8 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                             handlers.handleSave();
                             subResourceHandlers?.saveSubResources?.();
                           }}
-                          disabled={!(state.hasChanges || (subResourceState?.hasChanges ?? false))}
-                          loading={(fetcherState !== "idle" && (
+                          disabled={!(state.hasChanges || (subResourceState?.hasChanges ?? false)) || state.isSavingCurrentItem}
+                          loading={(state.isSavingCurrentItem && (
                             fetcherFormData?.get("action") === "updateContent" ||
                             fetcherFormData?.get("action") === "savePrimarySubResources" ||
                             fetcherFormData?.get("action") === "saveSubResourceTranslations"

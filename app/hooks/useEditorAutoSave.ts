@@ -32,6 +32,7 @@ interface UseEditorAutoSaveProps {
   selectedItem: any;
   shopLocales: ShopLocale[];
   savedLocaleRef: React.MutableRefObject<string | null>;
+  savedItemIdRef: React.MutableRefObject<string | null>;
   isSavePendingRef: React.MutableRefObject<boolean>;
   isSaveFromTranslateRef: React.MutableRefObject<boolean>;
   // These refs are owned by useUiDataLoader / the main hook; passed in for reading
@@ -46,11 +47,10 @@ interface UseEditorAutoSaveProps {
     formData: FormData;
     options: { method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" };
     savedLocale: string | null;
+    savedItemId: string | null;
   }>>;
   justSubmittedRef: React.MutableRefObject<boolean>;
   fetcherRef: React.MutableRefObject<any>;
-  // Helpers from main hook
-  clearPendingNavigation: () => void;
 }
 
 interface UseEditorAutoSaveReturn {
@@ -77,6 +77,7 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
     effectiveFieldDefinitions,
     selectedItem,
     savedLocaleRef,
+    savedItemIdRef,
     isSavePendingRef,
     isSaveFromTranslateRef,
     fallbackFieldsRef,
@@ -88,7 +89,6 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
     saveQueueRef,
     justSubmittedRef,
     fetcherRef,
-    clearPendingNavigation,
   } = props;
 
   // We need a stable ref for selectedItem so closures don't capture stale values
@@ -117,6 +117,7 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
         formData,
         options: options || { method: "POST" },
         savedLocale: savedLocaleRef.current,
+        savedItemId: savedItemIdRef.current,
       });
       return;
     }
@@ -281,10 +282,13 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
 
     debugLog.autoSave(' Saving with values:', valuesToSave, 'locale:', locale);
     savedLocaleRef.current = locale;
+    savedItemIdRef.current = selectedItemId;
     isSavePendingRef.current = true;
     safeSubmit(formDataObj, { method: "POST" });
-    clearPendingNavigation();
-  }, [selectedItemId, primaryLocale, effectiveFieldDefinitions, clearPendingNavigation, getChangedFields, getChangedAltTextIndices, safeSubmit]);
+    // NOTE: clearPendingNavigation is NOT called here — it is deferred to the
+    // response handler in useUnifiedContentEditor, which checks that the saved
+    // item is still the currently-selected item before unblocking navigation.
+  }, [selectedItemId, primaryLocale, effectiveFieldDefinitions, getChangedFields, getChangedAltTextIndices, safeSubmit]);
 
   return {
     performAutoSave,

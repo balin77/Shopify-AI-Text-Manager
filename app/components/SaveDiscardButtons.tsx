@@ -10,6 +10,7 @@ interface SaveDiscardButtonsProps {
   action?: string;
   fetcherState?: string;
   fetcherFormData?: FormData | null;
+  isSavingCurrentItem?: boolean;
 }
 
 /**
@@ -35,16 +36,19 @@ export function SaveDiscardButtons({
   action = "updateContent",
   fetcherState = "idle",
   fetcherFormData = null,
+  isSavingCurrentItem,
 }: SaveDiscardButtonsProps) {
-  // Determine if currently submitting this specific action
-  const isSubmitting = fetcherState !== "idle" &&
-    fetcherFormData?.get("action") === action;
+  // Determine if currently submitting this specific action.
+  // Prefer the item-scoped isSavingCurrentItem when available (prevents
+  // spinner/disabled state from leaking to a different item after navigation).
+  const isSubmitting = isSavingCurrentItem ?? (fetcherState !== "idle" &&
+    fetcherFormData?.get("action") === action);
 
   return (
     <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", flex: 1, minWidth: 0, alignItems: "center" }}>
       <Button
         onClick={onDiscard}
-        disabled={!hasChanges || fetcherState !== "idle"}
+        disabled={!hasChanges || isSubmitting}
         size="slim"
       >
         {discardText}
@@ -58,7 +62,7 @@ export function SaveDiscardButtons({
         <Button
           variant={hasChanges ? "primary" : undefined}
           onClick={onSave}
-          disabled={!hasChanges || fetcherState !== "idle"}
+          disabled={!hasChanges || isSubmitting}
           loading={isSubmitting}
           size="slim"
         >
