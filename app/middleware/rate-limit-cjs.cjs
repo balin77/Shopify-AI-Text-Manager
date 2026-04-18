@@ -76,7 +76,7 @@ const apiRateLimit = rateLimit({
 
 /**
  * AI Action Rate Limit — 30 requests per minute per IP.
- * Applied to /api/ai and form-submitting AI routes.
+ * Applied to /api/ai routes only (direct AI API calls).
  */
 const aiActionRateLimit = rateLimit({
   windowMs: 60 * 1000,
@@ -85,6 +85,22 @@ const aiActionRateLimit = rateLimit({
   legacyHeaders: false,
   handler: standardHandler,
   message: 'Too many AI requests, please try again later',
+  keyGenerator: normalizedIpKey,
+});
+
+/**
+ * Content Action Rate Limit — 200 requests per minute per IP.
+ * Applied to form submissions on content pages (products, collections, etc.).
+ * These pages mix AI and non-AI operations (save, copy, translate) so the
+ * limit must be high enough not to throttle routine save/copy clicks.
+ */
+const contentActionRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  max: 200,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: standardHandler,
+  message: 'Too many requests, please try again later',
   keyGenerator: normalizedIpKey,
 });
 
@@ -155,6 +171,7 @@ const bulkOperationRateLimit = rateLimit({
 module.exports = {
   apiRateLimit,
   aiActionRateLimit,
+  contentActionRateLimit,
   webhookRateLimit,
   authRateLimit,
   strictRateLimit,

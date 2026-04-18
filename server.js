@@ -30,6 +30,7 @@ try {
 const {
   apiRateLimit,
   aiActionRateLimit,
+  contentActionRateLimit,
   webhookRateLimit,
   authRateLimit,
   strictRateLimit,
@@ -82,17 +83,18 @@ app.use('/app/settings', strictRateLimit);
 app.use('/api/sync-products', bulkOperationRateLimit);
 app.use('/api/sync-content', bulkOperationRateLimit);
 
-// AI action rate limiting for generation/translation
+// Content page rate limiting — applied to form submissions (save, copy, translate).
+// Uses a permissive 200/min limit because these pages mix AI and non-AI operations
+// and routine copy/save clicks must not be throttled. The /api/ai route has its
+// own strict 30/min AI limit for direct AI API calls.
 app.use((req, res, next) => {
-  // Check if this is an AI action based on form data
   const contentType = req.headers['content-type'] || '';
   if (contentType.includes('application/x-www-form-urlencoded') ||
       contentType.includes('multipart/form-data')) {
-    // These might be AI actions, apply limit
     if (req.path.includes('/app/products') ||
         req.path.includes('/app/content') ||
         req.path.includes('/app/collections')) {
-      return aiActionRateLimit(req, res, next);
+      return contentActionRateLimit(req, res, next);
     }
   }
   next();

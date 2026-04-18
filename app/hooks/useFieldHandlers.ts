@@ -1375,19 +1375,23 @@ const handleCopyFieldToAllLocales = (fieldKey: string): void => {
   const capturedItemId = selectedItemId;
   markOperationActive(capturedItemId, fieldKey, "copyToAllLocales");
 
-  const saves = targetLocales.map(locale => {
-    const fd = new FormData();
-    fd.set("action", "updateContent");
-    fd.set("itemId", capturedItemId);
-    fd.set("locale", locale);
-    fd.set("primaryLocale", primaryLocale);
-    fd.set(fieldKey, primaryValue);
-    return fetch(window.location.pathname, { method: "POST", body: fd });
-  });
-
-  Promise.all(saves).finally(() => {
+  const runSaves = async () => {
+    for (const locale of targetLocales) {
+      const fd = new FormData();
+      fd.set("action", "updateContent");
+      fd.set("itemId", capturedItemId);
+      fd.set("locale", locale);
+      fd.set("primaryLocale", primaryLocale);
+      fd.set(fieldKey, primaryValue);
+      try {
+        await fetch(window.location.pathname, { method: "POST", body: fd });
+      } catch {
+        // individual locale save failure is non-critical
+      }
+    }
     markOperationFailed(capturedItemId, fieldKey);
-  });
+  };
+  runSaves();
 
   onTranslateToAllLocalesComplete?.(fieldKey, translations);
   showInfoBox(t.common?.copied ?? "Copied", "success");
