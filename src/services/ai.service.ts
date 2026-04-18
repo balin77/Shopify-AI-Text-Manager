@@ -630,7 +630,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     // Rough estimate: ~4 characters per token
     // Add output tokens estimate (2000 max_tokens)
     const inputTokens = Math.ceil(prompt.length / 4);
-    const outputTokens = 2000;
+    const outputTokens = 8192;
     return inputTokens + outputTokens;
   }
 
@@ -798,7 +798,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       const response = await this.huggingface.chatCompletion({
         model: this.getModel(),
         messages: [{ role: 'user', content: prompt }],
-        max_tokens: 2000,
+        max_tokens: 8192,
         temperature: 0.7,
       });
       if (!response.choices[0]) throw new Error('HuggingFace returned empty response');
@@ -844,7 +844,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       if (imageUrl) {
         const message = await this.anthropic.messages.create({
           model: this.getModel(),
-          max_tokens: 2000,
+          max_tokens: 8192,
           messages: [{
             role: 'user',
             content: [
@@ -861,7 +861,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       } else {
         const message = await this.anthropic.messages.create({
           model: this.getModel(),
-          max_tokens: 2000,
+          max_tokens: 8192,
           messages: [{ role: 'user', content: prompt }],
         });
         const content = message.content[0];
@@ -882,7 +882,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
               { type: 'text', text: prompt },
             ],
           }],
-          max_tokens: 2000,
+          max_tokens: 8192,
         });
         if (!completion.choices[0]) throw new Error('OpenAI returned empty response');
         const openaiVisionContent = completion.choices[0].message.content;
@@ -892,7 +892,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
         const completion = await this.openai.chat.completions.create({
           model: this.getModel(),
           messages: [{ role: 'user', content: prompt }],
-          max_tokens: 2000,
+          max_tokens: 8192,
         });
         if (!completion.choices[0]) throw new Error('OpenAI returned empty response');
         const openaiContent = completion.choices[0].message.content;
@@ -911,7 +911,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
               { type: 'text', text: prompt },
             ],
           }],
-          max_tokens: 2000,
+          max_tokens: 8192,
           temperature: 0.7,
         });
         if (!completion.choices[0]) throw new Error('Grok returned empty response');
@@ -922,7 +922,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
         const completion = await this.grok.chat.completions.create({
           model: this.getModel(),
           messages: [{ role: 'user', content: prompt }],
-          max_tokens: 2000,
+          max_tokens: 8192,
           temperature: 0.7,
         });
         if (!completion.choices[0]) throw new Error('Grok returned empty response');
@@ -935,7 +935,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       const completion = await this.deepseek.chat.completions.create({
         model: this.getModel(),
         messages: [{ role: 'user', content: prompt }],
-        max_tokens: 2000,
+        max_tokens: 8192,
         temperature: 0.7,
       });
       if (!completion.choices[0]) throw new Error('DeepSeek returned empty response');
