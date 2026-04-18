@@ -83,6 +83,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const [editableValues, setEditableValues] = useState<Record<string, string>>({});
   const [aiSuggestions, setAiSuggestions] = useState<Record<string, string>>({});
   const [htmlModes, setHtmlModes] = useState<Record<string, 'html' | 'rendered'>>({});
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [enabledLanguages, setEnabledLanguages] = useState<string[]>(
     shopLocales.map((l) => l.locale)
   );
@@ -888,6 +889,16 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   useEffect(() => {
     if (fetcher.data?.success && fetcher.data.actionType === "translateField") {
       const { fieldType, translatedValue, targetLocale } = fetcher.data as TranslatedValueResponse;
+
+      // Clear any previous error for this field on success
+      if (fieldType) {
+        setFieldErrors(prev => {
+          if (!prev[fieldType]) return prev;
+          const next = { ...prev };
+          delete next[fieldType];
+          return next;
+        });
+      }
 
       // Create a unique key for this response to prevent duplicate processing
       const responseKey = `translateField-${fieldType}-${targetLocale}-${translatedValue?.substring(0, 20)}`;
@@ -1713,7 +1724,17 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     if (fetcher.data === processedGenericErrorRef.current) return;
     processedGenericErrorRef.current = fetcher.data;
 
-    const translatedError = translateErrorMessage(String(fetcher.data.error || ""), t);
+    const actionType = (fetcher.data as { actionType?: string }).actionType;
+    const fieldType = (fetcher.data as { fieldType?: string }).fieldType;
+    const errorMsg = String(fetcher.data.error || "");
+
+    // For single-field translation errors: show the error inside the field instead of a banner
+    if ((actionType === "translateField" || actionType === "translateFieldToAllLocales") && fieldType) {
+      setFieldErrors(prev => ({ ...prev, [fieldType]: errorMsg }));
+      return;
+    }
+
+    const translatedError = translateErrorMessage(errorMsg, t);
     showInfoBox(translatedError, "critical", t.common?.error || "Error");
   }, [fetcher.data, showInfoBox, t]);
 
@@ -1859,6 +1880,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     setOriginalAltTexts,
     setFallbackFields,
     setTemplateValuesVersion,
+    setFieldErrors,
   });
 
   // ============================================================================
@@ -1990,6 +2012,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     images: selectedItem?.images || [],
     featuredImage: selectedItem?.featuredImage || null,
     isSavingCurrentItem,
+    fieldErrors,
   };
 
   const handlers: EditorHandlers = {

@@ -31,6 +31,8 @@ export interface FieldRendererProps {
   isFallbackValue?: boolean;
   /** If true, the field is read-only (disabled). Used when primary locale template editing is not enabled. */
   readOnly?: boolean;
+  /** Error message shown below the field (e.g. AI translation failed due to text being too long) */
+  fieldError?: string;
   onGenerateAI?: () => void;
   onFormatAI?: () => void;
   onTranslate?: () => void;
@@ -67,6 +69,7 @@ export function UnifiedFieldRenderer(
     disableGeneration,
     isFallbackValue,
     readOnly,
+    fieldError,
     onGenerateAI,
     onFormatAI,
     onTranslate,
@@ -316,6 +319,7 @@ export function UnifiedFieldRenderer(
       isFallbackValue={isFallbackValue}
       readOnly={readOnly}
       requiredIndicator={requiredIndicator}
+      error={fieldError}
       hasFieldMissingTranslations={fieldHasMissingTranslations}
       seoSuffix={field.key === "seoTitle" && seoTitleSuffix ? seoTitleSuffix : undefined}
       onGenerateAI={field.supportsAI !== false ? onGenerateAI : undefined}

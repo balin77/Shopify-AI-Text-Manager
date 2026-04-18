@@ -250,7 +250,7 @@ export async function handleTranslateField(
     } catch (updateErr) {
       console.error("Failed to update task status:", updateErr);
     }
-    return json({ success: false, error: errorMsg }, { status: 500 });
+    return json({ actionType: "translateField", success: false, error: errorMsg, fieldType }, { status: 500 });
   }
 }
 
@@ -666,6 +666,6 @@ export async function handleTranslateFieldToAllLocales(
         error: errorMsg,
       },
     });
-    return json({ success: false, error: errorMsg }, { status: 500 });
+    return json({ actionType: "translateFieldToAllLocales", success: false, error: errorMsg, fieldType }, { status: 500 });
   }
 }

@@ -123,6 +123,7 @@ export interface FieldHandlerProps {
   setOriginalAltTexts: React.Dispatch<React.SetStateAction<Record<number, string>>>;
   setFallbackFields: React.Dispatch<React.SetStateAction<Set<string>>>;
   setTemplateValuesVersion: React.Dispatch<React.SetStateAction<number>>;
+  setFieldErrors: React.Dispatch<React.SetStateAction<Record<string, string>>>;
 }
 
 export interface FieldHandlers {
@@ -224,6 +225,7 @@ export function useFieldHandlers(props: FieldHandlerProps): FieldHandlers {
     setOriginalAltTexts,
     setFallbackFields,
     setTemplateValuesVersion,
+    setFieldErrors,
   } = props;
 
 // ============================================================================
@@ -989,13 +991,21 @@ const handleValueChange = useCallback((fieldKey: string, value: string) => {
     });
   }
 
+  // Clear any translation error for this field when the user starts editing
+  setFieldErrors(prev => {
+    if (!prev[fieldKey]) return prev;
+    const next = { ...prev };
+    delete next[fieldKey];
+    return next;
+  });
+
   // Update the state immediately without any side effects
   // This ensures the input field responds instantly to user typing
   setEditableValues((prev) => ({
     ...prev,
     [fieldKey]: value,
   }));
-}, [fallbackFieldsRef]);
+}, [fallbackFieldsRef, setFieldErrors]);
 
 const handleToggleHtmlMode = useCallback((fieldKey: string) => {
   setHtmlModes((prev) => ({

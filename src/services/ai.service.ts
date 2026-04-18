@@ -756,7 +756,43 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     return this.executeAIRequest(prompt);
   }
 
+  /**
+   * Returns true if the error indicates the input prompt exceeded the model's context window.
+   * Each provider signals this differently; we normalise to a single user-facing message.
+   */
+  private static isInputTooLongError(error: unknown): boolean {
+    const msg = (error instanceof Error ? error.message : String(error)).toLowerCase();
+    const code = (error as { code?: string; status?: number })?.code ?? '';
+    const status = (error as { status?: number })?.status ?? 0;
+
+    // OpenAI / Grok / DeepSeek (OpenAI-compatible SDK)
+    if (code === 'context_length_exceeded') return true;
+    if (msg.includes('maximum context length') || msg.includes('context_length_exceeded')) return true;
+    // Claude (Anthropic SDK) — 400 with prompt-too-long message
+    if (status === 400 && (msg.includes('prompt is too long') || (msg.includes('token') && msg.includes('maximum')))) return true;
+    // Gemini
+    if (msg.includes('request payload size exceeds') || msg.includes('input is too long')) return true;
+    // Generic fallbacks
+    if (msg.includes('too many tokens') || msg.includes('exceeds the limit')) return true;
+
+    return false;
+  }
+
+  private static readonly INPUT_TOO_LONG_MESSAGE =
+    'The text is too long for the AI model to process. Please shorten the content and try again.';
+
   private async executeAIRequest(prompt: string, imageUrl?: string): Promise<string> {
+    try {
+      return await this._executeAIRequestInner(prompt, imageUrl);
+    } catch (error) {
+      if (AIService.isInputTooLongError(error)) {
+        throw new Error(AIService.INPUT_TOO_LONG_MESSAGE);
+      }
+      throw error;
+    }
+  }
+
+  private async _executeAIRequestInner(prompt: string, imageUrl?: string): Promise<string> {
     if (this.provider === 'huggingface' && this.huggingface) {
       // HuggingFace: text-only (no vision support)
       const response = await this.huggingface.chatCompletion({
@@ -787,6 +823,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
           if (!geminiText || !geminiText.trim()) throw new Error('Gemini returned empty response');
           return geminiText;
         } catch (error) {
+          if (AIService.isInputTooLongError(error)) throw error;
           loggers.ai('warn', '[AI-SERVICE] Gemini vision failed, falling back to text-only', { error });
           // Fallback to text-only
           const result = await this.gemini.generateContent(prompt);

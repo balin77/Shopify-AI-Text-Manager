@@ -29,41 +29,31 @@ const DANGEROUS_PATTERNS = [
   /roleplay\s+as/gi,
 ];
 
-/**
- * Maximum allowed length for user input in prompts
- */
-const MAX_INPUT_LENGTH = {
-  title: 200,
-  description: 5000,
-  handle: 100,
-  seoTitle: 150,
-  metaDescription: 300,
-  altText: 200,
-  general: 1000,
-};
-
-export type SanitizeFieldType = keyof typeof MAX_INPUT_LENGTH;
-
-const VALID_FIELD_TYPES = new Set<string>(Object.keys(MAX_INPUT_LENGTH));
+// No character limits are enforced here intentionally. Long content (e.g. terms & conditions,
+// legal pages) must be sent to the AI untruncated. If the input exceeds the model's context
+// window the AI provider returns an error, which is caught upstream and shown to the user.
+export type SanitizeFieldType = 'title' | 'description' | 'handle' | 'seoTitle' | 'metaDescription' | 'altText' | 'general';
 
 export function isValidFieldType(key: string): key is SanitizeFieldType {
-  return VALID_FIELD_TYPES.has(key);
+  const known: SanitizeFieldType[] = ['title', 'description', 'handle', 'seoTitle', 'metaDescription', 'altText', 'general'];
+  return known.includes(key as SanitizeFieldType);
 }
 
 export interface SanitizeOptions {
   maxLength?: number;
-  fieldType?: keyof typeof MAX_INPUT_LENGTH;
+  fieldType?: SanitizeFieldType;
   allowNewlines?: boolean;
 }
 
 /**
- * Sanitize user input before including it in AI prompts
+ * Sanitize user input before including it in AI prompts.
  *
  * This function:
- * 1. Truncates input to maximum length
- * 2. Removes or escapes dangerous patterns
- * 3. Normalizes whitespace
- * 4. Escapes special characters that could break prompt structure
+ * 1. Removes or escapes dangerous prompt-injection patterns
+ * 2. Normalizes whitespace
+ * 3. Escapes special characters that could break prompt structure
+ *
+ * NOTE: No truncation is applied — see comment above.
  */
 export function sanitizePromptInput(
   input: string,
@@ -73,17 +63,7 @@ export function sanitizePromptInput(
 
   let sanitized = input;
 
-  // 1. Determine max length
-  const maxLength = options.maxLength ||
-    (options.fieldType ? MAX_INPUT_LENGTH[options.fieldType] : MAX_INPUT_LENGTH.general);
-
-  // 2. Truncate to max length
-  if (sanitized.length > maxLength) {
-    sanitized = sanitized.substring(0, maxLength);
-    logger.warn(`[PROMPT_SANITIZER] Input truncated from ${input.length} to ${maxLength} characters`);
-  }
-
-  // 3. Remove dangerous patterns
+  // 1. Remove dangerous patterns
   for (const pattern of DANGEROUS_PATTERNS) {
     if (pattern.test(sanitized)) {
       logger.warn(`[PROMPT_SANITIZER] Dangerous pattern detected and removed: ${pattern}`);
@@ -91,7 +71,7 @@ export function sanitizePromptInput(
     }
   }
 
-  // 4. Normalize newlines (optional)
+  // 2. Normalize newlines (optional)
   if (!options.allowNewlines) {
     sanitized = sanitized.replace(/\n+/g, ' ');
   } else {
@@ -99,10 +79,10 @@ export function sanitizePromptInput(
     sanitized = sanitized.replace(/\n{3,}/g, '\n\n');
   }
 
-  // 5. Normalize whitespace
+  // 3. Normalize whitespace
   sanitized = sanitized.replace(/\s+/g, ' ').trim();
 
-  // 6. Escape backticks and special characters that could break JSON
+  // 4. Escape backticks and special characters that could break JSON
   sanitized = sanitized
     .replace(/`{3,}/g, '```')  // Limit consecutive backticks
     .replace(/\${/g, '$ {');    // Prevent template literal injection
