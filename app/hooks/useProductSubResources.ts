@@ -65,6 +65,8 @@ export interface SubResourceHandlers {
   handlePrimaryMetafieldChange: (metafieldId: string, value: string) => void;
   translateOption: (optionId: string) => void;
   translateOptionField: (optionId: string, fieldType: "name" | "value", valueIndex?: number) => void;
+  copyOptionField: (optionId: string, fieldType: "name" | "value", valueIndex?: number) => void;
+  copyOptionFieldToAllLocales: (optionId: string, fieldType: "name" | "value", valueIndex?: number) => void;
   translateMetafield: (metafieldId: string) => void;
   translateAllSubResources: () => void;
   translateAllSubResourcesToAllLocales: () => void;
@@ -77,6 +79,8 @@ interface UseProductSubResourcesProps {
   selectedItem: TranslatableContentItem | null;
   currentLanguage: string;
   primaryLocale: string;
+  /** Enabled shop locales — needed for copy-to-all-locales */
+  enabledLanguages?: string[];
   /** @deprecated No longer used — hook creates its own fetcher to avoid shared-fetcher race conditions */
   fetcher?: FetcherWithComponents<any>;
   revalidator?: { revalidate: () => void; state: string };
@@ -149,6 +153,7 @@ export function useProductSubResources({
   selectedItem,
   currentLanguage,
   primaryLocale,
+  enabledLanguages = [],
   revalidator,
   showInfoBox,
 }: UseProductSubResourcesProps): { state: SubResourceState; handlers: SubResourceHandlers } {
@@ -1062,6 +1067,78 @@ export function useProductSubResources({
     loadedForRef.current = "";
   }, []);
 
+  const copyOptionField = useCallback((optionId: string, fieldType: "name" | "value", valueIndex?: number) => {
+    if (!selectedItem) return;
+    const option = selectedItem.options?.find(o => o.id === optionId);
+    if (!option) return;
+
+    let translationsData: Record<string, { name: string }>;
+    let resourceTypes: Record<string, string>;
+
+    if (fieldType === "name") {
+      if (!option.name) return;
+      translationsData = { [option.id]: { name: option.name } };
+      resourceTypes = { [option.id]: "ProductOption" };
+      handleOptionNameChange(optionId, option.name);
+    } else {
+      const val = option.values[valueIndex!];
+      if (!val?.id || !val.name) return;
+      translationsData = { [val.id]: { name: val.name } };
+      resourceTypes = { [val.id]: "ProductOptionValue" };
+      handleOptionValueChange(optionId, valueIndex!, val.name);
+    }
+
+    fetcher.submit(
+      {
+        action: "saveSubResourceTranslations",
+        locale: currentLanguage,
+        translationsData: JSON.stringify(translationsData),
+        resourceTypes: JSON.stringify(resourceTypes),
+        itemId: selectedItem.id,
+      },
+      { method: "POST", action: "/app/products" }
+    );
+  }, [selectedItem, currentLanguage, fetcher, handleOptionNameChange, handleOptionValueChange]);
+
+  const copyOptionFieldToAllLocales = useCallback((optionId: string, fieldType: "name" | "value", valueIndex?: number) => {
+    if (!selectedItem) return;
+    const option = selectedItem.options?.find(o => o.id === optionId);
+    if (!option) return;
+
+    const targetLocales = enabledLanguages.filter(l => l !== primaryLocale);
+    if (targetLocales.length === 0) return;
+
+    let primaryValue: string;
+    let resourceId: string;
+    let resourceType: string;
+
+    if (fieldType === "name") {
+      if (!option.name) return;
+      primaryValue = option.name;
+      resourceId = option.id;
+      resourceType = "ProductOption";
+    } else {
+      const val = option.values[valueIndex!];
+      if (!val?.id || !val.name) return;
+      primaryValue = val.name;
+      resourceId = val.id;
+      resourceType = "ProductOptionValue";
+    }
+
+    const translationsData = JSON.stringify({ [resourceId]: { name: primaryValue } });
+    const resourceTypes = JSON.stringify({ [resourceId]: resourceType });
+
+    targetLocales.forEach(locale => {
+      const fd = new FormData();
+      fd.set("action", "saveSubResourceTranslations");
+      fd.set("locale", locale);
+      fd.set("translationsData", translationsData);
+      fd.set("resourceTypes", resourceTypes);
+      fd.set("itemId", selectedItem.id);
+      fetch("/app/products", { method: "POST", body: fd });
+    });
+  }, [selectedItem, primaryLocale, enabledLanguages]);
+
   return {
     state: {
       optionTranslations,
@@ -1082,6 +1159,8 @@ export function useProductSubResources({
       handlePrimaryMetafieldChange,
       translateOption,
       translateOptionField,
+      copyOptionField,
+      copyOptionFieldToAllLocales,
       translateMetafield,
       translateAllSubResources,
       translateAllSubResourcesToAllLocales,

@@ -477,6 +477,7 @@ export default function ProductsPage() {
     primaryLocale,
     revalidator,
     showInfoBox,
+    enabledLanguages: editor.state.enabledLanguages,
   });
 
   // Wrap translate-all handlers to also translate product options and metafields.

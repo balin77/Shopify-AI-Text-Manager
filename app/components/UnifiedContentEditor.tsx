@@ -725,6 +725,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                           sourceTextAvailable={!!getSourceText(selectedItem, field.key, primaryLocale)}
                           disableGeneration={config.contentType === 'templates'}
                           isFallbackValue={state.fallbackFields?.has(field.key) || false}
+                          fieldError={state.fieldErrors?.[field.key]}
                           readOnly={isTemplatePrimaryReadOnly}
                           onGenerateAI={isTemplatePrimaryReadOnly ? undefined : (field.supportsAI !== false ? () => handlers.handleGenerateAI(field.key) : undefined)}
                           onFormatAI={isTemplatePrimaryReadOnly ? undefined : (field.supportsFormatting !== false ? () => handlers.handleFormatAI(field.key) : undefined)}
@@ -801,6 +802,8 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                       translations={subResourceState.optionTranslations}
                       onTranslate={subResourceHandlers.translateOption}
                       onTranslateField={subResourceHandlers.translateOptionField}
+                      onCopyField={subResourceHandlers.copyOptionField}
+                      onCopyFieldToAllLocales={subResourceHandlers.copyOptionFieldToAllLocales}
                       onOptionNameChange={subResourceHandlers.handleOptionNameChange}
                       onOptionValueChange={subResourceHandlers.handleOptionValueChange}
                       onPrimaryOptionNameChange={subResourceHandlers.handlePrimaryOptionNameChange}
@@ -826,6 +829,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         metaobjectsLinkText: t.products?.metaobjectsLinkText,
                         optionPositionLabel: t.products?.optionPositionLabel,
                         clearButton: t.products?.clearButton,
+                        copyButton: t.products?.copy,
                       }}
                     />
                   </div>

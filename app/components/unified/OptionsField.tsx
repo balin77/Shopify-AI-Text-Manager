@@ -60,6 +60,12 @@ interface OptionsFieldProps {
   /** Callback to translate a single field (option name or value) */
   onTranslateField?: (optionId: string, fieldType: "name" | "value", valueIndex?: number) => void;
 
+  /** Callback to copy the primary locale value to the current foreign locale */
+  onCopyField?: (optionId: string, fieldType: "name" | "value", valueIndex?: number) => void;
+
+  /** Callback to copy the primary locale value to all foreign locales */
+  onCopyFieldToAllLocales?: (optionId: string, fieldType: "name" | "value", valueIndex?: number) => void;
+
   /** Callback when option name changes */
   onOptionNameChange: (optionId: string, value: string) => void;
 
@@ -106,6 +112,7 @@ interface OptionsFieldProps {
     metaobjectsLinkText?: string;
     optionPositionLabel?: string;
     clearButton?: string;
+    copyButton?: string;
   };
 }
 
@@ -117,6 +124,8 @@ export function OptionsField({
   translations,
   onTranslate,
   onTranslateField,
+  onCopyField,
+  onCopyFieldToAllLocales,
   onOptionNameChange,
   onOptionValueChange,
   onPrimaryOptionNameChange,
@@ -231,17 +240,28 @@ export function OptionsField({
                                 autoComplete="off"
                               />
                             </div>
-                            {onTranslateField && (
+                            {(onTranslateField || onCopyFieldToAllLocales) && (
                               <div className="ai-field-footer">
                                 <div className="ai-field-footer-left" />
                                 <div className="ai-field-footer-right">
-                                  <Button
-                                    size="slim"
-                                    onClick={() => onTranslateField(option.id, "name")}
-                                    loading={translatingFieldIds.has(nameFieldId) || translatingFieldIds.has(entireFieldId)}
-                                  >
-                                    🌍 {t.translateFieldButton || t.translateButton || "Translate"}
-                                  </Button>
+                                  {onTranslateField && (
+                                    <Button
+                                      size="slim"
+                                      onClick={() => onTranslateField(option.id, "name")}
+                                      loading={translatingFieldIds.has(nameFieldId) || translatingFieldIds.has(entireFieldId)}
+                                    >
+                                      🌍 {t.translateFieldButton || t.translateButton || "Translate"}
+                                    </Button>
+                                  )}
+                                  {onCopyFieldToAllLocales && (
+                                    <Button
+                                      size="slim"
+                                      onClick={() => onCopyFieldToAllLocales(option.id, "name")}
+                                      disabled={!currentName}
+                                    >
+                                      {t.copyButton || "Copy"}
+                                    </Button>
+                                  )}
                                 </div>
                               </div>
                             )}
@@ -292,17 +312,28 @@ export function OptionsField({
                                 autoComplete="off"
                               />
                             </div>
-                            {onTranslateField && (
+                            {(onTranslateField || onCopyFieldToAllLocales) && (
                               <div className="ai-field-footer">
                                 <div className="ai-field-footer-left" />
                                 <div className="ai-field-footer-right">
-                                  <Button
-                                    size="slim"
-                                    onClick={() => onTranslateField(option.id, "name")}
-                                    loading={translatingFieldIds.has(nameFieldId) || translatingFieldIds.has(entireFieldId)}
-                                  >
-                                    🌍 {t.translateFieldButton || t.translateButton || "Translate"}
-                                  </Button>
+                                  {onTranslateField && (
+                                    <Button
+                                      size="slim"
+                                      onClick={() => onTranslateField(option.id, "name")}
+                                      loading={translatingFieldIds.has(nameFieldId) || translatingFieldIds.has(entireFieldId)}
+                                    >
+                                      🌍 {t.translateFieldButton || t.translateButton || "Translate"}
+                                    </Button>
+                                  )}
+                                  {onCopyFieldToAllLocales && (
+                                    <Button
+                                      size="slim"
+                                      onClick={() => onCopyFieldToAllLocales(option.id, "name")}
+                                      disabled={!currentName}
+                                    >
+                                      {t.copyButton || "Copy"}
+                                    </Button>
+                                  )}
                                 </div>
                               </div>
                             )}
@@ -338,17 +369,28 @@ export function OptionsField({
                                       autoComplete="off"
                                     />
                                   </div>
-                                  {onTranslateField && (
+                                  {(onTranslateField || onCopyFieldToAllLocales) && (
                                     <div className="ai-field-footer">
                                       <div className="ai-field-footer-left" />
                                       <div className="ai-field-footer-right">
-                                        <Button
-                                          size="slim"
-                                          onClick={() => onTranslateField(option.id, "value", valueIndex)}
-                                          loading={translatingFieldIds.has(valueFieldId) || translatingFieldIds.has(entireFieldId)}
-                                        >
-                                          🌍 {t.translateFieldButton || t.translateButton || "Translate"}
-                                        </Button>
+                                        {onTranslateField && (
+                                          <Button
+                                            size="slim"
+                                            onClick={() => onTranslateField(option.id, "value", valueIndex)}
+                                            loading={translatingFieldIds.has(valueFieldId) || translatingFieldIds.has(entireFieldId)}
+                                          >
+                                            🌍 {t.translateFieldButton || t.translateButton || "Translate"}
+                                          </Button>
+                                        )}
+                                        {onCopyFieldToAllLocales && (
+                                          <Button
+                                            size="slim"
+                                            onClick={() => onCopyFieldToAllLocales(option.id, "value", valueIndex)}
+                                            disabled={!value}
+                                          >
+                                            {t.copyButton || "Copy"}
+                                          </Button>
+                                        )}
                                       </div>
                                     </div>
                                   )}
@@ -433,17 +475,28 @@ export function OptionsField({
                             autoComplete="off"
                           />
                         </div>
-                        {onTranslateField && (
+                        {(onTranslateField || onCopyField) && (
                           <div className="ai-field-footer">
                             <div className="ai-field-footer-left" />
                             <div className="ai-field-footer-right">
-                              <Button
-                                size="slim"
-                                onClick={() => onTranslateField(option.id, "name")}
-                                loading={translatingFieldIds.has(nameFieldId) || translatingFieldIds.has(entireFieldId)}
-                              >
-                                🌍 {t.translateFieldButton || t.translateButton || "Translate"}
-                              </Button>
+                              {onTranslateField && (
+                                <Button
+                                  size="slim"
+                                  onClick={() => onTranslateField(option.id, "name")}
+                                  loading={translatingFieldIds.has(nameFieldId) || translatingFieldIds.has(entireFieldId)}
+                                >
+                                  🌍 {t.translateFieldButton || t.translateButton || "Translate"}
+                                </Button>
+                              )}
+                              {onCopyField && (
+                                <Button
+                                  size="slim"
+                                  onClick={() => onCopyField(option.id, "name")}
+                                  disabled={!option.name}
+                                >
+                                  {t.copyButton || "Copy"}
+                                </Button>
+                              )}
                             </div>
                           </div>
                         )}
@@ -479,17 +532,28 @@ export function OptionsField({
                                     autoComplete="off"
                                   />
                                 </div>
-                                {onTranslateField && (
+                                {(onTranslateField || onCopyField) && (
                                   <div className="ai-field-footer">
                                     <div className="ai-field-footer-left" />
                                     <div className="ai-field-footer-right">
-                                      <Button
-                                        size="slim"
-                                        onClick={() => onTranslateField(option.id, "value", valueIndex)}
-                                        loading={translatingFieldIds.has(valueFieldId) || translatingFieldIds.has(entireFieldId)}
-                                      >
-                                        🌍 {t.translateFieldButton || t.translateButton || "Translate"}
-                                      </Button>
+                                      {onTranslateField && (
+                                        <Button
+                                          size="slim"
+                                          onClick={() => onTranslateField(option.id, "value", valueIndex)}
+                                          loading={translatingFieldIds.has(valueFieldId) || translatingFieldIds.has(entireFieldId)}
+                                        >
+                                          🌍 {t.translateFieldButton || t.translateButton || "Translate"}
+                                        </Button>
+                                      )}
+                                      {onCopyField && (
+                                        <Button
+                                          size="slim"
+                                          onClick={() => onCopyField(option.id, "value", valueIndex)}
+                                          disabled={!optVal.name}
+                                        >
+                                          {t.copyButton || "Copy"}
+                                        </Button>
+                                      )}
                                     </div>
                                   </div>
                                 )}
