@@ -257,7 +257,8 @@ export function OptionsField({
                                     <Button
                                       size="slim"
                                       onClick={() => onCopyFieldToAllLocales(option.id, "name")}
-                                      disabled={!currentName}
+                                      loading={translatingFieldIds.has(nameFieldId) || translatingFieldIds.has(entireFieldId)}
+                                      disabled={!currentName || translatingFieldIds.has(nameFieldId) || translatingFieldIds.has(entireFieldId)}
                                     >
                                       {t.copyButton || "Copy"}
                                     </Button>
@@ -329,7 +330,8 @@ export function OptionsField({
                                     <Button
                                       size="slim"
                                       onClick={() => onCopyFieldToAllLocales(option.id, "name")}
-                                      disabled={!currentName}
+                                      loading={translatingFieldIds.has(nameFieldId) || translatingFieldIds.has(entireFieldId)}
+                                      disabled={!currentName || translatingFieldIds.has(nameFieldId) || translatingFieldIds.has(entireFieldId)}
                                     >
                                       {t.copyButton || "Copy"}
                                     </Button>
@@ -386,7 +388,8 @@ export function OptionsField({
                                           <Button
                                             size="slim"
                                             onClick={() => onCopyFieldToAllLocales(option.id, "value", valueIndex)}
-                                            disabled={!value}
+                                            loading={translatingFieldIds.has(valueFieldId) || translatingFieldIds.has(entireFieldId)}
+                                            disabled={!value || translatingFieldIds.has(valueFieldId) || translatingFieldIds.has(entireFieldId)}
                                           >
                                             {t.copyButton || "Copy"}
                                           </Button>
@@ -492,7 +495,8 @@ export function OptionsField({
                                 <Button
                                   size="slim"
                                   onClick={() => onCopyField(option.id, "name")}
-                                  disabled={!option.name}
+                                  loading={translatingFieldIds.has(nameFieldId) || translatingFieldIds.has(entireFieldId)}
+                                  disabled={!option.name || translatingFieldIds.has(nameFieldId) || translatingFieldIds.has(entireFieldId)}
                                 >
                                   {t.copyButton || "Copy"}
                                 </Button>
@@ -549,7 +553,8 @@ export function OptionsField({
                                         <Button
                                           size="slim"
                                           onClick={() => onCopyField(option.id, "value", valueIndex)}
-                                          disabled={!optVal.name}
+                                          loading={translatingFieldIds.has(valueFieldId) || translatingFieldIds.has(entireFieldId)}
+                                          disabled={!optVal.name || translatingFieldIds.has(valueFieldId) || translatingFieldIds.has(entireFieldId)}
                                         >
                                           {t.copyButton || "Copy"}
                                         </Button>

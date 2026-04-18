@@ -10,7 +10,7 @@ import { useCallback } from "react";
 import { getTranslatedValue } from "../utils/contentEditor.utils";
 import { getItemFieldValue } from "./useUiDataLoader";
 import { debugLog } from "../utils/debug";
-import { markOperationActive, isOperationActive } from "./useAIOperationsStore";
+import { markOperationActive, markOperationFailed, isOperationActive } from "./useAIOperationsStore";
 import type {
   TranslatableContentItem,
   ContentImage,
@@ -69,6 +69,8 @@ export interface FieldHandlerProps {
   isSavePendingRef: { current: boolean };
   isSavingCurrentItem: boolean;
   isSaveFromTranslateRef: { current: boolean };
+  /** Tracks the fieldKey of a copy save so the response handler can clear the loading state. */
+  pendingCopyFieldKeyRef: { current: string | null };
   pendingTranslationAfterSaveRef: { current: { fieldKey: string; sourceText: string; targetLocales: string[]; contextTitle: string; itemId: string } | null };
   acceptedPrimaryValueRef: { current: { fieldKey: string; value: string } | null };
   initialLoadSuccessfulRef: { current: boolean };
@@ -196,6 +198,7 @@ export function useFieldHandlers(props: FieldHandlerProps): FieldHandlers {
     isSavePendingRef,
     isSavingCurrentItem,
     isSaveFromTranslateRef,
+    pendingCopyFieldKeyRef,
     pendingTranslationAfterSaveRef,
     acceptedPrimaryValueRef,
     initialLoadSuccessfulRef,
@@ -1341,6 +1344,9 @@ const handleCopyField = (fieldKey: string): void => {
   Object.assign(formDataObj, buildFieldsForSave(newValues, currentLanguage));
   formDataObj[fieldKey] = primaryValue;
 
+  markOperationActive(selectedItemId, fieldKey, "copy");
+  pendingCopyFieldKeyRef.current = fieldKey;
+
   savedLocaleRef.current = currentLanguage;
   isSavePendingRef.current = true;
   isSaveFromTranslateRef.current = true;
@@ -1366,14 +1372,21 @@ const handleCopyFieldToAllLocales = (fieldKey: string): void => {
 
   dataLoader.onTranslateFieldToAllLocalesComplete(field.translationKey, translations, currentLanguage);
 
-  targetLocales.forEach(locale => {
+  const capturedItemId = selectedItemId;
+  markOperationActive(capturedItemId, fieldKey, "copyToAllLocales");
+
+  const saves = targetLocales.map(locale => {
     const fd = new FormData();
     fd.set("action", "updateContent");
-    fd.set("itemId", selectedItemId);
+    fd.set("itemId", capturedItemId);
     fd.set("locale", locale);
     fd.set("primaryLocale", primaryLocale);
     fd.set(fieldKey, primaryValue);
-    fetch(window.location.pathname, { method: "POST", body: fd });
+    return fetch(window.location.pathname, { method: "POST", body: fd });
+  });
+
+  Promise.all(saves).finally(() => {
+    markOperationFailed(capturedItemId, fieldKey);
   });
 
   onTranslateToAllLocalesComplete?.(fieldKey, translations);

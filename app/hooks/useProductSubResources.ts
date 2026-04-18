@@ -190,6 +190,8 @@ export function useProductSubResources({
   const loadedForRef = useRef<string>("");
   // Track the last processed fetcher response to avoid re-processing
   const lastProcessedDataRef = useRef<any>(null);
+  // Track fieldId of an in-flight copy save so we can clear its spinner on response
+  const pendingCopyFieldIdRef = useRef<string | null>(null);
 
   const isPrimaryLocale = currentLanguage === primaryLocale;
   const itemId = selectedItem?.id;
@@ -376,6 +378,12 @@ export function useProductSubResources({
     }
 
     if (data.actionType === "saveSubResourceTranslations") {
+      // Clear copy loading state (markSubResourceActive was called in copyOptionField)
+      if (pendingCopyFieldIdRef.current) {
+        markSubResourceCompleted(selectedItem?.id || "", pendingCopyFieldIdRef.current);
+        pendingCopyFieldIdRef.current = null;
+      }
+
       const failedResources = data.failedResources || [];
 
       if (failedResources.length > 0) {
@@ -1074,6 +1082,7 @@ export function useProductSubResources({
 
     let translationsData: Record<string, { name: string }>;
     let resourceTypes: Record<string, string>;
+    const fieldId = fieldType === "name" ? `${optionId}:name` : `${optionId}:value:${valueIndex}`;
 
     if (fieldType === "name") {
       if (!option.name) return;
@@ -1087,6 +1096,9 @@ export function useProductSubResources({
       resourceTypes = { [val.id]: "ProductOptionValue" };
       handleOptionValueChange(optionId, valueIndex!, val.name);
     }
+
+    markSubResourceActive(selectedItem.id, fieldId, "copy");
+    pendingCopyFieldIdRef.current = fieldId;
 
     fetcher.submit(
       {
@@ -1111,6 +1123,7 @@ export function useProductSubResources({
     let primaryValue: string;
     let resourceId: string;
     let resourceType: string;
+    const fieldId = fieldType === "name" ? `${optionId}:name` : `${optionId}:value:${valueIndex}`;
 
     if (fieldType === "name") {
       if (!option.name) return;
@@ -1127,15 +1140,22 @@ export function useProductSubResources({
 
     const translationsData = JSON.stringify({ [resourceId]: { name: primaryValue } });
     const resourceTypes = JSON.stringify({ [resourceId]: resourceType });
+    const capturedItemId = selectedItem.id;
 
-    targetLocales.forEach(locale => {
+    markSubResourceActive(capturedItemId, fieldId, "copyToAllLocales");
+
+    const saves = targetLocales.map(locale => {
       const fd = new FormData();
       fd.set("action", "saveSubResourceTranslations");
       fd.set("locale", locale);
       fd.set("translationsData", translationsData);
       fd.set("resourceTypes", resourceTypes);
-      fd.set("itemId", selectedItem.id);
-      fetch("/app/products", { method: "POST", body: fd });
+      fd.set("itemId", capturedItemId);
+      return fetch("/app/products", { method: "POST", body: fd });
+    });
+
+    Promise.all(saves).finally(() => {
+      markSubResourceCompleted(capturedItemId, fieldId);
     });
   }, [selectedItem, primaryLocale, enabledLanguages]);
 

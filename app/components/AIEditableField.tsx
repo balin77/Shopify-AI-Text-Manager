@@ -217,7 +217,8 @@ export function AIEditableField({
             <Button
               size="slim"
               onClick={isPrimaryLocale ? onCopyToAllLocales : onCopy}
-              disabled={isPrimaryLocale ? !value : !sourceTextAvailable}
+              loading={isLoading}
+              disabled={isPrimaryLocale ? (!value || isLoading) : (!sourceTextAvailable || isLoading)}
             >
               {isPrimaryLocale
                 ? (t.products?.copyToAllLocales || "Copy to all")

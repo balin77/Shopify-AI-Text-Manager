@@ -427,6 +427,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const isSavePendingRef = useRef(false);
   // Ref to suppress the generic "Changes saved" toast when triggered by translate action
   const isSaveFromTranslateRef = useRef(false);
+  // Ref to track the fieldKey of a pending copy save so we can clear its loading state on response
+  const pendingCopyFieldKeyRef = useRef<string | null>(null);
 
   // Forwarding-Refs for functions defined later (Ref-Forwarding-Pattern for circular dep)
   const buildFieldsForSaveRef = useRef<(v: Record<string, string>, l: string) => Record<string, string>>(() => ({}));
@@ -1560,6 +1562,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
       // Check if any alt-text indices failed to save to Shopify
       const failedAltTextIndices = fetcher.data.failedAltTextIndices || [];
+      // If this save was triggered by a copy action, clear the field loading state.
+      if (pendingCopyFieldKeyRef.current && selectedItemIdRef.current) {
+        markOperationFailed(selectedItemIdRef.current, pendingCopyFieldKeyRef.current);
+        pendingCopyFieldKeyRef.current = null;
+      }
+
       // If this save was triggered by a translate action, the translate callback already
       // showed its own success toast — only show warnings/errors here, skip the generic "Changes saved".
       const wasTranslateSave = isSaveFromTranslateRef.current;
@@ -1851,6 +1859,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     isSavePendingRef,
     isSavingCurrentItem,
     isSaveFromTranslateRef,
+    pendingCopyFieldKeyRef,
     pendingTranslationAfterSaveRef,
     acceptedPrimaryValueRef,
     initialLoadSuccessfulRef,
