@@ -332,6 +332,35 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     return () => { clearItems(); };
   }, [clearItems]);
 
+  // Compute which option/value IDs have missing translations in any foreign locale.
+  // Used to show blue highlight on primary locale option fields (same pattern as regular fields).
+  const optionMissingTranslationIds = (() => {
+    const ids = new Set<string>();
+    if (state.currentLanguage !== primaryLocale || !selectedItem?.options) return ids;
+    const foreignLocales = shopLocales.filter((l: any) => !l.primary).map((l: any) => l.locale as string);
+    const subRT: Record<string, Array<{ key: string; value: string; locale: string }>> =
+      (selectedItem as any).subResourceTranslations || {};
+    for (const option of selectedItem.options) {
+      if (!option.name) continue;
+      const nameMissing = foreignLocales.some((locale) => {
+        const t = (subRT[option.id] || []).find((x) => x.key === "name" && x.locale === locale);
+        return !t || !t.value;
+      });
+      if (nameMissing) ids.add(option.id);
+      if (!option.isLinked) {
+        for (const value of option.values) {
+          if (!value.name || !value.id) continue;
+          const valueMissing = foreignLocales.some((locale) => {
+            const t = (subRT[value.id] || []).find((x) => x.key === "name" && x.locale === locale);
+            return !t || !t.value;
+          });
+          if (valueMissing) ids.add(value.id);
+        }
+      }
+    }
+    return ids;
+  })();
+
   return (
     <Page fullWidth>
       <div
@@ -778,6 +807,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                       onPrimaryOptionValuesChange={subResourceHandlers.handlePrimaryOptionValuesChange}
                       primaryOptions={subResourceState.primaryOptionEdits}
                       translatingFieldIds={subResourceState.translatingFieldIds}
+                      missingTranslationIds={optionMissingTranslationIds}
                       t={{
                         title: t.products?.productOptions,
                         notEditableInPrimary: t.products?.optionsNotEditableInPrimary,

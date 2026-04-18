@@ -78,6 +78,10 @@ interface OptionsFieldProps {
   /** Set of field IDs currently being translated (e.g. "optId:name", "optId:value:0") */
   translatingFieldIds?: Set<string>;
 
+  /** Set of option/value IDs that have missing translations in at least one foreign locale.
+   *  Only used in primary locale view to show blue highlight. */
+  missingTranslationIds?: Set<string>;
+
   /** Translation strings */
   t?: {
     title?: string;
@@ -119,6 +123,7 @@ export function OptionsField({
   onPrimaryOptionValuesChange,
   primaryOptions = {},
   translatingFieldIds = new Set(),
+  missingTranslationIds,
   t = {},
 }: OptionsFieldProps) {
   const { locale: appLocale } = useI18n();
@@ -202,7 +207,7 @@ export function OptionsField({
                         <>
                           {/* Option Name — editable for metaobjects */}
                           <div>
-                            <div className="ai-editable-field-wrapper bg-white" style={{ position: "relative" }}>
+                            <div className={`ai-editable-field-wrapper ${missingTranslationIds?.has(option.id) ? "bg-missing-translation" : "bg-white"}`} style={{ position: "relative" }}>
                               {currentName && (
                                 <div style={{ position: "absolute", top: "0", right: "0", zIndex: 10 }}>
                                   <Button
@@ -263,7 +268,7 @@ export function OptionsField({
                         <>
                           {/* Option Name */}
                           <div>
-                            <div className="ai-editable-field-wrapper bg-white" style={{ position: "relative" }}>
+                            <div className={`ai-editable-field-wrapper ${missingTranslationIds?.has(option.id) ? "bg-missing-translation" : "bg-white"}`} style={{ position: "relative" }}>
                               {currentName && (
                                 <div style={{ position: "absolute", top: "0", right: "0", zIndex: 10 }}>
                                   <Button
@@ -313,7 +318,7 @@ export function OptionsField({
                               const originalValue = option.values[valueIndex]?.name;
                               return (
                                 <div key={valueIndex}>
-                                  <div className="ai-editable-field-wrapper bg-white" style={{ position: "relative" }}>
+                                  <div className={`ai-editable-field-wrapper ${missingTranslationIds?.has(option.values[valueIndex]?.id) ? "bg-missing-translation" : "bg-white"}`} style={{ position: "relative" }}>
                                     {value && (
                                       <div style={{ position: "absolute", top: "0", right: "0", zIndex: 10 }}>
                                         <Button
