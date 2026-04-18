@@ -135,8 +135,17 @@ export function createContentLoader<T extends { id: string }, K extends string, 
         ...extra,
       } as unknown as LoaderData);
     } catch (error: unknown) {
-      if (error instanceof Response) throw error;
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      // Re-throw redirects (e.g. Shopify OAuth flows) but NOT 4xx/5xx API errors.
+      // Raw 4xx/5xx Responses can't be decoded as turbo-stream and crash the client.
+      if (error instanceof Response && error.status < 400) throw error;
+      const errorMessage =
+        error instanceof Response
+          ? error.status === 429
+            ? "Shopify API rate limit reached. Please wait a moment and try again."
+            : `Shopify API error (status ${error.status})`
+          : error instanceof Error
+          ? error.message
+          : String(error);
       logger.error(`[${config.logPrefix}-LOADER] Error`, {
         context: config.logPrefix,
         error: errorMessage,
@@ -159,7 +168,7 @@ export function createContentLoader<T extends { id: string }, K extends string, 
         error: errorMessage,
         aiSettings: null,
         ...(config.errorFallback || {}),
-      } as unknown as LoaderData, { status: 500 });
+      } as unknown as LoaderData);
     }
   };
 }
