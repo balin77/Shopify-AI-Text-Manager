@@ -11,7 +11,8 @@ import { ImageGalleryField } from "./unified/ImageGalleryField";
 import { useSeoSettings } from "../contexts/SeoSettingsContext";
 import { useI18n } from "../contexts/I18nContext";
 import { getLocalizedLanguageName } from "../utils/contentEditor.utils";
-import type { FieldDefinition } from "../types/content-editor.types";
+import { hasFieldMissingTranslations } from "../utils/field-validation.utils";
+import type { FieldDefinition, ContentType } from "../types/content-editor.types";
 import { IMAGE_ALL_LOCALES_AI_ACTIONS, IMAGE_PER_LOCALE_AI_ACTIONS } from "../constants/ai-actions";
 
 export interface FieldRendererProps {
@@ -150,6 +151,10 @@ export function UnifiedFieldRenderer(
       contentType === "metaobjects" ||
       (contentType === "products" && field.key === "title"));
 
+  const fieldHasMissingTranslations = isPrimaryLocale
+    ? hasFieldMissingTranslations(selectedItem, field.key, shopLocales, primaryLocale, contentType as ContentType)
+    : false;
+
   // Custom render function (if provided)
   if (field.renderField) {
     return field.renderField({
@@ -269,6 +274,7 @@ export function UnifiedFieldRenderer(
         disableGeneration={disableGeneration}
         readOnly={readOnly}
         requiredIndicator={requiredIndicator}
+        hasFieldMissingTranslations={fieldHasMissingTranslations}
         onGenerateAI={field.supportsAI !== false ? onGenerateAI : undefined}
         onFormatAI={field.supportsFormatting !== false ? onFormatAI : undefined}
         onTranslate={field.supportsTranslation !== false ? onTranslate : undefined}
@@ -302,6 +308,7 @@ export function UnifiedFieldRenderer(
       isFallbackValue={isFallbackValue}
       readOnly={readOnly}
       requiredIndicator={requiredIndicator}
+      hasFieldMissingTranslations={fieldHasMissingTranslations}
       seoSuffix={field.key === "seoTitle" && seoTitleSuffix ? seoTitleSuffix : undefined}
       onGenerateAI={field.supportsAI !== false ? onGenerateAI : undefined}
       onFormatAI={field.supportsFormatting !== false ? onFormatAI : undefined}
