@@ -132,6 +132,8 @@ export interface FieldHandlers {
   handleFormatAI: (fieldKey: string) => void;
   handleTranslateField: (fieldKey: string) => void;
   handleTranslateFieldToAllLocales: (fieldKey: string) => void;
+  handleCopyField: (fieldKey: string) => void;
+  handleCopyFieldToAllLocales: (fieldKey: string) => void;
   handleTranslateAll: () => void;
   handleAcceptSuggestion: (fieldKey: string) => void;
   handleAcceptAndTranslate: (fieldKey: string) => void;
@@ -1290,6 +1292,84 @@ const handleTranslateAllForLocale = () => {
   }
 };
 
+const handleCopyField = (fieldKey: string): void => {
+  if (!selectedItemId || !selectedItem) return;
+  const field = effectiveFieldDefinitions.find(f => f.key === fieldKey);
+  if (!field) return;
+  const primaryValue = getItemFieldValue(selectedItem, fieldKey, primaryLocale, config);
+  if (!primaryValue) return;
+
+  const transResult = dataLoader.onTranslateFieldComplete(
+    fieldKey,
+    field.translationKey,
+    primaryValue,
+    currentLanguage,
+    editableValuesRef.current
+  );
+
+  if (transResult.updatedValues) {
+    setEditableValues(transResult.updatedValues);
+  } else {
+    setEditableValues(prev => ({ ...prev, [fieldKey]: primaryValue }));
+  }
+  if (transResult.clearedFallbackKeys.length > 0) {
+    setFallbackFields(prev => {
+      const newSet = new Set(prev);
+      transResult.clearedFallbackKeys.forEach(k => newSet.delete(k));
+      return newSet;
+    });
+    transResult.clearedFallbackKeys.forEach(k => fallbackFieldsRef.current.delete(k));
+  }
+
+  const newValues = transResult.updatedValues ?? { ...editableValuesRef.current, [fieldKey]: primaryValue };
+  const formDataObj: Record<string, string> = {
+    action: "updateContent",
+    itemId: selectedItemId,
+    locale: currentLanguage,
+    primaryLocale,
+  };
+  Object.assign(formDataObj, buildFieldsForSave(newValues, currentLanguage));
+  formDataObj[fieldKey] = primaryValue;
+
+  savedLocaleRef.current = currentLanguage;
+  isSavePendingRef.current = true;
+  isSaveFromTranslateRef.current = true;
+  safeSubmit(formDataObj, { method: "POST" });
+  originalLoadedValuesRef.current = { ...newValues };
+
+  showInfoBox(t.common?.copied ?? "Copied", "success");
+};
+
+const handleCopyFieldToAllLocales = (fieldKey: string): void => {
+  if (!selectedItemId) return;
+  const field = effectiveFieldDefinitions.find(f => f.key === fieldKey);
+  if (!field) return;
+  const primaryValue = editableValuesRef.current[fieldKey];
+  if (!primaryValue) return;
+
+  const targetLocales = enabledLanguages.filter(l => l !== primaryLocale);
+  if (targetLocales.length === 0) return;
+
+  const translations: Record<string, string> = Object.fromEntries(
+    targetLocales.map(locale => [locale, primaryValue])
+  );
+
+  dataLoader.onTranslateFieldToAllLocalesComplete(field.translationKey, translations, currentLanguage);
+
+  targetLocales.forEach(locale => {
+    const fd = new FormData();
+    fd.set("action", "updateContent");
+    fd.set("itemId", selectedItemId);
+    fd.set("locale", locale);
+    fd.set("primaryLocale", primaryLocale);
+    fd.set(fieldKey, primaryValue);
+    fetch(window.location.pathname, { method: "POST", body: fd });
+  });
+
+  onTranslateToAllLocalesComplete?.(fieldKey, translations);
+  showInfoBox(t.common?.copied ?? "Copied", "success");
+};
+
   return {
     handleSave,
     handleDiscard,
@@ -1297,6 +1377,8 @@ const handleTranslateAllForLocale = () => {
     handleFormatAI,
     handleTranslateField,
     handleTranslateFieldToAllLocales,
+    handleCopyField,
+    handleCopyFieldToAllLocales,
     handleTranslateAll,
     handleAcceptSuggestion,
     handleAcceptAndTranslate,

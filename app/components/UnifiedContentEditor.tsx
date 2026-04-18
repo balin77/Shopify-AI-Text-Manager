@@ -701,6 +701,8 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                           onFormatAI={isTemplatePrimaryReadOnly ? undefined : (field.supportsFormatting !== false ? () => handlers.handleFormatAI(field.key) : undefined)}
                           onTranslate={field.supportsTranslation !== false ? () => handlers.handleTranslateField(field.key) : undefined}
                           onTranslateToAllLocales={field.supportsTranslation !== false ? () => handlers.handleTranslateFieldToAllLocales(field.key) : undefined}
+                          onCopy={field.supportsTranslation !== false ? () => handlers.handleCopyField(field.key) : undefined}
+                          onCopyToAllLocales={field.supportsTranslation !== false ? () => handlers.handleCopyFieldToAllLocales(field.key) : undefined}
                           onAcceptSuggestion={() => handlers.handleAcceptSuggestion(field.key)}
                           onAcceptAndTranslate={() => handlers.handleAcceptAndTranslate(field.key)}
                           onRejectSuggestion={() => handlers.handleRejectSuggestion(field.key)}

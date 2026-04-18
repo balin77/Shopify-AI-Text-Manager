@@ -38,6 +38,8 @@ interface AIEditableFieldProps {
   onFormatAI?: () => void;
   onTranslate?: () => void;
   onTranslateToAllLocales?: () => void;
+  onCopy?: () => void;
+  onCopyToAllLocales?: () => void;
   onAcceptSuggestion?: () => void;
   onAcceptAndTranslate?: () => void;
   onRejectSuggestion?: () => void;
@@ -72,6 +74,8 @@ export function AIEditableField({
   onFormatAI,
   onTranslate,
   onTranslateToAllLocales,
+  onCopy,
+  onCopyToAllLocales,
   onAcceptSuggestion,
   onAcceptAndTranslate,
   onRejectSuggestion,
@@ -203,6 +207,17 @@ export function AIEditableField({
               disabled={(isPrimaryLocale ? (!onTranslateToAllLocales && !onTranslate) : !sourceTextAvailable) || isLoading}
             >
               🌍 {isPrimaryLocale ? (t.products?.translate || "Übersetzen") : t.products?.translateFromPrimary}
+            </Button>
+          )}
+          {(onCopy || onCopyToAllLocales) && (
+            <Button
+              size="slim"
+              onClick={isPrimaryLocale ? onCopyToAllLocales : onCopy}
+              disabled={isPrimaryLocale ? !value : !sourceTextAvailable}
+            >
+              {isPrimaryLocale
+                ? (t.products?.copyToAllLocales || "Copy to all")
+                : (t.products?.copy || "Copy")}
             </Button>
           )}
         </div>

@@ -187,6 +187,7 @@ export interface TranslationStrings {
     fieldTranslatedToLanguages?: string;
     fieldTranslatedAndSaved?: string;
     translatedSuccessfully?: string;
+    copied?: string;
     [key: string]: TranslationValue;
   };
   content?: {
@@ -217,6 +218,8 @@ export interface FieldRenderProps {
   onFormatAI?: () => void;
   onTranslate?: () => void;
   onTranslateToAllLocales?: () => void;
+  onCopy?: () => void;
+  onCopyToAllLocales?: () => void;
   onAcceptSuggestion?: () => void;
   onAcceptAndTranslate?: () => void;
   onRejectSuggestion?: () => void;
@@ -352,6 +355,8 @@ export interface EditorHandlers {
   handleFormatAI: (fieldKey: string) => void;
   handleTranslateField: (fieldKey: string) => void;
   handleTranslateFieldToAllLocales: (fieldKey: string) => void;
+  handleCopyField: (fieldKey: string) => void;
+  handleCopyFieldToAllLocales: (fieldKey: string) => void;
   handleTranslateAll: () => void;
   handleAcceptSuggestion: (fieldKey: string) => void;
   handleAcceptAndTranslate: (fieldKey: string) => void;

@@ -35,6 +35,8 @@ export interface FieldRendererProps {
   onFormatAI?: () => void;
   onTranslate?: () => void;
   onTranslateToAllLocales?: () => void;
+  onCopy?: () => void;
+  onCopyToAllLocales?: () => void;
   onAcceptSuggestion: () => void;
   onAcceptAndTranslate: () => void;
   onRejectSuggestion: () => void;
@@ -69,6 +71,8 @@ export function UnifiedFieldRenderer(
     onFormatAI,
     onTranslate,
     onTranslateToAllLocales,
+    onCopy,
+    onCopyToAllLocales,
     onAcceptSuggestion,
     onAcceptAndTranslate,
     onRejectSuggestion,
@@ -170,6 +174,8 @@ export function UnifiedFieldRenderer(
       onFormatAI,
       onTranslate,
       onTranslateToAllLocales,
+      onCopy,
+      onCopyToAllLocales,
       onAcceptSuggestion,
       onAcceptAndTranslate,
       onRejectSuggestion,
@@ -279,6 +285,8 @@ export function UnifiedFieldRenderer(
         onFormatAI={field.supportsFormatting !== false ? onFormatAI : undefined}
         onTranslate={field.supportsTranslation !== false ? onTranslate : undefined}
         onTranslateToAllLocales={field.supportsTranslation !== false ? onTranslateToAllLocales : undefined}
+        onCopy={field.supportsTranslation !== false ? onCopy : undefined}
+        onCopyToAllLocales={field.supportsTranslation !== false ? onCopyToAllLocales : undefined}
         onAcceptSuggestion={onAcceptSuggestion}
         onAcceptAndTranslate={onAcceptAndTranslate}
         onRejectSuggestion={onRejectSuggestion}
@@ -314,6 +322,8 @@ export function UnifiedFieldRenderer(
       onFormatAI={field.supportsFormatting !== false ? onFormatAI : undefined}
       onTranslate={field.supportsTranslation !== false ? onTranslate : undefined}
       onTranslateToAllLocales={field.supportsTranslation !== false ? onTranslateToAllLocales : undefined}
+      onCopy={field.supportsTranslation !== false ? onCopy : undefined}
+      onCopyToAllLocales={field.supportsTranslation !== false ? onCopyToAllLocales : undefined}
       onAcceptSuggestion={onAcceptSuggestion}
       onAcceptAndTranslate={onAcceptAndTranslate}
       onRejectSuggestion={onRejectSuggestion}
