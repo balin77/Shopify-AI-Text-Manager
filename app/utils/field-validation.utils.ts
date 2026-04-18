@@ -578,14 +578,27 @@ export function hasFieldMissingTranslations(
   // Map UI field names to translation keys
   const translationKey = UI_FIELD_TO_TRANSLATION_KEY[fieldKey] || fieldKey;
 
+  const foreignLocales = shopLocales.filter(l => !l.primary);
+
+  // Templates store primary content in translatableContent, not top-level properties
+  if (contentType === 'templates') {
+    const translatableContent = selectedItem.translatableContent;
+    if (!translatableContent || !Array.isArray(translatableContent)) return false;
+    const tcEntry = translatableContent.find(
+      (tc: { key: string; value: string }) => tc?.key === translationKey
+    );
+    if (!tcEntry || isFieldEmpty(tcEntry.value)) return false;
+    return foreignLocales.some(locale =>
+      !hasTranslationForField(selectedItem, translationKey, locale.locale)
+    );
+  }
+
   // Check if primary locale has content for this field
   if (!primaryHasFieldContent(selectedItem, translationKey, contentType)) {
     return false;
   }
 
   // Check if any foreign locale is missing this specific translation
-  const foreignLocales = shopLocales.filter(l => !l.primary);
-
   return foreignLocales.some(locale => {
     return !hasTranslationForField(selectedItem, translationKey, locale.locale);
   });
