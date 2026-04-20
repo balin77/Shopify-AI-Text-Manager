@@ -3,6 +3,7 @@ import { useSortable, SortableContext, rectSortingStrategy } from "@dnd-kit/sort
 import { CSS } from "@dnd-kit/utilities";
 import { DndContext, closestCenter, MouseSensor, TouchSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
 import { arrayMove } from "@dnd-kit/sortable";
+import { useI18n } from "../../contexts/I18nContext";
 import type { ImageMeta } from "./types";
 
 function getFormatBadge(url: string, mimeType?: string): { label: string; color: string } | null {
@@ -31,6 +32,7 @@ interface PlaceholderThumbnailProps {
 }
 
 function PlaceholderThumbnail({ activeAction, onDrop, onUpload, thumbSize }: PlaceholderThumbnailProps) {
+  const { t } = useI18n();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isActionMode = activeAction !== null;
 
@@ -88,7 +90,7 @@ function PlaceholderThumbnail({ activeAction, onDrop, onUpload, thumbSize }: Pla
         fontWeight: isActionMode ? 600 : 400,
         lineHeight: 1.2,
       }}>
-        {isActionMode ? (activeAction === "copy" ? "Kopieren" : "Verschieben") : "Upload"}
+        {isActionMode ? (activeAction === "copy" ? t.imageManager.copy : t.imageManager.move) : t.imageManager.upload}
       </span>
     </div>
   );
@@ -112,6 +114,7 @@ function extractFilename(url: string): string {
 }
 
 function SortableThumbnail({ url, isSelected, meta, onSelect, thumbSize, isMain = false }: SortableThumbnailProps) {
+  const { t } = useI18n();
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: url });
   const formatBadge = getFormatBadge(url, meta?.mimeType);
   const hasAlt = Boolean(meta?.altText);
@@ -187,7 +190,7 @@ function SortableThumbnail({ url, isSelected, meta, onSelect, thumbSize, isMain 
             lineHeight: "14px",
             cursor: hasAlt ? "default" : "default",
           }}>
-          {hasAlt ? "ALT" : "KEIN ALT"}
+          {hasAlt ? t.imageManager.altBadge : t.imageManager.noAltBadge}
         </div>
 
         {/* Format badge */}
@@ -240,6 +243,7 @@ export function SortableImageGrid({
   onDropToPlaceholder,
   onUploadToGallery,
 }: SortableImageGridProps) {
+  const { t } = useI18n();
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 8 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 5 } }),
@@ -286,7 +290,7 @@ export function SortableImageGrid({
         <SortableContext items={imageUrls} strategy={rectSortingStrategy}>
           {imageUrls.length === 0 && !showPlaceholder && (
             <div style={{ color: "#8c9196", fontSize: 13, padding: "8px 4px" }}>
-              Keine Bilder
+              {t.imageManager.noImages}
             </div>
           )}
           {imageUrls.map((url, idx) => (

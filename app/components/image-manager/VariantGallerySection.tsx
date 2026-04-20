@@ -191,26 +191,28 @@ export function VariantGallerySection({
                 />
                 <div style={{ display: "flex", gap: 4, flexShrink: 0, flexWrap: "wrap" }}>
                   {isPrimaryLocale && onGenerateAltText && (
-                    <Button
-                      size="slim"
-                      disabled={isAltTextLoading}
-                      loading={isAltTextLoading}
-                      onMouseDown={() => { skipNextBlurRef.current = true; }}
-                      onClick={() => onGenerateAltText(singleSelectedUrl)}
-                    >
-                      {`✨ ${t.imageManager.aiGenerate}`}
-                    </Button>
+                    <div onMouseDown={() => { skipNextBlurRef.current = true; }}>
+                      <Button
+                        size="slim"
+                        disabled={isAltTextLoading}
+                        loading={isAltTextLoading}
+                        onClick={() => onGenerateAltText(singleSelectedUrl)}
+                      >
+                        {`✨ ${t.imageManager.aiGenerate}`}
+                      </Button>
+                    </div>
                   )}
                   {!isPrimaryLocale && onTranslateAltText && (
-                    <Button
-                      size="slim"
-                      disabled={isAltTextLoading}
-                      loading={isAltTextLoading}
-                      onMouseDown={() => { skipNextBlurRef.current = true; }}
-                      onClick={() => onTranslateAltText(singleSelectedUrl, currentAltText)}
-                    >
-                      {`🌍 ${t.imageManager.translateAlt}`}
-                    </Button>
+                    <div onMouseDown={() => { skipNextBlurRef.current = true; }}>
+                      <Button
+                        size="slim"
+                        disabled={isAltTextLoading}
+                        loading={isAltTextLoading}
+                        onClick={() => onTranslateAltText(singleSelectedUrl, currentAltText)}
+                      >
+                        {`🌍 ${t.imageManager.translateAlt}`}
+                      </Button>
+                    </div>
                   )}
                 </div>
               </div>

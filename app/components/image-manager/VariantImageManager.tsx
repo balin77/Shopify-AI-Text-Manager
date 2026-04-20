@@ -482,14 +482,6 @@ export function VariantImageManager({
 
   const isPrimaryLocale = !currentLanguage || currentLanguage === primaryLocale;
 
-  // i18n strings for alt text editor
-  const altTextT = {
-    generateAltText: t.products?.generateAltText,
-    translateAltText: t.products?.translateAltText,
-    altTextLabel: t.products?.altTextLabel,
-    altTextPlaceholder: t.products?.altTextPlaceholder,
-  };
-
   // Single selected URL in product gallery (for inline alt text editor)
   const productSelectedUrls = selectedUrlsByGallery.get("product") ?? new Set<string>();
   const productSingleSelected = productSelectedUrls.size === 1 ? [...productSelectedUrls][0] : null;
@@ -651,7 +643,7 @@ export function VariantImageManager({
           }}>
             <div style={{ marginBottom: 6 }}>
               <Text as="span" variant="bodySm" tone="subdued">
-                {altTextT.altTextLabel ?? "Alt text"}
+                {t.imageManager.altTextForSelected}
               </Text>
             </div>
             <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
@@ -771,7 +763,6 @@ export function VariantImageManager({
                 onTranslateAltText={handleTranslateAltTextForImage}
                 currentLanguage={currentLanguage}
                 primaryLocale={primaryLocale}
-                t={altTextT}
               />
               );
             })
