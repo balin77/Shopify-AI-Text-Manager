@@ -14,6 +14,7 @@ interface VariantGallerySectionProps {
   onDrop: (targetVariantId: string) => void;
   onRemoveFromGallery: (variantId: string, urls: string[]) => void;
   onGenerateAltFromSku: (variantId: string) => void;
+  onUploadToGallery: (variantId: string, files: File[]) => void;
 }
 
 export function VariantGallerySection({
@@ -27,6 +28,7 @@ export function VariantGallerySection({
   onDrop,
   onRemoveFromGallery,
   onGenerateAltFromSku,
+  onUploadToGallery,
 }: VariantGallerySectionProps) {
   const [open, setOpen] = useState(false);
 
@@ -44,7 +46,6 @@ export function VariantGallerySection({
 
   const localSelectedUrls = displayUrls.filter(url => selectedUrls.has(url));
   const hasLocalSelection = localSelectedUrls.length > 0;
-  const showDropButtons = activeAction !== null;
 
   return (
     <div style={{ borderBottom: "1px solid #e1e3e5", marginBottom: 4 }}>
@@ -83,29 +84,22 @@ export function VariantGallerySection({
             }}
             onSelect={onSelect}
             selectedUrls={selectedUrls}
-            isDropTarget={showDropButtons || hasLocalSelection}
+            isDropTarget={activeAction !== null || hasLocalSelection}
+            activeAction={activeAction}
+            onDropToPlaceholder={() => onDrop(variant.id)}
+            onUploadToGallery={(files) => onUploadToGallery(variant.id, files)}
           />
 
           <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {/* Drop target for bulk items / gallery items being copied/moved */}
-            {showDropButtons && (
-              <Button size="slim" variant="secondary" onClick={() => onDrop(variant.id)}>
-                {activeAction === "copy" ? "Hierhin kopieren" : "Hierhin verschieben"}
-              </Button>
-            )}
-
-            {/* Actions on locally selected images */}
             {hasLocalSelection && (
-              <>
-                <Button
-                  size="slim"
-                  tone="critical"
-                  variant="secondary"
-                  onClick={() => onRemoveFromGallery(variant.id, localSelectedUrls)}
-                >
-                  {`Entfernen (${localSelectedUrls.length})`}
-                </Button>
-              </>
+              <Button
+                size="slim"
+                tone="critical"
+                variant="secondary"
+                onClick={() => onRemoveFromGallery(variant.id, localSelectedUrls)}
+              >
+                {`Entfernen (${localSelectedUrls.length})`}
+              </Button>
             )}
 
             {variant.sku && (

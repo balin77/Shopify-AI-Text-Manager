@@ -1,6 +1,5 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
-import { Text, Button, InlineStack, Spinner, Banner, Divider, Tooltip } from "@shopify/polaris";
-import { ViewIcon } from "@shopify/polaris-icons";
+import { Text, Button, InlineStack, Spinner, Banner, Divider } from "@shopify/polaris";
 import { useFetcher } from "@remix-run/react";
 import { SortableImageGrid } from "./SortableImageGrid";
 import { VariantGallerySection } from "./VariantGallerySection";
@@ -266,6 +265,39 @@ export function VariantImageManager({
     }
   }, [productId, productImages]);
 
+  const handleUploadToVariant = useCallback(async (variantId: string, files: File[]) => {
+    for (const file of files) {
+      try {
+        const res = await fetch("/api/staged-upload", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ filename: file.name, mimeType: file.type, fileSize: file.size }),
+        });
+        const { url, resourceUrl, error } = await res.json();
+        if (error || !url) continue;
+
+        await new Promise<void>((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.onload = () => resolve();
+          xhr.onerror = () => reject();
+          xhr.open("PUT", url);
+          xhr.setRequestHeader("Content-Type", file.type);
+          xhr.send(file);
+        });
+
+        if (resourceUrl) {
+          setPendingVariantGalleries(p => {
+            const variant = variants.find(v => v.id === variantId);
+            const current = p[variantId] ?? variant?.galleryFileGids ?? [];
+            return { ...p, [variantId]: [...current, resourceUrl] };
+          });
+        }
+      } catch {
+        // silent — user can retry
+      }
+    }
+  }, [variants]);
+
   const nonWebpCount = productImages.filter(i =>
     !i.url.toLowerCase().includes(".webp") &&
     !i.url.toLowerCase().includes("format=webp")
@@ -283,21 +315,38 @@ export function VariantImageManager({
 
       {/* Produktbilder allgemein */}
       <div>
-        <InlineStack align="space-between" blockAlign="center">
-          <Text as="h3" variant="headingSm">
-            {!isLoadingVariants && variants.length > 0
-              ? (showAll ? "Alle Produktbilder" : "Nicht zugewiesene Bilder")
-              : "Produktbilder (allgemein)"}
-          </Text>
-          {!isLoadingVariants && variants.length > 0 && (
-            <Tooltip content={showAll ? "Nur nicht zugewiesene Bilder anzeigen" : "Alle Produktbilder anzeigen"}>
-              <Button
-                icon={ViewIcon}
-                onClick={() => setShowAll(s => !s)}
-                pressed={!showAll}
-                accessibilityLabel="Bildfiltermodus umschalten"
-              />
-            </Tooltip>
+        <InlineStack gap="200" blockAlign="center">
+          <Text as="h3" variant="headingSm">Produktfotos:</Text>
+          {!isLoadingVariants && variants.length > 0 ? (
+            <InlineStack gap="0" blockAlign="center">
+              {(["all", "unassigned"] as const).map((mode, i) => {
+                const label = mode === "all" ? "Alle" : "Nicht zugewiesen";
+                const active = mode === "all" ? showAll : !showAll;
+                return (
+                  <span key={mode}>
+                    {i > 0 && <span style={{ color: "#8c9196", padding: "0 4px" }}>·</span>}
+                    <button
+                      onClick={() => setShowAll(mode === "all")}
+                      style={{
+                        background: "none",
+                        border: "none",
+                        padding: "0 2px",
+                        cursor: "pointer",
+                        fontSize: 13,
+                        fontWeight: active ? 700 : 400,
+                        color: active ? "#202223" : "#6d7175",
+                        borderBottom: active ? "2px solid #202223" : "2px solid transparent",
+                        lineHeight: "20px",
+                      }}
+                    >
+                      {label}
+                    </button>
+                  </span>
+                );
+              })}
+            </InlineStack>
+          ) : (
+            <Text as="span" variant="headingSm" tone="subdued">Allgemein</Text>
           )}
         </InlineStack>
         <div style={{ marginTop: 8 }}>
@@ -353,7 +402,7 @@ export function VariantImageManager({
           <Text as="h3" variant="headingSm">Varianten-Galerien</Text>
           {hasAnySelection && activeAction && (
             <Text as="span" variant="bodySm" tone="subdued">
-              {activeAction === "copy" ? "Ziel wählen ↓" : "Ziel wählen ↓"}
+              {activeAction === "copy" ? "Kopieren: Galerie-Placeholder klicken" : "Verschieben: Galerie-Placeholder klicken"}
             </Text>
           )}
         </InlineStack>
@@ -384,6 +433,7 @@ export function VariantImageManager({
                 onDrop={handleDropToVariant}
                 onRemoveFromGallery={handleRemoveFromGallery}
                 onGenerateAltFromSku={handleGenerateAltFromSku}
+                onUploadToGallery={handleUploadToVariant}
               />
             ))
           )}

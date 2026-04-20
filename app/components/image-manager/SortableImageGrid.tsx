@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import { useSortable, SortableContext, rectSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { DndContext, closestCenter, MouseSensor, TouchSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
@@ -20,6 +21,76 @@ function getFormatBadge(url: string, mimeType?: string): { label: string; color:
     return { label: "JPG", color: "#616161" };
   }
   return null;
+}
+
+interface PlaceholderThumbnailProps {
+  activeAction: "copy" | "move" | null;
+  onDrop: () => void;
+  onUpload: (files: File[]) => void;
+}
+
+function PlaceholderThumbnail({ activeAction, onDrop, onUpload }: PlaceholderThumbnailProps) {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const isActionMode = activeAction !== null;
+
+  const borderColor = isActionMode
+    ? (activeAction === "copy" ? "#008060" : "#005bd3")
+    : "#c9cccf";
+  const bgColor = isActionMode
+    ? (activeAction === "copy" ? "rgba(0,128,96,0.07)" : "rgba(0,91,211,0.07)")
+    : "transparent";
+  const labelColor = isActionMode
+    ? (activeAction === "copy" ? "#008060" : "#005bd3")
+    : "#8c9196";
+
+  return (
+    <div
+      style={{
+        width: 80,
+        height: 80,
+        borderRadius: 6,
+        border: `2px dashed ${borderColor}`,
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        cursor: "pointer",
+        background: bgColor,
+        flexShrink: 0,
+        transition: "border-color 0.2s, background 0.2s",
+        gap: 4,
+      }}
+      onClick={() => {
+        if (isActionMode) onDrop();
+        else fileInputRef.current?.click();
+      }}
+    >
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        style={{ display: "none" }}
+        onChange={(e) => {
+          const files = Array.from(e.target.files ?? []);
+          if (files.length) onUpload(files);
+          e.target.value = "";
+        }}
+      />
+      <span style={{ fontSize: isActionMode ? 20 : 24, color: labelColor, lineHeight: 1 }}>
+        {isActionMode ? (activeAction === "copy" ? "⊕" : "→") : "+"}
+      </span>
+      <span style={{
+        fontSize: 9,
+        textAlign: "center",
+        color: labelColor,
+        fontWeight: isActionMode ? 600 : 400,
+        lineHeight: 1.2,
+      }}>
+        {isActionMode ? (activeAction === "copy" ? "Kopieren" : "Verschieben") : "Upload"}
+      </span>
+    </div>
+  );
 }
 
 interface SortableThumbnailProps {
@@ -132,6 +203,10 @@ interface SortableImageGridProps {
   onSelect?: (url: string, selected: boolean) => void;
   selectedUrls?: Set<string>;
   isDropTarget?: boolean;
+  // Placeholder props — only rendered for variant galleries
+  activeAction?: "copy" | "move" | null;
+  onDropToPlaceholder?: () => void;
+  onUploadToGallery?: (files: File[]) => void;
 }
 
 export function SortableImageGrid({
@@ -141,11 +216,16 @@ export function SortableImageGrid({
   onSelect,
   selectedUrls = new Set(),
   isDropTarget = false,
+  activeAction,
+  onDropToPlaceholder,
+  onUploadToGallery,
 }: SortableImageGridProps) {
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 8 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 5 } }),
   );
+
+  const showPlaceholder = onDropToPlaceholder !== undefined || onUploadToGallery !== undefined;
 
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event;
@@ -160,21 +240,30 @@ export function SortableImageGrid({
 
   return (
     <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-      <SortableContext items={imageUrls} strategy={rectSortingStrategy}>
-        <div
-          style={{
-            display: "flex",
-            flexWrap: "wrap",
-            gap: 8,
-            minHeight: 48,
-            padding: 8,
-            borderRadius: 8,
-            border: isDropTarget ? "2px dashed #005bd3" : "2px dashed #e1e3e5",
-            background: isDropTarget ? "rgba(0, 91, 211, 0.04)" : "transparent",
-            transition: "border-color 0.2s, background 0.2s",
-          }}
-        >
-          {imageUrls.length === 0 && (
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          gap: 8,
+          minHeight: 48,
+          padding: 8,
+          borderRadius: 8,
+          border: isDropTarget ? "2px dashed #005bd3" : "2px dashed #e1e3e5",
+          background: isDropTarget ? "rgba(0, 91, 211, 0.04)" : "transparent",
+          transition: "border-color 0.2s, background 0.2s",
+        }}
+      >
+        {/* Placeholder always first — variant galleries only */}
+        {showPlaceholder && (
+          <PlaceholderThumbnail
+            activeAction={activeAction ?? null}
+            onDrop={() => onDropToPlaceholder?.()}
+            onUpload={(files) => onUploadToGallery?.(files)}
+          />
+        )}
+
+        <SortableContext items={imageUrls} strategy={rectSortingStrategy}>
+          {imageUrls.length === 0 && !showPlaceholder && (
             <div style={{ color: "#8c9196", fontSize: 13, padding: "8px 4px" }}>
               Keine Bilder
             </div>
@@ -188,8 +277,8 @@ export function SortableImageGrid({
               onSelect={(sel) => onSelect?.(url, sel)}
             />
           ))}
-        </div>
-      </SortableContext>
+        </SortableContext>
+      </div>
     </DndContext>
   );
 }
