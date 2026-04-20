@@ -651,7 +651,7 @@ export function VariantImageManager({
                 type="text"
                 value={productCurrentAltText}
                 onChange={(e) => handleAltTextChange(productSingleSelected, e.target.value)}
-                placeholder={altTextT.altTextPlaceholder ?? "Enter alt text…"}
+                placeholder={t.imageManager.altTextPlaceholder}
                 style={{
                   flex: "1 1 200px",
                   minWidth: 180,
@@ -681,7 +681,7 @@ export function VariantImageManager({
                       loading={altTextFetcher.state !== "idle"}
                       onClick={() => handleGenerateAltTextForImage(productSingleSelected)}
                     >
-                      {`✨ ${altTextT.generateAltText ?? "Generate with AI"}`}
+                      {`✨ ${t.imageManager.aiGenerate}`}
                     </Button>
                   </div>
                 )}
@@ -693,7 +693,7 @@ export function VariantImageManager({
                       loading={altTextFetcher.state !== "idle"}
                       onClick={() => handleTranslateAltTextForImage(productSingleSelected, productCurrentAltText)}
                     >
-                      {`🌍 ${altTextT.translateAltText ?? "Translate"}`}
+                      {`🌍 ${t.imageManager.translateAlt}`}
                     </Button>
                   </div>
                 )}
