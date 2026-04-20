@@ -46,7 +46,8 @@ export function VariantImageManager({
   const [isLoadingVariants, setIsLoadingVariants] = useState(false);
   const [variantError, setVariantError] = useState<string | null>(null);
   const [productImageOrder, setProductImageOrder] = useState<string[]>([]);
-  // url → { sourceVariantId: string | null } — null means product gallery
+  // `${galleryId}::${url}` → sourceVariantId (null = product gallery)
+  // Compound keys ensure same image URL selected in gallery A doesn't affect gallery B
   const [selectedGalleryItems, setSelectedGalleryItems] = useState<Map<string, string | null>>(new Map());
   const [pendingVariantGalleries, setPendingVariantGalleries] = useState<Record<string, string[]>>({});
   const [webpError, setWebpError] = useState<string | null>(null);
@@ -135,14 +136,30 @@ export function VariantImageManager({
     });
   }, [showAll, productImageOrder, urlToGid, assignedGids, variants.length]);
 
-  const selectedGalleryUrls = useMemo(() => new Set(selectedGalleryItems.keys()), [selectedGalleryItems]);
+  // Per-gallery selected URL sets — same URL in different galleries is independent
+  const selectedUrlsByGallery = useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    map.set("product", new Set());
+    for (const v of variants) map.set(v.id, new Set());
+    for (const [key] of selectedGalleryItems) {
+      const sep = key.indexOf("::");
+      if (sep === -1) continue;
+      const galleryId = key.slice(0, sep);
+      const url = key.slice(sep + 2);
+      const s = map.get(galleryId);
+      if (s) s.add(url);
+    }
+    return map;
+  }, [selectedGalleryItems, variants]);
 
   const makeSelectHandler = useCallback((sourceVariantId: string | null) =>
     (url: string, sel: boolean) => {
+      const galleryId = sourceVariantId ?? "product";
+      const key = `${galleryId}::${url}`;
       setSelectedGalleryItems(m => {
         const next = new Map(m);
-        if (sel) next.set(url, sourceVariantId);
-        else next.delete(url);
+        if (sel) next.set(key, sourceVariantId);
+        else next.delete(key);
         return next;
       });
     }, []);
@@ -174,9 +191,11 @@ export function VariantImageManager({
       .filter(i => selectedBulkIds.has(i.uniqueId) && i.status === "ready")
       .map(i => i.resourceUrl);
 
-    const galleryGids = [...selectedGalleryItems.entries()]
-      .map(([url]) => urlToGid[url])
-      .filter(Boolean) as string[];
+    const galleryGids = [...new Set(
+      [...selectedGalleryItems.keys()]
+        .map(key => { const sep = key.indexOf("::"); return urlToGid[sep !== -1 ? key.slice(sep + 2) : key]; })
+        .filter(Boolean) as string[]
+    )];
 
     const newGids = [...bulkGids, ...galleryGids];
     if (newGids.length === 0) return;
@@ -192,8 +211,10 @@ export function VariantImageManager({
       if (selectedBulkIds.size > 0) onRemoveBulk([...selectedBulkIds]);
 
       const bySource = new Map<string, string[]>();
-      for (const [url, sourceId] of selectedGalleryItems.entries()) {
+      for (const [key, sourceId] of selectedGalleryItems.entries()) {
         if (sourceId === null) continue;
+        const sep = key.indexOf("::");
+        const url = sep !== -1 ? key.slice(sep + 2) : key;
         const gid = urlToGid[url];
         if (!gid) continue;
         if (!bySource.has(sourceId)) bySource.set(sourceId, []);
@@ -224,7 +245,7 @@ export function VariantImageManager({
     });
     setSelectedGalleryItems(m => {
       const next = new Map(m);
-      urls.forEach(u => next.delete(u));
+      urls.forEach(u => next.delete(`${variantId}::${u}`));
       return next;
     });
   }, [variants, fileUrlMap]);
@@ -378,7 +399,7 @@ export function VariantImageManager({
         <div style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 6 }}>
           <input
             type="checkbox"
-            checked={displayedProductUrls.length > 0 && displayedProductUrls.every(url => selectedGalleryUrls.has(url))}
+            checked={displayedProductUrls.length > 0 && displayedProductUrls.every(url => (selectedUrlsByGallery.get("product") ?? new Set()).has(url))}
             disabled={displayedProductUrls.length === 0}
             onChange={(e) => {
               const handler = makeSelectHandler(null);
@@ -396,7 +417,7 @@ export function VariantImageManager({
             imageMetas={imageMetas}
             onReorder={handleProductReorder}
             onSelect={makeSelectHandler(null)}
-            selectedUrls={selectedGalleryUrls}
+            selectedUrls={selectedUrlsByGallery.get("product") ?? new Set()}
             isDropTarget={activeAction !== null}
             thumbSize={thumbSize}
           />
@@ -466,7 +487,7 @@ export function VariantImageManager({
                 fileUrlMap={fileUrlMap}
                 imageMetas={imageMetas}
                 activeAction={hasAnySelection ? activeAction : null}
-                selectedUrls={selectedGalleryUrls}
+                selectedUrls={selectedUrlsByGallery.get(v.id) ?? new Set()}
                 onSelect={makeSelectHandler(v.id)}
                 onReorder={handleVariantReorder}
                 onDrop={handleDropToVariant}
