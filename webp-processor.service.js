@@ -106,7 +106,7 @@ export class WebPProcessorService {
 
       // 3. Get Shopify session for this shop
       const session = await db.session.findFirst({
-        where: { shop: task.shop },
+        where: { shop: task.shop, isOnline: false },
         orderBy: { lastActivityAt: "desc" },
       });
 
