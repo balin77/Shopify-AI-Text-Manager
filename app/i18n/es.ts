@@ -605,6 +605,7 @@ export const es: Translation = {
     aiGenerate: "Generar con IA",
     translateAlt: "Traducir",
     translateAltAll: "Traducir a todos los idiomas",
+    primaryRef: "Idioma principal",
     noImages: "Sin imágenes",
     altBadge: "ALT",
     noAltBadge: "SIN ALT",
@@ -729,6 +730,8 @@ export const es: Translation = {
     translationCompleted: "Traducción completada para \"{title}\"",
     fieldTranslationCompleted: "Traducción para {field} en \"{title}\" completada",
     generationCompleted: "Generación de IA para {field} en \"{title}\" completada",
+    allAltTexts: "todos los textos alt",
+    imageAltText: "texto alt imagen {n}",
     requests: "solicitudes",
   },
 

@@ -603,6 +603,7 @@ export const de = {
     aiGenerate: "KI generieren",
     translateAlt: "Übersetzen",
     translateAltAll: "In alle Sprachen übersetzen",
+    primaryRef: "Hauptsprache",
     noImages: "Keine Bilder",
     altBadge: "ALT",
     noAltBadge: "KEIN ALT",
@@ -727,6 +728,8 @@ export const de = {
     translationCompleted: "Übersetzung abgeschlossen für \"{title}\"",
     fieldTranslationCompleted: "Übersetzung für {field} in \"{title}\" abgeschlossen",
     generationCompleted: "KI-Generierung für {field} in \"{title}\" abgeschlossen",
+    allAltTexts: "alle Alt-Texte",
+    imageAltText: "Bild {n} Alt-Text",
     requests: "Anfragen",
   },
 

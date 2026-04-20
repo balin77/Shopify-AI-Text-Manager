@@ -4,12 +4,13 @@ import { db } from "../db.server";
 
 interface ConvertWebpBody {
   productId: string;
+  productTitle?: string;
   images: Array<{ mediaId: string; url: string; productImageId: string }>;
 }
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session } = await authenticate.admin(request);
-  const { productId, images }: ConvertWebpBody = await request.json();
+  const { productId, productTitle, images }: ConvertWebpBody = await request.json();
 
   if (!images?.length) {
     return json({ error: "No images provided" }, { status: 400 });
@@ -23,7 +24,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         status: "pending",
         resourceType: "product",
         resourceId: productId,
-        resourceTitle: img.mediaId,
+        resourceTitle: productTitle || productId,
         result: JSON.stringify({
           sourceUrl: img.url,
           mediaId: img.mediaId,

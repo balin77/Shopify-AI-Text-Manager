@@ -249,6 +249,7 @@ export async function handleTranslateAltText(ctx: AIActionContext): Promise<Resp
   const sourceAltText = getFormString(formData, "sourceAltText");
   const targetLocale = getFormString(formData, "targetLocale");
   const primaryLocale = getFormString(formData, "primaryLocale");
+  const productTitle = getFormString(formData, "productTitle");
 
   if (!sourceAltText) {
     return json({ success: false, error: "No source alt-text available" }, { status: 400 });
@@ -262,7 +263,7 @@ export async function handleTranslateAltText(ctx: AIActionContext): Promise<Resp
       status: "pending",
       resourceType: contentType,
       resourceId: itemId,
-      resourceTitle: `altText_${imageIndex}`,
+      resourceTitle: productTitle || itemId,
       fieldType: `altText_${imageIndex}`,
       targetLocale,
       progress: 0,
@@ -328,6 +329,7 @@ export async function handleTranslateAltTextToAllLocales(ctx: AIActionContext): 
   const targetLocalesJson = getFormString(formData, "targetLocales");
   const primaryLocale = getFormString(formData, "primaryLocale");
   const productId = getFormString(formData, "productId");
+  const productTitle = getFormString(formData, "productTitle");
 
   if (!sourceAltText) {
     return json({ success: false, error: "No source alt-text available" }, { status: 400 });
@@ -346,7 +348,7 @@ export async function handleTranslateAltTextToAllLocales(ctx: AIActionContext): 
       status: "pending",
       resourceType: contentType,
       resourceId: itemId,
-      resourceTitle: `altText_${imageIndex}`,
+      resourceTitle: productTitle || itemId,
       fieldType: `altText_${imageIndex}`,
       progress: 0,
       expiresAt: getTaskExpirationDate(),
@@ -563,6 +565,7 @@ export async function handleTranslateAllAltTextsToAllLocales(ctx: AIActionContex
   const targetLocalesJson = getFormString(formData, "targetLocales");
   const primaryLocale = getFormString(formData, "primaryLocale");
   const productId = getFormString(formData, "productId");
+  const productTitle = getFormString(formData, "productTitle");
 
   if (!altTextsDataJson) {
     return json({ success: false, error: "No alt-text data provided" }, { status: 400 });
@@ -584,7 +587,7 @@ export async function handleTranslateAllAltTextsToAllLocales(ctx: AIActionContex
       status: "pending",
       resourceType: contentType,
       resourceId: itemId,
-      resourceTitle: `allAltTexts`,
+      resourceTitle: productTitle || itemId,
       fieldType: "allAltTexts",
       progress: 0,
       expiresAt: getTaskExpirationDate(),
@@ -798,6 +801,7 @@ export async function handleTranslateAllAltTextsForLocale(ctx: AIActionContext):
   const altTextsDataJson = getFormString(formData, "altTextsData");
   const targetLocale = getFormString(formData, "targetLocale");
   const primaryLocale = getFormString(formData, "primaryLocale");
+  const productTitle = getFormString(formData, "productTitle");
 
   if (!altTextsDataJson) {
     return json({ success: false, error: "No alt-text data provided" }, { status: 400 });
@@ -818,7 +822,7 @@ export async function handleTranslateAllAltTextsForLocale(ctx: AIActionContext):
       status: "pending",
       resourceType: contentType,
       resourceId: itemId,
-      resourceTitle: `allAltTexts`,
+      resourceTitle: productTitle || itemId,
       fieldType: "allAltTexts",
       targetLocale,
       progress: 0,

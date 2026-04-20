@@ -351,6 +351,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
         action: "translateAltText",
         itemId: selectedItem.id,
         productId: selectedItem.id,
+        productTitle: selectedItem.title || "",
         imageIndex: String(imageIndex),
         sourceAltText,
         targetLocale: currentLanguage,
@@ -438,6 +439,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
         action: "translateAltTextToAllLocales",
         itemId: selectedItem.id,
         productId: selectedItem.id,
+        productTitle: selectedItem.title || "",
         imageIndex: String(imageIndex),
         sourceAltText,
         targetLocales: JSON.stringify(targetLocales),
@@ -523,6 +525,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
         action: "translateAllAltTextsToAllLocales",
         itemId: selectedItem.id,
         productId: selectedItem.id,
+        productTitle: selectedItem.title || "",
         altTextsData: JSON.stringify(altTextsData),
         targetLocales: JSON.stringify(targetLocales),
         primaryLocale
@@ -615,6 +618,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
         action: "translateAllAltTextsForLocale",
         itemId: selectedItem.id,
         productId: selectedItem.id,
+        productTitle: selectedItem.title || "",
         altTextsData: JSON.stringify(altTextsData),
         targetLocale: currentLanguage,
         primaryLocale

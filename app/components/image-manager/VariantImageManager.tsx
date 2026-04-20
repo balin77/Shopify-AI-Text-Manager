@@ -35,6 +35,7 @@ interface VariantImageManagerProps {
   primaryLocale?: string;
   productTitle?: string;
   enabledLanguages?: string[];
+  onDirtyChange?: (isDirty: boolean) => void;
 }
 
 export function VariantImageManager({
@@ -52,6 +53,7 @@ export function VariantImageManager({
   primaryLocale,
   productTitle,
   enabledLanguages = [],
+  onDirtyChange,
 }: VariantImageManagerProps) {
   const { t } = useI18n();
   const [variants, setVariants] = useState<VariantWithGallery[]>([]);
@@ -77,6 +79,7 @@ export function VariantImageManager({
   const translationsFetcher = useFetcher<any>();     // load foreign locale alt texts from DB
   const prevAltFetcherData = useRef<any>(null);
   const productGalleryBlurSkipRef = useRef(false);
+  const dirtyUrlsRef = useRef(new Set<string>());
   // Track current media order so we can include it whenever variant galleries change
   const pendingMediaOrderRef = useRef<Array<{ mediaId: string; position: number }>>([]);
 
@@ -90,6 +93,8 @@ export function VariantImageManager({
     setProductImageOrder(productImages.map(i => i.url));
     setSelectedGalleryItems(new Map());
     pendingMediaOrderRef.current = [];
+    dirtyUrlsRef.current.clear();
+    onDirtyChange?.(false);
   }, [resetKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load foreign-locale alt text translations from DB when language changes
@@ -469,7 +474,11 @@ export function VariantImageManager({
 
   const handleAltTextChange = useCallback((url: string, value: string) => {
     setLocalAltTexts(p => ({ ...p, [url]: value }));
-  }, []);
+    if (!dirtyUrlsRef.current.has(url)) {
+      dirtyUrlsRef.current.add(url);
+      if (dirtyUrlsRef.current.size === 1) onDirtyChange?.(true);
+    }
+  }, [onDirtyChange]);
 
   const handleSaveAltText = useCallback((url: string, altText: string) => {
     const mediaId = urlToGid[url];
@@ -481,7 +490,9 @@ export function VariantImageManager({
     if (currentLanguage) form.append("locale", currentLanguage);
     if (primaryLocale) form.append("primaryLocale", primaryLocale);
     saveAltTextFetcher.submit(form, { method: "post" });
-  }, [urlToGid, currentLanguage, primaryLocale, saveAltTextFetcher]);
+    dirtyUrlsRef.current.delete(url);
+    if (dirtyUrlsRef.current.size === 0) onDirtyChange?.(false);
+  }, [urlToGid, currentLanguage, primaryLocale, saveAltTextFetcher, onDirtyChange]);
 
   const handleGenerateAltTextForImage = useCallback((url: string) => {
     const imageIndex = productImages.findIndex(i => i.url === url);
@@ -538,8 +549,14 @@ export function VariantImageManager({
   const productSelectedUrls = selectedUrlsByGallery.get("product") ?? new Set<string>();
   const productSingleSelected = productSelectedUrls.size === 1 ? [...productSelectedUrls][0] : null;
   const productCurrentAltText = productSingleSelected
-    ? (localAltTexts[productSingleSelected] ?? imageMetas[productSingleSelected]?.altText ?? "")
+    ? (isPrimaryLocale
+      ? (localAltTexts[productSingleSelected] ?? imageMetas[productSingleSelected]?.altText ?? "")
+      : (localAltTexts[productSingleSelected] ?? ""))
     : "";
+  const productPrimaryAltText = productSingleSelected ? (imageMetas[productSingleSelected]?.altText ?? "") : "";
+  const productHasTranslation = productSingleSelected
+    ? (localAltTexts[productSingleSelected] !== undefined && localAltTexts[productSingleSelected] !== "")
+    : false;
 
   return (
     <Card padding="400">
@@ -701,9 +718,9 @@ export function VariantImageManager({
           <div style={{
             marginTop: 10,
             padding: "10px 12px",
-            background: "#f6f6f7",
+            background: !isPrimaryLocale && !productHasTranslation ? "#fff8f0" : "#f6f6f7",
             borderRadius: 6,
-            border: "1px solid #e1e3e5",
+            border: `1px solid ${!isPrimaryLocale && !productHasTranslation ? "#e6a817" : "#e1e3e5"}`,
           }}>
             <div style={{ marginBottom: 6 }}>
               <Text as="span" variant="bodySm" tone="subdued">
@@ -715,7 +732,7 @@ export function VariantImageManager({
                 type="text"
                 value={productCurrentAltText}
                 onChange={(e) => handleAltTextChange(productSingleSelected, e.target.value)}
-                placeholder={t.imageManager.altTextPlaceholder}
+                placeholder={isPrimaryLocale ? t.imageManager.altTextPlaceholder : (productPrimaryAltText || t.imageManager.altTextPlaceholder)}
                 style={{
                   flex: "1 1 200px",
                   minWidth: 180,
@@ -724,11 +741,12 @@ export function VariantImageManager({
                   border: "1px solid #c9cccf",
                   borderRadius: 4,
                   outline: "none",
-                  background: "white",
+                  background: !isPrimaryLocale && !productHasTranslation ? "#fff8f0" : "white",
                 }}
-                onFocus={(e) => { e.target.style.borderColor = "#005bd3"; }}
+                onFocus={(e) => { e.target.style.borderColor = "#005bd3"; e.target.style.background = "white"; }}
                 onBlur={(e) => {
                   e.target.style.borderColor = "#c9cccf";
+                  e.target.style.background = !isPrimaryLocale && !productHasTranslation ? "#fff8f0" : "white";
                   if (productGalleryBlurSkipRef.current) {
                     productGalleryBlurSkipRef.current = false;
                     return;
@@ -775,6 +793,12 @@ export function VariantImageManager({
                 )}
               </div>
             </div>
+            {!isPrimaryLocale && productPrimaryAltText && (
+              <div style={{ marginTop: 6, fontSize: 12, color: "#6d7175" }}>
+                <span style={{ fontWeight: 600 }}>{t.imageManager.primaryRef}: </span>
+                {productPrimaryAltText}
+              </div>
+            )}
           </div>
         )}
       </div>

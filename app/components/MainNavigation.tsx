@@ -51,22 +51,24 @@ export function MainNavigation() {
       let message = "";
       const resourceTitle = task.resourceTitle || "";
 
+      const toReadableFieldName = (raw: string) => {
+        if (raw === "allAltTexts") return t.tasks?.allAltTexts || "all alt-texts";
+        const altMatch = raw.match(/^altText_(\d+)$/);
+        if (altMatch) return t.tasks?.imageAltText?.replace("{n}", String(Number(altMatch[1]) + 1)) || `Image ${Number(altMatch[1]) + 1} alt-text`;
+        if (raw.includes('.') || raw.includes(':')) return extractReadableName(raw);
+        return raw;
+      };
+
       if (task.type === "bulkTranslation") {
         if (task.fieldType === "all") {
           message = t.tasks?.translationCompleted?.replace("{title}", resourceTitle) || `Translation completed for "${resourceTitle}"`;
         } else {
-          const rawFieldType = task.fieldType || "field";
-          const fieldName = (rawFieldType.includes('.') || rawFieldType.includes(':'))
-            ? extractReadableName(rawFieldType)
-            : rawFieldType;
+          const fieldName = toReadableFieldName(task.fieldType || "field");
           message = t.tasks?.fieldTranslationCompleted?.replace("{field}", fieldName).replace("{title}", resourceTitle)
             || `Translation completed for ${fieldName} in "${resourceTitle}"`;
         }
       } else if (task.type === "aiGeneration") {
-        const rawFieldType = task.fieldType || "content";
-        const fieldName = (rawFieldType.includes('.') || rawFieldType.includes(':'))
-          ? extractReadableName(rawFieldType)
-          : rawFieldType;
+        const fieldName = toReadableFieldName(task.fieldType || "content");
         message = t.tasks?.generationCompleted?.replace("{field}", fieldName).replace("{title}", resourceTitle)
           || `AI generation completed for ${fieldName} in "${resourceTitle}"`;
       } else {

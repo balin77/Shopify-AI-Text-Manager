@@ -605,6 +605,7 @@ export const en: Translation = {
     aiGenerate: "Generate with AI",
     translateAlt: "Translate",
     translateAltAll: "Translate to all languages",
+    primaryRef: "Primary language",
     noImages: "No images",
     altBadge: "ALT",
     noAltBadge: "NO ALT",
@@ -729,6 +730,8 @@ export const en: Translation = {
     translationCompleted: "Translation completed for \"{title}\"",
     fieldTranslationCompleted: "Translation for {field} in \"{title}\" completed",
     generationCompleted: "AI generation for {field} in \"{title}\" completed",
+    allAltTexts: "all alt-texts",
+    imageAltText: "Image {n} alt-text",
     requests: "requests",
   },
 
