@@ -71,6 +71,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         productId,
         variants: variantGalleries.map(vg => ({
           id: vg.variantId,
+          ...(vg.fileGids.length > 0 && { mediaId: vg.fileGids[0] }),
           metafields: [{
             namespace: "custom",
             key: "variant_gallery",

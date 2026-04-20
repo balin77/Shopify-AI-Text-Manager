@@ -312,8 +312,9 @@ export class ProductSyncService {
 
           // Save options (filter out Shopify's internal "Default Title" placeholder)
           const realOptions = (product.options ?? []).filter((opt) => !isDefaultTitleOption(opt));
+          // Always delete stale options so products without real variants don't keep phantom options
+          await tx.productOption.deleteMany({ where: { productId: product.id } });
           if (realOptions.length > 0) {
-            await tx.productOption.deleteMany({ where: { productId: product.id } });
             const optCreateData = realOptions.map((opt) => ({
               id: opt.id,
               productId: product.id,

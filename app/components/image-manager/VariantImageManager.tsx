@@ -84,7 +84,11 @@ export function VariantImageManager({
             try { return JSON.parse(v.galleryJson || "[]"); } catch { return []; }
           })(),
         }));
-        setVariants(mapped.sort((a, b) => a.position - b.position));
+        // Filter out Shopify's synthetic default variant (only variant, titled "Default Title")
+        const realVariants = mapped.length === 1 && mapped[0].title === "Default Title"
+          ? []
+          : mapped;
+        setVariants(realVariants.sort((a, b) => a.position - b.position));
       })
       .catch(() => setVariantError("Varianten konnten nicht geladen werden."))
       .finally(() => setIsLoadingVariants(false));
