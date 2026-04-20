@@ -51,6 +51,8 @@ export function VariantImageManager({
   const [selectedGalleryItems, setSelectedGalleryItems] = useState<Map<string, string | null>>(new Map());
   const [pendingVariantGalleries, setPendingVariantGalleries] = useState<Record<string, string[]>>({});
   const [webpError, setWebpError] = useState<string | null>(null);
+  const [isConvertingWebP, setIsConvertingWebP] = useState(false);
+  const webpPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [showAll, setShowAll] = useState(true);
   const [thumbSize, setThumbSize] = useState(imageManagerSettings.thumbSize ?? 80);
   const thumbSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -96,6 +98,38 @@ export function VariantImageManager({
     }));
     onPendingChange?.(galleries, pendingMediaOrderRef.current);
   }, [pendingVariantGalleries]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const startWebPPolling = useCallback((pid: string) => {
+    if (webpPollRef.current) clearInterval(webpPollRef.current);
+    webpPollRef.current = setInterval(async () => {
+      try {
+        const r = await fetch(`/api/running-field-tasks?resourceId=${encodeURIComponent(pid)}`);
+        const { tasks } = await r.json();
+        const active = (tasks ?? []).some((t: { type: string }) => t.type === "imageWebpConversion");
+        if (!active) {
+          clearInterval(webpPollRef.current!);
+          webpPollRef.current = null;
+          localStorage.removeItem(`webp_${pid}`);
+          setIsConvertingWebP(false);
+        }
+      } catch {
+        // keep polling on transient errors
+      }
+    }, 3000);
+  }, []);
+
+  // Resume polling on mount if a conversion was in progress
+  useEffect(() => {
+    if (!productId) return;
+    const converting = localStorage.getItem(`webp_${productId}`);
+    if (converting) {
+      setIsConvertingWebP(true);
+      startWebPPolling(productId);
+    }
+    return () => {
+      if (webpPollRef.current) clearInterval(webpPollRef.current);
+    };
+  }, [productId, startWebPPolling]);
 
   // GID → URL and URL → GID maps (filter out entries with no mediaId)
   const fileUrlMap: Record<string, string> = useMemo(() =>
@@ -284,10 +318,13 @@ export function VariantImageManager({
         }),
       });
       if (!res.ok) throw new Error();
+      localStorage.setItem(`webp_${productId}`, "1");
+      setIsConvertingWebP(true);
+      startWebPPolling(productId);
     } catch {
       setWebpError("WebP-Konvertierung konnte nicht gestartet werden.");
     }
-  }, [productId, productImages]);
+  }, [productId, productImages, startWebPPolling]);
 
   const handleUploadToVariant = useCallback(async (variantId: string, files: File[]) => {
     for (const file of files) {
@@ -502,11 +539,16 @@ export function VariantImageManager({
       </div>
 
       {/* WebP conversion */}
-      {nonWebpCount > 0 && (
+      {(nonWebpCount > 0 || isConvertingWebP) && (
         <div>
-          <Button size="slim" onClick={handleConvertToWebP}>
-            {`${nonWebpCount} Bild${nonWebpCount !== 1 ? "er" : ""} → WebP konvertieren`}
-          </Button>
+          <InlineStack gap="200" blockAlign="center">
+            <Button size="slim" onClick={handleConvertToWebP} disabled={isConvertingWebP}>
+              {isConvertingWebP
+                ? "WebP-Konvertierung läuft…"
+                : `${nonWebpCount} Bild${nonWebpCount !== 1 ? "er" : ""} → WebP konvertieren`}
+            </Button>
+            {isConvertingWebP && <Spinner size="small" />}
+          </InlineStack>
         </div>
       )}
     </div>
