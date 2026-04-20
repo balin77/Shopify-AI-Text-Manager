@@ -30,6 +30,9 @@ interface VariantImageManagerProps {
   imageManagerSettings: ImageManagerSettings;
   onPendingChange?: (variantGalleries: Array<{ variantId: string; fileGids: string[] }>, mediaOrder: Array<{ mediaId: string; position: number }>) => void;
   resetKey?: number;
+  currentLanguage?: string;
+  primaryLocale?: string;
+  productTitle?: string;
 }
 
 export function VariantImageManager({
@@ -43,6 +46,9 @@ export function VariantImageManager({
   imageManagerSettings,
   onPendingChange,
   resetKey,
+  currentLanguage,
+  primaryLocale,
+  productTitle,
 }: VariantImageManagerProps) {
   const [variants, setVariants] = useState<VariantWithGallery[]>([]);
   const [isLoadingVariants, setIsLoadingVariants] = useState(false);
@@ -60,6 +66,11 @@ export function VariantImageManager({
   const [thumbSize, setThumbSize] = useState(imageManagerSettings.thumbSize ?? 80);
   const thumbSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fetcher = useFetcher();
+  // Alt text editing state
+  const [localAltTexts, setLocalAltTexts] = useState<Record<string, string>>({});
+  const [altTextLoading, setAltTextLoading] = useState<Record<string, boolean>>({});
+  const altTextFetcher = useFetcher<any>();
+  const prevAltFetcherData = useRef<any>(null);
   // Track current media order so we can include it whenever variant galleries change
   const pendingMediaOrderRef = useRef<Array<{ mediaId: string; position: number }>>([]);
 
@@ -382,6 +393,67 @@ export function VariantImageManager({
     }
   }, [variants]);
 
+  // Watch altTextFetcher for AI generate / translate results
+  useEffect(() => {
+    const data = altTextFetcher.data;
+    if (!data || data === prevAltFetcherData.current) return;
+    prevAltFetcherData.current = data;
+    const idx = data.imageIndex as number | undefined;
+    const url = idx !== undefined ? productImages[idx]?.url : undefined;
+    if (url) {
+      if (data.actionType === "generateAltText" && data.altText !== undefined) {
+        setLocalAltTexts(p => ({ ...p, [url]: data.altText }));
+      }
+      if (data.actionType === "translateAltText" && data.translatedAltText !== undefined) {
+        setLocalAltTexts(p => ({ ...p, [url]: data.translatedAltText }));
+      }
+    }
+    if (data.actionType === "saveImageAltText" || data.actionType === "generateAltText" || data.actionType === "translateAltText") {
+      setAltTextLoading({});
+    }
+  }, [altTextFetcher.data, productImages]);
+
+  const handleAltTextChange = useCallback((url: string, value: string) => {
+    setLocalAltTexts(p => ({ ...p, [url]: value }));
+  }, []);
+
+  const handleSaveAltText = useCallback((url: string, altText: string) => {
+    const mediaId = urlToGid[url];
+    if (!mediaId) return;
+    setAltTextLoading(p => ({ ...p, [url]: true }));
+    const form = new FormData();
+    form.append("_action", "saveImageAltText");
+    form.append("mediaId", mediaId);
+    form.append("altText", altText);
+    if (currentLanguage) form.append("locale", currentLanguage);
+    if (primaryLocale) form.append("primaryLocale", primaryLocale);
+    altTextFetcher.submit(form, { method: "post" });
+  }, [urlToGid, currentLanguage, primaryLocale, altTextFetcher]);
+
+  const handleGenerateAltTextForImage = useCallback((url: string) => {
+    const imageIndex = productImages.findIndex(i => i.url === url);
+    setAltTextLoading(p => ({ ...p, [url]: true }));
+    const form = new FormData();
+    form.append("_action", "generateAltText");
+    form.append("imageIndex", String(Math.max(0, imageIndex)));
+    form.append("imageUrl", url);
+    form.append("productTitle", productTitle ?? "");
+    form.append("mainLanguage", primaryLocale ?? "en");
+    altTextFetcher.submit(form, { method: "post" });
+  }, [productImages, productTitle, primaryLocale, altTextFetcher]);
+
+  const handleTranslateAltTextForImage = useCallback((url: string, sourceAltText: string) => {
+    const imageIndex = productImages.findIndex(i => i.url === url);
+    if (!currentLanguage) return;
+    setAltTextLoading(p => ({ ...p, [url]: true }));
+    const form = new FormData();
+    form.append("_action", "translateAltText");
+    form.append("imageIndex", String(Math.max(0, imageIndex)));
+    form.append("sourceAltText", sourceAltText);
+    form.append("targetLocale", currentLanguage);
+    altTextFetcher.submit(form, { method: "post" });
+  }, [productImages, currentLanguage, altTextFetcher]);
+
   const nonWebpCount = productImages.filter(i =>
     !i.url.toLowerCase().includes(".webp") &&
     !i.url.toLowerCase().includes("format=webp")
@@ -585,6 +657,14 @@ export function VariantImageManager({
                 onGenerateAltFromSku={handleGenerateAltFromSku}
                 onUploadToGallery={handleUploadToVariant}
                 thumbSize={thumbSize}
+                localAltTexts={localAltTexts}
+                isAltTextLoading={Object.values(altTextLoading).some(Boolean)}
+                onAltTextChange={handleAltTextChange}
+                onSaveAltText={handleSaveAltText}
+                onGenerateAltText={handleGenerateAltTextForImage}
+                onTranslateAltText={handleTranslateAltTextForImage}
+                currentLanguage={currentLanguage}
+                primaryLocale={primaryLocale}
               />
               );
             })

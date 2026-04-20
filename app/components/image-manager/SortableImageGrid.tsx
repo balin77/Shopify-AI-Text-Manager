@@ -144,7 +144,10 @@ function SortableThumbnail({ url, isSelected, meta, onSelect, thumbSize, isMain 
             height: thumbSize,
             objectFit: "cover",
             borderRadius: 6,
-            border: isSelected ? "2px solid #005bd3" : "2px solid #e1e3e5",
+            border: isSelected ? "2px solid #005bd3" : (isMain ? "2px solid #e6a817" : "2px solid #e1e3e5"),
+            boxShadow: isMain
+              ? (isSelected ? "0 0 0 2px #e6a817" : "0 0 0 2px rgba(230,168,23,0.35)")
+              : "none",
             display: "block",
           }}
         />
@@ -168,39 +171,22 @@ function SortableThumbnail({ url, isSelected, meta, onSelect, thumbSize, isMain 
           </div>
         )}
 
-        {/* Main image badge */}
-        {isMain && (
-          <div style={{
+        {/* Alt text badge */}
+        <div
+          title={hasAlt ? (meta?.altText ?? undefined) : undefined}
+          style={{
             position: "absolute",
-            top: 4,
+            bottom: 4,
             left: 4,
-            background: "rgba(0,91,211,0.85)",
+            background: hasAlt ? "rgba(0,128,96,0.85)" : "rgba(142,31,11,0.75)",
             color: "white",
-            fontSize: 9,
+            fontSize: 10,
             fontWeight: 700,
-            padding: "1px 4px",
+            padding: "2px 6px",
             borderRadius: 3,
             lineHeight: "14px",
-            pointerEvents: "none",
+            cursor: hasAlt ? "default" : "default",
           }}>
-            HAUPT
-          </div>
-        )}
-
-        {/* Alt text badge */}
-        <div style={{
-          position: "absolute",
-          bottom: 4,
-          left: 4,
-          background: hasAlt ? "rgba(0,128,96,0.85)" : "rgba(142,31,11,0.75)",
-          color: "white",
-          fontSize: 9,
-          fontWeight: 700,
-          padding: "1px 4px",
-          borderRadius: 3,
-          lineHeight: "14px",
-          pointerEvents: "none",
-        }}>
           {hasAlt ? "ALT" : "KEIN ALT"}
         </div>
 
@@ -212,9 +198,9 @@ function SortableThumbnail({ url, isSelected, meta, onSelect, thumbSize, isMain 
             right: 4,
             background: formatBadge.color,
             color: "white",
-            fontSize: 9,
+            fontSize: 10,
             fontWeight: 700,
-            padding: "1px 4px",
+            padding: "2px 6px",
             borderRadius: 3,
             lineHeight: "14px",
             pointerEvents: "none",

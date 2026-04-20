@@ -16,6 +16,15 @@ interface VariantGallerySectionProps {
   onGenerateAltFromSku: (variantId: string) => void;
   onUploadToGallery: (variantId: string, files: File[]) => void;
   thumbSize?: number;
+  // Alt text editing
+  localAltTexts?: Record<string, string>;
+  isAltTextLoading?: boolean;
+  onAltTextChange?: (url: string, value: string) => void;
+  onSaveAltText?: (url: string, altText: string) => void;
+  onGenerateAltText?: (url: string) => void;
+  onTranslateAltText?: (url: string, sourceAltText: string) => void;
+  currentLanguage?: string;
+  primaryLocale?: string;
 }
 
 export function VariantGallerySection({
@@ -31,6 +40,14 @@ export function VariantGallerySection({
   onGenerateAltFromSku,
   onUploadToGallery,
   thumbSize = 80,
+  localAltTexts,
+  isAltTextLoading,
+  onAltTextChange,
+  onSaveAltText,
+  onGenerateAltText,
+  onTranslateAltText,
+  currentLanguage,
+  primaryLocale,
 }: VariantGallerySectionProps) {
   const [open, setOpen] = useState(false);
 
@@ -49,6 +66,12 @@ export function VariantGallerySection({
   const localSelectedUrls = displayUrls.filter(url => selectedUrls.has(url));
   const hasLocalSelection = localSelectedUrls.length > 0;
   const isAllSelected = displayUrls.length > 0 && displayUrls.every(url => selectedUrls.has(url));
+  const isPrimaryLocale = !currentLanguage || currentLanguage === primaryLocale;
+
+  const singleSelectedUrl = localSelectedUrls.length === 1 ? localSelectedUrls[0] : null;
+  const currentAltText = singleSelectedUrl
+    ? (localAltTexts?.[singleSelectedUrl] ?? imageMetas[singleSelectedUrl]?.altText ?? "")
+    : "";
 
   return (
     <div style={{ borderBottom: "1px solid #e1e3e5", marginBottom: 4 }}>
@@ -124,6 +147,74 @@ export function VariantGallerySection({
               </Button>
             )}
           </div>
+
+          {/* Alt text editor — only when exactly 1 image is selected */}
+          {singleSelectedUrl && onSaveAltText && (
+            <div style={{
+              marginTop: 10,
+              padding: "10px 12px",
+              background: "#f6f6f7",
+              borderRadius: 6,
+              border: "1px solid #e1e3e5",
+            }}>
+              <div style={{ marginBottom: 6 }}>
+                <Text as="span" variant="bodySm" tone="subdued">
+                  Alt-Text für ausgewähltes Bild
+                </Text>
+              </div>
+              <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                <input
+                  type="text"
+                  value={currentAltText}
+                  onChange={(e) => onAltTextChange?.(singleSelectedUrl, e.target.value)}
+                  placeholder="Alt-Text eingeben…"
+                  style={{
+                    flex: "1 1 200px",
+                    minWidth: 180,
+                    padding: "5px 8px",
+                    fontSize: 13,
+                    border: "1px solid #c9cccf",
+                    borderRadius: 4,
+                    outline: "none",
+                    background: "white",
+                  }}
+                  onFocus={(e) => { e.target.style.borderColor = "#005bd3"; }}
+                  onBlur={(e) => { e.target.style.borderColor = "#c9cccf"; }}
+                />
+                <div style={{ display: "flex", gap: 4, flexShrink: 0, flexWrap: "wrap" }}>
+                  {isPrimaryLocale && onGenerateAltText && (
+                    <Button
+                      size="slim"
+                      disabled={isAltTextLoading}
+                      loading={isAltTextLoading}
+                      onClick={() => onGenerateAltText(singleSelectedUrl)}
+                    >
+                      KI generieren
+                    </Button>
+                  )}
+                  {!isPrimaryLocale && onTranslateAltText && (
+                    <Button
+                      size="slim"
+                      disabled={isAltTextLoading}
+                      loading={isAltTextLoading}
+                      onClick={() => onTranslateAltText(singleSelectedUrl, currentAltText)}
+                    >
+                      Übersetzen
+                    </Button>
+                  )}
+                  <Button
+                    size="slim"
+                    variant="primary"
+                    disabled={isAltTextLoading}
+                    loading={isAltTextLoading}
+                    onClick={() => onSaveAltText(singleSelectedUrl, currentAltText)}
+                  >
+                    Speichern
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </Collapsible>
     </div>

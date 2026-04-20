@@ -847,6 +847,9 @@ export default function ProductsPage() {
               imageManagerSettings={imageManagerSettings ?? { firstImageBig: false, showAltTags: false, autoAltText: false, thumbSize: 80 }}
               onPendingChange={imageManagerState.handlePendingChange}
               resetKey={imageManagerState.resetCounter}
+              currentLanguage={editor.state.currentLanguage}
+              primaryLocale={primaryLocale}
+              productTitle={editor.selectedItem.title}
             />
           ) : undefined}
         />
