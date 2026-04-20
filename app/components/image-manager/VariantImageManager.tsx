@@ -167,15 +167,22 @@ export function VariantImageManager({
     return map;
   }, [productImages]);
 
-  // All GIDs currently assigned to any variant gallery
+  // All GIDs currently assigned to any variant gallery (including injected main images)
   const assignedGids = useMemo(() => {
     const gids = new Set<string>();
     for (const v of variants) {
-      const current = pendingVariantGalleries[v.id] ?? v.galleryFileGids;
-      current.forEach(gid => gids.add(gid));
+      const storedGids = pendingVariantGalleries[v.id] ?? v.galleryFileGids;
+      storedGids.forEach(gid => gids.add(gid));
+      if (v.defaultImageUrl) {
+        const mainGid = urlToGid[v.defaultImageUrl] ??
+          Object.entries(urlToGid).find(([u]) =>
+            u.split("?")[0] === v.defaultImageUrl!.split("?")[0]
+          )?.[1];
+        if (mainGid) gids.add(mainGid);
+      }
     }
     return gids;
-  }, [variants, pendingVariantGalleries]);
+  }, [variants, pendingVariantGalleries, urlToGid]);
 
   // Product image URLs to display (all or only unassigned)
   const displayedProductUrls = useMemo(() => {
