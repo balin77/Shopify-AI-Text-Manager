@@ -27,7 +27,7 @@
  */
 
 import { PrismaClient } from '@prisma/client';
-import { encryptPII, encryptToken, isEncrypted } from '../app/utils/encryption.server';
+import { encryptPII, encryptToken, isEncrypted } from '../app/utils/encryption.server.ts';
 
 const db = new PrismaClient();
 

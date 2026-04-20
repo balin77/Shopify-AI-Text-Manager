@@ -21,7 +21,7 @@
  */
 
 import { PrismaClient } from '@prisma/client';
-import { encryptApiKey, isEncrypted } from '../app/utils/encryption.server';
+import { encryptApiKey, isEncrypted } from '../app/utils/encryption.server.ts';
 
 const prisma = new PrismaClient();
 

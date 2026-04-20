@@ -21,7 +21,7 @@
  */
 
 import { PrismaClient } from '@prisma/client';
-import { encryptPayload, isEncrypted } from '../app/utils/encryption.server';
+import { encryptPayload, isEncrypted } from '../app/utils/encryption.server.ts';
 
 const db = new PrismaClient();
 
