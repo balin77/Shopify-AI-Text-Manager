@@ -327,7 +327,7 @@ export function VariantImageManager({
     if (!gids.length) return;
 
     const form = new FormData();
-    form.append("_action", "generateAltTextFromSku");
+    form.append("action", "generateAltTextFromSku");
     form.append("productId", productId);
     gids.forEach(gid => form.append("mediaId", gid));
     fetcher.submit(form, { method: "post" });
@@ -410,7 +410,7 @@ export function VariantImageManager({
         const mediaId = urlToGid[url];
         if (mediaId) {
           const form = new FormData();
-          form.append("_action", "saveImageAltText");
+          form.append("action", "saveImageAltText");
           form.append("mediaId", mediaId);
           form.append("altText", data.altText);
           if (currentLanguage) form.append("locale", currentLanguage);
@@ -424,7 +424,7 @@ export function VariantImageManager({
         const mediaId = urlToGid[url];
         if (mediaId) {
           const form = new FormData();
-          form.append("_action", "saveImageAltText");
+          form.append("action", "saveImageAltText");
           form.append("mediaId", mediaId);
           form.append("altText", data.translatedAltText);
           if (currentLanguage) form.append("locale", currentLanguage);
@@ -443,7 +443,7 @@ export function VariantImageManager({
     const mediaId = urlToGid[url];
     if (!mediaId) return;
     const form = new FormData();
-    form.append("_action", "saveImageAltText");
+    form.append("action", "saveImageAltText");
     form.append("mediaId", mediaId);
     form.append("altText", altText);
     if (currentLanguage) form.append("locale", currentLanguage);
@@ -454,24 +454,28 @@ export function VariantImageManager({
   const handleGenerateAltTextForImage = useCallback((url: string) => {
     const imageIndex = productImages.findIndex(i => i.url === url);
     const form = new FormData();
-    form.append("_action", "generateAltText");
+    form.append("action", "generateAltText");
+    form.append("itemId", productId);
+    form.append("productId", productId);
     form.append("imageIndex", String(Math.max(0, imageIndex)));
     form.append("imageUrl", url);
     form.append("productTitle", productTitle ?? "");
     form.append("mainLanguage", primaryLocale ?? "en");
     altTextFetcher.submit(form, { method: "post" });
-  }, [productImages, productTitle, primaryLocale, altTextFetcher]);
+  }, [productId, productImages, productTitle, primaryLocale, altTextFetcher]);
 
   const handleTranslateAltTextForImage = useCallback((url: string, sourceAltText: string) => {
     const imageIndex = productImages.findIndex(i => i.url === url);
     if (!currentLanguage) return;
     const form = new FormData();
-    form.append("_action", "translateAltText");
+    form.append("action", "translateAltText");
+    form.append("itemId", productId);
+    form.append("productId", productId);
     form.append("imageIndex", String(Math.max(0, imageIndex)));
     form.append("sourceAltText", sourceAltText);
     form.append("targetLocale", currentLanguage);
     altTextFetcher.submit(form, { method: "post" });
-  }, [productImages, currentLanguage, altTextFetcher]);
+  }, [productId, productImages, currentLanguage, altTextFetcher]);
 
   const nonWebpCount = productImages.filter(i =>
     !i.url.toLowerCase().includes(".webp") &&
