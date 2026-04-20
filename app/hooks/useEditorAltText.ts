@@ -304,6 +304,9 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
 
     Promise.all(saves).finally(() => {
       markOperationFailed(capturedItemId, `altText_${imageIndex}`);
+      if (revalidatorRef.current.state === 'idle') {
+        try { revalidatorRef.current.revalidate(); } catch {}
+      }
     });
 
     showInfoBox(t.common?.copied ?? "Copied", "success");

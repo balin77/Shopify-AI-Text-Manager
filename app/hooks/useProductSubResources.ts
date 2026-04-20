@@ -379,6 +379,7 @@ export function useProductSubResources({
 
     if (data.actionType === "saveSubResourceTranslations") {
       // Clear copy loading state (markSubResourceActive was called in copyOptionField)
+      const wasCopyOperation = !!pendingCopyFieldIdRef.current;
       if (pendingCopyFieldIdRef.current) {
         markSubResourceCompleted(selectedItem?.id || "", pendingCopyFieldIdRef.current);
         pendingCopyFieldIdRef.current = null;
@@ -461,6 +462,11 @@ export function useProductSubResources({
         setDirtyOptionIds(new Set());
         setDirtyOptionValueIds(new Set());
         setDirtyMetafieldIds(new Set());
+
+        // Revalidate after copy so fresh DB data loads when user switches locale
+        if (wasCopyOperation && revalidator && revalidator.state === "idle") {
+          revalidator.revalidate();
+        }
       }
     }
 
@@ -1156,8 +1162,11 @@ export function useProductSubResources({
 
     Promise.all(saves).finally(() => {
       markSubResourceCompleted(capturedItemId, fieldId);
+      if (revalidator && revalidator.state === "idle") {
+        revalidator.revalidate();
+      }
     });
-  }, [selectedItem, primaryLocale, enabledLanguages]);
+  }, [selectedItem, primaryLocale, enabledLanguages, revalidator]);
 
   return {
     state: {
