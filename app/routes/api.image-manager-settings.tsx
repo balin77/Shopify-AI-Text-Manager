@@ -14,12 +14,18 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session } = await authenticate.admin(request);
-  const { firstImageBig, showAltTags, autoAltText, thumbSize } = await request.json();
+  const { enabled, autoAltText, firstImageBig, showAltTags, thumbSize } = await request.json();
 
   const settings = await db.imageManagerSettings.upsert({
     where: { shopId: session.shop },
-    create: { shopId: session.shop, firstImageBig, showAltTags, autoAltText, thumbSize: thumbSize ?? 80 },
-    update: { firstImageBig, showAltTags, autoAltText, ...(thumbSize !== undefined && { thumbSize }) },
+    create: { shopId: session.shop, enabled: enabled ?? true, firstImageBig: firstImageBig ?? false, showAltTags: showAltTags ?? false, autoAltText: autoAltText ?? false, thumbSize: thumbSize ?? 80 },
+    update: {
+      ...(enabled !== undefined && { enabled }),
+      ...(autoAltText !== undefined && { autoAltText }),
+      ...(firstImageBig !== undefined && { firstImageBig }),
+      ...(showAltTags !== undefined && { showAltTags }),
+      ...(thumbSize !== undefined && { thumbSize }),
+    },
   });
 
   return json({ settings });

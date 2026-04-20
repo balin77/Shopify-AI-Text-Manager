@@ -326,7 +326,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
     const imageManagerSettings = await db.imageManagerSettings.findUnique({
       where: { shopId: session.shop },
-    }) ?? { firstImageBig: false, showAltTags: false, autoAltText: false };
+    }) ?? { enabled: true, firstImageBig: false, showAltTags: false, autoAltText: false };
     const showImageManagerTab = subscriptionPlan === "pro" || subscriptionPlan === "max";
 
     return json({
@@ -654,8 +654,9 @@ export default function SettingsPage() {
   const [hasAIChanges, setHasAIChanges] = useState(false);
   const [hasLanguageChanges, setHasLanguageChanges] = useState(false);
   const [hasInstructionsChanges, setHasInstructionsChanges] = useState(false);
+  const [hasImageManagerChanges, setHasImageManagerChanges] = useState(false);
   // Check if there are any unsaved changes across tabs
-  const hasUnsavedChanges = hasAIChanges || hasLanguageChanges || hasInstructionsChanges;
+  const hasUnsavedChanges = hasAIChanges || hasLanguageChanges || hasInstructionsChanges || hasImageManagerChanges;
 
   // Handle section navigation with unsaved changes warning
   const handleSectionChange = (newSection: "setup" | "ai" | "instructions" | "language" | "seo" | "plan" | "feedback" | "imagemanager") => {
@@ -670,6 +671,7 @@ export default function SettingsPage() {
       setHasAIChanges(false);
       setHasLanguageChanges(false);
       setHasInstructionsChanges(false);
+      setHasImageManagerChanges(false);
     }
     setSelectedSection(newSection);
   };
@@ -866,7 +868,7 @@ export default function SettingsPage() {
                   }}
                 >
                   <Text as="p" variant="bodyMd" fontWeight={selectedSection === "imagemanager" ? "semibold" : "regular"}>
-                    📁 Image Manager
+                    Image Manager
                   </Text>
                 </button>
               )}
@@ -980,7 +982,8 @@ export default function SettingsPage() {
               {/* Image Manager Settings */}
               {selectedSection === "imagemanager" && showImageManagerTab && (
                 <SettingsImageManagerTab
-                  settings={imageManagerSettings ?? { firstImageBig: false, showAltTags: false, autoAltText: false }}
+                  settings={{ enabled: imageManagerSettings?.enabled ?? true, autoAltText: imageManagerSettings?.autoAltText ?? false }}
+                  onHasChangesChange={setHasImageManagerChanges}
                 />
               )}
 

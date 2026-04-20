@@ -411,10 +411,10 @@ export const loader = createContentLoader({
     const plan = (settings?.subscriptionPlan || "free") as "free" | "basic" | "pro" | "max";
     const planLimits = getPlanLimits(plan);
     const productCount = await ctx.db.product.count({ where: { shop: ctx.session.shop } });
-    const showImageManager = canAccessVariantImageManager(plan);
     const imageManagerSettings = await ctx.db.imageManagerSettings.findUnique({
       where: { shopId: ctx.session.shop },
-    }) ?? { firstImageBig: false, showAltTags: false, autoAltText: false, thumbSize: 80 };
+    }) ?? { enabled: true, firstImageBig: false, showAltTags: false, autoAltText: false, thumbSize: 80 };
+    const showImageManager = canAccessVariantImageManager(plan) && (imageManagerSettings.enabled ?? true);
     return { plan, maxProducts: planLimits.maxProducts, productCount, showImageManager, imageManagerSettings };
   },
 });

@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
-import { Text, Button, InlineStack, Spinner, Banner, Divider } from "@shopify/polaris";
+import { Text, Button, InlineStack, Spinner, Banner, Divider, Card, BlockStack } from "@shopify/polaris";
 import { useFetcher } from "@remix-run/react";
 import { SortableImageGrid } from "./SortableImageGrid";
 import { VariantGallerySection } from "./VariantGallerySection";
@@ -53,6 +53,7 @@ export function VariantImageManager({
   const [webpError, setWebpError] = useState<string | null>(null);
   const [isConvertingWebP, setIsConvertingWebP] = useState(false);
   const webpPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [isExpanded, setIsExpanded] = useState(false);
   const [showAll, setShowAll] = useState(true);
   const [thumbSize, setThumbSize] = useState(imageManagerSettings.thumbSize ?? 80);
   const thumbSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -372,7 +373,26 @@ export function VariantImageManager({
   const hasAnySelection = selectedBulkIds.size > 0 || selectedGalleryItems.size > 0;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+    <Card padding="400">
+      <BlockStack gap="300">
+        <InlineStack align="space-between" blockAlign="center">
+          <Text as="h3" variant="headingSm">Image Manager</Text>
+          <Button
+            size="slim"
+            variant="plain"
+            onClick={() => setIsExpanded(e => !e)}
+          >
+            {isExpanded ? "Verkleinern ↑" : "Vergrößern ↓"}
+          </Button>
+        </InlineStack>
+
+        <div style={{
+          maxHeight: isExpanded ? "none" : 480,
+          overflowY: isExpanded ? "visible" : "auto",
+          overflowX: "hidden",
+          paddingRight: isExpanded ? 0 : 4,
+        }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       {webpError && (
         <Banner tone="critical" onDismiss={() => setWebpError(null)}>
           <p>{webpError}</p>
