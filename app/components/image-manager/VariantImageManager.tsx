@@ -83,6 +83,7 @@ export function VariantImageManager({
           galleryFileGids: (() => {
             try { return JSON.parse(v.galleryJson || "[]"); } catch { return []; }
           })(),
+          defaultImageUrl: v.image?.url ?? undefined,
         }));
         // Filter out Shopify's synthetic default variant (only variant, titled "Default Title")
         const realVariants = mapped.length === 1 && mapped[0].title === "Default Title"
@@ -518,12 +519,23 @@ export function VariantImageManager({
           ) : variants.length === 0 ? (
             <Text as="p" tone="subdued">Keine Varianten gefunden.</Text>
           ) : (
-            variants.map(v => (
+            variants.map(v => {
+              const storedGids = pendingVariantGalleries[v.id] ?? v.galleryFileGids;
+              const mainGid = v.defaultImageUrl
+                ? (urlToGid[v.defaultImageUrl] ??
+                   Object.entries(urlToGid).find(([u]) =>
+                     u.split("?")[0] === v.defaultImageUrl!.split("?")[0]
+                   )?.[1])
+                : undefined;
+              const effectiveGids = mainGid && !storedGids.includes(mainGid)
+                ? [mainGid, ...storedGids]
+                : storedGids;
+              return (
               <VariantGallerySection
                 key={v.id}
                 variant={{
                   ...v,
-                  galleryFileGids: pendingVariantGalleries[v.id] ?? v.galleryFileGids,
+                  galleryFileGids: effectiveGids,
                 }}
                 fileUrlMap={fileUrlMap}
                 imageMetas={imageMetas}
@@ -537,7 +549,8 @@ export function VariantImageManager({
                 onUploadToGallery={handleUploadToVariant}
                 thumbSize={thumbSize}
               />
-            ))
+              );
+            })
           )}
         </div>
       </div>
