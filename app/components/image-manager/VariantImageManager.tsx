@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { Text, Button, InlineStack, Spinner, Banner, Divider } from "@shopify/polaris";
 import { useFetcher } from "@remix-run/react";
 import { SortableImageGrid } from "./SortableImageGrid";
@@ -50,6 +50,8 @@ export function VariantImageManager({
   const [pendingVariantGalleries, setPendingVariantGalleries] = useState<Record<string, string[]>>({});
   const [webpError, setWebpError] = useState<string | null>(null);
   const fetcher = useFetcher();
+  // Track current media order so we can include it whenever variant galleries change
+  const pendingMediaOrderRef = useRef<Array<{ mediaId: string; position: number }>>([]);
 
   useEffect(() => {
     setProductImageOrder(productImages.map(i => i.url));
@@ -81,14 +83,23 @@ export function VariantImageManager({
       .finally(() => setIsLoadingVariants(false));
   }, [productId]);
 
-  // GID → URL and URL → GID maps
+  // Sync pendingVariantGalleries to parent whenever it changes
+  useEffect(() => {
+    if (Object.keys(pendingVariantGalleries).length === 0) return;
+    const galleries = Object.entries(pendingVariantGalleries).map(([variantId, fileGids]) => ({
+      variantId, fileGids,
+    }));
+    onPendingChange?.(galleries, pendingMediaOrderRef.current);
+  }, [pendingVariantGalleries]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // GID → URL and URL → GID maps (filter out entries with no mediaId)
   const fileUrlMap: Record<string, string> = useMemo(() =>
-    Object.fromEntries(productImages.map(img => [img.mediaId, img.url])),
+    Object.fromEntries(productImages.filter(img => img.mediaId).map(img => [img.mediaId, img.url])),
     [productImages]
   );
 
   const urlToGid: Record<string, string> = useMemo(() =>
-    Object.fromEntries(productImages.map(img => [img.url, img.mediaId])),
+    Object.fromEntries(productImages.filter(img => img.mediaId).map(img => [img.url, img.mediaId])),
     [productImages]
   );
 
@@ -122,10 +133,11 @@ export function VariantImageManager({
     const mediaOrder = newUrls
       .map((url, idx) => {
         const img = productImages.find(i => i.url === url);
-        return img ? { mediaId: img.mediaId, position: idx } : null;
+        return img?.mediaId ? { mediaId: img.mediaId, position: idx } : null;
       })
       .filter(Boolean) as Array<{ mediaId: string; position: number }>;
 
+    pendingMediaOrderRef.current = mediaOrder;
     const galleries = Object.entries(pendingVariantGalleries).map(([variantId, fileGids]) => ({
       variantId, fileGids,
     }));

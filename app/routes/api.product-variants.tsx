@@ -87,5 +87,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     });
   }));
 
-  return json({ variants });
+  // Map to shape the client expects: shopifyGid + galleryJson (from metafield.value)
+  const mappedVariants = variants.map((v: any) => ({
+    ...v,
+    shopifyGid: v.id,
+    galleryJson: v.metafield?.value ?? null,
+  }));
+
+  return json({ variants: mappedVariants });
 };
