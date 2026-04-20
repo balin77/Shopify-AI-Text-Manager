@@ -131,8 +131,6 @@ interface UnifiedContentEditorProps {
     onSetAction: (action: "copy" | "move" | null) => void;
     onBulkSelect: (id: string, selected: boolean) => void;
     onRemoveBulk: (ids: string[]) => void;
-    onApply: () => Promise<void>;
-    isApplying: boolean;
     activeRightTab: "seo" | "images";
     onTabChange: (tab: "seo" | "images") => void;
     imageManagerSettings: { firstImageBig: boolean; showAltTags: boolean; autoAltText: boolean };
@@ -956,8 +954,6 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   onSelect={imageManager.onBulkSelect}
                   onSetAction={imageManager.onSetAction}
                   onRemove={imageManager.onRemoveBulk}
-                  onApply={imageManager.onApply}
-                  isApplying={imageManager.isApplying}
                 />
               )}
             </div>

@@ -26,7 +26,7 @@ import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { usePlan } from "../contexts/PlanContext";
 import { useNavigationHeight } from "../contexts/NavigationHeightContext";
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { useVariantImageManager } from "../hooks/useVariantImageManager";
 import { VariantImageManager } from "../components/image-manager/VariantImageManager";
 import { Spinner, Text } from "@shopify/polaris";
@@ -500,6 +500,33 @@ export default function ProductsPage() {
     enabledLanguages: editor.state.enabledLanguages,
   });
 
+  // Extend subResource state/handlers to include pending gallery changes so the
+  // main Speichern/Verwerfen buttons also save and reset variant gallery assignments.
+  const hasPendingImageChanges = showImageManager && (
+    imageManagerState.pendingVariantGalleries.length > 0 ||
+    imageManagerState.pendingMediaOrder.length > 0 ||
+    imageManagerState.bulkItems.some(i => i.status === "ready")
+  );
+
+  const wrappedSubResourceState = useMemo(() => ({
+    ...subResources.state,
+    hasChanges: subResources.state.hasChanges || hasPendingImageChanges,
+  }), [subResources.state, hasPendingImageChanges]);
+
+  const wrappedSubResourceHandlers = useMemo(() => ({
+    ...subResources.handlers,
+    saveSubResources: () => {
+      subResources.handlers.saveSubResources();
+      if (hasPendingImageChanges && editor.selectedItem) {
+        imageManagerState.handleApply(editor.selectedItem.id).catch(console.error);
+      }
+    },
+    resetChanges: () => {
+      subResources.handlers.resetChanges();
+      imageManagerState.resetForProduct();
+    },
+  }), [subResources.handlers, hasPendingImageChanges, editor.selectedItem, imageManagerState]);
+
   // Wrap translate-all handlers to also translate product options and metafields.
   // Uses a separate internal fetcher in useProductSubResources to avoid conflicting
   // with the shared fetcher used by the main editor.
@@ -772,8 +799,8 @@ export default function ProductsPage() {
             { field: "status", label: "Status" },
             { field: "shopifyUpdatedAt", label: "Last Updated", type: "date" },
           ]}
-          subResourceState={subResources.state}
-          subResourceHandlers={subResources.handlers}
+          subResourceState={wrappedSubResourceState}
+          subResourceHandlers={wrappedSubResourceHandlers}
           showImageManager={showImageManager}
           imageManager={showImageManager ? {
             bulkItems: imageManagerState.bulkItems,
@@ -783,12 +810,6 @@ export default function ProductsPage() {
             onSetAction: imageManagerState.setActiveAction,
             onBulkSelect: imageManagerState.handleBulkSelect,
             onRemoveBulk: imageManagerState.handleRemoveBulk,
-            onApply: async () => {
-              if (!editor.selectedItem) return;
-              const err = await imageManagerState.handleApply(editor.selectedItem.id);
-              if (err) console.error("Apply failed:", err);
-            },
-            isApplying: imageManagerState.isApplying,
             activeRightTab: imageManagerState.activeRightTab,
             onTabChange: imageManagerState.setActiveRightTab,
             imageManagerSettings: imageManagerSettings ?? { firstImageBig: false, showAltTags: false, autoAltText: false, thumbSize: 80 },

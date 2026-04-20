@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import { DropZone, Text, Button, InlineStack, ProgressBar, Banner } from "@shopify/polaris";
+import { DropZone, Text, Button, InlineStack } from "@shopify/polaris";
 import type { StagedItem } from "./types";
 
 const ALLOWED_MIME = ["image/jpeg", "image/png", "image/gif", "image/webp", "image/svg+xml"];
@@ -12,8 +12,6 @@ interface BulkImageUploadPanelProps {
   onSelect: (uniqueId: string, selected: boolean) => void;
   onSetAction: (action: "copy" | "move" | null) => void;
   onRemove: (uniqueIds: string[]) => void;
-  onApply: () => Promise<void>;
-  isApplying: boolean;
 }
 
 export function BulkImageUploadPanel({
@@ -24,8 +22,6 @@ export function BulkImageUploadPanel({
   onSelect,
   onSetAction,
   onRemove,
-  onApply,
-  isApplying,
 }: BulkImageUploadPanelProps) {
   const handleDrop = useCallback(async (_dropFiles: File[], acceptedFiles: File[]) => {
     const validFiles = acceptedFiles.filter(f => ALLOWED_MIME.includes(f.type));
@@ -102,7 +98,6 @@ export function BulkImageUploadPanel({
   }, [onItemsChange]);
 
   const selectedItems = items.filter(i => selectedUniqueIds.has(i.uniqueId));
-  const readyItems = items.filter(i => i.status === "ready");
   const hasSelected = selectedItems.length > 0;
 
   return (
@@ -213,16 +208,6 @@ export function BulkImageUploadPanel({
         </>
       )}
 
-      {readyItems.length > 0 && (
-        <Button
-          variant="primary"
-          onClick={onApply}
-          loading={isApplying}
-          disabled={isApplying}
-        >
-          {`Apply Changes (${readyItems.length} Bild${readyItems.length !== 1 ? "er" : ""})`}
-        </Button>
-      )}
     </div>
   );
 }
