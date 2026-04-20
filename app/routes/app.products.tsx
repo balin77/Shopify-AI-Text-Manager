@@ -332,6 +332,7 @@ export const loader = createContentLoader({
         ? p.images.map((img: any) => ({
             url: img.url,
             altText: img.altText,
+            mediaId: img.mediaId ?? null,
             altTextTranslations: img.altTextTranslations
               ? img.altTextTranslations.map((t: any) => ({ locale: t.locale, altText: t.altText }))
               : [],
