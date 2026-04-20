@@ -2,6 +2,8 @@ import { useState, useEffect } from "react";
 import { Card, BlockStack, Text, InlineStack, Divider } from "@shopify/polaris";
 import { useFetcher } from "@remix-run/react";
 import { SaveDiscardButtons } from "./SaveDiscardButtons";
+import { ToggleSwitch } from "./ToggleSwitch";
+import { useI18n } from "../contexts/I18nContext";
 
 interface ImageManagerSettings {
   enabled: boolean;
@@ -14,6 +16,7 @@ interface Props {
 }
 
 export function SettingsImageManagerTab({ settings, onHasChangesChange }: Props) {
+  const { t } = useI18n();
   const [enabled, setEnabled] = useState(settings.enabled);
   const [autoAltText, setAutoAltText] = useState(settings.autoAltText);
   const [committed, setCommitted] = useState({ enabled: settings.enabled, autoAltText: settings.autoAltText });
@@ -47,57 +50,39 @@ export function SettingsImageManagerTab({ settings, onHasChangesChange }: Props)
     <Card>
       <BlockStack gap="400">
         <InlineStack align="space-between" blockAlign="center" wrap={false}>
-          <Text as="h2" variant="headingMd">Image Manager</Text>
+          <Text as="h2" variant="headingMd">{t.settings.imageManagerTitle}</Text>
           <div style={{ marginLeft: "auto" }}>
             <SaveDiscardButtons
               hasChanges={hasChanges}
               onSave={handleSave}
               onDiscard={handleDiscard}
-              saveText="Speichern"
-              discardText="Verwerfen"
+              saveText={t.common.save}
+              discardText={t.content?.discardChanges ?? "Verwerfen"}
               isSavingCurrentItem={fetcher.state !== "idle"}
             />
           </div>
         </InlineStack>
 
         <Text as="p" variant="bodySm" tone="subdued">
-          Einstellungen für den Variant Image Manager (Pro & Max).
+          {t.settings.imageManagerDescription}
         </Text>
 
         <Divider />
 
-        <InlineStack align="space-between" blockAlign="start">
+        <InlineStack align="space-between" blockAlign="center">
           <BlockStack gap="100">
-            <Text as="p" variant="bodyMd">Advanced Image Manager aktivieren</Text>
-            <Text as="p" variant="bodySm" tone="subdued">
-              Ersetzt die Standard-Bildgalerie durch den erweiterten Variant Image Manager.
-            </Text>
+            <Text as="p" variant="bodyMd">{t.settings.imageManagerEnabled}</Text>
+            <Text as="p" variant="bodySm" tone="subdued">{t.settings.imageManagerEnabledDescription}</Text>
           </BlockStack>
-          <label style={{ display: "flex", alignItems: "center", cursor: "pointer" }}>
-            <input
-              type="checkbox"
-              checked={enabled}
-              onChange={e => setEnabled(e.target.checked)}
-              style={{ width: 18, height: 18, cursor: "pointer" }}
-            />
-          </label>
+          <ToggleSwitch checked={enabled} onChange={setEnabled} />
         </InlineStack>
 
-        <InlineStack align="space-between" blockAlign="start">
+        <InlineStack align="space-between" blockAlign="center">
           <BlockStack gap="100">
-            <Text as="p" variant="bodyMd">Alt-Text bei Upload automatisch generieren</Text>
-            <Text as="p" variant="bodySm" tone="subdued">
-              Nach dem Hochladen wird automatisch ein Alt-Text aus den zugehörigen Varianten-SKUs erstellt.
-            </Text>
+            <Text as="p" variant="bodyMd">{t.settings.imageManagerAutoAltText}</Text>
+            <Text as="p" variant="bodySm" tone="subdued">{t.settings.imageManagerAutoAltTextDescription}</Text>
           </BlockStack>
-          <label style={{ display: "flex", alignItems: "center", cursor: "pointer" }}>
-            <input
-              type="checkbox"
-              checked={autoAltText}
-              onChange={e => setAutoAltText(e.target.checked)}
-              style={{ width: 18, height: 18, cursor: "pointer" }}
-            />
-          </label>
+          <ToggleSwitch checked={autoAltText} onChange={setAutoAltText} />
         </InlineStack>
       </BlockStack>
     </Card>

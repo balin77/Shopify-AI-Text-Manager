@@ -559,6 +559,13 @@ export const en: Translation = {
     limitReachedTitle: "Plan Limit Reached",
     limitReachedDescription: "You have reached your limit for: {resources}",
     viewUsage: "View usage",
+    // Image Manager Settings
+    imageManagerTitle: "Image Manager",
+    imageManagerDescription: "Settings for the Variant Image Manager (Pro & Max).",
+    imageManagerEnabled: "Enable Advanced Image Manager",
+    imageManagerEnabledDescription: "Replaces the default image gallery with the advanced Variant Image Manager.",
+    imageManagerAutoAltText: "Auto-generate alt text on upload",
+    imageManagerAutoAltTextDescription: "After uploading, an alt text is automatically generated from the associated variant SKUs.",
   },
 
   // Common
