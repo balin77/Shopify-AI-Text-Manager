@@ -110,7 +110,7 @@ export class WebPProcessorService {
       return;
     }
 
-    const { sourceUrl, mediaId, productImageId, productId } = taskData;
+    const { sourceUrl, mediaId, productImageId, productId, altText: taskAltText } = taskData;
     if (!sourceUrl || !productId) {
       await this.failTask(task.id, "Missing sourceUrl or productId");
       return;
@@ -148,9 +148,9 @@ export class WebPProcessorService {
         return;
       }
 
-      // Fetch original alt text from DB before deleting the image
-      let originalAltText = null;
-      if (productImageId) {
+      // Use altText passed from the client; fall back to DB lookup if not present
+      let originalAltText = taskAltText ?? null;
+      if (!originalAltText && productImageId) {
         const productImage = await db.productImage.findUnique({
           where: { id: productImageId },
           select: { altText: true },
@@ -216,28 +216,41 @@ export class WebPProcessorService {
         body: buffer,
       });
 
-      await db.task.update({ where: { id: task.id }, data: { progress: 75 } });
+      await db.task.update({ where: { id: task.id }, data: { progress: 70 } });
 
-      // 6. Add new WebP as product media
-      await fetch(shopifyApiUrl, {
+      // 6. Add new WebP as product media (productCreateMedia returns the new GID)
+      const createMediaRes = await fetch(shopifyApiUrl, {
         method: "POST",
         headers,
         body: JSON.stringify({
           query: `
-            mutation productUpdate($input: ProductInput!, $media: [CreateMediaInput!]) {
-              productUpdate(input: $input, media: $media) {
-                userErrors { field message }
+            mutation productCreateMedia($media: [CreateMediaInput!]!, $productId: ID!) {
+              productCreateMedia(media: $media, productId: $productId) {
+                media { id }
+                mediaUserErrors { field message }
               }
             }
           `,
           variables: {
-            input: { id: productId },
+            productId,
             media: [{ originalSource: target.resourceUrl, mediaContentType: "IMAGE", ...(originalAltText ? { alt: originalAltText } : {}) }],
           },
         }),
       });
+      if (!createMediaRes.ok) {
+        const body = await createMediaRes.text();
+        await this.failTask(task.id, `Create media HTTP ${createMediaRes.status}: ${body}`);
+        return;
+      }
+      const createMediaData = await createMediaRes.json();
+      const mediaUserErrors = createMediaData.data?.productCreateMedia?.mediaUserErrors ?? [];
+      if (mediaUserErrors.length > 0) {
+        await this.failTask(task.id, `Create media userErrors: ${JSON.stringify(mediaUserErrors)}`);
+        return;
+      }
+      const newMediaId = createMediaData.data?.productCreateMedia?.media?.[0]?.id ?? null;
 
-      await db.task.update({ where: { id: task.id }, data: { progress: 90 } });
+      await db.task.update({ where: { id: task.id }, data: { progress: 80 } });
 
       // 7. Delete old media from Shopify (if mediaId available)
       if (mediaId) {
@@ -257,7 +270,61 @@ export class WebPProcessorService {
         });
       }
 
-      // 8. Update DB with new URL
+      // 8. Re-assign variant galleries: replace old media GID with new WebP GID
+      if (mediaId && newMediaId) {
+        const affectedVariants = await db.productVariant.findMany({
+          where: { productId, galleryJson: { contains: mediaId } },
+          select: { shopifyGid: true, galleryJson: true },
+        });
+
+        for (const variant of affectedVariants) {
+          try {
+            const gids = JSON.parse(variant.galleryJson || "[]");
+            const updatedGids = gids.map(g => g === mediaId ? newMediaId : g);
+            const updatedJson = JSON.stringify(updatedGids);
+
+            await db.productVariant.updateMany({
+              where: { shopifyGid: variant.shopifyGid },
+              data: { galleryJson: updatedJson },
+            });
+
+            await fetch(shopifyApiUrl, {
+              method: "POST",
+              headers,
+              body: JSON.stringify({
+                query: `
+                  mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+                    productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+                      userErrors { field message }
+                    }
+                  }
+                `,
+                variables: {
+                  productId,
+                  variants: [{
+                    id: variant.shopifyGid,
+                    metafields: [{
+                      namespace: "custom",
+                      key: "variant_gallery",
+                      value: updatedJson,
+                      type: "list.file_reference",
+                    }],
+                  }],
+                },
+              }),
+            });
+          } catch (err) {
+            console.error(`[WebPProcessor] Failed to update variant gallery for ${variant.shopifyGid}:`, err);
+          }
+        }
+        if (affectedVariants.length > 0) {
+          console.log(`[WebPProcessor] Re-assigned ${affectedVariants.length} variant gallery(ies): ${mediaId} → ${newMediaId}`);
+        }
+      }
+
+      await db.task.update({ where: { id: task.id }, data: { progress: 90 } });
+
+      // 9. Update DB with new URL
       if (productImageId) {
         await db.productImage.update({
           where: { id: productImageId },
@@ -265,7 +332,7 @@ export class WebPProcessorService {
         }).catch(() => {}); // Ignore if record not found
       }
 
-      // 9. Mark task as completed
+      // 10. Mark task as completed
       await db.task.update({
         where: { id: task.id },
         data: {

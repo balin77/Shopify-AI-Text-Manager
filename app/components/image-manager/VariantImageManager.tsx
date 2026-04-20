@@ -366,13 +366,9 @@ export function VariantImageManager({
     fetcher.submit(form, { method: "post" });
   }, [variants, pendingVariantGalleries, productId, fetcher]);
 
-  const handleConvertToWebP = useCallback(async () => {
+  const handleConvertToWebP = useCallback(async (images: ProductImageRef[]) => {
     setWebpError(null);
-    const nonWebp = productImages.filter(i =>
-      !i.url.toLowerCase().includes(".webp") &&
-      !i.url.toLowerCase().includes("format=webp")
-    );
-    if (nonWebp.length === 0) return;
+    if (images.length === 0) return;
 
     try {
       const res = await fetch("/api/convert-webp", {
@@ -381,10 +377,11 @@ export function VariantImageManager({
         body: JSON.stringify({
           productId,
           productTitle,
-          images: nonWebp.map(i => ({
+          images: images.map(i => ({
             mediaId: i.mediaId,
             url: i.url,
             productImageId: i.id,
+            altText: i.altText ?? null,
           })),
         }),
       });
@@ -395,7 +392,7 @@ export function VariantImageManager({
     } catch {
       setWebpError(t.imageManager.webpConvertError);
     }
-  }, [productId, productImages, startWebPPolling]);
+  }, [productId, productTitle, startWebPPolling]);
 
   const handleUploadToVariant = useCallback(async (variantId: string, files: File[]) => {
     for (const file of files) {
@@ -533,17 +530,19 @@ export function VariantImageManager({
     altTextFetcher.submit(form, { method: "post" });
   }, [productId, productImages, enabledLanguages, primaryLocale, altTextFetcher]);
 
-  const nonWebpCount = productImages.filter(i =>
-    !i.url.toLowerCase().includes(".webp") &&
-    !i.url.toLowerCase().includes("format=webp")
-  ).length;
-
   const hasAnySelection = selectedBulkIds.size > 0 || selectedGalleryItems.size > 0;
 
   const isPrimaryLocale = !currentLanguage || currentLanguage === primaryLocale;
 
   // Single selected URL in product gallery (for inline alt text editor)
   const productSelectedUrls = selectedUrlsByGallery.get("product") ?? new Set<string>();
+  const noneOrAllSelected = productSelectedUrls.size === 0 || productSelectedUrls.size >= displayedProductUrls.length;
+  const imagesToConvert = productImages.filter(i =>
+    !i.url.toLowerCase().includes(".webp") &&
+    !i.url.toLowerCase().includes("format=webp") &&
+    (noneOrAllSelected || productSelectedUrls.has(i.url))
+  );
+
   const productSingleSelected = productSelectedUrls.size === 1 ? [...productSelectedUrls][0] : null;
   const productCurrentAltText = productSingleSelected
     ? (isPrimaryLocale
@@ -620,12 +619,12 @@ export function VariantImageManager({
           )}
         </InlineStack>
         <InlineStack gap="400" blockAlign="center">
-          {(nonWebpCount > 0 || isConvertingWebP) && (
+          {(imagesToConvert.length > 0 || isConvertingWebP) && (
             <InlineStack gap="200" blockAlign="center">
-              <Button size="slim" onClick={handleConvertToWebP} disabled={isConvertingWebP}>
+              <Button size="slim" onClick={() => handleConvertToWebP(imagesToConvert)} disabled={isConvertingWebP}>
                 {isConvertingWebP
                   ? t.imageManager.webpConverting
-                  : t.imageManager.webpConvertButton.replace("{count}", String(nonWebpCount))}
+                  : t.imageManager.webpConvertButton.replace("{count}", String(imagesToConvert.length))}
               </Button>
               {isConvertingWebP && <Spinner size="small" />}
             </InlineStack>
