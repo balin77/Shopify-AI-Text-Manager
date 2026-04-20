@@ -220,7 +220,7 @@ export function AIEditableField({
               loading={isLoading}
               disabled={isPrimaryLocale ? (!value || isLoading) : (!sourceTextAvailable || isLoading)}
             >
-              {isPrimaryLocale
+              📋 {isPrimaryLocale
                 ? (t.products?.copyToAllLocales || "Copy to all")
                 : (t.products?.copy || "Copy")}
             </Button>
