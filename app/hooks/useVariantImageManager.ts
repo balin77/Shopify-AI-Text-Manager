@@ -19,6 +19,7 @@ export function useVariantImageManager() {
   const [activeRightTab, setActiveRightTab] = useState<"seo" | "images">("seo");
   const [pendingVariantGalleries, setPendingVariantGalleries] = useState<VariantGalleryUpdate[]>([]);
   const [pendingMediaOrder, setPendingMediaOrder] = useState<MediaOrderUpdate[]>([]);
+  const [resetCounter, setResetCounter] = useState(0);
 
   const handleBulkItemsChange = useCallback((updater: (prev: StagedItem[]) => StagedItem[]) => {
     setBulkItems(updater);
@@ -84,6 +85,7 @@ export function useVariantImageManager() {
     setActiveAction(null);
     setPendingVariantGalleries([]);
     setPendingMediaOrder([]);
+    setResetCounter(c => c + 1);
   }, []);
 
   return {
@@ -96,6 +98,7 @@ export function useVariantImageManager() {
     setActiveRightTab,
     pendingVariantGalleries,
     pendingMediaOrder,
+    resetCounter,
     handleBulkItemsChange,
     handleBulkSelect,
     handleRemoveBulk,

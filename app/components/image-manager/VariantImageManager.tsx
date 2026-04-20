@@ -29,6 +29,7 @@ interface VariantImageManagerProps {
   onSetAction: (action: "copy" | "move" | null) => void;
   imageManagerSettings: ImageManagerSettings;
   onPendingChange?: (variantGalleries: Array<{ variantId: string; fileGids: string[] }>, mediaOrder: Array<{ mediaId: string; position: number }>) => void;
+  resetKey?: number;
 }
 
 export function VariantImageManager({
@@ -41,6 +42,7 @@ export function VariantImageManager({
   onSetAction,
   imageManagerSettings,
   onPendingChange,
+  resetKey,
 }: VariantImageManagerProps) {
   const [variants, setVariants] = useState<VariantWithGallery[]>([]);
   const [isLoadingVariants, setIsLoadingVariants] = useState(false);
@@ -64,6 +66,14 @@ export function VariantImageManager({
   useEffect(() => {
     setProductImageOrder(productImages.map(i => i.url));
   }, [productImages]);
+
+  useEffect(() => {
+    if (!resetKey) return;
+    setPendingVariantGalleries({});
+    setProductImageOrder(productImages.map(i => i.url));
+    setSelectedGalleryItems(new Map());
+    pendingMediaOrderRef.current = [];
+  }, [resetKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!productId) return;

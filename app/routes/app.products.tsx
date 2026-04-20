@@ -846,6 +846,7 @@ export default function ProductsPage() {
               onSetAction={imageManagerState.setActiveAction}
               imageManagerSettings={imageManagerSettings ?? { firstImageBig: false, showAltTags: false, autoAltText: false, thumbSize: 80 }}
               onPendingChange={imageManagerState.handlePendingChange}
+              resetKey={imageManagerState.resetCounter}
             />
           ) : undefined}
         />
