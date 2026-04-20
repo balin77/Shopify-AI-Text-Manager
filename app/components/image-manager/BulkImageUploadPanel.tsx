@@ -186,7 +186,7 @@ export function BulkImageUploadPanel({
               onClick={() => onSetAction(activeAction === "copy" ? null : "copy")}
               disabled={!hasSelected}
             >
-              Copy
+              Kopieren
             </Button>
             <Button
               size="slim"
@@ -194,7 +194,7 @@ export function BulkImageUploadPanel({
               onClick={() => onSetAction(activeAction === "move" ? null : "move")}
               disabled={!hasSelected}
             >
-              Move
+              Verschieben
             </Button>
             <Button
               size="slim"
@@ -202,7 +202,7 @@ export function BulkImageUploadPanel({
               onClick={() => onRemove([...selectedUniqueIds])}
               disabled={!hasSelected}
             >
-              Remove
+              Entfernen
             </Button>
           </InlineStack>
         </>

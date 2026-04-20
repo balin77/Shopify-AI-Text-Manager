@@ -201,7 +201,7 @@ function SortableThumbnail({ url, isSelected, meta, onSelect, thumbSize, isMain 
           lineHeight: "14px",
           pointerEvents: "none",
         }}>
-          {hasAlt ? "ALT" : "NO ALT"}
+          {hasAlt ? "ALT" : "KEIN ALT"}
         </div>
 
         {/* Format badge */}
