@@ -342,7 +342,15 @@ export const loader = createContentLoader({
         title: p.seoTitle || "",
         description: p.seoDescription || "",
       },
-      options: p.options?.map((opt: any) => {
+      options: p.options?.filter((opt: any) => {
+        try {
+          const parsed = JSON.parse(opt.values || "[]");
+          const valNames = Array.isArray(parsed)
+            ? parsed.map((v: any) => typeof v === "string" ? v : v.name)
+            : [];
+          return !isDefaultTitleOption({ name: opt.name, values: valNames });
+        } catch { return true; }
+      }).map((opt: any) => {
         let values: Array<{ id: string; name: string; linked?: boolean }> = [];
         try {
           const parsed = JSON.parse(opt.values || "[]");
