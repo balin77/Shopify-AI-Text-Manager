@@ -1,27 +1,31 @@
 import { useState } from "react";
-import { Text, Button, InlineStack, Collapsible } from "@shopify/polaris";
+import { Text, Button, InlineStack, Collapsible, Badge } from "@shopify/polaris";
 import { SortableImageGrid } from "./SortableImageGrid";
-import type { VariantWithGallery } from "./types";
+import type { VariantWithGallery, ImageMeta } from "./types";
 
 interface VariantGallerySectionProps {
   variant: VariantWithGallery;
   fileUrlMap: Record<string, string>;
+  imageMetas?: Record<string, ImageMeta>;
   activeAction: "copy" | "move" | null;
   selectedUrls: Set<string>;
   onSelect: (url: string, selected: boolean) => void;
   onReorder: (variantId: string, newGids: string[]) => void;
   onDrop: (targetVariantId: string) => void;
+  onRemoveFromGallery: (variantId: string, urls: string[]) => void;
   onGenerateAltFromSku: (variantId: string) => void;
 }
 
 export function VariantGallerySection({
   variant,
   fileUrlMap,
+  imageMetas = {},
   activeAction,
   selectedUrls,
   onSelect,
   onReorder,
   onDrop,
+  onRemoveFromGallery,
   onGenerateAltFromSku,
 }: VariantGallerySectionProps) {
   const [open, setOpen] = useState(false);
@@ -30,7 +34,6 @@ export function VariantGallerySection({
     .map(gid => fileUrlMap[gid])
     .filter(Boolean) as string[];
 
-  // Fallback: wenn keine GID-Mapping, versuche GID selbst als URL
   const displayUrls = urls.length > 0 ? urls : variant.galleryFileGids
     .filter(gid => gid.startsWith("http"))
     .slice(0, 10);
@@ -38,6 +41,10 @@ export function VariantGallerySection({
   const urlToGid = Object.fromEntries(
     Object.entries(fileUrlMap).map(([gid, url]) => [url, gid])
   );
+
+  const localSelectedUrls = displayUrls.filter(url => selectedUrls.has(url));
+  const hasLocalSelection = localSelectedUrls.length > 0;
+  const showDropButtons = activeAction !== null;
 
   return (
     <div style={{ borderBottom: "1px solid #e1e3e5", marginBottom: 4 }}>
@@ -59,7 +66,7 @@ export function VariantGallerySection({
           {variant.sku && (
             <Text as="span" variant="bodySm" tone="subdued">SKU: {variant.sku}</Text>
           )}
-          <Text as="span" variant="bodySm" tone="subdued">({displayUrls.length} Bilder)</Text>
+          <Badge>{String(displayUrls.length)}</Badge>
         </InlineStack>
         <Text as="span" tone="subdued">{open ? "▲" : "▼"}</Text>
       </div>
@@ -69,21 +76,38 @@ export function VariantGallerySection({
           <SortableImageGrid
             containerId={variant.id}
             imageUrls={displayUrls}
+            imageMetas={imageMetas}
             onReorder={(newUrls) => {
               const newGids = newUrls.map(u => urlToGid[u] ?? u).filter(Boolean);
               onReorder(variant.id, newGids);
             }}
             onSelect={onSelect}
             selectedUrls={selectedUrls}
-            isDropTarget={activeAction !== null}
+            isDropTarget={showDropButtons || hasLocalSelection}
           />
 
           <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {activeAction && (
+            {/* Drop target for bulk items / gallery items being copied/moved */}
+            {showDropButtons && (
               <Button size="slim" variant="secondary" onClick={() => onDrop(variant.id)}>
                 {activeAction === "copy" ? "Hierhin kopieren" : "Hierhin verschieben"}
               </Button>
             )}
+
+            {/* Actions on locally selected images */}
+            {hasLocalSelection && (
+              <>
+                <Button
+                  size="slim"
+                  tone="critical"
+                  variant="secondary"
+                  onClick={() => onRemoveFromGallery(variant.id, localSelectedUrls)}
+                >
+                  {`Entfernen (${localSelectedUrls.length})`}
+                </Button>
+              </>
+            )}
+
             {variant.sku && (
               <Button size="slim" onClick={() => onGenerateAltFromSku(variant.id)}>
                 Alt-Text aus SKU

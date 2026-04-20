@@ -1,14 +1,15 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import { Text, Button, InlineStack, Spinner, Banner, Divider } from "@shopify/polaris";
 import { useFetcher } from "@remix-run/react";
 import { SortableImageGrid } from "./SortableImageGrid";
 import { VariantGallerySection } from "./VariantGallerySection";
-import type { StagedItem, VariantWithGallery } from "./types";
+import type { StagedItem, VariantWithGallery, ImageMeta } from "./types";
 
 interface ProductImageRef {
   url: string;
   mediaId: string;
   id: string;
+  altText?: string | null;
 }
 
 interface ImageManagerSettings {
@@ -26,7 +27,6 @@ interface VariantImageManagerProps {
   onRemoveBulk: (ids: string[]) => void;
   onSetAction: (action: "copy" | "move" | null) => void;
   imageManagerSettings: ImageManagerSettings;
-  // Callback damit der Parent den Apply-State kennt
   onPendingChange?: (variantGalleries: Array<{ variantId: string; fileGids: string[] }>, mediaOrder: Array<{ mediaId: string; position: number }>) => void;
 }
 
@@ -45,22 +45,22 @@ export function VariantImageManager({
   const [isLoadingVariants, setIsLoadingVariants] = useState(false);
   const [variantError, setVariantError] = useState<string | null>(null);
   const [productImageOrder, setProductImageOrder] = useState<string[]>([]);
-  const [selectedGalleryUrls, setSelectedGalleryUrls] = useState<Set<string>>(new Set());
+  // url → { sourceVariantId: string | null } — null means product gallery
+  const [selectedGalleryItems, setSelectedGalleryItems] = useState<Map<string, string | null>>(new Map());
   const [pendingVariantGalleries, setPendingVariantGalleries] = useState<Record<string, string[]>>({});
   const [webpError, setWebpError] = useState<string | null>(null);
   const fetcher = useFetcher();
 
-  // Initialer Bild-Order aus productImages
   useEffect(() => {
     setProductImageOrder(productImages.map(i => i.url));
   }, [productImages]);
 
-  // Varianten laden wenn Produkt wechselt
   useEffect(() => {
     if (!productId) return;
     setIsLoadingVariants(true);
     setVariantError(null);
     setPendingVariantGalleries({});
+    setSelectedGalleryItems(new Map());
 
     fetch(`/api/product-variants?productId=${encodeURIComponent(productId)}`)
       .then(r => r.json())
@@ -81,10 +81,37 @@ export function VariantImageManager({
       .finally(() => setIsLoadingVariants(false));
   }, [productId]);
 
-  // GID → URL Mapping aus productImages
-  const fileUrlMap: Record<string, string> = Object.fromEntries(
-    productImages.map(img => [img.mediaId, img.url])
+  // GID → URL and URL → GID maps
+  const fileUrlMap: Record<string, string> = useMemo(() =>
+    Object.fromEntries(productImages.map(img => [img.mediaId, img.url])),
+    [productImages]
   );
+
+  const urlToGid: Record<string, string> = useMemo(() =>
+    Object.fromEntries(productImages.map(img => [img.url, img.mediaId])),
+    [productImages]
+  );
+
+  // Image metadata map (by URL)
+  const imageMetas: Record<string, ImageMeta> = useMemo(() => {
+    const map: Record<string, ImageMeta> = {};
+    for (const img of productImages) {
+      map[img.url] = { altText: img.altText };
+    }
+    return map;
+  }, [productImages]);
+
+  const selectedGalleryUrls = useMemo(() => new Set(selectedGalleryItems.keys()), [selectedGalleryItems]);
+
+  const makeSelectHandler = useCallback((sourceVariantId: string | null) =>
+    (url: string, sel: boolean) => {
+      setSelectedGalleryItems(m => {
+        const next = new Map(m);
+        if (sel) next.set(url, sourceVariantId);
+        else next.delete(url);
+        return next;
+      });
+    }, []);
 
   const handleVariantReorder = useCallback((variantId: string, newGids: string[]) => {
     setPendingVariantGalleries(p => ({ ...p, [variantId]: newGids }));
@@ -92,10 +119,12 @@ export function VariantImageManager({
 
   const handleProductReorder = useCallback((newUrls: string[]) => {
     setProductImageOrder(newUrls);
-    const mediaOrder = newUrls.map((url, idx) => {
-      const img = productImages.find(i => i.url === url);
-      return img ? { mediaId: img.mediaId, position: idx } : null;
-    }).filter(Boolean) as Array<{ mediaId: string; position: number }>;
+    const mediaOrder = newUrls
+      .map((url, idx) => {
+        const img = productImages.find(i => i.url === url);
+        return img ? { mediaId: img.mediaId, position: idx } : null;
+      })
+      .filter(Boolean) as Array<{ mediaId: string; position: number }>;
 
     const galleries = Object.entries(pendingVariantGalleries).map(([variantId, fileGids]) => ({
       variantId, fileGids,
@@ -104,12 +133,19 @@ export function VariantImageManager({
   }, [productImages, pendingVariantGalleries, onPendingChange]);
 
   const handleDropToVariant = useCallback((targetVariantId: string) => {
-    const selectedItems = bulkItems.filter(
-      i => selectedBulkIds.has(i.uniqueId) && i.status === "ready"
-    );
-    if (selectedItems.length === 0) return;
+    // Collect GIDs from bulk items
+    const bulkGids = bulkItems
+      .filter(i => selectedBulkIds.has(i.uniqueId) && i.status === "ready")
+      .map(i => i.resourceUrl);
 
-    const newGids = selectedItems.map(i => i.resourceUrl);
+    // Collect GIDs from selected gallery images
+    const galleryGids = [...selectedGalleryItems.entries()]
+      .map(([url]) => urlToGid[url])
+      .filter(Boolean) as string[];
+
+    const newGids = [...bulkGids, ...galleryGids];
+    if (newGids.length === 0) return;
+
     setPendingVariantGalleries(p => {
       const existing = p[targetVariantId] ??
         variants.find(v => v.id === targetVariantId)?.galleryFileGids ?? [];
@@ -117,21 +153,56 @@ export function VariantImageManager({
     });
 
     if (activeAction === "move") {
-      onRemoveBulk([...selectedBulkIds]);
+      // Remove from bulk
+      if (selectedBulkIds.size > 0) onRemoveBulk([...selectedBulkIds]);
+
+      // Remove gallery images from their source variants
+      const bySource = new Map<string, string[]>();
+      for (const [url, sourceId] of selectedGalleryItems.entries()) {
+        if (sourceId === null) continue; // product gallery — skip for now
+        const gid = urlToGid[url];
+        if (!gid) continue;
+        if (!bySource.has(sourceId)) bySource.set(sourceId, []);
+        bySource.get(sourceId)!.push(url);
+      }
+      for (const [srcVariantId, urls] of bySource.entries()) {
+        if (srcVariantId === targetVariantId) continue;
+        setPendingVariantGalleries(p => {
+          const srcVariant = variants.find(v => v.id === srcVariantId);
+          const current = p[srcVariantId] ?? srcVariant?.galleryFileGids ?? [];
+          const urlSet = new Set(urls);
+          return { ...p, [srcVariantId]: current.filter(gid => !urlSet.has(fileUrlMap[gid] ?? "")) };
+        });
+      }
     }
+
     onSetAction(null);
-  }, [bulkItems, selectedBulkIds, activeAction, variants, onRemoveBulk, onSetAction]);
+    setSelectedGalleryItems(new Map());
+  }, [bulkItems, selectedBulkIds, selectedGalleryItems, activeAction, variants, urlToGid, fileUrlMap, onRemoveBulk, onSetAction]);
+
+  const handleRemoveFromGallery = useCallback((variantId: string, urls: string[]) => {
+    const urlSet = new Set(urls);
+    setPendingVariantGalleries(p => {
+      const variant = variants.find(v => v.id === variantId);
+      const current = p[variantId] ?? variant?.galleryFileGids ?? [];
+      return { ...p, [variantId]: current.filter(gid => !urlSet.has(fileUrlMap[gid] ?? "")) };
+    });
+    setSelectedGalleryItems(m => {
+      const next = new Map(m);
+      urls.forEach(u => next.delete(u));
+      return next;
+    });
+  }, [variants, fileUrlMap]);
 
   const handleGenerateAltFromSku = useCallback((variantId: string) => {
     const variant = variants.find(v => v.id === variantId);
     const gids = pendingVariantGalleries[variantId] ?? variant?.galleryFileGids ?? [];
     if (!gids.length) return;
 
-    // Ersten GID als mediaId verwenden
     const form = new FormData();
     form.append("_action", "generateAltTextFromSku");
     form.append("productId", productId);
-    form.append("mediaId", gids[0]);
+    gids.forEach(gid => form.append("mediaId", gid));
     fetcher.submit(form, { method: "post" });
   }, [variants, pendingVariantGalleries, productId, fetcher]);
 
@@ -167,13 +238,7 @@ export function VariantImageManager({
     !i.url.toLowerCase().includes("format=webp")
   ).length;
 
-  const handleGallerySelect = useCallback((url: string, sel: boolean) => {
-    setSelectedGalleryUrls(s => {
-      const next = new Set(s);
-      sel ? next.add(url) : next.delete(url);
-      return next;
-    });
-  }, []);
+  const hasAnySelection = selectedBulkIds.size > 0 || selectedGalleryItems.size > 0;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -190,19 +255,60 @@ export function VariantImageManager({
           <SortableImageGrid
             containerId="product"
             imageUrls={productImageOrder}
+            imageMetas={imageMetas}
             onReorder={handleProductReorder}
-            onSelect={handleGallerySelect}
+            onSelect={makeSelectHandler(null)}
             selectedUrls={selectedGalleryUrls}
             isDropTarget={activeAction !== null}
           />
         </div>
+
+        {/* Selection info bar for product gallery */}
+        {selectedGalleryItems.size > 0 && (
+          <div style={{ marginTop: 6, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <Text as="span" variant="bodySm" tone="subdued">
+              {`${selectedGalleryItems.size} ausgewählt`}
+            </Text>
+            {!activeAction && (
+              <>
+                <Button
+                  size="slim"
+                  onClick={() => onSetAction("copy")}
+                >
+                  In Galerie kopieren
+                </Button>
+                <Button
+                  size="slim"
+                  onClick={() => onSetAction("move")}
+                >
+                  In Galerie verschieben
+                </Button>
+              </>
+            )}
+            <Button
+              size="slim"
+              variant="plain"
+              onClick={() => setSelectedGalleryItems(new Map())}
+            >
+              Auswahl aufheben
+            </Button>
+          </div>
+        )}
       </div>
 
       <Divider />
 
       {/* Varianten-Galerien */}
       <div>
-        <Text as="h3" variant="headingSm">Varianten-Galerien</Text>
+        <InlineStack align="space-between" blockAlign="center">
+          <Text as="h3" variant="headingSm">Varianten-Galerien</Text>
+          {hasAnySelection && activeAction && (
+            <Text as="span" variant="bodySm" tone="subdued">
+              {activeAction === "copy" ? "Ziel wählen ↓" : "Ziel wählen ↓"}
+            </Text>
+          )}
+        </InlineStack>
+
         <div style={{ marginTop: 8 }}>
           {isLoadingVariants ? (
             <div style={{ padding: 16, display: "flex", justifyContent: "center" }}>
@@ -221,11 +327,13 @@ export function VariantImageManager({
                   galleryFileGids: pendingVariantGalleries[v.id] ?? v.galleryFileGids,
                 }}
                 fileUrlMap={fileUrlMap}
-                activeAction={activeAction}
+                imageMetas={imageMetas}
+                activeAction={hasAnySelection ? activeAction : null}
                 selectedUrls={selectedGalleryUrls}
-                onSelect={handleGallerySelect}
+                onSelect={makeSelectHandler(v.id)}
                 onReorder={handleVariantReorder}
                 onDrop={handleDropToVariant}
+                onRemoveFromGallery={handleRemoveFromGallery}
                 onGenerateAltFromSku={handleGenerateAltFromSku}
               />
             ))
@@ -233,7 +341,7 @@ export function VariantImageManager({
         </div>
       </div>
 
-      {/* Aktionen */}
+      {/* WebP conversion */}
       {nonWebpCount > 0 && (
         <div>
           <Button size="slim" onClick={handleConvertToWebP}>

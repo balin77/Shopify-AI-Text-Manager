@@ -17,3 +17,8 @@ export interface VariantWithGallery {
   galleryFileGids: string[];
   defaultImageUrl?: string;
 }
+
+export interface ImageMeta {
+  altText?: string | null;
+  mimeType?: string;       // e.g. "image/webp", "image/jpeg"
+}

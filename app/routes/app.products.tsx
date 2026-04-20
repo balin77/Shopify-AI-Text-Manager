@@ -784,7 +784,8 @@ export default function ProductsPage() {
             onRemoveBulk: imageManagerState.handleRemoveBulk,
             onApply: async () => {
               if (!editor.selectedItem) return;
-              await imageManagerState.handleApply(editor.selectedItem.id);
+              const err = await imageManagerState.handleApply(editor.selectedItem.id);
+              if (err) console.error("Apply failed:", err);
             },
             isApplying: imageManagerState.isApplying,
             activeRightTab: imageManagerState.activeRightTab,
@@ -798,6 +799,7 @@ export default function ProductsPage() {
                 url: img.url ?? "",
                 mediaId: img.mediaId ?? img.url ?? "",
                 id: img.id ?? img.url ?? "",
+                altText: img.altText ?? null,
               }))}
               bulkItems={imageManagerState.bulkItems}
               activeAction={imageManagerState.activeAction}

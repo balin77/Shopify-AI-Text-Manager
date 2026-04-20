@@ -49,11 +49,11 @@ export function useVariantImageManager() {
     []
   );
 
-  const handleApply = useCallback(async (productId: string) => {
+  const handleApply = useCallback(async (productId: string): Promise<string | null> => {
     setIsApplying(true);
     try {
       const readyItems = bulkItems.filter(i => i.status === "ready");
-      await fetch("/api/update-variant-galleries", {
+      const res = await fetch("/api/update-variant-galleries", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -63,11 +63,15 @@ export function useVariantImageManager() {
           mediaOrder: pendingMediaOrder,
         }),
       });
-      // Bulk Items leeren nach erfolgreichem Apply
+      const data = await res.json();
+      if (!data.success) {
+        return (data.errors as string[]).join(", ");
+      }
       setBulkItems([]);
       setSelectedBulkIds(new Set());
       setPendingVariantGalleries([]);
       setPendingMediaOrder([]);
+      return null;
     } finally {
       setIsApplying(false);
     }

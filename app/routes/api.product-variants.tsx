@@ -2,6 +2,33 @@ import { json, type LoaderFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
 
+async function ensureVariantGalleryMetafieldDefinition(adminClient: { graphql: (query: string, options?: Record<string, unknown>) => Promise<Response> }) {
+  const existing = await adminClient.graphql(`
+    query {
+      metafieldDefinitions(first: 1, ownerType: PRODUCTVARIANT, namespace: "custom", key: "variant_gallery") {
+        edges { node { id } }
+      }
+    }
+  `);
+  const d = await existing.json();
+  if ((d.data?.metafieldDefinitions?.edges?.length ?? 0) > 0) return;
+
+  await adminClient.graphql(`
+    mutation {
+      metafieldDefinitionCreate(definition: {
+        name: "Variant Gallery"
+        namespace: "custom"
+        key: "variant_gallery"
+        type: "list.file_reference"
+        ownerType: PRODUCTVARIANT
+      }) {
+        createdDefinition { id }
+        userErrors { field message }
+      }
+    }
+  `);
+}
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   const url = new URL(request.url);
@@ -10,6 +37,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   if (!productId) {
     return json({ error: "productId required" }, { status: 400 });
   }
+
+  await ensureVariantGalleryMetafieldDefinition(admin);
 
   const response = await admin.graphql(`
     query GetVariantsWithGallery($id: ID!) {

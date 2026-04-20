@@ -542,61 +542,56 @@ export async function handleGenerateAltTextFromSku(
   ctx: ContentActionHandlerContext,
   formData: FormData
 ) {
-  const mediaId = formData.get("mediaId") as string;
+  const mediaIds = formData.getAll("mediaId").map(v => String(v)).filter(Boolean);
   const productId = formData.get("productId") as string;
 
-  if (!mediaId || !productId) {
-    return json({ success: false, error: "mediaId and productId required" }, { status: 400 });
+  if (mediaIds.length === 0 || !productId) {
+    return json({ success: false, error: "mediaId(s) and productId required" }, { status: 400 });
   }
 
   // 1. Alle gecachten Varianten des Produkts laden
   const variants = await ctx.db.productVariant.findMany({
     where: { productId },
-    select: { sku: true, galleryJson: true, shopifyGid: true },
+    select: { sku: true, galleryJson: true },
   });
 
-  // 2. Varianten finden, die dieses mediaId in ihrer Galerie haben
-  const numericMediaId = mediaId.replace("gid://shopify/MediaImage/", "")
-    .replace("gid://shopify/File/", "");
+  const results: Array<{ mediaId: string; altText: string }> = [];
 
-  const matchingSkus = variants
-    .filter(v => {
-      if (!v.galleryJson) return false;
-      try {
-        const gids: string[] = JSON.parse(v.galleryJson);
-        return gids.some(gid => gid.includes(numericMediaId) || gid === mediaId);
-      } catch {
-        return false;
-      }
-    })
-    .filter(v => v.sku)
-    .map(v => v.sku as string);
+  for (const mediaId of mediaIds) {
+    const numericId = mediaId.replace("gid://shopify/MediaImage/", "").replace("gid://shopify/File/", "");
 
-  if (matchingSkus.length === 0) {
-    return json({ success: false, error: "No variants with SKU found for this image" }, { status: 404 });
+    const matchingSkus = variants
+      .filter(v => {
+        if (!v.galleryJson) return false;
+        try {
+          const gids: string[] = JSON.parse(v.galleryJson);
+          return gids.some(gid => gid.includes(numericId) || gid === mediaId);
+        } catch { return false; }
+      })
+      .filter(v => v.sku)
+      .map(v => v.sku as string);
+
+    if (matchingSkus.length === 0) continue;
+
+    const altText = matchingSkus.join(",").slice(0, 512);
+    results.push({ mediaId, altText });
   }
 
-  // Max 512 Zeichen (Shopify-Limit für Alt-Text)
-  const altText = matchingSkus.join(",").slice(0, 512);
+  if (results.length === 0) {
+    return json({ success: false, error: "No variants with SKU found for these images" }, { status: 404 });
+  }
 
-  // 3. Alt-Text zu Shopify synchronisieren (fileUpdate Mutation)
+  // 2. Alt-Text zu Shopify synchronisieren
   await ctx.admin.graphql(`
     mutation fileUpdate($files: [FileUpdateInput!]!) {
-      fileUpdate(files: $files) {
-        userErrors { field message }
-      }
+      fileUpdate(files: $files) { userErrors { field message } }
     }
-  `, {
-    variables: {
-      files: [{ id: mediaId, alt: altText }],
-    },
-  });
+  `, { variables: { files: results.map(r => ({ id: r.mediaId, alt: r.altText })) } });
 
-  // 4. DB updaten
-  await ctx.db.productImage.updateMany({
-    where: { mediaId },
-    data: { altText },
-  });
+  // 3. DB updaten
+  await Promise.all(results.map(r =>
+    ctx.db.productImage.updateMany({ where: { mediaId: r.mediaId }, data: { altText: r.altText } })
+  ));
 
-  return json({ success: true, altText });
+  return json({ success: true, updated: results.length });
 }
