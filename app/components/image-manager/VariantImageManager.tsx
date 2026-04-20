@@ -1,12 +1,21 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { Text, Button, InlineStack, Spinner, Banner, Divider, Card, BlockStack } from "@shopify/polaris";
 import { useFetcher } from "@remix-run/react";
-import { DndContext, DragOverlay, closestCenter, MouseSensor, TouchSensor, useSensor, useSensors, type DragStartEvent, type DragOverEvent, type DragEndEvent } from "@dnd-kit/core";
+import { DndContext, DragOverlay, closestCenter, pointerWithin, MouseSensor, TouchSensor, useSensor, useSensors, type CollisionDetection, type DragStartEvent, type DragOverEvent, type DragEndEvent } from "@dnd-kit/core";
 import { arrayMove } from "@dnd-kit/sortable";
 import { useI18n } from "../../contexts/I18nContext";
 import { SortableImageGrid } from "./SortableImageGrid";
 import { VariantGallerySection } from "./VariantGallerySection";
 import type { StagedItem, VariantWithGallery, ImageMeta } from "./types";
+
+// Prefer sortable items (compound id '::') over plain container droppables;
+// fall back to closestCenter when pointer is outside all droppables.
+const imageManagerCollision: CollisionDetection = (args) => {
+  const hits = pointerWithin(args);
+  if (hits.length === 0) return closestCenter(args);
+  const itemHits = hits.filter(({ id }) => (id as string).includes("::"));
+  return itemHits.length > 0 ? itemHits : hits;
+};
 
 interface ProductImageRef {
   url: string;
@@ -93,6 +102,7 @@ export function VariantImageManager({
   const isCtrlHeldRef = useRef(false);
   const [autoExpandId, setAutoExpandId] = useState<string | null>(null);
   const autoExpandTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const currentOverContainerRef = useRef<string | null>(null);
   const sharedSensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 8 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 5 } }),
@@ -337,28 +347,25 @@ export function VariantImageManager({
     const { over } = event;
     if (!over) {
       if (autoExpandTimerRef.current) { clearTimeout(autoExpandTimerRef.current); autoExpandTimerRef.current = null; }
+      currentOverContainerRef.current = null;
       return;
     }
     const overStr = over.id as string;
     const containerId = overStr.includes("::") ? overStr.split("::")[0] : overStr;
 
-    // Start auto-expand timer when hovering a new variant container
-    if (containerId !== "product") {
-      setAutoExpandId(prev => {
-        if (prev !== containerId) {
-          if (autoExpandTimerRef.current) clearTimeout(autoExpandTimerRef.current);
-          autoExpandTimerRef.current = setTimeout(() => setAutoExpandId(containerId), 700);
-          return prev; // don't change yet — timer will do it
-        }
-        return prev;
-      });
+    // Start auto-expand timer when entering a new variant container (ref prevents redundant resets)
+    if (containerId !== "product" && containerId !== currentOverContainerRef.current) {
+      currentOverContainerRef.current = containerId;
+      if (autoExpandTimerRef.current) clearTimeout(autoExpandTimerRef.current);
+      autoExpandTimerRef.current = setTimeout(() => setAutoExpandId(containerId), 700);
     }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleSharedDragEnd = useCallback((event: DragEndEvent) => {
     const { active, over } = event;
     setActiveDragUrl(null);
     setAutoExpandId(null);
+    currentOverContainerRef.current = null;
     if (autoExpandTimerRef.current) { clearTimeout(autoExpandTimerRef.current); autoExpandTimerRef.current = null; }
     if (!over) return;
 
@@ -734,7 +741,7 @@ export function VariantImageManager({
   return (
     <DndContext
       sensors={sharedSensors}
-      collisionDetection={closestCenter}
+      collisionDetection={imageManagerCollision}
       onDragStart={handleSharedDragStart}
       onDragOver={handleSharedDragOver}
       onDragEnd={handleSharedDragEnd}
@@ -1080,20 +1087,20 @@ export function VariantImageManager({
           {isCtrlHeld && (
             <div style={{
               position: "absolute",
-              top: -6,
-              right: -6,
-              width: 18,
-              height: 18,
+              top: -10,
+              right: -10,
+              width: 36,
+              height: 36,
               borderRadius: "50%",
               background: "#008060",
               color: "white",
-              fontSize: 13,
+              fontSize: 22,
               fontWeight: 700,
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
               lineHeight: 1,
-              boxShadow: "0 1px 4px rgba(0,0,0,0.3)",
+              boxShadow: "0 2px 6px rgba(0,0,0,0.35)",
             }}>+</div>
           )}
         </div>
