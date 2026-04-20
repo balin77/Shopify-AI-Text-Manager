@@ -100,6 +100,7 @@ interface SortableThumbnailProps {
   meta?: ImageMeta;
   onSelect: (selected: boolean) => void;
   thumbSize: number;
+  isMain?: boolean;
 }
 
 function extractFilename(url: string): string {
@@ -110,7 +111,7 @@ function extractFilename(url: string): string {
   }
 }
 
-function SortableThumbnail({ url, isSelected, meta, onSelect, thumbSize }: SortableThumbnailProps) {
+function SortableThumbnail({ url, isSelected, meta, onSelect, thumbSize, isMain = false }: SortableThumbnailProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: url });
   const formatBadge = getFormatBadge(url, meta?.mimeType);
   const hasAlt = Boolean(meta?.altText);
@@ -164,6 +165,25 @@ function SortableThumbnail({ url, isSelected, meta, onSelect, thumbSize }: Sorta
             pointerEvents: "none",
           }}>
             <span style={{ color: "white", fontSize: 12, lineHeight: 1 }}>✓</span>
+          </div>
+        )}
+
+        {/* Main image badge */}
+        {isMain && (
+          <div style={{
+            position: "absolute",
+            top: 4,
+            left: 4,
+            background: "rgba(0,91,211,0.85)",
+            color: "white",
+            fontSize: 9,
+            fontWeight: 700,
+            padding: "1px 4px",
+            borderRadius: 3,
+            lineHeight: "14px",
+            pointerEvents: "none",
+          }}>
+            HAUPT
           </div>
         )}
 
@@ -283,7 +303,7 @@ export function SortableImageGrid({
               Keine Bilder
             </div>
           )}
-          {imageUrls.map(url => (
+          {imageUrls.map((url, idx) => (
             <SortableThumbnail
               key={url}
               url={url}
@@ -291,6 +311,7 @@ export function SortableImageGrid({
               meta={imageMetas[url]}
               onSelect={(sel) => onSelect?.(url, sel)}
               thumbSize={thumbSize}
+              isMain={showPlaceholder && idx === 0}
             />
           ))}
         </SortableContext>

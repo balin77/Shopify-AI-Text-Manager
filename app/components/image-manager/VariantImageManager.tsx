@@ -167,13 +167,13 @@ export function VariantImageManager({
     onPendingChange?.(galleries, mediaOrder);
   }, [productImages, pendingVariantGalleries, onPendingChange]);
 
-  const handleDropToVariant = useCallback((targetVariantId: string) => {
-    // Collect GIDs from bulk items
+  // prepend=true → image lands at position 0 (main image slot, triggered by placeholder click)
+  // prepend=false → image appended to end of gallery
+  const handleDropToVariant = useCallback((targetVariantId: string, prepend = false) => {
     const bulkGids = bulkItems
       .filter(i => selectedBulkIds.has(i.uniqueId) && i.status === "ready")
       .map(i => i.resourceUrl);
 
-    // Collect GIDs from selected gallery images
     const galleryGids = [...selectedGalleryItems.entries()]
       .map(([url]) => urlToGid[url])
       .filter(Boolean) as string[];
@@ -184,17 +184,16 @@ export function VariantImageManager({
     setPendingVariantGalleries(p => {
       const existing = p[targetVariantId] ??
         variants.find(v => v.id === targetVariantId)?.galleryFileGids ?? [];
-      return { ...p, [targetVariantId]: [...existing, ...newGids] };
+      const merged = prepend ? [...newGids, ...existing] : [...existing, ...newGids];
+      return { ...p, [targetVariantId]: merged };
     });
 
     if (activeAction === "move") {
-      // Remove from bulk
       if (selectedBulkIds.size > 0) onRemoveBulk([...selectedBulkIds]);
 
-      // Remove gallery images from their source variants
       const bySource = new Map<string, string[]>();
       for (const [url, sourceId] of selectedGalleryItems.entries()) {
-        if (sourceId === null) continue; // product gallery — skip for now
+        if (sourceId === null) continue;
         const gid = urlToGid[url];
         if (!gid) continue;
         if (!bySource.has(sourceId)) bySource.set(sourceId, []);
@@ -209,10 +208,11 @@ export function VariantImageManager({
           return { ...p, [srcVariantId]: current.filter(gid => !urlSet.has(fileUrlMap[gid] ?? "")) };
         });
       }
+      // Move ends the action and clears selection
+      onSetAction(null);
+      setSelectedGalleryItems(new Map());
     }
-
-    onSetAction(null);
-    setSelectedGalleryItems(new Map());
+    // Copy: keep action mode + selection active so user can copy to multiple variants
   }, [bulkItems, selectedBulkIds, selectedGalleryItems, activeAction, variants, urlToGid, fileUrlMap, onRemoveBulk, onSetAction]);
 
   const handleRemoveFromGallery = useCallback((variantId: string, urls: string[]) => {
@@ -408,26 +408,24 @@ export function VariantImageManager({
             <Text as="span" variant="bodySm" tone="subdued">
               {`${selectedGalleryItems.size} ausgewählt`}
             </Text>
-            {!activeAction && (
-              <>
-                <Button
-                  size="slim"
-                  onClick={() => onSetAction("copy")}
-                >
-                  In Galerie kopieren
-                </Button>
-                <Button
-                  size="slim"
-                  onClick={() => onSetAction("move")}
-                >
-                  In Galerie verschieben
-                </Button>
-              </>
-            )}
+            <Button
+              size="slim"
+              variant={activeAction === "copy" ? "primary" : "secondary"}
+              onClick={() => onSetAction(activeAction === "copy" ? null : "copy")}
+            >
+              {activeAction === "copy" ? "Kopieren aktiv ✕" : "Kopieren"}
+            </Button>
+            <Button
+              size="slim"
+              variant={activeAction === "move" ? "primary" : "secondary"}
+              onClick={() => onSetAction(activeAction === "move" ? null : "move")}
+            >
+              {activeAction === "move" ? "Verschieben aktiv ✕" : "Verschieben"}
+            </Button>
             <Button
               size="slim"
               variant="plain"
-              onClick={() => setSelectedGalleryItems(new Map())}
+              onClick={() => { setSelectedGalleryItems(new Map()); onSetAction(null); }}
             >
               Auswahl aufheben
             </Button>

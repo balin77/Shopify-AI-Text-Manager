@@ -11,7 +11,7 @@ interface VariantGallerySectionProps {
   selectedUrls: Set<string>;
   onSelect: (url: string, selected: boolean) => void;
   onReorder: (variantId: string, newGids: string[]) => void;
-  onDrop: (targetVariantId: string) => void;
+  onDrop: (targetVariantId: string, prepend?: boolean) => void;
   onRemoveFromGallery: (variantId: string, urls: string[]) => void;
   onGenerateAltFromSku: (variantId: string) => void;
   onUploadToGallery: (variantId: string, files: File[]) => void;
@@ -101,7 +101,7 @@ export function VariantGallerySection({
             selectedUrls={selectedUrls}
             isDropTarget={activeAction !== null || hasLocalSelection}
             activeAction={activeAction}
-            onDropToPlaceholder={() => onDrop(variant.id)}
+            onDropToPlaceholder={() => onDrop(variant.id, true)}
             onUploadToGallery={(files) => onUploadToGallery(variant.id, files)}
             thumbSize={thumbSize}
           />
