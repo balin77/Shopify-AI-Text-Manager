@@ -8,6 +8,33 @@
 
 import { PrismaClient } from "@prisma/client";
 import sharp from "sharp";
+import crypto from "crypto";
+
+function isEncryptedToken(data) {
+  if (!data) return false;
+  const parts = data.split(":");
+  if (parts.length !== 3) return false;
+  const base64Regex = /^[A-Za-z0-9+/]+=*$/;
+  return parts.every(part => base64Regex.test(part));
+}
+
+function decryptToken(encryptedToken) {
+  if (!encryptedToken) return null;
+  if (!isEncryptedToken(encryptedToken)) return encryptedToken;
+
+  const envKey = process.env.ENCRYPTION_KEY;
+  if (!envKey) throw new Error("ENCRYPTION_KEY not set");
+  const key = Buffer.from(envKey.trim(), "hex");
+
+  const [ivBase64, encBase64, tagBase64] = encryptedToken.split(":");
+  const iv = Buffer.from(ivBase64, "base64");
+  const encrypted = Buffer.from(encBase64, "base64");
+  const authTag = Buffer.from(tagBase64, "base64");
+
+  const decipher = crypto.createDecipheriv("aes-256-gcm", key, iv);
+  decipher.setAuthTag(authTag);
+  return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString("utf8");
+}
 
 async function downloadImageAsBuffer(url) {
   const response = await fetch(url);
@@ -115,9 +142,15 @@ export class WebPProcessorService {
         return;
       }
 
+      const accessToken = decryptToken(session.accessToken);
+      if (!accessToken) {
+        await this.failTask(task.id, "Failed to decrypt session access token");
+        return;
+      }
+
       const shopifyApiUrl = `https://${task.shop}/admin/api/2025-04/graphql.json`;
       const headers = {
-        "X-Shopify-Access-Token": session.accessToken,
+        "X-Shopify-Access-Token": accessToken,
         "Content-Type": "application/json",
       };
 
