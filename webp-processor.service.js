@@ -148,6 +148,16 @@ export class WebPProcessorService {
         return;
       }
 
+      // Fetch original alt text from DB before deleting the image
+      let originalAltText = null;
+      if (productImageId) {
+        const productImage = await db.productImage.findUnique({
+          where: { id: productImageId },
+          select: { altText: true },
+        });
+        originalAltText = productImage?.altText || null;
+      }
+
       const shopifyApiUrl = `https://${task.shop}/admin/api/2025-04/graphql.json`;
       const headers = {
         "X-Shopify-Access-Token": accessToken,
@@ -222,7 +232,7 @@ export class WebPProcessorService {
           `,
           variables: {
             input: { id: productId },
-            media: [{ originalSource: target.resourceUrl, mediaContentType: "IMAGE" }],
+            media: [{ originalSource: target.resourceUrl, mediaContentType: "IMAGE", ...(originalAltText ? { alt: originalAltText } : {}) }],
           },
         }),
       });
