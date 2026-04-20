@@ -531,3 +531,72 @@ export async function handleTranslateAltTextToAllLocales(
     return json({ success: false, error: errorMsg }, { status: 500 });
   }
 }
+
+/**
+ * Generate Alt Text from Variant SKUs
+ *
+ * Finds all variants that reference this image in their custom.variant_gallery
+ * metafield and generates an alt text from their comma-separated SKUs.
+ */
+export async function handleGenerateAltTextFromSku(
+  ctx: ContentActionHandlerContext,
+  formData: FormData
+) {
+  const mediaId = formData.get("mediaId") as string;
+  const productId = formData.get("productId") as string;
+
+  if (!mediaId || !productId) {
+    return json({ success: false, error: "mediaId and productId required" }, { status: 400 });
+  }
+
+  // 1. Alle gecachten Varianten des Produkts laden
+  const variants = await ctx.db.productVariant.findMany({
+    where: { productId },
+    select: { sku: true, galleryJson: true, shopifyGid: true },
+  });
+
+  // 2. Varianten finden, die dieses mediaId in ihrer Galerie haben
+  const numericMediaId = mediaId.replace("gid://shopify/MediaImage/", "")
+    .replace("gid://shopify/File/", "");
+
+  const matchingSkus = variants
+    .filter(v => {
+      if (!v.galleryJson) return false;
+      try {
+        const gids: string[] = JSON.parse(v.galleryJson);
+        return gids.some(gid => gid.includes(numericMediaId) || gid === mediaId);
+      } catch {
+        return false;
+      }
+    })
+    .filter(v => v.sku)
+    .map(v => v.sku as string);
+
+  if (matchingSkus.length === 0) {
+    return json({ success: false, error: "No variants with SKU found for this image" }, { status: 404 });
+  }
+
+  // Max 512 Zeichen (Shopify-Limit für Alt-Text)
+  const altText = matchingSkus.join(",").slice(0, 512);
+
+  // 3. Alt-Text zu Shopify synchronisieren (fileUpdate Mutation)
+  await ctx.admin.graphql(`
+    mutation fileUpdate($files: [FileUpdateInput!]!) {
+      fileUpdate(files: $files) {
+        userErrors { field message }
+      }
+    }
+  `, {
+    variables: {
+      files: [{ id: mediaId, alt: altText }],
+    },
+  });
+
+  // 4. DB updaten
+  await ctx.db.productImage.updateMany({
+    where: { mediaId },
+    data: { altText },
+  });
+
+  return json({ success: true, altText });
+}

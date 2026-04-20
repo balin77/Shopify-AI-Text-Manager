@@ -201,6 +201,16 @@ const server = app.listen(port, host, async () => {
     serverLogger.error("Failed to start task cleanup service", { error: String(error) });
   }
 
+  // Start WebP conversion task processor
+  try {
+    const { WebPProcessorService } = await import("./webp-processor.service.js");
+    const webpProcessor = WebPProcessorService.getInstance();
+    webpProcessor.start();
+    serverLogger.info("WebP processor service started");
+  } catch (error) {
+    serverLogger.error("Failed to start WebP processor service", { error: String(error) });
+  }
+
   // Recover pending tasks after server restart and start stuck task monitoring
   try {
     const { TaskRecoveryService } = await import("./task-recovery.service.js");

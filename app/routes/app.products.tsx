@@ -26,7 +26,9 @@ import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { usePlan } from "../contexts/PlanContext";
 import { useNavigationHeight } from "../contexts/NavigationHeightContext";
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
+import { useVariantImageManager } from "../hooks/useVariantImageManager";
+import { VariantImageManager } from "../components/image-manager/VariantImageManager";
 import { Spinner, Text } from "@shopify/polaris";
 import type { ContentItem } from "../types/content-editor.types";
 import { logger } from "~/utils/logger.server";
@@ -395,12 +397,16 @@ export const loader = createContentLoader({
   },
 
   async extraData(ctx) {
-    const { getPlanLimits } = await import("../utils/planUtils");
+    const { getPlanLimits, canAccessVariantImageManager } = await import("../utils/planUtils");
     const settings = await ctx.db.aISettings.findUnique({ where: { shop: ctx.session.shop } });
     const plan = (settings?.subscriptionPlan || "free") as "free" | "basic" | "pro" | "max";
     const planLimits = getPlanLimits(plan);
     const productCount = await ctx.db.product.count({ where: { shop: ctx.session.shop } });
-    return { plan, maxProducts: planLimits.maxProducts, productCount };
+    const showImageManager = canAccessVariantImageManager(plan);
+    const imageManagerSettings = await ctx.db.imageManagerSettings.findUnique({
+      where: { shopId: ctx.session.shop },
+    }) ?? { firstImageBig: false, showAltTags: false, autoAltText: false };
+    return { plan, maxProducts: planLimits.maxProducts, productCount, showImageManager, imageManagerSettings };
   },
 });
 
@@ -436,7 +442,7 @@ export const action = async (args: ActionFunctionArgs) => {
 // ============================================================================
 
 export default function ProductsPage() {
-  const { products, shopLocales, primaryLocale, error, aiSettings, plan, maxProducts } = useLoaderData<typeof loader>();
+  const { products, shopLocales, primaryLocale, error, aiSettings, plan, maxProducts, showImageManager, imageManagerSettings } = useLoaderData<typeof loader>();
   const navigation = useNavigation();
   const fetcher = useFetcher<typeof action>();
   const syncFetcher = useFetcher<{ success: boolean; synced: number; total: number }>();
@@ -468,6 +474,19 @@ export default function ProductsPage() {
     showInfoBox,
     t,
   });
+
+  // Image Manager state (Pro/Max only - always call hook, gated in UI)
+  const imageManagerState = useVariantImageManager();
+
+  // Reset image manager state when product selection changes
+  const prevSelectedItemId = useRef<string | null>(null);
+  useEffect(() => {
+    const currentId = editor.state.selectedItemId;
+    if (currentId && currentId !== prevSelectedItemId.current) {
+      prevSelectedItemId.current = currentId;
+      imageManagerState.resetForProduct();
+    }
+  }, [editor.state.selectedItemId, imageManagerState.resetForProduct]);
 
   // Initialize sub-resources hook for options + metafields translations
   // Uses its own internal fetcher to avoid race conditions with the main editor
@@ -754,7 +773,46 @@ export default function ProductsPage() {
           ]}
           subResourceState={subResources.state}
           subResourceHandlers={subResources.handlers}
+          showImageManager={showImageManager}
+          imageManager={showImageManager ? {
+            bulkItems: imageManagerState.bulkItems,
+            onBulkItemsChange: imageManagerState.handleBulkItemsChange,
+            selectedBulkIds: imageManagerState.selectedBulkIds,
+            activeAction: imageManagerState.activeAction,
+            onSetAction: imageManagerState.setActiveAction,
+            onBulkSelect: imageManagerState.handleBulkSelect,
+            onRemoveBulk: imageManagerState.handleRemoveBulk,
+            onApply: async () => {
+              if (!editor.selectedItem) return;
+              await imageManagerState.handleApply(editor.selectedItem.id);
+            },
+            isApplying: imageManagerState.isApplying,
+            activeRightTab: imageManagerState.activeRightTab,
+            onTabChange: imageManagerState.setActiveRightTab,
+            imageManagerSettings: imageManagerSettings ?? { firstImageBig: false, showAltTags: false, autoAltText: false },
+          } : undefined}
         />
+
+        {/* Variant Image Manager (Pro/Max) — im Hauptbereich unterhalb der Standard-Felder */}
+        {showImageManager && editor.selectedItem && imageManagerState.activeRightTab === "seo" && (
+          <div style={{ padding: "0 16px 24px" }}>
+            <VariantImageManager
+              productId={editor.selectedItem.id}
+              productImages={(editor.selectedItem.images ?? []).map((img: any) => ({
+                url: img.url ?? "",
+                mediaId: img.mediaId ?? img.url ?? "",
+                id: img.id ?? img.url ?? "",
+              }))}
+              bulkItems={imageManagerState.bulkItems}
+              activeAction={imageManagerState.activeAction}
+              selectedBulkIds={imageManagerState.selectedBulkIds}
+              onRemoveBulk={imageManagerState.handleRemoveBulk}
+              onSetAction={imageManagerState.setActiveAction}
+              imageManagerSettings={imageManagerSettings ?? { firstImageBig: false, showAltTags: false, autoAltText: false }}
+              onPendingChange={imageManagerState.handlePendingChange}
+            />
+          </div>
+        )}
       </div>
     </div>
   );

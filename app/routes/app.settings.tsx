@@ -18,6 +18,7 @@ import { SettingsLanguageTab } from "../components/SettingsLanguageTab";
 import { SettingsSEOTab } from "../components/SettingsSEOTab";
 import { SettingsUsageLimitsTab } from "../components/SettingsUsageLimitsTab";
 import { SettingsPlanTab } from "../components/SettingsPlanTab";
+import { SettingsImageManagerTab } from "../components/SettingsImageManagerTab";
 import { db } from "../db.server";
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
@@ -323,6 +324,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       };
     }
 
+    const imageManagerSettings = await db.imageManagerSettings.findUnique({
+      where: { shopId: session.shop },
+    }) ?? { firstImageBig: false, showAltTags: false, autoAltText: false };
+    const showImageManagerTab = subscriptionPlan === "pro" || subscriptionPlan === "max";
+
     return json({
       shop: session.shop,
       shopDisplayName,
@@ -337,6 +343,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       isTestStore,
       isDevMode,
       subscriptionPlan,
+      imageManagerSettings,
+      showImageManagerTab,
       settings: {
         ...decryptedKeys,
         preferredProvider: settings.preferredProvider,
@@ -622,7 +630,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function SettingsPage() {
-  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, localeCount, subscriptionPlan, isTestStore, isDevMode } = useLoaderData<typeof loader>();
+  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, localeCount, subscriptionPlan, isTestStore, isDevMode, imageManagerSettings, showImageManagerTab } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
   const [searchParams] = useSearchParams();
@@ -642,7 +650,7 @@ export default function SettingsPage() {
     return "setup";
   };
 
-  const [selectedSection, setSelectedSection] = useState<"setup" | "ai" | "instructions" | "language" | "seo" | "plan" | "feedback">(getInitialSection);
+  const [selectedSection, setSelectedSection] = useState<"setup" | "ai" | "instructions" | "language" | "seo" | "plan" | "feedback" | "imagemanager">(getInitialSection);
   const [hasAIChanges, setHasAIChanges] = useState(false);
   const [hasLanguageChanges, setHasLanguageChanges] = useState(false);
   const [hasInstructionsChanges, setHasInstructionsChanges] = useState(false);
@@ -650,7 +658,7 @@ export default function SettingsPage() {
   const hasUnsavedChanges = hasAIChanges || hasLanguageChanges || hasInstructionsChanges;
 
   // Handle section navigation with unsaved changes warning
-  const handleSectionChange = (newSection: "setup" | "ai" | "instructions" | "language" | "seo" | "plan" | "feedback") => {
+  const handleSectionChange = (newSection: "setup" | "ai" | "instructions" | "language" | "seo" | "plan" | "feedback" | "imagemanager") => {
     if (hasUnsavedChanges) {
       const message = t.settings?.unsavedChangesMessage ||
         "You have unsaved changes. Do you really want to continue? Your changes will be lost.";
@@ -841,6 +849,27 @@ export default function SettingsPage() {
                   {t.settings.plan}
                 </Text>
               </button>
+              {showImageManagerTab && (
+                <button
+                  onClick={() => handleSectionChange("imagemanager")}
+                  style={{
+                    width: "100%",
+                    padding: "1rem",
+                    background: selectedSection === "imagemanager" ? "#f1f8f5" : "white",
+                    borderTop: "1px solid #e1e3e5",
+                    borderRight: "none",
+                    borderBottom: "none",
+                    borderLeft: selectedSection === "imagemanager" ? "3px solid #008060" : "3px solid transparent",
+                    textAlign: "left",
+                    cursor: "pointer",
+                    transition: "all 0.2s",
+                  }}
+                >
+                  <Text as="p" variant="bodyMd" fontWeight={selectedSection === "imagemanager" ? "semibold" : "regular"}>
+                    📁 Image Manager
+                  </Text>
+                </button>
+              )}
               <button
                 onClick={() => handleSectionChange("feedback")}
                 style={{
@@ -945,6 +974,13 @@ export default function SettingsPage() {
                   pageCount={pageCount}
                   themeTranslationCount={themeTranslationCount}
                   t={t}
+                />
+              )}
+
+              {/* Image Manager Settings */}
+              {selectedSection === "imagemanager" && showImageManagerTab && (
+                <SettingsImageManagerTab
+                  settings={imageManagerSettings ?? { firstImageBig: false, showAltTags: false, autoAltText: false }}
                 />
               )}
 

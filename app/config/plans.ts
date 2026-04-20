@@ -26,6 +26,7 @@ export interface PlanLimits {
   productImages: "featured-only" | "all";
   contentTypes: ContentType[];
   aiInstructionsEditable: boolean;
+  variantImageManager: boolean;
   cacheEnabled: {
     products: boolean;
     productImages: boolean;
@@ -50,6 +51,7 @@ export const PLAN_CONFIG: Record<Plan, PlanLimits> = {
     productImages: "featured-only",
     contentTypes: ["products", "collections"],
     aiInstructionsEditable: false,
+    variantImageManager: false,
     cacheEnabled: {
       products: true, // limited to 25
       productImages: false, // only featured image
@@ -72,6 +74,7 @@ export const PLAN_CONFIG: Record<Plan, PlanLimits> = {
     productImages: "all",
     contentTypes: ["products", "collections", "pages", "policies"],
     aiInstructionsEditable: false,
+    variantImageManager: false,
     cacheEnabled: {
       products: true,
       productImages: true,
@@ -94,6 +97,7 @@ export const PLAN_CONFIG: Record<Plan, PlanLimits> = {
     productImages: "all",
     contentTypes: ["products", "collections", "articles", "blogs", "pages", "policies", "templates", "menus", "metaobjects"],
     aiInstructionsEditable: true,
+    variantImageManager: true,
     cacheEnabled: {
       products: true,
       productImages: true,
@@ -116,6 +120,7 @@ export const PLAN_CONFIG: Record<Plan, PlanLimits> = {
     productImages: "all",
     contentTypes: ["products", "collections", "articles", "blogs", "pages", "policies", "templates", "menus", "metaobjects"],
     aiInstructionsEditable: true,
+    variantImageManager: true,
     cacheEnabled: {
       products: true,
       productImages: true,

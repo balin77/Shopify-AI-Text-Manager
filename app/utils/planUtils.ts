@@ -181,3 +181,11 @@ export function getResourcesApproachingLimits(
     isApproachingLimit(plan, resource, counts[resource], threshold)
   );
 }
+
+
+/**
+ * Check if a plan has access to the Variant Image Manager feature
+ */
+export function canAccessVariantImageManager(plan: Plan): boolean {
+  return getPlanLimits(plan).variantImageManager;
+}

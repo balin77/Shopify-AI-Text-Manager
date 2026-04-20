@@ -20,6 +20,7 @@ import { ReloadButton } from "./ReloadButton";
 import type { SubResourceState, SubResourceHandlers } from "../hooks/useProductSubResources";
 import { HelpTooltip } from "./HelpTooltip";
 import { SeoSidebar } from "./SeoSidebar";
+import { BulkImageUploadPanel } from "./image-manager/BulkImageUploadPanel";
 import { useNavigationHeight } from "../contexts/NavigationHeightContext";
 import { usePlan } from "../contexts/PlanContext";
 import { getPlanDisplayName as getPlanDisplayNameUtil } from "../utils/planUtils";
@@ -114,6 +115,25 @@ interface UnifiedContentEditorProps {
 
   /** Optional: Sub-resource handlers */
   subResourceHandlers?: SubResourceHandlers;
+
+  /** Optional: Variant Image Manager für Pro/Max */
+  showImageManager?: boolean;
+
+  /** Optional: Image Manager State + Handlers */
+  imageManager?: {
+    bulkItems: import("./image-manager/types").StagedItem[];
+    onBulkItemsChange: (updater: (prev: import("./image-manager/types").StagedItem[]) => import("./image-manager/types").StagedItem[]) => void;
+    selectedBulkIds: Set<string>;
+    activeAction: "copy" | "move" | null;
+    onSetAction: (action: "copy" | "move" | null) => void;
+    onBulkSelect: (id: string, selected: boolean) => void;
+    onRemoveBulk: (ids: string[]) => void;
+    onApply: () => Promise<void>;
+    isApplying: boolean;
+    activeRightTab: "seo" | "images";
+    onTabChange: (tab: "seo" | "images") => void;
+    imageManagerSettings: { firstImageBig: boolean; showAltTags: boolean; autoAltText: boolean };
+  };
 }
 
 export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
@@ -140,6 +160,8 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     sortOptions,
     subResourceState,
     subResourceHandlers,
+    showImageManager,
+    imageManager,
   } = props;
 
   // Local state for search input - synced with fieldPagination.search
@@ -875,8 +897,60 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
         {/* Right: Optional Sidebar (Fixed) - Hidden on narrow screens via CSS */}
         {selectedItem && config.showSeoSidebar && (
           <div className="seo-sidebar-container" style={{ width: "320px", flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+            {/* Tab-Toggle für Pro/Max Image Manager */}
+            {showImageManager && imageManager && (
+              <div style={{ display: "flex", borderBottom: "1px solid #e1e3e5", marginBottom: 8, flexShrink: 0 }}>
+                <button
+                  style={{
+                    flex: 1,
+                    padding: "8px 4px",
+                    border: "none",
+                    background: "none",
+                    borderBottom: imageManager.activeRightTab === "seo" ? "2px solid #005bd3" : "2px solid transparent",
+                    cursor: "pointer",
+                    fontWeight: imageManager.activeRightTab === "seo" ? 600 : 400,
+                    fontSize: 13,
+                    color: imageManager.activeRightTab === "seo" ? "#005bd3" : "#616161",
+                  }}
+                  onClick={() => imageManager.onTabChange("seo")}
+                >
+                  SEO Score
+                </button>
+                <button
+                  style={{
+                    flex: 1,
+                    padding: "8px 4px",
+                    border: "none",
+                    background: "none",
+                    borderBottom: imageManager.activeRightTab === "images" ? "2px solid #005bd3" : "2px solid transparent",
+                    cursor: "pointer",
+                    fontWeight: imageManager.activeRightTab === "images" ? 600 : 400,
+                    fontSize: 13,
+                    color: imageManager.activeRightTab === "images" ? "#005bd3" : "#616161",
+                  }}
+                  onClick={() => imageManager.onTabChange("images")}
+                >
+                  📁 Bilder
+                </button>
+              </div>
+            )}
             <div style={{ flex: 1, overflowY: "auto" }}>
-              {sidebarRenderer(selectedItem, state.editableValues)}
+              {(!showImageManager || !imageManager || imageManager.activeRightTab === "seo") && (
+                sidebarRenderer(selectedItem, state.editableValues)
+              )}
+              {showImageManager && imageManager && imageManager.activeRightTab === "images" && (
+                <BulkImageUploadPanel
+                  items={imageManager.bulkItems}
+                  selectedUniqueIds={imageManager.selectedBulkIds}
+                  activeAction={imageManager.activeAction}
+                  onItemsChange={imageManager.onBulkItemsChange}
+                  onSelect={imageManager.onBulkSelect}
+                  onSetAction={imageManager.onSetAction}
+                  onRemove={imageManager.onRemoveBulk}
+                  onApply={imageManager.onApply}
+                  isApplying={imageManager.isApplying}
+                />
+              )}
             </div>
           </div>
         )}

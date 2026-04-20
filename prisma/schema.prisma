@@ -201,6 +201,7 @@ model Product {
   images       ProductImage[]
   options      ProductOption[]
   metafields   ProductMetafield[]
+  variants     ProductVariant[]
 
   @@unique([shop, id])
   @@index([shop])
@@ -263,6 +264,30 @@ model ProductMetafield {
   type      String
 
   @@index([productId])
+}
+
+model ProductVariant {
+  id         String  @id           // numerische Shopify ID
+  shopifyGid String  @unique       // gid://shopify/ProductVariant/...
+  productId  String
+  product    Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  title      String
+  sku        String?
+  position   Int
+  galleryJson String? @db.Text    // JSON: ["gid://shopify/File/...", ...]
+  updatedAt  DateTime @updatedAt
+
+  @@index([productId])
+}
+
+model ImageManagerSettings {
+  id            String  @id @default(cuid())
+  shopId        String  @unique
+  firstImageBig Boolean @default(false)
+  showAltTags   Boolean @default(false)
+  autoAltText   Boolean @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 }
 
 model WebhookLog {
