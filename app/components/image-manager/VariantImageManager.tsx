@@ -31,7 +31,7 @@ interface VariantImageManagerProps {
   onRemoveBulk: (ids: string[]) => void;
   onSetAction: (action: "copy" | "move" | null) => void;
   imageManagerSettings: ImageManagerSettings;
-  onPendingChange?: (variantGalleries: Array<{ variantId: string; fileGids: string[] }>, mediaOrder: Array<{ mediaId: string; position: number }>) => void;
+  onPendingChange?: (variantGalleries: Array<{ variantId: string; fileGids: string[] }>, mediaOrder: Array<{ mediaId: string; position: number }>, productNewMedia?: string[]) => void;
   resetKey?: number;
   currentLanguage?: string;
   primaryLocale?: string;
@@ -66,6 +66,7 @@ export function VariantImageManager({
   // Compound keys ensure same image URL selected in gallery A doesn't affect gallery B
   const [selectedGalleryItems, setSelectedGalleryItems] = useState<Map<string, string | null>>(new Map());
   const [pendingVariantGalleries, setPendingVariantGalleries] = useState<Record<string, string[]>>({});
+  const [pendingProductNewMedia, setPendingProductNewMedia] = useState<string[]>([]);
   const [webpError, setWebpError] = useState<string | null>(null);
   const [isConvertingWebP, setIsConvertingWebP] = useState(false);
   const webpPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -112,6 +113,7 @@ export function VariantImageManager({
   useEffect(() => {
     if (!resetKey) return;
     setPendingVariantGalleries({});
+    setPendingProductNewMedia([]);
     setPendingProductImageOrder(null);
     setSelectedGalleryItems(new Map());
     pendingMediaOrderRef.current = [];
@@ -182,8 +184,8 @@ export function VariantImageManager({
     const galleries = Object.entries(pendingVariantGalleries).map(([variantId, fileGids]) => ({
       variantId, fileGids,
     }));
-    onPendingChange?.(galleries, pendingMediaOrderRef.current);
-  }, [pendingVariantGalleries]); // eslint-disable-line react-hooks/exhaustive-deps
+    onPendingChange?.(galleries, pendingMediaOrderRef.current, pendingProductNewMedia);
+  }, [pendingVariantGalleries, pendingProductNewMedia]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const startWebPPolling = useCallback((pid: string) => {
     if (webpPollRef.current) clearInterval(webpPollRef.current);
@@ -311,8 +313,8 @@ export function VariantImageManager({
     const galleries = Object.entries(pendingVariantGalleries).map(([variantId, fileGids]) => ({
       variantId, fileGids,
     }));
-    onPendingChange?.(galleries, mediaOrder);
-  }, [productImages, pendingVariantGalleries, onPendingChange]);
+    onPendingChange?.(galleries, mediaOrder, pendingProductNewMedia);
+  }, [productImages, pendingVariantGalleries, pendingProductNewMedia, onPendingChange]);
 
   const handleSharedDragStart = useCallback((event: DragStartEvent) => {
     const url = event.active.data.current?.url as string | undefined;
@@ -561,6 +563,35 @@ export function VariantImageManager({
     }
   }, [variants]);
 
+  const handleUploadToProductGallery = useCallback(async (files: File[]) => {
+    for (const file of files) {
+      try {
+        const res = await fetch("/api/staged-upload", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ filename: file.name, mimeType: file.type, fileSize: file.size }),
+        });
+        const { url, resourceUrl, error } = await res.json();
+        if (error || !url) continue;
+
+        await new Promise<void>((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.onload = () => resolve();
+          xhr.onerror = () => reject();
+          xhr.open("PUT", url);
+          xhr.setRequestHeader("Content-Type", file.type);
+          xhr.send(file);
+        });
+
+        if (resourceUrl) {
+          setPendingProductNewMedia(p => [...p, resourceUrl]);
+        }
+      } catch {
+        // silent — user can retry
+      }
+    }
+  }, []);
+
   // Watch altTextFetcher for AI generate / translate results → auto-save result
   useEffect(() => {
     const data = altTextFetcher.data;
@@ -674,7 +705,7 @@ export function VariantImageManager({
   const imagesToConvert = productImages.filter(i =>
     !i.url.toLowerCase().includes(".webp") &&
     !i.url.toLowerCase().includes("format=webp") &&
-    (noneOrAllSelected || productSelectedUrls.has(i.url))
+    (noneOrAllSelected ? displayedProductUrls.includes(i.url) : productSelectedUrls.has(i.url))
   );
 
   const productSingleSelected = productSelectedUrls.size === 1 ? [...productSelectedUrls][0] : null;
@@ -818,6 +849,7 @@ export function VariantImageManager({
             isDropTarget={activeAction !== null}
             thumbSize={thumbSize}
             skipDndContext
+            onUploadToGallery={handleUploadToProductGallery}
           />
         </div>
 

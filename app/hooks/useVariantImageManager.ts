@@ -19,6 +19,7 @@ export function useVariantImageManager() {
   const [activeRightTab, setActiveRightTab] = useState<"seo" | "images">("seo");
   const [pendingVariantGalleries, setPendingVariantGalleries] = useState<VariantGalleryUpdate[]>([]);
   const [pendingMediaOrder, setPendingMediaOrder] = useState<MediaOrderUpdate[]>([]);
+  const [pendingProductNewMedia, setPendingProductNewMedia] = useState<string[]>([]);
   const [resetCounter, setResetCounter] = useState(0);
   const [hasAltTextEdits, setHasAltTextEdits] = useState(false);
 
@@ -44,9 +45,10 @@ export function useVariantImageManager() {
   }, []);
 
   const handlePendingChange = useCallback(
-    (galleries: VariantGalleryUpdate[], mediaOrder: MediaOrderUpdate[]) => {
+    (galleries: VariantGalleryUpdate[], mediaOrder: MediaOrderUpdate[], productNewMedia?: string[]) => {
       setPendingVariantGalleries(galleries);
       setPendingMediaOrder(mediaOrder);
+      if (productNewMedia) setPendingProductNewMedia(productNewMedia);
     },
     []
   );
@@ -55,12 +57,16 @@ export function useVariantImageManager() {
     setIsApplying(true);
     try {
       const readyItems = bulkItems.filter(i => i.status === "ready");
+      const allNewMedia = [
+        ...readyItems.map(i => ({ resourceUrl: i.resourceUrl })),
+        ...pendingProductNewMedia.map(r => ({ resourceUrl: r })),
+      ];
       const res = await fetch("/api/update-variant-galleries", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           productId,
-          newMedia: readyItems.map(i => ({ resourceUrl: i.resourceUrl })),
+          newMedia: allNewMedia,
           variantGalleries: pendingVariantGalleries,
           mediaOrder: pendingMediaOrder,
         }),
@@ -73,12 +79,13 @@ export function useVariantImageManager() {
       setSelectedBulkIds(new Set());
       setPendingVariantGalleries([]);
       setPendingMediaOrder([]);
+      setPendingProductNewMedia([]);
       setHasAltTextEdits(false);
       return null;
     } finally {
       setIsApplying(false);
     }
-  }, [bulkItems, pendingVariantGalleries, pendingMediaOrder]);
+  }, [bulkItems, pendingVariantGalleries, pendingMediaOrder, pendingProductNewMedia]);
 
   // Beim Produktwechsel: State zurücksetzen
   const resetForProduct = useCallback(() => {
@@ -87,6 +94,7 @@ export function useVariantImageManager() {
     setActiveAction(null);
     setPendingVariantGalleries([]);
     setPendingMediaOrder([]);
+    setPendingProductNewMedia([]);
     setHasAltTextEdits(false);
     setResetCounter(c => c + 1);
   }, []);
@@ -101,6 +109,7 @@ export function useVariantImageManager() {
     setActiveRightTab,
     pendingVariantGalleries,
     pendingMediaOrder,
+    pendingProductNewMedia,
     resetCounter,
     hasAltTextEdits,
     setHasAltTextEdits,

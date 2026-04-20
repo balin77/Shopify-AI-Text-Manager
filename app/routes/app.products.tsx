@@ -513,6 +513,7 @@ export default function ProductsPage() {
   const hasPendingImageChanges = showImageManager && (
     imageManagerState.pendingVariantGalleries.length > 0 ||
     imageManagerState.pendingMediaOrder.length > 0 ||
+    imageManagerState.pendingProductNewMedia.length > 0 ||
     imageManagerState.bulkItems.some(i => i.status === "ready") ||
     imageManagerState.hasAltTextEdits
   );
