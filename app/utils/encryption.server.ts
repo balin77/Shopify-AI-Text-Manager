@@ -27,7 +27,7 @@
  */
 
 import crypto from 'crypto';
-import { logger } from './logger.server.ts';
+import { logger } from './logger.server.js';
 
 /**
  * Encryption algorithm (AES-256-GCM)
