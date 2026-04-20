@@ -75,9 +75,16 @@ export function VariantGallerySection({
   const isPrimaryLocale = !currentLanguage || currentLanguage === primaryLocale;
 
   const singleSelectedUrl = localSelectedUrls.length === 1 ? localSelectedUrls[0] : null;
+  // In foreign locale don't fall back to primary locale value (would show wrong content)
   const currentAltText = singleSelectedUrl
-    ? (localAltTexts?.[singleSelectedUrl] ?? imageMetas[singleSelectedUrl]?.altText ?? "")
+    ? (isPrimaryLocale
+      ? (localAltTexts?.[singleSelectedUrl] ?? imageMetas[singleSelectedUrl]?.altText ?? "")
+      : (localAltTexts?.[singleSelectedUrl] ?? ""))
     : "";
+  const primaryAltText = singleSelectedUrl ? (imageMetas[singleSelectedUrl]?.altText ?? "") : "";
+  const hasTranslation = singleSelectedUrl
+    ? (localAltTexts?.[singleSelectedUrl] !== undefined && localAltTexts[singleSelectedUrl] !== "")
+    : false;
 
   return (
     <div style={{ borderBottom: "1px solid #e1e3e5", marginBottom: 4 }}>
@@ -158,9 +165,9 @@ export function VariantGallerySection({
             <div style={{
               marginTop: 10,
               padding: "10px 12px",
-              background: "#f6f6f7",
+              background: !isPrimaryLocale && !hasTranslation ? "#fff8f0" : "#f6f6f7",
               borderRadius: 6,
-              border: "1px solid #e1e3e5",
+              border: `1px solid ${!isPrimaryLocale && !hasTranslation ? "#e6a817" : "#e1e3e5"}`,
             }}>
               <div style={{ marginBottom: 6 }}>
                 <Text as="span" variant="bodySm" tone="subdued">
@@ -172,7 +179,7 @@ export function VariantGallerySection({
                   type="text"
                   value={currentAltText}
                   onChange={(e) => onAltTextChange?.(singleSelectedUrl, e.target.value)}
-                  placeholder={t.imageManager.altTextPlaceholder}
+                  placeholder={isPrimaryLocale ? t.imageManager.altTextPlaceholder : (primaryAltText || t.imageManager.altTextPlaceholder)}
                   style={{
                     flex: "1 1 200px",
                     minWidth: 180,
@@ -181,11 +188,12 @@ export function VariantGallerySection({
                     border: "1px solid #c9cccf",
                     borderRadius: 4,
                     outline: "none",
-                    background: "white",
+                    background: !isPrimaryLocale && !hasTranslation ? "#fff8f0" : "white",
                   }}
-                  onFocus={(e) => { e.target.style.borderColor = "#005bd3"; }}
+                  onFocus={(e) => { e.target.style.borderColor = "#005bd3"; e.target.style.background = "white"; }}
                   onBlur={(e) => {
                     e.target.style.borderColor = "#c9cccf";
+                    e.target.style.background = !isPrimaryLocale && !hasTranslation ? "#fff8f0" : "white";
                     if (skipNextBlurRef.current) {
                       skipNextBlurRef.current = false;
                       return;
@@ -232,6 +240,12 @@ export function VariantGallerySection({
                   )}
                 </div>
               </div>
+              {!isPrimaryLocale && primaryAltText && (
+                <div style={{ marginTop: 6, fontSize: 12, color: "#6d7175" }}>
+                  <span style={{ fontWeight: 600 }}>{t.imageManager.primaryRef}: </span>
+                  {primaryAltText}
+                </div>
+              )}
             </div>
           )}
         </div>

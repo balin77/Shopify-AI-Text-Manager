@@ -513,7 +513,8 @@ export default function ProductsPage() {
   const hasPendingImageChanges = showImageManager && (
     imageManagerState.pendingVariantGalleries.length > 0 ||
     imageManagerState.pendingMediaOrder.length > 0 ||
-    imageManagerState.bulkItems.some(i => i.status === "ready")
+    imageManagerState.bulkItems.some(i => i.status === "ready") ||
+    imageManagerState.hasAltTextEdits
   );
 
   const wrappedSubResourceState = useMemo(() => ({
@@ -851,6 +852,7 @@ export default function ProductsPage() {
               primaryLocale={primaryLocale}
               productTitle={editor.selectedItem.title}
               enabledLanguages={shopLocales.map((l: any) => l.locale)}
+              onDirtyChange={imageManagerState.setHasAltTextEdits}
             />
           ) : undefined}
         />

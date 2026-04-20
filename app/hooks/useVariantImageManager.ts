@@ -20,6 +20,7 @@ export function useVariantImageManager() {
   const [pendingVariantGalleries, setPendingVariantGalleries] = useState<VariantGalleryUpdate[]>([]);
   const [pendingMediaOrder, setPendingMediaOrder] = useState<MediaOrderUpdate[]>([]);
   const [resetCounter, setResetCounter] = useState(0);
+  const [hasAltTextEdits, setHasAltTextEdits] = useState(false);
 
   const handleBulkItemsChange = useCallback((updater: (prev: StagedItem[]) => StagedItem[]) => {
     setBulkItems(updater);
@@ -72,6 +73,7 @@ export function useVariantImageManager() {
       setSelectedBulkIds(new Set());
       setPendingVariantGalleries([]);
       setPendingMediaOrder([]);
+      setHasAltTextEdits(false);
       return null;
     } finally {
       setIsApplying(false);
@@ -85,6 +87,7 @@ export function useVariantImageManager() {
     setActiveAction(null);
     setPendingVariantGalleries([]);
     setPendingMediaOrder([]);
+    setHasAltTextEdits(false);
     setResetCounter(c => c + 1);
   }, []);
 
@@ -99,6 +102,8 @@ export function useVariantImageManager() {
     pendingVariantGalleries,
     pendingMediaOrder,
     resetCounter,
+    hasAltTextEdits,
+    setHasAltTextEdits,
     handleBulkItemsChange,
     handleBulkSelect,
     handleRemoveBulk,
