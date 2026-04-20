@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
-import { Text, Button, InlineStack, Spinner, Banner, Divider } from "@shopify/polaris";
+import { Text, Button, InlineStack, Spinner, Banner, Divider, Tooltip } from "@shopify/polaris";
+import { ViewIcon } from "@shopify/polaris-icons";
 import { useFetcher } from "@remix-run/react";
 import { SortableImageGrid } from "./SortableImageGrid";
 import { VariantGallerySection } from "./VariantGallerySection";
@@ -49,6 +50,7 @@ export function VariantImageManager({
   const [selectedGalleryItems, setSelectedGalleryItems] = useState<Map<string, string | null>>(new Map());
   const [pendingVariantGalleries, setPendingVariantGalleries] = useState<Record<string, string[]>>({});
   const [webpError, setWebpError] = useState<string | null>(null);
+  const [showAll, setShowAll] = useState(true);
   const fetcher = useFetcher();
   // Track current media order so we can include it whenever variant galleries change
   const pendingMediaOrderRef = useRef<Array<{ mediaId: string; position: number }>>([]);
@@ -111,6 +113,25 @@ export function VariantImageManager({
     }
     return map;
   }, [productImages]);
+
+  // All GIDs currently assigned to any variant gallery
+  const assignedGids = useMemo(() => {
+    const gids = new Set<string>();
+    for (const v of variants) {
+      const current = pendingVariantGalleries[v.id] ?? v.galleryFileGids;
+      current.forEach(gid => gids.add(gid));
+    }
+    return gids;
+  }, [variants, pendingVariantGalleries]);
+
+  // Product image URLs to display (all or only unassigned)
+  const displayedProductUrls = useMemo(() => {
+    if (showAll || variants.length === 0) return productImageOrder;
+    return productImageOrder.filter(url => {
+      const gid = urlToGid[url];
+      return !gid || !assignedGids.has(gid);
+    });
+  }, [showAll, productImageOrder, urlToGid, assignedGids, variants.length]);
 
   const selectedGalleryUrls = useMemo(() => new Set(selectedGalleryItems.keys()), [selectedGalleryItems]);
 
@@ -262,11 +283,27 @@ export function VariantImageManager({
 
       {/* Produktbilder allgemein */}
       <div>
-        <Text as="h3" variant="headingSm">Produktbilder (allgemein)</Text>
+        <InlineStack align="space-between" blockAlign="center">
+          <Text as="h3" variant="headingSm">
+            {!isLoadingVariants && variants.length > 0
+              ? (showAll ? "Alle Produktbilder" : "Nicht zugewiesene Bilder")
+              : "Produktbilder (allgemein)"}
+          </Text>
+          {!isLoadingVariants && variants.length > 0 && (
+            <Tooltip content={showAll ? "Nur nicht zugewiesene Bilder anzeigen" : "Alle Produktbilder anzeigen"}>
+              <Button
+                icon={ViewIcon}
+                onClick={() => setShowAll(s => !s)}
+                pressed={!showAll}
+                accessibilityLabel="Bildfiltermodus umschalten"
+              />
+            </Tooltip>
+          )}
+        </InlineStack>
         <div style={{ marginTop: 8 }}>
           <SortableImageGrid
             containerId="product"
-            imageUrls={productImageOrder}
+            imageUrls={displayedProductUrls}
             imageMetas={imageMetas}
             onReorder={handleProductReorder}
             onSelect={makeSelectHandler(null)}
