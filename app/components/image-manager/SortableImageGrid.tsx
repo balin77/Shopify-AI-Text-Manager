@@ -1,7 +1,7 @@
 import { useRef } from "react";
 import { useSortable, SortableContext, rectSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { DndContext, closestCenter, MouseSensor, TouchSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
+import { DndContext, closestCenter, MouseSensor, TouchSensor, useSensor, useSensors, useDroppable, type DragEndEvent } from "@dnd-kit/core";
 import { arrayMove } from "@dnd-kit/sortable";
 import { useI18n } from "../../contexts/I18nContext";
 import type { ImageMeta } from "./types";
@@ -97,7 +97,9 @@ function PlaceholderThumbnail({ activeAction, onDrop, onUpload, thumbSize }: Pla
 }
 
 interface SortableThumbnailProps {
+  sortableId: string;
   url: string;
+  containerId: string;
   isSelected: boolean;
   meta?: ImageMeta;
   onSelect: (selected: boolean) => void;
@@ -113,9 +115,12 @@ function extractFilename(url: string): string {
   }
 }
 
-function SortableThumbnail({ url, isSelected, meta, onSelect, thumbSize, isMain = false }: SortableThumbnailProps) {
+function SortableThumbnail({ sortableId, url, containerId, isSelected, meta, onSelect, thumbSize, isMain = false }: SortableThumbnailProps) {
   const { t } = useI18n();
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: url });
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: sortableId,
+    data: { containerId, url },
+  });
   const formatBadge = getFormatBadge(url, meta?.mimeType);
   const hasAlt = Boolean(meta?.altText);
   const filename = extractFilename(url);
@@ -216,6 +221,12 @@ function SortableThumbnail({ url, isSelected, meta, onSelect, thumbSize, isMain 
   );
 }
 
+// Used when skipDndContext=true so the container is droppable in the parent's DndContext
+function DroppableGrid({ id, style, children }: { id: string; style: React.CSSProperties; children: React.ReactNode }) {
+  const { setNodeRef } = useDroppable({ id });
+  return <div ref={setNodeRef} style={style}>{children}</div>;
+}
+
 interface SortableImageGridProps {
   containerId: string;
   imageUrls: string[];
@@ -229,9 +240,12 @@ interface SortableImageGridProps {
   activeAction?: "copy" | "move" | null;
   onDropToPlaceholder?: () => void;
   onUploadToGallery?: (files: File[]) => void;
+  // When true, no internal DndContext — parent provides one
+  skipDndContext?: boolean;
 }
 
 export function SortableImageGrid({
+  containerId,
   imageUrls,
   imageMetas = {},
   onReorder,
@@ -242,6 +256,7 @@ export function SortableImageGrid({
   activeAction,
   onDropToPlaceholder,
   onUploadToGallery,
+  skipDndContext = false,
 }: SortableImageGridProps) {
   const { t } = useI18n();
   const sensors = useSensors(
@@ -250,72 +265,85 @@ export function SortableImageGrid({
   );
 
   const showPlaceholder = onDropToPlaceholder !== undefined || onUploadToGallery !== undefined;
+  const sortableIds = imageUrls.map(url => `${containerId}::${url}`);
 
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event;
     if (over && active.id !== over.id) {
-      const oldIndex = imageUrls.indexOf(active.id as string);
-      const newIndex = imageUrls.indexOf(over.id as string);
+      const activeUrl = (active.id as string).slice((active.id as string).indexOf("::") + 2);
+      const overUrl = (over.id as string).slice((over.id as string).indexOf("::") + 2);
+      const oldIndex = imageUrls.indexOf(activeUrl);
+      const newIndex = imageUrls.indexOf(overUrl);
       if (oldIndex !== -1 && newIndex !== -1) {
         onReorder(arrayMove(imageUrls, oldIndex, newIndex));
       }
     }
   }
 
+  const containerStyle: React.CSSProperties = {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: 8,
+    minHeight: 48,
+    padding: 8,
+    borderRadius: 8,
+    border: isDropTarget ? "2px dashed #005bd3" : "2px dashed #e1e3e5",
+    background: isDropTarget ? "rgba(0, 91, 211, 0.04)" : "transparent",
+    transition: "border-color 0.2s, background 0.2s",
+  };
+
+  const inner = (
+    <>
+      {/* Placeholder first only when gallery is empty */}
+      {showPlaceholder && imageUrls.length === 0 && (
+        <PlaceholderThumbnail
+          activeAction={activeAction ?? null}
+          onDrop={() => onDropToPlaceholder?.()}
+          onUpload={(files) => onUploadToGallery?.(files)}
+          thumbSize={thumbSize}
+        />
+      )}
+
+      <SortableContext items={sortableIds} strategy={rectSortingStrategy}>
+        {imageUrls.length === 0 && !showPlaceholder && (
+          <div style={{ color: "#8c9196", fontSize: 13, padding: "8px 4px" }}>
+            {t.imageManager.noImages}
+          </div>
+        )}
+        {imageUrls.map((url, idx) => (
+          <SortableThumbnail
+            key={url}
+            sortableId={`${containerId}::${url}`}
+            url={url}
+            containerId={containerId}
+            isSelected={selectedUrls.has(url)}
+            meta={imageMetas[url]}
+            onSelect={(sel) => onSelect?.(url, sel)}
+            thumbSize={thumbSize}
+            isMain={showPlaceholder && idx === 0}
+          />
+        ))}
+      </SortableContext>
+
+      {/* Placeholder at end when gallery has images */}
+      {showPlaceholder && imageUrls.length > 0 && (
+        <PlaceholderThumbnail
+          activeAction={activeAction ?? null}
+          onDrop={() => onDropToPlaceholder?.()}
+          onUpload={(files) => onUploadToGallery?.(files)}
+          thumbSize={thumbSize}
+        />
+      )}
+    </>
+  );
+
+  if (skipDndContext) {
+    return <DroppableGrid id={containerId} style={containerStyle}>{inner}</DroppableGrid>;
+  }
+
   return (
     <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-      <div
-        style={{
-          display: "flex",
-          flexWrap: "wrap",
-          gap: 8,
-          minHeight: 48,
-          padding: 8,
-          borderRadius: 8,
-          border: isDropTarget ? "2px dashed #005bd3" : "2px dashed #e1e3e5",
-          background: isDropTarget ? "rgba(0, 91, 211, 0.04)" : "transparent",
-          transition: "border-color 0.2s, background 0.2s",
-        }}
-      >
-        {/* Placeholder first only when gallery is empty */}
-        {showPlaceholder && imageUrls.length === 0 && (
-          <PlaceholderThumbnail
-            activeAction={activeAction ?? null}
-            onDrop={() => onDropToPlaceholder?.()}
-            onUpload={(files) => onUploadToGallery?.(files)}
-            thumbSize={thumbSize}
-          />
-        )}
-
-        <SortableContext items={imageUrls} strategy={rectSortingStrategy}>
-          {imageUrls.length === 0 && !showPlaceholder && (
-            <div style={{ color: "#8c9196", fontSize: 13, padding: "8px 4px" }}>
-              {t.imageManager.noImages}
-            </div>
-          )}
-          {imageUrls.map((url, idx) => (
-            <SortableThumbnail
-              key={url}
-              url={url}
-              isSelected={selectedUrls.has(url)}
-              meta={imageMetas[url]}
-              onSelect={(sel) => onSelect?.(url, sel)}
-              thumbSize={thumbSize}
-              isMain={showPlaceholder && idx === 0}
-            />
-          ))}
-        </SortableContext>
-
-        {/* Placeholder at end when gallery has images */}
-        {showPlaceholder && imageUrls.length > 0 && (
-          <PlaceholderThumbnail
-            activeAction={activeAction ?? null}
-            onDrop={() => onDropToPlaceholder?.()}
-            onUpload={(files) => onUploadToGallery?.(files)}
-            thumbSize={thumbSize}
-          />
-        )}
-      </div>
+      <div style={containerStyle}>{inner}</div>
     </DndContext>
   );
 }

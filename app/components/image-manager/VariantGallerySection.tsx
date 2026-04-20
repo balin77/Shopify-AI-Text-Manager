@@ -17,6 +17,8 @@ interface VariantGallerySectionProps {
   onGenerateAltFromSku: (variantId: string) => void;
   onUploadToGallery: (variantId: string, files: File[]) => void;
   thumbSize?: number;
+  forceOpen?: boolean;
+  skipDndContext?: boolean;
   localAltTexts?: Record<string, string>;
   isAltTextLoading?: boolean;
   onAltTextChange?: (url: string, value: string) => void;
@@ -42,6 +44,8 @@ export function VariantGallerySection({
   onGenerateAltFromSku,
   onUploadToGallery,
   thumbSize = 80,
+  forceOpen = false,
+  skipDndContext = false,
   localAltTexts,
   isAltTextLoading,
   onAltTextChange,
@@ -55,6 +59,7 @@ export function VariantGallerySection({
 }: VariantGallerySectionProps) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
+  const isOpen = open || forceOpen;
   const skipNextBlurRef = useRef(false);
 
   const urls = variant.galleryFileGids
@@ -100,6 +105,7 @@ export function VariantGallerySection({
         }}
         onClick={() => setOpen(o => !o)}
         onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setOpen(o => !o); }}
+        aria-expanded={isOpen}
       >
         <InlineStack gap="200" align="center" blockAlign="center">
           <input
@@ -120,10 +126,10 @@ export function VariantGallerySection({
           )}
           <Badge>{String(displayUrls.length)}</Badge>
         </InlineStack>
-        <Text as="span" tone="subdued">{open ? "▲" : "▼"}</Text>
+        <Text as="span" tone="subdued">{isOpen ? "▲" : "▼"}</Text>
       </div>
 
-      <Collapsible open={open} id={`variant-gallery-${variant.id}`} transition={{ duration: "150ms" }}>
+      <Collapsible open={isOpen} id={`variant-gallery-${variant.id}`} transition={{ duration: "150ms" }}>
         <div style={{ paddingBottom: 12 }}>
           <SortableImageGrid
             containerId={variant.id}
@@ -140,6 +146,7 @@ export function VariantGallerySection({
             onDropToPlaceholder={() => onDrop(variant.id, true)}
             onUploadToGallery={(files) => onUploadToGallery(variant.id, files)}
             thumbSize={thumbSize}
+            skipDndContext={skipDndContext}
           />
 
           <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>

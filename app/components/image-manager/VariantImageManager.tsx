@@ -1,6 +1,8 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { Text, Button, InlineStack, Spinner, Banner, Divider, Card, BlockStack } from "@shopify/polaris";
 import { useFetcher } from "@remix-run/react";
+import { DndContext, DragOverlay, closestCenter, MouseSensor, TouchSensor, useSensor, useSensors, type DragStartEvent, type DragOverEvent, type DragEndEvent } from "@dnd-kit/core";
+import { arrayMove } from "@dnd-kit/sortable";
 import { useI18n } from "../../contexts/I18nContext";
 import { SortableImageGrid } from "./SortableImageGrid";
 import { VariantGallerySection } from "./VariantGallerySection";
@@ -82,6 +84,14 @@ export function VariantImageManager({
   const dirtyUrlsRef = useRef(new Set<string>());
   // Track current media order so we can include it whenever variant galleries change
   const pendingMediaOrderRef = useRef<Array<{ mediaId: string; position: number }>>([]);
+
+  // Cross-gallery drag state
+  const [activeDragUrl, setActiveDragUrl] = useState<string | null>(null);
+  const [overContainerId, setOverContainerId] = useState<string | null>(null);
+  const sharedSensors = useSensors(
+    useSensor(MouseSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 5 } }),
+  );
 
   useEffect(() => {
     if (!resetKey) return;
@@ -287,6 +297,89 @@ export function VariantImageManager({
     }));
     onPendingChange?.(galleries, mediaOrder);
   }, [productImages, pendingVariantGalleries, onPendingChange]);
+
+  const handleSharedDragStart = useCallback((event: DragStartEvent) => {
+    const url = event.active.data.current?.url as string | undefined;
+    setActiveDragUrl(url ?? null);
+  }, []);
+
+  const handleSharedDragOver = useCallback((event: DragOverEvent) => {
+    const { over } = event;
+    if (!over) { setOverContainerId(null); return; }
+    const overStr = over.id as string;
+    const containerId = overStr.includes("::") ? overStr.split("::")[0] : overStr;
+    setOverContainerId(containerId);
+  }, []);
+
+  const handleSharedDragEnd = useCallback((event: DragEndEvent) => {
+    const { active, over } = event;
+    setActiveDragUrl(null);
+    setOverContainerId(null);
+    if (!over) return;
+
+    const sourceContainerId = active.data.current?.containerId as string | undefined;
+    const url = active.data.current?.url as string | undefined;
+    if (!sourceContainerId || !url) return;
+
+    const overStr = over.id as string;
+    const sepIdx = overStr.indexOf("::");
+    const targetContainerId = sepIdx !== -1 ? overStr.slice(0, sepIdx) : overStr;
+    const overUrl = sepIdx !== -1 ? overStr.slice(sepIdx + 2) : null;
+
+    if (sourceContainerId === targetContainerId) {
+      // Same gallery — reorder (only when dropping on a sibling item, not on the container itself)
+      if (!overUrl || url === overUrl) return;
+      if (sourceContainerId === "product") {
+        const urls = pendingProductImageOrder ?? productImages.map(i => i.url);
+        const oldIndex = urls.indexOf(url);
+        const newIndex = urls.indexOf(overUrl);
+        if (oldIndex !== -1 && newIndex !== -1 && oldIndex !== newIndex) {
+          handleProductReorder(arrayMove(urls, oldIndex, newIndex));
+        }
+      } else {
+        const variant = variants.find(v => v.id === sourceContainerId);
+        const gids = pendingVariantGalleries[sourceContainerId] ?? variant?.galleryFileGids ?? [];
+        const variantUrls = gids.map(gid => fileUrlMap[gid]).filter(Boolean) as string[];
+        const oldIndex = variantUrls.indexOf(url);
+        const newIndex = variantUrls.indexOf(overUrl);
+        if (oldIndex !== -1 && newIndex !== -1 && oldIndex !== newIndex) {
+          handleVariantReorder(
+            sourceContainerId,
+            arrayMove(variantUrls, oldIndex, newIndex).map(u => urlToGid[u] ?? u),
+          );
+        }
+      }
+      return;
+    }
+
+    // Cross-gallery: dropping onto variant only (product gallery is source-only)
+    if (targetContainerId === "product") return;
+
+    const gid = urlToGid[url];
+    if (!gid) return;
+
+    if (sourceContainerId !== "product") {
+      // Variant → Variant: move (remove from source, add to target) in single update
+      setPendingVariantGalleries(p => {
+        const targetVariant = variants.find(v => v.id === targetContainerId);
+        const sourceVariant = variants.find(v => v.id === sourceContainerId);
+        const targetExisting = p[targetContainerId] ?? targetVariant?.galleryFileGids ?? [];
+        const sourceCurrent = p[sourceContainerId] ?? sourceVariant?.galleryFileGids ?? [];
+        const result = { ...p };
+        if (!targetExisting.includes(gid)) result[targetContainerId] = [...targetExisting, gid];
+        result[sourceContainerId] = sourceCurrent.filter(g => g !== gid);
+        return result;
+      });
+    } else {
+      // Product → Variant: copy (keep in product gallery)
+      setPendingVariantGalleries(p => {
+        const targetVariant = variants.find(v => v.id === targetContainerId);
+        const existing = p[targetContainerId] ?? targetVariant?.galleryFileGids ?? [];
+        if (existing.includes(gid)) return p;
+        return { ...p, [targetContainerId]: [...existing, gid] };
+      });
+    }
+  }, [pendingProductImageOrder, productImages, variants, pendingVariantGalleries, fileUrlMap, urlToGid, handleProductReorder, handleVariantReorder]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // prepend=true → image lands at position 0 (main image slot, triggered by placeholder click)
   // prepend=false → image appended to end of gallery
@@ -555,6 +648,13 @@ export function VariantImageManager({
     : false;
 
   return (
+    <DndContext
+      sensors={sharedSensors}
+      collisionDetection={closestCenter}
+      onDragStart={handleSharedDragStart}
+      onDragOver={handleSharedDragOver}
+      onDragEnd={handleSharedDragEnd}
+    >
     <Card padding="400">
       <BlockStack gap="300">
         <InlineStack align="space-between" blockAlign="center">
@@ -676,6 +776,7 @@ export function VariantImageManager({
             selectedUrls={selectedUrlsByGallery.get("product") ?? new Set()}
             isDropTarget={activeAction !== null}
             thumbSize={thumbSize}
+            skipDndContext
           />
         </div>
 
@@ -861,6 +962,8 @@ export function VariantImageManager({
                 enabledLanguages={enabledLanguages}
                 currentLanguage={currentLanguage}
                 primaryLocale={primaryLocale}
+                skipDndContext
+                forceOpen={overContainerId === v.id}
               />
               );
             })
@@ -872,5 +975,23 @@ export function VariantImageManager({
         </div>
       </BlockStack>
     </Card>
+    <DragOverlay>
+      {activeDragUrl ? (
+        <img
+          src={activeDragUrl}
+          alt=""
+          style={{
+            width: thumbSize,
+            height: thumbSize,
+            objectFit: "cover",
+            borderRadius: 6,
+            opacity: 0.9,
+            boxShadow: "0 4px 16px rgba(0,0,0,0.3)",
+            pointerEvents: "none",
+          }}
+        />
+      ) : null}
+    </DragOverlay>
+    </DndContext>
   );
 }
