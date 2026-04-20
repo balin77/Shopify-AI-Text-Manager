@@ -588,6 +588,9 @@ export function VariantImageManager({
           </InlineStack>
         </div>
       )}
-    </div>
+        </div>
+        </div>
+      </BlockStack>
+    </Card>
   );
 }
