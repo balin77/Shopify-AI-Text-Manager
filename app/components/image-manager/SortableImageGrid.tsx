@@ -102,14 +102,24 @@ interface SortableThumbnailProps {
   thumbSize: number;
 }
 
+function extractFilename(url: string): string {
+  try {
+    return new URL(url).pathname.split("/").pop() ?? url;
+  } catch {
+    return url.split("/").pop()?.split("?")[0] ?? url;
+  }
+}
+
 function SortableThumbnail({ url, isSelected, meta, onSelect, thumbSize }: SortableThumbnailProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: url });
   const formatBadge = getFormatBadge(url, meta?.mimeType);
   const hasAlt = Boolean(meta?.altText);
+  const filename = extractFilename(url);
 
   return (
     <div
       ref={setNodeRef}
+      title={filename}
       style={{
         transform: CSS.Transform.toString(transform),
         transition,

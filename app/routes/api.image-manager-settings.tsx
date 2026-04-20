@@ -8,18 +8,18 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     where: { shopId: session.shop },
   });
   return json({
-    settings: settings ?? { firstImageBig: false, showAltTags: false, autoAltText: false },
+    settings: settings ?? { firstImageBig: false, showAltTags: false, autoAltText: false, thumbSize: 80 },
   });
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session } = await authenticate.admin(request);
-  const { firstImageBig, showAltTags, autoAltText } = await request.json();
+  const { firstImageBig, showAltTags, autoAltText, thumbSize } = await request.json();
 
   const settings = await db.imageManagerSettings.upsert({
     where: { shopId: session.shop },
-    create: { shopId: session.shop, firstImageBig, showAltTags, autoAltText },
-    update: { firstImageBig, showAltTags, autoAltText },
+    create: { shopId: session.shop, firstImageBig, showAltTags, autoAltText, thumbSize: thumbSize ?? 80 },
+    update: { firstImageBig, showAltTags, autoAltText, ...(thumbSize !== undefined && { thumbSize }) },
   });
 
   return json({ settings });

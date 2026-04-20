@@ -16,6 +16,7 @@ interface ImageManagerSettings {
   firstImageBig: boolean;
   showAltTags: boolean;
   autoAltText: boolean;
+  thumbSize?: number;
 }
 
 interface VariantImageManagerProps {
@@ -50,7 +51,8 @@ export function VariantImageManager({
   const [pendingVariantGalleries, setPendingVariantGalleries] = useState<Record<string, string[]>>({});
   const [webpError, setWebpError] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(true);
-  const [thumbSize, setThumbSize] = useState(80);
+  const [thumbSize, setThumbSize] = useState(imageManagerSettings.thumbSize ?? 80);
+  const thumbSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fetcher = useFetcher();
   // Track current media order so we can include it whenever variant galleries change
   const pendingMediaOrderRef = useRef<Array<{ mediaId: string; position: number }>>([]);
@@ -357,7 +359,18 @@ export function VariantImageManager({
           max={200}
           step={10}
           value={thumbSize}
-          onChange={(e) => setThumbSize(Number(e.target.value))}
+          onChange={(e) => {
+            const val = Number(e.target.value);
+            setThumbSize(val);
+            if (thumbSaveTimer.current) clearTimeout(thumbSaveTimer.current);
+            thumbSaveTimer.current = setTimeout(() => {
+              fetch("/api/image-manager-settings", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ thumbSize: val }),
+              }).catch(() => {});
+            }, 600);
+          }}
           style={{ width: 80, cursor: "pointer", accentColor: "#005bd3" }}
           aria-label="Bildgröße"
         />

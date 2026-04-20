@@ -286,6 +286,7 @@ model ImageManagerSettings {
   firstImageBig Boolean @default(false)
   showAltTags   Boolean @default(false)
   autoAltText   Boolean @default(false)
+  thumbSize     Int     @default(80)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 }

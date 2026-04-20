@@ -406,7 +406,7 @@ export const loader = createContentLoader({
     const showImageManager = canAccessVariantImageManager(plan);
     const imageManagerSettings = await ctx.db.imageManagerSettings.findUnique({
       where: { shopId: ctx.session.shop },
-    }) ?? { firstImageBig: false, showAltTags: false, autoAltText: false };
+    }) ?? { firstImageBig: false, showAltTags: false, autoAltText: false, thumbSize: 80 };
     return { plan, maxProducts: planLimits.maxProducts, productCount, showImageManager, imageManagerSettings };
   },
 });
@@ -791,7 +791,7 @@ export default function ProductsPage() {
             isApplying: imageManagerState.isApplying,
             activeRightTab: imageManagerState.activeRightTab,
             onTabChange: imageManagerState.setActiveRightTab,
-            imageManagerSettings: imageManagerSettings ?? { firstImageBig: false, showAltTags: false, autoAltText: false },
+            imageManagerSettings: imageManagerSettings ?? { firstImageBig: false, showAltTags: false, autoAltText: false, thumbSize: 80 },
           } : undefined}
           imageGalleryReplacement={showImageManager && editor.selectedItem ? (
             <VariantImageManager
@@ -807,7 +807,7 @@ export default function ProductsPage() {
               selectedBulkIds={imageManagerState.selectedBulkIds}
               onRemoveBulk={imageManagerState.handleRemoveBulk}
               onSetAction={imageManagerState.setActiveAction}
-              imageManagerSettings={imageManagerSettings ?? { firstImageBig: false, showAltTags: false, autoAltText: false }}
+              imageManagerSettings={imageManagerSettings ?? { firstImageBig: false, showAltTags: false, autoAltText: false, thumbSize: 80 }}
               onPendingChange={imageManagerState.handlePendingChange}
             />
           ) : undefined}
