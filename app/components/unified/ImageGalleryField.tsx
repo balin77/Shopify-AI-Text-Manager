@@ -64,6 +64,12 @@ interface ImageGalleryFieldProps {
   /** Callback to translate all alt-texts into the current foreign locale */
   onTranslateAllAltTextsForLocale?: () => void;
 
+  /** Callback to copy primary alt-text into current foreign locale */
+  onCopyAltText?: (imageIndex: number) => void;
+
+  /** Callback to copy primary alt-text to all foreign locales */
+  onCopyAltTextToAllLocales?: (imageIndex: number) => void;
+
   /** Callback to translate alt-text (for non-primary locale) */
   onTranslateAltText: (imageIndex: number) => void;
 
@@ -115,6 +121,8 @@ export function ImageGalleryField({
   onGenerateAllAltTexts,
   onTranslateAllAltTexts,
   onTranslateAllAltTextsForLocale,
+  onCopyAltText,
+  onCopyAltTextToAllLocales,
   onTranslateAltText,
   onTranslateAltTextToAllLocales,
   altTextSuggestions = {},
@@ -453,6 +461,8 @@ export function ImageGalleryField({
           placeholder={t.altTextPlaceholder}
           isLoading={isFieldLoading ? isFieldLoading(selectedImageIndex) : false}
           onGenerateAI={isPrimaryLocale ? () => onGenerateAltText(selectedImageIndex) : undefined}
+          onCopy={!isPrimaryLocale && onCopyAltText ? () => onCopyAltText(selectedImageIndex) : undefined}
+          onCopyToAllLocales={isPrimaryLocale && onCopyAltTextToAllLocales ? () => onCopyAltTextToAllLocales(selectedImageIndex) : undefined}
           onTranslate={() => onTranslateAltText(selectedImageIndex)}
           onTranslateToAllLocales={onTranslateAltTextToAllLocales ? () => onTranslateAltTextToAllLocales(selectedImageIndex) : undefined}
           onAcceptSuggestion={() => onAcceptSuggestion(selectedImageIndex)}
@@ -476,6 +486,8 @@ export function ImageGalleryField({
           placeholder={t.altTextPlaceholder}
           isLoading={isFieldLoading ? isFieldLoading(0) : false}
           onGenerateAI={isPrimaryLocale ? () => onGenerateAltText(0) : undefined}
+          onCopy={!isPrimaryLocale && onCopyAltText ? () => onCopyAltText(0) : undefined}
+          onCopyToAllLocales={isPrimaryLocale && onCopyAltTextToAllLocales ? () => onCopyAltTextToAllLocales(0) : undefined}
           onTranslate={() => onTranslateAltText(0)}
           onTranslateToAllLocales={onTranslateAltTextToAllLocales ? () => onTranslateAltTextToAllLocales(0) : undefined}
           onAcceptSuggestion={() => onAcceptSuggestion(0)}

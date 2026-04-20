@@ -830,6 +830,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         optionPositionLabel: t.products?.optionPositionLabel,
                         clearButton: t.products?.clearButton,
                         copyButton: t.products?.copy,
+                        copyToAllLocalesButton: t.products?.copyToAllLocales,
                       }}
                     />
                   </div>

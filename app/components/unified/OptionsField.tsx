@@ -113,6 +113,7 @@ interface OptionsFieldProps {
     optionPositionLabel?: string;
     clearButton?: string;
     copyButton?: string;
+    copyToAllLocalesButton?: string;
   };
 }
 
@@ -260,7 +261,7 @@ export function OptionsField({
                                       loading={translatingFieldIds.has(nameFieldId) || translatingFieldIds.has(entireFieldId)}
                                       disabled={!currentName || translatingFieldIds.has(nameFieldId) || translatingFieldIds.has(entireFieldId)}
                                     >
-                                      {t.copyButton || "Copy"}
+                                      {t.copyToAllLocalesButton || "Copy to all languages"}
                                     </Button>
                                   )}
                                 </div>
@@ -333,7 +334,7 @@ export function OptionsField({
                                       loading={translatingFieldIds.has(nameFieldId) || translatingFieldIds.has(entireFieldId)}
                                       disabled={!currentName || translatingFieldIds.has(nameFieldId) || translatingFieldIds.has(entireFieldId)}
                                     >
-                                      {t.copyButton || "Copy"}
+                                      {t.copyToAllLocalesButton || "Copy to all languages"}
                                     </Button>
                                   )}
                                 </div>
@@ -391,7 +392,7 @@ export function OptionsField({
                                             loading={translatingFieldIds.has(valueFieldId) || translatingFieldIds.has(entireFieldId)}
                                             disabled={!value || translatingFieldIds.has(valueFieldId) || translatingFieldIds.has(entireFieldId)}
                                           >
-                                            {t.copyButton || "Copy"}
+                                            {t.copyToAllLocalesButton || "Copy to all languages"}
                                           </Button>
                                         )}
                                       </div>

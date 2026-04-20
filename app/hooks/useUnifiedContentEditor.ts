@@ -449,6 +449,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     selectedImageIndex, setSelectedImageIndex,
     handleAltTextChange, handleGenerateAltText, handleGenerateAllAltTexts,
     handleAcceptAltText, handleRejectAltText,
+    handleCopyAltText, handleCopyAltTextToAllLocales, pendingCopyAltTextIndexRef,
     handleTranslateAltText, handleTranslateAltTextToAllLocales,
     handleTranslateAllAltTexts, handleTranslateAllAltTextsForLocale,
     handleAcceptAltTextSuggestion, handleAcceptAndTranslateAltText,
@@ -1567,6 +1568,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         markOperationFailed(selectedItemIdRef.current, pendingCopyFieldKeyRef.current);
         pendingCopyFieldKeyRef.current = null;
       }
+      if (pendingCopyAltTextIndexRef.current !== null && selectedItemIdRef.current) {
+        markOperationFailed(selectedItemIdRef.current, `altText_${pendingCopyAltTextIndexRef.current}`);
+        pendingCopyAltTextIndexRef.current = null;
+      }
 
       // If this save was triggered by a translate action, the translate callback already
       // showed its own success toast — only show warnings/errors here, skip the generic "Changes saved".
@@ -2052,6 +2057,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     handleAltTextChange,
     handleGenerateAltText,
     handleGenerateAllAltTexts,
+    handleCopyAltText,
+    handleCopyAltTextToAllLocales,
     handleTranslateAltText,
     handleTranslateAltTextToAllLocales,
     handleTranslateAllAltTexts,

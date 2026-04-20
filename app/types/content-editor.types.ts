@@ -377,6 +377,8 @@ export interface EditorHandlers {
   handleAltTextChange: (imageIndex: number, value: string) => void;
   handleGenerateAltText: (imageIndex: number) => void;
   handleGenerateAllAltTexts: () => void;
+  handleCopyAltText: (imageIndex: number) => void;
+  handleCopyAltTextToAllLocales: (imageIndex: number) => void;
   handleTranslateAltText: (imageIndex: number) => void;
   handleTranslateAltTextToAllLocales: (imageIndex: number) => void;
   handleTranslateAllAltTexts: () => void;

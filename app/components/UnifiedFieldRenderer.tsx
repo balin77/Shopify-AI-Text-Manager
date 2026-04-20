@@ -211,6 +211,8 @@ export function UnifiedFieldRenderer(
         onAltTextChange={handlers.handleAltTextChange}
         onGenerateAltText={handlers.handleGenerateAltText}
         onGenerateAllAltTexts={handlers.handleGenerateAllAltTexts}
+        onCopyAltText={handlers.handleCopyAltText}
+        onCopyAltTextToAllLocales={handlers.handleCopyAltTextToAllLocales}
         onTranslateAltText={handlers.handleTranslateAltText}
         onTranslateAltTextToAllLocales={handlers.handleTranslateAltTextToAllLocales}
         onTranslateAllAltTexts={handlers.handleTranslateAllAltTexts}

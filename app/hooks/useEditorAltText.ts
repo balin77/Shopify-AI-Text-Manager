@@ -12,6 +12,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useLatestRef } from "./useLatestRef";
 import { getItemFieldValue } from "./useUiDataLoader";
+import { markOperationActive, markOperationFailed } from "./useAIOperationsStore";
 import type {
   ShopLocale,
   ContentImage,
@@ -74,9 +75,13 @@ interface UseEditorAltTextReturn {
   handleGenerateAllAltTexts: () => void;
   handleAcceptAltText: (imageIndex: number) => void;
   handleRejectAltText: (imageIndex: number) => void;
+  handleCopyAltText: (imageIndex: number) => void;
+  handleCopyAltTextToAllLocales: (imageIndex: number) => void;
   handleTranslateAltText: (imageIndex: number) => void;
   handleTranslateAltTextToAllLocales: (imageIndex: number) => void;
   handleTranslateAllAltTexts: () => void;
+  /** Ref to pending copy index so save-response handler can clear loading state */
+  pendingCopyAltTextIndexRef: React.MutableRefObject<number | null>;
   handleTranslateAllAltTextsForLocale: () => void;
   handleAcceptAltTextSuggestion: (imageIndex: number) => void;
   handleAcceptAndTranslateAltText: (imageIndex: number) => void;
@@ -127,6 +132,8 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
 
   // Track pending auto-save for alt-texts (set by bulk generation and translation effects)
   const pendingAltTextAutoSaveRef = useRef<Record<number, string> | null>(null);
+  // Track image index of an in-flight copy save so save-response handler can clear loading
+  const pendingCopyAltTextIndexRef = useRef<number | null>(null);
 
   // Send Image to AI feature state
   const [sendImageToAI, setSendImageToAI] = useState(false);
@@ -223,6 +230,83 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
         }
       }
     );
+  };
+
+  const handleCopyAltText = (imageIndex: number) => {
+    if (!selectedItem || !selectedItemId) return;
+    const image = getImageAtIndex(selectedItem, imageIndex);
+    if (!image) return;
+
+    const sourceAltText = image.altText || "";
+    if (!sourceAltText) {
+      showInfoBox(
+        t.content?.noSourceText || "Kein Alt-Text in der Hauptsprache vorhanden",
+        "warning",
+        "Warnung"
+      );
+      return;
+    }
+
+    const newAltTexts = { ...imageAltTexts, [imageIndex]: sourceAltText };
+    setImageAltTexts(newAltTexts);
+    setOriginalAltTexts(newAltTexts);
+
+    markOperationActive(selectedItemId, `altText_${imageIndex}`, "copy");
+    pendingCopyAltTextIndexRef.current = imageIndex;
+
+    const formDataObj: Record<string, string> = {
+      action: "updateContent",
+      itemId: selectedItemId,
+      locale: currentLanguage,
+      primaryLocale,
+    };
+    Object.assign(formDataObj, buildFieldsForSave(editableValuesRef.current, currentLanguage));
+    formDataObj.imageAltTexts = JSON.stringify(newAltTexts);
+
+    savedLocaleRef.current = currentLanguage;
+    isSavePendingRef.current = true;
+    isSaveFromTranslateRef.current = true;
+    safeSubmit(formDataObj, { method: "POST" });
+
+    showInfoBox(t.common?.copied ?? "Copied", "success");
+  };
+
+  const handleCopyAltTextToAllLocales = (imageIndex: number) => {
+    if (!selectedItem || !selectedItemId) return;
+    const image = getImageAtIndex(selectedItem, imageIndex);
+    if (!image) return;
+
+    const targetLocales = enabledLanguages.filter(l => l !== primaryLocale);
+    if (targetLocales.length === 0) return;
+
+    const sourceAltText = imageAltTexts[imageIndex] || image.altText || "";
+    if (!sourceAltText) {
+      showInfoBox(
+        t.content?.noSourceText || "Kein Alt-Text in der Hauptsprache vorhanden",
+        "warning",
+        "Warnung"
+      );
+      return;
+    }
+
+    const capturedItemId = selectedItemId;
+    markOperationActive(capturedItemId, `altText_${imageIndex}`, "copyToAllLocales");
+
+    const saves = targetLocales.map(locale => {
+      const fd = new FormData();
+      fd.set("action", "updateContent");
+      fd.set("itemId", capturedItemId);
+      fd.set("locale", locale);
+      fd.set("primaryLocale", primaryLocale);
+      fd.set("imageAltTexts", JSON.stringify({ [imageIndex]: sourceAltText }));
+      return fetch(window.location.pathname, { method: "POST", body: fd });
+    });
+
+    Promise.all(saves).finally(() => {
+      markOperationFailed(capturedItemId, `altText_${imageIndex}`);
+    });
+
+    showInfoBox(t.common?.copied ?? "Copied", "success");
   };
 
   const handleTranslateAltText = (imageIndex: number) => {
@@ -766,6 +850,9 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     handleGenerateAllAltTexts,
     handleAcceptAltText: handleAcceptAltTextSuggestion,
     handleRejectAltText: handleRejectAltTextSuggestion,
+    handleCopyAltText,
+    handleCopyAltTextToAllLocales,
+    pendingCopyAltTextIndexRef,
     handleTranslateAltText,
     handleTranslateAltTextToAllLocales,
     handleTranslateAllAltTexts,
