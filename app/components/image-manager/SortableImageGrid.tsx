@@ -287,8 +287,8 @@ export function SortableImageGrid({
           transition: "border-color 0.2s, background 0.2s",
         }}
       >
-        {/* Placeholder always first — variant galleries only */}
-        {showPlaceholder && (
+        {/* Placeholder first only when gallery is empty */}
+        {showPlaceholder && imageUrls.length === 0 && (
           <PlaceholderThumbnail
             activeAction={activeAction ?? null}
             onDrop={() => onDropToPlaceholder?.()}
@@ -315,6 +315,16 @@ export function SortableImageGrid({
             />
           ))}
         </SortableContext>
+
+        {/* Placeholder at end when gallery has images */}
+        {showPlaceholder && imageUrls.length > 0 && (
+          <PlaceholderThumbnail
+            activeAction={activeAction ?? null}
+            onDrop={() => onDropToPlaceholder?.()}
+            onUpload={(files) => onUploadToGallery?.(files)}
+            thumbSize={thumbSize}
+          />
+        )}
       </div>
     </DndContext>
   );
