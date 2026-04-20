@@ -15,6 +15,7 @@ interface VariantGallerySectionProps {
   onRemoveFromGallery: (variantId: string, urls: string[]) => void;
   onGenerateAltFromSku: (variantId: string) => void;
   onUploadToGallery: (variantId: string, files: File[]) => void;
+  thumbSize?: number;
 }
 
 export function VariantGallerySection({
@@ -29,6 +30,7 @@ export function VariantGallerySection({
   onRemoveFromGallery,
   onGenerateAltFromSku,
   onUploadToGallery,
+  thumbSize = 80,
 }: VariantGallerySectionProps) {
   const [open, setOpen] = useState(false);
 
@@ -88,6 +90,7 @@ export function VariantGallerySection({
             activeAction={activeAction}
             onDropToPlaceholder={() => onDrop(variant.id)}
             onUploadToGallery={(files) => onUploadToGallery(variant.id, files)}
+            thumbSize={thumbSize}
           />
 
           <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>

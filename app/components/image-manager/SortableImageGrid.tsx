@@ -27,9 +27,10 @@ interface PlaceholderThumbnailProps {
   activeAction: "copy" | "move" | null;
   onDrop: () => void;
   onUpload: (files: File[]) => void;
+  thumbSize: number;
 }
 
-function PlaceholderThumbnail({ activeAction, onDrop, onUpload }: PlaceholderThumbnailProps) {
+function PlaceholderThumbnail({ activeAction, onDrop, onUpload, thumbSize }: PlaceholderThumbnailProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isActionMode = activeAction !== null;
 
@@ -46,8 +47,8 @@ function PlaceholderThumbnail({ activeAction, onDrop, onUpload }: PlaceholderThu
   return (
     <div
       style={{
-        width: 80,
-        height: 80,
+        width: thumbSize,
+        height: thumbSize,
         borderRadius: 6,
         border: `2px dashed ${borderColor}`,
         display: "flex",
@@ -98,9 +99,10 @@ interface SortableThumbnailProps {
   isSelected: boolean;
   meta?: ImageMeta;
   onSelect: (selected: boolean) => void;
+  thumbSize: number;
 }
 
-function SortableThumbnail({ url, isSelected, meta, onSelect }: SortableThumbnailProps) {
+function SortableThumbnail({ url, isSelected, meta, onSelect, thumbSize }: SortableThumbnailProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: url });
   const formatBadge = getFormatBadge(url, meta?.mimeType);
   const hasAlt = Boolean(meta?.altText);
@@ -127,8 +129,8 @@ function SortableThumbnail({ url, isSelected, meta, onSelect }: SortableThumbnai
           alt=""
           draggable={false}
           style={{
-            width: 80,
-            height: 80,
+            width: thumbSize,
+            height: thumbSize,
             objectFit: "cover",
             borderRadius: 6,
             border: isSelected ? "2px solid #005bd3" : "2px solid #e1e3e5",
@@ -203,6 +205,7 @@ interface SortableImageGridProps {
   onSelect?: (url: string, selected: boolean) => void;
   selectedUrls?: Set<string>;
   isDropTarget?: boolean;
+  thumbSize?: number;
   // Placeholder props — only rendered for variant galleries
   activeAction?: "copy" | "move" | null;
   onDropToPlaceholder?: () => void;
@@ -216,6 +219,7 @@ export function SortableImageGrid({
   onSelect,
   selectedUrls = new Set(),
   isDropTarget = false,
+  thumbSize = 80,
   activeAction,
   onDropToPlaceholder,
   onUploadToGallery,
@@ -259,6 +263,7 @@ export function SortableImageGrid({
             activeAction={activeAction ?? null}
             onDrop={() => onDropToPlaceholder?.()}
             onUpload={(files) => onUploadToGallery?.(files)}
+            thumbSize={thumbSize}
           />
         )}
 
@@ -275,6 +280,7 @@ export function SortableImageGrid({
               isSelected={selectedUrls.has(url)}
               meta={imageMetas[url]}
               onSelect={(sel) => onSelect?.(url, sel)}
+              thumbSize={thumbSize}
             />
           ))}
         </SortableContext>

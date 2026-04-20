@@ -50,6 +50,7 @@ export function VariantImageManager({
   const [pendingVariantGalleries, setPendingVariantGalleries] = useState<Record<string, string[]>>({});
   const [webpError, setWebpError] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(true);
+  const [thumbSize, setThumbSize] = useState(80);
   const fetcher = useFetcher();
   // Track current media order so we can include it whenever variant galleries change
   const pendingMediaOrderRef = useRef<Array<{ mediaId: string; position: number }>>([]);
@@ -315,6 +316,7 @@ export function VariantImageManager({
 
       {/* Produktbilder allgemein */}
       <div>
+        <InlineStack align="space-between" blockAlign="center">
         <InlineStack gap="200" blockAlign="center">
           <Text as="h3" variant="headingSm">Produktfotos:</Text>
           {!isLoadingVariants && variants.length > 0 ? (
@@ -349,6 +351,17 @@ export function VariantImageManager({
             <Text as="span" variant="headingSm" tone="subdued">Allgemein</Text>
           )}
         </InlineStack>
+        <input
+          type="range"
+          min={80}
+          max={200}
+          step={10}
+          value={thumbSize}
+          onChange={(e) => setThumbSize(Number(e.target.value))}
+          style={{ width: 80, cursor: "pointer", accentColor: "#005bd3" }}
+          aria-label="Bildgröße"
+        />
+        </InlineStack>
         <div style={{ marginTop: 8 }}>
           <SortableImageGrid
             containerId="product"
@@ -358,6 +371,7 @@ export function VariantImageManager({
             onSelect={makeSelectHandler(null)}
             selectedUrls={selectedGalleryUrls}
             isDropTarget={activeAction !== null}
+            thumbSize={thumbSize}
           />
         </div>
 
@@ -434,6 +448,7 @@ export function VariantImageManager({
                 onRemoveFromGallery={handleRemoveFromGallery}
                 onGenerateAltFromSku={handleGenerateAltFromSku}
                 onUploadToGallery={handleUploadToVariant}
+                thumbSize={thumbSize}
               />
             ))
           )}
