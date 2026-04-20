@@ -607,6 +607,9 @@ export const de = {
     altBadge: "ALT",
     noAltBadge: "KEIN ALT",
     upload: "Upload",
+    seoScoreTab: "SEO Score",
+    imagesTab: "📁 Bilder",
+    uploadTitle: "Bilder hochladen",
   },
 
   // Common

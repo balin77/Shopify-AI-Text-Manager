@@ -921,7 +921,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   }}
                   onClick={() => imageManager.onTabChange("seo")}
                 >
-                  SEO Score
+                  {t.imageManager?.seoScoreTab ?? "SEO Score"}
                 </button>
                 <button
                   style={{
@@ -937,7 +937,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   }}
                   onClick={() => imageManager.onTabChange("images")}
                 >
-                  📁 Bilder
+                  {t.imageManager?.imagesTab ?? "📁 Images"}
                 </button>
               </div>
             )}

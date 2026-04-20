@@ -609,6 +609,9 @@ export const es: Translation = {
     altBadge: "ALT",
     noAltBadge: "SIN ALT",
     upload: "Subir",
+    seoScoreTab: "SEO Score",
+    imagesTab: "📁 Imágenes",
+    uploadTitle: "Subir imágenes",
   },
 
   // Common

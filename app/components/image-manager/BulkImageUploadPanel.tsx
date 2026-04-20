@@ -1,5 +1,6 @@
 import { useCallback } from "react";
 import { DropZone, Text, Button, InlineStack } from "@shopify/polaris";
+import { useI18n } from "../../contexts/I18nContext";
 import type { StagedItem } from "./types";
 
 const ALLOWED_MIME = ["image/jpeg", "image/png", "image/gif", "image/webp", "image/svg+xml"];
@@ -23,6 +24,7 @@ export function BulkImageUploadPanel({
   onSetAction,
   onRemove,
 }: BulkImageUploadPanelProps) {
+  const { t } = useI18n();
   const handleDrop = useCallback(async (_dropFiles: File[], acceptedFiles: File[]) => {
     const validFiles = acceptedFiles.filter(f => ALLOWED_MIME.includes(f.type));
     if (validFiles.length === 0) return;
@@ -103,7 +105,7 @@ export function BulkImageUploadPanel({
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <DropZone onDrop={handleDrop} accept={ALLOWED_MIME.join(",")} allowMultiple>
-        <DropZone.FileUpload actionTitle="Bilder hochladen" actionHint="JPG, PNG, GIF, WebP, SVG" />
+        <DropZone.FileUpload actionTitle={t.imageManager.uploadTitle} actionHint="JPG, PNG, GIF, WebP, SVG" />
       </DropZone>
 
       {items.length > 0 && (
@@ -186,7 +188,7 @@ export function BulkImageUploadPanel({
               onClick={() => onSetAction(activeAction === "copy" ? null : "copy")}
               disabled={!hasSelected}
             >
-              Kopieren
+              {t.imageManager.copy}
             </Button>
             <Button
               size="slim"
@@ -194,7 +196,7 @@ export function BulkImageUploadPanel({
               onClick={() => onSetAction(activeAction === "move" ? null : "move")}
               disabled={!hasSelected}
             >
-              Verschieben
+              {t.imageManager.move}
             </Button>
             <Button
               size="slim"
@@ -202,7 +204,7 @@ export function BulkImageUploadPanel({
               onClick={() => onRemove([...selectedUniqueIds])}
               disabled={!hasSelected}
             >
-              Entfernen
+              {t.imageManager.remove.replace(" ({count})", "")}
             </Button>
           </InlineStack>
         </>
