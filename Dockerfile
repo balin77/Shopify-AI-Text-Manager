@@ -48,6 +48,7 @@ COPY scripts ./scripts/
 
 # Copy middleware and other app files needed at runtime by server.js
 COPY app/middleware ./app/middleware/
+COPY app/utils ./app/utils/
 
 EXPOSE 3000
 
