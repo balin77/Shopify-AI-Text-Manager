@@ -59,7 +59,7 @@ export function VariantImageManager({
   const [variants, setVariants] = useState<VariantWithGallery[]>([]);
   const [isLoadingVariants, setIsLoadingVariants] = useState(false);
   const [variantError, setVariantError] = useState<string | null>(null);
-  const [productImageOrder, setProductImageOrder] = useState<string[]>([]);
+  const [pendingProductImageOrder, setPendingProductImageOrder] = useState<string[] | null>(null);
   // `${galleryId}::${url}` → sourceVariantId (null = product gallery)
   // Compound keys ensure same image URL selected in gallery A doesn't affect gallery B
   const [selectedGalleryItems, setSelectedGalleryItems] = useState<Map<string, string | null>>(new Map());
@@ -84,13 +84,9 @@ export function VariantImageManager({
   const pendingMediaOrderRef = useRef<Array<{ mediaId: string; position: number }>>([]);
 
   useEffect(() => {
-    setProductImageOrder(productImages.map(i => i.url));
-  }, [productImages]);
-
-  useEffect(() => {
     if (!resetKey) return;
     setPendingVariantGalleries({});
-    setProductImageOrder(productImages.map(i => i.url));
+    setPendingProductImageOrder(null);
     setSelectedGalleryItems(new Map());
     pendingMediaOrderRef.current = [];
     dirtyUrlsRef.current.clear();
@@ -236,12 +232,13 @@ export function VariantImageManager({
 
   // Product image URLs to display (all or only unassigned)
   const displayedProductUrls = useMemo(() => {
-    if (showAll || variants.length === 0) return productImageOrder;
-    return productImageOrder.filter(url => {
+    const order = pendingProductImageOrder ?? productImages.map(i => i.url);
+    if (showAll || variants.length === 0) return order;
+    return order.filter(url => {
       const gid = urlToGid[url];
       return !gid || !assignedGids.has(gid);
     });
-  }, [showAll, productImageOrder, urlToGid, assignedGids, variants.length]);
+  }, [showAll, pendingProductImageOrder, productImages, urlToGid, assignedGids, variants.length]);
 
   // Per-gallery selected URL sets — same URL in different galleries is independent
   const selectedUrlsByGallery = useMemo(() => {
@@ -276,7 +273,7 @@ export function VariantImageManager({
   }, []);
 
   const handleProductReorder = useCallback((newUrls: string[]) => {
-    setProductImageOrder(newUrls);
+    setPendingProductImageOrder(newUrls);
     const mediaOrder = newUrls
       .map((url, idx) => {
         const img = productImages.find(i => i.url === url);
