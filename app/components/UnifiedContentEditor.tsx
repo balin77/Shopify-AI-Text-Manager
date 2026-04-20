@@ -116,6 +116,9 @@ interface UnifiedContentEditorProps {
   /** Optional: Sub-resource handlers */
   subResourceHandlers?: SubResourceHandlers;
 
+  /** Optional: replaces the image-gallery field for Pro/Max users */
+  imageGalleryReplacement?: React.ReactNode;
+
   /** Optional: Variant Image Manager für Pro/Max */
   showImageManager?: boolean;
 
@@ -162,6 +165,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     subResourceHandlers,
     showImageManager,
     imageManager,
+    imageGalleryReplacement,
   } = props;
 
   // Local state for search input - synced with fieldPagination.search
@@ -733,7 +737,11 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         && state.currentLanguage === primaryLocale
                         && !ENABLE_THEME_PRIMARY_EDIT;
 
-                      return fieldDefinitions.map((field) => (
+                      return fieldDefinitions.map((field) => {
+                        if (field.type === "image-gallery" && imageGalleryReplacement) {
+                          return <div key={field.key}>{imageGalleryReplacement}</div>;
+                        }
+                        return (
                         <UnifiedFieldRenderer
                           key={field.key}
                           field={field}
@@ -772,7 +780,8 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                           fetcherState={fetcherState}
                           fetcherFormData={fetcherFormData}
                         />
-                      ));
+                        );
+                      });
                     })()}
 
                     {/* Bottom Pagination (for easier navigation after scrolling) */}

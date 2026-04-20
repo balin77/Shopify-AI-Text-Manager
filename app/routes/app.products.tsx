@@ -791,11 +791,7 @@ export default function ProductsPage() {
             onTabChange: imageManagerState.setActiveRightTab,
             imageManagerSettings: imageManagerSettings ?? { firstImageBig: false, showAltTags: false, autoAltText: false },
           } : undefined}
-        />
-
-        {/* Variant Image Manager (Pro/Max) — im Hauptbereich unterhalb der Standard-Felder */}
-        {showImageManager && editor.selectedItem && imageManagerState.activeRightTab === "seo" && (
-          <div style={{ padding: "0 16px 24px" }}>
+          imageGalleryReplacement={showImageManager && editor.selectedItem ? (
             <VariantImageManager
               productId={editor.selectedItem.id}
               productImages={(editor.selectedItem.images ?? []).map((img: any) => ({
@@ -811,8 +807,8 @@ export default function ProductsPage() {
               imageManagerSettings={imageManagerSettings ?? { firstImageBig: false, showAltTags: false, autoAltText: false }}
               onPendingChange={imageManagerState.handlePendingChange}
             />
-          </div>
-        )}
+          ) : undefined}
+        />
       </div>
     </div>
   );
