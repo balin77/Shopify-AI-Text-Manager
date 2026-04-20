@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { Text, Button, InlineStack, Spinner, Banner, Divider, Card, BlockStack } from "@shopify/polaris";
 import { useFetcher } from "@remix-run/react";
+import { useI18n } from "../../contexts/I18nContext";
 import { SortableImageGrid } from "./SortableImageGrid";
 import { VariantGallerySection } from "./VariantGallerySection";
 import type { StagedItem, VariantWithGallery, ImageMeta } from "./types";
@@ -50,6 +51,7 @@ export function VariantImageManager({
   primaryLocale,
   productTitle,
 }: VariantImageManagerProps) {
+  const { t } = useI18n();
   const [variants, setVariants] = useState<VariantWithGallery[]>([]);
   const [isLoadingVariants, setIsLoadingVariants] = useState(false);
   const [variantError, setVariantError] = useState<string | null>(null);
@@ -68,9 +70,10 @@ export function VariantImageManager({
   const fetcher = useFetcher();
   // Alt text editing state
   const [localAltTexts, setLocalAltTexts] = useState<Record<string, string>>({});
-  const [altTextLoading, setAltTextLoading] = useState<Record<string, boolean>>({});
-  const altTextFetcher = useFetcher<any>();
+  const altTextFetcher = useFetcher<any>();       // generate / translate (returns text)
+  const saveAltTextFetcher = useFetcher<any>();   // save (writes to Shopify)
   const prevAltFetcherData = useRef<any>(null);
+  const productGalleryBlurSkipRef = useRef(false);
   // Track current media order so we can include it whenever variant galleries change
   const pendingMediaOrderRef = useRef<Array<{ mediaId: string; position: number }>>([]);
 
@@ -113,7 +116,7 @@ export function VariantImageManager({
           : mapped;
         setVariants(realVariants.sort((a, b) => a.position - b.position));
       })
-      .catch(() => setVariantError("Varianten konnten nicht geladen werden."))
+      .catch(() => setVariantError(t.imageManager.variantsLoadError))
       .finally(() => setIsLoadingVariants(false));
   }, [productId]);
 
@@ -356,7 +359,7 @@ export function VariantImageManager({
       setIsConvertingWebP(true);
       startWebPPolling(productId);
     } catch {
-      setWebpError("WebP-Konvertierung konnte nicht gestartet werden.");
+      setWebpError(t.imageManager.webpConvertError);
     }
   }, [productId, productImages, startWebPPolling]);
 
@@ -393,7 +396,7 @@ export function VariantImageManager({
     }
   }, [variants]);
 
-  // Watch altTextFetcher for AI generate / translate results
+  // Watch altTextFetcher for AI generate / translate results → auto-save result
   useEffect(() => {
     const data = altTextFetcher.data;
     if (!data || data === prevAltFetcherData.current) return;
@@ -403,15 +406,34 @@ export function VariantImageManager({
     if (url) {
       if (data.actionType === "generateAltText" && data.altText !== undefined) {
         setLocalAltTexts(p => ({ ...p, [url]: data.altText }));
+        // Auto-save the generated result immediately
+        const mediaId = urlToGid[url];
+        if (mediaId) {
+          const form = new FormData();
+          form.append("_action", "saveImageAltText");
+          form.append("mediaId", mediaId);
+          form.append("altText", data.altText);
+          if (currentLanguage) form.append("locale", currentLanguage);
+          if (primaryLocale) form.append("primaryLocale", primaryLocale);
+          saveAltTextFetcher.submit(form, { method: "post" });
+        }
       }
       if (data.actionType === "translateAltText" && data.translatedAltText !== undefined) {
         setLocalAltTexts(p => ({ ...p, [url]: data.translatedAltText }));
+        // Auto-save the translated result immediately
+        const mediaId = urlToGid[url];
+        if (mediaId) {
+          const form = new FormData();
+          form.append("_action", "saveImageAltText");
+          form.append("mediaId", mediaId);
+          form.append("altText", data.translatedAltText);
+          if (currentLanguage) form.append("locale", currentLanguage);
+          if (primaryLocale) form.append("primaryLocale", primaryLocale);
+          saveAltTextFetcher.submit(form, { method: "post" });
+        }
       }
     }
-    if (data.actionType === "saveImageAltText" || data.actionType === "generateAltText" || data.actionType === "translateAltText") {
-      setAltTextLoading({});
-    }
-  }, [altTextFetcher.data, productImages]);
+  }, [altTextFetcher.data, productImages]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleAltTextChange = useCallback((url: string, value: string) => {
     setLocalAltTexts(p => ({ ...p, [url]: value }));
@@ -420,19 +442,17 @@ export function VariantImageManager({
   const handleSaveAltText = useCallback((url: string, altText: string) => {
     const mediaId = urlToGid[url];
     if (!mediaId) return;
-    setAltTextLoading(p => ({ ...p, [url]: true }));
     const form = new FormData();
     form.append("_action", "saveImageAltText");
     form.append("mediaId", mediaId);
     form.append("altText", altText);
     if (currentLanguage) form.append("locale", currentLanguage);
     if (primaryLocale) form.append("primaryLocale", primaryLocale);
-    altTextFetcher.submit(form, { method: "post" });
-  }, [urlToGid, currentLanguage, primaryLocale, altTextFetcher]);
+    saveAltTextFetcher.submit(form, { method: "post" });
+  }, [urlToGid, currentLanguage, primaryLocale, saveAltTextFetcher]);
 
   const handleGenerateAltTextForImage = useCallback((url: string) => {
     const imageIndex = productImages.findIndex(i => i.url === url);
-    setAltTextLoading(p => ({ ...p, [url]: true }));
     const form = new FormData();
     form.append("_action", "generateAltText");
     form.append("imageIndex", String(Math.max(0, imageIndex)));
@@ -445,7 +465,6 @@ export function VariantImageManager({
   const handleTranslateAltTextForImage = useCallback((url: string, sourceAltText: string) => {
     const imageIndex = productImages.findIndex(i => i.url === url);
     if (!currentLanguage) return;
-    setAltTextLoading(p => ({ ...p, [url]: true }));
     const form = new FormData();
     form.append("_action", "translateAltText");
     form.append("imageIndex", String(Math.max(0, imageIndex)));
@@ -461,17 +480,34 @@ export function VariantImageManager({
 
   const hasAnySelection = selectedBulkIds.size > 0 || selectedGalleryItems.size > 0;
 
+  const isPrimaryLocale = !currentLanguage || currentLanguage === primaryLocale;
+
+  // i18n strings for alt text editor
+  const altTextT = {
+    generateAltText: t.products?.generateAltText,
+    translateAltText: t.products?.translateAltText,
+    altTextLabel: t.products?.altTextLabel,
+    altTextPlaceholder: t.products?.altTextPlaceholder,
+  };
+
+  // Single selected URL in product gallery (for inline alt text editor)
+  const productSelectedUrls = selectedUrlsByGallery.get("product") ?? new Set<string>();
+  const productSingleSelected = productSelectedUrls.size === 1 ? [...productSelectedUrls][0] : null;
+  const productCurrentAltText = productSingleSelected
+    ? (localAltTexts[productSingleSelected] ?? imageMetas[productSingleSelected]?.altText ?? "")
+    : "";
+
   return (
     <Card padding="400">
       <BlockStack gap="300">
         <InlineStack align="space-between" blockAlign="center">
-          <Text as="h3" variant="headingSm">Image Manager</Text>
+          <Text as="h3" variant="headingSm">{t.imageManager.title}</Text>
           <Button
             size="slim"
             variant="plain"
             onClick={() => setIsExpanded(e => !e)}
           >
-            {isExpanded ? "Verkleinern ↑" : "Vergrößern ↓"}
+            {isExpanded ? t.imageManager.collapse : t.imageManager.expand}
           </Button>
         </InlineStack>
 
@@ -492,11 +528,11 @@ export function VariantImageManager({
       <div>
         <InlineStack align="space-between" blockAlign="center">
         <InlineStack gap="200" blockAlign="center">
-          <Text as="h3" variant="headingSm">Produktfotos:</Text>
+          <Text as="h3" variant="headingSm">{t.imageManager.productPhotos}</Text>
           {!isLoadingVariants && variants.length > 0 ? (
             <InlineStack gap="0" blockAlign="center">
               {(["all", "unassigned"] as const).map((mode, i) => {
-                const label = mode === "all" ? "Alle" : "Nicht zugewiesen";
+                const label = mode === "all" ? t.imageManager.all : t.imageManager.unassigned;
                 const active = mode === "all" ? showAll : !showAll;
                 return (
                   <span key={mode}>
@@ -522,7 +558,7 @@ export function VariantImageManager({
               })}
             </InlineStack>
           ) : (
-            <Text as="span" variant="headingSm" tone="subdued">Allgemein</Text>
+            <Text as="span" variant="headingSm" tone="subdued">{t.imageManager.general}</Text>
           )}
         </InlineStack>
         <input
@@ -544,7 +580,7 @@ export function VariantImageManager({
             }, 600);
           }}
           style={{ width: 80, cursor: "pointer", accentColor: "#005bd3" }}
-          aria-label="Bildgröße"
+          aria-label={t.imageManager.thumbSizeLabel}
         />
         </InlineStack>
         <div style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 6 }}>
@@ -557,9 +593,9 @@ export function VariantImageManager({
               displayedProductUrls.forEach(url => handler(url, e.target.checked));
             }}
             style={{ width: 15, height: 15, cursor: "pointer", accentColor: "#005bd3" }}
-            aria-label="Alle Produktbilder auswählen"
+            aria-label={t.imageManager.selectAllProductImagesLabel}
           />
-          <Text as="span" variant="bodySm" tone="subdued">Alle auswählen</Text>
+          <Text as="span" variant="bodySm" tone="subdued">{t.imageManager.selectAll}</Text>
         </div>
         <div style={{ marginTop: 8 }}>
           <SortableImageGrid
@@ -578,29 +614,99 @@ export function VariantImageManager({
         {selectedGalleryItems.size > 0 && (
           <div style={{ marginTop: 6, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
             <Text as="span" variant="bodySm" tone="subdued">
-              {`${selectedGalleryItems.size} ausgewählt`}
+              {t.imageManager.selectedCount.replace("{count}", String(selectedGalleryItems.size))}
             </Text>
             <Button
               size="slim"
               variant={activeAction === "copy" ? "primary" : "secondary"}
               onClick={() => onSetAction(activeAction === "copy" ? null : "copy")}
             >
-              {activeAction === "copy" ? "Kopieren aktiv ✕" : "Kopieren"}
+              {activeAction === "copy" ? t.imageManager.copyActive : t.imageManager.copy}
             </Button>
             <Button
               size="slim"
               variant={activeAction === "move" ? "primary" : "secondary"}
               onClick={() => onSetAction(activeAction === "move" ? null : "move")}
             >
-              {activeAction === "move" ? "Verschieben aktiv ✕" : "Verschieben"}
+              {activeAction === "move" ? t.imageManager.moveActive : t.imageManager.move}
             </Button>
             <Button
               size="slim"
               variant="plain"
               onClick={() => { setSelectedGalleryItems(new Map()); onSetAction(null); }}
             >
-              Auswahl aufheben
+              {t.imageManager.clearSelection}
             </Button>
+          </div>
+        )}
+
+        {/* Alt text editor for product gallery — only when exactly 1 image is selected */}
+        {productSingleSelected && (
+          <div style={{
+            marginTop: 10,
+            padding: "10px 12px",
+            background: "#f6f6f7",
+            borderRadius: 6,
+            border: "1px solid #e1e3e5",
+          }}>
+            <div style={{ marginBottom: 6 }}>
+              <Text as="span" variant="bodySm" tone="subdued">
+                {altTextT.altTextLabel ?? "Alt text"}
+              </Text>
+            </div>
+            <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+              <input
+                type="text"
+                value={productCurrentAltText}
+                onChange={(e) => handleAltTextChange(productSingleSelected, e.target.value)}
+                placeholder={altTextT.altTextPlaceholder ?? "Enter alt text…"}
+                style={{
+                  flex: "1 1 200px",
+                  minWidth: 180,
+                  padding: "5px 8px",
+                  fontSize: 13,
+                  border: "1px solid #c9cccf",
+                  borderRadius: 4,
+                  outline: "none",
+                  background: "white",
+                }}
+                onFocus={(e) => { e.target.style.borderColor = "#005bd3"; }}
+                onBlur={(e) => {
+                  e.target.style.borderColor = "#c9cccf";
+                  if (productGalleryBlurSkipRef.current) {
+                    productGalleryBlurSkipRef.current = false;
+                    return;
+                  }
+                  handleSaveAltText(productSingleSelected, e.target.value);
+                }}
+              />
+              <div style={{ display: "flex", gap: 4, flexShrink: 0, flexWrap: "wrap" }}>
+                {isPrimaryLocale && (
+                  <div onMouseDown={() => { productGalleryBlurSkipRef.current = true; }}>
+                    <Button
+                      size="slim"
+                      disabled={altTextFetcher.state !== "idle"}
+                      loading={altTextFetcher.state !== "idle"}
+                      onClick={() => handleGenerateAltTextForImage(productSingleSelected)}
+                    >
+                      {`✨ ${altTextT.generateAltText ?? "Generate with AI"}`}
+                    </Button>
+                  </div>
+                )}
+                {!isPrimaryLocale && (
+                  <div onMouseDown={() => { productGalleryBlurSkipRef.current = true; }}>
+                    <Button
+                      size="slim"
+                      disabled={altTextFetcher.state !== "idle"}
+                      loading={altTextFetcher.state !== "idle"}
+                      onClick={() => handleTranslateAltTextForImage(productSingleSelected, productCurrentAltText)}
+                    >
+                      {`🌍 ${altTextT.translateAltText ?? "Translate"}`}
+                    </Button>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         )}
       </div>
@@ -610,10 +716,10 @@ export function VariantImageManager({
       {/* Varianten-Galerien */}
       <div>
         <InlineStack align="space-between" blockAlign="center">
-          <Text as="h3" variant="headingSm">Varianten-Galerien</Text>
+          <Text as="h3" variant="headingSm">{t.imageManager.variantGalleries}</Text>
           {hasAnySelection && activeAction && (
             <Text as="span" variant="bodySm" tone="subdued">
-              {activeAction === "copy" ? "Kopieren: Galerie-Placeholder klicken" : "Verschieben: Galerie-Placeholder klicken"}
+              {activeAction === "copy" ? t.imageManager.copyHint : t.imageManager.moveHint}
             </Text>
           )}
         </InlineStack>
@@ -626,7 +732,7 @@ export function VariantImageManager({
           ) : variantError ? (
             <Banner tone="warning"><p>{variantError}</p></Banner>
           ) : variants.length === 0 ? (
-            <Text as="p" tone="subdued">Keine Varianten gefunden.</Text>
+            <Text as="p" tone="subdued">{t.imageManager.noVariants}</Text>
           ) : (
             variants.map(v => {
               const storedGids = pendingVariantGalleries[v.id] ?? v.galleryFileGids;
@@ -658,13 +764,14 @@ export function VariantImageManager({
                 onUploadToGallery={handleUploadToVariant}
                 thumbSize={thumbSize}
                 localAltTexts={localAltTexts}
-                isAltTextLoading={Object.values(altTextLoading).some(Boolean)}
+                isAltTextLoading={altTextFetcher.state !== "idle"}
                 onAltTextChange={handleAltTextChange}
                 onSaveAltText={handleSaveAltText}
                 onGenerateAltText={handleGenerateAltTextForImage}
                 onTranslateAltText={handleTranslateAltTextForImage}
                 currentLanguage={currentLanguage}
                 primaryLocale={primaryLocale}
+                t={altTextT}
               />
               );
             })
@@ -678,8 +785,8 @@ export function VariantImageManager({
           <InlineStack gap="200" blockAlign="center">
             <Button size="slim" onClick={handleConvertToWebP} disabled={isConvertingWebP}>
               {isConvertingWebP
-                ? "WebP-Konvertierung läuft…"
-                : `${nonWebpCount} Bild${nonWebpCount !== 1 ? "er" : ""} → WebP konvertieren`}
+                ? t.imageManager.webpConverting
+                : t.imageManager.webpConvertButton.replace("{count}", String(nonWebpCount))}
             </Button>
             {isConvertingWebP && <Spinner size="small" />}
           </InlineStack>

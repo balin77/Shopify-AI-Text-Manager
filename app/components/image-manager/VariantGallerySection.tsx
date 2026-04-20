@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { Text, Button, InlineStack, Collapsible, Badge } from "@shopify/polaris";
+import { useI18n } from "../../contexts/I18nContext";
 import { SortableImageGrid } from "./SortableImageGrid";
 import type { VariantWithGallery, ImageMeta } from "./types";
 
@@ -16,7 +17,6 @@ interface VariantGallerySectionProps {
   onGenerateAltFromSku: (variantId: string) => void;
   onUploadToGallery: (variantId: string, files: File[]) => void;
   thumbSize?: number;
-  // Alt text editing
   localAltTexts?: Record<string, string>;
   isAltTextLoading?: boolean;
   onAltTextChange?: (url: string, value: string) => void;
@@ -49,7 +49,9 @@ export function VariantGallerySection({
   currentLanguage,
   primaryLocale,
 }: VariantGallerySectionProps) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
+  const skipNextBlurRef = useRef(false);
 
   const urls = variant.galleryFileGids
     .map(gid => fileUrlMap[gid])
@@ -99,7 +101,7 @@ export function VariantGallerySection({
             }}
             onClick={(e) => e.stopPropagation()}
             style={{ width: 15, height: 15, cursor: "pointer", accentColor: "#005bd3", flexShrink: 0 }}
-            aria-label={`Alle Bilder von ${variant.title} auswählen`}
+            aria-label={t.imageManager.selectAllVariantLabel.replace("{title}", variant.title)}
           />
           <Text as="span" variant="headingSm">{variant.title}</Text>
           {variant.sku && (
@@ -137,13 +139,12 @@ export function VariantGallerySection({
                 variant="secondary"
                 onClick={() => onRemoveFromGallery(variant.id, localSelectedUrls)}
               >
-                {`Entfernen (${localSelectedUrls.length})`}
+                {t.imageManager.remove.replace("{count}", String(localSelectedUrls.length))}
               </Button>
             )}
-
             {variant.sku && (
               <Button size="slim" onClick={() => onGenerateAltFromSku(variant.id)}>
-                Alt-Text aus SKU
+                {t.imageManager.altTextFromSku}
               </Button>
             )}
           </div>
@@ -159,7 +160,7 @@ export function VariantGallerySection({
             }}>
               <div style={{ marginBottom: 6 }}>
                 <Text as="span" variant="bodySm" tone="subdued">
-                  Alt-Text für ausgewähltes Bild
+                  {t.imageManager.altTextForSelected}
                 </Text>
               </div>
               <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
@@ -167,7 +168,7 @@ export function VariantGallerySection({
                   type="text"
                   value={currentAltText}
                   onChange={(e) => onAltTextChange?.(singleSelectedUrl, e.target.value)}
-                  placeholder="Alt-Text eingeben…"
+                  placeholder={t.imageManager.altTextPlaceholder}
                   style={{
                     flex: "1 1 200px",
                     minWidth: 180,
@@ -179,7 +180,14 @@ export function VariantGallerySection({
                     background: "white",
                   }}
                   onFocus={(e) => { e.target.style.borderColor = "#005bd3"; }}
-                  onBlur={(e) => { e.target.style.borderColor = "#c9cccf"; }}
+                  onBlur={(e) => {
+                    e.target.style.borderColor = "#c9cccf";
+                    if (skipNextBlurRef.current) {
+                      skipNextBlurRef.current = false;
+                      return;
+                    }
+                    onSaveAltText(singleSelectedUrl, e.target.value);
+                  }}
                 />
                 <div style={{ display: "flex", gap: 4, flexShrink: 0, flexWrap: "wrap" }}>
                   {isPrimaryLocale && onGenerateAltText && (
@@ -187,9 +195,10 @@ export function VariantGallerySection({
                       size="slim"
                       disabled={isAltTextLoading}
                       loading={isAltTextLoading}
+                      onMouseDown={() => { skipNextBlurRef.current = true; }}
                       onClick={() => onGenerateAltText(singleSelectedUrl)}
                     >
-                      KI generieren
+                      {`✨ ${t.imageManager.aiGenerate}`}
                     </Button>
                   )}
                   {!isPrimaryLocale && onTranslateAltText && (
@@ -197,20 +206,12 @@ export function VariantGallerySection({
                       size="slim"
                       disabled={isAltTextLoading}
                       loading={isAltTextLoading}
+                      onMouseDown={() => { skipNextBlurRef.current = true; }}
                       onClick={() => onTranslateAltText(singleSelectedUrl, currentAltText)}
                     >
-                      Übersetzen
+                      {`🌍 ${t.imageManager.translateAlt}`}
                     </Button>
                   )}
-                  <Button
-                    size="slim"
-                    variant="primary"
-                    disabled={isAltTextLoading}
-                    loading={isAltTextLoading}
-                    onClick={() => onSaveAltText(singleSelectedUrl, currentAltText)}
-                  >
-                    Speichern
-                  </Button>
                 </div>
               </div>
             </div>
