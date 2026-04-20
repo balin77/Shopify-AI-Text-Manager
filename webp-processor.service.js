@@ -145,11 +145,22 @@ export class WebPProcessorService {
           },
         }),
       });
+      if (!stagedRes.ok) {
+        const body = await stagedRes.text();
+        await this.failTask(task.id, `Staged upload HTTP ${stagedRes.status}: ${body}`);
+        return;
+      }
       const stagedData = await stagedRes.json();
+      const userErrors = stagedData.data?.stagedUploadsCreate?.userErrors ?? [];
+      if (userErrors.length > 0) {
+        await this.failTask(task.id, `Staged upload userErrors: ${JSON.stringify(userErrors)}`);
+        return;
+      }
       const target = stagedData.data?.stagedUploadsCreate?.stagedTargets?.[0];
 
       if (!target) {
-        await this.failTask(task.id, "Staged upload creation failed");
+        console.error("[WebPProcessor] Unexpected stagedUploadsCreate response:", JSON.stringify(stagedData));
+        await this.failTask(task.id, "Staged upload creation failed: no target returned");
         return;
       }
 
