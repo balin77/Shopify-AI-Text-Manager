@@ -850,6 +850,7 @@ export default function ProductsPage() {
               currentLanguage={editor.state.currentLanguage}
               primaryLocale={primaryLocale}
               productTitle={editor.selectedItem.title}
+              enabledLanguages={shopLocales.map((l: any) => l.locale)}
             />
           ) : undefined}
         />

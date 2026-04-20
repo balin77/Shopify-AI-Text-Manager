@@ -23,6 +23,8 @@ interface VariantGallerySectionProps {
   onSaveAltText?: (url: string, altText: string) => void;
   onGenerateAltText?: (url: string) => void;
   onTranslateAltText?: (url: string, sourceAltText: string) => void;
+  onTranslateAltToAllLocales?: (url: string, sourceAltText: string) => void;
+  enabledLanguages?: string[];
   currentLanguage?: string;
   primaryLocale?: string;
 }
@@ -46,6 +48,8 @@ export function VariantGallerySection({
   onSaveAltText,
   onGenerateAltText,
   onTranslateAltText,
+  onTranslateAltToAllLocales,
+  enabledLanguages = [],
   currentLanguage,
   primaryLocale,
 }: VariantGallerySectionProps) {
@@ -199,6 +203,18 @@ export function VariantGallerySection({
                         onClick={() => onGenerateAltText(singleSelectedUrl)}
                       >
                         {`✨ ${t.imageManager.aiGenerate}`}
+                      </Button>
+                    </div>
+                  )}
+                  {isPrimaryLocale && onTranslateAltToAllLocales && enabledLanguages.filter(l => l !== primaryLocale).length > 0 && (
+                    <div onMouseDown={() => { skipNextBlurRef.current = true; }}>
+                      <Button
+                        size="slim"
+                        disabled={isAltTextLoading}
+                        loading={isAltTextLoading}
+                        onClick={() => onTranslateAltToAllLocales(singleSelectedUrl, currentAltText)}
+                      >
+                        {`🌍 ${t.imageManager.translateAltAll}`}
                       </Button>
                     </div>
                   )}

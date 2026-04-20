@@ -34,6 +34,7 @@ interface VariantImageManagerProps {
   currentLanguage?: string;
   primaryLocale?: string;
   productTitle?: string;
+  enabledLanguages?: string[];
 }
 
 export function VariantImageManager({
@@ -50,6 +51,7 @@ export function VariantImageManager({
   currentLanguage,
   primaryLocale,
   productTitle,
+  enabledLanguages = [],
 }: VariantImageManagerProps) {
   const { t } = useI18n();
   const [variants, setVariants] = useState<VariantWithGallery[]>([]);
@@ -477,6 +479,21 @@ export function VariantImageManager({
     altTextFetcher.submit(form, { method: "post" });
   }, [productId, productImages, currentLanguage, altTextFetcher]);
 
+  const handleTranslateAltTextToAllLocales = useCallback((url: string, sourceAltText: string) => {
+    const imageIndex = productImages.findIndex(i => i.url === url);
+    const targetLocales = enabledLanguages.filter(l => l !== primaryLocale);
+    if (targetLocales.length === 0) return;
+    const form = new FormData();
+    form.append("action", "translateAltTextToAllLocales");
+    form.append("itemId", productId);
+    form.append("productId", productId);
+    form.append("imageIndex", String(Math.max(0, imageIndex)));
+    form.append("sourceAltText", sourceAltText);
+    form.append("targetLocales", JSON.stringify(targetLocales));
+    if (primaryLocale) form.append("primaryLocale", primaryLocale);
+    altTextFetcher.submit(form, { method: "post" });
+  }, [productId, productImages, enabledLanguages, primaryLocale, altTextFetcher]);
+
   const nonWebpCount = productImages.filter(i =>
     !i.url.toLowerCase().includes(".webp") &&
     !i.url.toLowerCase().includes("format=webp")
@@ -689,6 +706,18 @@ export function VariantImageManager({
                     </Button>
                   </div>
                 )}
+                {isPrimaryLocale && enabledLanguages.filter(l => l !== primaryLocale).length > 0 && (
+                  <div onMouseDown={() => { productGalleryBlurSkipRef.current = true; }}>
+                    <Button
+                      size="slim"
+                      disabled={altTextFetcher.state !== "idle"}
+                      loading={altTextFetcher.state !== "idle"}
+                      onClick={() => handleTranslateAltTextToAllLocales(productSingleSelected, productCurrentAltText)}
+                    >
+                      {`🌍 ${t.imageManager.translateAltAll}`}
+                    </Button>
+                  </div>
+                )}
                 {!isPrimaryLocale && (
                   <div onMouseDown={() => { productGalleryBlurSkipRef.current = true; }}>
                     <Button
@@ -765,6 +794,8 @@ export function VariantImageManager({
                 onSaveAltText={handleSaveAltText}
                 onGenerateAltText={handleGenerateAltTextForImage}
                 onTranslateAltText={handleTranslateAltTextForImage}
+                onTranslateAltToAllLocales={handleTranslateAltTextToAllLocales}
+                enabledLanguages={enabledLanguages}
                 currentLanguage={currentLanguage}
                 primaryLocale={primaryLocale}
               />

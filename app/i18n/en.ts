@@ -604,6 +604,7 @@ export const en: Translation = {
     altTextPlaceholder: "Enter alt text…",
     aiGenerate: "Generate with AI",
     translateAlt: "Translate",
+    translateAltAll: "Translate to all languages",
     noImages: "No images",
     altBadge: "ALT",
     noAltBadge: "NO ALT",

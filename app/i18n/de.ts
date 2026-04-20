@@ -602,6 +602,7 @@ export const de = {
     altTextPlaceholder: "Alt-Text eingeben…",
     aiGenerate: "KI generieren",
     translateAlt: "Übersetzen",
+    translateAltAll: "In alle Sprachen übersetzen",
     noImages: "Keine Bilder",
     altBadge: "ALT",
     noAltBadge: "KEIN ALT",
