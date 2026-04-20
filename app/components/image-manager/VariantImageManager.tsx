@@ -177,13 +177,15 @@ export function VariantImageManager({
     }, 3000);
   }, []);
 
-  // Resume polling on mount if a conversion was in progress
+  // Resume polling on mount/product-switch; reset spinner if no active conversion for this product
   useEffect(() => {
     if (!productId) return;
     const converting = localStorage.getItem(`webp_${productId}`);
     if (converting) {
       setIsConvertingWebP(true);
       startWebPPolling(productId);
+    } else {
+      setIsConvertingWebP(false);
     }
     return () => {
       if (webpPollRef.current) clearInterval(webpPollRef.current);
@@ -376,6 +378,7 @@ export function VariantImageManager({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           productId,
+          productTitle,
           images: nonWebp.map(i => ({
             mediaId: i.mediaId,
             url: i.url,
@@ -602,27 +605,39 @@ export function VariantImageManager({
             <Text as="span" variant="headingSm" tone="subdued">{t.imageManager.general}</Text>
           )}
         </InlineStack>
-        <input
-          type="range"
-          min={80}
-          max={200}
-          step={10}
-          value={thumbSize}
-          onChange={(e) => {
-            const val = Number(e.target.value);
-            setThumbSize(val);
-            if (thumbSaveTimer.current) clearTimeout(thumbSaveTimer.current);
-            thumbSaveTimer.current = setTimeout(() => {
-              fetch("/api/image-manager-settings", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ thumbSize: val }),
-              }).catch(() => {});
-            }, 600);
-          }}
-          style={{ width: 80, cursor: "pointer", accentColor: "#005bd3" }}
-          aria-label={t.imageManager.thumbSizeLabel}
-        />
+        <InlineStack gap="400" blockAlign="center">
+          {(nonWebpCount > 0 || isConvertingWebP) && (
+            <InlineStack gap="200" blockAlign="center">
+              <Button size="slim" onClick={handleConvertToWebP} disabled={isConvertingWebP}>
+                {isConvertingWebP
+                  ? t.imageManager.webpConverting
+                  : t.imageManager.webpConvertButton.replace("{count}", String(nonWebpCount))}
+              </Button>
+              {isConvertingWebP && <Spinner size="small" />}
+            </InlineStack>
+          )}
+          <input
+            type="range"
+            min={80}
+            max={200}
+            step={10}
+            value={thumbSize}
+            onChange={(e) => {
+              const val = Number(e.target.value);
+              setThumbSize(val);
+              if (thumbSaveTimer.current) clearTimeout(thumbSaveTimer.current);
+              thumbSaveTimer.current = setTimeout(() => {
+                fetch("/api/image-manager-settings", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ thumbSize: val }),
+                }).catch(() => {});
+              }, 600);
+            }}
+            style={{ width: 80, cursor: "pointer", accentColor: "#005bd3" }}
+            aria-label={t.imageManager.thumbSizeLabel}
+          />
+        </InlineStack>
         </InlineStack>
         <div style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 6 }}>
           <input
@@ -833,19 +848,6 @@ export function VariantImageManager({
         </div>
       </div>
 
-      {/* WebP conversion */}
-      {(nonWebpCount > 0 || isConvertingWebP) && (
-        <div>
-          <InlineStack gap="200" blockAlign="center">
-            <Button size="slim" onClick={handleConvertToWebP} disabled={isConvertingWebP}>
-              {isConvertingWebP
-                ? t.imageManager.webpConverting
-                : t.imageManager.webpConvertButton.replace("{count}", String(nonWebpCount))}
-            </Button>
-            {isConvertingWebP && <Spinner size="small" />}
-          </InlineStack>
-        </div>
-      )}
         </div>
         </div>
       </BlockStack>
