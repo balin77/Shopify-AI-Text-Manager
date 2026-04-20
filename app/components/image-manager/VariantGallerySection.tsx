@@ -48,6 +48,7 @@ export function VariantGallerySection({
 
   const localSelectedUrls = displayUrls.filter(url => selectedUrls.has(url));
   const hasLocalSelection = localSelectedUrls.length > 0;
+  const isAllSelected = displayUrls.length > 0 && displayUrls.every(url => selectedUrls.has(url));
 
   return (
     <div style={{ borderBottom: "1px solid #e1e3e5", marginBottom: 4 }}>
@@ -65,6 +66,18 @@ export function VariantGallerySection({
         onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setOpen(o => !o); }}
       >
         <InlineStack gap="200" align="center" blockAlign="center">
+          <input
+            type="checkbox"
+            checked={isAllSelected}
+            disabled={displayUrls.length === 0}
+            onChange={(e) => {
+              e.stopPropagation();
+              displayUrls.forEach(url => onSelect(url, e.target.checked));
+            }}
+            onClick={(e) => e.stopPropagation()}
+            style={{ width: 15, height: 15, cursor: "pointer", accentColor: "#005bd3", flexShrink: 0 }}
+            aria-label={`Alle Bilder von ${variant.title} auswählen`}
+          />
           <Text as="span" variant="headingSm">{variant.title}</Text>
           {variant.sku && (
             <Text as="span" variant="bodySm" tone="subdued">SKU: {variant.sku}</Text>

@@ -362,6 +362,20 @@ export function VariantImageManager({
           aria-label="Bildgröße"
         />
         </InlineStack>
+        <div style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 6 }}>
+          <input
+            type="checkbox"
+            checked={displayedProductUrls.length > 0 && displayedProductUrls.every(url => selectedGalleryUrls.has(url))}
+            disabled={displayedProductUrls.length === 0}
+            onChange={(e) => {
+              const handler = makeSelectHandler(null);
+              displayedProductUrls.forEach(url => handler(url, e.target.checked));
+            }}
+            style={{ width: 15, height: 15, cursor: "pointer", accentColor: "#005bd3" }}
+            aria-label="Alle Produktbilder auswählen"
+          />
+          <Text as="span" variant="bodySm" tone="subdued">Alle auswählen</Text>
+        </div>
         <div style={{ marginTop: 8 }}>
           <SortableImageGrid
             containerId="product"
