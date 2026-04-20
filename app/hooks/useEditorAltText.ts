@@ -134,6 +134,9 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
   const pendingAltTextAutoSaveRef = useRef<Record<number, string> | null>(null);
   // Track image index of an in-flight copy save so save-response handler can clear loading
   const pendingCopyAltTextIndexRef = useRef<number | null>(null);
+  // Per-locale overlay for copy operations — eliminates stale window on locale switch
+  // structure: { locale: { imageIndex: altText } }
+  const localAltTextOverlayRef = useRef<Record<string, Record<number, string>>>({});
 
   // Send Image to AI feature state
   const [sendImageToAI, setSendImageToAI] = useState(false);
@@ -251,6 +254,12 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     setImageAltTexts(newAltTexts);
     setOriginalAltTexts(newAltTexts);
 
+    // Write to overlay so switching away and back to this locale shows correct value immediately
+    if (!localAltTextOverlayRef.current[currentLanguage]) {
+      localAltTextOverlayRef.current[currentLanguage] = {};
+    }
+    localAltTextOverlayRef.current[currentLanguage][imageIndex] = sourceAltText;
+
     markOperationActive(selectedItemId, `altText_${imageIndex}`, "copy");
     pendingCopyAltTextIndexRef.current = imageIndex;
 
@@ -290,6 +299,15 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     }
 
     const capturedItemId = selectedItemId;
+
+    // Write to overlay immediately for all target locales
+    for (const locale of targetLocales) {
+      if (!localAltTextOverlayRef.current[locale]) {
+        localAltTextOverlayRef.current[locale] = {};
+      }
+      localAltTextOverlayRef.current[locale][imageIndex] = sourceAltText;
+    }
+
     markOperationActive(capturedItemId, `altText_${imageIndex}`, "copyToAllLocales");
 
     const saves = targetLocales.map(locale => {
@@ -800,6 +818,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     setAltTextSuggestions({});
     setOriginalAltTexts({});
     setAiSuggestions({});
+    localAltTextOverlayRef.current = {};
   }, [selectedItemId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load translated alt-texts when language changes
@@ -817,9 +836,14 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
       setImageAltTexts({});
       setOriginalAltTexts({});
     } else {
-      // Load translated alt-texts from DB
+      // Load translated alt-texts — check overlay first (from copy ops), then DB
       const translatedAltTexts: Record<number, string> = {};
+      const overlayForLocale = localAltTextOverlayRef.current[currentLanguage] || {};
       allImages.forEach((img: ContentImage, index: number) => {
+        if (overlayForLocale[index] !== undefined) {
+          translatedAltTexts[index] = overlayForLocale[index];
+          return;
+        }
         const translation = img.altTextTranslations?.find(
           (t: { locale: string }) => t.locale === currentLanguage
         );

@@ -192,6 +192,11 @@ export function useProductSubResources({
   const lastProcessedDataRef = useRef<any>(null);
   // Track fieldId of an in-flight copy save so we can clear its spinner on response
   const pendingCopyFieldIdRef = useRef<string | null>(null);
+  // Per-locale overlay for copy operations — eliminates stale window on locale switch
+  // structure: { locale: { resourceId: { fieldKey: value } } }
+  const localSubResourceOverlayRef = useRef<Record<string, Record<string, Record<string, string>>>>({});
+  // Track item ID to clear overlay when switching items
+  const lastOverlayItemIdRef = useRef<string | null>(null);
 
   const isPrimaryLocale = currentLanguage === primaryLocale;
   const itemId = selectedItem?.id;
@@ -229,6 +234,12 @@ export function useProductSubResources({
 
     loadedForRef.current = loadKey;
 
+    // Clear overlay when switching to a different item (data is item-specific)
+    if (lastOverlayItemIdRef.current !== itemId) {
+      lastOverlayItemIdRef.current = itemId || null;
+      localSubResourceOverlayRef.current = {};
+    }
+
     if (!itemId || isPrimaryLocale || subResourceIds.length === 0) {
       setOptionTranslations({});
       setMetafieldTranslations({});
@@ -238,8 +249,16 @@ export function useProductSubResources({
 
     // Phase 1: DB pre-load — read from item.subResourceTranslations (instant, synchronous)
     const dbMap = dbPreloadToMap(selectedItem?.subResourceTranslations, currentLanguage);
+
+    // Merge overlay (from copy operations) on top of DB data
+    const overlayForLocale = localSubResourceOverlayRef.current[currentLanguage] || {};
+    const mergedMap = { ...dbMap };
+    for (const [resourceId, fields] of Object.entries(overlayForLocale)) {
+      mergedMap[resourceId] = { ...(mergedMap[resourceId] || {}), ...fields };
+    }
+
     const { optionTranslations: dbOpts, metafieldTranslations: dbMfs } =
-      buildFromTranslationsMap(selectedItem, dbMap);
+      buildFromTranslationsMap(selectedItem, mergedMap);
 
     setOptionTranslations(dbOpts);
     setMetafieldTranslations(dbMfs);
@@ -1103,6 +1122,14 @@ export function useProductSubResources({
       handleOptionValueChange(optionId, valueIndex!, val.name);
     }
 
+    // Write to overlay immediately (eliminates stale window when switching locale)
+    const overlay = localSubResourceOverlayRef.current;
+    if (!overlay[currentLanguage]) overlay[currentLanguage] = {};
+    for (const [resourceId, fields] of Object.entries(translationsData)) {
+      if (!overlay[currentLanguage][resourceId]) overlay[currentLanguage][resourceId] = {};
+      overlay[currentLanguage][resourceId]["name"] = fields.name;
+    }
+
     markSubResourceActive(selectedItem.id, fieldId, "copy");
     pendingCopyFieldIdRef.current = fieldId;
 
@@ -1147,6 +1174,14 @@ export function useProductSubResources({
     const translationsData = JSON.stringify({ [resourceId]: { name: primaryValue } });
     const resourceTypes = JSON.stringify({ [resourceId]: resourceType });
     const capturedItemId = selectedItem.id;
+
+    // Write to overlay immediately for all target locales
+    for (const locale of targetLocales) {
+      const overlay = localSubResourceOverlayRef.current;
+      if (!overlay[locale]) overlay[locale] = {};
+      if (!overlay[locale][resourceId]) overlay[locale][resourceId] = {};
+      overlay[locale][resourceId]["name"] = primaryValue;
+    }
 
     markSubResourceActive(capturedItemId, fieldId, "copyToAllLocales");
 
