@@ -1,5 +1,6 @@
 import { useState, useRef } from "react";
 import { Text, Button, InlineStack, Collapsible, Badge } from "@shopify/polaris";
+import { useDroppable } from "@dnd-kit/core";
 import { useI18n } from "../../contexts/I18nContext";
 import { SortableImageGrid } from "./SortableImageGrid";
 import type { VariantWithGallery, ImageMeta } from "./types";
@@ -60,6 +61,7 @@ export function VariantGallerySection({
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const isOpen = open || forceOpen;
+  const { setNodeRef: setDropRef } = useDroppable({ id: variant.id });
   const skipNextBlurRef = useRef(false);
 
   const urls = variant.galleryFileGids
@@ -92,7 +94,7 @@ export function VariantGallerySection({
     : false;
 
   return (
-    <div style={{ borderBottom: "1px solid #e1e3e5", marginBottom: 4 }}>
+    <div ref={setDropRef} style={{ borderBottom: "1px solid #e1e3e5", marginBottom: 4 }}>
       <div
         role="button"
         tabIndex={0}

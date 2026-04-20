@@ -1,7 +1,7 @@
 import { useRef } from "react";
 import { useSortable, SortableContext, rectSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { DndContext, closestCenter, MouseSensor, TouchSensor, useSensor, useSensors, useDroppable, type DragEndEvent } from "@dnd-kit/core";
+import { DndContext, closestCenter, MouseSensor, TouchSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
 import { arrayMove } from "@dnd-kit/sortable";
 import { useI18n } from "../../contexts/I18nContext";
 import type { ImageMeta } from "./types";
@@ -221,12 +221,6 @@ function SortableThumbnail({ sortableId, url, containerId, isSelected, meta, onS
   );
 }
 
-// Used when skipDndContext=true so the container is droppable in the parent's DndContext
-function DroppableGrid({ id, style, children }: { id: string; style: React.CSSProperties; children: React.ReactNode }) {
-  const { setNodeRef } = useDroppable({ id });
-  return <div ref={setNodeRef} style={style}>{children}</div>;
-}
-
 interface SortableImageGridProps {
   containerId: string;
   imageUrls: string[];
@@ -338,7 +332,7 @@ export function SortableImageGrid({
   );
 
   if (skipDndContext) {
-    return <DroppableGrid id={containerId} style={containerStyle}>{inner}</DroppableGrid>;
+    return <div style={containerStyle}>{inner}</div>;
   }
 
   return (

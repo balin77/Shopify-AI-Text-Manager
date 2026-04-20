@@ -87,11 +87,27 @@ export function VariantImageManager({
 
   // Cross-gallery drag state
   const [activeDragUrl, setActiveDragUrl] = useState<string | null>(null);
-  const [overContainerId, setOverContainerId] = useState<string | null>(null);
+  const [isCtrlHeld, setIsCtrlHeld] = useState(false);
+  // overContainerId tracked implicitly via autoExpandId
+  const isCtrlHeldRef = useRef(false);
+  const [autoExpandId, setAutoExpandId] = useState<string | null>(null);
+  const autoExpandTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sharedSensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 8 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 5 } }),
   );
+
+  useEffect(() => {
+    const down = (e: KeyboardEvent) => {
+      if (e.key === "Control" || e.key === "Meta") { isCtrlHeldRef.current = true; setIsCtrlHeld(true); }
+    };
+    const up = (e: KeyboardEvent) => {
+      if (e.key === "Control" || e.key === "Meta") { isCtrlHeldRef.current = false; setIsCtrlHeld(false); }
+    };
+    window.addEventListener("keydown", down);
+    window.addEventListener("keyup", up);
+    return () => { window.removeEventListener("keydown", down); window.removeEventListener("keyup", up); };
+  }, []);
 
   useEffect(() => {
     if (!resetKey) return;
@@ -305,16 +321,31 @@ export function VariantImageManager({
 
   const handleSharedDragOver = useCallback((event: DragOverEvent) => {
     const { over } = event;
-    if (!over) { setOverContainerId(null); return; }
+    if (!over) {
+      if (autoExpandTimerRef.current) { clearTimeout(autoExpandTimerRef.current); autoExpandTimerRef.current = null; }
+      return;
+    }
     const overStr = over.id as string;
     const containerId = overStr.includes("::") ? overStr.split("::")[0] : overStr;
-    setOverContainerId(containerId);
-  }, []);
+
+    // Start auto-expand timer when hovering a new variant container
+    if (containerId !== "product") {
+      setAutoExpandId(prev => {
+        if (prev !== containerId) {
+          if (autoExpandTimerRef.current) clearTimeout(autoExpandTimerRef.current);
+          autoExpandTimerRef.current = setTimeout(() => setAutoExpandId(containerId), 700);
+          return prev; // don't change yet — timer will do it
+        }
+        return prev;
+      });
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSharedDragEnd = useCallback((event: DragEndEvent) => {
     const { active, over } = event;
     setActiveDragUrl(null);
-    setOverContainerId(null);
+    setAutoExpandId(null);
+    if (autoExpandTimerRef.current) { clearTimeout(autoExpandTimerRef.current); autoExpandTimerRef.current = null; }
     if (!over) return;
 
     const sourceContainerId = active.data.current?.containerId as string | undefined;
@@ -359,17 +390,27 @@ export function VariantImageManager({
     if (!gid) return;
 
     if (sourceContainerId !== "product") {
-      // Variant → Variant: move (remove from source, add to target) in single update
-      setPendingVariantGalleries(p => {
-        const targetVariant = variants.find(v => v.id === targetContainerId);
-        const sourceVariant = variants.find(v => v.id === sourceContainerId);
-        const targetExisting = p[targetContainerId] ?? targetVariant?.galleryFileGids ?? [];
-        const sourceCurrent = p[sourceContainerId] ?? sourceVariant?.galleryFileGids ?? [];
-        const result = { ...p };
-        if (!targetExisting.includes(gid)) result[targetContainerId] = [...targetExisting, gid];
-        result[sourceContainerId] = sourceCurrent.filter(g => g !== gid);
-        return result;
-      });
+      if (isCtrlHeldRef.current) {
+        // Variant → Variant + Ctrl: copy (keep in source)
+        setPendingVariantGalleries(p => {
+          const targetVariant = variants.find(v => v.id === targetContainerId);
+          const existing = p[targetContainerId] ?? targetVariant?.galleryFileGids ?? [];
+          if (existing.includes(gid)) return p;
+          return { ...p, [targetContainerId]: [...existing, gid] };
+        });
+      } else {
+        // Variant → Variant: move (remove from source, add to target) in single update
+        setPendingVariantGalleries(p => {
+          const targetVariant = variants.find(v => v.id === targetContainerId);
+          const sourceVariant = variants.find(v => v.id === sourceContainerId);
+          const targetExisting = p[targetContainerId] ?? targetVariant?.galleryFileGids ?? [];
+          const sourceCurrent = p[sourceContainerId] ?? sourceVariant?.galleryFileGids ?? [];
+          const result = { ...p };
+          if (!targetExisting.includes(gid)) result[targetContainerId] = [...targetExisting, gid];
+          result[sourceContainerId] = sourceCurrent.filter(g => g !== gid);
+          return result;
+        });
+      }
     } else {
       // Product → Variant: copy (keep in product gallery)
       setPendingVariantGalleries(p => {
@@ -963,7 +1004,7 @@ export function VariantImageManager({
                 currentLanguage={currentLanguage}
                 primaryLocale={primaryLocale}
                 skipDndContext
-                forceOpen={overContainerId === v.id}
+                forceOpen={autoExpandId === v.id}
               />
               );
             })
@@ -977,19 +1018,41 @@ export function VariantImageManager({
     </Card>
     <DragOverlay>
       {activeDragUrl ? (
-        <img
-          src={activeDragUrl}
-          alt=""
-          style={{
-            width: thumbSize,
-            height: thumbSize,
-            objectFit: "cover",
-            borderRadius: 6,
-            opacity: 0.9,
-            boxShadow: "0 4px 16px rgba(0,0,0,0.3)",
-            pointerEvents: "none",
-          }}
-        />
+        <div style={{ position: "relative", display: "inline-block" }}>
+          <img
+            src={activeDragUrl}
+            alt=""
+            style={{
+              width: thumbSize,
+              height: thumbSize,
+              objectFit: "cover",
+              borderRadius: 6,
+              opacity: 0.9,
+              boxShadow: "0 4px 16px rgba(0,0,0,0.3)",
+              pointerEvents: "none",
+              display: "block",
+            }}
+          />
+          {isCtrlHeld && (
+            <div style={{
+              position: "absolute",
+              top: -6,
+              right: -6,
+              width: 18,
+              height: 18,
+              borderRadius: "50%",
+              background: "#008060",
+              color: "white",
+              fontSize: 13,
+              fontWeight: 700,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              lineHeight: 1,
+              boxShadow: "0 1px 4px rgba(0,0,0,0.3)",
+            }}>+</div>
+          )}
+        </div>
       ) : null}
     </DragOverlay>
     </DndContext>
