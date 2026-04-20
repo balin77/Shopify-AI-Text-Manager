@@ -72,8 +72,9 @@ export function VariantImageManager({
   const fetcher = useFetcher();
   // Alt text editing state
   const [localAltTexts, setLocalAltTexts] = useState<Record<string, string>>({});
-  const altTextFetcher = useFetcher<any>();       // generate / translate (returns text)
-  const saveAltTextFetcher = useFetcher<any>();   // save (writes to Shopify)
+  const altTextFetcher = useFetcher<any>();          // generate / translate (returns text)
+  const saveAltTextFetcher = useFetcher<any>();      // save (writes to Shopify)
+  const translationsFetcher = useFetcher<any>();     // load foreign locale alt texts from DB
   const prevAltFetcherData = useRef<any>(null);
   const productGalleryBlurSkipRef = useRef(false);
   // Track current media order so we can include it whenever variant galleries change
@@ -90,6 +91,32 @@ export function VariantImageManager({
     setSelectedGalleryItems(new Map());
     pendingMediaOrderRef.current = [];
   }, [resetKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Load foreign-locale alt text translations from DB when language changes
+  useEffect(() => {
+    setLocalAltTexts({});
+    if (!productId || !currentLanguage || currentLanguage === primaryLocale) return;
+    const form = new FormData();
+    form.append("action", "loadImageAltTranslations");
+    form.append("productId", productId);
+    form.append("locale", currentLanguage);
+    translationsFetcher.submit(form, { method: "post" });
+  }, [currentLanguage, productId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Apply loaded translations to localAltTexts (mediaId → url → altText)
+  useEffect(() => {
+    const data = translationsFetcher.data;
+    if (!data || data.actionType !== "loadImageAltTranslations") return;
+    const altTexts: Record<string, string> = data.altTexts ?? {};
+    setLocalAltTexts(prev => {
+      const next = { ...prev };
+      for (const [mediaId, altText] of Object.entries(altTexts)) {
+        const url = fileUrlMap[mediaId];
+        if (url) next[url] = altText as string;
+      }
+      return next;
+    });
+  }, [translationsFetcher.data]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!productId) return;
@@ -490,6 +517,7 @@ export function VariantImageManager({
     form.append("imageIndex", String(Math.max(0, imageIndex)));
     form.append("sourceAltText", sourceAltText);
     form.append("targetLocales", JSON.stringify(targetLocales));
+    form.append("productTitle", productTitle ?? "");
     if (primaryLocale) form.append("primaryLocale", primaryLocale);
     altTextFetcher.submit(form, { method: "post" });
   }, [productId, productImages, enabledLanguages, primaryLocale, altTextFetcher]);

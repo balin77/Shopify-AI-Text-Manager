@@ -323,20 +323,26 @@ export async function handleTranslateAltTextToAllLocales(
 
   const imageIndex = getFormInt(formData, "imageIndex") ?? 0;
   const sourceAltText = getFormString(formData, "sourceAltText");
+  const productTitle = getFormString(formData, "productTitle") || "";
   const targetLocales = getFormJSON<string[]>(formData, "targetLocales");
   if (!targetLocales) {
     return json({ success: false, error: "Invalid targetLocales format" }, { status: 400 });
   }
 
+  const resourceTitle = productTitle
+    ? `${productTitle} – Bild ${imageIndex + 1}`
+    : `Bild ${imageIndex + 1}`;
+
   // Create task entry
   const task = await db.task.create({
     data: {
       shop: session.shop,
-      type: "translation",
+      type: "bulkTranslation",
       status: "pending",
       resourceType: contentConfig.resourceType,
       resourceId: itemId,
-      fieldType: `altText_${imageIndex}`,
+      resourceTitle,
+      fieldType: "all",
       targetLocale: targetLocales.join(","),
       progress: 0,
       expiresAt: getTaskExpirationDate(),
@@ -706,4 +712,36 @@ export async function handleSaveImageAltText(
   }
 
   return json({ actionType: "saveImageAltText", success: shopifySaved });
+}
+
+// ============================================================================
+// LOAD IMAGE ALT-TEXT TRANSLATIONS (for a given product + locale)
+// Returns { mediaId → altText } map from DB
+// ============================================================================
+
+export async function handleLoadImageAltTranslations(
+  ctx: ContentActionHandlerContext,
+  formData: FormData,
+): Promise<Response> {
+  const { db } = ctx;
+  const productId = getFormString(formData, "productId") || ctx.itemId;
+  const locale = getFormString(formData, "locale");
+
+  if (!productId || !locale) {
+    return json({ success: false, error: "productId and locale required" }, { status: 400 });
+  }
+
+  const rows = await db.productImageAltTranslation.findMany({
+    where: { locale, image: { productId } },
+    select: { altText: true, image: { select: { mediaId: true } } },
+  });
+
+  const altTexts: Record<string, string> = {};
+  for (const row of rows) {
+    if (row.image?.mediaId) {
+      altTexts[row.image.mediaId] = row.altText;
+    }
+  }
+
+  return json({ actionType: "loadImageAltTranslations", locale, altTexts });
 }

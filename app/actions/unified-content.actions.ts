@@ -34,6 +34,7 @@ import {
   handleTranslateAltTextToAllLocales,
   handleGenerateAltTextFromSku,
   handleSaveImageAltText,
+  handleLoadImageAltTranslations,
 } from "./content/alt-text.action";
 import {
   handleTranslateField,
@@ -133,6 +134,7 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
     case "translateAltTextToAllLocales":     return handleTranslateAltTextToAllLocales(ctx, formData);
     case "generateAltTextFromSku":           return handleGenerateAltTextFromSku(ctx, formData);
     case "saveImageAltText":                 return handleSaveImageAltText(ctx, formData);
+    case "loadImageAltTranslations":         return handleLoadImageAltTranslations(ctx, formData);
     case "loadSubResourceTranslations":      return handleLoadSubResourceTranslations(ctx, formData);
     case "saveSubResourceTranslations":      return handleSaveSubResourceTranslations(ctx, formData);
     case "translateSubResources":            return handleTranslateSubResources(ctx, formData);
