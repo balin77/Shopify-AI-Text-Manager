@@ -178,12 +178,24 @@ export function VariantImageManager({
       .finally(() => setIsLoadingVariants(false));
   }, [productId]);
 
-  // Sync pendingVariantGalleries to parent whenever it changes
+  // Sync pendingVariantGalleries to parent whenever it changes.
+  // Always prepend the variant's native main image GID at position 0 so the backend can set
+  // mediaId correctly and exclude it from the gallery metafield (prevents main image duplication).
   useEffect(() => {
     if (Object.keys(pendingVariantGalleries).length === 0) return;
-    const galleries = Object.entries(pendingVariantGalleries).map(([variantId, fileGids]) => ({
-      variantId, fileGids,
-    }));
+    const galleries = Object.entries(pendingVariantGalleries).map(([variantId, fileGids]) => {
+      const variant = variants.find(v => v.id === variantId);
+      const mainGid = variant?.defaultImageUrl
+        ? (urlToGid[variant.defaultImageUrl] ??
+           Object.entries(urlToGid).find(([u]) =>
+             u.split("?")[0] === variant.defaultImageUrl!.split("?")[0]
+           )?.[1])
+        : undefined;
+      const fullGids = mainGid
+        ? [mainGid, ...fileGids.filter(g => g !== mainGid)]
+        : fileGids;
+      return { variantId, fileGids: fullGids };
+    });
     onPendingChange?.(galleries, pendingMediaOrderRef.current, pendingProductNewMedia);
   }, [pendingVariantGalleries, pendingProductNewMedia]); // eslint-disable-line react-hooks/exhaustive-deps
 

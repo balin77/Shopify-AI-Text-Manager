@@ -71,11 +71,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         productId,
         variants: variantGalleries.map(vg => ({
           id: vg.variantId,
+          // fileGids[0] is the variant's native main image; the gallery metafield must only
+          // contain the remaining images to prevent the main image from appearing twice on the storefront.
           ...(vg.fileGids.length > 0 && { mediaId: vg.fileGids[0] }),
           metafields: [{
             namespace: "custom",
             key: "variant_gallery",
-            value: JSON.stringify(vg.fileGids),
+            value: JSON.stringify(vg.fileGids.slice(1)),
             type: "list.file_reference",
           }],
         })),
@@ -89,7 +91,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       await Promise.all(variantGalleries.map(vg =>
         db.productVariant.updateMany({
           where: { shopifyGid: vg.variantId },
-          data: { galleryJson: JSON.stringify(vg.fileGids) },
+          data: { galleryJson: JSON.stringify(vg.fileGids.slice(1)) },
         })
       ));
     }
