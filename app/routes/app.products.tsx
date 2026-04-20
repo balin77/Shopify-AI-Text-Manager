@@ -518,14 +518,22 @@ export default function ProductsPage() {
     saveSubResources: () => {
       subResources.handlers.saveSubResources();
       if (hasPendingImageChanges && editor.selectedItem) {
-        imageManagerState.handleApply(editor.selectedItem.id).catch(console.error);
+        imageManagerState.handleApply(editor.selectedItem.id).then(err => {
+          if (err) {
+            showInfoBox(err, "critical", "Galerie-Fehler");
+          } else {
+            showInfoBox("Galerie erfolgreich auf Shopify gespeichert.", "success");
+          }
+        }).catch(() => {
+          showInfoBox("Galerie konnte nicht gespeichert werden.", "critical");
+        });
       }
     },
     resetChanges: () => {
       subResources.handlers.resetChanges();
       imageManagerState.resetForProduct();
     },
-  }), [subResources.handlers, hasPendingImageChanges, editor.selectedItem, imageManagerState]);
+  }), [subResources.handlers, hasPendingImageChanges, editor.selectedItem, imageManagerState, showInfoBox]);
 
   // Wrap translate-all handlers to also translate product options and metafields.
   // Uses a separate internal fetcher in useProductSubResources to avoid conflicting
