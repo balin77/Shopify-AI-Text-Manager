@@ -7,7 +7,18 @@
  */
 
 import { PrismaClient } from "@prisma/client";
-import { downloadImageAsBuffer, convertToWebP } from "./app/services/image-processing.service.js";
+import sharp from "sharp";
+
+async function downloadImageAsBuffer(url) {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`Failed to download image: ${response.status} ${url}`);
+  return Buffer.from(await response.arrayBuffer());
+}
+
+async function convertToWebP(sourceBuffer, quality = 85) {
+  const buffer = await sharp(sourceBuffer).webp({ quality }).toBuffer();
+  return { buffer, filename: `converted-${Date.now()}.webp` };
+}
 
 const db = new PrismaClient();
 
