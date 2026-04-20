@@ -248,6 +248,8 @@ export function UnifiedFieldRenderer(
           additionalImagesLocked: t.products?.additionalImagesLocked || "Additional images are locked",
           availableInBasicPlan:
             t.products?.availableInBasicPlan || "Available in Basic plan and above",
+          altBadge: t.imageManager?.altBadge || "ALT",
+          noAltBadge: t.imageManager?.noAltBadge || "NO ALT",
         }}
       />
     );

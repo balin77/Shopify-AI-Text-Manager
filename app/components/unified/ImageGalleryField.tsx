@@ -105,6 +105,8 @@ interface ImageGalleryFieldProps {
     onlyFeaturedImageAvailable?: string;
     additionalImagesLocked?: string;
     availableInBasicPlan?: string;
+    altBadge?: string;
+    noAltBadge?: string;
   };
 }
 
@@ -223,54 +225,26 @@ export function ImageGalleryField({
               <div
                 style={{
                   position: "absolute",
-                  top: "8px",
-                  right: "8px",
-                  backgroundColor: (altTexts[selectedImageIndex] !== undefined
+                  top: 8,
+                  right: 8,
+                  background: (altTexts[selectedImageIndex] !== undefined
                     ? altTexts[selectedImageIndex] !== ""
-                    : (isPrimaryLocale && !!images[selectedImageIndex]?.altText)) ? "#008060" : "#d72c0d",
-                  borderRadius: "50%",
-                  width: "36px",
-                  height: "36px",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  boxShadow: "0 2px 4px rgba(0, 0, 0, 0.2)",
+                    : (isPrimaryLocale && !!images[selectedImageIndex]?.altText))
+                    ? "rgba(0,128,96,0.85)"
+                    : "rgba(142,31,11,0.75)",
+                  color: "white",
+                  fontSize: 11,
+                  fontWeight: 700,
+                  padding: "3px 7px",
+                  borderRadius: 3,
+                  lineHeight: "15px",
                 }}
               >
-                <svg
-                  width="20"
-                  height="20"
-                  viewBox="0 0 20 20"
-                  fill="none"
-                  xmlns="http://www.w3.org/2000/svg"
-                >
-                  {(altTexts[selectedImageIndex] !== undefined
-                    ? altTexts[selectedImageIndex] !== ""
-                    : (isPrimaryLocale && !!images[selectedImageIndex]?.altText)) ? (
-                    <path
-                      d="M16 6L8 14L4 10"
-                      stroke="white"
-                      strokeWidth="2.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  ) : (
-                    <>
-                      <path
-                        d="M5 5L15 15"
-                        stroke="white"
-                        strokeWidth="2.5"
-                        strokeLinecap="round"
-                      />
-                      <path
-                        d="M15 5L5 15"
-                        stroke="white"
-                        strokeWidth="2.5"
-                        strokeLinecap="round"
-                      />
-                    </>
-                  )}
-                </svg>
+                {(altTexts[selectedImageIndex] !== undefined
+                  ? altTexts[selectedImageIndex] !== ""
+                  : (isPrimaryLocale && !!images[selectedImageIndex]?.altText))
+                  ? (t.altBadge || "ALT")
+                  : (t.noAltBadge || "NO ALT")}
               </div>
             )}
           </div>
@@ -335,50 +309,18 @@ export function ImageGalleryField({
                     <div
                       style={{
                         position: "absolute",
-                        top: "4px",
-                        right: "4px",
-                        backgroundColor: hasAltText ? "#008060" : "#d72c0d",
-                        borderRadius: "50%",
-                        width: "24px",
-                        height: "24px",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        boxShadow: "0 2px 4px rgba(0, 0, 0, 0.2)",
+                        top: 4,
+                        right: 4,
+                        background: hasAltText ? "rgba(0,128,96,0.85)" : "rgba(142,31,11,0.75)",
+                        color: "white",
+                        fontSize: 10,
+                        fontWeight: 700,
+                        padding: "2px 6px",
+                        borderRadius: 3,
+                        lineHeight: "14px",
                       }}
                     >
-                      <svg
-                        width="14"
-                        height="14"
-                        viewBox="0 0 20 20"
-                        fill="none"
-                        xmlns="http://www.w3.org/2000/svg"
-                      >
-                        {hasAltText ? (
-                          <path
-                            d="M16 6L8 14L4 10"
-                            stroke="white"
-                            strokeWidth="2.5"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          />
-                        ) : (
-                          <>
-                            <path
-                              d="M5 5L15 15"
-                              stroke="white"
-                              strokeWidth="2.5"
-                              strokeLinecap="round"
-                            />
-                            <path
-                              d="M15 5L5 15"
-                              stroke="white"
-                              strokeWidth="2.5"
-                              strokeLinecap="round"
-                            />
-                          </>
-                        )}
-                      </svg>
+                      {hasAltText ? (t.altBadge || "ALT") : (t.noAltBadge || "NO ALT")}
                     </div>
                   </button>
                 );
