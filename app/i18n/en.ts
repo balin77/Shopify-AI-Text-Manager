@@ -614,6 +614,7 @@ export const en: Translation = {
     selectAllVariantLabel: "Select all images of {title}",
     remove: "Remove ({count})",
     altTextFromSku: "Alt text from SKU",
+    altTextFromSkuAll: "Alt text from SKU (all)",
     altTextForSelected: "Alt text for selected image",
     altTextPlaceholder: "Enter alt text…",
     aiGenerate: "Generate with AI",

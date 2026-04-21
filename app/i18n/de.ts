@@ -612,6 +612,7 @@ export const de = {
     selectAllVariantLabel: "Alle Bilder von {title} auswählen",
     remove: "Entfernen ({count})",
     altTextFromSku: "Alt-Text aus SKU",
+    altTextFromSkuAll: "Alt-Text aus SKU (alle)",
     altTextForSelected: "Alt-Text für ausgewähltes Bild",
     altTextPlaceholder: "Alt-Text eingeben…",
     aiGenerate: "KI generieren",

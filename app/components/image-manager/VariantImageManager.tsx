@@ -843,18 +843,27 @@ export function VariantImageManager({
     setIsDeleting(false);
   }, [deleteConfirm, urlToGid, variants, effectiveProductImages, productId]);
 
-  const handleGenerateAltFromSku = useCallback((variantId: string, selectedGids?: string[]) => {
-    const variant = variants.find(v => v.id === variantId);
-    const allGids = pendingVariantGalleries[variantId] ?? variant?.galleryFileGids ?? [];
-    const gids = selectedGids && selectedGids.length > 0 ? selectedGids : allGids;
-    if (!gids.length) return;
-
+  const handleGenerateAltFromSku = useCallback((_variantId: string, selectedGids: string[]) => {
+    if (!selectedGids.length) return;
     const form = new FormData();
     form.append("action", "generateAltTextFromSku");
     form.append("productId", productId);
-    gids.forEach(gid => form.append("mediaId", gid));
+    selectedGids.forEach(gid => form.append("mediaId", gid));
     fetcher.submit(form, { method: "post" });
-  }, [variants, pendingVariantGalleries, productId, fetcher]);
+  }, [productId, fetcher]);
+
+  const handleGenerateAltFromSkuAll = useCallback(() => {
+    const allGids = new Set<string>([
+      ...variants.flatMap(v => pendingVariantGalleries[v.id] ?? v.galleryFileGids),
+      ...effectiveProductImages.filter(img => img.mediaId).map(img => img.mediaId!),
+    ]);
+    if (!allGids.size) return;
+    const form = new FormData();
+    form.append("action", "generateAltTextFromSku");
+    form.append("productId", productId);
+    allGids.forEach(gid => form.append("mediaId", gid));
+    fetcher.submit(form, { method: "post" });
+  }, [variants, pendingVariantGalleries, effectiveProductImages, productId, fetcher]);
 
   const handleConvertToWebP = useCallback(async (images: ProductImageRef[]) => {
     setWebpError(null);
@@ -1148,6 +1157,9 @@ export function VariantImageManager({
           )}
         </InlineStack>
         <InlineStack gap="400" blockAlign="center">
+          <Button size="slim" onClick={handleGenerateAltFromSkuAll}>
+            {t.imageManager.altTextFromSkuAll}
+          </Button>
           {(imagesToConvert.length > 0 || isConvertingWebP) && (
             <InlineStack gap="200" blockAlign="center">
               <Button size="slim" onClick={() => handleConvertToWebP(imagesToConvert)} disabled={isConvertingWebP}>
@@ -1249,6 +1261,17 @@ export function VariantImageManager({
                 }}
               >
                 {t.imageManager.deleteImage}
+              </Button>
+            )}
+            {productSelectedUrls.length > 0 && (
+              <Button
+                size="slim"
+                onClick={() => {
+                  const gids = productSelectedUrls.map(url => urlToGid[url]).filter(Boolean);
+                  handleGenerateAltFromSku("", gids);
+                }}
+              >
+                {t.imageManager.altTextFromSku}
               </Button>
             )}
             <Button

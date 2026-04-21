@@ -15,7 +15,7 @@ interface VariantGallerySectionProps {
   onReorder: (variantId: string, newGids: string[]) => void;
   onDrop: (targetVariantId: string, prepend?: boolean) => void;
   onRemoveFromGallery: (variantId: string, urls: string[]) => void;
-  onGenerateAltFromSku: (variantId: string) => void;
+  onGenerateAltFromSku: (variantId: string, selectedGids: string[]) => void;
   onUploadToGallery: (variantId: string, files: File[]) => void;
   thumbSize?: number;
   forceOpen?: boolean;
@@ -165,8 +165,8 @@ export function VariantGallerySection({
                 {t.imageManager.remove.replace("{count}", String(localSelectedUrls.length))}
               </Button>
             )}
-            {variant.sku && (
-              <Button size="slim" onClick={() => onGenerateAltFromSku(variant.id)}>
+            {variant.sku && hasLocalSelection && (
+              <Button size="slim" onClick={() => onGenerateAltFromSku(variant.id, localSelectedUrls.map(url => urlToGid[url]).filter(Boolean))}>
                 {t.imageManager.altTextFromSku}
               </Button>
             )}
