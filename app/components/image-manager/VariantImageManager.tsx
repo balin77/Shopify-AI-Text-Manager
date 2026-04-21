@@ -88,7 +88,9 @@ export function VariantImageManager({
   const [pendingProductNewMedia, setPendingProductNewMedia] = useState<string[]>([]);
   const [webpError, setWebpError] = useState<string | null>(null);
   const [isConvertingWebP, setIsConvertingWebP] = useState(false);
-  // Source URLs (original PNG) of images currently being converted; cleared when done.
+  // GIDs (mediaId) of images currently being converted; cleared when done.
+  // Tracked by GID rather than URL because Shopify CDN URLs can change query params between
+  // task creation and a fresh image fetch, causing URL-based lookups to miss still-running images.
   const [convertingImageUrls, setConvertingImageUrls] = useState<Set<string>>(new Set());
   const [refreshedProductImages, setRefreshedProductImages] = useState<ProductImageRef[] | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<{ urls: string[]; affectedVariantCount: number } | null>(null);
@@ -306,14 +308,15 @@ export function VariantImageManager({
         const count = webpTasks.length;
         const prev = webpActiveCountRef.current;
 
-        // Update per-image spinner: derive the set of source URLs still being converted.
-        // The task result JSON contains sourceUrl (the original PNG URL).
-        const stillConvertingUrls = new Set<string>(
+        // Update per-image spinner: derive the set of GIDs still being converted.
+        // The task result JSON contains mediaId (the original media GID). GIDs are stable
+        // across Shopify CDN URL refreshes, unlike sourceUrl which can have changing query params.
+        const stillConvertingGids = new Set<string>(
           webpTasks.map((t: { result?: string }) => {
-            try { return JSON.parse(t.result || "{}").sourceUrl as string; } catch { return null; }
+            try { return JSON.parse(t.result || "{}").mediaId as string; } catch { return null; }
           }).filter(Boolean) as string[]
         );
-        setConvertingImageUrls(stillConvertingUrls);
+        setConvertingImageUrls(stillConvertingGids);
 
         // Fetch fresh image URLs whenever a task completes (count decreased) or we're still
         // waiting for Shopify to finish processing a recently converted image.
@@ -341,18 +344,30 @@ export function VariantImageManager({
                 imagesAwaitingSync = false;
                 syncRetryCount = 0;
 
-                // Build URL and GID remaps by matching positions (processor preserves order).
-                // Needed so pendingProductImageOrder and pendingVariantGalleries stay valid
-                // after old PNG media is deleted and replaced by new WebP media.
+                // Build URL and GID remaps by matching filenames (basename without extension).
+                // The worker always creates WebP with the same base filename as the source image
+                // (e.g. img0.png → img0.webp), so basename matching is reliable regardless of
+                // the order Shopify returns images in (productReorderMedia is async and may not
+                // have taken effect when this fetch runs, making positional matching unreliable).
                 const urlRemap: Record<string, string> = {};
                 const gidRemap: Record<string, string> = {};
-                oldImages.forEach((old, i) => {
-                  const next = newImages[i];
+                const getBasename = (url: string) => {
+                  try { return new URL(url).pathname.split("/").pop()?.replace(/\.[^.]+$/, "") ?? ""; }
+                  catch { return ""; }
+                };
+                const newByBasename: Record<string, ProductImageRef> = {};
+                for (const img of newImages) {
+                  const base = getBasename(img.url);
+                  if (base) newByBasename[base] = img;
+                }
+                for (const old of oldImages) {
+                  const base = getBasename(old.url);
+                  const next = base ? newByBasename[base] : undefined;
                   if (next && old.mediaId && next.mediaId && old.mediaId !== next.mediaId) {
                     urlRemap[old.url] = next.url;
                     gidRemap[old.mediaId] = next.mediaId;
                   }
-                });
+                }
                 if (Object.keys(urlRemap).length > 0) {
                   setPendingProductImageOrder(curr =>
                     curr ? curr.map(url => urlRemap[url] ?? url) : null
@@ -414,12 +429,12 @@ export function VariantImageManager({
         .then(r => r.json())
         .then(({ tasks }) => {
           const webpTasks = (tasks ?? []).filter((t: { type: string }) => t.type === "imageWebpConversion");
-          const urls = new Set<string>(
+          const gids = new Set<string>(
             webpTasks.map((t: { result?: string }) => {
-              try { return JSON.parse(t.result || "{}").sourceUrl as string; } catch { return null; }
+              try { return JSON.parse(t.result || "{}").mediaId as string; } catch { return null; }
             }).filter(Boolean) as string[]
           );
-          setConvertingImageUrls(urls);
+          setConvertingImageUrls(gids);
         })
         .catch(() => {});
       startWebPPolling(productId);
@@ -501,7 +516,7 @@ export function VariantImageManager({
     for (const img of effectiveProductImages) {
       map[img.url] = {
         altText: img.altText,
-        isConverting: convertingImageUrls.has(img.url),
+        isConverting: convertingImageUrls.has(img.mediaId),
       };
     }
     return map;
