@@ -531,6 +531,7 @@ export function VariantImageManager({
           : undefined;
         if (mainGid && fileUrlMap[mainGid] === url) {
           setLocallyExcludedMainGids(prev => new Set([...prev, sourceContainerId]));
+          onDirtyChange?.(true);
         }
         return;
       }
@@ -568,14 +569,28 @@ export function VariantImageManager({
       }
     } else {
       // Product → Variant: copy (keep in product gallery)
+      // Special case: if the dragged image is this variant's locally-excluded main image,
+      // restore it instead of copying it (clear exclusion, don't add to metafield).
+      const targetVariant = variants.find(v => v.id === targetContainerId);
+      if (locallyExcludedMainGids.has(targetContainerId)) {
+        const targetMainGid = targetVariant?.defaultImageUrl
+          ? (urlToGid[targetVariant.defaultImageUrl] ??
+             Object.entries(urlToGid).find(([u]) =>
+               u.split("?")[0] === targetVariant.defaultImageUrl!.split("?")[0]
+             )?.[1])
+          : undefined;
+        if (targetMainGid && gid === targetMainGid) {
+          setLocallyExcludedMainGids(prev => { const n = new Set(prev); n.delete(targetContainerId); return n; });
+          return;
+        }
+      }
       setPendingVariantGalleries(p => {
-        const targetVariant = variants.find(v => v.id === targetContainerId);
         const existing = p[targetContainerId] ?? targetVariant?.galleryFileGids ?? [];
         if (existing.includes(gid)) return p;
         return { ...p, [targetContainerId]: [...existing, gid] };
       });
     }
-  }, [pendingProductImageOrder, effectiveProductImages, variants, pendingVariantGalleries, fileUrlMap, urlToGid, handleProductReorder, handleVariantReorder]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [pendingProductImageOrder, effectiveProductImages, variants, pendingVariantGalleries, fileUrlMap, urlToGid, locallyExcludedMainGids, handleProductReorder, handleVariantReorder]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // prepend=true → image lands at position 0 (main image slot, triggered by placeholder click)
   // prepend=false → image appended to end of gallery
