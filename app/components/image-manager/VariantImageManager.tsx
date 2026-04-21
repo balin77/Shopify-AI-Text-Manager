@@ -265,29 +265,33 @@ export function VariantImageManager({
     };
   }, [productId, startWebPPolling]);
 
+  // After WebP conversion completes, use the refreshed Shopify URLs (with .webp extension)
+  // so badges update immediately without a page reload. Falls back to the prop otherwise.
+  const effectiveProductImages = refreshedProductImages ?? productImages;
+
   // GID → URL map: DB-cached productImages merged with the authoritative Shopify media map.
   // shopifyMediaMap is fetched fresh from Shopify on every product load, so gallery images
   // always resolve even when the DB cache is stale or incomplete.
   const fileUrlMap: Record<string, string> = useMemo(() => ({
     ...Object.fromEntries(
-      productImages.filter(img => img.mediaId).map(img => [img.mediaId, img.url])
+      effectiveProductImages.filter(img => img.mediaId).map(img => [img.mediaId, img.url])
     ),
     ...shopifyMediaMap,
-  }), [productImages, shopifyMediaMap]);
+  }), [effectiveProductImages, shopifyMediaMap]);
 
   const urlToGid: Record<string, string> = useMemo(() =>
-    Object.fromEntries(productImages.filter(img => img.mediaId).map(img => [img.url, img.mediaId])),
-    [productImages]
+    Object.fromEntries(effectiveProductImages.filter(img => img.mediaId).map(img => [img.url, img.mediaId])),
+    [effectiveProductImages]
   );
 
   // Image metadata map (by URL)
   const imageMetas: Record<string, ImageMeta> = useMemo(() => {
     const map: Record<string, ImageMeta> = {};
-    for (const img of productImages) {
+    for (const img of effectiveProductImages) {
       map[img.url] = { altText: img.altText };
     }
     return map;
-  }, [productImages]);
+  }, [effectiveProductImages]);
 
   // All GIDs currently assigned to any variant gallery (including injected main images)
   const assignedGids = useMemo(() => {
@@ -308,13 +312,13 @@ export function VariantImageManager({
 
   // Product image URLs to display (all or only unassigned)
   const displayedProductUrls = useMemo(() => {
-    const order = pendingProductImageOrder ?? productImages.map(i => i.url);
+    const order = pendingProductImageOrder ?? effectiveProductImages.map(i => i.url);
     if (showAll || variants.length === 0) return order;
     return order.filter(url => {
       const gid = urlToGid[url];
       return !gid || !assignedGids.has(gid);
     });
-  }, [showAll, pendingProductImageOrder, productImages, urlToGid, assignedGids, variants.length]);
+  }, [showAll, pendingProductImageOrder, effectiveProductImages, urlToGid, assignedGids, variants.length]);
 
   // Per-gallery selected URL sets — same URL in different galleries is independent
   const selectedUrlsByGallery = useMemo(() => {
@@ -352,7 +356,7 @@ export function VariantImageManager({
     setPendingProductImageOrder(newUrls);
     const mediaOrder = newUrls
       .map((url, idx) => {
-        const img = productImages.find(i => i.url === url);
+        const img = effectiveProductImages.find(i => i.url === url);
         return img?.mediaId ? { mediaId: img.mediaId, position: idx } : null;
       })
       .filter(Boolean) as Array<{ mediaId: string; position: number }>;
@@ -362,7 +366,7 @@ export function VariantImageManager({
       variantId, fileGids,
     }));
     onPendingChange?.(galleries, mediaOrder, pendingProductNewMedia);
-  }, [productImages, pendingVariantGalleries, pendingProductNewMedia, onPendingChange]);
+  }, [effectiveProductImages, pendingVariantGalleries, pendingProductNewMedia, onPendingChange]);
 
   const handleSharedDragStart = useCallback((event: DragStartEvent) => {
     const url = event.active.data.current?.url as string | undefined;
@@ -411,7 +415,7 @@ export function VariantImageManager({
       // Same gallery — reorder (only when dropping on a sibling item, not on the container itself)
       if (!overUrl || url === overUrl) return;
       if (sourceContainerId === "product") {
-        const urls = pendingProductImageOrder ?? productImages.map(i => i.url);
+        const urls = pendingProductImageOrder ?? effectiveProductImages.map(i => i.url);
         const oldIndex = urls.indexOf(url);
         const newIndex = urls.indexOf(overUrl);
         if (oldIndex !== -1 && newIndex !== -1 && oldIndex !== newIndex) {
@@ -478,7 +482,7 @@ export function VariantImageManager({
         return { ...p, [targetContainerId]: [...existing, gid] };
       });
     }
-  }, [pendingProductImageOrder, productImages, variants, pendingVariantGalleries, fileUrlMap, urlToGid, handleProductReorder, handleVariantReorder]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [pendingProductImageOrder, effectiveProductImages, variants, pendingVariantGalleries, fileUrlMap, urlToGid, handleProductReorder, handleVariantReorder]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // prepend=true → image lands at position 0 (main image slot, triggered by placeholder click)
   // prepend=false → image appended to end of gallery
@@ -654,7 +658,7 @@ export function VariantImageManager({
     if (!data || data === prevAltFetcherData.current) return;
     prevAltFetcherData.current = data;
     const idx = data.imageIndex as number | undefined;
-    const url = idx !== undefined ? productImages[idx]?.url : undefined;
+    const url = idx !== undefined ? effectiveProductImages[idx]?.url : undefined;
     if (url) {
       if (data.actionType === "generateAltText" && data.altText !== undefined) {
         setLocalAltTexts(p => ({ ...p, [url]: data.altText }));
@@ -685,7 +689,7 @@ export function VariantImageManager({
         }
       }
     }
-  }, [altTextFetcher.data, productImages]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [altTextFetcher.data, effectiveProductImages]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleAltTextChange = useCallback((url: string, value: string) => {
     setLocalAltTexts(p => ({ ...p, [url]: value }));
@@ -710,7 +714,7 @@ export function VariantImageManager({
   }, [urlToGid, currentLanguage, primaryLocale, saveAltTextFetcher, onDirtyChange]);
 
   const handleGenerateAltTextForImage = useCallback((url: string) => {
-    const imageIndex = productImages.findIndex(i => i.url === url);
+    const imageIndex = effectiveProductImages.findIndex(i => i.url === url);
     const form = new FormData();
     form.append("action", "generateAltText");
     form.append("itemId", productId);
@@ -720,10 +724,10 @@ export function VariantImageManager({
     form.append("productTitle", productTitle ?? "");
     form.append("mainLanguage", primaryLocale ?? "en");
     altTextFetcher.submit(form, { method: "post" });
-  }, [productId, productImages, productTitle, primaryLocale, altTextFetcher]);
+  }, [productId, effectiveProductImages, productTitle, primaryLocale, altTextFetcher]);
 
   const handleTranslateAltTextForImage = useCallback((url: string, sourceAltText: string) => {
-    const imageIndex = productImages.findIndex(i => i.url === url);
+    const imageIndex = effectiveProductImages.findIndex(i => i.url === url);
     if (!currentLanguage) return;
     const form = new FormData();
     form.append("action", "translateAltText");
@@ -733,10 +737,10 @@ export function VariantImageManager({
     form.append("sourceAltText", sourceAltText);
     form.append("targetLocale", currentLanguage);
     altTextFetcher.submit(form, { method: "post" });
-  }, [productId, productImages, currentLanguage, altTextFetcher]);
+  }, [productId, effectiveProductImages, currentLanguage, altTextFetcher]);
 
   const handleTranslateAltTextToAllLocales = useCallback((url: string, sourceAltText: string) => {
-    const imageIndex = productImages.findIndex(i => i.url === url);
+    const imageIndex = effectiveProductImages.findIndex(i => i.url === url);
     const targetLocales = enabledLanguages.filter(l => l !== primaryLocale);
     if (targetLocales.length === 0) return;
     const form = new FormData();
@@ -749,7 +753,7 @@ export function VariantImageManager({
     form.append("productTitle", productTitle ?? "");
     if (primaryLocale) form.append("primaryLocale", primaryLocale);
     altTextFetcher.submit(form, { method: "post" });
-  }, [productId, productImages, enabledLanguages, primaryLocale, altTextFetcher]);
+  }, [productId, effectiveProductImages, enabledLanguages, primaryLocale, altTextFetcher]);
 
   const hasAnySelection = selectedBulkIds.size > 0 || selectedGalleryItems.size > 0;
 
@@ -758,7 +762,7 @@ export function VariantImageManager({
   // Single selected URL in product gallery (for inline alt text editor)
   const productSelectedUrls = selectedUrlsByGallery.get("product") ?? new Set<string>();
   const noneOrAllSelected = productSelectedUrls.size === 0 || productSelectedUrls.size >= displayedProductUrls.length;
-  const imagesToConvert = productImages.filter(i =>
+  const imagesToConvert = effectiveProductImages.filter(i =>
     !i.url.toLowerCase().includes(".webp") &&
     !i.url.toLowerCase().includes("format=webp") &&
     (noneOrAllSelected ? displayedProductUrls.includes(i.url) : productSelectedUrls.has(i.url))
