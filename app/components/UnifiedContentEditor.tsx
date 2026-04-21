@@ -134,6 +134,8 @@ interface UnifiedContentEditorProps {
     activeRightTab: "seo" | "images";
     onTabChange: (tab: "seo" | "images") => void;
     imageManagerSettings: { firstImageBig: boolean; showAltTags: boolean; autoAltText: boolean };
+    variantsForBulk?: import("./image-manager/types").VariantWithGallery[];
+    onVariantsLoaded?: (variants: import("./image-manager/types").VariantWithGallery[]) => void;
   };
 }
 
@@ -950,6 +952,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   items={imageManager.bulkItems}
                   selectedUniqueIds={imageManager.selectedBulkIds}
                   activeAction={imageManager.activeAction}
+                  variants={imageManager.variantsForBulk}
                   onItemsChange={imageManager.onBulkItemsChange}
                   onSelect={imageManager.onBulkSelect}
                   onSetAction={imageManager.onSetAction}

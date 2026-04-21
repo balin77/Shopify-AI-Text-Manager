@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import type { StagedItem } from "../components/image-manager/types";
+import type { StagedItem, VariantWithGallery } from "../components/image-manager/types";
 
 export interface VariantGalleryUpdate {
   variantId: string;
@@ -22,6 +22,12 @@ export function useVariantImageManager() {
   const [pendingProductNewMedia, setPendingProductNewMedia] = useState<string[]>([]);
   const [resetCounter, setResetCounter] = useState(0);
   const [hasAltTextEdits, setHasAltTextEdits] = useState(false);
+  // Variants exposed to BulkImageUploadPanel for auto-assignment
+  const [variantsForBulk, setVariantsForBulk] = useState<VariantWithGallery[]>([]);
+
+  const handleVariantsLoaded = useCallback((variants: VariantWithGallery[]) => {
+    setVariantsForBulk(variants);
+  }, []);
 
   const handleBulkItemsChange = useCallback((updater: (prev: StagedItem[]) => StagedItem[]) => {
     setBulkItems(updater);
@@ -61,13 +67,30 @@ export function useVariantImageManager() {
         ...readyItems.map(i => ({ resourceUrl: i.resourceUrl })),
         ...pendingProductNewMedia.map(r => ({ resourceUrl: r })),
       ];
+
+      // Merge auto-assigned bulk items into pendingVariantGalleries
+      const mergedVariantGalleries = [...pendingVariantGalleries];
+      for (const item of readyItems) {
+        if (!item.targetVariantId || item.assignmentMode !== "assigned") continue;
+        const existing = mergedVariantGalleries.find(vg => vg.variantId === item.targetVariantId);
+        if (existing) {
+          existing.fileGids = [...existing.fileGids, item.resourceUrl];
+        } else {
+          const baseVariant = variantsForBulk.find(v => v.id === item.targetVariantId);
+          mergedVariantGalleries.push({
+            variantId: item.targetVariantId,
+            fileGids: [...(baseVariant?.galleryFileGids ?? []), item.resourceUrl],
+          });
+        }
+      }
+
       const res = await fetch("/api/update-variant-galleries", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           productId,
           newMedia: allNewMedia,
-          variantGalleries: pendingVariantGalleries,
+          variantGalleries: mergedVariantGalleries,
           mediaOrder: pendingMediaOrder,
         }),
       });
@@ -113,6 +136,8 @@ export function useVariantImageManager() {
     resetCounter,
     hasAltTextEdits,
     setHasAltTextEdits,
+    variantsForBulk,
+    handleVariantsLoaded,
     handleBulkItemsChange,
     handleBulkSelect,
     handleRemoveBulk,

@@ -831,6 +831,8 @@ export default function ProductsPage() {
             activeRightTab: imageManagerState.activeRightTab,
             onTabChange: imageManagerState.setActiveRightTab,
             imageManagerSettings: imageManagerSettings ?? { firstImageBig: false, showAltTags: false, autoAltText: false, thumbSize: 80 },
+            variantsForBulk: imageManagerState.variantsForBulk,
+            onVariantsLoaded: imageManagerState.handleVariantsLoaded,
           } : undefined}
           imageGalleryReplacement={showImageManager && editor.selectedItem ? (
             <VariantImageManager
@@ -848,6 +850,7 @@ export default function ProductsPage() {
               onSetAction={imageManagerState.setActiveAction}
               imageManagerSettings={imageManagerSettings ?? { firstImageBig: false, showAltTags: false, autoAltText: false, thumbSize: 80 }}
               onPendingChange={imageManagerState.handlePendingChange}
+              onVariantsLoaded={imageManagerState.handleVariantsLoaded}
               resetKey={imageManagerState.resetCounter}
               currentLanguage={editor.state.currentLanguage}
               primaryLocale={primaryLocale}

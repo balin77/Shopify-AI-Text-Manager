@@ -41,6 +41,7 @@ interface VariantImageManagerProps {
   onSetAction: (action: "copy" | "move" | null) => void;
   imageManagerSettings: ImageManagerSettings;
   onPendingChange?: (variantGalleries: Array<{ variantId: string; fileGids: string[] }>, mediaOrder: Array<{ mediaId: string; position: number }>, productNewMedia?: string[]) => void;
+  onVariantsLoaded?: (variants: VariantWithGallery[]) => void;
   resetKey?: number;
   currentLanguage?: string;
   primaryLocale?: string;
@@ -59,6 +60,7 @@ export function VariantImageManager({
   onSetAction,
   imageManagerSettings,
   onPendingChange,
+  onVariantsLoaded,
   resetKey,
   currentLanguage,
   primaryLocale,
@@ -194,7 +196,9 @@ export function VariantImageManager({
         const realVariants = mapped.length === 1 && mapped[0].title === "Default Title"
           ? []
           : mapped;
-        setVariants(realVariants.sort((a, b) => a.position - b.position));
+        const sortedVariants = realVariants.sort((a, b) => a.position - b.position);
+        setVariants(sortedVariants);
+        onVariantsLoaded?.(sortedVariants);
 
         // Auto-detect variants whose metafield wrongly contains the main image GID.
         // Queue them for cleanup so the user only needs to click Save to fix existing bad data.

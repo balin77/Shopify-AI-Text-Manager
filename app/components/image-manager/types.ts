@@ -1,3 +1,9 @@
+export interface StagedItemParsedMeta {
+  productName: string;
+  variants: string[];
+  identifier: string;
+}
+
 export interface StagedItem {
   uniqueId: string;
   previewUrl: string;
@@ -7,6 +13,10 @@ export interface StagedItem {
   progress: number;
   status: "uploading" | "ready" | "error";
   targetVariantId?: string;
+  /** Parsed from filename: productName_variant1_..._identifier.ext */
+  parsedMeta?: StagedItemParsedMeta;
+  /** "unassigned" = no SKU match, "assigned" = auto-matched, "manual" = user-placed */
+  assignmentMode?: "unassigned" | "assigned" | "manual";
 }
 
 export interface VariantWithGallery {
