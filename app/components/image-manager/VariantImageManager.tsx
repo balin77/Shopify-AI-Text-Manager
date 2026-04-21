@@ -276,9 +276,10 @@ export function VariantImageManager({
            )?.[1])
         : undefined;
       if (!mainGid) {
-        // Variant never had a featured image. If the gallery is empty, keep mediaId: null.
-        // If the gallery has images, let fileGids[0] be promoted to mediaId by the backend.
-        if (fileGids.length === 0) noMainVariantIds.add(variantId);
+        // No native Shopify featured image — always keep mediaId: null on the backend.
+        // Gallery-only images must never be auto-promoted to mediaId; the user must
+        // explicitly assign a product image as the variant's featured image.
+        noMainVariantIds.add(variantId);
         return { variantId, fileGids };
       }
       const fullGids = [mainGid, ...fileGids.filter(g => g !== mainGid)];
@@ -545,8 +546,9 @@ export function VariantImageManager({
            )?.[1])
         : undefined;
       if (mainGid) return false;
-      const storedGids = pendingVariantGalleries[v.id] ?? v.galleryFileGids;
-      return storedGids.length === 0;
+      // No native main image → always flag, even if metafield gallery has images.
+      // Gallery images cannot substitute for a missing Shopify featured image.
+      return true;
     });
   }, [variants, urlToGid, locallyExcludedMainGids, pendingVariantGalleries]);
 
@@ -1600,9 +1602,10 @@ export function VariantImageManager({
               // metafield (which would cause React to silently drop the second occurrence).
               // Skip injection when the user dragged the main image to the product gallery this session.
               const galleryGids = mainGid ? storedGids.filter(g => g !== mainGid) : storedGids;
-              const hasMainImageForVariant = !locallyExcludedMainGids.has(v.id) && (
-                Boolean(mainGid) || galleryGids.length > 0
-              );
+              // hasMainImage is true only when a native Shopify main image (defaultImageUrl) resolves
+              // to a GID. Gallery-only images from the metafield are NOT a substitute — without a
+              // native main image the section must show the placeholder and pulse warning.
+              const hasMainImageForVariant = !locallyExcludedMainGids.has(v.id) && Boolean(mainGid);
               const effectiveGids = hasMainImageForVariant
                 ? [mainGid!, ...galleryGids]
                 : galleryGids;
