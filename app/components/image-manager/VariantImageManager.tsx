@@ -909,15 +909,15 @@ export function VariantImageManager({
   const isPrimaryLocale = !currentLanguage || currentLanguage === primaryLocale;
 
   // Single selected URL in product gallery (for inline alt text editor)
-  const productSelectedUrls = selectedUrlsByGallery.get("product") ?? new Set<string>();
-  const noneOrAllSelected = productSelectedUrls.size === 0 || productSelectedUrls.size >= displayedProductUrls.length;
+  const productGallerySelectedUrls = selectedUrlsByGallery.get("product") ?? new Set<string>();
+  const noneOrAllSelected = productGallerySelectedUrls.size === 0 || productGallerySelectedUrls.size >= displayedProductUrls.length;
   const imagesToConvert = effectiveProductImages.filter(i =>
     !i.url.toLowerCase().includes(".webp") &&
     !i.url.toLowerCase().includes("format=webp") &&
-    (noneOrAllSelected ? displayedProductUrls.includes(i.url) : productSelectedUrls.has(i.url))
+    (noneOrAllSelected ? displayedProductUrls.includes(i.url) : productGallerySelectedUrls.has(i.url))
   );
 
-  const productSingleSelected = productSelectedUrls.size === 1 ? [...productSelectedUrls][0] : null;
+  const productSingleSelected = productGallerySelectedUrls.size === 1 ? [...productGallerySelectedUrls][0] : null;
   const productCurrentAltText = productSingleSelected
     ? (isPrimaryLocale
       ? (localAltTexts[productSingleSelected] ?? imageMetas[productSingleSelected]?.altText ?? "")
