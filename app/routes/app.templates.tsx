@@ -530,7 +530,7 @@ export default function TemplatesPage() {
             }, 0);
           })
           .catch(() => {
-            showInfoBox("Error loading theme content", "critical", t.content?.error || "Error");
+            showInfoBox(t.content?.errorLoadingThemeContent || "Error loading theme content", "critical", t.content?.error || "Error");
           })
           .finally(() => {
             setIsLoading(false);

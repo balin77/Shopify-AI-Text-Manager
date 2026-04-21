@@ -126,6 +126,19 @@ export const de = {
     syncInProgress: "Lade zusätzliche Produkte nach Plan-Upgrade...",
     syncComplete: "{count} neue Produkte geladen",
     syncCompleteTitle: "Sync abgeschlossen",
+    // Gallery toast messages
+    gallerySaveSuccess: "Galerie erfolgreich auf Shopify gespeichert.",
+    gallerySaveError: "Galerie konnte nicht gespeichert werden.",
+    galleryErrorTitle: "Galerie-Fehler",
+    // Sub-resource (options/metafields) toast messages
+    optionsSavedSuccess: "Optionen und Metafelder erfolgreich gespeichert",
+    saveFailed: "Speichern fehlgeschlagen",
+    saveFailedOptions: "{count} Option(en) konnte(n) nicht gespeichert werden. Änderungen wurden auf die ursprünglichen Werte zurückgesetzt.",
+    saveFailedItems: "{count} Element(e) konnte(n) nicht gespeichert werden. Änderungen wurden auf die ursprünglichen Werte zurückgesetzt.",
+    validationError: "Validierungsfehler",
+    optionNameEmpty: "Optionsname darf nicht leer sein",
+    optionValuesEmpty: "Optionswerte dürfen nicht leer sein",
+    metafieldValuesEmpty: "Metafeld-Werte dürfen nicht leer sein",
   },
 
   // Content Page
@@ -176,6 +189,7 @@ export const de = {
     discardChanges: "Verwerfen",
     changesSaved: "Änderungen erfolgreich gespeichert!",
     reloadSuccess: "Daten erfolgreich von Shopify neu geladen!",
+    errorLoadingThemeContent: "Fehler beim Laden des Theme-Inhalts",
     error: "Fehler",
     success: "Erfolg!",
     aiSuggestion: "KI-Vorschlag:",

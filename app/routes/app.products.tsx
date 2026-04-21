@@ -506,6 +506,17 @@ export default function ProductsPage() {
     revalidator,
     showInfoBox,
     enabledLanguages: editor.state.enabledLanguages,
+    strings: {
+      optionsSavedSuccess: t.products.optionsSavedSuccess,
+      saveFailed: t.products.saveFailed,
+      saveFailedOptions: t.products.saveFailedOptions,
+      saveFailedItems: t.products.saveFailedItems,
+      validationError: t.products.validationError,
+      optionNameEmpty: t.products.optionNameEmpty,
+      optionValuesEmpty: t.products.optionValuesEmpty,
+      metafieldValuesEmpty: t.products.metafieldValuesEmpty,
+      success: t.products.successTitle,
+    },
   });
 
   // Extend subResource state/handlers to include pending gallery changes so the
@@ -530,12 +541,12 @@ export default function ProductsPage() {
       if (hasPendingImageChanges && editor.selectedItem) {
         imageManagerState.handleApply(editor.selectedItem.id).then(err => {
           if (err) {
-            showInfoBox(err, "critical", "Galerie-Fehler");
+            showInfoBox(err, "critical", t.products.galleryErrorTitle);
           } else {
-            showInfoBox("Galerie erfolgreich auf Shopify gespeichert.", "success");
+            showInfoBox(t.products.gallerySaveSuccess, "success");
           }
         }).catch(() => {
-          showInfoBox("Galerie konnte nicht gespeichert werden.", "critical");
+          showInfoBox(t.products.gallerySaveError, "critical");
         });
       }
     },

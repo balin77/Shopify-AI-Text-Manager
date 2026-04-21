@@ -128,6 +128,19 @@ export const en: Translation = {
     syncInProgress: "Loading additional products after plan upgrade...",
     syncComplete: "{count} new products loaded",
     syncCompleteTitle: "Sync complete",
+    // Gallery toast messages
+    gallerySaveSuccess: "Gallery saved to Shopify successfully.",
+    gallerySaveError: "Gallery could not be saved.",
+    galleryErrorTitle: "Gallery Error",
+    // Sub-resource (options/metafields) toast messages
+    optionsSavedSuccess: "Options and metafields saved successfully",
+    saveFailed: "Save Failed",
+    saveFailedOptions: "Failed to save {count} option(s). Changes have been reverted to original values.",
+    saveFailedItems: "Failed to save {count} item(s). Changes have been reverted to original values.",
+    validationError: "Validation Error",
+    optionNameEmpty: "Option name cannot be empty",
+    optionValuesEmpty: "Option values cannot be empty",
+    metafieldValuesEmpty: "Metafield values cannot be empty",
   },
 
   // Content Page
@@ -178,6 +191,7 @@ export const en: Translation = {
     discardChanges: "Discard",
     changesSaved: "Changes saved successfully!",
     reloadSuccess: "Data reloaded from Shopify successfully!",
+    errorLoadingThemeContent: "Error loading theme content",
     error: "Error",
     success: "Success!",
     aiSuggestion: "AI suggestion:",

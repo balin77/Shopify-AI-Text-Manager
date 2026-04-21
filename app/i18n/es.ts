@@ -128,6 +128,19 @@ export const es: Translation = {
     syncInProgress: "Cargando productos adicionales después de la actualización del plan...",
     syncComplete: "{count} nuevos productos cargados",
     syncCompleteTitle: "Sincronización completa",
+    // Gallery toast messages
+    gallerySaveSuccess: "Galería guardada en Shopify correctamente.",
+    gallerySaveError: "No se pudo guardar la galería.",
+    galleryErrorTitle: "Error de galería",
+    // Sub-resource (options/metafields) toast messages
+    optionsSavedSuccess: "Opciones y metadatos guardados correctamente",
+    saveFailed: "Error al guardar",
+    saveFailedOptions: "No se pudo guardar {count} opción/opciones. Los cambios han sido revertidos a los valores originales.",
+    saveFailedItems: "No se pudo guardar {count} elemento(s). Los cambios han sido revertidos a los valores originales.",
+    validationError: "Error de validación",
+    optionNameEmpty: "El nombre de la opción no puede estar vacío",
+    optionValuesEmpty: "Los valores de la opción no pueden estar vacíos",
+    metafieldValuesEmpty: "Los valores de los metadatos no pueden estar vacíos",
   },
 
   // Content Page
@@ -178,6 +191,7 @@ export const es: Translation = {
     discardChanges: "Descartar",
     changesSaved: "¡Cambios guardados correctamente!",
     reloadSuccess: "¡Datos recargados de Shopify correctamente!",
+    errorLoadingThemeContent: "Error al cargar el contenido del tema",
     error: "Error",
     success: "¡Éxito!",
     aiSuggestion: "Sugerencia de IA:",
