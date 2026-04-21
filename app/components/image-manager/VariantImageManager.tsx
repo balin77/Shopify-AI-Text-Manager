@@ -215,19 +215,22 @@ export function VariantImageManager({
     onPendingChange?.(galleries, pendingMediaOrderRef.current, pendingProductNewMedia);
   }, [pendingVariantGalleries, pendingProductNewMedia]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const webpActiveCountRef = useRef<number | null>(null);
+
   const startWebPPolling = useCallback((pid: string) => {
     if (webpPollRef.current) clearInterval(webpPollRef.current);
+    webpActiveCountRef.current = null;
     webpPollRef.current = setInterval(async () => {
       try {
         const r = await fetch(`/api/running-field-tasks?resourceId=${encodeURIComponent(pid)}`);
         const { tasks } = await r.json();
-        const active = (tasks ?? []).some((t: { type: string }) => t.type === "imageWebpConversion");
-        if (!active) {
-          clearInterval(webpPollRef.current!);
-          webpPollRef.current = null;
-          localStorage.removeItem(`webp_${pid}`);
-          setIsConvertingWebP(false);
-          // Fetch refreshed image URLs from Shopify so badges update immediately
+        const webpTasks = (tasks ?? []).filter((t: { type: string }) => t.type === "imageWebpConversion");
+        const count = webpTasks.length;
+        const prev = webpActiveCountRef.current;
+
+        // Fetch fresh image URLs whenever a task completes (count decreased) or all are done.
+        // This updates each image's badge as soon as its individual conversion finishes.
+        if (prev === null || count < prev) {
           try {
             const imgR = await fetch(`/api/product-images?productId=${encodeURIComponent(pid)}`);
             const imgData = await imgR.json();
@@ -242,6 +245,16 @@ export function VariantImageManager({
           } catch {
             // non-critical: badge will update on next page load
           }
+        }
+
+        webpActiveCountRef.current = count;
+
+        if (count === 0) {
+          clearInterval(webpPollRef.current!);
+          webpPollRef.current = null;
+          webpActiveCountRef.current = null;
+          localStorage.removeItem(`webp_${pid}`);
+          setIsConvertingWebP(false);
         }
       } catch {
         // keep polling on transient errors
