@@ -9,12 +9,20 @@ export async function downloadImageAsBuffer(url: string): Promise<Buffer> {
 
 export async function convertToWebP(
   sourceBuffer: Buffer,
+  originalUrl?: string,
   quality = 85
 ): Promise<{ buffer: Buffer; filename: string }> {
   const buffer = await sharp(sourceBuffer)
     .webp({ quality })
     .toBuffer();
-  return { buffer, filename: `converted-${Date.now()}.webp` };
+  let filename = `converted-${Date.now()}.webp`;
+  if (originalUrl) {
+    try {
+      const base = new URL(originalUrl).pathname.split("/").pop()!.replace(/\.[^.]+$/, "");
+      if (base) filename = `${base}.webp`;
+    } catch {}
+  }
+  return { buffer, filename };
 }
 
 export async function getImageMetadata(buffer: Buffer) {

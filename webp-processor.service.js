@@ -42,9 +42,17 @@ async function downloadImageAsBuffer(url) {
   return Buffer.from(await response.arrayBuffer());
 }
 
-async function convertToWebP(sourceBuffer, quality = 85) {
+async function convertToWebP(sourceBuffer, originalUrl, quality = 85) {
   const buffer = await sharp(sourceBuffer).webp({ quality }).toBuffer();
-  return { buffer, filename: `converted-${Date.now()}.webp` };
+  let filename = `converted-${Date.now()}.webp`;
+  if (originalUrl) {
+    try {
+      const pathname = new URL(originalUrl).pathname;
+      const base = pathname.split("/").pop().replace(/\.[^.]+$/, "");
+      if (base) filename = `${base}.webp`;
+    } catch {}
+  }
+  return { buffer, filename };
 }
 
 const db = new PrismaClient();
@@ -128,7 +136,7 @@ export class WebPProcessorService {
       await db.task.update({ where: { id: task.id }, data: { progress: 30 } });
 
       // 2. Convert to WebP
-      const { buffer, filename } = await convertToWebP(sourceBuffer);
+      const { buffer, filename } = await convertToWebP(sourceBuffer, sourceUrl);
       await db.task.update({ where: { id: task.id }, data: { progress: 50 } });
 
       // 3. Get Shopify session for this shop
