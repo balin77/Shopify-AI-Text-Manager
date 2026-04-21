@@ -20,6 +20,7 @@ export function useVariantImageManager() {
   const [pendingVariantGalleries, setPendingVariantGalleries] = useState<VariantGalleryUpdate[]>([]);
   const [pendingMediaOrder, setPendingMediaOrder] = useState<MediaOrderUpdate[]>([]);
   const [pendingProductNewMedia, setPendingProductNewMedia] = useState<string[]>([]);
+  const [pendingClearVariantMainImages, setPendingClearVariantMainImages] = useState<string[]>([]);
   const [resetCounter, setResetCounter] = useState(0);
   const [hasAltTextEdits, setHasAltTextEdits] = useState(false);
   // Variants exposed to BulkImageUploadPanel for auto-assignment
@@ -51,10 +52,11 @@ export function useVariantImageManager() {
   }, []);
 
   const handlePendingChange = useCallback(
-    (galleries: VariantGalleryUpdate[], mediaOrder: MediaOrderUpdate[], productNewMedia?: string[]) => {
+    (galleries: VariantGalleryUpdate[], mediaOrder: MediaOrderUpdate[], productNewMedia?: string[], clearVariantMainImages?: string[]) => {
       setPendingVariantGalleries(galleries);
       setPendingMediaOrder(mediaOrder);
       if (productNewMedia) setPendingProductNewMedia(productNewMedia);
+      if (clearVariantMainImages !== undefined) setPendingClearVariantMainImages(clearVariantMainImages);
     },
     []
   );
@@ -92,6 +94,7 @@ export function useVariantImageManager() {
           newMedia: allNewMedia,
           variantGalleries: mergedVariantGalleries,
           mediaOrder: pendingMediaOrder,
+          clearVariantMainImages: pendingClearVariantMainImages,
         }),
       });
       const data = await res.json();
@@ -103,6 +106,7 @@ export function useVariantImageManager() {
       setPendingVariantGalleries([]);
       setPendingMediaOrder([]);
       setPendingProductNewMedia([]);
+      setPendingClearVariantMainImages([]);
       setHasAltTextEdits(false);
       return null;
     } finally {
@@ -118,6 +122,7 @@ export function useVariantImageManager() {
     setPendingVariantGalleries([]);
     setPendingMediaOrder([]);
     setPendingProductNewMedia([]);
+    setPendingClearVariantMainImages([]);
     setHasAltTextEdits(false);
     setResetCounter(c => c + 1);
   }, []);

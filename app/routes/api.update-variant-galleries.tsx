@@ -7,12 +7,15 @@ interface UpdateVariantGalleriesBody {
   newMedia?: Array<{ resourceUrl: string }>;
   variantGalleries?: Array<{ variantId: string; fileGids: string[] }>;
   mediaOrder?: Array<{ mediaId: string; position: number }>;
+  // Variant IDs whose Shopify image (mediaId) should be explicitly set to null.
+  // fileGids for these variants (if present) are gallery-only — no main GID at position 0.
+  clearVariantMainImages?: string[];
 }
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { admin } = await authenticate.admin(request);
   const body: UpdateVariantGalleriesBody = await request.json();
-  const { productId, newMedia = [], variantGalleries = [], mediaOrder = [] } = body;
+  const { productId, newMedia = [], variantGalleries = [], mediaOrder = [], clearVariantMainImages = [] } = body;
 
   const errors: string[] = [];
 
@@ -57,8 +60,51 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     if (ue.length > 0) errors.push(...ue.map((e: { message: string }) => e.message));
   }
 
-  // 3. Variant-Galerien (Metafelder) updaten
-  if (variantGalleries.length > 0) {
+  // 3. Variant-Galerien (Metafelder) updaten + Hauptbilder ggf. löschen
+  const clearSet = new Set(clearVariantMainImages);
+  const hasVariantChanges = variantGalleries.length > 0 || clearSet.size > 0;
+  if (hasVariantChanges) {
+    // Build variant update objects:
+    //  - Normal variants: fileGids[0] is the main image GID, fileGids[1..] are gallery.
+    //  - Clear-main variants: fileGids are gallery-only (no main at pos 0); set mediaId: null.
+    //  - Clear-only variants (not in variantGalleries): only send mediaId: null, no metafield change.
+    const variantMap = new Map<string, object>();
+
+    for (const vg of variantGalleries) {
+      if (clearSet.has(vg.variantId)) {
+        variantMap.set(vg.variantId, {
+          id: vg.variantId,
+          mediaId: null,
+          metafields: [{
+            namespace: "custom",
+            key: "variant_gallery",
+            value: JSON.stringify(vg.fileGids),
+            type: "list.file_reference",
+          }],
+        });
+      } else {
+        // fileGids[0] is the variant's native main image; the gallery metafield must only
+        // contain the remaining images to prevent the main image appearing twice on the storefront.
+        variantMap.set(vg.variantId, {
+          id: vg.variantId,
+          ...(vg.fileGids.length > 0 && { mediaId: vg.fileGids[0] }),
+          metafields: [{
+            namespace: "custom",
+            key: "variant_gallery",
+            value: JSON.stringify(vg.fileGids.slice(1)),
+            type: "list.file_reference",
+          }],
+        });
+      }
+    }
+
+    // Add variants that only need mediaId cleared (no gallery change)
+    for (const vid of clearSet) {
+      if (!variantMap.has(vid)) {
+        variantMap.set(vid, { id: vid, mediaId: null });
+      }
+    }
+
     const r = await admin.graphql(`
       mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
         productVariantsBulkUpdate(productId: $productId, variants: $variants) {
@@ -69,18 +115,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     `, {
       variables: {
         productId,
-        variants: variantGalleries.map(vg => ({
-          id: vg.variantId,
-          // fileGids[0] is the variant's native main image; the gallery metafield must only
-          // contain the remaining images to prevent the main image from appearing twice on the storefront.
-          ...(vg.fileGids.length > 0 && { mediaId: vg.fileGids[0] }),
-          metafields: [{
-            namespace: "custom",
-            key: "variant_gallery",
-            value: JSON.stringify(vg.fileGids.slice(1)),
-            type: "list.file_reference",
-          }],
-        })),
+        variants: [...variantMap.values()],
       },
     });
     const d = await r.json();
@@ -88,12 +123,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     if (ue.length > 0) errors.push(...ue.map((e: { message: string }) => e.message));
 
     if (errors.length === 0) {
-      await Promise.all(variantGalleries.map(vg =>
-        db.productVariant.updateMany({
+      await Promise.all(variantGalleries.map(vg => {
+        const galleryGids = clearSet.has(vg.variantId) ? vg.fileGids : vg.fileGids.slice(1);
+        return db.productVariant.updateMany({
           where: { shopifyGid: vg.variantId },
-          data: { galleryJson: JSON.stringify(vg.fileGids.slice(1)) },
-        })
-      ));
+          data: { galleryJson: JSON.stringify(galleryGids) },
+        });
+      }));
     }
   }
 

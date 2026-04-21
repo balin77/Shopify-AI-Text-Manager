@@ -40,7 +40,7 @@ interface VariantImageManagerProps {
   onRemoveBulk: (ids: string[]) => void;
   onSetAction: (action: "copy" | "move" | null) => void;
   imageManagerSettings: ImageManagerSettings;
-  onPendingChange?: (variantGalleries: Array<{ variantId: string; fileGids: string[] }>, mediaOrder: Array<{ mediaId: string; position: number }>, productNewMedia?: string[]) => void;
+  onPendingChange?: (variantGalleries: Array<{ variantId: string; fileGids: string[] }>, mediaOrder: Array<{ mediaId: string; position: number }>, productNewMedia?: string[], clearVariantMainImages?: string[]) => void;
   onVariantsLoaded?: (variants: VariantWithGallery[]) => void;
   resetKey?: number;
   currentLanguage?: string;
@@ -229,12 +229,21 @@ export function VariantImageManager({
       .finally(() => setIsLoadingVariants(false));
   }, [productId, resetKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Sync pendingVariantGalleries to parent whenever it changes.
-  // Always prepend the variant's native main image GID at position 0 so the backend can set
-  // mediaId correctly and exclude it from the gallery metafield (prevents main image duplication).
+  // Sync pendingVariantGalleries and locallyExcludedMainGids to parent whenever either changes.
+  // For normal variants: prepend the native main image GID at position 0 so the backend sets mediaId
+  // correctly and excludes it from the gallery metafield (prevents main image duplication).
+  // For excluded variants: send gallery-only GIDs (no main at pos 0) and pass the variant ID in
+  // clearVariantMainImages so the backend sets mediaId: null on Shopify.
   useEffect(() => {
-    if (Object.keys(pendingVariantGalleries).length === 0) return;
+    const hasGalleryChanges = Object.keys(pendingVariantGalleries).length > 0;
+    const hasExcludedMain = locallyExcludedMainGids.size > 0;
+    if (!hasGalleryChanges && !hasExcludedMain) return;
+
     const galleries = Object.entries(pendingVariantGalleries).map(([variantId, fileGids]) => {
+      if (locallyExcludedMainGids.has(variantId)) {
+        // Main image cleared — pass gallery-only GIDs; backend will set mediaId: null
+        return { variantId, fileGids };
+      }
       const variant = variants.find(v => v.id === variantId);
       const mainGid = variant?.defaultImageUrl
         ? (urlToGid[variant.defaultImageUrl] ??
@@ -247,8 +256,18 @@ export function VariantImageManager({
         : fileGids;
       return { variantId, fileGids: fullGids };
     });
-    onPendingChange?.(galleries, pendingMediaOrderRef.current, pendingProductNewMedia);
-  }, [pendingVariantGalleries, pendingProductNewMedia]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Add variants whose main image was excluded but have no pending gallery changes yet
+    for (const variantId of locallyExcludedMainGids) {
+      if (pendingVariantGalleries[variantId] === undefined) {
+        const variant = variants.find(v => v.id === variantId);
+        galleries.push({ variantId, fileGids: variant?.galleryFileGids ?? [] });
+      }
+    }
+
+    const clearVariantMainImages = [...locallyExcludedMainGids];
+    onPendingChange?.(galleries, pendingMediaOrderRef.current, pendingProductNewMedia, clearVariantMainImages);
+  }, [pendingVariantGalleries, pendingProductNewMedia, locallyExcludedMainGids]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const webpActiveCountRef = useRef<number | null>(null);
 
@@ -647,8 +666,15 @@ export function VariantImageManager({
 
   const handleRemoveFromGallery = useCallback((variantId: string, urls: string[]) => {
     const urlSet = new Set(urls);
+    const variant = variants.find(v => v.id === variantId);
+
+    // If the variant's main image (injected at position 0) is among the removed URLs,
+    // mark it as locally excluded so Shopify's mediaId gets cleared on save.
+    if (variant?.defaultImageUrl && urlSet.has(variant.defaultImageUrl)) {
+      setLocallyExcludedMainGids(prev => new Set([...prev, variantId]));
+    }
+
     setPendingVariantGalleries(p => {
-      const variant = variants.find(v => v.id === variantId);
       const current = p[variantId] ?? variant?.galleryFileGids ?? [];
       return { ...p, [variantId]: current.filter(gid => !urlSet.has(fileUrlMap[gid] ?? "")) };
     });
@@ -689,12 +715,11 @@ export function VariantImageManager({
       }
       return next;
     });
-    // Exclude main images of variants whose featured image was deleted
+    // Variants whose featured image was deleted — exclude from gallery and unset on Shopify
+    const variantsWithDeletedMainImage = variants.filter(v => v.defaultImageUrl && urlSet.has(v.defaultImageUrl));
     setLocallyExcludedMainGids(s => {
       const next = new Set(s);
-      for (const v of variants) {
-        if (v.defaultImageUrl && urlSet.has(v.defaultImageUrl)) next.add(v.id);
-      }
+      variantsWithDeletedMainImage.forEach(v => next.add(v.id));
       return next;
     });
     setPendingProductImageOrder(curr => {
@@ -709,11 +734,22 @@ export function VariantImageManager({
     });
 
     try {
-      await fetch("/api/delete-product-images", {
+      const deleteFetch = fetch("/api/delete-product-images", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ productId, mediaIds: gids }),
       });
+      // Shopify does not automatically clear a variant's image when the referenced media is
+      // deleted. Explicitly unset mediaId for all affected variants in the same round-trip.
+      const clearMainImageIds = variantsWithDeletedMainImage.map(v => v.id);
+      const clearFetch = clearMainImageIds.length > 0
+        ? fetch("/api/update-variant-galleries", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ productId, clearVariantMainImages: clearMainImageIds }),
+          })
+        : Promise.resolve();
+      await Promise.all([deleteFetch, clearFetch]);
     } catch {
       // non-critical: local state already reflects deletion
     }
