@@ -371,7 +371,7 @@ export function VariantImageManager({
     for (const v of variants) {
       const storedGids = pendingVariantGalleries[v.id] ?? v.galleryFileGids;
       storedGids.forEach(gid => gids.add(gid));
-      if (v.defaultImageUrl) {
+      if (v.defaultImageUrl && !locallyExcludedMainGids.has(v.id)) {
         const mainGid = urlToGid[v.defaultImageUrl] ??
           Object.entries(urlToGid).find(([u]) =>
             u.split("?")[0] === v.defaultImageUrl!.split("?")[0]
@@ -380,7 +380,7 @@ export function VariantImageManager({
       }
     }
     return gids;
-  }, [variants, pendingVariantGalleries, urlToGid]);
+  }, [variants, pendingVariantGalleries, urlToGid, locallyExcludedMainGids]);
 
   // Product image URLs to display (all or only unassigned)
   const displayedProductUrls = useMemo(() => {
@@ -513,13 +513,27 @@ export function VariantImageManager({
     // Must be checked before urlToGid lookup — image may not be in urlToGid if resolved via shopifyMediaMap only.
     if (targetContainerId === "product") {
       if (sourceContainerId === "product") return;
-      setPendingVariantGalleries(p => {
-        const sourceVariant = variants.find(v => v.id === sourceContainerId);
-        const sourceCurrent = p[sourceContainerId] ?? sourceVariant?.galleryFileGids ?? [];
-        const gidToRemove = sourceCurrent.find(g => fileUrlMap[g] === url);
-        if (!gidToRemove) return p;
-        return { ...p, [sourceContainerId]: sourceCurrent.filter(g => g !== gidToRemove) };
-      });
+      const sourceVariant = variants.find(v => v.id === sourceContainerId);
+      const sourceCurrent = pendingVariantGalleries[sourceContainerId] ?? sourceVariant?.galleryFileGids ?? [];
+      const gidToRemove = sourceCurrent.find(g => fileUrlMap[g] === url);
+      if (!gidToRemove) {
+        // The dragged image is the injected main image (not stored in the metafield).
+        // Mark it as locally excluded so it disappears from the variant gallery this session.
+        const mainGid = sourceVariant?.defaultImageUrl
+          ? (urlToGid[sourceVariant.defaultImageUrl] ??
+             Object.entries(urlToGid).find(([u]) =>
+               u.split("?")[0] === sourceVariant.defaultImageUrl!.split("?")[0]
+             )?.[1])
+          : undefined;
+        if (mainGid && fileUrlMap[mainGid] === url) {
+          setLocallyExcludedMainGids(prev => new Set([...prev, sourceContainerId]));
+        }
+        return;
+      }
+      setPendingVariantGalleries(p => ({
+        ...p,
+        [sourceContainerId]: sourceCurrent.filter(g => g !== gidToRemove),
+      }));
       return;
     }
 
@@ -1252,8 +1266,11 @@ export function VariantImageManager({
               // Always strip mainGid from the gallery portion and re-inject once at position 0.
               // This prevents duplicate React keys when mainGid was wrongly saved into the
               // metafield (which would cause React to silently drop the second occurrence).
+              // Skip injection when the user dragged the main image to the product gallery this session.
               const galleryGids = mainGid ? storedGids.filter(g => g !== mainGid) : storedGids;
-              const effectiveGids = mainGid ? [mainGid, ...galleryGids] : galleryGids;
+              const effectiveGids = mainGid && !locallyExcludedMainGids.has(v.id)
+                ? [mainGid, ...galleryGids]
+                : galleryGids;
               return (
               <VariantGallerySection
                 key={v.id}
