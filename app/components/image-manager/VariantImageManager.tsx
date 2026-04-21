@@ -176,6 +176,7 @@ export function VariantImageManager({
     setVariantError(null);
     setPendingVariantGalleries({});
     setSelectedGalleryItems(new Map());
+    setLocallyExcludedMainGids(new Set());
 
     fetch(`/api/product-variants?productId=${encodeURIComponent(productId)}`)
       .then(r => r.json())
@@ -226,7 +227,7 @@ export function VariantImageManager({
       })
       .catch(() => setVariantError(t.imageManager.variantsLoadError))
       .finally(() => setIsLoadingVariants(false));
-  }, [productId]);
+  }, [productId, resetKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Sync pendingVariantGalleries to parent whenever it changes.
   // Always prepend the variant's native main image GID at position 0 so the backend can set
@@ -688,6 +689,14 @@ export function VariantImageManager({
       }
       return next;
     });
+    // Exclude main images of variants whose featured image was deleted
+    setLocallyExcludedMainGids(s => {
+      const next = new Set(s);
+      for (const v of variants) {
+        if (v.defaultImageUrl && urlSet.has(v.defaultImageUrl)) next.add(v.id);
+      }
+      return next;
+    });
     setPendingProductImageOrder(curr => {
       const base = curr ?? effectiveProductImages.map(i => i.url);
       return base.filter(url => !urlSet.has(url));
@@ -1104,10 +1113,13 @@ export function VariantImageManager({
                 variant="secondary"
                 disabled={isDeleting}
                 onClick={() => {
+                  const urlSetForCount = new Set(productSelectedUrls);
                   const gidSet = new Set(productSelectedUrls.map(url => urlToGid[url]).filter(Boolean));
                   const affectedVariantCount = variants.filter(v => {
                     const gids = pendingVariantGalleries[v.id] ?? v.galleryFileGids;
-                    return gids.some(gid => gidSet.has(gid));
+                    const inGallery = gids.some(gid => gidSet.has(gid));
+                    const isMainImage = v.defaultImageUrl ? urlSetForCount.has(v.defaultImageUrl) : false;
+                    return inGallery || isMainImage;
                   }).length;
                   setDeleteConfirm({ urls: productSelectedUrls, affectedVariantCount });
                 }}

@@ -543,6 +543,10 @@ export default function ProductsPage() {
       subResources.handlers.resetChanges();
       imageManagerState.resetForProduct();
     },
+    resetForReload: () => {
+      subResources.handlers.resetForReload();
+      imageManagerState.resetForProduct();
+    },
   }), [subResources.handlers, hasPendingImageChanges, editor.selectedItem, imageManagerState, showInfoBox]);
 
   // Wrap translate-all handlers to also translate product options and metafields.
