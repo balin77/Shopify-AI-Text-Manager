@@ -678,6 +678,7 @@ export const es: Translation = {
     // Tooltip for locale buttons
     missingContent: "Contenido faltante:",
     missingTranslations: "Traducciones faltantes:",
+    unsavedChanges: "Cambios sin guardar",
     fieldLabels: {
       title: "Título",
       description: "Descripción",
