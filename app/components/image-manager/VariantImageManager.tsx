@@ -98,6 +98,7 @@ export function VariantImageManager({
   const webpPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const currentImagesRef = useRef<ProductImageRef[]>([]);
   const isConvertingWebPRef = useRef(false);
+  const prevConvertingGidsRef = useRef<Set<string>>(new Set());
   const prevProductImagesKeyRef = useRef<string>("");
   const [isExpanded, setIsExpanded] = useState(false);
   const [showAll, setShowAll] = useState(true);
@@ -301,6 +302,7 @@ export function VariantImageManager({
   const startWebPPolling = useCallback((pid: string) => {
     if (webpPollRef.current) clearInterval(webpPollRef.current);
     webpActiveCountRef.current = null;
+    prevConvertingGidsRef.current = new Set();
     // Shopify processes new WebP media asynchronously after the backend task completes.
     // During processing, image.url is null and the API filters those images out, causing
     // the gallery to temporarily show fewer images than expected. imagesAwaitingSync tracks
@@ -327,9 +329,12 @@ export function VariantImageManager({
         );
         setConvertingImageUrls(stillConvertingGids);
 
-        // Fetch fresh image URLs whenever a task completes (count decreased) or we're still
-        // waiting for Shopify to finish processing a recently converted image.
-        if (prev === null || count < prev || imagesAwaitingSync) {
+        const completedGids = new Set([...prevConvertingGidsRef.current].filter(gid => !stillConvertingGids.has(gid)));
+        prevConvertingGidsRef.current = stillConvertingGids;
+
+        // Only fetch fresh images for tasks that just completed, or while waiting for
+        // Shopify to finish processing a recently converted image.
+        if (completedGids.size > 0 || imagesAwaitingSync) {
           try {
             const imgR = await fetch(`/api/product-images?productId=${encodeURIComponent(pid)}`);
             const imgData = await imgR.json();
@@ -370,6 +375,7 @@ export function VariantImageManager({
                   if (base) newByBasename[base] = img;
                 }
                 for (const old of oldImages) {
+                  if (!completedGids.has(old.mediaId ?? "")) continue;
                   const base = getBasename(old.url);
                   const next = base ? newByBasename[base] : undefined;
                   if (next && old.mediaId && next.mediaId && old.mediaId !== next.mediaId) {
@@ -421,7 +427,17 @@ export function VariantImageManager({
                   }));
                 }
 
-                setRefreshedProductImages(newImages);
+                // Only swap in new entries for images that actually completed conversion;
+                // keep old entries for still-converting images to avoid unnecessary browser reloads
+                // (CDN URLs can have changing query params even for unchanged images).
+                const mergedImages = oldImages.map(old => {
+                  if (completedGids.has(old.mediaId ?? "")) {
+                    const base = getBasename(old.url);
+                    return (base ? newByBasename[base] : undefined) ?? old;
+                  }
+                  return old;
+                });
+                setRefreshedProductImages(mergedImages);
               }
             }
           } catch {
@@ -465,6 +481,7 @@ export function VariantImageManager({
             }).filter(Boolean) as string[]
           );
           setConvertingImageUrls(gids);
+          prevConvertingGidsRef.current = gids;
         })
         .catch(() => {});
       startWebPPolling(productId);
