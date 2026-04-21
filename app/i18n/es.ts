@@ -623,6 +623,7 @@ export const es: Translation = {
     primaryRef: "Idioma principal",
     noImages: "Sin imágenes",
     noMainImage: "Sin imagen principal",
+    missingMainImageTooltip: "Sin imagen principal: {variants}",
     altBadge: "ALT",
     noAltBadge: "SIN ALT",
     upload: "Subir",

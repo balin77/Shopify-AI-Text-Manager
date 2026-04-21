@@ -118,6 +118,7 @@ export function useVariantImageManager() {
       setPendingProductNewMedia([]);
       setPendingClearVariantMainImages([]);
       setHasAltTextEdits(false);
+      setResetCounter(c => c + 1);
       return null;
     } finally {
       setIsApplying(false);

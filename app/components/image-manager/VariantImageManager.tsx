@@ -4,6 +4,8 @@ import { useFetcher } from "@remix-run/react";
 import { DndContext, DragOverlay, closestCenter, pointerWithin, useDroppable, MouseSensor, TouchSensor, useSensor, useSensors, type CollisionDetection, type DragStartEvent, type DragOverEvent, type DragEndEvent } from "@dnd-kit/core";
 import { arrayMove } from "@dnd-kit/sortable";
 import { useI18n } from "../../contexts/I18nContext";
+import { PULSE_SYNC_EPOCH } from "../../utils/contentEditor.utils";
+import { TIMING } from "../../constants/timing";
 import { SortableImageGrid } from "./SortableImageGrid";
 import { VariantGallerySection } from "./VariantGallerySection";
 import type { StagedItem, VariantWithGallery, ImageMeta } from "./types";
@@ -464,18 +466,27 @@ export function VariantImageManager({
     ...Object.fromEntries(Object.entries(shopifyMediaMap).map(([gid, url]) => [url, gid])),
   }), [effectiveProductImages, shopifyMediaMap]);
 
-  const hasAnyVariantMissingMainImage = useMemo(() => {
-    if (variants.length === 0) return false;
-    return variants.some(v => {
+  // Variants that have no effective main image (neither native Shopify main nor any gallery image
+  // at position 0 that would be promoted on save). Used for tooltip, pulse, and dot indicator.
+  const variantsWithMissingMain = useMemo(() => {
+    return variants.filter(v => {
+      if (locallyExcludedMainGids.has(v.id)) {
+        const storedGids = pendingVariantGalleries[v.id] ?? v.galleryFileGids;
+        return storedGids.length === 0;
+      }
       const mainGid = v.defaultImageUrl
         ? (urlToGid[v.defaultImageUrl] ??
            Object.entries(urlToGid).find(([u]) =>
              u.split("?")[0] === v.defaultImageUrl!.split("?")[0]
            )?.[1])
         : undefined;
-      return !Boolean(mainGid) || locallyExcludedMainGids.has(v.id);
+      if (mainGid) return false;
+      const storedGids = pendingVariantGalleries[v.id] ?? v.galleryFileGids;
+      return storedGids.length === 0;
     });
-  }, [variants, urlToGid, locallyExcludedMainGids]);
+  }, [variants, urlToGid, locallyExcludedMainGids, pendingVariantGalleries]);
+
+  const hasAnyVariantMissingMainImage = variantsWithMissingMain.length > 0;
 
   useEffect(() => {
     if (!isLoadingVariants && variants.length > 0) {
@@ -1154,12 +1165,20 @@ export function VariantImageManager({
     <Card padding="400">
       <BlockStack gap="300">
         <InlineStack align="space-between" blockAlign="center">
-          <span style={hasAnyVariantMissingMainImage ? {
-            animation: `pulseFadeIn 500ms ease-out forwards, pulse 1500ms ease-in-out infinite`,
-            animationDelay: `0s, -${Date.now() % 1500}ms`,
-            borderRadius: 4,
-            padding: "2px 6px",
-          } : undefined}>
+          <span
+            title={hasAnyVariantMissingMainImage
+              ? t.imageManager.missingMainImageTooltip.replace(
+                  "{variants}",
+                  variantsWithMissingMain.map(v => v.title).join(", ")
+                )
+              : undefined}
+            style={hasAnyVariantMissingMainImage ? {
+              animation: `pulseFadeIn 500ms ease-out forwards, pulse ${TIMING.HIGHLIGHT_DURATION_MS}ms ease-in-out infinite`,
+              animationDelay: `0s, -${(Date.now() - PULSE_SYNC_EPOCH) % TIMING.HIGHLIGHT_DURATION_MS}ms`,
+              borderRadius: 4,
+              padding: "2px 6px",
+            } : undefined}
+          >
             <Text as="h3" variant="headingSm">{t.imageManager.title}</Text>
           </span>
           <Button

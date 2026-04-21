@@ -621,6 +621,7 @@ export const de = {
     primaryRef: "Hauptsprache",
     noImages: "Keine Bilder",
     noMainImage: "Kein Hauptbild",
+    missingMainImageTooltip: "Kein Hauptbild: {variants}",
     altBadge: "ALT",
     noAltBadge: "KEIN ALT",
     upload: "Upload",

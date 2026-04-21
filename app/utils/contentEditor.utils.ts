@@ -818,7 +818,7 @@ export function getLocaleButtonTooltip(
 // A negative animation-delay calculated from this epoch ensures every button starts
 // at the correct phase of the shared pulse cycle, even when animations restart at
 // different times (e.g., after editing a field briefly removes the "missing" state).
-const PULSE_SYNC_EPOCH = Date.now();
+export const PULSE_SYNC_EPOCH = Date.now();
 
 /**
  * Hook: Get button style for locale navigation with memoization

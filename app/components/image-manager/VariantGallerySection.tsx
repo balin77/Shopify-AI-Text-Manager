@@ -2,6 +2,8 @@ import { useState, useRef } from "react";
 import { Text, Button, InlineStack, Collapsible, Badge } from "@shopify/polaris";
 import { useDroppable } from "@dnd-kit/core";
 import { useI18n } from "../../contexts/I18nContext";
+import { PULSE_SYNC_EPOCH } from "../../utils/contentEditor.utils";
+import { TIMING } from "../../constants/timing";
 import { SortableImageGrid } from "./SortableImageGrid";
 import type { VariantWithGallery, ImageMeta } from "./types";
 
@@ -125,8 +127,8 @@ export function VariantGallerySection({
             aria-label={t.imageManager.selectAllVariantLabel.replace("{title}", variant.title)}
           />
           <span style={!hasMainImage ? {
-            animation: `pulseFadeIn 500ms ease-out forwards, pulse 1500ms ease-in-out infinite`,
-            animationDelay: `0s, -${Date.now() % 1500}ms`,
+            animation: `pulseFadeIn 500ms ease-out forwards, pulse ${TIMING.HIGHLIGHT_DURATION_MS}ms ease-in-out infinite`,
+            animationDelay: `0s, -${(Date.now() - PULSE_SYNC_EPOCH) % TIMING.HIGHLIGHT_DURATION_MS}ms`,
             borderRadius: 4,
             padding: "1px 4px",
           } : undefined}>
