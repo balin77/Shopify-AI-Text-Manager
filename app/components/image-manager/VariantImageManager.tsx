@@ -450,19 +450,22 @@ export function VariantImageManager({
       return;
     }
 
-    const gid = urlToGid[url];
-    if (!gid) return;
-
     // Variant → product gallery: remove from variant (no copy)
+    // Must be checked before urlToGid lookup — image may not be in urlToGid if resolved via shopifyMediaMap only.
     if (targetContainerId === "product") {
       if (sourceContainerId === "product") return;
       setPendingVariantGalleries(p => {
         const sourceVariant = variants.find(v => v.id === sourceContainerId);
         const sourceCurrent = p[sourceContainerId] ?? sourceVariant?.galleryFileGids ?? [];
-        return { ...p, [sourceContainerId]: sourceCurrent.filter(g => g !== gid) };
+        const gidToRemove = sourceCurrent.find(g => fileUrlMap[g] === url);
+        if (!gidToRemove) return p;
+        return { ...p, [sourceContainerId]: sourceCurrent.filter(g => g !== gidToRemove) };
       });
       return;
     }
+
+    const gid = urlToGid[url];
+    if (!gid) return;
 
     if (sourceContainerId !== "product") {
       if (isCtrlHeldRef.current) {
