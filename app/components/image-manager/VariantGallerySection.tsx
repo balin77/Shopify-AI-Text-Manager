@@ -149,6 +149,7 @@ export function VariantGallerySection({
             onUploadToGallery={(files) => onUploadToGallery(variant.id, files)}
             thumbSize={thumbSize}
             skipDndContext={skipDndContext}
+            disableMainDrag
           />
 
           <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>

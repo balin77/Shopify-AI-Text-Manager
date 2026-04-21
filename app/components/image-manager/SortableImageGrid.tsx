@@ -105,6 +105,7 @@ interface SortableThumbnailProps {
   onSelect: (selected: boolean) => void;
   thumbSize: number;
   isMain?: boolean;
+  dragDisabled?: boolean;
 }
 
 function extractFilename(url: string): string {
@@ -115,11 +116,12 @@ function extractFilename(url: string): string {
   }
 }
 
-function SortableThumbnail({ sortableId, url, containerId, isSelected, meta, onSelect, thumbSize, isMain = false }: SortableThumbnailProps) {
+function SortableThumbnail({ sortableId, url, containerId, isSelected, meta, onSelect, thumbSize, isMain = false, dragDisabled = false }: SortableThumbnailProps) {
   const { t } = useI18n();
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: sortableId,
     data: { containerId, url },
+    disabled: dragDisabled,
   });
   const formatBadge = getFormatBadge(url, meta?.mimeType);
   const hasAlt = Boolean(meta?.altText);
@@ -140,7 +142,7 @@ function SortableThumbnail({ sortableId, url, containerId, isSelected, meta, onS
     >
       <div
         {...listeners}
-        style={{ cursor: "grab" }}
+        style={{ cursor: dragDisabled ? "default" : "grab" }}
         onClick={(e) => { e.stopPropagation(); onSelect(!isSelected); }}
       >
         <img
@@ -236,6 +238,8 @@ interface SortableImageGridProps {
   onUploadToGallery?: (files: File[]) => void;
   // When true, no internal DndContext — parent provides one
   skipDndContext?: boolean;
+  // When true, the first item (main variant image) cannot be dragged cross-container
+  disableMainDrag?: boolean;
 }
 
 export function SortableImageGrid({
@@ -251,6 +255,7 @@ export function SortableImageGrid({
   onDropToPlaceholder,
   onUploadToGallery,
   skipDndContext = false,
+  disableMainDrag = false,
 }: SortableImageGridProps) {
   const { t } = useI18n();
   const sensors = useSensors(
@@ -315,6 +320,7 @@ export function SortableImageGrid({
             onSelect={(sel) => onSelect?.(url, sel)}
             thumbSize={thumbSize}
             isMain={showPlaceholder && idx === 0}
+            dragDisabled={disableMainDrag && showPlaceholder && idx === 0}
           />
         ))}
       </SortableContext>
