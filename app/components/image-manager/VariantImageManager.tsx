@@ -243,6 +243,10 @@ export function VariantImageManager({
     const hasExcludedMain = locallyExcludedMainGids.size > 0;
     if (!hasGalleryChanges && !hasExcludedMain) return;
 
+    // Track variants with no featured image so backend keeps all GIDs in the metafield
+    // and never promotes fileGids[0] to become mediaId on Shopify.
+    const noMainVariantIds = new Set<string>();
+
     const galleries = Object.entries(pendingVariantGalleries).map(([variantId, fileGids]) => {
       if (locallyExcludedMainGids.has(variantId)) {
         // Main image cleared — pass gallery-only GIDs; backend will set mediaId: null
@@ -255,9 +259,14 @@ export function VariantImageManager({
              u.split("?")[0] === variant.defaultImageUrl!.split("?")[0]
            )?.[1])
         : undefined;
-      const fullGids = mainGid
-        ? [mainGid, ...fileGids.filter(g => g !== mainGid)]
-        : fileGids;
+      if (!mainGid) {
+        // Variant never had a featured image — all GIDs are gallery-only.
+        // Mark for clearVariantMainImages so backend sets mediaId: null and keeps
+        // all fileGids in the metafield instead of promoting fileGids[0].
+        noMainVariantIds.add(variantId);
+        return { variantId, fileGids };
+      }
+      const fullGids = [mainGid, ...fileGids.filter(g => g !== mainGid)];
       return { variantId, fileGids: fullGids };
     });
 
@@ -269,7 +278,7 @@ export function VariantImageManager({
       }
     }
 
-    const clearVariantMainImages = [...locallyExcludedMainGids];
+    const clearVariantMainImages = [...locallyExcludedMainGids, ...noMainVariantIds];
     onPendingChange?.(galleries, pendingMediaOrderRef.current, pendingProductNewMedia, clearVariantMainImages);
   }, [pendingVariantGalleries, pendingProductNewMedia, locallyExcludedMainGids]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -352,6 +361,16 @@ export function VariantImageManager({
                     }
                     return next;
                   });
+                  // Update variants state so that unmodified galleries (falling back to
+                  // v.galleryFileGids) and variant featured images resolve to the new WebP
+                  // GIDs/URLs — ensures correct alt badges and main image display.
+                  setVariants(curr => curr.map(v => ({
+                    ...v,
+                    galleryFileGids: v.galleryFileGids.map(gid => gidRemap[gid] ?? gid),
+                    defaultImageUrl: v.defaultImageUrl
+                      ? (urlRemap[v.defaultImageUrl] ?? v.defaultImageUrl)
+                      : v.defaultImageUrl,
+                  })));
                 }
 
                 setRefreshedProductImages(newImages);
@@ -1403,8 +1422,9 @@ export function VariantImageManager({
               // metafield (which would cause React to silently drop the second occurrence).
               // Skip injection when the user dragged the main image to the product gallery this session.
               const galleryGids = mainGid ? storedGids.filter(g => g !== mainGid) : storedGids;
-              const effectiveGids = mainGid && !locallyExcludedMainGids.has(v.id)
-                ? [mainGid, ...galleryGids]
+              const hasMainImageForVariant = Boolean(mainGid) && !locallyExcludedMainGids.has(v.id);
+              const effectiveGids = hasMainImageForVariant
+                ? [mainGid!, ...galleryGids]
                 : galleryGids;
               return (
               <VariantGallerySection
@@ -1413,6 +1433,7 @@ export function VariantImageManager({
                   ...v,
                   galleryFileGids: effectiveGids,
                 }}
+                hasMainImage={hasMainImageForVariant}
                 fileUrlMap={fileUrlMap}
                 imageMetas={imageMetas}
                 activeAction={hasAnySelection ? activeAction : null}

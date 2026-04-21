@@ -260,6 +260,28 @@ export class WebPProcessorService {
 
       await db.task.update({ where: { id: task.id }, data: { progress: 80 } });
 
+      // 6.5. Find variants whose featured image is the old PNG — query before deletion
+      // so the variant.image relationship is still visible in Shopify's API.
+      let variantIdsWithOldFeaturedImage = [];
+      if (mediaId && newMediaId) {
+        try {
+          const variantsQueryRes = await fetch(shopifyApiUrl, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+              query: `query($id: ID!) { product(id: $id) { variants(first: 100) { edges { node { id image { id } } } } } }`,
+              variables: { id: productId },
+            }),
+          });
+          const variantsQueryData = await variantsQueryRes.json();
+          variantIdsWithOldFeaturedImage = (variantsQueryData.data?.product?.variants?.edges ?? [])
+            .filter(({ node }) => node.image?.id === mediaId)
+            .map(({ node }) => node.id);
+        } catch (err) {
+          console.error(`[WebPProcessor] Failed to query variants for featured image update:`, err);
+        }
+      }
+
       // 7. Delete old media from Shopify (if mediaId available)
       if (mediaId) {
         await fetch(shopifyApiUrl, {
@@ -302,6 +324,32 @@ export class WebPProcessorService {
           console.log(`[WebPProcessor] Restored position ${originalPosition} for ${newMediaId}`);
         } catch (err) {
           console.error(`[WebPProcessor] Failed to restore position for task ${task.id}:`, err);
+        }
+      }
+
+      // 7c. Re-assign variant featured images (mediaId) to the new WebP
+      if (variantIdsWithOldFeaturedImage.length > 0 && newMediaId) {
+        try {
+          await fetch(shopifyApiUrl, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+              query: `
+                mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+                  productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+                    userErrors { field message }
+                  }
+                }
+              `,
+              variables: {
+                productId,
+                variants: variantIdsWithOldFeaturedImage.map(id => ({ id, mediaId: newMediaId })),
+              },
+            }),
+          });
+          console.log(`[WebPProcessor] Updated featured image for ${variantIdsWithOldFeaturedImage.length} variant(s): ${mediaId} → ${newMediaId}`);
+        } catch (err) {
+          console.error(`[WebPProcessor] Failed to update variant featured images for task ${task.id}:`, err);
         }
       }
 

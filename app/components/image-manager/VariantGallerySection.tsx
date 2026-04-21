@@ -20,6 +20,7 @@ interface VariantGallerySectionProps {
   thumbSize?: number;
   forceOpen?: boolean;
   skipDndContext?: boolean;
+  hasMainImage?: boolean;
   localAltTexts?: Record<string, string>;
   isAltTextLoading?: boolean;
   onAltTextChange?: (url: string, value: string) => void;
@@ -47,6 +48,7 @@ export function VariantGallerySection({
   thumbSize = 80,
   forceOpen = false,
   skipDndContext = false,
+  hasMainImage = true,
   localAltTexts,
   isAltTextLoading,
   onAltTextChange,
@@ -149,6 +151,7 @@ export function VariantGallerySection({
             onUploadToGallery={(files) => onUploadToGallery(variant.id, files)}
             thumbSize={thumbSize}
             skipDndContext={skipDndContext}
+            hasMainImage={hasMainImage}
           />
 
           <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>

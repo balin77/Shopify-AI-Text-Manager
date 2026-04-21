@@ -260,6 +260,8 @@ interface SortableImageGridProps {
   onUploadToGallery?: (files: File[]) => void;
   // When true, no internal DndContext — parent provides one
   skipDndContext?: boolean;
+  // When false, no image gets the "main" gold border (variant has no featured image)
+  hasMainImage?: boolean;
 }
 
 export function SortableImageGrid({
@@ -275,6 +277,7 @@ export function SortableImageGrid({
   onDropToPlaceholder,
   onUploadToGallery,
   skipDndContext = false,
+  hasMainImage = true,
 }: SortableImageGridProps) {
   const { t } = useI18n();
   const sensors = useSensors(
@@ -338,7 +341,7 @@ export function SortableImageGrid({
             meta={imageMetas[url]}
             onSelect={(sel) => onSelect?.(url, sel)}
             thumbSize={thumbSize}
-            isMain={showPlaceholder && idx === 0}
+            isMain={showPlaceholder && hasMainImage && idx === 0}
           />
         ))}
       </SortableContext>
