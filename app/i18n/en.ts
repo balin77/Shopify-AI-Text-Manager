@@ -613,6 +613,11 @@ export const en: Translation = {
     seoScoreTab: "SEO Score",
     imagesTab: "📁 Images",
     uploadTitle: "Upload images",
+    deleteImage: "Delete",
+    deleteConfirmTitle: "Really delete {count} image(s)?",
+    deleteConfirmBody: "This action cannot be undone. The images will be permanently deleted from Shopify.",
+    deleteConfirmWithGalleries: "Warning: {count} of these images still appear in {galleries} variant gallery/galleries and will also be removed from there.",
+    deleteConfirmBtn: "Yes, delete now",
   },
 
   // Common

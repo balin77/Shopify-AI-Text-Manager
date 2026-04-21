@@ -611,6 +611,11 @@ export const de = {
     seoScoreTab: "SEO Score",
     imagesTab: "📁 Bilder",
     uploadTitle: "Bilder hochladen",
+    deleteImage: "Löschen",
+    deleteConfirmTitle: "{count} Bild(er) wirklich löschen?",
+    deleteConfirmBody: "Diese Aktion kann nicht rückgängig gemacht werden. Die Bilder werden dauerhaft von Shopify gelöscht.",
+    deleteConfirmWithGalleries: "Achtung: {count} dieser Bilder erscheinen noch in {galleries} Varianten-Galerien und werden dort ebenfalls entfernt.",
+    deleteConfirmBtn: "Ja, jetzt löschen",
   },
 
   // Common

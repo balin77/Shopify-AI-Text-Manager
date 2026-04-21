@@ -77,10 +77,14 @@ export function VariantImageManager({
   // Compound keys ensure same image URL selected in gallery A doesn't affect gallery B
   const [selectedGalleryItems, setSelectedGalleryItems] = useState<Map<string, string | null>>(new Map());
   const [pendingVariantGalleries, setPendingVariantGalleries] = useState<Record<string, string[]>>({});
+  // Variant IDs whose injected main image was dragged to the product gallery this session
+  const [locallyExcludedMainGids, setLocallyExcludedMainGids] = useState<Set<string>>(new Set());
   const [pendingProductNewMedia, setPendingProductNewMedia] = useState<string[]>([]);
   const [webpError, setWebpError] = useState<string | null>(null);
   const [isConvertingWebP, setIsConvertingWebP] = useState(false);
   const [refreshedProductImages, setRefreshedProductImages] = useState<ProductImageRef[] | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<{ urls: string[]; affectedVariantCount: number } | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
   const webpPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const currentImagesRef = useRef<ProductImageRef[]>([]);
   const [isExpanded, setIsExpanded] = useState(false);
@@ -132,6 +136,7 @@ export function VariantImageManager({
     setPendingProductNewMedia([]);
     setPendingProductImageOrder(null);
     setSelectedGalleryItems(new Map());
+    setLocallyExcludedMainGids(new Set());
     pendingMediaOrderRef.current = [];
     dirtyUrlsRef.current.clear();
     onDirtyChange?.(false);
@@ -620,6 +625,59 @@ export function VariantImageManager({
     });
   }, [variants, fileUrlMap]);
 
+  const productSelectedUrls = useMemo(() => {
+    const urls: string[] = [];
+    for (const [key, sourceVariantId] of selectedGalleryItems) {
+      if (sourceVariantId === null && key.startsWith("product::")) {
+        urls.push(key.slice("product::".length));
+      }
+    }
+    return urls;
+  }, [selectedGalleryItems]);
+
+  const handleConfirmDelete = useCallback(async () => {
+    if (!deleteConfirm) return;
+    const { urls } = deleteConfirm;
+    const gids = urls.map(url => urlToGid[url]).filter(Boolean) as string[];
+    const urlSet = new Set(urls);
+    const gidSet = new Set(gids);
+
+    setIsDeleting(true);
+    setDeleteConfirm(null);
+
+    // Optimistically remove from local state
+    setPendingVariantGalleries(p => {
+      const next = { ...p };
+      for (const v of variants) {
+        const current = p[v.id] ?? v.galleryFileGids;
+        const filtered = current.filter(gid => !gidSet.has(gid));
+        if (filtered.length !== current.length) next[v.id] = filtered;
+      }
+      return next;
+    });
+    setPendingProductImageOrder(curr => {
+      const base = curr ?? effectiveProductImages.map(i => i.url);
+      return base.filter(url => !urlSet.has(url));
+    });
+    setRefreshedProductImages(effectiveProductImages.filter(img => !urlSet.has(img.url)));
+    setSelectedGalleryItems(m => {
+      const next = new Map(m);
+      urls.forEach(url => next.delete(`product::${url}`));
+      return next;
+    });
+
+    try {
+      await fetch("/api/delete-product-images", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ productId, mediaIds: gids }),
+      });
+    } catch {
+      // non-critical: local state already reflects deletion
+    }
+    setIsDeleting(false);
+  }, [deleteConfirm, urlToGid, variants, effectiveProductImages, productId]);
+
   const handleGenerateAltFromSku = useCallback((variantId: string) => {
     const variant = variants.find(v => v.id === variantId);
     const gids = pendingVariantGalleries[variantId] ?? variant?.galleryFileGids ?? [];
@@ -1006,6 +1064,24 @@ export function VariantImageManager({
             >
               {activeAction === "move" ? t.imageManager.moveActive : t.imageManager.move}
             </Button>
+            {productSelectedUrls.length > 0 && (
+              <Button
+                size="slim"
+                tone="critical"
+                variant="secondary"
+                disabled={isDeleting}
+                onClick={() => {
+                  const gidSet = new Set(productSelectedUrls.map(url => urlToGid[url]).filter(Boolean));
+                  const affectedVariantCount = variants.filter(v => {
+                    const gids = pendingVariantGalleries[v.id] ?? v.galleryFileGids;
+                    return gids.some(gid => gidSet.has(gid));
+                  }).length;
+                  setDeleteConfirm({ urls: productSelectedUrls, affectedVariantCount });
+                }}
+              >
+                {t.imageManager.deleteImage}
+              </Button>
+            )}
             <Button
               size="slim"
               variant="plain"
@@ -1013,6 +1089,42 @@ export function VariantImageManager({
             >
               {t.imageManager.clearSelection}
             </Button>
+          </div>
+        )}
+
+        {deleteConfirm && (
+          <div style={{
+            marginTop: 8,
+            padding: "10px 12px",
+            background: "#fff4e4",
+            border: "1px solid #e6a817",
+            borderRadius: 6,
+          }}>
+            <Text as="p" variant="bodyMd" fontWeight="semibold">
+              {t.imageManager.deleteConfirmTitle.replace("{count}", String(deleteConfirm.urls.length))}
+            </Text>
+            <div style={{ marginTop: 4 }}>
+              <Text as="p" variant="bodySm">
+                {t.imageManager.deleteConfirmBody}
+              </Text>
+            </div>
+            {deleteConfirm.affectedVariantCount > 0 && (
+              <div style={{ marginTop: 6, color: "#b44b00" }}>
+                <Text as="p" variant="bodySm">
+                  {t.imageManager.deleteConfirmWithGalleries
+                    .replace("{count}", String(deleteConfirm.urls.length))
+                    .replace("{galleries}", String(deleteConfirm.affectedVariantCount))}
+                </Text>
+              </div>
+            )}
+            <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
+              <Button size="slim" tone="critical" loading={isDeleting} onClick={handleConfirmDelete}>
+                {t.imageManager.deleteConfirmBtn}
+              </Button>
+              <Button size="slim" disabled={isDeleting} onClick={() => setDeleteConfirm(null)}>
+                {t.common.cancel}
+              </Button>
+            </div>
           </div>
         )}
 

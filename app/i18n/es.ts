@@ -613,6 +613,11 @@ export const es: Translation = {
     seoScoreTab: "SEO Score",
     imagesTab: "📁 Imágenes",
     uploadTitle: "Subir imágenes",
+    deleteImage: "Eliminar",
+    deleteConfirmTitle: "¿Realmente eliminar {count} imagen(es)?",
+    deleteConfirmBody: "Esta acción no se puede deshacer. Las imágenes serán eliminadas permanentemente de Shopify.",
+    deleteConfirmWithGalleries: "Atención: {count} de estas imágenes aún aparecen en {galleries} galería(s) de variantes y también serán eliminadas de allí.",
+    deleteConfirmBtn: "Sí, eliminar ahora",
   },
 
   // Common
