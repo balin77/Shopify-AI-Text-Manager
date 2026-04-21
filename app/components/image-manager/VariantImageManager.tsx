@@ -1064,9 +1064,11 @@ export function VariantImageManager({
                      u.split("?")[0] === v.defaultImageUrl!.split("?")[0]
                    )?.[1])
                 : undefined;
-              const effectiveGids = mainGid && !storedGids.includes(mainGid)
-                ? [mainGid, ...storedGids]
-                : storedGids;
+              // Always strip mainGid from the gallery portion and re-inject once at position 0.
+              // This prevents duplicate React keys when mainGid was wrongly saved into the
+              // metafield (which would cause React to silently drop the second occurrence).
+              const galleryGids = mainGid ? storedGids.filter(g => g !== mainGid) : storedGids;
+              const effectiveGids = mainGid ? [mainGid, ...galleryGids] : galleryGids;
               return (
               <VariantGallerySection
                 key={v.id}
