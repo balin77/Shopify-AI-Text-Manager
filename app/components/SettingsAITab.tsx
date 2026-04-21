@@ -63,9 +63,10 @@ interface SettingsAITabProps {
   fetcher: FetcherWithComponents<any>;
   t: I18nTranslation;
   onHasChangesChange?: (hasChanges: boolean) => void;
+  highlightSaveButton?: boolean;
 }
 
-export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: SettingsAITabProps) {
+export function SettingsAITab({ settings, fetcher, t, onHasChangesChange, highlightSaveButton = false }: SettingsAITabProps) {
   const AI_PROVIDERS = [
     { label: t.settings.providers.openai, value: "openai" },
     { label: t.settings.providers.gemini, value: "gemini" },
@@ -273,6 +274,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
               action="saveSettings"
               fetcherState={fetcher.state}
               fetcherFormData={fetcher.formData}
+              highlightSaveButton={highlightSaveButton}
             />
           </div>
         </InlineStack>

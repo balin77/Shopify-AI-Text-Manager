@@ -13,9 +13,10 @@ interface ImageManagerSettings {
 interface Props {
   settings: ImageManagerSettings;
   onHasChangesChange?: (hasChanges: boolean) => void;
+  highlightSaveButton?: boolean;
 }
 
-export function SettingsImageManagerTab({ settings, onHasChangesChange }: Props) {
+export function SettingsImageManagerTab({ settings, onHasChangesChange, highlightSaveButton = false }: Props) {
   const { t } = useI18n();
   const [enabled, setEnabled] = useState(settings.enabled);
   const [autoAltText, setAutoAltText] = useState(settings.autoAltText);
@@ -59,6 +60,7 @@ export function SettingsImageManagerTab({ settings, onHasChangesChange }: Props)
               saveText={t.common.save}
               discardText={t.content?.discardChanges ?? "Verwerfen"}
               isSavingCurrentItem={fetcher.state !== "idle"}
+              highlightSaveButton={highlightSaveButton}
             />
           </div>
         </InlineStack>

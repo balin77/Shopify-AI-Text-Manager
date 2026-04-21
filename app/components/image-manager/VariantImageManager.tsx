@@ -97,6 +97,7 @@ export function VariantImageManager({
 
   // Cross-gallery drag state
   const [activeDragUrl, setActiveDragUrl] = useState<string | null>(null);
+  const [activeDragSourceContainer, setActiveDragSourceContainer] = useState<string | null>(null);
   const [isCtrlHeld, setIsCtrlHeld] = useState(false);
   // overContainerId tracked implicitly via autoExpandId
   const isCtrlHeldRef = useRef(false);
@@ -348,7 +349,9 @@ export function VariantImageManager({
 
   const handleSharedDragStart = useCallback((event: DragStartEvent) => {
     const url = event.active.data.current?.url as string | undefined;
+    const containerId = event.active.data.current?.containerId as string | undefined;
     setActiveDragUrl(url ?? null);
+    setActiveDragSourceContainer(containerId ?? null);
   }, []);
 
   const handleSharedDragOver = useCallback((event: DragOverEvent) => {
@@ -372,6 +375,7 @@ export function VariantImageManager({
   const handleSharedDragEnd = useCallback((event: DragEndEvent) => {
     const { active, over } = event;
     setActiveDragUrl(null);
+    setActiveDragSourceContainer(null);
     setAutoExpandId(null);
     currentOverContainerRef.current = null;
     if (autoExpandTimerRef.current) { clearTimeout(autoExpandTimerRef.current); autoExpandTimerRef.current = null; }
@@ -881,7 +885,7 @@ export function VariantImageManager({
             onReorder={handleProductReorder}
             onSelect={makeSelectHandler(null)}
             selectedUrls={selectedUrlsByGallery.get("product") ?? new Set()}
-            isDropTarget={activeAction !== null}
+            isDropTarget={activeAction !== null || (activeDragSourceContainer !== null && activeDragSourceContainer !== "product")}
             thumbSize={thumbSize}
             skipDndContext
             onUploadToGallery={handleUploadToProductGallery}

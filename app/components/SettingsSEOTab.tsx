@@ -22,6 +22,7 @@ interface SettingsSEOTabProps {
   t: any;
   shopDisplayName?: string;
   onHasChangesChange?: (hasChanges: boolean) => void;
+  highlightSaveButton?: boolean;
 }
 
 export function SettingsSEOTab({
@@ -30,6 +31,7 @@ export function SettingsSEOTab({
   t,
   shopDisplayName = "",
   onHasChangesChange,
+  highlightSaveButton = false,
 }: SettingsSEOTabProps) {
   const [seoTitleSuffixEnabled, setSeoTitleSuffixEnabled] = useState(
     settings.seoTitleSuffixEnabled ?? false
@@ -79,6 +81,7 @@ export function SettingsSEOTab({
               action="saveSeoSettings"
               fetcherState={fetcher.state}
               fetcherFormData={fetcher.formData}
+              highlightSaveButton={highlightSaveButton}
             />
           </div>
         </InlineStack>

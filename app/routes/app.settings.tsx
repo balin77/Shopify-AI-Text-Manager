@@ -655,23 +655,18 @@ export default function SettingsPage() {
   const [hasLanguageChanges, setHasLanguageChanges] = useState(false);
   const [hasInstructionsChanges, setHasInstructionsChanges] = useState(false);
   const [hasImageManagerChanges, setHasImageManagerChanges] = useState(false);
+  const [highlightSaveButton, setHighlightSaveButton] = useState(false);
   // Check if there are any unsaved changes across tabs
   const hasUnsavedChanges = hasAIChanges || hasLanguageChanges || hasInstructionsChanges || hasImageManagerChanges;
 
   // Handle section navigation with unsaved changes warning
   const handleSectionChange = (newSection: "setup" | "ai" | "instructions" | "language" | "seo" | "plan" | "feedback" | "imagemanager") => {
     if (hasUnsavedChanges) {
-      const message = t.settings?.unsavedChangesMessage ||
-        "You have unsaved changes. Do you really want to continue? Your changes will be lost.";
-      const confirmed = window.confirm(message);
-      if (!confirmed) {
-        return;
-      }
-      // Reset changes state when user confirms navigation
-      setHasAIChanges(false);
-      setHasLanguageChanges(false);
-      setHasInstructionsChanges(false);
-      setHasImageManagerChanges(false);
+      // Scroll to save button and pulse it instead of showing a dialog
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      setHighlightSaveButton(true);
+      setTimeout(() => setHighlightSaveButton(false), 3000);
+      return;
     }
     setSelectedSection(newSection);
   };
@@ -682,6 +677,7 @@ export default function SettingsPage() {
       setHasAIChanges(false);
       setHasLanguageChanges(false);
       setHasInstructionsChanges(false);
+      setHighlightSaveButton(false);
     }
   }, [fetcher.data]);
 
@@ -917,6 +913,7 @@ export default function SettingsPage() {
                   fetcher={fetcher}
                   t={t}
                   onHasChangesChange={setHasAIChanges}
+                  highlightSaveButton={highlightSaveButton}
                 />
               )}
 
@@ -938,6 +935,7 @@ export default function SettingsPage() {
                     fetcher={fetcher}
                     readOnly={aiInstructionsReadOnly}
                     onHasChangesChange={setHasInstructionsChanges}
+                    highlightSaveButton={highlightSaveButton}
                   />
                 </>
               )}
@@ -949,6 +947,7 @@ export default function SettingsPage() {
                   fetcher={fetcher}
                   t={t}
                   onHasChangesChange={setHasLanguageChanges}
+                  highlightSaveButton={highlightSaveButton}
                 />
               )}
 
@@ -960,6 +959,7 @@ export default function SettingsPage() {
                   t={t}
                   shopDisplayName={shopDisplayName}
                   onHasChangesChange={setHasAIChanges}
+                  highlightSaveButton={highlightSaveButton}
                 />
               )}
 
@@ -984,6 +984,7 @@ export default function SettingsPage() {
                 <SettingsImageManagerTab
                   settings={{ enabled: imageManagerSettings?.enabled ?? true, autoAltText: imageManagerSettings?.autoAltText ?? false }}
                   onHasChangesChange={setHasImageManagerChanges}
+                  highlightSaveButton={highlightSaveButton}
                 />
               )}
 
