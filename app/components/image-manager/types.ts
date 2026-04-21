@@ -16,6 +16,9 @@ export interface VariantWithGallery {
   position: number;
   galleryFileGids: string[];
   defaultImageUrl?: string;
+  // GID → URL map fetched directly from Shopify references (not from DB cache).
+  // Ensures gallery images display even when they're absent from the productImages prop.
+  galleryImageMap?: Record<string, string>;
 }
 
 export interface ImageMeta {

@@ -53,6 +53,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
               image { url altText }
               metafield(namespace: "custom", key: "variant_gallery") {
                 value
+                references(first: 250) {
+                  edges {
+                    node {
+                      ... on MediaImage {
+                        id
+                        image { url }
+                      }
+                    }
+                  }
+                }
               }
             }
           }
@@ -87,12 +97,25 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     });
   }));
 
-  // Map to shape the client expects: shopifyGid + galleryJson (from metafield.value)
-  const mappedVariants = variants.map((v: any) => ({
-    ...v,
-    shopifyGid: v.id,
-    galleryJson: v.metafield?.value ?? null,
-  }));
+  // Map to shape the client expects: shopifyGid + galleryJson + galleryImageMap
+  // galleryImageMap provides GID→URL for every referenced image so the client can display
+  // gallery thumbnails even when a GID is absent from the productImages DB cache.
+  const mappedVariants = variants.map((v: any) => {
+    const refEdges: any[] = v.metafield?.references?.edges ?? [];
+    const galleryImageMap: Record<string, string> = {};
+    for (const edge of refEdges) {
+      const node = edge.node;
+      if (node?.id && node?.image?.url) {
+        galleryImageMap[node.id] = node.image.url;
+      }
+    }
+    return {
+      ...v,
+      shopifyGid: v.id,
+      galleryJson: v.metafield?.value ?? null,
+      galleryImageMap,
+    };
+  });
 
   return json({ variants: mappedVariants });
 };

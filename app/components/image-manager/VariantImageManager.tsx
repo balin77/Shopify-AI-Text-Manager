@@ -177,6 +177,7 @@ export function VariantImageManager({
             try { return JSON.parse(v.galleryJson || "[]"); } catch { return []; }
           })(),
           defaultImageUrl: v.image?.url ?? undefined,
+          galleryImageMap: v.galleryImageMap ?? {},
         }));
         // Filter out Shopify's synthetic default variant (only variant, titled "Default Title")
         const realVariants = mapped.length === 1 && mapped[0].title === "Default Title"
@@ -243,11 +244,18 @@ export function VariantImageManager({
     };
   }, [productId, startWebPPolling]);
 
-  // GID → URL and URL → GID maps (filter out entries with no mediaId)
-  const fileUrlMap: Record<string, string> = useMemo(() =>
-    Object.fromEntries(productImages.filter(img => img.mediaId).map(img => [img.mediaId, img.url])),
-    [productImages]
-  );
+  // GID → URL map: starts from the DB-cached productImages, supplemented with
+  // per-variant galleryImageMap from Shopify references so gallery images always
+  // display even when not yet present in the DB cache.
+  const fileUrlMap: Record<string, string> = useMemo(() => {
+    const base = Object.fromEntries(
+      productImages.filter(img => img.mediaId).map(img => [img.mediaId, img.url])
+    );
+    for (const v of variants) {
+      if (v.galleryImageMap) Object.assign(base, v.galleryImageMap);
+    }
+    return base;
+  }, [productImages, variants]);
 
   const urlToGid: Record<string, string> = useMemo(() =>
     Object.fromEntries(productImages.filter(img => img.mediaId).map(img => [img.url, img.mediaId])),
@@ -404,11 +412,19 @@ export function VariantImageManager({
       return;
     }
 
-    // Cross-gallery: dropping onto variant only (product gallery is source-only)
-    if (targetContainerId === "product") return;
-
     const gid = urlToGid[url];
     if (!gid) return;
+
+    // Variant → product gallery: remove from variant (no copy)
+    if (targetContainerId === "product") {
+      if (sourceContainerId === "product") return;
+      setPendingVariantGalleries(p => {
+        const sourceVariant = variants.find(v => v.id === sourceContainerId);
+        const sourceCurrent = p[sourceContainerId] ?? sourceVariant?.galleryFileGids ?? [];
+        return { ...p, [sourceContainerId]: sourceCurrent.filter(g => g !== gid) };
+      });
+      return;
+    }
 
     if (sourceContainerId !== "product") {
       if (isCtrlHeldRef.current) {
