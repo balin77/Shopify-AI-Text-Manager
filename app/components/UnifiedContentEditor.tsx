@@ -137,6 +137,9 @@ interface UnifiedContentEditorProps {
     variantsForBulk?: import("./image-manager/types").VariantWithGallery[];
     onVariantsLoaded?: (variants: import("./image-manager/types").VariantWithGallery[]) => void;
   };
+
+  /** Optional: product IDs that have variants with missing main images (for yellow dot in list) */
+  extraMissingPrimaryIds?: Set<string>;
 }
 
 export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
@@ -166,6 +169,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     showImageManager,
     imageManager,
     imageGalleryReplacement,
+    extraMissingPrimaryIds,
   } = props;
 
   // Local state for search input - synced with fieldPagination.search
@@ -228,7 +232,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
       if (config.contentType === "templates" && item.contentCount !== undefined) {
         subtitle = `${item.contentCount || 0} ${t.content?.translatableFields || "translatable fields"}`;
       }
-      const hasMissingPrimary = hasPrimaryContentMissing(item, config.contentType);
+      const hasMissingPrimary = hasPrimaryContentMissing(item, config.contentType) || (extraMissingPrimaryIds?.has(item.id) ?? false);
       const missingPrimaryTooltip = hasMissingPrimary
         ? getLocaleButtonTooltip(primaryLocaleObj, item, primaryLocale, config.contentType, false, tooltipI18n)
         : null;
@@ -261,7 +265,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
         missingTranslationsTooltip,
       };
     });
-  }, [items, config.getPrimaryField, config.getSubtitle, config.contentType, t, shopLocales, primaryLocale]);
+  }, [items, config.getPrimaryField, config.getSubtitle, config.contentType, t, shopLocales, primaryLocale, extraMissingPrimaryIds]);
 
   // Plan limit configuration
   const maxItems = getMaxProducts(); // This works for all content types

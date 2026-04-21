@@ -124,7 +124,14 @@ export function VariantGallerySection({
             style={{ width: 15, height: 15, cursor: "pointer", accentColor: "#005bd3", flexShrink: 0 }}
             aria-label={t.imageManager.selectAllVariantLabel.replace("{title}", variant.title)}
           />
-          <Text as="span" variant="headingSm">{variant.title}</Text>
+          <span style={!hasMainImage ? {
+            animation: `pulseFadeIn 500ms ease-out forwards, pulse 1500ms ease-in-out infinite`,
+            animationDelay: `0s, -${Date.now() % 1500}ms`,
+            borderRadius: 4,
+            padding: "1px 4px",
+          } : undefined}>
+            <Text as="span" variant="headingSm">{variant.title}</Text>
+          </span>
           {variant.sku && (
             <Text as="span" variant="bodySm" tone="subdued">SKU: {variant.sku}</Text>
           )}

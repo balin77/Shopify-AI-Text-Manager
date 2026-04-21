@@ -25,9 +25,19 @@ export function useVariantImageManager() {
   const [hasAltTextEdits, setHasAltTextEdits] = useState(false);
   // Variants exposed to BulkImageUploadPanel for auto-assignment
   const [variantsForBulk, setVariantsForBulk] = useState<VariantWithGallery[]>([]);
+  const [missingMainImageProductIds, setMissingMainImageProductIds] = useState<Set<string>>(new Set());
 
   const handleVariantsLoaded = useCallback((variants: VariantWithGallery[]) => {
     setVariantsForBulk(variants);
+  }, []);
+
+  const handleMissingMainImageChange = useCallback((productId: string, hasMissing: boolean) => {
+    setMissingMainImageProductIds(prev => {
+      const next = new Set(prev);
+      if (hasMissing) next.add(productId);
+      else next.delete(productId);
+      return next;
+    });
   }, []);
 
   const handleBulkItemsChange = useCallback((updater: (prev: StagedItem[]) => StagedItem[]) => {
@@ -142,7 +152,9 @@ export function useVariantImageManager() {
     hasAltTextEdits,
     setHasAltTextEdits,
     variantsForBulk,
+    missingMainImageProductIds,
     handleVariantsLoaded,
+    handleMissingMainImageChange,
     handleBulkItemsChange,
     handleBulkSelect,
     handleRemoveBulk,

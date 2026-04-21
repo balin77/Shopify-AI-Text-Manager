@@ -816,6 +816,7 @@ export default function ProductsPage() {
           shopLocales={shopLocales}
           primaryLocale={primaryLocale}
           editor={editorWithSubResources}
+          extraMissingPrimaryIds={imageManagerState.missingMainImageProductIds}
           fetcherState={fetcher.state}
           fetcherFormData={fetcher.formData}
           t={t}
@@ -872,6 +873,7 @@ export default function ProductsPage() {
               productTitle={editor.selectedItem.title}
               enabledLanguages={shopLocales.map((l: any) => l.locale)}
               onDirtyChange={imageManagerState.setHasAltTextEdits}
+              onMissingMainImageChange={(hasMissing) => imageManagerState.handleMissingMainImageChange(editor.selectedItem!.id, hasMissing)}
             />
           ) : undefined}
         />

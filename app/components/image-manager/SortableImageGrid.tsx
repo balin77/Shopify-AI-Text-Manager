@@ -315,6 +315,28 @@ export function SortableImageGrid({
 
   const inner = (
     <>
+      {/* Missing main image placeholder — shown at position 0 when gallery exists but main image is absent */}
+      {showPlaceholder && !hasMainImage && imageUrls.length > 0 && (
+        <div style={{
+          width: thumbSize,
+          height: thumbSize,
+          borderRadius: 6,
+          border: "2px dashed rgba(255,149,0,0.7)",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          background: "rgba(255,149,0,0.06)",
+          flexShrink: 0,
+          gap: 2,
+        }}>
+          <span style={{ fontSize: Math.max(16, thumbSize * 0.22), lineHeight: 1, color: "rgba(255,149,0,0.9)" }}>!</span>
+          <span style={{ fontSize: Math.max(8, thumbSize * 0.1), color: "rgba(255,149,0,0.8)", textAlign: "center", padding: "0 4px", lineHeight: 1.2 }}>
+            {t.imageManager.noMainImage}
+          </span>
+        </div>
+      )}
+
       {/* Placeholder first only when gallery is empty */}
       {showPlaceholder && imageUrls.length === 0 && (
         <PlaceholderThumbnail

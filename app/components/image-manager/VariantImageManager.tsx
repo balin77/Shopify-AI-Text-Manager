@@ -48,6 +48,7 @@ interface VariantImageManagerProps {
   productTitle?: string;
   enabledLanguages?: string[];
   onDirtyChange?: (isDirty: boolean) => void;
+  onMissingMainImageChange?: (hasMissing: boolean) => void;
 }
 
 export function VariantImageManager({
@@ -67,6 +68,7 @@ export function VariantImageManager({
   productTitle,
   enabledLanguages = [],
   onDirtyChange,
+  onMissingMainImageChange,
 }: VariantImageManagerProps) {
   const { t } = useI18n();
   const [variants, setVariants] = useState<VariantWithGallery[]>([]);
@@ -462,6 +464,25 @@ export function VariantImageManager({
     ...Object.fromEntries(effectiveProductImages.filter(img => img.mediaId).map(img => [img.url, img.mediaId])),
     ...Object.fromEntries(Object.entries(shopifyMediaMap).map(([gid, url]) => [url, gid])),
   }), [effectiveProductImages, shopifyMediaMap]);
+
+  const hasAnyVariantMissingMainImage = useMemo(() => {
+    if (variants.length === 0) return false;
+    return variants.some(v => {
+      const mainGid = v.defaultImageUrl
+        ? (urlToGid[v.defaultImageUrl] ??
+           Object.entries(urlToGid).find(([u]) =>
+             u.split("?")[0] === v.defaultImageUrl!.split("?")[0]
+           )?.[1])
+        : undefined;
+      return !Boolean(mainGid) || locallyExcludedMainGids.has(v.id);
+    });
+  }, [variants, urlToGid, locallyExcludedMainGids]);
+
+  useEffect(() => {
+    if (!isLoadingVariants && variants.length > 0) {
+      onMissingMainImageChange?.(hasAnyVariantMissingMainImage);
+    }
+  }, [hasAnyVariantMissingMainImage, isLoadingVariants, variants.length, onMissingMainImageChange]);
 
   // Image metadata map (by URL): includes altText and isConverting spinner flag.
   // isConverting is true when the image's URL matches a still-running WebP task sourceUrl.
@@ -1096,7 +1117,14 @@ export function VariantImageManager({
     <Card padding="400">
       <BlockStack gap="300">
         <InlineStack align="space-between" blockAlign="center">
-          <Text as="h3" variant="headingSm">{t.imageManager.title}</Text>
+          <span style={hasAnyVariantMissingMainImage ? {
+            animation: `pulseFadeIn 500ms ease-out forwards, pulse 1500ms ease-in-out infinite`,
+            animationDelay: `0s, -${Date.now() % 1500}ms`,
+            borderRadius: 4,
+            padding: "2px 6px",
+          } : undefined}>
+            <Text as="h3" variant="headingSm">{t.imageManager.title}</Text>
+          </span>
           <Button
             size="slim"
             variant="plain"

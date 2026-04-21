@@ -620,6 +620,7 @@ export const de = {
     translateAltAll: "In alle Sprachen übersetzen",
     primaryRef: "Hauptsprache",
     noImages: "Keine Bilder",
+    noMainImage: "Kein Hauptbild",
     altBadge: "ALT",
     noAltBadge: "KEIN ALT",
     upload: "Upload",
