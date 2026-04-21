@@ -189,6 +189,30 @@ export function VariantImageManager({
           ? []
           : mapped;
         setVariants(realVariants.sort((a, b) => a.position - b.position));
+
+        // Auto-detect variants whose metafield wrongly contains the main image GID.
+        // Queue them for cleanup so the user only needs to click Save to fix existing bad data.
+        if (mediaMap) {
+          const urlToGidFromMedia: Record<string, string> = {};
+          for (const [gid, url] of Object.entries(mediaMap as Record<string, string>)) {
+            urlToGidFromMedia[url] = gid;
+          }
+          const autoFixes: Record<string, string[]> = {};
+          for (const v of realVariants) {
+            if (!v.defaultImageUrl || v.galleryFileGids.length === 0) continue;
+            const mainGid =
+              urlToGidFromMedia[v.defaultImageUrl] ??
+              Object.entries(urlToGidFromMedia).find(([u]) =>
+                u.split("?")[0] === v.defaultImageUrl!.split("?")[0]
+              )?.[1];
+            if (mainGid && v.galleryFileGids.includes(mainGid)) {
+              autoFixes[v.id] = v.galleryFileGids.filter(g => g !== mainGid);
+            }
+          }
+          if (Object.keys(autoFixes).length > 0) {
+            setPendingVariantGalleries(autoFixes);
+          }
+        }
       })
       .catch(() => setVariantError(t.imageManager.variantsLoadError))
       .finally(() => setIsLoadingVariants(false));
@@ -292,10 +316,10 @@ export function VariantImageManager({
     ...shopifyMediaMap,
   }), [effectiveProductImages, shopifyMediaMap]);
 
-  const urlToGid: Record<string, string> = useMemo(() =>
-    Object.fromEntries(effectiveProductImages.filter(img => img.mediaId).map(img => [img.url, img.mediaId])),
-    [effectiveProductImages]
-  );
+  const urlToGid: Record<string, string> = useMemo(() => ({
+    ...Object.fromEntries(effectiveProductImages.filter(img => img.mediaId).map(img => [img.url, img.mediaId])),
+    ...Object.fromEntries(Object.entries(shopifyMediaMap).map(([gid, url]) => [url, gid])),
+  }), [effectiveProductImages, shopifyMediaMap]);
 
   // Image metadata map (by URL)
   const imageMetas: Record<string, ImageMeta> = useMemo(() => {
