@@ -53,6 +53,15 @@ interface VariantImageManagerProps {
   onMissingMainImageChange?: (hasMissing: boolean) => void;
 }
 
+function insertGidAtPosition(gids: string[], gid: string, overUrl: string | null, fileUrlMap: Record<string, string>): string[] {
+  if (!overUrl) return [...gids, gid];
+  const overIdx = gids.findIndex(g => fileUrlMap[g] === overUrl);
+  if (overIdx === -1) return [...gids, gid];
+  const result = [...gids];
+  result.splice(overIdx, 0, gid);
+  return result;
+}
+
 export function VariantImageManager({
   productId,
   productImages,
@@ -769,7 +778,7 @@ export function VariantImageManager({
                )?.[1])
             : undefined;
           const noMain = (!targetMainGid || locallyExcludedMainGids.has(targetContainerId)) && existing.length === 0;
-          return { ...p, [targetContainerId]: noMain ? [gid, ...existing] : [...existing, gid] };
+          return { ...p, [targetContainerId]: noMain ? [gid, ...existing] : insertGidAtPosition(existing, gid, overUrl, fileUrlMap) };
         });
       } else {
         // Variant → Variant: move (remove from source, add to target) in single update
@@ -788,7 +797,7 @@ export function VariantImageManager({
                  )?.[1])
               : undefined;
             const noMain = (!targetMainGid || locallyExcludedMainGids.has(targetContainerId)) && targetExisting.length === 0;
-            result[targetContainerId] = noMain ? [gid, ...targetExisting] : [...targetExisting, gid];
+            result[targetContainerId] = noMain ? [gid, ...targetExisting] : insertGidAtPosition(targetExisting, gid, overUrl, fileUrlMap);
           }
           result[sourceContainerId] = sourceCurrent.filter(g => g !== gid);
           return result;
@@ -821,7 +830,7 @@ export function VariantImageManager({
              )?.[1])
           : undefined;
         const noMain = (!targetMainGid || locallyExcludedMainGids.has(targetContainerId)) && existing.length === 0;
-        return { ...p, [targetContainerId]: noMain ? [gid, ...existing] : [...existing, gid] };
+        return { ...p, [targetContainerId]: noMain ? [gid, ...existing] : insertGidAtPosition(existing, gid, overUrl, fileUrlMap) };
       });
     }
   }, [pendingProductImageOrder, effectiveProductImages, variants, pendingVariantGalleries, fileUrlMap, urlToGid, locallyExcludedMainGids, handleProductReorder, handleVariantReorder]); // eslint-disable-line react-hooks/exhaustive-deps
