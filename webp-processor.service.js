@@ -262,20 +262,29 @@ export class WebPProcessorService {
 
       // 6.5. Find variants whose featured image is the old PNG — query before deletion
       // so the variant.image relationship is still visible in Shopify's API.
+      // NOTE: variant.image.id returns a ProductImage GID (gid://shopify/ProductImage/...),
+      // while mediaId in the task is a MediaImage GID (gid://shopify/MediaImage/...).
+      // These are different GID types for the same image, so we must match by URL path instead.
       let variantIdsWithOldFeaturedImage = [];
-      if (mediaId && newMediaId) {
+      if (newMediaId) {
         try {
           const variantsQueryRes = await fetch(shopifyApiUrl, {
             method: "POST",
             headers,
             body: JSON.stringify({
-              query: `query($id: ID!) { product(id: $id) { variants(first: 100) { edges { node { id image { id } } } } } }`,
+              query: `query($id: ID!) { product(id: $id) { variants(first: 100) { edges { node { id image { url } } } } } }`,
               variables: { id: productId },
             }),
           });
           const variantsQueryData = await variantsQueryRes.json();
+          const srcPath = (() => {
+            try { return new URL(sourceUrl).pathname; } catch { return sourceUrl; }
+          })();
           variantIdsWithOldFeaturedImage = (variantsQueryData.data?.product?.variants?.edges ?? [])
-            .filter(({ node }) => node.image?.id === mediaId)
+            .filter(({ node }) => {
+              if (!node.image?.url) return false;
+              try { return new URL(node.image.url).pathname === srcPath; } catch { return node.image.url === sourceUrl; }
+            })
             .map(({ node }) => node.id);
         } catch (err) {
           console.error(`[WebPProcessor] Failed to query variants for featured image update:`, err);
