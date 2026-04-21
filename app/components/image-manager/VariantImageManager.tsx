@@ -582,6 +582,8 @@ export function VariantImageManager({
     setWebpError(null);
     if (images.length === 0) return;
 
+    const effectiveOrder = pendingProductImageOrder ?? productImages.map(p => p.url);
+
     try {
       const res = await fetch("/api/convert-webp", {
         method: "POST",
@@ -594,6 +596,7 @@ export function VariantImageManager({
             url: i.url,
             productImageId: i.id,
             altText: i.altText ?? null,
+            position: effectiveOrder.indexOf(i.url),
           })),
         }),
       });
@@ -604,7 +607,7 @@ export function VariantImageManager({
     } catch {
       setWebpError(t.imageManager.webpConvertError);
     }
-  }, [productId, productTitle, startWebPPolling]);
+  }, [productId, productTitle, startWebPPolling, pendingProductImageOrder, productImages]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleUploadToVariant = useCallback(async (variantId: string, files: File[]) => {
     for (const file of files) {

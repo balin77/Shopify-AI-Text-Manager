@@ -5,7 +5,7 @@ import { db } from "../db.server";
 interface ConvertWebpBody {
   productId: string;
   productTitle?: string;
-  images: Array<{ mediaId: string; url: string; productImageId: string; altText?: string | null }>;
+  images: Array<{ mediaId: string; url: string; productImageId: string; altText?: string | null; position?: number | null }>;
 }
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -31,6 +31,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           productImageId: img.productImageId,
           productId,
           altText: img.altText ?? null,
+          position: img.position ?? null,
         }),
       },
     })

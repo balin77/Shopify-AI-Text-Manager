@@ -270,6 +270,33 @@ export class WebPProcessorService {
         });
       }
 
+      // 7b. Restore original position of the new WebP image
+      const originalPosition = taskData.position;
+      if (newMediaId && originalPosition != null && originalPosition >= 0) {
+        try {
+          await fetch(shopifyApiUrl, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+              query: `
+                mutation productReorderMedia($id: ID!, $moves: [MoveInput!]!) {
+                  productReorderMedia(id: $id, moves: $moves) {
+                    userErrors { field message }
+                  }
+                }
+              `,
+              variables: {
+                id: productId,
+                moves: [{ id: newMediaId, newPosition: String(originalPosition) }],
+              },
+            }),
+          });
+          console.log(`[WebPProcessor] Restored position ${originalPosition} for ${newMediaId}`);
+        } catch (err) {
+          console.error(`[WebPProcessor] Failed to restore position for task ${task.id}:`, err);
+        }
+      }
+
       // 8. Re-assign variant galleries: replace old media GID with new WebP GID
       if (mediaId && newMediaId) {
         const affectedVariants = await db.productVariant.findMany({
