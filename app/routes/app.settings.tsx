@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher, useSearchParams, useRevalidator } from "@remix-run/react";
 import {
@@ -23,6 +23,7 @@ import { db } from "../db.server";
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { useItemSelector } from "../contexts/ItemSelectorContext";
+import { useNavigationGuard } from "../contexts/NavigationGuardContext";
 import { sanitizeHTML } from "../utils/sanitizer";
 import { AISettingsSchema, AIInstructionsSchema, parseFormData } from "../utils/validation";
 import { getFormString } from "../utils/form-data.utils";
@@ -637,6 +638,7 @@ export default function SettingsPage() {
   const { t } = useI18n();
   const { showInfoBox } = useInfoBox();
   const { registerItems, clearItems } = useItemSelector();
+  const { registerGuard, unregisterGuard } = useNavigationGuard();
   const isFreePlan = subscriptionPlan === "free";
   const isBasicPlan = subscriptionPlan === "basic";
   const aiInstructionsReadOnly = isFreePlan || isBasicPlan;
@@ -659,13 +661,34 @@ export default function SettingsPage() {
   // Check if there are any unsaved changes across tabs
   const hasUnsavedChanges = hasAIChanges || hasLanguageChanges || hasInstructionsChanges || hasImageManagerChanges;
 
+  const triggerSaveButtonHighlight = useCallback(() => {
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    setHighlightSaveButton(true);
+    showInfoBox(
+      t.settings?.unsavedChangesMessage || "You have unsaved changes. Please save before navigating away.",
+      "warning",
+      t.common?.unsavedChanges || "Unsaved Changes"
+    );
+    setTimeout(() => setHighlightSaveButton(false), 3000);
+  }, [showInfoBox, t]);
+
+  // Register navigation guard while there are unsaved changes
+  useEffect(() => {
+    if (hasUnsavedChanges) {
+      registerGuard(() => {
+        triggerSaveButtonHighlight();
+        return false;
+      });
+    } else {
+      unregisterGuard();
+    }
+    return () => unregisterGuard();
+  }, [hasUnsavedChanges, registerGuard, unregisterGuard, triggerSaveButtonHighlight]);
+
   // Handle section navigation with unsaved changes warning
   const handleSectionChange = (newSection: "setup" | "ai" | "instructions" | "language" | "seo" | "plan" | "feedback" | "imagemanager") => {
     if (hasUnsavedChanges) {
-      // Scroll to save button and pulse it instead of showing a dialog
-      window.scrollTo({ top: 0, behavior: "smooth" });
-      setHighlightSaveButton(true);
-      setTimeout(() => setHighlightSaveButton(false), 3000);
+      triggerSaveButtonHighlight();
       return;
     }
     setSelectedSection(newSection);
