@@ -843,9 +843,10 @@ export function VariantImageManager({
     setIsDeleting(false);
   }, [deleteConfirm, urlToGid, variants, effectiveProductImages, productId]);
 
-  const handleGenerateAltFromSku = useCallback((variantId: string) => {
+  const handleGenerateAltFromSku = useCallback((variantId: string, selectedGids?: string[]) => {
     const variant = variants.find(v => v.id === variantId);
-    const gids = pendingVariantGalleries[variantId] ?? variant?.galleryFileGids ?? [];
+    const allGids = pendingVariantGalleries[variantId] ?? variant?.galleryFileGids ?? [];
+    const gids = selectedGids && selectedGids.length > 0 ? selectedGids : allGids;
     if (!gids.length) return;
 
     const form = new FormData();
