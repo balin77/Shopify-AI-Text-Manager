@@ -68,6 +68,8 @@ export function VariantImageManager({
 }: VariantImageManagerProps) {
   const { t } = useI18n();
   const [variants, setVariants] = useState<VariantWithGallery[]>([]);
+  // Authoritative GID→URL map fetched from Shopify product media (not DB cache).
+  const [shopifyMediaMap, setShopifyMediaMap] = useState<Record<string, string>>({});
   const [isLoadingVariants, setIsLoadingVariants] = useState(false);
   const [variantError, setVariantError] = useState<string | null>(null);
   const [pendingProductImageOrder, setPendingProductImageOrder] = useState<string[] | null>(null);
@@ -78,6 +80,7 @@ export function VariantImageManager({
   const [pendingProductNewMedia, setPendingProductNewMedia] = useState<string[]>([]);
   const [webpError, setWebpError] = useState<string | null>(null);
   const [isConvertingWebP, setIsConvertingWebP] = useState(false);
+  const [refreshedProductImages, setRefreshedProductImages] = useState<ProductImageRef[] | null>(null);
   const webpPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [isExpanded, setIsExpanded] = useState(false);
   const [showAll, setShowAll] = useState(true);
@@ -168,8 +171,9 @@ export function VariantImageManager({
 
     fetch(`/api/product-variants?productId=${encodeURIComponent(productId)}`)
       .then(r => r.json())
-      .then(({ variants: raw, error }) => {
+      .then(({ variants: raw, mediaMap, error }) => {
         if (error) { setVariantError(error); return; }
+        if (mediaMap) setShopifyMediaMap(mediaMap);
         const mapped: VariantWithGallery[] = (raw ?? []).map((v: any) => ({
           id: v.shopifyGid ?? v.id,
           title: v.title,
@@ -179,7 +183,6 @@ export function VariantImageManager({
             try { return JSON.parse(v.galleryJson || "[]"); } catch { return []; }
           })(),
           defaultImageUrl: v.image?.url ?? undefined,
-          galleryImageMap: v.galleryImageMap ?? {},
         }));
         // Filter out Shopify's synthetic default variant (only variant, titled "Default Title")
         const realVariants = mapped.length === 1 && mapped[0].title === "Default Title"
@@ -224,6 +227,21 @@ export function VariantImageManager({
           webpPollRef.current = null;
           localStorage.removeItem(`webp_${pid}`);
           setIsConvertingWebP(false);
+          // Fetch refreshed image URLs from Shopify so badges update immediately
+          try {
+            const imgR = await fetch(`/api/product-images?productId=${encodeURIComponent(pid)}`);
+            const imgData = await imgR.json();
+            if (imgData.success && Array.isArray(imgData.images)) {
+              setRefreshedProductImages(imgData.images.map((img: any) => ({
+                url: img.url ?? "",
+                mediaId: img.mediaId ?? img.url ?? "",
+                id: img.mediaId ?? img.url ?? "",
+                altText: img.altText ?? null,
+              })));
+            }
+          } catch {
+            // non-critical: badge will update on next page load
+          }
         }
       } catch {
         // keep polling on transient errors
@@ -233,6 +251,7 @@ export function VariantImageManager({
 
   // Resume polling on mount/product-switch; reset spinner if no active conversion for this product
   useEffect(() => {
+    setRefreshedProductImages(null);
     if (!productId) return;
     const converting = localStorage.getItem(`webp_${productId}`);
     if (converting) {
@@ -246,18 +265,15 @@ export function VariantImageManager({
     };
   }, [productId, startWebPPolling]);
 
-  // GID → URL map: starts from the DB-cached productImages, supplemented with
-  // per-variant galleryImageMap from Shopify references so gallery images always
-  // display even when not yet present in the DB cache.
-  const fileUrlMap: Record<string, string> = useMemo(() => {
-    const base = Object.fromEntries(
+  // GID → URL map: DB-cached productImages merged with the authoritative Shopify media map.
+  // shopifyMediaMap is fetched fresh from Shopify on every product load, so gallery images
+  // always resolve even when the DB cache is stale or incomplete.
+  const fileUrlMap: Record<string, string> = useMemo(() => ({
+    ...Object.fromEntries(
       productImages.filter(img => img.mediaId).map(img => [img.mediaId, img.url])
-    );
-    for (const v of variants) {
-      if (v.galleryImageMap) Object.assign(base, v.galleryImageMap);
-    }
-    return base;
-  }, [productImages, variants]);
+    ),
+    ...shopifyMediaMap,
+  }), [productImages, shopifyMediaMap]);
 
   const urlToGid: Record<string, string> = useMemo(() =>
     Object.fromEntries(productImages.filter(img => img.mediaId).map(img => [img.url, img.mediaId])),

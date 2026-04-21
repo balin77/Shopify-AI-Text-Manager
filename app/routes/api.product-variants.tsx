@@ -40,9 +40,22 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   await ensureVariantGalleryMetafieldDefinition(admin);
 
+  // Fetch product media + variants in one query.
+  // media(first:250) gives us a definitive GID→URL map for ALL product images,
+  // independent of the DB cache — so gallery thumbnails always resolve correctly.
   const response = await admin.graphql(`
     query GetVariantsWithGallery($id: ID!) {
       product(id: $id) {
+        media(first: 250) {
+          edges {
+            node {
+              ... on MediaImage {
+                id
+                image { url }
+              }
+            }
+          }
+        }
         variants(first: 100) {
           edges {
             node {
@@ -53,16 +66,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
               image { url altText }
               metafield(namespace: "custom", key: "variant_gallery") {
                 value
-                references(first: 250) {
-                  edges {
-                    node {
-                      ... on MediaImage {
-                        id
-                        image { url }
-                      }
-                    }
-                  }
-                }
               }
             }
           }
@@ -72,7 +75,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   `, { variables: { id: productId } });
 
   const data = await response.json();
-  const variants = data.data?.product?.variants?.edges?.map((e: any) => e.node) ?? [];
+  const productData = data.data?.product;
+  const variants = productData?.variants?.edges?.map((e: any) => e.node) ?? [];
+
+  // Build a GID→URL map from ALL current product media (authoritative, not DB-cached).
+  const mediaMap: Record<string, string> = {};
+  for (const edge of (productData?.media?.edges ?? [])) {
+    const node = edge.node;
+    if (node?.id && node?.image?.url) mediaMap[node.id] = node.image.url;
+  }
 
   // In DB cachen (upsert)
   await Promise.all(variants.map((v: any) => {
@@ -97,25 +108,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     });
   }));
 
-  // Map to shape the client expects: shopifyGid + galleryJson + galleryImageMap
-  // galleryImageMap provides GID→URL for every referenced image so the client can display
-  // gallery thumbnails even when a GID is absent from the productImages DB cache.
-  const mappedVariants = variants.map((v: any) => {
-    const refEdges: any[] = v.metafield?.references?.edges ?? [];
-    const galleryImageMap: Record<string, string> = {};
-    for (const edge of refEdges) {
-      const node = edge.node;
-      if (node?.id && node?.image?.url) {
-        galleryImageMap[node.id] = node.image.url;
-      }
-    }
-    return {
-      ...v,
-      shopifyGid: v.id,
-      galleryJson: v.metafield?.value ?? null,
-      galleryImageMap,
-    };
-  });
+  const mappedVariants = variants.map((v: any) => ({
+    ...v,
+    shopifyGid: v.id,
+    galleryJson: v.metafield?.value ?? null,
+  }));
 
-  return json({ variants: mappedVariants });
+  return json({ variants: mappedVariants, mediaMap });
 };
