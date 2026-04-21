@@ -223,7 +223,7 @@ export function BulkImageUploadPanel({
           ariaExpanded={docsOpen}
           ariaControls="bulk-docs"
         >
-          {docsOpen ? "Dokumentation ausblenden" : "Automatische Zuordnung – Hilfe"}
+          {docsOpen ? t.imageManager.bulkDocsToggleHide : t.imageManager.bulkDocsToggleShow}
         </Button>
         <Collapsible open={docsOpen} id="bulk-docs" transition={{ duration: "200ms", timingFunction: "ease-in-out" }}>
           <Box paddingBlockStart="300">
@@ -231,25 +231,21 @@ export function BulkImageUploadPanel({
               <Box padding="400">
                 <BlockStack gap="300">
                   <Text as="h3" variant="headingSm" fontWeight="semibold">
-                    Automatische Varianten-Zuordnung
+                    {t.imageManager.bulkDocsTitle}
                   </Text>
                   <Text as="p" variant="bodySm">
-                    Bilder werden automatisch der richtigen Variante zugeordnet, wenn der Dateiname folgendem Format entspricht:
+                    {t.imageManager.bulkDocsBody}
                   </Text>
                   <Box padding="200" background="bg-surface" borderRadius="100">
                     <code style={{ fontFamily: "monospace", fontSize: 12 }}>
-                      Produktname_Variante1_Variante2_..._Identifier.ext
+                      ProductName_Variant1_Variant2_..._Identifier.ext
                     </code>
                   </Box>
                   <Text as="p" variant="bodySm" tone="subdued">
-                    <strong>Beispiel:</strong> <code>Tshirt_Blue_M_001.jpg</code>
-                    <br />
-                    Produktname: <code>Tshirt</code> | Varianten: <code>Blue</code>, <code>M</code> | Identifier: <code>001</code>
-                    <br />
-                    Passende SKU: <code>Tshirt_Blue_M</code>
+                    {t.imageManager.bulkDocsExample}
                   </Text>
                   <Text as="p" variant="bodySm" tone="critical">
-                    Gross-/Kleinschreibung und Reihenfolge der Varianten müssen exakt mit der SKU übereinstimmen.
+                    {t.imageManager.bulkDocsCaseSensitive}
                   </Text>
                 </BlockStack>
               </Box>
@@ -268,9 +264,9 @@ export function BulkImageUploadPanel({
           {/* Assignment summary */}
           {variants.length > 0 && (
             <InlineStack gap="200" blockAlign="center">
-              <Badge tone="success">{`${assignedCount} zugewiesen`}</Badge>
+              <Badge tone="success">{t.imageManager.bulkAssigned.replace("{count}", String(assignedCount))}</Badge>
               {unassignedCount > 0 && (
-                <Badge tone="attention">{`${unassignedCount} nicht zugewiesen`}</Badge>
+                <Badge tone="attention">{t.imageManager.bulkUnassigned.replace("{count}", String(unassignedCount))}</Badge>
               )}
             </InlineStack>
           )}
@@ -278,12 +274,12 @@ export function BulkImageUploadPanel({
           {/* Sort controls */}
           <InlineStack gap="200" blockAlign="center">
             <Select
-              label="Sortierung"
+              label={t.imageManager.bulkSortLabel}
               labelInline
               options={[
-                { label: "Nach Identifier", value: "identifier" },
-                { label: "Nach SKU", value: "sku" },
-                { label: "Nach Dateiname", value: "filename" },
+                { label: t.imageManager.bulkSortIdentifier, value: "identifier" },
+                { label: t.imageManager.bulkSortSku, value: "sku" },
+                { label: t.imageManager.bulkSortFilename, value: "filename" },
               ]}
               value={sortMode}
               onChange={v => setSortMode(v as SortMode)}
@@ -293,7 +289,7 @@ export function BulkImageUploadPanel({
               variant={sortListOpen ? "primary" : "secondary"}
               onClick={() => setSortListOpen(o => !o)}
             >
-              {sortListOpen ? "Listenansicht schließen" : "Reihenfolge anpassen"}
+              {sortListOpen ? t.imageManager.bulkSortListOpen : t.imageManager.bulkSortListClose}
             </Button>
           </InlineStack>
 
@@ -386,7 +382,7 @@ export function BulkImageUploadPanel({
               <Divider />
               <BlockStack gap="200">
                 <Text as="p" variant="bodyMd" fontWeight="semibold">
-                  Vorschau: Zuordnung zu Varianten
+                  {t.imageManager.bulkPreviewTitle}
                 </Text>
                 {Object.entries(assignedByVariant).map(([variantId, variantItems]) => (
                   <Card key={variantId} padding="300">
@@ -413,7 +409,7 @@ export function BulkImageUploadPanel({
                   <Card padding="300">
                     <BlockStack gap="200">
                       <Text as="p" variant="bodySm" fontWeight="semibold" tone="caution">
-                        Nicht zugewiesen ({unassignedCount})
+                        {t.imageManager.bulkPreviewUnassigned.replace("{count}", String(unassignedCount))}
                       </Text>
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                         {items.filter(i => i.assignmentMode === "unassigned" || !i.assignmentMode).map(item => (

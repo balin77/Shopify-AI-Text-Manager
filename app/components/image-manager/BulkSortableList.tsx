@@ -16,6 +16,7 @@ import {
 } from "@dnd-kit/sortable";
 import { InlineStack, Text, Badge, Button } from "@shopify/polaris";
 import { DeleteIcon } from "@shopify/polaris-icons";
+import { useI18n } from "../../contexts/I18nContext";
 import type { StagedItem } from "./types";
 
 interface SortableItemRowProps {
@@ -25,6 +26,7 @@ interface SortableItemRowProps {
 }
 
 function SortableItemRow({ item, variantTitle, onRemove }: SortableItemRowProps) {
+  const { t } = useI18n();
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: item.uniqueId });
 
@@ -38,11 +40,12 @@ function SortableItemRow({ item, variantTitle, onRemove }: SortableItemRowProps)
 
   const identifier = item.parsedMeta?.identifier ?? item.fileName ?? item.uniqueId;
   const productName = item.parsedMeta?.productName ?? "—";
+  const im = t.imageManager;
   const assignmentBadge = item.assignmentMode === "assigned"
-    ? <Badge tone="success">Zugewiesen</Badge>
+    ? <Badge tone="success">{im.bulkAssigned?.replace("{count}", "") ?? "✓"}</Badge>
     : item.assignmentMode === "manual"
-    ? <Badge tone="info">Manuell</Badge>
-    : <Badge tone="attention">Nicht zugewiesen</Badge>;
+    ? <Badge tone="info">{im.unassigned ?? "Manual"}</Badge>
+    : <Badge tone="attention">{im.unassigned ?? "?"}</Badge>;
 
   return (
     <li ref={setNodeRef} style={style}>
@@ -97,7 +100,7 @@ function SortableItemRow({ item, variantTitle, onRemove }: SortableItemRowProps)
               variant="plain"
               tone="critical"
               onClick={() => onRemove(item.uniqueId)}
-              accessibilityLabel="Entfernen"
+              accessibilityLabel={t.imageManager.remove?.replace(" ({count})", "") ?? "Remove"}
             />
           </div>
         </InlineStack>
@@ -114,6 +117,7 @@ interface BulkSortableListProps {
 }
 
 export function BulkSortableList({ items, variantTitles = {}, onReorder, onRemove }: BulkSortableListProps) {
+  const { t } = useI18n();
   const sensors = useSensors(
     useSensor(PointerSensor),
     useSensor(KeyboardSensor)
@@ -145,7 +149,7 @@ export function BulkSortableList({ items, variantTitles = {}, onReorder, onRemov
       <SortableContext items={sortedItems.map(i => i.uniqueId)} strategy={verticalListSortingStrategy}>
         <div>
           <Text as="p" variant="bodyMd" fontWeight="semibold">
-            Reihenfolge anpassen ({sortedItems.length} Bilder)
+            {t.imageManager.bulkSortListTitle?.replace("{count}", String(sortedItems.length)) ?? `${sortedItems.length}`}
           </Text>
           <ul style={{ padding: 0, margin: "8px 0 0" }}>
             {sortedItems.map(item => (

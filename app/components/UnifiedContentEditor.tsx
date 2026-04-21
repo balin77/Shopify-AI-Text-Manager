@@ -939,7 +939,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   }}
                   onClick={() => imageManager.onTabChange("images")}
                 >
-                  {t.imageManager?.imagesTab ?? "📁 Images"}
+                  {t.imageManager?.imagesTab ?? "Bulk Upload"}
                 </button>
               </div>
             )}
