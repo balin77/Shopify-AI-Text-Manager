@@ -124,6 +124,7 @@ function SortableThumbnail({ sortableId, url, containerId, isSelected, meta, onS
   const formatBadge = getFormatBadge(url, meta?.mimeType);
   const hasAlt = Boolean(meta?.altText);
   const filename = extractFilename(url);
+  const isConverting = Boolean(meta?.isConverting);
 
   return (
     <div
@@ -197,6 +198,29 @@ function SortableThumbnail({ sortableId, url, containerId, isSelected, meta, onS
           }}>
           {hasAlt ? t.imageManager.altBadge : t.imageManager.noAltBadge}
         </div>
+
+        {/* Conversion spinner overlay */}
+        {isConverting && (
+          <div style={{
+            position: "absolute",
+            inset: 0,
+            background: "rgba(0,0,0,0.45)",
+            borderRadius: 6,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            pointerEvents: "none",
+          }}>
+            <div style={{
+              width: 20,
+              height: 20,
+              border: "3px solid rgba(255,255,255,0.35)",
+              borderTopColor: "white",
+              borderRadius: "50%",
+              animation: "spin 0.75s linear infinite",
+            }} />
+          </div>
+        )}
 
         {/* Format badge */}
         {formatBadge && (

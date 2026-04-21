@@ -84,11 +84,15 @@ export function VariantImageManager({
   const [pendingProductNewMedia, setPendingProductNewMedia] = useState<string[]>([]);
   const [webpError, setWebpError] = useState<string | null>(null);
   const [isConvertingWebP, setIsConvertingWebP] = useState(false);
+  // Source URLs (original PNG) of images currently being converted; cleared when done.
+  const [convertingImageUrls, setConvertingImageUrls] = useState<Set<string>>(new Set());
   const [refreshedProductImages, setRefreshedProductImages] = useState<ProductImageRef[] | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<{ urls: string[]; affectedVariantCount: number } | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const webpPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const currentImagesRef = useRef<ProductImageRef[]>([]);
+  const isConvertingWebPRef = useRef(false);
+  const prevProductImagesKeyRef = useRef<string>("");
   const [isExpanded, setIsExpanded] = useState(false);
   const [showAll, setShowAll] = useState(true);
   const [thumbSize, setThumbSize] = useState(imageManagerSettings.thumbSize ?? 80);
@@ -274,6 +278,14 @@ export function VariantImageManager({
   const startWebPPolling = useCallback((pid: string) => {
     if (webpPollRef.current) clearInterval(webpPollRef.current);
     webpActiveCountRef.current = null;
+    // Shopify processes new WebP media asynchronously after the backend task completes.
+    // During processing, image.url is null and the API filters those images out, causing
+    // the gallery to temporarily show fewer images than expected. imagesAwaitingSync tracks
+    // this state so we keep polling until all images are available.
+    let imagesAwaitingSync = false;
+    let syncRetryCount = 0;
+    const MAX_SYNC_RETRIES = 10;
+
     webpPollRef.current = setInterval(async () => {
       try {
         const r = await fetch(`/api/running-field-tasks?resourceId=${encodeURIComponent(pid)}`);
@@ -282,9 +294,18 @@ export function VariantImageManager({
         const count = webpTasks.length;
         const prev = webpActiveCountRef.current;
 
-        // Fetch fresh image URLs whenever a task completes (count decreased) or all are done.
-        // This updates each image's badge as soon as its individual conversion finishes.
-        if (prev === null || count < prev) {
+        // Update per-image spinner: derive the set of source URLs still being converted.
+        // The task result JSON contains sourceUrl (the original PNG URL).
+        const stillConvertingUrls = new Set<string>(
+          webpTasks.map((t: { result?: string }) => {
+            try { return JSON.parse(t.result || "{}").sourceUrl as string; } catch { return null; }
+          }).filter(Boolean) as string[]
+        );
+        setConvertingImageUrls(stillConvertingUrls);
+
+        // Fetch fresh image URLs whenever a task completes (count decreased) or we're still
+        // waiting for Shopify to finish processing a recently converted image.
+        if (prev === null || count < prev || imagesAwaitingSync) {
           try {
             const imgR = await fetch(`/api/product-images?productId=${encodeURIComponent(pid)}`);
             const imgData = await imgR.json();
@@ -296,33 +317,45 @@ export function VariantImageManager({
                 altText: img.altText ?? null,
               }));
 
-              // Build URL and GID remaps by matching positions (processor preserves order).
-              // Needed so pendingProductImageOrder and pendingVariantGalleries stay valid
-              // after old PNG media is deleted and replaced by new WebP media.
               const oldImages = currentImagesRef.current;
-              const urlRemap: Record<string, string> = {};
-              const gidRemap: Record<string, string> = {};
-              oldImages.forEach((old, i) => {
-                const next = newImages[i];
-                if (next && old.mediaId && next.mediaId && old.mediaId !== next.mediaId) {
-                  urlRemap[old.url] = next.url;
-                  gidRemap[old.mediaId] = next.mediaId;
-                }
-              });
-              if (Object.keys(urlRemap).length > 0) {
-                setPendingProductImageOrder(curr =>
-                  curr ? curr.map(url => urlRemap[url] ?? url) : null
-                );
-                setPendingVariantGalleries(curr => {
-                  const next: Record<string, string[]> = {};
-                  for (const [variantId, gids] of Object.entries(curr)) {
-                    next[variantId] = gids.map(gid => gidRemap[gid] ?? gid);
-                  }
-                  return next;
-                });
-              }
 
-              setRefreshedProductImages(newImages);
+              // If Shopify returns fewer images than expected, some new WebPs are still in
+              // PROCESSING state (image.url is null → filtered out by the API). Skip updating
+              // refreshedProductImages to avoid erasing images from the gallery. Retry next poll.
+              if (newImages.length < oldImages.length && syncRetryCount < MAX_SYNC_RETRIES) {
+                imagesAwaitingSync = true;
+                syncRetryCount++;
+              } else {
+                imagesAwaitingSync = false;
+                syncRetryCount = 0;
+
+                // Build URL and GID remaps by matching positions (processor preserves order).
+                // Needed so pendingProductImageOrder and pendingVariantGalleries stay valid
+                // after old PNG media is deleted and replaced by new WebP media.
+                const urlRemap: Record<string, string> = {};
+                const gidRemap: Record<string, string> = {};
+                oldImages.forEach((old, i) => {
+                  const next = newImages[i];
+                  if (next && old.mediaId && next.mediaId && old.mediaId !== next.mediaId) {
+                    urlRemap[old.url] = next.url;
+                    gidRemap[old.mediaId] = next.mediaId;
+                  }
+                });
+                if (Object.keys(urlRemap).length > 0) {
+                  setPendingProductImageOrder(curr =>
+                    curr ? curr.map(url => urlRemap[url] ?? url) : null
+                  );
+                  setPendingVariantGalleries(curr => {
+                    const next: Record<string, string[]> = {};
+                    for (const [variantId, gids] of Object.entries(curr)) {
+                      next[variantId] = gids.map(gid => gidRemap[gid] ?? gid);
+                    }
+                    return next;
+                  });
+                }
+
+                setRefreshedProductImages(newImages);
+              }
             }
           } catch {
             // non-critical: badge will update on next page load
@@ -331,12 +364,13 @@ export function VariantImageManager({
 
         webpActiveCountRef.current = count;
 
-        if (count === 0) {
+        if (count === 0 && !imagesAwaitingSync) {
           clearInterval(webpPollRef.current!);
           webpPollRef.current = null;
           webpActiveCountRef.current = null;
           localStorage.removeItem(`webp_${pid}`);
           setIsConvertingWebP(false);
+          setConvertingImageUrls(new Set());
         }
       } catch {
         // keep polling on transient errors
@@ -347,10 +381,25 @@ export function VariantImageManager({
   // Resume polling on mount/product-switch; reset spinner if no active conversion for this product
   useEffect(() => {
     setRefreshedProductImages(null);
+    setConvertingImageUrls(new Set());
     if (!productId) return;
     const converting = localStorage.getItem(`webp_${productId}`);
     if (converting) {
       setIsConvertingWebP(true);
+      // Immediately populate converting URLs from DB tasks so spinners show without
+      // waiting for the first 3-second poll interval (important after navigation).
+      fetch(`/api/running-field-tasks?resourceId=${encodeURIComponent(productId)}`)
+        .then(r => r.json())
+        .then(({ tasks }) => {
+          const webpTasks = (tasks ?? []).filter((t: { type: string }) => t.type === "imageWebpConversion");
+          const urls = new Set<string>(
+            webpTasks.map((t: { result?: string }) => {
+              try { return JSON.parse(t.result || "{}").sourceUrl as string; } catch { return null; }
+            }).filter(Boolean) as string[]
+          );
+          setConvertingImageUrls(urls);
+        })
+        .catch(() => {});
       startWebPPolling(productId);
     } else {
       setIsConvertingWebP(false);
@@ -359,6 +408,21 @@ export function VariantImageManager({
       if (webpPollRef.current) clearInterval(webpPollRef.current);
     };
   }, [productId, startWebPPolling]);
+
+  // Keep ref in sync so polling closures can read current conversion state without stale closure.
+  isConvertingWebPRef.current = isConvertingWebP;
+
+  // Clear stale refreshedProductImages when the parent reloads fresh data (same productId).
+  // refreshedProductImages overrides productImages via effectiveProductImages; without this,
+  // a user-triggered reload would be silently ignored as long as the stale override is set.
+  const productImagesKey = productImages.map(i => i.mediaId).join(",");
+  useEffect(() => {
+    const prev = prevProductImagesKeyRef.current;
+    prevProductImagesKeyRef.current = productImagesKey;
+    if (prev !== "" && prev !== productImagesKey && !isConvertingWebPRef.current) {
+      setRefreshedProductImages(null);
+    }
+  }, [productImagesKey]); // string comparison → only fires when actual image data changes
 
   // After WebP conversion completes, use the refreshed Shopify URLs (with .webp extension)
   // so badges update immediately without a page reload. Falls back to the prop otherwise.
@@ -380,14 +444,18 @@ export function VariantImageManager({
     ...Object.fromEntries(Object.entries(shopifyMediaMap).map(([gid, url]) => [url, gid])),
   }), [effectiveProductImages, shopifyMediaMap]);
 
-  // Image metadata map (by URL)
+  // Image metadata map (by URL): includes altText and isConverting spinner flag.
+  // isConverting is true when the image's URL matches a still-running WebP task sourceUrl.
   const imageMetas: Record<string, ImageMeta> = useMemo(() => {
     const map: Record<string, ImageMeta> = {};
     for (const img of effectiveProductImages) {
-      map[img.url] = { altText: img.altText };
+      map[img.url] = {
+        altText: img.altText,
+        isConverting: convertingImageUrls.has(img.url),
+      };
     }
     return map;
-  }, [effectiveProductImages]);
+  }, [effectiveProductImages, convertingImageUrls]);
 
   // All GIDs currently assigned to any variant gallery (including injected main images)
   const assignedGids = useMemo(() => {

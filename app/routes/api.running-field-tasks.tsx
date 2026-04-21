@@ -28,6 +28,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
           targetLocale: true,
           type: true,
           status: true,
+          result: true,
         },
       });
 

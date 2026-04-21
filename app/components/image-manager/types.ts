@@ -31,4 +31,5 @@ export interface VariantWithGallery {
 export interface ImageMeta {
   altText?: string | null;
   mimeType?: string;       // e.g. "image/webp", "image/jpeg"
+  isConverting?: boolean;  // true while a WebP conversion task is running for this image
 }
