@@ -112,7 +112,7 @@ export function useVariantImageManager() {
     } finally {
       setIsApplying(false);
     }
-  }, [bulkItems, pendingVariantGalleries, pendingMediaOrder, pendingProductNewMedia]);
+  }, [bulkItems, pendingVariantGalleries, pendingMediaOrder, pendingProductNewMedia, pendingClearVariantMainImages]);
 
   // Beim Produktwechsel: State zurücksetzen
   const resetForProduct = useCallback(() => {
