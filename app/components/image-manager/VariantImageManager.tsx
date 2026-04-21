@@ -82,6 +82,7 @@ export function VariantImageManager({
   const [isConvertingWebP, setIsConvertingWebP] = useState(false);
   const [refreshedProductImages, setRefreshedProductImages] = useState<ProductImageRef[] | null>(null);
   const webpPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const currentImagesRef = useRef<ProductImageRef[]>([]);
   const [isExpanded, setIsExpanded] = useState(false);
   const [showAll, setShowAll] = useState(true);
   const [thumbSize, setThumbSize] = useState(imageManagerSettings.thumbSize ?? 80);
@@ -259,12 +260,40 @@ export function VariantImageManager({
             const imgR = await fetch(`/api/product-images?productId=${encodeURIComponent(pid)}`);
             const imgData = await imgR.json();
             if (imgData.success && Array.isArray(imgData.images)) {
-              setRefreshedProductImages(imgData.images.map((img: any) => ({
+              const newImages: ProductImageRef[] = imgData.images.map((img: any) => ({
                 url: img.url ?? "",
                 mediaId: img.mediaId ?? img.url ?? "",
                 id: img.mediaId ?? img.url ?? "",
                 altText: img.altText ?? null,
-              })));
+              }));
+
+              // Build URL and GID remaps by matching positions (processor preserves order).
+              // Needed so pendingProductImageOrder and pendingVariantGalleries stay valid
+              // after old PNG media is deleted and replaced by new WebP media.
+              const oldImages = currentImagesRef.current;
+              const urlRemap: Record<string, string> = {};
+              const gidRemap: Record<string, string> = {};
+              oldImages.forEach((old, i) => {
+                const next = newImages[i];
+                if (next && old.mediaId && next.mediaId && old.mediaId !== next.mediaId) {
+                  urlRemap[old.url] = next.url;
+                  gidRemap[old.mediaId] = next.mediaId;
+                }
+              });
+              if (Object.keys(urlRemap).length > 0) {
+                setPendingProductImageOrder(curr =>
+                  curr ? curr.map(url => urlRemap[url] ?? url) : null
+                );
+                setPendingVariantGalleries(curr => {
+                  const next: Record<string, string[]> = {};
+                  for (const [variantId, gids] of Object.entries(curr)) {
+                    next[variantId] = gids.map(gid => gidRemap[gid] ?? gid);
+                  }
+                  return next;
+                });
+              }
+
+              setRefreshedProductImages(newImages);
             }
           } catch {
             // non-critical: badge will update on next page load
@@ -305,6 +334,7 @@ export function VariantImageManager({
   // After WebP conversion completes, use the refreshed Shopify URLs (with .webp extension)
   // so badges update immediately without a page reload. Falls back to the prop otherwise.
   const effectiveProductImages = refreshedProductImages ?? productImages;
+  currentImagesRef.current = effectiveProductImages;
 
   // GID → URL map: DB-cached productImages merged with the authoritative Shopify media map.
   // shopifyMediaMap is fetched fresh from Shopify on every product load, so gallery images
