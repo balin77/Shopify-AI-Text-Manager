@@ -180,15 +180,19 @@ export function VariantImageManager({
     });
   }, [translationsFetcher.data]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => {
-    if (!productId) return;
+  // Extracted so it can be called both on product selection (full reset) and on image reload
+  // (variants-only refresh, no pending-state reset). The resetState flag controls whether
+  // pending galleries / selection / exclusions are cleared before fetching.
+  const fetchVariantsForProduct = useCallback((pid: string, resetState: boolean) => {
     setIsLoadingVariants(true);
     setVariantError(null);
-    setPendingVariantGalleries({});
-    setSelectedGalleryItems(new Map());
-    setLocallyExcludedMainGids(new Set());
+    if (resetState) {
+      setPendingVariantGalleries({});
+      setSelectedGalleryItems(new Map());
+      setLocallyExcludedMainGids(new Set());
+    }
 
-    fetch(`/api/product-variants?productId=${encodeURIComponent(productId)}`)
+    fetch(`/api/product-variants?productId=${encodeURIComponent(pid)}`)
       .then(r => r.json())
       .then(({ variants: raw, mediaMap, error }) => {
         if (error) { setVariantError(error); return; }
@@ -213,7 +217,7 @@ export function VariantImageManager({
 
         // Auto-detect variants whose metafield wrongly contains the main image GID.
         // Queue them for cleanup so the user only needs to click Save to fix existing bad data.
-        if (mediaMap) {
+        if (resetState && mediaMap) {
           const urlToGidFromMedia: Record<string, string> = {};
           for (const [gid, url] of Object.entries(mediaMap as Record<string, string>)) {
             urlToGidFromMedia[url] = gid;
@@ -237,6 +241,11 @@ export function VariantImageManager({
       })
       .catch(() => setVariantError(t.imageManager.variantsLoadError))
       .finally(() => setIsLoadingVariants(false));
+  }, [t.imageManager.variantsLoadError, onVariantsLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!productId) return;
+    fetchVariantsForProduct(productId, true);
   }, [productId, resetKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Sync pendingVariantGalleries and locallyExcludedMainGids to parent whenever either changes.
@@ -382,13 +391,34 @@ export function VariantImageManager({
                   // Update variants state so that unmodified galleries (falling back to
                   // v.galleryFileGids) and variant featured images resolve to the new WebP
                   // GIDs/URLs — ensures correct alt badges and main image display.
-                  setVariants(curr => curr.map(v => ({
-                    ...v,
-                    galleryFileGids: v.galleryFileGids.map(gid => gidRemap[gid] ?? gid),
-                    defaultImageUrl: v.defaultImageUrl
-                      ? (urlRemap[v.defaultImageUrl] ?? v.defaultImageUrl)
-                      : v.defaultImageUrl,
-                  })));
+                  //
+                  // defaultImageUrl comes from the Shopify variant API (?v= may differ from the
+                  // DB-cached old.url used as urlRemap keys). Fall back to GID-based remap so
+                  // the main image URL is always updated even when query params don't match.
+                  const newGidToUrl: Record<string, string> = {};
+                  for (const img of newImages) {
+                    if (img.mediaId) newGidToUrl[img.mediaId] = img.url;
+                  }
+                  setVariants(curr => curr.map(v => {
+                    let newDefaultImageUrl = v.defaultImageUrl;
+                    if (v.defaultImageUrl) {
+                      if (urlRemap[v.defaultImageUrl]) {
+                        newDefaultImageUrl = urlRemap[v.defaultImageUrl];
+                      } else {
+                        const oldImg = oldImages.find(img =>
+                          img.url === v.defaultImageUrl ||
+                          img.url.split("?")[0] === v.defaultImageUrl!.split("?")[0]
+                        );
+                        const newGid = oldImg?.mediaId ? gidRemap[oldImg.mediaId] : undefined;
+                        if (newGid && newGidToUrl[newGid]) newDefaultImageUrl = newGidToUrl[newGid];
+                      }
+                    }
+                    return {
+                      ...v,
+                      galleryFileGids: v.galleryFileGids.map(gid => gidRemap[gid] ?? gid),
+                      defaultImageUrl: newDefaultImageUrl,
+                    };
+                  }));
                 }
 
                 setRefreshedProductImages(newImages);
@@ -452,14 +482,16 @@ export function VariantImageManager({
   // Clear stale refreshedProductImages when the parent reloads fresh data (same productId).
   // refreshedProductImages overrides productImages via effectiveProductImages; without this,
   // a user-triggered reload would be silently ignored as long as the stale override is set.
+  // Also re-fetch variants so defaultImageUrl is fresh — missing-main detection depends on it.
   const productImagesKey = productImages.map(i => i.mediaId).join(",");
   useEffect(() => {
     const prev = prevProductImagesKeyRef.current;
     prevProductImagesKeyRef.current = productImagesKey;
     if (prev !== "" && prev !== productImagesKey && !isConvertingWebPRef.current) {
       setRefreshedProductImages(null);
+      if (productId) fetchVariantsForProduct(productId, false);
     }
-  }, [productImagesKey]); // string comparison → only fires when actual image data changes
+  }, [productImagesKey, productId, fetchVariantsForProduct]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // After WebP conversion completes, use the refreshed Shopify URLs (with .webp extension)
   // so badges update immediately without a page reload. Falls back to the prop otherwise.
@@ -511,16 +543,22 @@ export function VariantImageManager({
 
   // Image metadata map (by URL): includes altText and isConverting spinner flag.
   // isConverting is true when the image's URL matches a still-running WebP task sourceUrl.
+  // Also indexed by shopifyMediaMap URL per GID: fileUrlMap uses shopifyMediaMap as override,
+  // so the URL resolved for a gallery image may differ from the DB-cached img.url (different
+  // ?v= query params). Without the extra entry the alt-text badge lookup would silently fail.
   const imageMetas: Record<string, ImageMeta> = useMemo(() => {
     const map: Record<string, ImageMeta> = {};
     for (const img of effectiveProductImages) {
-      map[img.url] = {
+      const entry: ImageMeta = {
         altText: img.altText,
         isConverting: convertingImageUrls.has(img.mediaId),
       };
+      map[img.url] = entry;
+      const freshUrl = img.mediaId ? shopifyMediaMap[img.mediaId] : undefined;
+      if (freshUrl && freshUrl !== img.url) map[freshUrl] = entry;
     }
     return map;
-  }, [effectiveProductImages, convertingImageUrls]);
+  }, [effectiveProductImages, convertingImageUrls, shopifyMediaMap]);
 
   // All GIDs currently assigned to any variant gallery (including injected main images)
   const assignedGids = useMemo(() => {
