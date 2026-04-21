@@ -262,10 +262,9 @@ export function VariantImageManager({
            )?.[1])
         : undefined;
       if (!mainGid) {
-        // Variant never had a featured image — all GIDs are gallery-only.
-        // Mark for clearVariantMainImages so backend sets mediaId: null and keeps
-        // all fileGids in the metafield instead of promoting fileGids[0].
-        noMainVariantIds.add(variantId);
+        // Variant never had a featured image. If the gallery is empty, keep mediaId: null.
+        // If the gallery has images, let fileGids[0] be promoted to mediaId by the backend.
+        if (fileGids.length === 0) noMainVariantIds.add(variantId);
         return { variantId, fileGids };
       }
       const fullGids = [mainGid, ...fileGids.filter(g => g !== mainGid)];
@@ -680,7 +679,14 @@ export function VariantImageManager({
           const targetVariant = variants.find(v => v.id === targetContainerId);
           const existing = p[targetContainerId] ?? targetVariant?.galleryFileGids ?? [];
           if (existing.includes(gid)) return p;
-          return { ...p, [targetContainerId]: [...existing, gid] };
+          const targetMainGid = targetVariant?.defaultImageUrl
+            ? (urlToGid[targetVariant.defaultImageUrl] ??
+               Object.entries(urlToGid).find(([u]) =>
+                 u.split("?")[0] === targetVariant.defaultImageUrl!.split("?")[0]
+               )?.[1])
+            : undefined;
+          const noMain = (!targetMainGid || locallyExcludedMainGids.has(targetContainerId)) && existing.length === 0;
+          return { ...p, [targetContainerId]: noMain ? [gid, ...existing] : [...existing, gid] };
         });
       } else {
         // Variant → Variant: move (remove from source, add to target) in single update
@@ -690,7 +696,17 @@ export function VariantImageManager({
           const targetExisting = p[targetContainerId] ?? targetVariant?.galleryFileGids ?? [];
           const sourceCurrent = p[sourceContainerId] ?? sourceVariant?.galleryFileGids ?? [];
           const result = { ...p };
-          if (!targetExisting.includes(gid)) result[targetContainerId] = [...targetExisting, gid];
+          if (!targetExisting.includes(gid)) {
+            const targetVariant = variants.find(v => v.id === targetContainerId);
+            const targetMainGid = targetVariant?.defaultImageUrl
+              ? (urlToGid[targetVariant.defaultImageUrl] ??
+                 Object.entries(urlToGid).find(([u]) =>
+                   u.split("?")[0] === targetVariant.defaultImageUrl!.split("?")[0]
+                 )?.[1])
+              : undefined;
+            const noMain = (!targetMainGid || locallyExcludedMainGids.has(targetContainerId)) && targetExisting.length === 0;
+            result[targetContainerId] = noMain ? [gid, ...targetExisting] : [...targetExisting, gid];
+          }
           result[sourceContainerId] = sourceCurrent.filter(g => g !== gid);
           return result;
         });
@@ -715,7 +731,14 @@ export function VariantImageManager({
       setPendingVariantGalleries(p => {
         const existing = p[targetContainerId] ?? targetVariant?.galleryFileGids ?? [];
         if (existing.includes(gid)) return p;
-        return { ...p, [targetContainerId]: [...existing, gid] };
+        const targetMainGid = targetVariant?.defaultImageUrl
+          ? (urlToGid[targetVariant.defaultImageUrl] ??
+             Object.entries(urlToGid).find(([u]) =>
+               u.split("?")[0] === targetVariant.defaultImageUrl!.split("?")[0]
+             )?.[1])
+          : undefined;
+        const noMain = (!targetMainGid || locallyExcludedMainGids.has(targetContainerId)) && existing.length === 0;
+        return { ...p, [targetContainerId]: noMain ? [gid, ...existing] : [...existing, gid] };
       });
     }
   }, [pendingProductImageOrder, effectiveProductImages, variants, pendingVariantGalleries, fileUrlMap, urlToGid, locallyExcludedMainGids, handleProductReorder, handleVariantReorder]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -737,9 +760,16 @@ export function VariantImageManager({
     if (newGids.length === 0) return;
 
     setPendingVariantGalleries(p => {
-      const existing = p[targetVariantId] ??
-        variants.find(v => v.id === targetVariantId)?.galleryFileGids ?? [];
-      const merged = prepend ? [...newGids, ...existing] : [...existing, ...newGids];
+      const targetVariant = variants.find(v => v.id === targetVariantId);
+      const existing = p[targetVariantId] ?? targetVariant?.galleryFileGids ?? [];
+      const targetMainGid = targetVariant?.defaultImageUrl
+        ? (urlToGid[targetVariant.defaultImageUrl] ??
+           Object.entries(urlToGid).find(([u]) =>
+             u.split("?")[0] === targetVariant.defaultImageUrl!.split("?")[0]
+           )?.[1])
+        : undefined;
+      const noMain = (!targetMainGid || locallyExcludedMainGids.has(targetVariantId)) && existing.length === 0;
+      const merged = (prepend || noMain) ? [...newGids, ...existing] : [...existing, ...newGids];
       return { ...p, [targetVariantId]: merged };
     });
 
@@ -770,7 +800,7 @@ export function VariantImageManager({
       setSelectedGalleryItems(new Map());
     }
     // Copy: keep action mode + selection active so user can copy to multiple variants
-  }, [bulkItems, selectedBulkIds, selectedGalleryItems, activeAction, variants, urlToGid, fileUrlMap, onRemoveBulk, onSetAction]);
+  }, [bulkItems, selectedBulkIds, selectedGalleryItems, activeAction, variants, urlToGid, fileUrlMap, locallyExcludedMainGids, onRemoveBulk, onSetAction]);
 
   const handleRemoveFromGallery = useCallback((variantId: string, urls: string[]) => {
     const urlSet = new Set(urls);
@@ -941,14 +971,21 @@ export function VariantImageManager({
           setPendingVariantGalleries(p => {
             const variant = variants.find(v => v.id === variantId);
             const current = p[variantId] ?? variant?.galleryFileGids ?? [];
-            return { ...p, [variantId]: [...current, resourceUrl] };
+            const mainGid = variant?.defaultImageUrl
+              ? (urlToGid[variant.defaultImageUrl] ??
+                 Object.entries(urlToGid).find(([u]) =>
+                   u.split("?")[0] === variant.defaultImageUrl!.split("?")[0]
+                 )?.[1])
+              : undefined;
+            const noMain = (!mainGid || locallyExcludedMainGids.has(variantId)) && current.length === 0;
+            return { ...p, [variantId]: noMain ? [resourceUrl, ...current] : [...current, resourceUrl] };
           });
         }
       } catch {
         // silent — user can retry
       }
     }
-  }, [variants]);
+  }, [variants, urlToGid, locallyExcludedMainGids]);
 
   const handleUploadToProductGallery = useCallback(async (files: File[]) => {
     for (const file of files) {
@@ -1474,7 +1511,9 @@ export function VariantImageManager({
               // metafield (which would cause React to silently drop the second occurrence).
               // Skip injection when the user dragged the main image to the product gallery this session.
               const galleryGids = mainGid ? storedGids.filter(g => g !== mainGid) : storedGids;
-              const hasMainImageForVariant = Boolean(mainGid) && !locallyExcludedMainGids.has(v.id);
+              const hasMainImageForVariant = !locallyExcludedMainGids.has(v.id) && (
+                Boolean(mainGid) || galleryGids.length > 0
+              );
               const effectiveGids = hasMainImageForVariant
                 ? [mainGid!, ...galleryGids]
                 : galleryGids;
