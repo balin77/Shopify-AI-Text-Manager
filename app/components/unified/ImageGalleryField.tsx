@@ -21,6 +21,14 @@ import { useState, useEffect } from "react";
 import { BlockStack, InlineStack, Button, Text, Banner } from "@shopify/polaris";
 import { AIEditableField } from "../AIEditableField";
 
+function extractFilename(url: string): string {
+  try {
+    return new URL(url).pathname.split("/").pop() ?? url;
+  } catch {
+    return url.split("/").pop()?.split("?")[0] ?? url;
+  }
+}
+
 export interface ImageData {
   url: string;
   altText?: string;
@@ -210,6 +218,7 @@ export function ImageGalleryField({
               <img
                 src={previewImage.url}
                 alt={altTexts[selectedImageIndex] || previewImage.altText || t.featuredImage || "Image"}
+                title={extractFilename(previewImage.url)}
                 style={{
                   position: "absolute",
                   top: 0,
@@ -223,6 +232,12 @@ export function ImageGalleryField({
             {/* Alt-text status badge on preview */}
             {!isFreePlan && images && images[selectedImageIndex] && (
               <div
+                title={(() => {
+                  const alt = altTexts[selectedImageIndex] !== undefined
+                    ? altTexts[selectedImageIndex]
+                    : (isPrimaryLocale ? images[selectedImageIndex]?.altText : undefined);
+                  return alt || undefined;
+                })()}
                 style={{
                   position: "absolute",
                   top: 8,
@@ -279,6 +294,7 @@ export function ImageGalleryField({
                   <button
                     key={index}
                     onClick={() => setSelectedImageIndex(index)}
+                    title={extractFilename(image.url)}
                     style={{
                       position: "relative",
                       width: "100%",
@@ -307,6 +323,7 @@ export function ImageGalleryField({
                     />
                     {/* Alt-text status badge */}
                     <div
+                      title={(altTexts[index] !== undefined ? altTexts[index] : (isPrimaryLocale ? image.altText : undefined)) || undefined}
                       style={{
                         position: "absolute",
                         top: 4,
