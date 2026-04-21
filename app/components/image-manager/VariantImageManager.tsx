@@ -319,6 +319,10 @@ export function VariantImageManager({
     // this state so we keep polling until all images are available.
     let imagesAwaitingSync = false;
     let syncRetryCount = 0;
+    // Accumulates GIDs across ticks so the merge can remap images that completed on an
+    // earlier tick when imagesAwaitingSync delayed the merge to a later tick where
+    // completedGids would otherwise be empty.
+    const allCompletedGids = new Set<string>();
     const MAX_SYNC_RETRIES = 10;
 
     webpPollRef.current = setInterval(async () => {
@@ -341,6 +345,7 @@ export function VariantImageManager({
 
         const completedGids = new Set([...prevConvertingGidsRef.current].filter(gid => !stillConvertingGids.has(gid)));
         prevConvertingGidsRef.current = stillConvertingGids;
+        completedGids.forEach(gid => allCompletedGids.add(gid));
 
         // Only fetch fresh images for tasks that just completed, or while waiting for
         // Shopify to finish processing a recently converted image.
@@ -441,7 +446,7 @@ export function VariantImageManager({
                 // keep old entries for still-converting images to avoid unnecessary browser reloads
                 // (CDN URLs can have changing query params even for unchanged images).
                 const mergedImages = oldImages.map(old => {
-                  if (completedGids.has(old.mediaId ?? "")) {
+                  if (allCompletedGids.has(old.mediaId ?? "")) {
                     const base = getBasename(old.url);
                     return (base ? newByBasename[base] : undefined) ?? old;
                   }
@@ -1224,6 +1229,22 @@ export function VariantImageManager({
     (noneOrAllSelected ? displayedProductUrls.includes(i.url) : productGallerySelectedUrls.has(i.url))
   );
 
+  const webpFormatBreakdown = (() => {
+    const counts: Record<string, number> = {};
+    for (const img of imagesToConvert) {
+      const lower = img.url.toLowerCase();
+      const fmt = lower.includes(".png") ? "PNG"
+        : (lower.includes(".jpg") || lower.includes(".jpeg")) ? "JPG"
+        : lower.includes(".gif") ? "GIF"
+        : lower.includes(".avif") ? "AVIF"
+        : lower.includes(".tif") ? "TIFF"
+        : null;
+      if (fmt) counts[fmt] = (counts[fmt] ?? 0) + 1;
+    }
+    const parts = Object.entries(counts).map(([fmt, n]) => `${n}\u00a0${fmt}`);
+    return parts.length > 1 ? ` (${parts.join(", ")})` : "";
+  })();
+
   const productSingleSelected = productGallerySelectedUrls.size === 1 ? [...productGallerySelectedUrls][0] : null;
   const productCurrentAltText = productSingleSelected
     ? (isPrimaryLocale
@@ -1330,7 +1351,7 @@ export function VariantImageManager({
               <Button size="slim" onClick={() => handleConvertToWebP(imagesToConvert)} disabled={isConvertingWebP}>
                 {isConvertingWebP
                   ? t.imageManager.webpConverting
-                  : t.imageManager.webpConvertButton.replace("{count}", String(imagesToConvert.length))}
+                  : t.imageManager.webpConvertButton.replace("{count}", String(imagesToConvert.length)) + webpFormatBreakdown}
               </Button>
               {isConvertingWebP && <Spinner size="small" />}
             </InlineStack>

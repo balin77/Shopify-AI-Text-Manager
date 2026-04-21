@@ -416,12 +416,12 @@ export class WebPProcessorService {
 
       await db.task.update({ where: { id: task.id }, data: { progress: 90 } });
 
-      // 9. Update DB with new URL
-      if (productImageId) {
-        await db.productImage.update({
-          where: { id: productImageId },
+      // 9. Update DB with new URL (match by Shopify mediaId, not the DB CUID)
+      if (mediaId) {
+        await db.productImage.updateMany({
+          where: { mediaId: mediaId },
           data: { url: target.resourceUrl },
-        }).catch(() => {}); // Ignore if record not found
+        }).catch(() => {});
       }
 
       // 10. Mark task as completed
