@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { Text, Button, InlineStack, Spinner, Banner, Divider, Card, BlockStack } from "@shopify/polaris";
 import { useFetcher } from "@remix-run/react";
-import { DndContext, DragOverlay, closestCenter, pointerWithin, MouseSensor, TouchSensor, useSensor, useSensors, type CollisionDetection, type DragStartEvent, type DragOverEvent, type DragEndEvent } from "@dnd-kit/core";
+import { DndContext, DragOverlay, closestCenter, pointerWithin, useDroppable, MouseSensor, TouchSensor, useSensor, useSensors, type CollisionDetection, type DragStartEvent, type DragOverEvent, type DragEndEvent } from "@dnd-kit/core";
 import { arrayMove } from "@dnd-kit/sortable";
 import { useI18n } from "../../contexts/I18nContext";
 import { SortableImageGrid } from "./SortableImageGrid";
@@ -108,6 +108,7 @@ export function VariantImageManager({
     useSensor(MouseSensor, { activationConstraint: { distance: 8 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 5 } }),
   );
+  const { setNodeRef: setProductDropRef } = useDroppable({ id: "product" });
 
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
@@ -877,7 +878,7 @@ export function VariantImageManager({
           />
           <Text as="span" variant="bodySm" tone="subdued">{t.imageManager.selectAll}</Text>
         </div>
-        <div style={{ marginTop: 8 }}>
+        <div style={{ marginTop: 8 }} ref={setProductDropRef}>
           <SortableImageGrid
             containerId="product"
             imageUrls={displayedProductUrls}
