@@ -18,6 +18,15 @@ public/build/
 
 # Prisma
 prisma/*.db
+
+# One-time DB utility scripts
+scripts/check-db.cjs
+scripts/check-db-remote.cjs
+scripts/apply-migration-remote.cjs
+scripts/fix-migrations-remote.cjs
+
+# Claude Code
+.claude/
 prisma/*.db-journal
 *.sqlite
 
