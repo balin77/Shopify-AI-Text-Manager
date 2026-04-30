@@ -288,6 +288,10 @@ export function BulkImageUploadPanel({
   const assignedCount = items.filter(i => i.assignmentMode === "assigned").length;
   const unassignedCount = items.filter(i => i.assignmentMode === "unassigned" || !i.assignmentMode).length;
   const variantTitleMap = useMemo(() => Object.fromEntries(variants.map(v => [v.id, v.title])), [variants]);
+  const handlesAvailable = useMemo(
+    () => variants.some(v => v.selectedOptions.some(o => o.handle !== null)),
+    [variants]
+  );
 
   const sortedItems = useMemo(() => {
     const copy = [...items];
@@ -378,6 +382,11 @@ export function BulkImageUploadPanel({
                   {t.imageManager.bulkGeneratorButton}
                 </Button>
               </InlineStack>
+              {labelMode === "handle" && !handlesAvailable && variants.length > 0 && (
+                <Text as="p" variant="bodySm" tone="caution">
+                  {t.imageManager.bulkNoHandlesInfo}
+                </Text>
+              )}
 
               {/* Per-variant rows */}
               {variants.length > 0 && (
