@@ -113,8 +113,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       }
     }
     console.log("[api.product-variants] optionHandleMap:", JSON.stringify(optionHandleMap));
-  } catch (err) {
-    console.error("[api.product-variants] handle lookup failed:", err);
+  } catch (err: any) {
+    console.error("[api.product-variants] handle lookup failed:", err?.message);
+    console.error("[api.product-variants] graphQLErrors:", JSON.stringify(err?.graphQLErrors ?? err?.response?.errors ?? null, null, 2));
   }
 
   const variants = (productData?.variants?.edges?.map((e: any) => {
