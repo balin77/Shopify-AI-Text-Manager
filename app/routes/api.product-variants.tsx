@@ -90,32 +90,58 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // Fetch metaobject handles separately — optional, degrades gracefully if unavailable.
   const optionHandleMap: Record<string, Record<string, string | null>> = {};
   try {
+    // Step 1: get optionValues with their linked metaobject GID (stored as string)
     const optionsRes = await admin.graphql(`
-      query GetProductOptionHandles($id: ID!) {
+      query GetProductOptionValues($id: ID!) {
         product(id: $id) {
           options {
             name
             optionValues {
               name
-              linkedMetaobjectValue { handle }
+              linkedMetafieldValue
             }
           }
         }
       }
     `, { variables: { id: productId } });
     const optionsData = await optionsRes.json();
-    console.log("[api.product-variants] options raw response:", JSON.stringify(optionsData, null, 2));
+
+    // Collect all non-null metaobject GIDs and track which option/value they belong to
+    type OVRef = { optionName: string; valueName: string };
+    const gidToRefs: Record<string, OVRef[]> = {};
     for (const opt of (optionsData.data?.product?.options ?? [])) {
-      console.log("[api.product-variants] option:", opt.name, "optionValues:", JSON.stringify(opt.optionValues));
-      optionHandleMap[opt.name] = {};
       for (const ov of (opt.optionValues ?? [])) {
-        optionHandleMap[opt.name][ov.name] = ov.linkedMetaobjectValue?.handle ?? null;
+        if (ov.linkedMetafieldValue) {
+          if (!gidToRefs[ov.linkedMetafieldValue]) gidToRefs[ov.linkedMetafieldValue] = [];
+          gidToRefs[ov.linkedMetafieldValue].push({ optionName: opt.name, valueName: ov.name });
+        }
+      }
+    }
+
+    const gids = Object.keys(gidToRefs);
+    if (gids.length > 0) {
+      // Step 2: batch-fetch all metaobject handles in one nodes query
+      const nodesRes = await admin.graphql(`
+        query GetMetaobjectHandles($ids: [ID!]!) {
+          nodes(ids: $ids) {
+            id
+            ... on Metaobject { handle }
+          }
+        }
+      `, { variables: { ids: gids } });
+      const nodesData = await nodesRes.json();
+      for (const node of (nodesData.data?.nodes ?? [])) {
+        if (!node?.id || !node?.handle) continue;
+        for (const { optionName, valueName } of (gidToRefs[node.id] ?? [])) {
+          if (!optionHandleMap[optionName]) optionHandleMap[optionName] = {};
+          optionHandleMap[optionName][valueName] = node.handle;
+        }
       }
     }
     console.log("[api.product-variants] optionHandleMap:", JSON.stringify(optionHandleMap));
   } catch (err: any) {
     console.error("[api.product-variants] handle lookup failed:", err?.message);
-    console.error("[api.product-variants] graphQLErrors:", JSON.stringify(err?.graphQLErrors ?? err?.response?.errors ?? null, null, 2));
+    console.error("[api.product-variants] graphQLErrors:", JSON.stringify(err?.graphQLErrors ?? null, null, 2));
   }
 
   const variants = (productData?.variants?.edges?.map((e: any) => {
