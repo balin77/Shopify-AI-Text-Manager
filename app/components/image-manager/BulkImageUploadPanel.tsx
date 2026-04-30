@@ -1,4 +1,4 @@
-import { useCallback, useState, useMemo } from "react";
+import { useCallback, useState, useMemo, useRef, useEffect } from "react";
 import {
   DropZone,
   Text,
@@ -11,6 +11,7 @@ import {
   Box,
   Divider,
   Select,
+  TextField,
 } from "@shopify/polaris";
 import { InfoIcon } from "@shopify/polaris-icons";
 import { useI18n } from "../../contexts/I18nContext";
@@ -21,20 +22,16 @@ import type { StagedItem, VariantWithGallery } from "./types";
 const ALLOWED_MIME = ["image/jpeg", "image/png", "image/gif", "image/webp", "image/svg+xml"];
 
 type SortMode = "identifier" | "sku" | "filename";
+type MatchMode = "sku" | "imageKey";
 
-interface BulkImageUploadPanelProps {
-  items: StagedItem[];
-  selectedUniqueIds: Set<string>;
-  activeAction: "copy" | "move" | null;
-  variants?: VariantWithGallery[];
-  onItemsChange: (updater: (prev: StagedItem[]) => StagedItem[]) => void;
-  onSelect: (uniqueId: string, selected: boolean) => void;
-  onSetAction: (action: "copy" | "move" | null) => void;
-  onRemove: (uniqueIds: string[]) => void;
+/** Build a match key from a base name and a Shopify variant title ("Red / XL" → "BaseName_Red_XL"). */
+function generateKey(baseName: string, variantTitle: string): string {
+  const parts = variantTitle.split(" / ").map(p => p.trim().replace(/\s+/g, "_"));
+  return [baseName.trim(), ...parts].filter(Boolean).join("_");
 }
 
-/** Match a StagedItem against all variants by SKU and set targetVariantId + parsedMeta. */
-function autoAssign(item: StagedItem, variants: VariantWithGallery[]): StagedItem {
+/** Match a StagedItem against all variants using the selected field and set targetVariantId + parsedMeta. */
+function autoAssign(item: StagedItem, variants: VariantWithGallery[], matchMode: MatchMode): StagedItem {
   let meta: ReturnType<typeof parseFilename> | null = null;
   try {
     meta = parseFilename(item.fileName);
@@ -43,13 +40,14 @@ function autoAssign(item: StagedItem, variants: VariantWithGallery[]): StagedIte
   }
 
   const match = variants.find(v => {
-    if (!v.sku) return false;
+    const key = matchMode === "sku" ? v.sku : v.imageKey;
+    if (!key) return false;
     try {
-      const skuData = parseSku(v.sku);
+      const keyData = parseSku(key);
       return (
-        skuData.productName === meta!.productName &&
-        skuData.variants.length === meta!.variants.length &&
-        skuData.variants.every((part, i) => part === meta!.variants[i])
+        keyData.productName === meta!.productName &&
+        keyData.variants.length === meta!.variants.length &&
+        keyData.variants.every((part, i) => part === meta!.variants[i])
       );
     } catch {
       return false;
@@ -62,6 +60,17 @@ function autoAssign(item: StagedItem, variants: VariantWithGallery[]): StagedIte
     targetVariantId: match?.id,
     assignmentMode: match ? "assigned" : "unassigned",
   };
+}
+
+interface BulkImageUploadPanelProps {
+  items: StagedItem[];
+  selectedUniqueIds: Set<string>;
+  activeAction: "copy" | "move" | null;
+  variants?: VariantWithGallery[];
+  onItemsChange: (updater: (prev: StagedItem[]) => StagedItem[]) => void;
+  onSelect: (uniqueId: string, selected: boolean) => void;
+  onSetAction: (action: "copy" | "move" | null) => void;
+  onRemove: (uniqueIds: string[]) => void;
 }
 
 export function BulkImageUploadPanel({
@@ -78,6 +87,95 @@ export function BulkImageUploadPanel({
   const [docsOpen, setDocsOpen] = useState(false);
   const [sortListOpen, setSortListOpen] = useState(false);
   const [sortMode, setSortMode] = useState<SortMode>("identifier");
+  const [matchMode, setMatchMode] = useState<MatchMode>("sku");
+  const [baseName, setBaseName] = useState("");
+  const [localKeys, setLocalKeys] = useState<Record<string, string>>({});
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false);
+
+  // Initialize localKeys when variants load (only for variants not yet tracked)
+  useEffect(() => {
+    if (variants.length === 0) return;
+    setLocalKeys(prev => {
+      const next = { ...prev };
+      variants.forEach(v => {
+        if (!(v.id in next)) {
+          next[v.id] = (matchMode === "sku" ? v.sku : v.imageKey) ?? "";
+        }
+      });
+      return next;
+    });
+  }, [variants]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Effective variants used for matching: prop values overlaid with local edits
+  const effectiveVariants = useMemo(() => variants.map(v => ({
+    ...v,
+    sku: matchMode === "sku" ? (localKeys[v.id] ?? v.sku) : v.sku,
+    imageKey: matchMode === "imageKey" ? (localKeys[v.id] ?? v.imageKey) : v.imageKey,
+  })), [variants, localKeys, matchMode]);
+
+  // Refs so handleDrop (async callback) always sees the latest values
+  const effectiveVariantsRef = useRef(effectiveVariants);
+  const matchModeRef = useRef(matchMode);
+  useEffect(() => { effectiveVariantsRef.current = effectiveVariants; }, [effectiveVariants]);
+  useEffect(() => { matchModeRef.current = matchMode; }, [matchMode]);
+
+  const handleMatchModeChange = useCallback((newMode: MatchMode) => {
+    setMatchMode(newMode);
+    // Re-initialize local keys from the correct server field
+    const next: Record<string, string> = {};
+    variants.forEach(v => {
+      next[v.id] = (newMode === "sku" ? v.sku : v.imageKey) ?? "";
+    });
+    setLocalKeys(next);
+    // Re-assign already-dropped items immediately
+    onItemsChange(prev => prev.map(item =>
+      item.assignmentMode !== "manual"
+        ? autoAssign(item, variants.map(v => ({
+            ...v,
+            sku: newMode === "sku" ? (next[v.id] ?? v.sku) : v.sku,
+            imageKey: newMode === "imageKey" ? (next[v.id] ?? v.imageKey) : v.imageKey,
+          })), newMode)
+        : item
+    ));
+  }, [variants, onItemsChange]);
+
+  const handleGenerate = useCallback(() => {
+    if (!baseName.trim() || variants.length === 0) return;
+    const generated: Record<string, string> = {};
+    variants.forEach(v => {
+      generated[v.id] = generateKey(baseName, v.title);
+    });
+    setLocalKeys(generated);
+  }, [baseName, variants]);
+
+  const handleSaveAll = useCallback(async () => {
+    const updates = variants
+      .map(v => ({ variantId: v.id, value: localKeys[v.id] ?? "" }))
+      .filter(u => u.value.trim() !== "");
+    if (updates.length === 0) return;
+
+    setIsSaving(true);
+    try {
+      const r = await fetch("/api/update-variant-match-key", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: matchMode, updates }),
+      });
+      if (r.ok) {
+        setSaveSuccess(true);
+        setTimeout(() => setSaveSuccess(false), 2500);
+        // Re-assign already-dropped items with the now-saved effective variants
+        onItemsChange(prev => prev.map(item =>
+          item.assignmentMode !== "manual"
+            ? autoAssign(item, effectiveVariantsRef.current, matchModeRef.current)
+            : item
+        ));
+      }
+    } finally {
+      setIsSaving(false);
+    }
+  }, [variants, localKeys, matchMode, onItemsChange]);
 
   const handleDrop = useCallback(async (_dropFiles: File[], acceptedFiles: File[]) => {
     const validFiles = acceptedFiles.filter(f => ALLOWED_MIME.includes(f.type));
@@ -94,8 +192,9 @@ export function BulkImageUploadPanel({
       assignmentMode: "unassigned" as const,
     }));
 
-    // Auto-assign immediately so UI shows badges right away
-    const assignedItems = newItems.map(item => autoAssign(item, variants));
+    const assignedItems = newItems.map(item =>
+      autoAssign(item, effectiveVariantsRef.current, matchModeRef.current)
+    );
 
     onItemsChange(prev => [...prev, ...assignedItems]);
 
@@ -154,7 +253,7 @@ export function BulkImageUploadPanel({
         ));
       }
     }));
-  }, [onItemsChange, variants]);
+  }, [onItemsChange]);
 
   const selectedItems = items.filter(i => selectedUniqueIds.has(i.uniqueId));
   const hasSelected = selectedItems.length > 0;
@@ -162,13 +261,11 @@ export function BulkImageUploadPanel({
   const assignedCount = items.filter(i => i.assignmentMode === "assigned").length;
   const unassignedCount = items.filter(i => i.assignmentMode === "unassigned" || !i.assignmentMode).length;
 
-  // Build variant title lookup map
   const variantTitleMap = useMemo(
     () => Object.fromEntries(variants.map(v => [v.id, v.title])),
     [variants]
   );
 
-  // Sort items based on selected mode
   const sortedItems = useMemo(() => {
     const copy = [...items];
     if (sortMode === "identifier") {
@@ -189,7 +286,6 @@ export function BulkImageUploadPanel({
     return copy;
   }, [items, sortMode]);
 
-  // Preview: group assigned items by variant
   const assignedByVariant = useMemo(() => {
     const map: Record<string, StagedItem[]> = {};
     for (const item of items) {
@@ -214,7 +310,86 @@ export function BulkImageUploadPanel({
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
 
-      {/* Documentation Section */}
+      {/* Settings Panel */}
+      <Card>
+        <BlockStack gap="400">
+          {/* Match mode selector */}
+          <Select
+            label={t.imageManager.bulkMatchModeLabel}
+            options={[
+              { label: t.imageManager.bulkMatchModeSku, value: "sku" },
+              { label: t.imageManager.bulkMatchModeImageKey, value: "imageKey" },
+            ]}
+            value={matchMode}
+            onChange={v => handleMatchModeChange(v as MatchMode)}
+          />
+
+          {/* Key generator */}
+          <BlockStack gap="200">
+            <Text as="p" variant="bodySm" fontWeight="semibold">
+              {t.imageManager.bulkGeneratorTitle}
+            </Text>
+            <InlineStack gap="200" blockAlign="end">
+              <div style={{ flex: 1 }}>
+                <TextField
+                  label={t.imageManager.bulkGeneratorBaseName}
+                  value={baseName}
+                  onChange={setBaseName}
+                  placeholder={t.imageManager.bulkGeneratorBaseNamePlaceholder}
+                  autoComplete="off"
+                />
+              </div>
+              <Button
+                onClick={handleGenerate}
+                disabled={!baseName.trim() || variants.length === 0}
+              >
+                {t.imageManager.bulkGeneratorButton}
+              </Button>
+            </InlineStack>
+          </BlockStack>
+
+          {/* Per-variant key fields */}
+          {variants.length > 0 && (
+            <BlockStack gap="200">
+              {variants.map(v => (
+                <InlineStack key={v.id} gap="200" blockAlign="center">
+                  <div style={{ minWidth: 110, flexShrink: 0 }}>
+                    <Text as="span" variant="bodySm" tone="subdued">{v.title}</Text>
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <TextField
+                      label=""
+                      labelHidden
+                      value={localKeys[v.id] ?? ""}
+                      onChange={val => setLocalKeys(prev => ({ ...prev, [v.id]: val }))}
+                      placeholder={t.imageManager.bulkGeneratorVariantKey}
+                      autoComplete="off"
+                    />
+                  </div>
+                </InlineStack>
+              ))}
+              <InlineStack align="end" gap="300" blockAlign="center">
+                {saveSuccess && (
+                  <Text as="span" variant="bodySm" tone="success">
+                    {t.imageManager.bulkGeneratorSuccess}
+                  </Text>
+                )}
+                <Button
+                  variant="primary"
+                  size="slim"
+                  onClick={handleSaveAll}
+                  loading={isSaving}
+                  disabled={isSaving}
+                >
+                  {t.imageManager.bulkGeneratorSaveAll}
+                </Button>
+              </InlineStack>
+            </BlockStack>
+          )}
+        </BlockStack>
+      </Card>
+
+      {/* Documentation (collapsible) */}
       <div>
         <Button
           icon={InfoIcon}
@@ -242,8 +417,15 @@ export function BulkImageUploadPanel({
                     </code>
                   </Box>
                   <Text as="p" variant="bodySm" tone="subdued">
-                    {t.imageManager.bulkDocsExample}
+                    {matchMode === "sku"
+                      ? t.imageManager.bulkDocsExampleSku
+                      : t.imageManager.bulkDocsExampleImageKey}
                   </Text>
+                  {matchMode === "imageKey" && (
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      {t.imageManager.bulkDocsImageKeyHint}
+                    </Text>
+                  )}
                   <Text as="p" variant="bodySm" tone="critical">
                     {t.imageManager.bulkDocsCaseSensitive}
                   </Text>
@@ -327,7 +509,6 @@ export function BulkImageUploadPanel({
                       style={{ width: 72, height: 72, objectFit: "cover", borderRadius: 6, display: "block" }}
                     />
 
-                    {/* Progress bar */}
                     {item.status === "uploading" && (
                       <div style={{ position: "absolute", bottom: 0, left: 0, right: 0 }}>
                         <div style={{ height: 4, background: "#e1e3e5", borderRadius: "0 0 6px 6px", overflow: "hidden" }}>
@@ -336,7 +517,6 @@ export function BulkImageUploadPanel({
                       </div>
                     )}
 
-                    {/* Error overlay */}
                     {item.status === "error" && (
                       <div style={{
                         position: "absolute", inset: 0, background: "rgba(212,44,37,0.3)",
@@ -346,7 +526,6 @@ export function BulkImageUploadPanel({
                       </div>
                     )}
 
-                    {/* Assignment badge */}
                     {item.assignmentMode && (
                       <div style={{
                         position: "absolute", top: 0, left: 0, right: 0,
@@ -360,7 +539,6 @@ export function BulkImageUploadPanel({
                       </div>
                     )}
 
-                    {/* Selection checkmark */}
                     {selectedUniqueIds.has(item.uniqueId) && (
                       <div style={{
                         position: "absolute", top: 18, right: 3, width: 18, height: 18,

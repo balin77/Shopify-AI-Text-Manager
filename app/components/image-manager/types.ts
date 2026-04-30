@@ -23,6 +23,7 @@ export interface VariantWithGallery {
   id: string;              // gid://shopify/ProductVariant/...
   title: string;
   sku: string | null;
+  imageKey: string | null;
   position: number;
   galleryFileGids: string[];
   defaultImageUrl?: string;

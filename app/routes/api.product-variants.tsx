@@ -2,10 +2,15 @@ import { json, type LoaderFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
 
-async function ensureVariantGalleryMetafieldDefinition(adminClient: { graphql: (query: string, options?: Record<string, unknown>) => Promise<Response> }) {
+async function ensureVariantMetafieldDefinition(
+  adminClient: { graphql: (query: string, options?: Record<string, unknown>) => Promise<Response> },
+  key: string,
+  name: string,
+  type: string,
+) {
   const existing = await adminClient.graphql(`
     query {
-      metafieldDefinitions(first: 1, ownerType: PRODUCTVARIANT, namespace: "custom", key: "variant_gallery") {
+      metafieldDefinitions(first: 1, ownerType: PRODUCTVARIANT, namespace: "custom", key: "${key}") {
         edges { node { id } }
       }
     }
@@ -16,10 +21,10 @@ async function ensureVariantGalleryMetafieldDefinition(adminClient: { graphql: (
   await adminClient.graphql(`
     mutation {
       metafieldDefinitionCreate(definition: {
-        name: "Variant Gallery"
+        name: "${name}"
         namespace: "custom"
-        key: "variant_gallery"
-        type: "list.file_reference"
+        key: "${key}"
+        type: "${type}"
         ownerType: PRODUCTVARIANT
       }) {
         createdDefinition { id }
@@ -38,7 +43,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     return json({ error: "productId required" }, { status: 400 });
   }
 
-  await ensureVariantGalleryMetafieldDefinition(admin);
+  await ensureVariantMetafieldDefinition(admin, "variant_gallery", "Variant Gallery", "list.file_reference");
+  await ensureVariantMetafieldDefinition(admin, "image_key", "Image Key", "single_line_text_field");
 
   // Fetch product media + variants in one query.
   // media(first:250) gives us a definitive GID→URL map for ALL product images,
@@ -65,6 +71,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
               position
               image { url altText }
               metafield(namespace: "custom", key: "variant_gallery") {
+                value
+              }
+              imageKeyMetafield: metafield(namespace: "custom", key: "image_key") {
                 value
               }
             }
@@ -96,12 +105,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         productId,
         title: v.title,
         sku: v.sku ?? null,
+        imageKey: v.imageKeyMetafield?.value ?? null,
         position: v.position,
         galleryJson: v.metafield?.value ?? null,
       },
       update: {
         title: v.title,
         sku: v.sku ?? null,
+        imageKey: v.imageKeyMetafield?.value ?? null,
         position: v.position,
         galleryJson: v.metafield?.value ?? null,
       },
@@ -112,6 +123,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     ...v,
     shopifyGid: v.id,
     galleryJson: v.metafield?.value ?? null,
+    imageKey: v.imageKeyMetafield?.value ?? null,
   }));
 
   return json({ variants: mappedVariants, mediaMap });

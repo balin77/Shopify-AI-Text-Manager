@@ -273,6 +273,7 @@ model ProductVariant {
   product    Product @relation(fields: [productId], references: [id], onDelete: Cascade)
   title      String
   sku        String?
+  imageKey   String?
   position   Int
   galleryJson String? @db.Text    // JSON: ["gid://shopify/File/...", ...]
   updatedAt  DateTime @updatedAt

@@ -211,6 +211,7 @@ export function VariantImageManager({
           id: v.shopifyGid ?? v.id,
           title: v.title,
           sku: v.sku,
+          imageKey: v.imageKey ?? null,
           position: v.position,
           galleryFileGids: (() => {
             try { return JSON.parse(v.galleryJson || "[]"); } catch { return []; }
