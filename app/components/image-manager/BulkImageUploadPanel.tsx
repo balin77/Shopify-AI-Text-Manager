@@ -322,6 +322,37 @@ export function BulkImageUploadPanel({
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
 
+      {/* Documentation (collapsible) */}
+      <div>
+        <Button icon={InfoIcon} variant="plain" onClick={() => setDocsOpen(o => !o)} ariaExpanded={docsOpen} ariaControls="bulk-docs">
+          {docsOpen ? t.imageManager.bulkDocsToggleHide : t.imageManager.bulkDocsToggleShow}
+        </Button>
+        <Collapsible open={docsOpen} id="bulk-docs" transition={{ duration: "200ms", timingFunction: "ease-in-out" }}>
+          <Box paddingBlockStart="300">
+            <Card background="bg-surface-secondary">
+              <Box padding="400">
+                <BlockStack gap="300">
+                  <Text as="h3" variant="headingSm" fontWeight="semibold">{t.imageManager.bulkDocsTitle}</Text>
+                  <Text as="p" variant="bodySm">{t.imageManager.bulkDocsBody}</Text>
+                  <Box padding="200" background="bg-surface" borderRadius="100">
+                    <code style={{ fontFamily: "monospace", fontSize: 12 }}>
+                      ProductName_Variant1_Variant2_..._Identifier.ext
+                    </code>
+                  </Box>
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    {matchMode === "sku" ? t.imageManager.bulkDocsExampleSku : t.imageManager.bulkDocsExampleImageKey}
+                  </Text>
+                  {matchMode === "imageKey" && (
+                    <Text as="p" variant="bodySm" tone="subdued">{t.imageManager.bulkDocsImageKeyHint}</Text>
+                  )}
+                  <Text as="p" variant="bodySm" tone="critical">{t.imageManager.bulkDocsCaseSensitive}</Text>
+                </BlockStack>
+              </Box>
+            </Card>
+          </Box>
+        </Collapsible>
+      </div>
+
       {/* Settings Card */}
       <Card>
         <BlockStack gap="300">
@@ -345,7 +376,7 @@ export function BulkImageUploadPanel({
           >
             <InlineStack gap="200" blockAlign="center">
               <Text as="span" variant="bodySm" fontWeight="semibold">
-                {t.imageManager.bulkGeneratorTitle}
+                {matchMode === "sku" ? t.imageManager.bulkGeneratorTitleSku : t.imageManager.bulkGeneratorTitle}
               </Text>
               <Text as="span" variant="bodySm" tone="subdued">{generatorOpen ? "▲" : "▼"}</Text>
             </InlineStack>
@@ -353,6 +384,22 @@ export function BulkImageUploadPanel({
 
           <Collapsible open={generatorOpen} id="bulk-generator" transition={{ duration: "150ms" }}>
             <BlockStack gap="300">
+              {/* Generator documentation */}
+              <Card background="bg-surface-secondary">
+                <Box padding="300">
+                  <BlockStack gap="200">
+                    <Text as="h4" variant="bodySm" fontWeight="semibold">{t.imageManager.bulkGeneratorDocsTitle}</Text>
+                    <Text as="p" variant="bodySm" tone="subdued">{t.imageManager.bulkGeneratorDocsBody}</Text>
+                    <Box padding="200" background="bg-surface" borderRadius="100">
+                      <code style={{ fontFamily: "monospace", fontSize: 12 }}>{t.imageManager.bulkGeneratorDocsFormat}</code>
+                    </Box>
+                    <Text as="p" variant="bodySm" tone="subdued">{t.imageManager.bulkGeneratorDocsExample}</Text>
+                    <Text as="p" variant="bodySm" tone="subdued">{t.imageManager.bulkGeneratorDocsHandleNote}</Text>
+                    <Text as="p" variant="bodySm" tone="subdued">{t.imageManager.bulkGeneratorDocsOverrideNote}</Text>
+                  </BlockStack>
+                </Box>
+              </Card>
+
               {/* Base name + label mode */}
               <InlineStack gap="200" blockAlign="end">
                 <div style={{ flex: 1 }}>
@@ -472,37 +519,6 @@ export function BulkImageUploadPanel({
           </Collapsible>
         </BlockStack>
       </Card>
-
-      {/* Documentation (collapsible) */}
-      <div>
-        <Button icon={InfoIcon} variant="plain" onClick={() => setDocsOpen(o => !o)} ariaExpanded={docsOpen} ariaControls="bulk-docs">
-          {docsOpen ? t.imageManager.bulkDocsToggleHide : t.imageManager.bulkDocsToggleShow}
-        </Button>
-        <Collapsible open={docsOpen} id="bulk-docs" transition={{ duration: "200ms", timingFunction: "ease-in-out" }}>
-          <Box paddingBlockStart="300">
-            <Card background="bg-surface-secondary">
-              <Box padding="400">
-                <BlockStack gap="300">
-                  <Text as="h3" variant="headingSm" fontWeight="semibold">{t.imageManager.bulkDocsTitle}</Text>
-                  <Text as="p" variant="bodySm">{t.imageManager.bulkDocsBody}</Text>
-                  <Box padding="200" background="bg-surface" borderRadius="100">
-                    <code style={{ fontFamily: "monospace", fontSize: 12 }}>
-                      ProductName_Variant1_Variant2_..._Identifier.ext
-                    </code>
-                  </Box>
-                  <Text as="p" variant="bodySm" tone="subdued">
-                    {matchMode === "sku" ? t.imageManager.bulkDocsExampleSku : t.imageManager.bulkDocsExampleImageKey}
-                  </Text>
-                  {matchMode === "imageKey" && (
-                    <Text as="p" variant="bodySm" tone="subdued">{t.imageManager.bulkDocsImageKeyHint}</Text>
-                  )}
-                  <Text as="p" variant="bodySm" tone="critical">{t.imageManager.bulkDocsCaseSensitive}</Text>
-                </BlockStack>
-              </Box>
-            </Card>
-          </Box>
-        </Collapsible>
-      </div>
 
       {/* Drop Zone */}
       <DropZone onDrop={handleDrop} accept={ALLOWED_MIME.join(",")} allowMultiple>
