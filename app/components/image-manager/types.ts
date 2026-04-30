@@ -19,6 +19,12 @@ export interface StagedItem {
   assignmentMode?: "unassigned" | "assigned" | "manual";
 }
 
+export interface VariantSelectedOption {
+  name: string;    // option name, e.g. "Farbe"
+  value: string;   // display value, e.g. "Aschgrau"
+  handle: string | null; // metaobject handle if linked, e.g. "ashgrey"
+}
+
 export interface VariantWithGallery {
   id: string;              // gid://shopify/ProductVariant/...
   title: string;
@@ -27,6 +33,7 @@ export interface VariantWithGallery {
   position: number;
   galleryFileGids: string[];
   defaultImageUrl?: string;
+  selectedOptions: VariantSelectedOption[];
 }
 
 export interface ImageMeta {

@@ -217,6 +217,7 @@ export function VariantImageManager({
             try { return JSON.parse(v.galleryJson || "[]"); } catch { return []; }
           })(),
           defaultImageUrl: v.image?.url ?? undefined,
+          selectedOptions: v.selectedOptions ?? [],
         }));
         // Filter out Shopify's synthetic default variant (only variant, titled "Default Title")
         const realVariants = mapped.length === 1 && mapped[0].title === "Default Title"

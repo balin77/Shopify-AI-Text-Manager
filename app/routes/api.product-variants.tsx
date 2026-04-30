@@ -62,6 +62,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
             }
           }
         }
+        options {
+          name
+          optionValues {
+            name
+            linkedMetaobjectValue {
+              handle
+            }
+          }
+        }
         variants(first: 100) {
           edges {
             node {
@@ -70,6 +79,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
               sku
               position
               image { url altText }
+              selectedOptions { name value }
               metafield(namespace: "custom", key: "variant_gallery") {
                 value
               }
@@ -85,7 +95,25 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   const data = await response.json();
   const productData = data.data?.product;
-  const variants = productData?.variants?.edges?.map((e: any) => e.node) ?? [];
+
+  // Build optionName → displayValue → metaobject handle map
+  const optionHandleMap: Record<string, Record<string, string | null>> = {};
+  for (const opt of (productData?.options ?? [])) {
+    optionHandleMap[opt.name] = {};
+    for (const ov of (opt.optionValues ?? [])) {
+      optionHandleMap[opt.name][ov.name] = ov.linkedMetaobjectValue?.handle ?? null;
+    }
+  }
+
+  const variants = (productData?.variants?.edges?.map((e: any) => {
+    const node = e.node;
+    const selectedOptions = (node.selectedOptions ?? []).map((so: any) => ({
+      name: so.name,
+      value: so.value,
+      handle: optionHandleMap[so.name]?.[so.value] ?? null,
+    }));
+    return { ...node, selectedOptions };
+  }) ?? []);
 
   // Build a GID→URL map from ALL current product media (authoritative, not DB-cached).
   const mediaMap: Record<string, string> = {};
@@ -124,6 +152,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     shopifyGid: v.id,
     galleryJson: v.metafield?.value ?? null,
     imageKey: v.imageKeyMetafield?.value ?? null,
+    // selectedOptions already enriched with handles above
   }));
 
   return json({ variants: mappedVariants, mediaMap });
