@@ -7,6 +7,7 @@ import {
   isMetaobjectLabelField,
 } from "~/constants/shopifyFields";
 import { TIMING } from "~/constants/timing";
+import { PULSE_SYNC_EPOCH } from "~/utils/contentEditor.utils";
 import { extractReadableName } from "~/utils/templates-field-factory";
 
 // ============================================================================
@@ -128,14 +129,6 @@ function getRequiredFieldsForContentType(contentType: ContentType): string[] {
     return ["title", "body_html", "handle"];
   }
 }
-
-// ============================================================================
-// Module-level reference point for synchronizing all pulse animations across
-// buttons. A negative animation-delay calculated from this epoch ensures every
-// button starts at the correct phase of the shared pulse cycle, even when
-// animations restart at different times.
-// ============================================================================
-const PULSE_SYNC_EPOCH = Date.now();
 
 // ============================================================================
 // Exported Functions

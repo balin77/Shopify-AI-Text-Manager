@@ -569,6 +569,18 @@ export function VariantImageManager({
 
   const hasAnyVariantMissingMainImage = variantsWithMissingMain.length > 0;
 
+  const imageManagerTitlePulseStyle = useMemo<React.CSSProperties | undefined>(() => {
+    if (hasAnyVariantMissingMainImage) {
+      return {
+        animation: `pulseFadeIn 500ms ease-out forwards, pulse ${TIMING.HIGHLIGHT_DURATION_MS}ms ease-in-out infinite`,
+        animationDelay: `0s, -${(Date.now() - PULSE_SYNC_EPOCH) % TIMING.HIGHLIGHT_DURATION_MS}ms`,
+        borderRadius: 4,
+        padding: "2px 6px",
+      };
+    }
+    return undefined;
+  }, [hasAnyVariantMissingMainImage]);
+
   useEffect(() => {
     if (!isLoadingVariants && variants.length > 0) {
       onMissingMainImageChange?.(hasAnyVariantMissingMainImage);
@@ -1275,12 +1287,7 @@ export function VariantImageManager({
                   variantsWithMissingMain.map(v => v.title).join(", ")
                 )
               : undefined}
-            style={hasAnyVariantMissingMainImage ? {
-              animation: `pulseFadeIn 500ms ease-out forwards, pulse ${TIMING.HIGHLIGHT_DURATION_MS}ms ease-in-out infinite`,
-              animationDelay: `0s, -${(Date.now() - PULSE_SYNC_EPOCH) % TIMING.HIGHLIGHT_DURATION_MS}ms`,
-              borderRadius: 4,
-              padding: "2px 6px",
-            } : undefined}
+            style={imageManagerTitlePulseStyle}
           >
             <Text as="h3" variant="headingSm">{t.imageManager.title}</Text>
           </span>

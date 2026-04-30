@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useMemo } from "react";
 import { Text, Button, InlineStack, Collapsible, Badge } from "@shopify/polaris";
 import { useDroppable } from "@dnd-kit/core";
 import { useI18n } from "../../contexts/I18nContext";
@@ -97,6 +97,18 @@ export function VariantGallerySection({
     ? (localAltTexts?.[singleSelectedUrl] !== undefined && localAltTexts[singleSelectedUrl] !== "")
     : false;
 
+  const variantTitlePulseStyle = useMemo<React.CSSProperties | undefined>(() => {
+    if (!hasMainImage) {
+      return {
+        animation: `pulseFadeIn 500ms ease-out forwards, pulse ${TIMING.HIGHLIGHT_DURATION_MS}ms ease-in-out infinite`,
+        animationDelay: `0s, -${(Date.now() - PULSE_SYNC_EPOCH) % TIMING.HIGHLIGHT_DURATION_MS}ms`,
+        borderRadius: 4,
+        padding: "1px 4px",
+      };
+    }
+    return undefined;
+  }, [hasMainImage]);
+
   return (
     <div ref={setDropRef} style={{ borderBottom: "1px solid #e1e3e5", marginBottom: 4 }}>
       <div
@@ -126,12 +138,7 @@ export function VariantGallerySection({
             style={{ width: 15, height: 15, cursor: "pointer", accentColor: "#005bd3", flexShrink: 0 }}
             aria-label={t.imageManager.selectAllVariantLabel.replace("{title}", variant.title)}
           />
-          <span style={!hasMainImage ? {
-            animation: `pulseFadeIn 500ms ease-out forwards, pulse ${TIMING.HIGHLIGHT_DURATION_MS}ms ease-in-out infinite`,
-            animationDelay: `0s, -${(Date.now() - PULSE_SYNC_EPOCH) % TIMING.HIGHLIGHT_DURATION_MS}ms`,
-            borderRadius: 4,
-            padding: "1px 4px",
-          } : undefined}>
+          <span style={variantTitlePulseStyle}>
             <Text as="span" variant="headingSm">{variant.title}</Text>
           </span>
           {variant.sku && (
