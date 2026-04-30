@@ -46,7 +46,7 @@ export function HelpTooltip({ helpKey, position = "above" }: HelpTooltipProps) {
       type="button"
       aria-label={helpContent.title}
     >
-      <Icon source={QuestionCircleIcon} tone="subdued" />
+      <Icon source={QuestionCircleIcon} tone="interactive" />
     </button>
   );
 

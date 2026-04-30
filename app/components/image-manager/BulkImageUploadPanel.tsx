@@ -3,6 +3,7 @@ import {
   DropZone,
   Text,
   Button,
+  Icon,
   InlineStack,
   BlockStack,
   Badge,
@@ -13,7 +14,8 @@ import {
   Select,
   TextField,
 } from "@shopify/polaris";
-import { InfoIcon } from "@shopify/polaris-icons";
+import { QuestionCircleIcon } from "@shopify/polaris-icons";
+import "../../styles/HelpTooltip.css";
 import { useI18n } from "../../contexts/I18nContext";
 import { parseFilename, parseSku } from "../../utils/parseFilenames";
 import { BulkSortableList } from "./BulkSortableList";
@@ -109,6 +111,7 @@ export function BulkImageUploadPanel({
   const { t } = useI18n();
   const [docsOpen, setDocsOpen] = useState(false);
   const [generatorOpen, setGeneratorOpen] = useState(false);
+  const [generatorDocsOpen, setGeneratorDocsOpen] = useState(false);
   const [sortListOpen, setSortListOpen] = useState(false);
   const [sortMode, setSortMode] = useState<SortMode>("identifier");
 
@@ -324,7 +327,7 @@ export function BulkImageUploadPanel({
 
       {/* Documentation (collapsible) */}
       <div>
-        <Button icon={InfoIcon} variant="plain" onClick={() => setDocsOpen(o => !o)} ariaExpanded={docsOpen} ariaControls="bulk-docs">
+        <Button icon={QuestionCircleIcon} variant="plain" onClick={() => setDocsOpen(o => !o)} ariaExpanded={docsOpen} ariaControls="bulk-docs">
           {docsOpen ? t.imageManager.bulkDocsToggleHide : t.imageManager.bulkDocsToggleShow}
         </Button>
         <Collapsible open={docsOpen} id="bulk-docs" transition={{ duration: "200ms", timingFunction: "ease-in-out" }}>
@@ -367,38 +370,52 @@ export function BulkImageUploadPanel({
             onChange={v => handleMatchModeChange(v as MatchMode)}
           />
 
-          <div
-            role="button"
-            tabIndex={0}
-            onClick={() => setGeneratorOpen(o => !o)}
-            onKeyDown={e => { if (e.key === "Enter" || e.key === " ") setGeneratorOpen(o => !o); }}
-            style={{ cursor: "pointer", userSelect: "none" }}
-          >
-            <InlineStack gap="200" blockAlign="center">
+          <InlineStack gap="200" blockAlign="center">
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => setGeneratorOpen(o => !o)}
+              onKeyDown={e => { if (e.key === "Enter" || e.key === " ") setGeneratorOpen(o => !o); }}
+              style={{ cursor: "pointer", userSelect: "none", display: "inline-flex", alignItems: "center", gap: 6 }}
+            >
               <Text as="span" variant="bodySm" fontWeight="semibold">
                 {matchMode === "sku" ? t.imageManager.bulkGeneratorTitleSku : t.imageManager.bulkGeneratorTitle}
               </Text>
               <Text as="span" variant="bodySm" tone="subdued">{generatorOpen ? "▲" : "▼"}</Text>
-            </InlineStack>
-          </div>
+            </div>
+            <button
+              className="help-tooltip-trigger"
+              type="button"
+              style={{ marginLeft: 0 }}
+              aria-label={t.imageManager.bulkGeneratorDocsTitle}
+              onClick={() => {
+                if (!generatorOpen) setGeneratorOpen(true);
+                setGeneratorDocsOpen(o => !o);
+              }}
+            >
+              <Icon source={QuestionCircleIcon} tone="interactive" />
+            </button>
+          </InlineStack>
 
           <Collapsible open={generatorOpen} id="bulk-generator" transition={{ duration: "150ms" }}>
             <BlockStack gap="300">
-              {/* Generator documentation */}
-              <Card background="bg-surface-secondary">
-                <Box padding="300">
-                  <BlockStack gap="200">
-                    <Text as="h4" variant="bodySm" fontWeight="semibold">{t.imageManager.bulkGeneratorDocsTitle}</Text>
-                    <Text as="p" variant="bodySm" tone="subdued">{t.imageManager.bulkGeneratorDocsBody}</Text>
-                    <Box padding="200" background="bg-surface" borderRadius="100">
-                      <code style={{ fontFamily: "monospace", fontSize: 12 }}>{t.imageManager.bulkGeneratorDocsFormat}</code>
-                    </Box>
-                    <Text as="p" variant="bodySm" tone="subdued">{t.imageManager.bulkGeneratorDocsExample}</Text>
-                    <Text as="p" variant="bodySm" tone="subdued">{t.imageManager.bulkGeneratorDocsHandleNote}</Text>
-                    <Text as="p" variant="bodySm" tone="subdued">{t.imageManager.bulkGeneratorDocsOverrideNote}</Text>
-                  </BlockStack>
-                </Box>
-              </Card>
+              {/* Generator documentation (hidden by default, toggled by ? button) */}
+              <Collapsible open={generatorDocsOpen} id="bulk-generator-docs" transition={{ duration: "150ms" }}>
+                <Card background="bg-surface-secondary">
+                  <Box padding="300">
+                    <BlockStack gap="200">
+                      <Text as="h4" variant="bodySm" fontWeight="semibold">{t.imageManager.bulkGeneratorDocsTitle}</Text>
+                      <Text as="p" variant="bodySm" tone="subdued">{t.imageManager.bulkGeneratorDocsBody}</Text>
+                      <Box padding="200" background="bg-surface" borderRadius="100">
+                        <code style={{ fontFamily: "monospace", fontSize: 12 }}>{t.imageManager.bulkGeneratorDocsFormat}</code>
+                      </Box>
+                      <Text as="p" variant="bodySm" tone="subdued">{t.imageManager.bulkGeneratorDocsExample}</Text>
+                      <Text as="p" variant="bodySm" tone="subdued">{t.imageManager.bulkGeneratorDocsHandleNote}</Text>
+                      <Text as="p" variant="bodySm" tone="subdued">{t.imageManager.bulkGeneratorDocsOverrideNote}</Text>
+                    </BlockStack>
+                  </Box>
+                </Card>
+              </Collapsible>
 
               {/* Base name + label mode */}
               <InlineStack gap="200" blockAlign="end">
