@@ -104,14 +104,17 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       }
     `, { variables: { id: productId } });
     const optionsData = await optionsRes.json();
+    console.log("[api.product-variants] options raw response:", JSON.stringify(optionsData, null, 2));
     for (const opt of (optionsData.data?.product?.options ?? [])) {
+      console.log("[api.product-variants] option:", opt.name, "optionValues:", JSON.stringify(opt.optionValues));
       optionHandleMap[opt.name] = {};
       for (const ov of (opt.optionValues ?? [])) {
         optionHandleMap[opt.name][ov.name] = ov.linkedMetaobjectValue?.handle ?? null;
       }
     }
-  } catch {
-    // Handle lookup is optional — gallery still works without it
+    console.log("[api.product-variants] optionHandleMap:", JSON.stringify(optionHandleMap));
+  } catch (err) {
+    console.error("[api.product-variants] handle lookup failed:", err);
   }
 
   const variants = (productData?.variants?.edges?.map((e: any) => {
