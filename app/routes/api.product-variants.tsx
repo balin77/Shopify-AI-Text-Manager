@@ -62,15 +62,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
             }
           }
         }
-        options {
-          name
-          optionValues {
-            name
-            linkedMetaobjectValue {
-              handle
-            }
-          }
-        }
         variants(first: 100) {
           edges {
             node {
@@ -96,13 +87,31 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const data = await response.json();
   const productData = data.data?.product;
 
-  // Build optionName → displayValue → metaobject handle map
+  // Fetch metaobject handles separately — optional, degrades gracefully if unavailable.
   const optionHandleMap: Record<string, Record<string, string | null>> = {};
-  for (const opt of (productData?.options ?? [])) {
-    optionHandleMap[opt.name] = {};
-    for (const ov of (opt.optionValues ?? [])) {
-      optionHandleMap[opt.name][ov.name] = ov.linkedMetaobjectValue?.handle ?? null;
+  try {
+    const optionsRes = await admin.graphql(`
+      query GetProductOptionHandles($id: ID!) {
+        product(id: $id) {
+          options {
+            name
+            optionValues {
+              name
+              linkedMetaobjectValue { handle }
+            }
+          }
+        }
+      }
+    `, { variables: { id: productId } });
+    const optionsData = await optionsRes.json();
+    for (const opt of (optionsData.data?.product?.options ?? [])) {
+      optionHandleMap[opt.name] = {};
+      for (const ov of (opt.optionValues ?? [])) {
+        optionHandleMap[opt.name][ov.name] = ov.linkedMetaobjectValue?.handle ?? null;
+      }
     }
+  } catch {
+    // Handle lookup is optional — gallery still works without it
   }
 
   const variants = (productData?.variants?.edges?.map((e: any) => {
