@@ -18,9 +18,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   const errors: string[] = [];
 
+  const collectErrors = (d: any, dataKey: string): string[] => [
+    ...(d.errors ?? []).map((e: { message: string }) => e.message),
+    ...(d.data?.[dataKey]?.userErrors ?? []).map((e: { message: string }) => e.message),
+  ];
+
   if (mode === "sku") {
-    // productVariantUpdate was removed in API 2025-01; use productVariantsBulkUpdate instead.
-    // That mutation requires a productId, which we fetch from the DB.
     const dbVariant = await db.productVariant.findFirst({
       where: { shopifyGid: updates[0].variantId },
       select: { productId: true },
@@ -30,59 +33,61 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return json({ ok: false, errors: ["Product not found — please reload the product first."] }, { status: 400 });
     }
 
-    const r = await admin.graphql(`
-      mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
-        productVariantsBulkUpdate(productId: $productId, variants: $variants) {
-          userErrors { field message }
+    try {
+      const r = await admin.graphql(`
+        mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+          productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+            userErrors { field message }
+          }
         }
+      `, {
+        variables: {
+          productId,
+          variants: updates.map(({ variantId, value }) => ({ id: variantId, sku: value })),
+        },
+      });
+      const d = await r.json();
+      const errs = collectErrors(d, "productVariantsBulkUpdate");
+      if (errs.length > 0) {
+        errors.push(...errs);
+      } else {
+        await Promise.all(updates.map(({ variantId, value }) =>
+          db.productVariant.updateMany({ where: { shopifyGid: variantId }, data: { sku: value } })
+        ));
       }
-    `, {
-      variables: {
-        productId,
-        variants: updates.map(({ variantId, value }) => ({ id: variantId, sku: value })),
-      },
-    });
-    const d = await r.json();
-    const ue = d.data?.productVariantsBulkUpdate?.userErrors ?? [];
-    if (ue.length > 0) {
-      errors.push(...ue.map((e: { message: string }) => e.message));
-    } else {
-      await Promise.all(updates.map(({ variantId, value }) =>
-        db.productVariant.updateMany({
-          where: { shopifyGid: variantId },
-          data: { sku: value },
-        })
-      ));
+    } catch (err: any) {
+      errors.push(`Shopify API error: ${err?.message ?? "unknown"}`);
     }
   } else {
-    const r = await admin.graphql(`
-      mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
-        metafieldsSet(metafields: $metafields) {
-          userErrors { field message }
+    try {
+      const r = await admin.graphql(`
+        mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
+          metafieldsSet(metafields: $metafields) {
+            userErrors { field message }
+          }
         }
+      `, {
+        variables: {
+          metafields: updates.map(({ variantId, value }) => ({
+            ownerId: variantId,
+            namespace: "custom",
+            key: "image_key",
+            type: "single_line_text_field",
+            value,
+          })),
+        },
+      });
+      const d = await r.json();
+      const errs = collectErrors(d, "metafieldsSet");
+      if (errs.length > 0) {
+        errors.push(...errs);
+      } else {
+        await Promise.all(updates.map(({ variantId, value }) =>
+          db.productVariant.updateMany({ where: { shopifyGid: variantId }, data: { imageKey: value } })
+        ));
       }
-    `, {
-      variables: {
-        metafields: updates.map(({ variantId, value }) => ({
-          ownerId: variantId,
-          namespace: "custom",
-          key: "image_key",
-          type: "single_line_text_field",
-          value,
-        })),
-      },
-    });
-    const d = await r.json();
-    const ue = d.data?.metafieldsSet?.userErrors ?? [];
-    if (ue.length > 0) {
-      errors.push(...ue.map((e: { message: string }) => e.message));
-    } else {
-      await Promise.all(updates.map(({ variantId, value }) =>
-        db.productVariant.updateMany({
-          where: { shopifyGid: variantId },
-          data: { imageKey: value },
-        })
-      ));
+    } catch (err: any) {
+      errors.push(`Shopify API error: ${err?.message ?? "unknown"}`);
     }
   }
 

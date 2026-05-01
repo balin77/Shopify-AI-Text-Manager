@@ -172,6 +172,7 @@ export function BulkImageUploadPanel({
   const [localKeys, setLocalKeys] = useState<Record<string, string>>({});
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   // Memory: optionValue (display name) → last saved key segment
   const [memoryMap, setMemoryMap] = useState<Record<string, string>>({});
@@ -275,6 +276,7 @@ export function BulkImageUploadPanel({
       });
     });
 
+    setSaveError(null);
     setIsSaving(true);
     try {
       const r = await fetch("/api/update-variant-match-key", {
@@ -282,10 +284,12 @@ export function BulkImageUploadPanel({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ mode: matchMode, updates, memoryEntries }),
       });
-      if (r.ok) {
+      let body: { ok: boolean; errors?: string[] } = { ok: false };
+      try { body = await r.json(); } catch { /* non-JSON response */ }
+
+      if (r.ok && body.ok) {
         setSaveSuccess(true);
         setTimeout(() => setSaveSuccess(false), 2500);
-        // Update local memory map immediately
         if (memoryEntries.length > 0) {
           setMemoryMap(prev => {
             const next = { ...prev };
@@ -298,7 +302,12 @@ export function BulkImageUploadPanel({
             ? autoAssign(item, effectiveVariantsRef.current, matchModeRef.current)
             : item
         ));
+      } else {
+        const msg = body.errors?.join(" · ") || `Save failed (HTTP ${r.status})`;
+        setSaveError(msg);
       }
+    } catch (err: any) {
+      setSaveError(`Network error: ${err?.message ?? "could not reach server"}`);
     } finally {
       setIsSaving(false);
     }
@@ -610,14 +619,19 @@ export function BulkImageUploadPanel({
                     );
                   })}
 
-                  <InlineStack align="end" gap="300" blockAlign="center">
-                    {saveSuccess && (
-                      <Text as="span" variant="bodySm" tone="success">{t.imageManager.bulkGeneratorSuccess}</Text>
+                  <BlockStack gap="100">
+                    {saveError && (
+                      <Text as="p" variant="bodySm" tone="critical">{saveError}</Text>
                     )}
-                    <Button variant="primary" size="slim" onClick={handleSaveAll} loading={isSaving} disabled={isSaving}>
-                      {t.imageManager.bulkGeneratorSaveAll}
-                    </Button>
-                  </InlineStack>
+                    <InlineStack align="end" gap="300" blockAlign="center">
+                      {saveSuccess && (
+                        <Text as="span" variant="bodySm" tone="success">{t.imageManager.bulkGeneratorSuccess}</Text>
+                      )}
+                      <Button variant="primary" size="slim" onClick={handleSaveAll} loading={isSaving} disabled={isSaving}>
+                        {t.imageManager.bulkGeneratorSaveAll}
+                      </Button>
+                    </InlineStack>
+                  </BlockStack>
                 </BlockStack>
               )}
             </BlockStack>
