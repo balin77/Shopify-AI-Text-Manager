@@ -207,6 +207,13 @@ export function VariantImageManager({
       .then(({ variants: raw, mediaMap, error }) => {
         if (error) { setVariantError(error); return; }
         if (mediaMap) setShopifyMediaMap(mediaMap);
+        // Build URL→GID reverse map to resolve each variant's main image GID
+        const urlToGidMap: Record<string, string> = {};
+        if (mediaMap) {
+          for (const [gid, url] of Object.entries(mediaMap as Record<string, string>)) {
+            urlToGidMap[url.split("?")[0]] = gid;
+          }
+        }
         const mapped: VariantWithGallery[] = (raw ?? []).map((v: any) => ({
           id: v.shopifyGid ?? v.id,
           title: v.title,
@@ -216,6 +223,7 @@ export function VariantImageManager({
           galleryFileGids: (() => {
             try { return JSON.parse(v.galleryJson || "[]"); } catch { return []; }
           })(),
+          mainImageGid: v.image?.url ? urlToGidMap[v.image.url.split("?")[0]] : undefined,
           defaultImageUrl: v.image?.url ?? undefined,
           selectedOptions: v.selectedOptions ?? [],
         }));

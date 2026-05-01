@@ -31,7 +31,8 @@ export interface VariantWithGallery {
   sku: string | null;
   imageKey: string | null;
   position: number;
-  galleryFileGids: string[];
+  galleryFileGids: string[];  // gallery metafield only — does NOT include the main variant image
+  mainImageGid?: string;      // GID of the variant's native featured image (mediaId)
   defaultImageUrl?: string;
   selectedOptions: VariantSelectedOption[];
 }

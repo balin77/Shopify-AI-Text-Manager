@@ -80,19 +80,33 @@ export function useVariantImageManager() {
         ...pendingProductNewMedia.map(r => ({ resourceUrl: r })),
       ];
 
-      // Merge auto-assigned bulk items into pendingVariantGalleries
-      const mergedVariantGalleries = [...pendingVariantGalleries];
+      // Merge auto-assigned bulk items into pendingVariantGalleries.
+      // fileGids structure expected by the API:
+      //   fileGids[0] → variant's native featured image (mediaId)
+      //   fileGids[1..] → variant_gallery metafield
+      // Group all new images per variant first so we can build the list in one pass.
+      const newImagesByVariant = new Map<string, string[]>();
       for (const item of readyItems) {
         if (!item.targetVariantId || item.assignmentMode !== "assigned") continue;
-        const existing = mergedVariantGalleries.find(vg => vg.variantId === item.targetVariantId);
+        const group = newImagesByVariant.get(item.targetVariantId) ?? [];
+        group.push(item.resourceUrl);
+        newImagesByVariant.set(item.targetVariantId, group);
+      }
+
+      const mergedVariantGalleries = [...pendingVariantGalleries];
+      for (const [variantId, newUrls] of newImagesByVariant) {
+        const baseVariant = variantsForBulk.find(v => v.id === variantId);
+        const mainGid = baseVariant?.mainImageGid;
+        const galleryGids = baseVariant?.galleryFileGids ?? [];
+        const existing = mergedVariantGalleries.find(vg => vg.variantId === variantId);
         if (existing) {
-          existing.fileGids = [...existing.fileGids, item.resourceUrl];
+          existing.fileGids = [...existing.fileGids, ...newUrls];
         } else {
-          const baseVariant = variantsForBulk.find(v => v.id === item.targetVariantId);
-          mergedVariantGalleries.push({
-            variantId: item.targetVariantId,
-            fileGids: [...(baseVariant?.galleryFileGids ?? []), item.resourceUrl],
-          });
+          // Preserve existing main image at position 0; append new images after gallery.
+          const fileGids = mainGid
+            ? [mainGid, ...galleryGids, ...newUrls]
+            : [...galleryGids, ...newUrls];
+          mergedVariantGalleries.push({ variantId, fileGids });
         }
       }
 

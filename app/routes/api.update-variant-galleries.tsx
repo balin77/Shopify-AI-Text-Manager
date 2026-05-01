@@ -19,11 +19,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   const errors: string[] = [];
 
-  // 1. Neue Bilder zu Produkt hinzufügen
+  // 1. Neue Bilder zu Produkt hinzufügen und GID-Mapping aufbauen
+  // resourceUrl (staged upload URL) → Shopify MediaImage GID
+  const resourceUrlToGid: Record<string, string> = {};
   if (newMedia.length > 0) {
     const r = await admin.graphql(`
       mutation productUpdate($input: ProductInput!, $media: [CreateMediaInput!]) {
         productUpdate(input: $input, media: $media) {
+          media { id }
           userErrors { field message }
         }
       }
@@ -39,7 +42,23 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const d = await r.json();
     const ue = d.data?.productUpdate?.userErrors ?? [];
     if (ue.length > 0) errors.push(...ue.map((e: { message: string }) => e.message));
+
+    // Map each resourceUrl to the GID of the newly created media (response order matches input order)
+    const createdMedia: { id: string }[] = d.data?.productUpdate?.media ?? [];
+    newMedia.forEach((m, i) => {
+      if (createdMedia[i]?.id) resourceUrlToGid[m.resourceUrl] = createdMedia[i].id;
+    });
   }
+
+  // Resolve a fileGid that may be a staged resourceUrl to an actual Shopify GID
+  const resolveGid = (gid: string): string =>
+    gid.startsWith("gid://") ? gid : (resourceUrlToGid[gid] ?? gid);
+
+  // Translate all resourceUrls in variantGalleries.fileGids to actual Shopify GIDs
+  const resolvedVariantGalleries = variantGalleries.map(vg => ({
+    ...vg,
+    fileGids: vg.fileGids.map(resolveGid),
+  }));
 
   // 2. Bilder neu sortieren
   if (mediaOrder.length > 0) {
@@ -62,7 +81,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   // 3. Variant-Galerien (Metafelder) updaten + Hauptbilder ggf. löschen
   const clearSet = new Set(clearVariantMainImages);
-  const hasVariantChanges = variantGalleries.length > 0 || clearSet.size > 0;
+  const hasVariantChanges = resolvedVariantGalleries.length > 0 || clearSet.size > 0;
   if (hasVariantChanges) {
     // Build variant update objects:
     //  - Normal variants: fileGids[0] is the main image GID, fileGids[1..] are gallery.
@@ -70,7 +89,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     //  - Clear-only variants (not in variantGalleries): only send mediaId: null, no metafield change.
     const variantMap = new Map<string, object>();
 
-    for (const vg of variantGalleries) {
+    for (const vg of resolvedVariantGalleries) {
       if (clearSet.has(vg.variantId)) {
         variantMap.set(vg.variantId, {
           id: vg.variantId,
@@ -123,7 +142,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     if (ue.length > 0) errors.push(...ue.map((e: { message: string }) => e.message));
 
     if (errors.length === 0) {
-      await Promise.all(variantGalleries.map(vg => {
+      await Promise.all(resolvedVariantGalleries.map(vg => {
         const galleryGids = clearSet.has(vg.variantId) ? vg.fileGids : vg.fileGids.slice(1);
         return db.productVariant.updateMany({
           where: { shopifyGid: vg.variantId },
