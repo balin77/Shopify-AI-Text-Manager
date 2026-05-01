@@ -56,6 +56,33 @@ function getOptionKeySegment(
   return cleanSeg(opt.value);
 }
 
+/**
+ * Try to reverse-engineer per-option segments from a saved full key.
+ * Returns an array of segments (one per option) or null if the format doesn't match.
+ * Example: baseName="Box", key="Box_Peanut_S", 2 options → ["Peanut","S"]
+ */
+function extractSegmentsFromKey(
+  fullKey: string,
+  baseName: string,
+  optCount: number,
+): string[] | null {
+  if (!fullKey || optCount === 0) return null;
+  const prefix = cleanSeg(baseName.trim());
+  let remaining = fullKey;
+  if (prefix) {
+    if (remaining.startsWith(prefix + "_")) {
+      remaining = remaining.slice(prefix.length + 1);
+    } else if (remaining === prefix) {
+      return null;
+    } else {
+      return null;
+    }
+  }
+  const parts = remaining.split("_");
+  if (parts.length !== optCount) return null;
+  return parts;
+}
+
 /** Build the full key for a variant given the current state. */
 function buildVariantKey(
   baseName: string,
@@ -229,18 +256,22 @@ export function BulkImageUploadPanel({
       .filter(u => u.value.trim() !== "");
     if (updates.length === 0) return;
 
-    // Collect memory entries: for each unique optionValue, record the key segment used
+    // Collect memory entries by decomposing the actually-saved key back into per-option segments.
+    // This is reliable regardless of how the key was set (generated, manually typed, or chip override).
     const seenOptionValues = new Set<string>();
     const memoryEntries: Array<{ optionValue: string; savedAs: string }> = [];
     variants.forEach(v => {
+      const key = localKeys[v.id] ?? "";
+      if (!key.trim()) return;
       const opts = v.selectedOptions.length > 0
         ? v.selectedOptions
         : v.title.split(" / ").map(val => ({ name: "", value: val, handle: null }));
+      const segments = extractSegmentsFromKey(key, baseName, opts.length);
+      if (!segments) return;
       opts.forEach((opt, i) => {
-        if (!opt.value || seenOptionValues.has(opt.value)) return;
+        if (!opt.value || seenOptionValues.has(opt.value) || !segments[i]) return;
         seenOptionValues.add(opt.value);
-        const seg = getOptionKeySegment(opt, labelMode, optionOverrides[v.id]?.[i], memoryMap);
-        if (seg) memoryEntries.push({ optionValue: opt.value, savedAs: seg });
+        memoryEntries.push({ optionValue: opt.value, savedAs: segments[i] });
       });
     });
 
@@ -271,7 +302,7 @@ export function BulkImageUploadPanel({
     } finally {
       setIsSaving(false);
     }
-  }, [variants, localKeys, matchMode, labelMode, optionOverrides, memoryMap, onItemsChange]);
+  }, [variants, localKeys, baseName, matchMode, labelMode, memoryMap, onItemsChange]);
 
   const handleDrop = useCallback(async (_dropFiles: File[], acceptedFiles: File[]) => {
     const validFiles = acceptedFiles.filter(f => ALLOWED_MIME.includes(f.type));
