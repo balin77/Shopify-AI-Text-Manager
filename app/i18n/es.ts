@@ -659,6 +659,7 @@ export const es: Translation = {
     bulkLabelModeLabel: "Usar para generación",
     bulkLabelModeName: "Nombre de visualización",
     bulkLabelModeHandle: "Handle",
+    bulkLabelModeMemory: "Memory",
     bulkOverrideTooltip: "Clic para sobrescribir (solo esta sesión)",
     bulkNoHandlesInfo: "No se encontraron handles de metaobjetos para este producto. Los valores de opción no están vinculados a un metaobjeto — los handles no diferirán de los nombres de visualización.",
     bulkAssigned: "{count} asignadas",

@@ -659,6 +659,7 @@ export const en: Translation = {
     bulkLabelModeLabel: "Use for generation",
     bulkLabelModeName: "Display name",
     bulkLabelModeHandle: "Handle",
+    bulkLabelModeMemory: "Memory",
     bulkOverrideTooltip: "Click to override for this session",
     bulkNoHandlesInfo: "No metaobject handles found for this product. Option values are not linked to a metaobject — handles will not differ from display names.",
     bulkAssigned: "{count} assigned",

@@ -657,6 +657,7 @@ export const de = {
     bulkLabelModeLabel: "Verwenden für Generierung",
     bulkLabelModeName: "Anzeigename",
     bulkLabelModeHandle: "Handle",
+    bulkLabelModeMemory: "Memory",
     bulkOverrideTooltip: "Klicken zum Überschreiben (nur diese Sitzung)",
     bulkNoHandlesInfo: "Keine Metaobject-Handles für dieses Produkt gefunden. Die Optionswerte sind nicht mit einem Metaobject verknüpft — Handles unterscheiden sich nicht von den Anzeigenamen.",
     bulkAssigned: "{count} zugewiesen",

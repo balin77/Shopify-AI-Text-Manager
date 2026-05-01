@@ -25,20 +25,35 @@ const ALLOWED_MIME = ["image/jpeg", "image/png", "image/gif", "image/webp", "ima
 
 type SortMode = "identifier" | "sku" | "filename";
 type MatchMode = "sku" | "imageKey";
-type LabelMode = "name" | "handle";
+type LabelMode = "name" | "handle" | "memory";
+
+/** Strip spaces and underscores — underscores are our separator so must not appear inside a segment. */
+const cleanSeg = (s: string) => s.replace(/[\s_]+/g, "");
 
 /** Return the chip display text for one option value (before key generation). */
-function getOptionDisplay(opt: VariantSelectedOption, labelMode: LabelMode, override?: string): string {
+function getOptionDisplay(
+  opt: VariantSelectedOption,
+  labelMode: LabelMode,
+  override?: string,
+  memoryMap: Record<string, string> = {},
+): string {
   if (override !== undefined) return override;
   if (labelMode === "handle" && opt.handle) return opt.handle;
+  if (labelMode === "memory") return memoryMap[opt.value] ?? opt.value;
   return opt.value;
 }
 
-/** Return the key-segment for one option value (space-removal applied for non-overrides). */
-function getOptionKeySegment(opt: VariantSelectedOption, labelMode: LabelMode, override?: string): string {
-  if (override !== undefined) return override.replace(/\s+/g, "");
-  if (labelMode === "handle" && opt.handle) return opt.handle;
-  return opt.value.replace(/\s+/g, "");
+/** Return the key-segment for one option value (spaces and underscores removed). */
+function getOptionKeySegment(
+  opt: VariantSelectedOption,
+  labelMode: LabelMode,
+  override?: string,
+  memoryMap: Record<string, string> = {},
+): string {
+  if (override !== undefined) return cleanSeg(override);
+  if (labelMode === "handle" && opt.handle) return cleanSeg(opt.handle);
+  if (labelMode === "memory") return cleanSeg(memoryMap[opt.value] ?? opt.value);
+  return cleanSeg(opt.value);
 }
 
 /** Build the full key for a variant given the current state. */
@@ -47,11 +62,12 @@ function buildVariantKey(
   variant: VariantWithGallery,
   labelMode: LabelMode,
   overrides: Record<number, string>,
+  memoryMap: Record<string, string> = {},
 ): string {
   const opts = variant.selectedOptions.length > 0
     ? variant.selectedOptions
     : variant.title.split(" / ").map(v => ({ name: "", value: v, handle: null }));
-  const parts = opts.map((opt, i) => getOptionKeySegment(opt, labelMode, overrides[i]));
+  const parts = opts.map((opt, i) => getOptionKeySegment(opt, labelMode, overrides[i], memoryMap));
   return [baseName.trim(), ...parts].filter(Boolean).join("_");
 }
 
@@ -130,6 +146,15 @@ export function BulkImageUploadPanel({
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
 
+  // Memory: optionValue (display name) → last saved key segment
+  const [memoryMap, setMemoryMap] = useState<Record<string, string>>({});
+  useEffect(() => {
+    fetch("/api/option-value-memory")
+      .then(r => r.json())
+      .then(d => setMemoryMap(d.memory ?? {}))
+      .catch(() => {});
+  }, []);
+
   // Initialize localKeys when variants load
   useEffect(() => {
     if (variants.length === 0) return;
@@ -193,10 +218,10 @@ export function BulkImageUploadPanel({
     if (!baseName.trim() || variants.length === 0) return;
     const generated: Record<string, string> = {};
     variants.forEach(v => {
-      generated[v.id] = buildVariantKey(baseName, v, labelMode, optionOverrides[v.id] ?? {});
+      generated[v.id] = buildVariantKey(baseName, v, labelMode, optionOverrides[v.id] ?? {}, memoryMap);
     });
     setLocalKeys(generated);
-  }, [baseName, variants, labelMode, optionOverrides]);
+  }, [baseName, variants, labelMode, optionOverrides, memoryMap]);
 
   const handleSaveAll = useCallback(async () => {
     const updates = variants
@@ -204,16 +229,39 @@ export function BulkImageUploadPanel({
       .filter(u => u.value.trim() !== "");
     if (updates.length === 0) return;
 
+    // Collect memory entries: for each unique optionValue, record the key segment used
+    const seenOptionValues = new Set<string>();
+    const memoryEntries: Array<{ optionValue: string; savedAs: string }> = [];
+    variants.forEach(v => {
+      const opts = v.selectedOptions.length > 0
+        ? v.selectedOptions
+        : v.title.split(" / ").map(val => ({ name: "", value: val, handle: null }));
+      opts.forEach((opt, i) => {
+        if (!opt.value || seenOptionValues.has(opt.value)) return;
+        seenOptionValues.add(opt.value);
+        const seg = getOptionKeySegment(opt, labelMode, optionOverrides[v.id]?.[i], memoryMap);
+        if (seg) memoryEntries.push({ optionValue: opt.value, savedAs: seg });
+      });
+    });
+
     setIsSaving(true);
     try {
       const r = await fetch("/api/update-variant-match-key", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode: matchMode, updates }),
+        body: JSON.stringify({ mode: matchMode, updates, memoryEntries }),
       });
       if (r.ok) {
         setSaveSuccess(true);
         setTimeout(() => setSaveSuccess(false), 2500);
+        // Update local memory map immediately
+        if (memoryEntries.length > 0) {
+          setMemoryMap(prev => {
+            const next = { ...prev };
+            memoryEntries.forEach(({ optionValue, savedAs }) => { next[optionValue] = savedAs; });
+            return next;
+          });
+        }
         onItemsChange(prev => prev.map(item =>
           item.assignmentMode !== "manual"
             ? autoAssign(item, effectiveVariantsRef.current, matchModeRef.current)
@@ -223,7 +271,7 @@ export function BulkImageUploadPanel({
     } finally {
       setIsSaving(false);
     }
-  }, [variants, localKeys, matchMode, onItemsChange]);
+  }, [variants, localKeys, matchMode, labelMode, optionOverrides, memoryMap, onItemsChange]);
 
   const handleDrop = useCallback(async (_dropFiles: File[], acceptedFiles: File[]) => {
     const validFiles = acceptedFiles.filter(f => ALLOWED_MIME.includes(f.type));
@@ -434,6 +482,7 @@ export function BulkImageUploadPanel({
                     options={[
                       { label: t.imageManager.bulkLabelModeName, value: "name" },
                       { label: t.imageManager.bulkLabelModeHandle, value: "handle" },
+                      { label: t.imageManager.bulkLabelModeMemory, value: "memory" },
                     ]}
                     value={labelMode}
                     onChange={v => setLabelMode(v as LabelMode)}
@@ -464,10 +513,18 @@ export function BulkImageUploadPanel({
                         {/* Option value chips */}
                         <div style={{ minWidth: 130, flexShrink: 0, display: "flex", flexWrap: "wrap", gap: 2, alignItems: "center" }}>
                           {opts.map((opt, i) => {
-                            const display = getOptionDisplay(opt, labelMode, optionOverrides[v.id]?.[i]);
+                            const display = getOptionDisplay(opt, labelMode, optionOverrides[v.id]?.[i], memoryMap);
                             const isEditing = editingChip?.variantId === v.id && editingChip?.optionIndex === i;
                             const hasHandle = opt.handle !== null;
                             const hasOverride = optionOverrides[v.id]?.[i] !== undefined;
+                            const hasMemory = !hasOverride && labelMode === "memory" && !!memoryMap[opt.value];
+                            const chipColor = hasOverride ? "#005bd3"
+                              : hasMemory ? "#7c3aed"
+                              : (hasHandle && labelMode === "handle") ? "#008060"
+                              : "#202223";
+                            const chipBorder = hasOverride ? "2px solid #005bd3"
+                              : hasMemory ? "1px solid #7c3aed"
+                              : "1px dashed #8c9196";
                             return (
                               <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 2 }}>
                                 {i > 0 && <span style={{ color: "#8c9196", fontSize: 11 }}>/</span>}
@@ -494,8 +551,8 @@ export function BulkImageUploadPanel({
                                     style={{
                                       fontSize: 12,
                                       cursor: "pointer",
-                                      borderBottom: hasOverride ? "2px solid #005bd3" : "1px dashed #8c9196",
-                                      color: hasOverride ? "#005bd3" : (hasHandle && labelMode === "handle" ? "#008060" : "#202223"),
+                                      borderBottom: chipBorder,
+                                      color: chipColor,
                                       padding: "0 1px",
                                     }}
                                   >

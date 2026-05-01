@@ -281,6 +281,17 @@ model ProductVariant {
   @@index([productId])
 }
 
+model OptionValueMemory {
+  id          String   @id @default(cuid())
+  shop        String
+  optionValue String   // original display name, e.g. "Erdnuss"
+  savedAs     String   // last saved key segment, e.g. "Peanut"
+  updatedAt   DateTime @updatedAt
+
+  @@unique([shop, optionValue])
+  @@index([shop])
+}
+
 model ImageManagerSettings {
   id            String  @id @default(cuid())
   shopId        String  @unique

@@ -5,12 +5,14 @@ import { db } from "../db.server";
 interface UpdateVariantMatchKeyBody {
   mode: "sku" | "imageKey";
   updates: Array<{ variantId: string; value: string }>;
+  memoryEntries?: Array<{ optionValue: string; savedAs: string }>;
 }
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { admin } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
+  const shop = session.shop;
   const body: UpdateVariantMatchKeyBody = await request.json();
-  const { mode, updates } = body;
+  const { mode, updates, memoryEntries } = body;
 
   if (!updates?.length) return json({ ok: true });
 
@@ -68,5 +70,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 
   if (errors.length > 0) return json({ ok: false, errors }, { status: 400 });
+
+  if (memoryEntries?.length) {
+    await Promise.all(memoryEntries.map(({ optionValue, savedAs }) =>
+      db.optionValueMemory.upsert({
+        where: { shop_optionValue: { shop, optionValue } },
+        create: { shop, optionValue, savedAs },
+        update: { savedAs },
+      })
+    ));
+  }
+
   return json({ ok: true });
 };
