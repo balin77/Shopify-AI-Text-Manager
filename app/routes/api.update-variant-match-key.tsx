@@ -43,7 +43,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       `, {
         variables: {
           productId,
-          variants: updates.map(({ variantId, value }) => ({ id: variantId, sku: value })),
+          variants: updates.map(({ variantId, value }) => ({ id: variantId, inventoryItem: { sku: value } })),
         },
       });
       const d = await r.json();
