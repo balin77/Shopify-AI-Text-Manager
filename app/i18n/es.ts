@@ -678,6 +678,9 @@ export const es: Translation = {
     deleteConfirmBody: "Esta acción no se puede deshacer. Las imágenes serán eliminadas permanentemente de Shopify.",
     deleteConfirmWithGalleries: "Atención: {count} de estas imágenes aún aparecen en {galleries} galería(s) de variantes y también serán eliminadas de allí.",
     deleteConfirmBtn: "Sí, eliminar ahora",
+    bulkApplyButton: "Guardar imágenes ahora",
+    bulkApplyError: "Error al guardar: {error}",
+    bulkForeignProductWarning: "Advertencia: Estas imágenes pueden pertenecer a otro producto ({names}).",
   },
 
   // Common

@@ -136,6 +136,9 @@ interface UnifiedContentEditorProps {
     imageManagerSettings: { firstImageBig: boolean; showAltTags: boolean; autoAltText: boolean };
     variantsForBulk?: import("./image-manager/types").VariantWithGallery[];
     onVariantsLoaded?: (variants: import("./image-manager/types").VariantWithGallery[]) => void;
+    onConfirm?: () => Promise<string | null>;
+    isApplying?: boolean;
+    productTitle?: string;
   };
 
   /** Optional: product IDs that have variants with missing main images (for yellow dot in list) */
@@ -955,12 +958,13 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                 <BulkImageUploadPanel
                   items={imageManager.bulkItems}
                   selectedUniqueIds={imageManager.selectedBulkIds}
-                  activeAction={imageManager.activeAction}
                   variants={imageManager.variantsForBulk}
+                  productTitle={imageManager.productTitle}
                   onItemsChange={imageManager.onBulkItemsChange}
                   onSelect={imageManager.onBulkSelect}
-                  onSetAction={imageManager.onSetAction}
                   onRemove={imageManager.onRemoveBulk}
+                  onConfirm={imageManager.onConfirm}
+                  isConfirming={imageManager.isApplying}
                 />
               )}
             </div>

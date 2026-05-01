@@ -133,25 +133,28 @@ function autoAssign(item: StagedItem, variants: VariantWithGallery[], matchMode:
 interface BulkImageUploadPanelProps {
   items: StagedItem[];
   selectedUniqueIds: Set<string>;
-  activeAction: "copy" | "move" | null;
   variants?: VariantWithGallery[];
+  productTitle?: string;
   onItemsChange: (updater: (prev: StagedItem[]) => StagedItem[]) => void;
   onSelect: (uniqueId: string, selected: boolean) => void;
-  onSetAction: (action: "copy" | "move" | null) => void;
   onRemove: (uniqueIds: string[]) => void;
+  onConfirm?: () => Promise<string | null>;
+  isConfirming?: boolean;
 }
 
 export function BulkImageUploadPanel({
   items,
   selectedUniqueIds,
-  activeAction,
   variants = [],
+  productTitle,
   onItemsChange,
   onSelect,
-  onSetAction,
   onRemove,
+  onConfirm,
+  isConfirming = false,
 }: BulkImageUploadPanelProps) {
   const { t } = useI18n();
+  const [confirmError, setConfirmError] = useState<string | null>(null);
   const [docsOpen, setDocsOpen] = useState(false);
   const [generatorOpen, setGeneratorOpen] = useState(false);
   const [generatorDocsOpen, setGeneratorDocsOpen] = useState(false);
@@ -376,8 +379,26 @@ export function BulkImageUploadPanel({
 
   const selectedItems = items.filter(i => selectedUniqueIds.has(i.uniqueId));
   const hasSelected = selectedItems.length > 0;
+  const hasReady = items.some(i => i.status === "ready");
   const assignedCount = items.filter(i => i.assignmentMode === "assigned").length;
   const unassignedCount = items.filter(i => i.assignmentMode === "unassigned" || !i.assignmentMode).length;
+
+  const foreignProductNames = useMemo(() => {
+    if (!productTitle) return [] as string[];
+    const normalize = (s: string) => s.toLowerCase().replace(/[\s_\-]+/g, "");
+    const currentNorm = normalize(productTitle);
+    const seen = new Set<string>();
+    for (const item of items) {
+      const pn = item.parsedMeta?.productName;
+      if (pn && !seen.has(pn)) {
+        const pnNorm = normalize(pn);
+        if (!currentNorm.includes(pnNorm) && !pnNorm.includes(currentNorm)) {
+          seen.add(pn);
+        }
+      }
+    }
+    return [...seen];
+  }, [items, productTitle]);
   const variantTitleMap = useMemo(() => Object.fromEntries(variants.map(v => [v.id, v.title])), [variants]);
   const handlesAvailable = useMemo(
     () => variants.some(v => v.selectedOptions.some(o => o.handle !== null)),
@@ -746,15 +767,45 @@ export function BulkImageUploadPanel({
                     </BlockStack>
                   </Card>
                 )}
+                {foreignProductNames.length > 0 && (
+                  <div style={{ padding: "8px 12px", background: "#fff3cd", borderRadius: 6, border: "1px solid #ffc453" }}>
+                    <Text as="p" variant="bodySm" tone="caution">
+                      {(t.imageManager.bulkForeignProductWarning ?? "Warning: These images may belong to a different product ({names}).").replace("{names}", foreignProductNames.join(", "))}
+                    </Text>
+                  </div>
+                )}
               </BlockStack>
             </>
           )}
 
-          <InlineStack gap="200">
-            <Button size="slim" pressed={activeAction === "copy"} onClick={() => onSetAction(activeAction === "copy" ? null : "copy")} disabled={!hasSelected}>{t.imageManager.copy}</Button>
-            <Button size="slim" pressed={activeAction === "move"} onClick={() => onSetAction(activeAction === "move" ? null : "move")} disabled={!hasSelected}>{t.imageManager.move}</Button>
-            <Button size="slim" tone="critical" onClick={() => onRemove([...selectedUniqueIds])} disabled={!hasSelected}>{t.imageManager.remove.replace(" ({count})", "")}</Button>
-          </InlineStack>
+          {/* Sticky action bar */}
+          <div style={{ position: "sticky", bottom: 0, zIndex: 2, background: "var(--p-color-bg-surface)", borderTop: "1px solid var(--p-color-border)", padding: "8px 0 4px" }}>
+            <BlockStack gap="100">
+              {confirmError && (
+                <Text as="p" variant="bodySm" tone="critical">
+                  {(t.imageManager.bulkApplyError ?? "Error saving: {error}").replace("{error}", confirmError)}
+                </Text>
+              )}
+              <InlineStack gap="200">
+                <Button size="slim" tone="critical" onClick={() => onRemove([...selectedUniqueIds])} disabled={!hasSelected}>{t.imageManager.remove.replace(" ({count})", "")}</Button>
+                {onConfirm && (
+                  <Button
+                    size="slim"
+                    variant="primary"
+                    disabled={!hasReady || isConfirming}
+                    loading={isConfirming}
+                    onClick={async () => {
+                      setConfirmError(null);
+                      const err = await onConfirm();
+                      if (err) setConfirmError(err);
+                    }}
+                  >
+                    {t.imageManager.bulkApplyButton ?? "Save images now"}
+                  </Button>
+                )}
+              </InlineStack>
+            </BlockStack>
+          </div>
         </>
       )}
     </div>

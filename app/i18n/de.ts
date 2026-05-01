@@ -676,6 +676,9 @@ export const de = {
     deleteConfirmBody: "Diese Aktion kann nicht rückgängig gemacht werden. Die Bilder werden dauerhaft von Shopify gelöscht.",
     deleteConfirmWithGalleries: "Achtung: {count} dieser Bilder erscheinen noch in {galleries} Varianten-Galerien und werden dort ebenfalls entfernt.",
     deleteConfirmBtn: "Ja, jetzt löschen",
+    bulkApplyButton: "Bilder jetzt speichern",
+    bulkApplyError: "Fehler beim Speichern: {error}",
+    bulkForeignProductWarning: "Achtung: Diese Bilder gehören möglicherweise zu einem anderen Produkt ({names}).",
   },
 
   // Common

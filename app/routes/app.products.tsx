@@ -849,6 +849,9 @@ export default function ProductsPage() {
             imageManagerSettings: imageManagerSettings ?? { firstImageBig: false, showAltTags: false, autoAltText: false, thumbSize: 80 },
             variantsForBulk: imageManagerState.variantsForBulk,
             onVariantsLoaded: imageManagerState.handleVariantsLoaded,
+            onConfirm: () => imageManagerState.handleApply(editor.selectedItem?.id ?? ""),
+            isApplying: imageManagerState.isApplying,
+            productTitle: editor.selectedItem?.title ?? "",
           } : undefined}
           imageGalleryReplacement={showImageManager && editor.selectedItem ? (
             <VariantImageManager

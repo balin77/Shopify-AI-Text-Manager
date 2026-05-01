@@ -678,6 +678,9 @@ export const en: Translation = {
     deleteConfirmBody: "This action cannot be undone. The images will be permanently deleted from Shopify.",
     deleteConfirmWithGalleries: "Warning: {count} of these images still appear in {galleries} variant gallery/galleries and will also be removed from there.",
     deleteConfirmBtn: "Yes, delete now",
+    bulkApplyButton: "Save images now",
+    bulkApplyError: "Error saving: {error}",
+    bulkForeignProductWarning: "Warning: These images may belong to a different product ({names}).",
   },
 
   // Common
