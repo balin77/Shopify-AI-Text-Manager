@@ -19,24 +19,41 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const errors: string[] = [];
 
   if (mode === "sku") {
-    await Promise.all(updates.map(async ({ variantId, value }) => {
-      const r = await admin.graphql(`
-        mutation productVariantUpdate($input: ProductVariantInput!) {
-          productVariantUpdate(input: $input) {
-            userErrors { field message }
-          }
+    // productVariantUpdate was removed in API 2025-01; use productVariantsBulkUpdate instead.
+    // That mutation requires a productId, which we fetch from the DB.
+    const dbVariant = await db.productVariant.findFirst({
+      where: { shopifyGid: updates[0].variantId },
+      select: { productId: true },
+    });
+    const productId = dbVariant?.productId;
+    if (!productId) {
+      return json({ ok: false, errors: ["Product not found — please reload the product first."] }, { status: 400 });
+    }
+
+    const r = await admin.graphql(`
+      mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+        productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+          userErrors { field message }
         }
-      `, { variables: { input: { id: variantId, sku: value } } });
-      const d = await r.json();
-      const ue = d.data?.productVariantUpdate?.userErrors ?? [];
-      if (ue.length > 0) errors.push(...ue.map((e: { message: string }) => e.message));
-      else {
-        await db.productVariant.updateMany({
+      }
+    `, {
+      variables: {
+        productId,
+        variants: updates.map(({ variantId, value }) => ({ id: variantId, sku: value })),
+      },
+    });
+    const d = await r.json();
+    const ue = d.data?.productVariantsBulkUpdate?.userErrors ?? [];
+    if (ue.length > 0) {
+      errors.push(...ue.map((e: { message: string }) => e.message));
+    } else {
+      await Promise.all(updates.map(({ variantId, value }) =>
+        db.productVariant.updateMany({
           where: { shopifyGid: variantId },
           data: { sku: value },
-        });
-      }
-    }));
+        })
+      ));
+    }
   } else {
     const r = await admin.graphql(`
       mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
