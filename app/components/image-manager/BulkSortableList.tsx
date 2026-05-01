@@ -22,10 +22,11 @@ import type { StagedItem } from "./types";
 interface SortableItemRowProps {
   item: StagedItem;
   variantTitle?: string;
+  variantCount: number;
   onRemove: (uniqueId: string) => void;
 }
 
-function SortableItemRow({ item, variantTitle, onRemove }: SortableItemRowProps) {
+function SortableItemRow({ item, variantTitle, variantCount, onRemove }: SortableItemRowProps) {
   const { t } = useI18n();
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: item.uniqueId });
@@ -93,6 +94,9 @@ function SortableItemRow({ item, variantTitle, onRemove }: SortableItemRowProps)
         </div>
 
         <InlineStack gap="200" blockAlign="center">
+          {variantCount > 1 && (
+            <Badge>{`×${variantCount}`}</Badge>
+          )}
           {assignmentBadge}
           <div onPointerDown={e => e.stopPropagation()}>
             <Button
@@ -113,7 +117,7 @@ interface BulkSortableListProps {
   items: StagedItem[];
   variantTitles?: Record<string, string>;
   onReorder: (newOrder: StagedItem[]) => void;
-  onRemove: (uniqueId: string) => void;
+  onRemove: (uniqueIds: string[]) => void;
 }
 
 export function BulkSortableList({ items, variantTitles = {}, onReorder, onRemove }: BulkSortableListProps) {
@@ -123,21 +127,53 @@ export function BulkSortableList({ items, variantTitles = {}, onReorder, onRemov
     useSensor(KeyboardSensor)
   );
 
-  const sortedItems = useMemo(
-    () => [...items].sort((a, b) => {
-      const ia = a.parsedMeta?.identifier ?? a.fileName ?? "";
-      const ib = b.parsedMeta?.identifier ?? b.fileName ?? "";
-      return ia.localeCompare(ib, undefined, { numeric: true });
-    }),
-    [items]
-  );
+  // One representative per identifier — maintain array order so drag-and-drop order persists
+  const uniqueItems = useMemo(() => {
+    const seen = new Set<string>();
+    return items.filter(item => {
+      const key = item.parsedMeta?.identifier ?? item.fileName ?? item.uniqueId;
+      if (!seen.has(key)) {
+        seen.add(key);
+        return true;
+      }
+      return false;
+    });
+  }, [items]);
+
+  // Count how many items share each identifier
+  const countByIdentifier = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const item of items) {
+      const key = item.parsedMeta?.identifier ?? item.fileName ?? item.uniqueId;
+      counts[key] = (counts[key] ?? 0) + 1;
+    }
+    return counts;
+  }, [items]);
 
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
-    const oldIndex = sortedItems.findIndex(i => i.uniqueId === active.id);
-    const newIndex = sortedItems.findIndex(i => i.uniqueId === over.id);
-    onReorder(arrayMove(sortedItems, oldIndex, newIndex));
+    const oldIndex = uniqueItems.findIndex(i => i.uniqueId === active.id);
+    const newIndex = uniqueItems.findIndex(i => i.uniqueId === over.id);
+    const reorderedUnique = arrayMove(uniqueItems, oldIndex, newIndex);
+
+    // Expand back to full items array, grouping all variants per identifier together
+    const result: StagedItem[] = [];
+    for (const rep of reorderedUnique) {
+      const key = rep.parsedMeta?.identifier ?? rep.fileName ?? rep.uniqueId;
+      result.push(...items.filter(i => (i.parsedMeta?.identifier ?? i.fileName ?? i.uniqueId) === key));
+    }
+    onReorder(result);
+  }
+
+  function handleRemoveByIdentifier(clickedUniqueId: string) {
+    const clicked = items.find(i => i.uniqueId === clickedUniqueId);
+    if (!clicked) return;
+    const key = clicked.parsedMeta?.identifier ?? clicked.fileName ?? clicked.uniqueId;
+    const allIds = items
+      .filter(i => (i.parsedMeta?.identifier ?? i.fileName ?? i.uniqueId) === key)
+      .map(i => i.uniqueId);
+    onRemove(allIds);
   }
 
   return (
@@ -146,20 +182,24 @@ export function BulkSortableList({ items, variantTitles = {}, onReorder, onRemov
       collisionDetection={closestCenter}
       onDragEnd={handleDragEnd}
     >
-      <SortableContext items={sortedItems.map(i => i.uniqueId)} strategy={verticalListSortingStrategy}>
+      <SortableContext items={uniqueItems.map(i => i.uniqueId)} strategy={verticalListSortingStrategy}>
         <div>
           <Text as="p" variant="bodyMd" fontWeight="semibold">
-            {t.imageManager.bulkSortListTitle?.replace("{count}", String(sortedItems.length)) ?? `${sortedItems.length}`}
+            {t.imageManager.bulkSortListTitle?.replace("{count}", String(uniqueItems.length)) ?? `${uniqueItems.length}`}
           </Text>
           <ul style={{ padding: 0, margin: "8px 0 0" }}>
-            {sortedItems.map(item => (
-              <SortableItemRow
-                key={item.uniqueId}
-                item={item}
-                variantTitle={item.targetVariantId ? variantTitles[item.targetVariantId] : undefined}
-                onRemove={onRemove}
-              />
-            ))}
+            {uniqueItems.map(item => {
+              const key = item.parsedMeta?.identifier ?? item.fileName ?? item.uniqueId;
+              return (
+                <SortableItemRow
+                  key={item.uniqueId}
+                  item={item}
+                  variantTitle={item.targetVariantId ? variantTitles[item.targetVariantId] : undefined}
+                  variantCount={countByIdentifier[key] ?? 1}
+                  onRemove={handleRemoveByIdentifier}
+                />
+              );
+            })}
           </ul>
         </div>
       </SortableContext>

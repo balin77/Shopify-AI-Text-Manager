@@ -408,7 +408,6 @@ export function BulkImageUploadPanel({
   }, [items]);
 
   const handleReorder = useCallback((newOrder: StagedItem[]) => { onItemsChange(() => newOrder); }, [onItemsChange]);
-  const handleRemoveSingle = useCallback((uniqueId: string) => { onRemove([uniqueId]); }, [onRemove]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -673,7 +672,7 @@ export function BulkImageUploadPanel({
           </InlineStack>
 
           {sortListOpen && (
-            <BulkSortableList items={sortedItems} variantTitles={variantTitleMap} onReorder={handleReorder} onRemove={handleRemoveSingle} />
+            <BulkSortableList items={sortedItems} variantTitles={variantTitleMap} onReorder={handleReorder} onRemove={onRemove} />
           )}
 
           {!sortListOpen && (
