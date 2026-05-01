@@ -56,6 +56,14 @@ interface TaskData {
   targetLocale?: string | null;
 }
 
+function readLastSelectedId(contentType: string): string | null {
+  try { return localStorage.getItem(`contentpilot_last_selected_${contentType}`); } catch { return null; }
+}
+
+function writeLastSelectedId(contentType: string, id: string): void {
+  try { localStorage.setItem(`contentpilot_last_selected_${contentType}`, id); } catch {}
+}
+
 export function useUnifiedContentEditor(props: UseContentEditorProps): UseContentEditorReturn {
   const { config, items, shopLocales, primaryLocale, fetcher, showInfoBox, t, onTranslateToAllLocalesComplete, initialItemId } = props;
   const { refresh: refreshTaskCount } = useTaskCount();
@@ -77,7 +85,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // STATE MANAGEMENT
   // ============================================================================
 
-  const [selectedItemId, setSelectedItemId] = useState<string | null>(initialItemId || null);
+  const [selectedItemId, setSelectedItemId] = useState<string | null>(
+    initialItemId || readLastSelectedId(config.contentType) || null
+  );
   const [currentLanguage, setCurrentLanguage] = useState(primaryLocale);
   const currentLanguageRef = useLatestRef(currentLanguage);
   const [editableValues, setEditableValues] = useState<Record<string, string>>({});
@@ -317,6 +327,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       setSelectedItemId(items[0].id);
     }
   }, [items, selectedItemId]);
+
+  // Persist selected item so the same item reopens after a page reload
+  useEffect(() => {
+    if (selectedItemId) {
+      writeLastSelectedId(config.contentType, selectedItemId);
+    }
+  }, [selectedItemId, config.contentType]);
 
   // ============================================================================
   // FOCUS MANAGEMENT - Set focus when item changes
