@@ -61,26 +61,31 @@ if (!process.env.ENCRYPTION_KEY) {
   );
 }
 
+// Trim env vars to prevent whitespace/newline issues.
+// A trailing newline in SHOPIFY_API_SECRET breaks HMAC-SHA256 JWT signature
+// verification (token exchange) while OAuth client_secret POST still works,
+// causing an auth loop where every request after OAuth triggers another OAuth.
+const apiKey = (process.env.SHOPIFY_API_KEY || "").trim();
+const apiSecretKey = (process.env.SHOPIFY_API_SECRET || "").trim();
+const appUrl = (process.env.SHOPIFY_APP_URL || "https://localhost:3000").trim();
+
 // Log Shopify configuration on startup
 logger.info(`[SHOPIFY.SERVER] Initializing Shopify App...`);
-logger.debug(`[SHOPIFY.SERVER] Environment Variables:`);
-logger.debug(`[SHOPIFY.SERVER]  - SHOPIFY_API_KEY: ${process.env.SHOPIFY_API_KEY ? `${process.env.SHOPIFY_API_KEY.substring(0, 8)}...` : "❌ MISSING"}`);
-logger.debug(`[SHOPIFY.SERVER]  - SHOPIFY_API_SECRET: ${process.env.SHOPIFY_API_SECRET ? "✅ SET" : "❌ MISSING"}`);
-logger.debug(`[SHOPIFY.SERVER]  - SHOPIFY_APP_URL: ${process.env.SHOPIFY_APP_URL || "❌ MISSING (using default)"}`);
+logger.info(`[SHOPIFY.SERVER] Env diagnostics: SHOPIFY_API_KEY=${apiKey ? `${apiKey.substring(0, 8)}... (len=${apiKey.length})` : "MISSING"} | SHOPIFY_API_SECRET=${apiSecretKey ? `SET (len=${apiSecretKey.length}, rawLen=${process.env.SHOPIFY_API_SECRET?.length})` : "MISSING"} | SHOPIFY_APP_URL=${appUrl}`);
 logger.debug(`[SHOPIFY.SERVER]  - SHOPIFY_SCOPES: ${process.env.SHOPIFY_SCOPES || "❌ MISSING"}`);
 logger.debug(`[SHOPIFY.SERVER]  - SHOPIFY_API_VERSION: ${process.env.SHOPIFY_API_VERSION || "❌ MISSING (using default: 2025-10)"}`);
 logger.debug(`[SHOPIFY.SERVER]  - NODE_ENV: ${process.env.NODE_ENV || "development"}`);
 
-const scopes = process.env.SHOPIFY_SCOPES?.split(",") || [];
-logger.debug(`[SHOPIFY.SERVER] Parsed scopes (${scopes.length}):`, scopes);
+const scopes = (process.env.SHOPIFY_SCOPES || "").split(",").map(s => s.trim()).filter(Boolean);
+logger.info(`[SHOPIFY.SERVER] Parsed scopes (${scopes.length}): ${scopes.join(",")}`);
 logger.debug(`[SHOPIFY.SERVER] Using API version: ${selectedApiVersion}`);
 
 const shopify = shopifyApp({
-  apiKey: process.env.SHOPIFY_API_KEY!,
-  apiSecretKey: process.env.SHOPIFY_API_SECRET || "",
+  apiKey,
+  apiSecretKey,
   apiVersion: selectedApiVersion,
-  scopes: scopes,
-  appUrl: process.env.SHOPIFY_APP_URL || "https://localhost:3000",
+  scopes,
+  appUrl,
   authPathPrefix: "/auth",
   sessionStorage: new EncryptedPrismaSessionStorage(new PrismaSessionStorage(prisma)),
   distribution: AppDistribution.AppStore,
