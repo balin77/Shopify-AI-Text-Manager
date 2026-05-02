@@ -52,6 +52,15 @@ function getApiVersion(versionString?: string): ApiVersion {
 // Get API version from environment variable
 const selectedApiVersion = getApiVersion(process.env.SHOPIFY_API_VERSION);
 
+// Validate ENCRYPTION_KEY at startup — fail fast with a clear message rather than a
+// confusing auth loop on the first request (which is what happens when it's missing).
+if (!process.env.ENCRYPTION_KEY) {
+  throw new Error(
+    '[STARTUP] ENCRYPTION_KEY environment variable is required but not set. ' +
+    'Generate one with: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"',
+  );
+}
+
 // Log Shopify configuration on startup
 logger.info(`[SHOPIFY.SERVER] Initializing Shopify App...`);
 logger.debug(`[SHOPIFY.SERVER] Environment Variables:`);
@@ -83,6 +92,14 @@ const shopify = shopifyApp({
       logger.debug(`[SHOPIFY.SERVER]  - Session ID: ${session.id}`);
       logger.debug(`[SHOPIFY.SERVER]  - Has Access Token: ${session.accessToken ? true : false}`);
       logger.debug(`[SHOPIFY.SERVER]  - Scopes: ${session.scope}`);
+
+      // Stop any stale SyncScheduler that was bound to the previous OAuth token.
+      // Without this, a reinstalled shop keeps running background sync with the old
+      // revoked token until the 5-min inactivity timeout fires.
+      if (syncScheduler.isShopActive(session.shop)) {
+        syncScheduler.stopSyncForShop(session.shop);
+        logger.info(`[SHOPIFY.SERVER] Cleared stale scheduler for ${session.shop} after re-auth`);
+      }
 
       try {
         await shopify.registerWebhooks({ session });

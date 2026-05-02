@@ -56,9 +56,12 @@ export class EncryptedPrismaSessionStorage implements SessionStorage {
         session.accessToken = decryptToken(session.accessToken) ?? session.accessToken;
       } catch (error) {
         logger.error(
-          "[EncryptedSessionStorage] Failed to decrypt accessToken, returning as-is:",
+          "[EncryptedSessionStorage] Failed to decrypt accessToken — treating session as missing to force re-auth:",
           error instanceof Error ? error.message : "Unknown error",
         );
+        // Return undefined so the SDK redirects to OAuth instead of sending the
+        // raw encrypted string as a Bearer token (which would produce a Shopify 401).
+        return undefined;
       }
     }
 
@@ -67,9 +70,10 @@ export class EncryptedPrismaSessionStorage implements SessionStorage {
         session.refreshToken = decryptToken(session.refreshToken) ?? session.refreshToken;
       } catch (error) {
         logger.error(
-          "[EncryptedSessionStorage] Failed to decrypt refreshToken, returning as-is:",
+          "[EncryptedSessionStorage] Failed to decrypt refreshToken, clearing it:",
           error instanceof Error ? error.message : "Unknown error",
         );
+        session.refreshToken = undefined;
       }
     }
 
