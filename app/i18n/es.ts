@@ -559,6 +559,12 @@ export const es: Translation = {
     limitReachedTitle: "Límite del plan alcanzado",
     limitReachedDescription: "Has alcanzado tu límite para: {resources}",
     viewUsage: "Ver uso",
+    billingSuccessTitle: "Plan activado",
+    billingSuccessMessage: "Tu suscripción ahora está activa.",
+    billingDeclinedTitle: "Pago no completado",
+    billingDeclinedMessage: "La suscripción no fue activada. Puedes intentarlo de nuevo a continuación.",
+    billingErrorTitle: "Error de facturación",
+    billingErrorMessage: "Algo salió mal al procesar tu suscripción. Por favor, inténtalo de nuevo o contacta con el soporte.",
   },
 
   // Common

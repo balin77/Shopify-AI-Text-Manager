@@ -557,6 +557,12 @@ export const de = {
     limitReachedTitle: "Plan-Limit erreicht",
     limitReachedDescription: "Sie haben das Limit erreicht für: {resources}",
     viewUsage: "Nutzung anzeigen",
+    billingSuccessTitle: "Plan aktiviert",
+    billingSuccessMessage: "Dein Abonnement ist jetzt aktiv.",
+    billingDeclinedTitle: "Zahlung nicht abgeschlossen",
+    billingDeclinedMessage: "Das Abonnement wurde nicht aktiviert. Du kannst es unten erneut versuchen.",
+    billingErrorTitle: "Abrechnungsfehler",
+    billingErrorMessage: "Bei der Verarbeitung deines Abonnements ist etwas schiefgelaufen. Bitte versuche es erneut oder kontaktiere den Support.",
   },
 
   // Common

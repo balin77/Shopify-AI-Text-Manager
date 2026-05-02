@@ -5,7 +5,6 @@
  * checking subscription status, and managing billing webhooks.
  */
 
-import { BillingInterval, BillingReplacementBehavior, shopifyApp } from '@shopify/shopify-app-remix/server';
 import type { Session } from '@shopify/shopify-api';
 import { BILLING_PLANS, type BillingPlan, isPaidPlan } from '~/config/billing';
 import { db as prisma } from '~/db.server';
