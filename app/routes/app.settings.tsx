@@ -1037,6 +1037,7 @@ export default function SettingsPage() {
               {selectedSection === "imagemanager" && showImageManagerTab && (
                 <SettingsImageManagerTab
                   settings={{ enabled: imageManagerSettings?.enabled ?? true, autoAltText: imageManagerSettings?.autoAltText ?? false }}
+                  shop={shop}
                   onHasChangesChange={setHasImageManagerChanges}
                   highlightSaveButton={highlightSaveButton}
                 />

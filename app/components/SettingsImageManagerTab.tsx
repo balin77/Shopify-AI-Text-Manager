@@ -1,9 +1,11 @@
 import { useState, useEffect } from "react";
-import { Card, BlockStack, Text, InlineStack, Divider } from "@shopify/polaris";
+import { Card, BlockStack, Text, InlineStack, Divider, Button, Badge, Box } from "@shopify/polaris";
 import { useFetcher } from "@remix-run/react";
 import { SaveDiscardButtons } from "./SaveDiscardButtons";
 import { ToggleSwitch } from "./ToggleSwitch";
 import { useI18n } from "../contexts/I18nContext";
+
+const EXTENSION_UID = "55861f03-b391-90ea-8394-b3a6d5b6946b5f566a73";
 
 interface ImageManagerSettings {
   enabled: boolean;
@@ -12,12 +14,15 @@ interface ImageManagerSettings {
 
 interface Props {
   settings: ImageManagerSettings;
+  shop: string;
   onHasChangesChange?: (hasChanges: boolean) => void;
   highlightSaveButton?: boolean;
 }
 
-export function SettingsImageManagerTab({ settings, onHasChangesChange, highlightSaveButton = false }: Props) {
+export function SettingsImageManagerTab({ settings, shop, onHasChangesChange, highlightSaveButton = false }: Props) {
   const { t } = useI18n();
+  const embedUrl = `https://${shop}/admin/themes/current/editor?context=apps&activateAppId=${EXTENSION_UID}/variant-gallery-embed`;
+  const blockUrl = `https://${shop}/admin/themes/current/editor?template=product&addAppBlockId=${EXTENSION_UID}/variant-gallery&target=mainSection`;
   const [enabled, setEnabled] = useState(settings.enabled);
   const [autoAltText, setAutoAltText] = useState(settings.autoAltText);
   const [committed, setCommitted] = useState({ enabled: settings.enabled, autoAltText: settings.autoAltText });
@@ -86,6 +91,52 @@ export function SettingsImageManagerTab({ settings, onHasChangesChange, highligh
           </BlockStack>
           <ToggleSwitch checked={autoAltText} onChange={setAutoAltText} />
         </InlineStack>
+
+        <Divider />
+
+        <BlockStack gap="300">
+          <Text as="h3" variant="headingMd">{t.settings.themeSetupTitle}</Text>
+          <Text as="p" variant="bodySm" tone="subdued">{t.settings.themeSetupDescription}</Text>
+
+          <Box
+            background="bg-surface-secondary"
+            borderRadius="200"
+            padding="400"
+          >
+            <BlockStack gap="200">
+              <InlineStack gap="200" blockAlign="center">
+                <Text as="p" variant="bodyMd" fontWeight="semibold">{t.settings.themeSetupOptionATitle}</Text>
+                <Badge tone="success">Recommended</Badge>
+              </InlineStack>
+              <Text as="p" variant="bodySm" tone="subdued">{t.settings.themeSetupOptionADescription}</Text>
+              <div>
+                <Button url={embedUrl} external variant="primary" size="slim">
+                  {t.settings.themeSetupOptionAButton}
+                </Button>
+              </div>
+            </BlockStack>
+          </Box>
+
+          <Box
+            background="bg-surface-secondary"
+            borderRadius="200"
+            padding="400"
+          >
+            <BlockStack gap="200">
+              <Text as="p" variant="bodyMd" fontWeight="semibold">{t.settings.themeSetupOptionBTitle}</Text>
+              <Text as="p" variant="bodySm" tone="subdued">{t.settings.themeSetupOptionBDescription}</Text>
+              <div>
+                <Button url={blockUrl} external variant="secondary" size="slim">
+                  {t.settings.themeSetupOptionBButton}
+                </Button>
+              </div>
+            </BlockStack>
+          </Box>
+
+          <Text as="p" variant="bodySm" tone="subdued">
+            {t.settings.themeSetupNote}
+          </Text>
+        </BlockStack>
       </BlockStack>
     </Card>
   );
