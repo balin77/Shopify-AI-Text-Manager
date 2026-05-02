@@ -20,6 +20,7 @@ import { AppErrorBoundary } from "../components/AppErrorBoundary";
 import type { Locale } from "../i18n";
 import type { Plan } from "../config/plans";
 import { logger } from "~/utils/logger.server";
+import { checkAndSyncSubscription } from "~/services/billing.server";
 import { de, en, es } from "../i18n";
 
 // Inline helper to build API-key presence flags from a single AISettings record.
@@ -70,7 +71,18 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   }
 
   try {
-    const { session } = await authenticate.admin(request);
+    const { admin, session } = await authenticate.admin(request);
+
+    // Sync subscription BEFORE reading plan so the DB value is always up-to-date
+    // when returning from Shopify billing (app.tsx and child loaders run in parallel,
+    // causing a race if we let the child route do the sync instead)
+    if (url.searchParams.get('billing') === 'success') {
+      try {
+        await checkAndSyncSubscription(admin, session.shop);
+      } catch (e) {
+        logger.warn("[APP.TSX] Billing sync failed, plan may be stale", { context: "App", error: String(e) });
+      }
+    }
 
     // Load app language preference from database
     const { db } = await import("../db.server");
