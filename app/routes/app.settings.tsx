@@ -634,7 +634,7 @@ export default function SettingsPage() {
   const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, localeCount, subscriptionPlan, isTestStore, isDevMode, imageManagerSettings, showImageManagerTab } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { t } = useI18n();
   const { showInfoBox } = useInfoBox();
   const { registerItems, clearItems } = useItemSelector();
@@ -995,12 +995,7 @@ export default function SettingsPage() {
                     <Banner
                       tone="success"
                       title={t.settings?.billingSuccessTitle || "Plan activated"}
-                      onDismiss={() => {
-                        const params = new URLSearchParams(window.location.search);
-                        params.delete("billing");
-                        params.delete("plan");
-                        window.history.replaceState({}, "", `${window.location.pathname}${params.size ? `?${params}` : ""}`);
-                      }}
+                      onDismiss={() => setSearchParams(prev => { prev.delete("billing"); prev.delete("plan"); return prev; }, { replace: true })}
                     >
                       <p>{t.settings?.billingSuccessMessage || `Your subscription to the ${searchParams.get("plan") || ""} plan is now active.`}</p>
                     </Banner>
@@ -1009,12 +1004,7 @@ export default function SettingsPage() {
                     <Banner
                       tone="warning"
                       title={t.settings?.billingDeclinedTitle || "Payment not completed"}
-                      onDismiss={() => {
-                        const params = new URLSearchParams(window.location.search);
-                        params.delete("billing");
-                        params.delete("plan");
-                        window.history.replaceState({}, "", `${window.location.pathname}${params.size ? `?${params}` : ""}`);
-                      }}
+                      onDismiss={() => setSearchParams(prev => { prev.delete("billing"); prev.delete("plan"); return prev; }, { replace: true })}
                     >
                       <p>{t.settings?.billingDeclinedMessage || "The subscription was not activated. You can try again below."}</p>
                     </Banner>
@@ -1023,12 +1013,7 @@ export default function SettingsPage() {
                     <Banner
                       tone="critical"
                       title={t.settings?.billingErrorTitle || "Billing error"}
-                      onDismiss={() => {
-                        const params = new URLSearchParams(window.location.search);
-                        params.delete("billing");
-                        params.delete("plan");
-                        window.history.replaceState({}, "", `${window.location.pathname}${params.size ? `?${params}` : ""}`);
-                      }}
+                      onDismiss={() => setSearchParams(prev => { prev.delete("billing"); prev.delete("plan"); return prev; }, { replace: true })}
                     >
                       <p>{t.settings?.billingErrorMessage || "Something went wrong while processing your subscription. Please try again or contact support."}</p>
                     </Banner>

@@ -581,6 +581,12 @@ export const de = {
     imageManagerEnabledDescription: "Ersetzt die Standard-Bildgalerie durch den erweiterten Variant Image Manager.",
     imageManagerAutoAltText: "Alt-Text bei Upload automatisch generieren",
     imageManagerAutoAltTextDescription: "Nach dem Hochladen wird automatisch ein Alt-Text aus den zugehörigen Varianten-SKUs erstellt.",
+    billingSuccessTitle: "Plan aktiviert",
+    billingSuccessMessage: "Dein Abonnement ist jetzt aktiv.",
+    billingDeclinedTitle: "Zahlung nicht abgeschlossen",
+    billingDeclinedMessage: "Das Abonnement wurde nicht aktiviert. Du kannst es unten erneut versuchen.",
+    billingErrorTitle: "Abrechnungsfehler",
+    billingErrorMessage: "Bei der Verarbeitung deines Abonnements ist etwas schiefgelaufen. Bitte versuche es erneut oder kontaktiere den Support.",
   },
 
   // Image Manager

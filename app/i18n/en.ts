@@ -583,6 +583,12 @@ export const en: Translation = {
     imageManagerEnabledDescription: "Replaces the default image gallery with the advanced Variant Image Manager.",
     imageManagerAutoAltText: "Auto-generate alt text on upload",
     imageManagerAutoAltTextDescription: "After uploading, an alt text is automatically generated from the associated variant SKUs.",
+    billingSuccessTitle: "Plan activated",
+    billingSuccessMessage: "Your subscription is now active.",
+    billingDeclinedTitle: "Payment not completed",
+    billingDeclinedMessage: "The subscription was not activated. You can try again below.",
+    billingErrorTitle: "Billing error",
+    billingErrorMessage: "Something went wrong while processing your subscription. Please try again or contact support.",
   },
 
   // Image Manager
