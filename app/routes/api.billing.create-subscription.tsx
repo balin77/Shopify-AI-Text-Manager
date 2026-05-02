@@ -8,7 +8,7 @@
 import type { ActionFunctionArgs } from '@remix-run/node';
 import { json } from '@remix-run/node';
 import { authenticate } from '~/shopify.server';
-import { createSubscription, syncSubscriptionToDatabase } from '~/services/billing.server';
+import { createSubscription, getCurrentSubscription, syncSubscriptionToDatabase } from '~/services/billing.server';
 import type { BillingPlan } from '~/config/billing';
 import { isPaidPlan } from '~/config/billing';
 import { logger } from '~/utils/logger.server';
@@ -40,11 +40,22 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
     }
 
-    // Return URL goes directly to Settings page via Shopify Admin embedded context.
-    // The settings loader detects the billing param and syncs the subscription.
-    const returnUrl = `https://${session.shop}/admin/apps/${process.env.SHOPIFY_API_KEY}/app/settings?billing=success&plan=${plan}`;
+    // Check for an existing paid subscription to enable atomic replacement (paid→paid switch).
+    const existingSubscription = await getCurrentSubscription(admin);
+    const hasExistingSubscription = existingSubscription !== null && existingSubscription.status === 'ACTIVE';
 
-    const result = await createSubscription(admin, session, plan, returnUrl);
+    logger.info('[Billing] Creating subscription', {
+      plan,
+      shop: session.shop,
+      hasExistingSubscription,
+      existingPlan: existingSubscription?.name ?? 'none',
+    });
+
+    // Route through the billing callback so it can verify the subscription status
+    // before deciding whether to redirect to success or declined.
+    const returnUrl = `https://${session.shop}/admin/apps/${process.env.SHOPIFY_API_KEY}/app/billing/callback?plan=${plan}`;
+
+    const result = await createSubscription(admin, session, plan, returnUrl, hasExistingSubscription);
 
     return json({
       success: true,
