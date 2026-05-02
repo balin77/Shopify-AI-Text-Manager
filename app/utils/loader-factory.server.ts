@@ -9,7 +9,7 @@
  * specific sync + load + transform logic via the `loadData` callback.
  */
 
-import { json, type LoaderFunctionArgs } from "@remix-run/node";
+import { json, redirect, type LoaderFunctionArgs } from "@remix-run/node";
 import { PrismaClient } from "@prisma/client";
 import type { AISettings } from "@prisma/client";
 import { authenticate } from "../shopify.server";
@@ -138,6 +138,22 @@ export function createContentLoader<T extends { id: string }, K extends string, 
       // Re-throw redirects (e.g. Shopify OAuth flows) but NOT 4xx/5xx API errors.
       // Raw 4xx/5xx Responses can't be decoded as turbo-stream and crash the client.
       if (error instanceof Response && error.status < 400) throw error;
+
+      // On 401: the stored offline access token is revoked or invalid.
+      // This happens after a reinstall when the old session isn't yet cleaned up
+      // (APP_UNINSTALLED webhook not yet received). Delete the stale session so
+      // the next OAuth grant stores a fresh token, then redirect to re-authenticate.
+      if (error instanceof Response && error.status === 401) {
+        try {
+          const { db: dbForCleanup } = await import("../db.server");
+          await dbForCleanup.session.deleteMany({ where: { shop: session.shop } });
+          logger.warn(`[${config.logPrefix}-LOADER] 401 from Shopify — deleted stale session for ${session.shop}, redirecting to OAuth`);
+        } catch (dbErr) {
+          logger.error(`[${config.logPrefix}-LOADER] Failed to delete stale session:`, dbErr);
+        }
+        throw redirect(`/auth?shop=${session.shop}`);
+      }
+
       const errorMessage =
         error instanceof Response
           ? error.status === 429
