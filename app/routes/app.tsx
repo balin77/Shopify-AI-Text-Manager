@@ -49,21 +49,7 @@ function buildAiSettingsFlags(settings: AiSettingsRow, decryptApiKey: (v?: strin
 
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const headers = Object.fromEntries(request.headers.entries());
   const url = new URL(request.url);
-
-  // Check if this is a prefetch request - these don't have session tokens
-  const isPrefetch = headers['sec-purpose'] === 'prefetch' || headers['purpose'] === 'prefetch';
-
-  if (isPrefetch) {
-    // Return default data for prefetch - no auth needed
-    return json({
-      appLanguage: "en" as Locale,
-      subscriptionPlan: "free" as Plan,
-      aiSettings: null,
-      seoTitleSuffix: "",
-    });
-  }
 
   // Check if this is a browser reload (F5) - these lose session tokens in embedded apps
   const isBrowserReload = !url.searchParams.has('shop') && !url.searchParams.has('host');
