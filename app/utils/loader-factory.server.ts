@@ -148,6 +148,10 @@ export function createContentLoader<T extends { id: string }, K extends string, 
       // redirect blocked by iframe security policy → loop).
       if (error instanceof Response && error.status === 401) {
         try {
+          const body = await error.clone().text();
+          logger.error(`[${config.logPrefix}-LOADER] 401 body from Shopify:`, { body, shop: session.shop });
+        } catch { /* ignore */ }
+        try {
           const { db: dbForCleanup } = await import("../db.server");
           await dbForCleanup.session.deleteMany({ where: { shop: session.shop } });
           logger.warn(`[${config.logPrefix}-LOADER] 401 from Shopify — deleted stale session for ${session.shop}. Next request will re-authenticate via token exchange.`);

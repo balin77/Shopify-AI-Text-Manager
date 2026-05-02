@@ -81,9 +81,14 @@ export async function getCachedShopLocales(
       logger.error(`[ShopLocalesCache] Error fetching locales for shop: ${shop}`, { error });
 
       // Re-throw 401 so the loader-factory can handle re-authentication.
-      // Swallowing a 401 here masks a revoked token and lets the loader continue
-      // making more API calls that will also fail.
+      // Log the response body first so we can see Shopify's exact error message.
       if (error instanceof Response && error.status === 401) {
+        try {
+          const body = await error.clone().text();
+          logger.error(`[ShopLocalesCache] 401 response body for ${shop}:`, { body });
+        } catch {
+          // ignore if body can't be read
+        }
         throw error;
       }
 
