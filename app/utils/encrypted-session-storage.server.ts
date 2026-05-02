@@ -41,7 +41,9 @@ export class EncryptedPrismaSessionStorage implements SessionStorage {
       clone.refreshToken = encrypted;
     }
 
-    return this.inner.storeSession(clone);
+    const result = await this.inner.storeSession(clone);
+    logger.info(`[EncryptedSessionStorage] storeSession('${session.id}'): stored=${result}, scope=${session.scope || "none"}`);
+    return result;
   }
 
   /**
@@ -49,11 +51,17 @@ export class EncryptedPrismaSessionStorage implements SessionStorage {
    */
   async loadSession(id: string): Promise<Session | undefined> {
     const session = await this.inner.loadSession(id);
-    if (!session) return undefined;
+    if (!session) {
+      logger.info(`[EncryptedSessionStorage] loadSession('${id}'): NOT FOUND in DB`);
+      return undefined;
+    }
+
+    logger.info(`[EncryptedSessionStorage] loadSession('${id}'): found, hasToken=${!!session.accessToken}, scope=${session.scope || "none"}`);
 
     if (session.accessToken) {
       try {
         session.accessToken = decryptToken(session.accessToken) ?? session.accessToken;
+        logger.info(`[EncryptedSessionStorage] loadSession('${id}'): decryption OK`);
       } catch (error) {
         logger.error(
           "[EncryptedSessionStorage] Failed to decrypt accessToken — treating session as missing to force re-auth:",
