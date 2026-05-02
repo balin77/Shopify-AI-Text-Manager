@@ -49,7 +49,20 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     logger.warn("[AUTH.$] No session and no redirect - returning OK", { context: "Auth" });
     return new Response("OK", { status: 200 });
   } catch (error) {
-    logger.error("[AUTH.$] Error", { context: "Auth", error: error instanceof Error ? error.message : String(error), ...(process.env.NODE_ENV !== 'production' && { stack: error instanceof Error ? error.stack : undefined }) });
+    if (error instanceof Response) {
+      logger.warn("[AUTH.$] Response thrown (normal auth redirect)", {
+        context: "Auth",
+        status: error.status,
+        statusText: error.statusText,
+        location: error.headers.get("Location"),
+      });
+    } else {
+      logger.error("[AUTH.$] Unexpected error", {
+        context: "Auth",
+        error: error instanceof Error ? error.message : String(error),
+        ...(process.env.NODE_ENV !== "production" && { stack: error instanceof Error ? error.stack : undefined }),
+      });
+    }
     throw error;
   }
 };

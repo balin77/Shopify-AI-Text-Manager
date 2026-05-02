@@ -139,21 +139,32 @@ export function createContentLoader<T extends { id: string }, K extends string, 
       // Raw 4xx/5xx Responses can't be decoded as turbo-stream and crash the client.
       if (error instanceof Response && error.status < 400) throw error;
 
-      // On 401: the stored offline access token is revoked or invalid.
-      // Delete the stale session and re-throw so Shopify's boundary.error handler
-      // in app.tsx generates the correct App Bridge HTML for a top-level frame
-      // redirect to OAuth. Using redirect() directly from a loader inside an
-      // embedded-app iframe causes "connection refused" because the browser blocks
-      // cross-origin iframe navigation to accounts.shopify.com.
+      // On 401: the stored offline access token is revoked or invalid (e.g. after
+      // reinstall before APP_UNINSTALLED webhook fires). Delete the stale session
+      // so the NEXT request triggers automatic token exchange and gets a fresh
+      // offline token from Shopify — no OAuth redirect needed for embedded apps.
+      // We deliberately do NOT throw here: re-throwing a 401 inside an embedded
+      // Shopify app iframe causes a boot loop (boundary.error → auth page → OAuth
+      // redirect blocked by iframe security policy → loop).
       if (error instanceof Response && error.status === 401) {
         try {
           const { db: dbForCleanup } = await import("../db.server");
           await dbForCleanup.session.deleteMany({ where: { shop: session.shop } });
-          logger.warn(`[${config.logPrefix}-LOADER] 401 from Shopify — deleted stale session for ${session.shop}, re-throwing for boundary.error`);
+          logger.warn(`[${config.logPrefix}-LOADER] 401 from Shopify — deleted stale session for ${session.shop}. Next request will re-authenticate via token exchange.`);
         } catch (dbErr) {
           logger.error(`[${config.logPrefix}-LOADER] Failed to delete stale session:`, dbErr);
         }
-        throw error;
+        // Return a recoverable error — the user sees a message and the next
+        // page navigation / manual refresh will silently re-authenticate.
+        return json({
+          [config.itemsKey]: [],
+          shop: session.shop,
+          shopLocales: [],
+          primaryLocale: "en",
+          error: "Session expired. Please refresh the page to reconnect.",
+          aiSettings: null,
+          ...(config.errorFallback || {}),
+        } as unknown as LoaderData);
       }
 
       const errorMessage =
