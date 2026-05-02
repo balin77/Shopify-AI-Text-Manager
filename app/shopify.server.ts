@@ -5,7 +5,6 @@ import {
   shopifyApp,
 } from "@shopify/shopify-app-remix/server";
 import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prisma";
-import { restResources } from "@shopify/shopify-api/rest/admin/2025-10";
 import prisma from "./db.server";
 import { logger } from "./utils/logger.server";
 import { EncryptedPrismaSessionStorage } from "./utils/encrypted-session-storage.server";
@@ -89,7 +88,6 @@ const shopify = shopifyApp({
   authPathPrefix: "/auth",
   sessionStorage: new EncryptedPrismaSessionStorage(new PrismaSessionStorage(prisma)),
   distribution: AppDistribution.AppStore,
-  restResources: restResources as any,
   hooks: {
     afterAuth: async ({ session }) => {
       logger.info(`[SHOPIFY.SERVER] afterAuth hook triggered`);
