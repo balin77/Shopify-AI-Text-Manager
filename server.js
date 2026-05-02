@@ -60,6 +60,17 @@ app.use(compression());
 // http://expressjs.com/en/advanced/best-practice-security.html#at-a-minimum-disable-x-powered-by-header
 app.disable("x-powered-by");
 
+// HTTP → HTTPS redirect — defense-in-depth. Railway terminates TLS and also
+// redirects at the proxy level, but this catches any path that reaches the app
+// with X-Forwarded-Proto: http (e.g., internal mis-routing or proxy config change).
+// Only active when X-Forwarded-Proto is explicitly "http" so dev has no redirect.
+app.use((req, res, next) => {
+  if (process.env.NODE_ENV === 'production' && req.headers['x-forwarded-proto'] === 'http') {
+    return res.redirect(301, `https://${req.headers.host}${req.url}`);
+  }
+  next();
+});
+
 // Basic security headers (CSP removed - causes issues with Shopify App Bridge)
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
