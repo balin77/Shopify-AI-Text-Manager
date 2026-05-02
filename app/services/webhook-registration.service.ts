@@ -155,12 +155,34 @@ export class WebhookRegistrationService {
   }
 
   /**
-   * Register ALL webhooks (products + content + subscriptions)
+   * Register APP_UNINSTALLED webhook so the app can immediately clean up
+   * state (session, scheduler) when a shop uninstalls. Without this, the
+   * old revoked session persists until the SHOP_REDACT webhook 48 h later.
+   */
+  async registerAppUninstalledWebhook(): Promise<void> {
+    const appUrl = process.env.SHOPIFY_APP_URL;
+    if (!appUrl) {
+      throw new Error("SHOPIFY_APP_URL environment variable not set");
+    }
+    try {
+      await this.registerWebhook("APP_UNINSTALLED", `${appUrl}/webhooks/app-uninstalled`);
+      logger.info(`[WebhookRegistration] Registered APP_UNINSTALLED`);
+    } catch (error: unknown) {
+      logger.error(
+        `[WebhookRegistration] Failed to register APP_UNINSTALLED:`,
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  }
+
+  /**
+   * Register ALL webhooks (products + content + subscriptions + app lifecycle)
    */
   async registerAllWebhooks(): Promise<void> {
     await this.registerProductWebhooks();
     await this.registerContentWebhooks();
     await this.registerSubscriptionWebhooks();
+    await this.registerAppUninstalledWebhook();
   }
 
   /**
