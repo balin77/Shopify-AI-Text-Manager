@@ -80,13 +80,19 @@ export async function getCachedShopLocales(
     } catch (error) {
       logger.error(`[ShopLocalesCache] Error fetching locales for shop: ${shop}`, { error });
 
-      // If we have stale cache, return it as fallback
+      // Re-throw 401 so the loader-factory can handle re-authentication.
+      // Swallowing a 401 here masks a revoked token and lets the loader continue
+      // making more API calls that will also fail.
+      if (error instanceof Response && error.status === 401) {
+        throw error;
+      }
+
+      // For other errors, fall back to stale cache or empty array
       if (cached) {
         logger.info('[ShopLocalesCache] Returning stale cache as fallback');
         return cached.locales;
       }
 
-      // No cache available, return empty array
       return [];
     } finally {
       IN_FLIGHT.delete(shop);
