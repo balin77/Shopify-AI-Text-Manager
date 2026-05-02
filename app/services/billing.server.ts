@@ -59,12 +59,15 @@ async function isDevStore(admin: ShopifyAdminClient): Promise<boolean> {
 /**
  * Creates a billing subscription for the given plan.
  * Automatically uses test mode for development stores and dev environments.
+ * Pass hasExistingSubscription=true for paid→paid switches so Shopify
+ * atomically replaces the old plan (APPLY_IMMEDIATELY, prorated).
  */
 export async function createSubscription(
   admin: ShopifyAdminClient,
   session: Session,
   plan: Exclude<BillingPlan, 'free'>,
-  returnUrl: string
+  returnUrl: string,
+  hasExistingSubscription = false
 ) {
   const planConfig = BILLING_PLANS[plan];
 
@@ -79,12 +82,19 @@ export async function createSubscription(
 
   const response = await admin.graphql(
     `#graphql
-      mutation AppSubscriptionCreate($name: String!, $returnUrl: URL!, $test: Boolean, $lineItems: [AppSubscriptionLineItemInput!]!) {
+      mutation AppSubscriptionCreate(
+        $name: String!
+        $returnUrl: URL!
+        $test: Boolean
+        $lineItems: [AppSubscriptionLineItemInput!]!
+        $replacementBehavior: AppSubscriptionReplacementBehavior
+      ) {
         appSubscriptionCreate(
           name: $name
           returnUrl: $returnUrl
           test: $test
           lineItems: $lineItems
+          replacementBehavior: $replacementBehavior
         ) {
           appSubscription {
             id
@@ -107,7 +117,9 @@ export async function createSubscription(
         name: planConfig.name,
         returnUrl,
         test: useTestBilling,
-        trialDays: planConfig.trialDays || 0,
+        // Replace existing subscription immediately (prorated) for paid→paid switches.
+        // Merchant still confirms via confirmationUrl; if they cancel, nothing changes.
+        replacementBehavior: hasExistingSubscription ? 'APPLY_IMMEDIATELY' : null,
         lineItems: [
           {
             plan: {
@@ -233,19 +245,16 @@ export function getPlanFromSubscription(subscription: AppSubscription | null): B
 }
 
 /**
- * Syncs the subscription plan to the database
+ * Syncs the subscription plan to the database.
+ * Uses upsert so reinstalled shops without an existing AISettings row are handled
+ * correctly instead of silently skipping the write.
  */
 export async function syncSubscriptionToDatabase(shop: string, plan: BillingPlan) {
-  const aiSettings = await prisma.aISettings.findUnique({
+  await prisma.aISettings.upsert({
     where: { shop },
+    update: { subscriptionPlan: plan },
+    create: { shop, subscriptionPlan: plan },
   });
-
-  if (aiSettings) {
-    await prisma.aISettings.update({
-      where: { shop },
-      data: { subscriptionPlan: plan },
-    });
-  }
 }
 
 /**

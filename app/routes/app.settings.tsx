@@ -643,8 +643,10 @@ export default function SettingsPage() {
   const isBasicPlan = subscriptionPlan === "basic";
   const aiInstructionsReadOnly = isFreePlan || isBasicPlan;
 
-  // Get initial tab from URL parameter (e.g., ?tab=plan)
+  // Get initial tab from URL parameter (e.g., ?tab=plan).
+  // Billing callbacks always land on the plan tab so the merchant sees the result.
   const getInitialSection = (): "setup" | "ai" | "instructions" | "language" | "seo" | "plan" | "feedback" => {
+    if (searchParams.get("billing")) return "plan";
     const tabParam = searchParams.get("tab");
     if (tabParam && ["setup", "ai", "instructions", "language", "seo", "plan", "feedback"].includes(tabParam)) {
       return tabParam as "setup" | "ai" | "instructions" | "language" | "seo" | "plan" | "feedback";
@@ -988,18 +990,62 @@ export default function SettingsPage() {
 
               {/* Plan Settings */}
               {selectedSection === "plan" && (
-                <SettingsPlanTab
-                  subscriptionPlan={subscriptionPlan}
-                  isTestStore={isTestStore}
-                  isDevMode={isDevMode}
-                  productCount={productCount}
-                  localeCount={localeCount}
-                  collectionCount={collectionCount}
-                  articleCount={articleCount}
-                  pageCount={pageCount}
-                  themeTranslationCount={themeTranslationCount}
-                  t={t}
-                />
+                <>
+                  {searchParams.get("billing") === "success" && (
+                    <Banner
+                      tone="success"
+                      title={t.settings?.billingSuccessTitle || "Plan activated"}
+                      onDismiss={() => {
+                        const params = new URLSearchParams(window.location.search);
+                        params.delete("billing");
+                        params.delete("plan");
+                        window.history.replaceState({}, "", `${window.location.pathname}${params.size ? `?${params}` : ""}`);
+                      }}
+                    >
+                      <p>{t.settings?.billingSuccessMessage || `Your subscription to the ${searchParams.get("plan") || ""} plan is now active.`}</p>
+                    </Banner>
+                  )}
+                  {searchParams.get("billing") === "declined" && (
+                    <Banner
+                      tone="warning"
+                      title={t.settings?.billingDeclinedTitle || "Payment not completed"}
+                      onDismiss={() => {
+                        const params = new URLSearchParams(window.location.search);
+                        params.delete("billing");
+                        params.delete("plan");
+                        window.history.replaceState({}, "", `${window.location.pathname}${params.size ? `?${params}` : ""}`);
+                      }}
+                    >
+                      <p>{t.settings?.billingDeclinedMessage || "The subscription was not activated. You can try again below."}</p>
+                    </Banner>
+                  )}
+                  {searchParams.get("billing") === "error" && (
+                    <Banner
+                      tone="critical"
+                      title={t.settings?.billingErrorTitle || "Billing error"}
+                      onDismiss={() => {
+                        const params = new URLSearchParams(window.location.search);
+                        params.delete("billing");
+                        params.delete("plan");
+                        window.history.replaceState({}, "", `${window.location.pathname}${params.size ? `?${params}` : ""}`);
+                      }}
+                    >
+                      <p>{t.settings?.billingErrorMessage || "Something went wrong while processing your subscription. Please try again or contact support."}</p>
+                    </Banner>
+                  )}
+                  <SettingsPlanTab
+                    subscriptionPlan={subscriptionPlan}
+                    isTestStore={isTestStore}
+                    isDevMode={isDevMode}
+                    productCount={productCount}
+                    localeCount={localeCount}
+                    collectionCount={collectionCount}
+                    articleCount={articleCount}
+                    pageCount={pageCount}
+                    themeTranslationCount={themeTranslationCount}
+                    t={t}
+                  />
+                </>
               )}
 
               {/* Image Manager Settings */}
