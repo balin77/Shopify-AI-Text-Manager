@@ -4,6 +4,8 @@ import type { StagedItem, VariantWithGallery } from "../components/image-manager
 export interface VariantGalleryUpdate {
   variantId: string;
   fileGids: string[];
+  // true = variant already has a main image; skip setting mediaId, all fileGids go to gallery metafield
+  galleryOnly?: boolean;
 }
 
 export interface MediaOrderUpdate {
@@ -99,14 +101,25 @@ export function useVariantImageManager() {
         const mainGid = baseVariant?.mainImageGid;
         const galleryGids = baseVariant?.galleryFileGids ?? [];
         const existing = mergedVariantGalleries.find(vg => vg.variantId === variantId);
-        if (existing) {
-          existing.fileGids = [...existing.fileGids, ...newUrls];
+
+        if (mainGid) {
+          // Variant already has a main image → all new uploads go to gallery only, mediaId unchanged.
+          if (existing) {
+            // pendingVariantGalleries entry already has mainGid at [0]; new URLs land after it → gallery.
+            existing.fileGids = [...existing.fileGids, ...newUrls];
+          } else {
+            mergedVariantGalleries.push({ variantId, fileGids: [...galleryGids, ...newUrls], galleryOnly: true });
+          }
         } else {
-          // Preserve existing main image at position 0; append new images after gallery.
-          const fileGids = mainGid
-            ? [mainGid, ...galleryGids, ...newUrls]
-            : [...galleryGids, ...newUrls];
-          mergedVariantGalleries.push({ variantId, fileGids });
+          // Variant has no main image → first new upload becomes the variant image, rest go to gallery.
+          if (existing) {
+            existing.fileGids = [...existing.fileGids, ...newUrls];
+          } else {
+            const fileGids = newUrls.length > 0
+              ? [newUrls[0], ...galleryGids, ...newUrls.slice(1)]
+              : [...galleryGids];
+            mergedVariantGalleries.push({ variantId, fileGids });
+          }
         }
       }
 

@@ -5,7 +5,7 @@ import { db } from "../db.server";
 interface UpdateVariantGalleriesBody {
   productId: string;
   newMedia?: Array<{ resourceUrl: string }>;
-  variantGalleries?: Array<{ variantId: string; fileGids: string[] }>;
+  variantGalleries?: Array<{ variantId: string; fileGids: string[]; galleryOnly?: boolean }>;
   mediaOrder?: Array<{ mediaId: string; position: number }>;
   // Variant IDs whose Shopify image (mediaId) should be explicitly set to null.
   // fileGids for these variants (if present) are gallery-only — no main GID at position 0.
@@ -113,6 +113,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     for (const vg of resolvedVariantGalleries) {
       if (clearSet.has(vg.variantId)) {
+        // Explicitly cleared main image: all fileGids are gallery-only.
         variantMap.set(vg.variantId, {
           id: vg.variantId,
           mediaId: null,
@@ -123,9 +124,20 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             type: "list.file_reference",
           }],
         });
+      } else if (vg.galleryOnly) {
+        // Variant already has a main image — do NOT touch mediaId, only update gallery metafield.
+        variantMap.set(vg.variantId, {
+          id: vg.variantId,
+          metafields: [{
+            namespace: "custom",
+            key: "variant_gallery",
+            value: JSON.stringify(vg.fileGids),
+            type: "list.file_reference",
+          }],
+        });
       } else {
-        // fileGids[0] is the variant's native main image; the gallery metafield must only
-        // contain the remaining images to prevent the main image appearing twice on the storefront.
+        // fileGids[0] is the new/existing variant main image; fileGids[1..] are gallery.
+        // (When variant had no main image, fileGids[0] is the first newly uploaded image.)
         variantMap.set(vg.variantId, {
           id: vg.variantId,
           ...(vg.fileGids.length > 0 && { mediaId: vg.fileGids[0] }),
