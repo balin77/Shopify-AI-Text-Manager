@@ -88,6 +88,9 @@ const shopify = shopifyApp({
   authPathPrefix: "/auth",
   sessionStorage: new EncryptedPrismaSessionStorage(new PrismaSessionStorage(prisma)),
   distribution: AppDistribution.AppStore,
+  future: {
+    unstable_newEmbeddedAuthStrategy: true,
+  },
   hooks: {
     afterAuth: async ({ session }) => {
       logger.info(`[SHOPIFY.SERVER] afterAuth hook triggered`);
