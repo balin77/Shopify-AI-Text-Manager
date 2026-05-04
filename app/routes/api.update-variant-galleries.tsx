@@ -180,7 +180,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     if (errors.length === 0) {
       await Promise.all(resolvedVariantGalleries.map(vg => {
-        const galleryGids = clearSet.has(vg.variantId) ? vg.fileGids : vg.fileGids.slice(1);
+        // clearSet variants and galleryOnly variants: all fileGids are gallery (no main at [0])
+        // normal variants: fileGids[0] is the main image, fileGids[1..] are gallery
+        const galleryGids = (clearSet.has(vg.variantId) || vg.galleryOnly)
+          ? vg.fileGids
+          : vg.fileGids.slice(1);
         return db.productVariant.updateMany({
           where: { shopifyGid: vg.variantId },
           data: { galleryJson: JSON.stringify(galleryGids) },

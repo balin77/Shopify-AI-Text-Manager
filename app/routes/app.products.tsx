@@ -855,6 +855,7 @@ export default function ProductsPage() {
                 showInfoBox(err, "critical", t.products.galleryErrorTitle);
               } else {
                 showInfoBox(t.products.gallerySaveSuccess, "success");
+                revalidator.revalidate();
               }
               return err;
             },
