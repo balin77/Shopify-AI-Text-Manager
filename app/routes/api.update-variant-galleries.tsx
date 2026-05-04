@@ -33,17 +33,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   // resourceUrl (staged upload URL) → Shopify MediaImage GID
   const resourceUrlToGid: Record<string, string> = {};
   if (newMedia.length > 0) {
-    console.log("[update-variant-galleries] calling productUpdate with", newMedia.length, "media items");
+    console.log("[update-variant-galleries] calling productCreateMedia with", newMedia.length, "items");
     const r = await admin.graphql(`
-      mutation productUpdate($input: ProductInput!, $media: [CreateMediaInput!]) {
-        productUpdate(input: $input, media: $media) {
-          media { id status }
-          userErrors { field message }
+      mutation productCreateMedia($productId: ID!, $media: [CreateMediaInput!]!) {
+        productCreateMedia(productId: $productId, media: $media) {
+          media { id }
+          mediaUserErrors { field message }
         }
       }
     `, {
       variables: {
-        input: { id: productId },
+        productId,
         media: newMedia.map(m => ({
           originalSource: m.resourceUrl,
           mediaContentType: "IMAGE",
@@ -51,12 +51,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       },
     });
     const d = await r.json();
-    console.log("[update-variant-galleries] productUpdate response", JSON.stringify(d, null, 2));
-    const ue = d.data?.productUpdate?.userErrors ?? [];
+    console.log("[update-variant-galleries] productCreateMedia response", JSON.stringify(d, null, 2));
+    const ue = d.data?.productCreateMedia?.mediaUserErrors ?? [];
     if (ue.length > 0) errors.push(...ue.map((e: { message: string }) => e.message));
 
     // Map each resourceUrl to the GID of the newly created media (response order matches input order)
-    const createdMedia: { id: string; status?: string }[] = d.data?.productUpdate?.media ?? [];
+    const createdMedia: { id: string }[] = d.data?.productCreateMedia?.media ?? [];
     console.log("[update-variant-galleries] createdMedia", createdMedia);
     newMedia.forEach((m, i) => {
       if (createdMedia[i]?.id) {
