@@ -17,16 +17,27 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const body: UpdateVariantGalleriesBody = await request.json();
   const { productId, newMedia = [], variantGalleries = [], mediaOrder = [], clearVariantMainImages = [] } = body;
 
+  console.log("[update-variant-galleries] incoming", {
+    productId,
+    newMediaCount: newMedia.length,
+    newMediaUrls: newMedia.map(m => m.resourceUrl),
+    variantGalleriesCount: variantGalleries.length,
+    variantGalleries,
+    mediaOrderCount: mediaOrder.length,
+    clearVariantMainImages,
+  });
+
   const errors: string[] = [];
 
   // 1. Neue Bilder zu Produkt hinzufügen und GID-Mapping aufbauen
   // resourceUrl (staged upload URL) → Shopify MediaImage GID
   const resourceUrlToGid: Record<string, string> = {};
   if (newMedia.length > 0) {
+    console.log("[update-variant-galleries] calling productUpdate with", newMedia.length, "media items");
     const r = await admin.graphql(`
       mutation productUpdate($input: ProductInput!, $media: [CreateMediaInput!]) {
         productUpdate(input: $input, media: $media) {
-          media { id }
+          media { id status }
           userErrors { field message }
         }
       }
@@ -40,14 +51,22 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       },
     });
     const d = await r.json();
+    console.log("[update-variant-galleries] productUpdate response", JSON.stringify(d, null, 2));
     const ue = d.data?.productUpdate?.userErrors ?? [];
     if (ue.length > 0) errors.push(...ue.map((e: { message: string }) => e.message));
 
     // Map each resourceUrl to the GID of the newly created media (response order matches input order)
-    const createdMedia: { id: string }[] = d.data?.productUpdate?.media ?? [];
+    const createdMedia: { id: string; status?: string }[] = d.data?.productUpdate?.media ?? [];
+    console.log("[update-variant-galleries] createdMedia", createdMedia);
     newMedia.forEach((m, i) => {
-      if (createdMedia[i]?.id) resourceUrlToGid[m.resourceUrl] = createdMedia[i].id;
+      if (createdMedia[i]?.id) {
+        resourceUrlToGid[m.resourceUrl] = createdMedia[i].id;
+        console.log("[update-variant-galleries] mapped", m.resourceUrl, "→", createdMedia[i].id);
+      } else {
+        console.warn("[update-variant-galleries] no GID for index", i, "resourceUrl", m.resourceUrl);
+      }
     });
+    console.log("[update-variant-galleries] resourceUrlToGid", resourceUrlToGid);
   }
 
   // Resolve a fileGid that may be a staged resourceUrl to an actual Shopify GID
@@ -79,9 +98,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     if (ue.length > 0) errors.push(...ue.map((e: { message: string }) => e.message));
   }
 
+  console.log("[update-variant-galleries] resolvedVariantGalleries", resolvedVariantGalleries);
+
   // 3. Variant-Galerien (Metafelder) updaten + Hauptbilder ggf. löschen
   const clearSet = new Set(clearVariantMainImages);
   const hasVariantChanges = resolvedVariantGalleries.length > 0 || clearSet.size > 0;
+  console.log("[update-variant-galleries] hasVariantChanges", hasVariantChanges);
   if (hasVariantChanges) {
     // Build variant update objects:
     //  - Normal variants: fileGids[0] is the main image GID, fileGids[1..] are gallery.
@@ -124,6 +146,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
     }
 
+    const variantPayload = [...variantMap.values()];
+    console.log("[update-variant-galleries] productVariantsBulkUpdate payload", JSON.stringify(variantPayload, null, 2));
     const r = await admin.graphql(`
       mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
         productVariantsBulkUpdate(productId: $productId, variants: $variants) {
@@ -134,10 +158,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     `, {
       variables: {
         productId,
-        variants: [...variantMap.values()],
+        variants: variantPayload,
       },
     });
     const d = await r.json();
+    console.log("[update-variant-galleries] productVariantsBulkUpdate response", JSON.stringify(d, null, 2));
     const ue = d.data?.productVariantsBulkUpdate?.userErrors ?? [];
     if (ue.length > 0) errors.push(...ue.map((e: { message: string }) => e.message));
 
@@ -153,7 +178,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 
   if (errors.length > 0) {
+    console.error("[update-variant-galleries] finished with errors", errors);
     return json({ success: false, errors }, { status: 422 });
   }
+  console.log("[update-variant-galleries] success");
   return json({ success: true });
 };

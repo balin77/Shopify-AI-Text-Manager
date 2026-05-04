@@ -338,14 +338,18 @@ export function BulkImageUploadPanel({
 
     await Promise.all(validFiles.map(async (file, i) => {
       const item = assignedItems[i];
+      console.log("[BulkUpload] requesting staged URL", { filename: file.name, mimeType: file.type, fileSize: file.size });
       try {
         const res = await fetch("/api/staged-upload", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ filename: file.name, mimeType: file.type, fileSize: file.size }),
         });
-        const { url, resourceUrl, error } = await res.json();
+        const stagedJson = await res.json();
+        const { url, resourceUrl, error } = stagedJson;
+        console.log("[BulkUpload] staged-upload response", { httpStatus: res.status, url, resourceUrl, error });
         if (error || !url) {
+          console.error("[BulkUpload] staged-upload failed", { error, url });
           onItemsChange(prev => prev.map(it => it.uniqueId === item.uniqueId ? { ...it, status: "error" as const } : it));
           return;
         }
@@ -358,25 +362,31 @@ export function BulkImageUploadPanel({
             }
           };
           xhr.onload = () => {
+            console.log("[BulkUpload] XHR PUT completed", { filename: file.name, status: xhr.status, responseText: xhr.responseText.slice(0, 200) });
             if (xhr.status >= 200 && xhr.status < 300) {
+              console.log("[BulkUpload] upload OK → resourceUrl", resourceUrl);
               onItemsChange(prev => prev.map(it =>
                 it.uniqueId === item.uniqueId ? { ...it, status: "ready" as const, progress: 100, resourceUrl } : it
               ));
               resolve();
             } else {
+              console.error("[BulkUpload] XHR PUT failed", { status: xhr.status, responseText: xhr.responseText.slice(0, 500) });
               onItemsChange(prev => prev.map(it => it.uniqueId === item.uniqueId ? { ...it, status: "error" as const } : it));
               reject(new Error(`Upload failed: HTTP ${xhr.status}`));
             }
           };
           xhr.onerror = () => {
+            console.error("[BulkUpload] XHR network error", { filename: file.name });
             onItemsChange(prev => prev.map(it => it.uniqueId === item.uniqueId ? { ...it, status: "error" as const } : it));
             reject(new Error("Upload network error"));
           };
+          console.log("[BulkUpload] XHR PUT →", url);
           xhr.open("PUT", url);
           xhr.setRequestHeader("Content-Type", file.type);
           xhr.send(file);
         });
-      } catch {
+      } catch (err) {
+        console.error("[BulkUpload] unexpected error", err);
         onItemsChange(prev => prev.map(it => it.uniqueId === item.uniqueId ? { ...it, status: "error" as const } : it));
       }
     }));
