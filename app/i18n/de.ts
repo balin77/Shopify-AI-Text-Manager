@@ -681,6 +681,7 @@ export const de = {
     bulkSortIdentifier: "Nach Identifier",
     bulkSortSku: "Nach SKU",
     bulkSortFilename: "Nach Dateiname",
+    bulkSortCustom: "Benutzerdefiniert",
     bulkSortLabel: "Sortierung",
     bulkSortListOpen: "Listenansicht schließen",
     bulkSortListClose: "Reihenfolge anpassen",

@@ -178,6 +178,30 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   // Local state for search input - synced with fieldPagination.search
   const [fieldSearchInput, setFieldSearchInput] = useState(fieldPagination?.search || "");
 
+  // Resizable SEO/bulk sidebar
+  const [sidebarWidth, setSidebarWidth] = useState(320);
+  const sidebarWidthRef = useRef(320);
+  const handleResizerMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = sidebarWidthRef.current;
+    const onMouseMove = (ev: MouseEvent) => {
+      const newWidth = Math.max(200, Math.min(600, startWidth + (startX - ev.clientX)));
+      sidebarWidthRef.current = newWidth;
+      setSidebarWidth(newWidth);
+    };
+    const onMouseUp = () => {
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+    };
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+  }, []);
+
   // Sync local search input when fieldPagination.search changes externally (e.g. group switch)
   const prevFieldSearchRef = useRef(fieldPagination?.search || "");
   useEffect(() => {
@@ -910,9 +934,35 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           )}
         </div>
 
+        {/* Resizer handle between editor and sidebar */}
+        {selectedItem && config.showSeoSidebar && (
+          <div
+            className="sidebar-resizer desktop-only"
+            onMouseDown={handleResizerMouseDown}
+            style={{
+              width: 8,
+              flexShrink: 0,
+              cursor: "col-resize",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              marginInline: -4,
+              zIndex: 10,
+            }}
+          >
+            <div style={{
+              width: 4,
+              height: 40,
+              borderRadius: 2,
+              background: "var(--p-color-border)",
+              transition: "background 150ms",
+            }} />
+          </div>
+        )}
+
         {/* Right: Optional Sidebar (Fixed) - Hidden on narrow screens via CSS */}
         {selectedItem && config.showSeoSidebar && (
-          <div className="seo-sidebar-container" style={{ width: "320px", flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+          <div className="seo-sidebar-container" style={{ width: sidebarWidth, flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
             {/* Tab-Toggle für Pro/Max Image Manager */}
             {showImageManager && imageManager && (
               <div style={{ display: "flex", borderBottom: "1px solid #e1e3e5", marginBottom: 8, flexShrink: 0 }}>

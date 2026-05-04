@@ -23,7 +23,7 @@ import type { StagedItem, VariantWithGallery, VariantSelectedOption } from "./ty
 
 const ALLOWED_MIME = ["image/jpeg", "image/png", "image/gif", "image/webp", "image/svg+xml"];
 
-type SortMode = "identifier" | "sku" | "filename";
+type SortMode = "identifier" | "sku" | "filename" | "custom";
 type MatchMode = "sku" | "imageKey";
 type LabelMode = "name" | "handle" | "memory";
 
@@ -406,6 +406,7 @@ export function BulkImageUploadPanel({
   );
 
   const sortedItems = useMemo(() => {
+    if (sortMode === "custom") return [...items];
     const copy = [...items];
     if (sortMode === "identifier") {
       copy.sort((a, b) => (a.parsedMeta?.identifier ?? a.fileName).localeCompare(b.parsedMeta?.identifier ?? b.fileName, undefined, { numeric: true }));
@@ -428,7 +429,10 @@ export function BulkImageUploadPanel({
     return map;
   }, [items]);
 
-  const handleReorder = useCallback((newOrder: StagedItem[]) => { onItemsChange(() => newOrder); }, [onItemsChange]);
+  const handleReorder = useCallback((newOrder: StagedItem[]) => {
+    setSortMode("custom");
+    onItemsChange(() => newOrder);
+  }, [onItemsChange]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -683,6 +687,7 @@ export function BulkImageUploadPanel({
                 { label: t.imageManager.bulkSortIdentifier, value: "identifier" },
                 { label: t.imageManager.bulkSortSku, value: "sku" },
                 { label: t.imageManager.bulkSortFilename, value: "filename" },
+                ...(sortMode === "custom" ? [{ label: t.imageManager.bulkSortCustom ?? "Custom", value: "custom" }] : []),
               ]}
               value={sortMode}
               onChange={v => setSortMode(v as SortMode)}
@@ -779,7 +784,7 @@ export function BulkImageUploadPanel({
           )}
 
           {/* Sticky action bar */}
-          <div style={{ position: "sticky", bottom: 0, zIndex: 2, background: "var(--p-color-bg-surface)", borderTop: "1px solid var(--p-color-border)", padding: "8px 0 4px" }}>
+          <div style={{ position: "sticky", bottom: 0, zIndex: 2, background: "var(--p-color-bg-surface)", borderTop: "1px solid var(--p-color-border)", borderRadius: "0 0 var(--p-border-radius-300) var(--p-border-radius-300)", padding: "10px 12px" }}>
             <BlockStack gap="100">
               {confirmError && (
                 <Text as="p" variant="bodySm" tone="critical">

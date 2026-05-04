@@ -683,6 +683,7 @@ export const en: Translation = {
     bulkSortIdentifier: "By identifier",
     bulkSortSku: "By SKU",
     bulkSortFilename: "By filename",
+    bulkSortCustom: "Custom",
     bulkSortLabel: "Sort",
     bulkSortListOpen: "Close list view",
     bulkSortListClose: "Adjust order",
