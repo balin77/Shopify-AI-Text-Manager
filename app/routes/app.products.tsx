@@ -849,7 +849,15 @@ export default function ProductsPage() {
             imageManagerSettings: imageManagerSettings ?? { firstImageBig: false, showAltTags: false, autoAltText: false, thumbSize: 80 },
             variantsForBulk: imageManagerState.variantsForBulk,
             onVariantsLoaded: imageManagerState.handleVariantsLoaded,
-            onConfirm: () => imageManagerState.handleApply(editor.selectedItem?.id ?? ""),
+            onConfirm: async () => {
+              const err = await imageManagerState.handleApply(editor.selectedItem?.id ?? "");
+              if (err) {
+                showInfoBox(err, "critical", t.products.galleryErrorTitle);
+              } else {
+                showInfoBox(t.products.gallerySaveSuccess, "success");
+              }
+              return err;
+            },
             isApplying: imageManagerState.isApplying,
             productTitle: editor.selectedItem?.title ?? "",
           } : undefined}

@@ -358,14 +358,19 @@ export function BulkImageUploadPanel({
             }
           };
           xhr.onload = () => {
-            onItemsChange(prev => prev.map(it =>
-              it.uniqueId === item.uniqueId ? { ...it, status: "ready" as const, progress: 100, resourceUrl } : it
-            ));
-            resolve();
+            if (xhr.status >= 200 && xhr.status < 300) {
+              onItemsChange(prev => prev.map(it =>
+                it.uniqueId === item.uniqueId ? { ...it, status: "ready" as const, progress: 100, resourceUrl } : it
+              ));
+              resolve();
+            } else {
+              onItemsChange(prev => prev.map(it => it.uniqueId === item.uniqueId ? { ...it, status: "error" as const } : it));
+              reject(new Error(`Upload failed: HTTP ${xhr.status}`));
+            }
           };
           xhr.onerror = () => {
             onItemsChange(prev => prev.map(it => it.uniqueId === item.uniqueId ? { ...it, status: "error" as const } : it));
-            reject();
+            reject(new Error("Upload network error"));
           };
           xhr.open("PUT", url);
           xhr.setRequestHeader("Content-Type", file.type);
