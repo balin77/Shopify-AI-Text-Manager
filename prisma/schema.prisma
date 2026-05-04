@@ -559,6 +559,22 @@ model MetaobjectTranslation {
   @@index([locale])
 }
 
+/// Templates for bulk alt text generation with variable placeholders (e.g. {Farbe}).
+model AltTextTemplate {
+  id            String   @id @default(cuid())
+  shop          String
+  productId     String
+  position      Int      // image position index (0 = first, 1 = second, ...)
+  positionLabel String?  // optional user-defined label, e.g. "Main Image"
+  locale        String   // "de", "en", "fr", etc.
+  template      String   @db.Text // e.g. "Eleganter {Farbe} Blumentopf"
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([shop, productId, position, locale])
+  @@index([shop, productId])
+}
+
 /// Persistent audit trail for GDPR compliance requests.
 /// Entries must be retained for at least 3 years (Art. 5(2) GDPR accountability).
 model GdprAuditLog {

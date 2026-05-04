@@ -19,6 +19,7 @@ export function useVariantImageManager() {
   const [activeAction, setActiveAction] = useState<"copy" | "move" | null>(null);
   const [isApplying, setIsApplying] = useState(false);
   const [activeRightTab, setActiveRightTab] = useState<"seo" | "images">("seo");
+  const [activeImageSubTab, setActiveImageSubTab] = useState<"bulkUpload" | "bulkAltText">("bulkUpload");
   const [pendingVariantGalleries, setPendingVariantGalleries] = useState<VariantGalleryUpdate[]>([]);
   const [pendingMediaOrder, setPendingMediaOrder] = useState<MediaOrderUpdate[]>([]);
   const [pendingProductNewMedia, setPendingProductNewMedia] = useState<string[]>([]);
@@ -173,6 +174,8 @@ export function useVariantImageManager() {
     isApplying,
     activeRightTab,
     setActiveRightTab,
+    activeImageSubTab,
+    setActiveImageSubTab,
     pendingVariantGalleries,
     pendingMediaOrder,
     pendingProductNewMedia,

@@ -21,6 +21,7 @@ import type { SubResourceState, SubResourceHandlers } from "../hooks/useProductS
 import { HelpTooltip } from "./HelpTooltip";
 import { SeoSidebar } from "./SeoSidebar";
 import { BulkImageUploadPanel } from "./image-manager/BulkImageUploadPanel";
+import { BulkAltTextPanel } from "./image-manager/BulkAltTextPanel";
 import { useNavigationHeight } from "../contexts/NavigationHeightContext";
 import { usePlan } from "../contexts/PlanContext";
 import { getPlanDisplayName as getPlanDisplayNameUtil } from "../utils/planUtils";
@@ -133,12 +134,15 @@ interface UnifiedContentEditorProps {
     onRemoveBulk: (ids: string[]) => void;
     activeRightTab: "seo" | "images";
     onTabChange: (tab: "seo" | "images") => void;
+    activeImageSubTab: "bulkUpload" | "bulkAltText";
+    onImageSubTabChange: (tab: "bulkUpload" | "bulkAltText") => void;
     imageManagerSettings: { firstImageBig: boolean; showAltTags: boolean; autoAltText: boolean };
     variantsForBulk?: import("./image-manager/types").VariantWithGallery[];
     onVariantsLoaded?: (variants: import("./image-manager/types").VariantWithGallery[]) => void;
     onConfirm?: () => Promise<string | null>;
     isApplying?: boolean;
     productTitle?: string;
+    productId?: string;
   };
 
   /** Optional: product IDs that have variants with missing main images (for yellow dot in list) */
@@ -1000,21 +1004,67 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                 </button>
               </div>
             )}
+            {/* Sub-Tab bar for Image Processing tab */}
+            {showImageManager && imageManager && imageManager.activeRightTab === "images" && (
+              <div style={{ display: "flex", borderBottom: "1px solid #e1e3e5", marginBottom: 4, flexShrink: 0, paddingLeft: 4 }}>
+                <button
+                  style={{
+                    padding: "6px 10px",
+                    border: "none",
+                    background: "none",
+                    borderBottom: imageManager.activeImageSubTab === "bulkUpload" ? "2px solid #005bd3" : "2px solid transparent",
+                    cursor: "pointer",
+                    fontWeight: imageManager.activeImageSubTab === "bulkUpload" ? 600 : 400,
+                    fontSize: 12,
+                    color: imageManager.activeImageSubTab === "bulkUpload" ? "#005bd3" : "#616161",
+                  }}
+                  onClick={() => imageManager.onImageSubTabChange("bulkUpload")}
+                >
+                  {t.imageManager?.bulkUploadSubTab ?? "Bulk Upload"}
+                </button>
+                <button
+                  style={{
+                    padding: "6px 10px",
+                    border: "none",
+                    background: "none",
+                    borderBottom: imageManager.activeImageSubTab === "bulkAltText" ? "2px solid #005bd3" : "2px solid transparent",
+                    cursor: "pointer",
+                    fontWeight: imageManager.activeImageSubTab === "bulkAltText" ? 600 : 400,
+                    fontSize: 12,
+                    color: imageManager.activeImageSubTab === "bulkAltText" ? "#005bd3" : "#616161",
+                  }}
+                  onClick={() => imageManager.onImageSubTabChange("bulkAltText")}
+                >
+                  {t.imageManager?.bulkAltTextSubTab ?? "Bulk Alt Text"}
+                </button>
+              </div>
+            )}
             <div style={{ flex: 1, overflowY: "auto" }}>
               {(!showImageManager || !imageManager || imageManager.activeRightTab === "seo") && (
                 sidebarRenderer(selectedItem, state.editableValues)
               )}
-              {showImageManager && imageManager && imageManager.activeRightTab === "images" && (
+              {showImageManager && imageManager && imageManager.activeRightTab === "images" && imageManager.activeImageSubTab === "bulkUpload" && (
                 <BulkImageUploadPanel
                   items={imageManager.bulkItems}
                   selectedUniqueIds={imageManager.selectedBulkIds}
                   variants={imageManager.variantsForBulk}
                   productTitle={imageManager.productTitle}
+                  productId={imageManager.productId}
+                  primaryLocale={primaryLocale}
                   onItemsChange={imageManager.onBulkItemsChange}
                   onSelect={imageManager.onBulkSelect}
                   onRemove={imageManager.onRemoveBulk}
                   onConfirm={imageManager.onConfirm}
                   isConfirming={imageManager.isApplying}
+                />
+              )}
+              {showImageManager && imageManager && imageManager.activeRightTab === "images" && imageManager.activeImageSubTab === "bulkAltText" && (
+                <BulkAltTextPanel
+                  productId={imageManager.productId ?? ""}
+                  productTitle={imageManager.productTitle ?? ""}
+                  variants={imageManager.variantsForBulk ?? []}
+                  shopLocales={shopLocales.map((l) => l.locale)}
+                  primaryLocale={primaryLocale}
                 />
               )}
             </div>
