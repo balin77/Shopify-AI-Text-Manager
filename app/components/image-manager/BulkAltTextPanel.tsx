@@ -295,21 +295,21 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
       });
       const data = await res.json();
       if (data.success) {
-        showInfoBox(im?.altTextTemplateApplySuccess ?? "Alt texts applied successfully", "success");
+        showInfoBox(
+          (im?.altTextTemplateApplySuccess ?? "Alt texts applied successfully") +
+            (data.applied != null ? ` (${data.applied})` : ""),
+          "success"
+        );
         onApplySuccess?.();
       } else {
-        const msg = (im?.altTextTemplateApplyError ?? "Error: {error}").replace(
-          "{error}",
-          data.error ?? "unknown"
-        );
-        showInfoBox(msg, "critical");
+        const detail = Array.isArray(data.errors) && data.errors.length > 0
+          ? data.errors.join("\n")
+          : (data.error ?? "Unknown error");
+        showInfoBox(detail, "critical");
       }
     } catch (e: any) {
-      const msg = (im?.altTextTemplateApplyError ?? "Error: {error}").replace(
-        "{error}",
-        e.message ?? "unknown"
-      );
-      showInfoBox(msg, "critical");
+      const detail = e.message ?? "Unknown error";
+      showInfoBox(detail, "critical");
     } finally {
       setIsApplying(false);
     }

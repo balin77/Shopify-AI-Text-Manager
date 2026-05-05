@@ -38,6 +38,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   const uploadedSet = uploadedImageGids ? new Set(uploadedImageGids) : null;
   let applied = 0;
+  let attempted = 0;
   const errors: string[] = [];
 
   const isPrimary = !locale || locale === primaryLocale;
@@ -67,6 +68,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       // Scope filter: only apply to uploaded images if scope === "uploaded"
       if (scope === "uploaded" && uploadedSet && !uploadedSet.has(gid)) continue;
 
+      attempted++;
       const altText = fillAltTextTemplate(tmpl.template, resolvedOptions);
 
       try {
@@ -77,6 +79,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
               mutation fileUpdate($files: [FileUpdateInput!]!) {
                 fileUpdate(files: $files) {
                   userErrors { field message }
+                  files { id }
                 }
               }`,
             { variables: { files: [{ id: gid, alt: altText }] } }
@@ -85,13 +88,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           const errs = d.data?.fileUpdate?.userErrors ?? [];
           if (errs.length === 0) {
             applied++;
-            // Update DB
             await db.productImage.updateMany({
               where: { mediaId: gid },
               data: { altText: altText || null, altTextModifiedAt: new Date() },
             }).catch(() => {});
           } else {
-            errors.push(`${variant.title} pos ${tmpl.position}: ${errs.map((e: any) => e.message).join(", ")}`);
+            errors.push(`${variant.title} (Position ${tmpl.position}, GID ${gid}): ${errs.map((e: any) => e.message).join(", ")}`);
           }
         } else {
           // Foreign locale: get digest first
@@ -109,7 +111,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             .find((c: { key: string; digest?: string }) => c.key === "alt")?.digest;
 
           if (!altDigest) {
-            errors.push(`${variant.title} pos ${tmpl.position}: no digest`);
+            errors.push(`${variant.title} (Position ${tmpl.position}): No translatable digest found for GID ${gid}`);
             continue;
           }
 
@@ -131,7 +133,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           const errs = d.data?.translationsRegister?.userErrors ?? [];
           if (errs.length === 0) {
             applied++;
-            // Update DB
             const dbImage = await db.productImage.findFirst({ where: { mediaId: gid }, select: { id: true } });
             if (dbImage) {
               await db.productImageAltTranslation.upsert({
@@ -141,19 +142,27 @@ export const action = async ({ request }: ActionFunctionArgs) => {
               }).catch(() => {});
             }
           } else {
-            errors.push(`${variant.title} pos ${tmpl.position}: ${errs.map((e: any) => e.message).join(", ")}`);
+            errors.push(`${variant.title} (Position ${tmpl.position}, GID ${gid}): ${errs.map((e: any) => e.message).join(", ")}`);
           }
         }
       } catch (err: unknown) {
-        errors.push(`${variant.title} pos ${tmpl.position}: ${String(err)}`);
+        errors.push(`${variant.title} (Position ${tmpl.position}, GID ${gid}): ${String(err)}`);
       }
     }
+  }
+
+  if (attempted === 0) {
+    return json({
+      success: false,
+      applied: 0,
+      error: "No images could be matched to positions. Make sure variant images and gallery images are loaded before applying.",
+    });
   }
 
   return json({
     success: errors.length === 0,
     applied,
     errors: errors.length > 0 ? errors : undefined,
-    error: errors.length > 0 ? errors.join("; ") : undefined,
+    error: errors.length > 0 ? errors.join("\n") : undefined,
   });
 };
