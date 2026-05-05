@@ -489,50 +489,58 @@ export function BulkImageUploadPanel({
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
 
-      {/* Documentation (collapsible) */}
-      <div>
-        <Button icon={QuestionCircleIcon} variant="plain" onClick={() => setDocsOpen(o => !o)} ariaExpanded={docsOpen} ariaControls="bulk-docs">
-          {docsOpen ? t.imageManager.bulkDocsToggleHide : t.imageManager.bulkDocsToggleShow}
-        </Button>
-        <Collapsible open={docsOpen} id="bulk-docs" transition={{ duration: "200ms", timingFunction: "ease-in-out" }}>
-          <Box paddingBlockStart="300">
-            <Card background="bg-surface-secondary">
-              <Box padding="400">
-                <BlockStack gap="300">
-                  <Text as="h3" variant="headingSm" fontWeight="semibold">{t.imageManager.bulkDocsTitle}</Text>
-                  <Text as="p" variant="bodySm">{t.imageManager.bulkDocsBody}</Text>
-                  <Box padding="200" background="bg-surface" borderRadius="100">
-                    <code style={{ fontFamily: "monospace", fontSize: 12 }}>
-                      ProductName_Variant1_Variant2_..._Identifier.ext
-                    </code>
-                  </Box>
-                  <Text as="p" variant="bodySm" tone="subdued">
-                    {matchMode === "sku" ? t.imageManager.bulkDocsExampleSku : t.imageManager.bulkDocsExampleImageKey}
-                  </Text>
-                  {matchMode === "imageKey" && (
-                    <Text as="p" variant="bodySm" tone="subdued">{t.imageManager.bulkDocsImageKeyHint}</Text>
-                  )}
-                  <Text as="p" variant="bodySm" tone="critical">{t.imageManager.bulkDocsCaseSensitive}</Text>
-                </BlockStack>
-              </Box>
-            </Card>
-          </Box>
-        </Collapsible>
-      </div>
-
       {/* Settings Card */}
       <Card>
         <BlockStack gap="300">
-          {/* Always visible: match mode + generator toggle */}
-          <Select
-            label={t.imageManager.bulkMatchModeLabel}
-            options={[
-              { label: t.imageManager.bulkMatchModeSku, value: "sku" },
-              { label: t.imageManager.bulkMatchModeImageKey, value: "imageKey" },
-            ]}
-            value={matchMode}
-            onChange={v => handleMatchModeChange(v as MatchMode)}
-          />
+          {/* Match mode with help icon */}
+          <BlockStack gap="100">
+            <InlineStack gap="100" blockAlign="center">
+              <Text as="span" variant="bodySm" fontWeight="semibold">{t.imageManager.bulkMatchModeLabel}</Text>
+              <button
+                className="help-tooltip-trigger"
+                type="button"
+                style={{ marginLeft: 2 }}
+                aria-label={t.imageManager.bulkDocsTitle}
+                onClick={() => setDocsOpen(o => !o)}
+              >
+                <Icon source={QuestionCircleIcon} tone="interactive" />
+              </button>
+            </InlineStack>
+            <Select
+              label={t.imageManager.bulkMatchModeLabel}
+              labelHidden
+              options={[
+                { label: t.imageManager.bulkMatchModeSku, value: "sku" },
+                { label: t.imageManager.bulkMatchModeImageKey, value: "imageKey" },
+              ]}
+              value={matchMode}
+              onChange={v => handleMatchModeChange(v as MatchMode)}
+            />
+            <Collapsible open={docsOpen} id="bulk-docs" transition={{ duration: "200ms", timingFunction: "ease-in-out" }}>
+              <Box paddingBlockStart="200">
+                <Card background="bg-surface-secondary">
+                  <Box padding="400">
+                    <BlockStack gap="300">
+                      <Text as="h3" variant="headingSm" fontWeight="semibold">{t.imageManager.bulkDocsTitle}</Text>
+                      <Text as="p" variant="bodySm">{t.imageManager.bulkDocsBody}</Text>
+                      <Box padding="200" background="bg-surface" borderRadius="100">
+                        <code style={{ fontFamily: "monospace", fontSize: 12 }}>
+                          ProductName_Variant1_Variant2_..._Identifier.ext
+                        </code>
+                      </Box>
+                      <Text as="p" variant="bodySm" tone="subdued">
+                        {matchMode === "sku" ? t.imageManager.bulkDocsExampleSku : t.imageManager.bulkDocsExampleImageKey}
+                      </Text>
+                      {matchMode === "imageKey" && (
+                        <Text as="p" variant="bodySm" tone="subdued">{t.imageManager.bulkDocsImageKeyHint}</Text>
+                      )}
+                      <Text as="p" variant="bodySm" tone="critical">{t.imageManager.bulkDocsCaseSensitive}</Text>
+                    </BlockStack>
+                  </Box>
+                </Card>
+              </Box>
+            </Collapsible>
+          </BlockStack>
 
           <InlineStack gap="200" blockAlign="center">
             <div
