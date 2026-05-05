@@ -67,7 +67,7 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
   const { showInfoBox } = useInfoBox();
 
   const [positions, setPositions] = useState<TemplatePosition[]>([
-    { position: 0, label: "", templates: {} },
+    { position: 1, label: "", templates: {} },
   ]);
   const [activeLocale, setActiveLocale] = useState(primaryLocale);
   const [isLoading, setIsLoading] = useState(false);
@@ -88,7 +88,7 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
       .then((r) => r.json())
       .then((data: AltTextTemplateRow[]) => {
         if (!Array.isArray(data) || data.length === 0) {
-          setPositions([{ position: 0, label: "", templates: {} }]);
+          setPositions([{ position: 1, label: "", templates: {} }]);
           return;
         }
         // Group by position
@@ -104,7 +104,7 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
           posMap.get(row.position)!.templates[row.locale] = row.template;
         }
         const sorted = Array.from(posMap.values()).sort((a, b) => a.position - b.position);
-        setPositions(sorted.length > 0 ? sorted : [{ position: 0, label: "", templates: {} }]);
+        setPositions(sorted.length > 0 ? sorted : [{ position: 1, label: "", templates: {} }]);
       })
       .catch(() => {})
       .finally(() => setIsLoading(false));

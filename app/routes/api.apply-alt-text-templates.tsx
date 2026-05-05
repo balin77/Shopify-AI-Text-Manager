@@ -51,8 +51,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       variant.mainImageGid,
       ...galleryGids,
     ];
-    console.log(`[apply-alt-text] variant="${variant.title}" mainImageGid=${variant.mainImageGid ?? "undefined"} galleryFileGids=${JSON.stringify(variant.galleryFileGids)} galleryGids=${JSON.stringify(galleryGids)} orderedGids=${JSON.stringify(orderedGids)}`);
-
     // Resolve variable values for foreign locales
     const resolvedOptions = await resolveVariableValues(
       variant.selectedOptions,
@@ -62,14 +60,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     );
 
     for (const tmpl of templates) {
-      const gid = orderedGids[tmpl.position];
+      // Templates use 1-based positions (1 = main image, 2 = first gallery, etc.)
+      const gid = orderedGids[tmpl.position - 1];
       if (!gid) continue;
 
       // Scope filter: only apply to uploaded images if scope === "uploaded"
       if (scope === "uploaded" && uploadedSet && !uploadedSet.has(gid)) continue;
 
       const altText = fillAltTextTemplate(tmpl.template, resolvedOptions);
-      console.log(`[apply-alt-text] variant="${variant.title}" tmpl.position=${tmpl.position} gid=${gid} template="${tmpl.template}" altText="${altText}"`);
 
       try {
         if (isPrimary) {
