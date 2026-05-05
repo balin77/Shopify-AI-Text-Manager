@@ -45,9 +45,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   for (const variant of variants) {
     // Build ordered list of image GIDs for this variant:
     // Position 0 = main featured image, positions 1+ = gallery images
+    // Filter mainImageGid from gallery to avoid duplicate when the metafield still contains it
+    const galleryGids = variant.galleryFileGids.filter(gid => gid !== variant.mainImageGid);
     const orderedGids: (string | undefined)[] = [
       variant.mainImageGid,
-      ...variant.galleryFileGids,
+      ...galleryGids,
     ];
 
     // Resolve variable values for foreign locales
