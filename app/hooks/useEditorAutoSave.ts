@@ -125,6 +125,11 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
     try {
       justSubmittedRef.current = true;
       fetcherRef.current.submit(formData, options || { method: "POST" });
+      // Reset via microtask: React 18 automatic batching can collapse idle→submitting→idle
+      // into a single render, so the useEffect([fetcher.state]) reset never fires.
+      // A microtask still blocks same-event-loop-tick double submits but clears before
+      // the next user interaction (which is always a new task, never a microtask).
+      Promise.resolve().then(() => { justSubmittedRef.current = false; });
     } catch (error) {
       console.error('❌ [safeSubmit] Error caught:', error);
       justSubmittedRef.current = false;

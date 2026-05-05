@@ -107,18 +107,16 @@ export function useChangeTracking(
         ...itemValues,
       };
     } else if (wasNull && originalValuesRef.current) {
-      // Coming back from null state (after save/load) - update original values to match editable fields
-      // This ensures hasChanges becomes false after save
+      // Coming back from null state after save + revalidation — reset the baseline
+      // to the server's current values so hasChanges correctly reflects unsaved edits.
+      // Do NOT use editableFields here: if the user made manual edits while the
+      // accept-auto-save was in-flight, editableFields already contains those edits,
+      // which would incorrectly set hasChanges=false and block the save button.
+      const itemValues = getCurrentItemValues(selectedItem);
       originalValuesRef.current = {
         itemId: selectedItemId,
         language: currentLanguage,
-        title: editableFields.title || "",
-        description: editableFields.body || editableFields.description || "",
-        handle: editableFields.handle || "",
-        seoTitle: editableFields.seoTitle || "",
-        metaDescription: editableFields.metaDescription || "",
-        productType: editableFields.productType || "",
-        summary: editableFields.summary || "",
+        ...itemValues,
       };
     }
   }

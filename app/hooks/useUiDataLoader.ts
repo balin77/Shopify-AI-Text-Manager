@@ -46,6 +46,7 @@ export interface DataCacheState {
   savedPrimaryCache: Record<string, Record<string, string>>;
   originalLoaded: Record<string, string>;
   originalTemplate: Record<string, string>;
+  baseline: Record<string, string>;
 }
 
 export interface UseUiDataLoaderProps {
@@ -127,6 +128,9 @@ export interface UseUiDataLoaderReturn {
   /** When user clicks ReloadButton */
   onRefresh: (itemId: string | null) => void;
 
+  /** After resolveAll() completes — sets unified baseline and keeps legacy refs in sync */
+  onDataLoaded: (values: Record<string, string>) => void;
+
   /** Direct ref accessors for mutation by existing code (backward compat) */
   refs: {
     localTranslationsRef: React.MutableRefObject<
@@ -138,11 +142,17 @@ export interface UseUiDataLoaderReturn {
     >;
     originalLoadedValuesRef: React.MutableRefObject<Record<string, string>>;
     originalTemplateValuesRef: React.MutableRefObject<Record<string, string>>;
+    /** Unified change-detection baseline — single source of truth for all content types */
+    baselineValuesRef: React.MutableRefObject<Record<string, string>>;
   };
 
   /** Template change-detection version counter */
   templateValuesVersion: number;
   setTemplateValuesVersion: React.Dispatch<React.SetStateAction<number>>;
+
+  /** Unified change-detection version counter — incremented whenever baselineValuesRef updates */
+  baselineVersion: number;
+  setBaselineVersion: React.Dispatch<React.SetStateAction<number>>;
 
   /** Read-only snapshot for debugging */
   getDebugState: () => DataCacheState;
@@ -240,6 +250,13 @@ export function useUiDataLoader(
 
   /** State counter to force templateHasFieldChanges useMemo recalculation when ref updates */
   const [templateValuesVersion, setTemplateValuesVersion] = useState(0);
+
+  /** Unified baseline for change detection — single source of truth for all content types.
+   *  Updated only via onDataLoaded() after revalidation and in translation callbacks. */
+  const baselineValuesRef = useRef<Record<string, string>>({});
+
+  /** Version counter to force hasFieldChanges useMemo recalculation when baselineValuesRef updates */
+  const [baselineVersion, setBaselineVersion] = useState(0);
 
   // ---------------------------------------------------------------------------
   // RESOLVE — Single field
@@ -395,6 +412,22 @@ export function useUiDataLoader(
   // TRANSITIONS — Named state changes with logging
   // ---------------------------------------------------------------------------
 
+  /** Called by the data-loading effect after resolveAll() completes.
+   *  Updates the unified change-detection baseline and keeps legacy refs in sync. */
+  const onDataLoaded = useCallback(
+    (values: Record<string, string>) => {
+      baselineValuesRef.current = { ...values };
+      setBaselineVersion((v) => v + 1);
+      // Keep legacy refs updated for error recovery and buildFieldsForSave
+      originalLoadedValuesRef.current = { ...values };
+      if (config.contentType === "templates") {
+        originalTemplateValuesRef.current = { ...values };
+        setTemplateValuesVersion((v) => v + 1);
+      }
+    },
+    [config.contentType, setTemplateValuesVersion]
+  );
+
   /** After a single-field translation response */
   const onTranslateFieldComplete = useCallback(
     (
@@ -427,8 +460,10 @@ export function useUiDataLoader(
         [fieldKey]: translatedValue,
       };
 
-      // 4. Update originalLoaded baseline
+      // 4. Update baselines (unified + legacy)
       originalLoadedValuesRef.current = { ...updatedValues };
+      baselineValuesRef.current = { ...updatedValues };
+      setBaselineVersion((v) => v + 1);
 
       // 5. Template change detection
       if (config.contentType === "templates") {
@@ -497,8 +532,10 @@ export function useUiDataLoader(
             clearedFallbackKeys.push(fieldDef.key);
           }
         }
-        // Update baseline
+        // Update baselines (unified + legacy)
         originalLoadedValuesRef.current = { ...updatedValues };
+        baselineValuesRef.current = { ...updatedValues };
+        setBaselineVersion((v) => v + 1);
         debugLog.transition(
           `  updated ${clearedFallbackKeys.length} fields for viewing locale ${currentLocale}`
         );
@@ -565,7 +602,10 @@ export function useUiDataLoader(
             clearedFallbackKeys.push(fieldDef.key);
           }
         }
+        // Update baselines (unified + legacy)
         originalLoadedValuesRef.current = { ...updatedValues };
+        baselineValuesRef.current = { ...updatedValues };
+        setBaselineVersion((v) => v + 1);
         debugLog.transition(
           `  updated ${clearedFallbackKeys.length} fields for viewing locale`
         );
@@ -741,6 +781,7 @@ export function useUiDataLoader(
       savedPrimaryCache: { ...savedPrimaryValuesRef.current },
       originalLoaded: { ...originalLoadedValuesRef.current },
       originalTemplate: { ...originalTemplateValuesRef.current },
+      baseline: { ...baselineValuesRef.current },
     };
   }, []);
 
@@ -752,6 +793,7 @@ export function useUiDataLoader(
     resolve,
     resolveAll,
     onTranslateFieldComplete,
+    onDataLoaded,
     onTranslateAllComplete,
     onTranslateAllForLocaleComplete,
     onSaveComplete,
@@ -764,9 +806,12 @@ export function useUiDataLoader(
       savedPrimaryValuesRef,
       originalLoadedValuesRef,
       originalTemplateValuesRef,
+      baselineValuesRef,
     },
     templateValuesVersion,
     setTemplateValuesVersion,
+    baselineVersion,
+    setBaselineVersion,
     getDebugState,
   };
 }

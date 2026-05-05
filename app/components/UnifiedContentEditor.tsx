@@ -572,7 +572,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                             handlers.handleSave();
                             subResourceHandlers?.saveSubResources?.();
                           }}
-                          disabled={!(state.hasChanges || (subResourceState?.hasChanges ?? false)) || state.isSavingCurrentItem}
+                          disabled={!(state.hasChanges || (subResourceState?.hasChanges ?? false))}
                           loading={(state.isSavingCurrentItem && (
                             fetcherFormData?.get("action") === "updateContent" ||
                             fetcherFormData?.get("action") === "savePrimarySubResources" ||
