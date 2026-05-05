@@ -155,21 +155,20 @@ Return only the translation, without additional explanations.`;
 
   async translateTemplate(template: string, fromLang: string, toLang: string): Promise<string> {
     const sanitized = sanitizePromptInput(template, { maxLength: 500, allowNewlines: false });
-    const fromName = LOCALE_NAMES[fromLang] || fromLang;
-    const toName = LOCALE_NAMES[toLang] || toLang;
-    // Extract variable names so we can list them explicitly in the guard instruction
-    const variableNames = [...sanitized.matchAll(/\{([^}]+)\}/g)].map(m => m[1]);
-    const varGuard = variableNames.length > 0
-      ? `IMPORTANT: Keep these placeholder names UNCHANGED (do not translate them): ${variableNames.map(v => `{${v}}`).join(", ")}`
-      : "IMPORTANT: Keep all {placeholder} names exactly as they appear — do not translate them.";
-    const prompt = `Translate this product image alt text template from ${fromName} to ${toName}.
-The template may contain variable placeholders in {curly braces}.
-${varGuard}
-Only translate the surrounding text, not the placeholder names inside the braces.
-Return only the translated template text, nothing else.
 
-Template: ${sanitized}`;
-    return (await this.askAI(prompt)).trim();
+    // Replace every {VarName} with a unique opaque token before sending to the AI.
+    // This prevents the AI from "absorbing" the variable into the surrounding translation.
+    const varNames: string[] = [];
+    const tokenized = sanitized.replace(/\{([^}]+)\}/g, (_, name: string) => {
+      const idx = varNames.length;
+      varNames.push(name);
+      return `TPLVAR${idx}`;
+    });
+
+    const translated = await this.translateContent(tokenized, fromLang, toLang);
+
+    // Restore the original {VarName} placeholders
+    return translated.replace(/TPLVAR(\d+)/g, (_, idx) => `{${varNames[parseInt(idx, 10)]}}`);
   }
 
   /**
