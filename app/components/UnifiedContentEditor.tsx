@@ -143,6 +143,7 @@ interface UnifiedContentEditorProps {
     isApplying?: boolean;
     productTitle?: string;
     productId?: string;
+    onApplySuccess?: () => void;
   };
 
   /** Optional: product IDs that have variants with missing main images (for yellow dot in list) */
@@ -1065,6 +1066,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   variants={imageManager.variantsForBulk ?? []}
                   shopLocales={shopLocales.map((l) => l.locale)}
                   primaryLocale={primaryLocale}
+                  onApplySuccess={imageManager.onApplySuccess}
                 />
               )}
             </div>

@@ -864,6 +864,10 @@ export default function ProductsPage() {
             },
             isApplying: imageManagerState.isApplying,
             productTitle: editor.selectedItem?.title ?? "",
+            onApplySuccess: () => {
+              imageManagerState.reloadVariants();
+              revalidator.revalidate();
+            },
           } : undefined}
           imageGalleryReplacement={showImageManager && editor.selectedItem ? (
             <VariantImageManager
@@ -887,6 +891,7 @@ export default function ProductsPage() {
               primaryLocale={primaryLocale}
               productTitle={editor.selectedItem.title}
               enabledLanguages={shopLocales.map((l: any) => l.locale)}
+              variantReloadKey={imageManagerState.variantReloadCounter}
               onDirtyChange={imageManagerState.setHasAltTextEdits}
               onMissingMainImageChange={(hasMissing) => imageManagerState.handleMissingMainImageChange(editor.selectedItem!.id, hasMissing)}
             />

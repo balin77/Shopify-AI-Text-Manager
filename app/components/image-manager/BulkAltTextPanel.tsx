@@ -7,13 +7,13 @@ import {
   TextField,
   Badge,
   Spinner,
-  Banner,
   Divider,
   Box,
   Select,
 } from "@shopify/polaris";
 import { PlusIcon, DeleteIcon } from "@shopify/polaris-icons";
 import { useI18n } from "../../contexts/I18nContext";
+import { useInfoBox } from "../../contexts/InfoBoxContext";
 import type { VariantWithGallery } from "./types";
 
 export interface AltTextTemplateRow {
@@ -36,6 +36,7 @@ interface Props {
   variants: VariantWithGallery[];
   shopLocales: string[];
   primaryLocale: string;
+  onApplySuccess?: () => void;
 }
 
 function fillTemplate(template: string, variant: VariantWithGallery): string {
@@ -60,9 +61,10 @@ function buildVariableChips(variants: VariantWithGallery[]): string[] {
   return Array.from(seen);
 }
 
-export function BulkAltTextPanel({ productId, variants, shopLocales, primaryLocale }: Props) {
+export function BulkAltTextPanel({ productId, variants, shopLocales, primaryLocale, onApplySuccess }: Props) {
   const { t } = useI18n();
   const im = t.imageManager;
+  const { showInfoBox } = useInfoBox();
 
   const [positions, setPositions] = useState<TemplatePosition[]>([
     { position: 0, label: "", templates: {} },
@@ -70,7 +72,6 @@ export function BulkAltTextPanel({ productId, variants, shopLocales, primaryLoca
   const [activeLocale, setActiveLocale] = useState(primaryLocale);
   const [isLoading, setIsLoading] = useState(false);
   const [isApplying, setIsApplying] = useState(false);
-  const [applyResult, setApplyResult] = useState<{ success: boolean; message: string } | null>(null);
 
   const variableChips = buildVariableChips(variants);
 
@@ -197,7 +198,6 @@ export function BulkAltTextPanel({ productId, variants, shopLocales, primaryLoca
 
   const handleApplyToAll = useCallback(async () => {
     setIsApplying(true);
-    setApplyResult(null);
     try {
       const res = await fetch("/api/apply-alt-text-templates", {
         method: "POST",
@@ -212,27 +212,25 @@ export function BulkAltTextPanel({ productId, variants, shopLocales, primaryLoca
       });
       const data = await res.json();
       if (data.success) {
-        setApplyResult({
-          success: true,
-          message: im?.altTextTemplateApplySuccess ?? "Applied successfully",
-        });
+        showInfoBox(im?.altTextTemplateApplySuccess ?? "Alt texts applied successfully", "success");
+        onApplySuccess?.();
       } else {
         const msg = (im?.altTextTemplateApplyError ?? "Error: {error}").replace(
           "{error}",
           data.error ?? "unknown"
         );
-        setApplyResult({ success: false, message: msg });
+        showInfoBox(msg, "critical");
       }
     } catch (e: any) {
       const msg = (im?.altTextTemplateApplyError ?? "Error: {error}").replace(
         "{error}",
         e.message ?? "unknown"
       );
-      setApplyResult({ success: false, message: msg });
+      showInfoBox(msg, "critical");
     } finally {
       setIsApplying(false);
     }
-  }, [productId, activeLocale, primaryLocale, variants, im]);
+  }, [productId, activeLocale, primaryLocale, variants, im, showInfoBox, onApplySuccess]);
 
   const localeOptions = shopLocales.map((l) => ({ label: l.toUpperCase(), value: l }));
   const previewVariants = variants.slice(0, 3);
@@ -261,15 +259,6 @@ export function BulkAltTextPanel({ productId, variants, shopLocales, primaryLoca
             />
           )}
 
-          {/* Apply result banner */}
-          {applyResult && (
-            <Banner
-              tone={applyResult.success ? "success" : "critical"}
-              onDismiss={() => setApplyResult(null)}
-            >
-              {applyResult.message}
-            </Banner>
-          )}
 
           {/* Positions */}
           {positions.map((pos, idx) => {

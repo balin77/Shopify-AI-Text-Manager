@@ -45,6 +45,7 @@ interface VariantImageManagerProps {
   onPendingChange?: (variantGalleries: Array<{ variantId: string; fileGids: string[] }>, mediaOrder: Array<{ mediaId: string; position: number }>, productNewMedia?: string[], clearVariantMainImages?: string[]) => void;
   onVariantsLoaded?: (variants: VariantWithGallery[]) => void;
   resetKey?: number;
+  variantReloadKey?: number;
   currentLanguage?: string;
   primaryLocale?: string;
   productTitle?: string;
@@ -74,6 +75,7 @@ export function VariantImageManager({
   onPendingChange,
   onVariantsLoaded,
   resetKey,
+  variantReloadKey,
   currentLanguage,
   primaryLocale,
   productTitle,
@@ -163,6 +165,12 @@ export function VariantImageManager({
     dirtyUrlsRef.current.clear();
     onDirtyChange?.(false);
   }, [resetKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Reload variant data (e.g. after alt text templates are applied) without clearing pending state
+  useEffect(() => {
+    if (!variantReloadKey || !productId) return;
+    fetchVariantsForProduct(productId, false);
+  }, [variantReloadKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load foreign-locale alt text translations from DB when language changes
   useEffect(() => {
