@@ -51,6 +51,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       variant.mainImageGid,
       ...galleryGids,
     ];
+    console.log(`[apply-alt-text] variant="${variant.title}" mainImageGid=${variant.mainImageGid ?? "undefined"} galleryFileGids=${JSON.stringify(variant.galleryFileGids)} galleryGids=${JSON.stringify(galleryGids)} orderedGids=${JSON.stringify(orderedGids)}`);
 
     // Resolve variable values for foreign locales
     const resolvedOptions = await resolveVariableValues(
@@ -68,6 +69,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       if (scope === "uploaded" && uploadedSet && !uploadedSet.has(gid)) continue;
 
       const altText = fillAltTextTemplate(tmpl.template, resolvedOptions);
+      console.log(`[apply-alt-text] variant="${variant.title}" tmpl.position=${tmpl.position} gid=${gid} template="${tmpl.template}" altText="${altText}"`);
 
       try {
         if (isPrimary) {
