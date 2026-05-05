@@ -870,12 +870,6 @@ const handleAcceptSuggestion = (fieldKey: string) => {
     delete newSuggestions[fieldKey];
     return newSuggestions;
   });
-
-
-
-  // Auto-save immediately after accepting AI suggestion
-  // IMPORTANT: Always save to primary locale since AI suggestions are generated for primary content
-  performSaveWithValues(newValues, primaryLocale);
 };
 
 const handleAcceptAndTranslate = (fieldKey: string) => {
