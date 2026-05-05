@@ -103,6 +103,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // Track if we're currently loading data to prevent false change detection
   // Initialize to true if an item is selected to prevent race condition
   const [isLoadingData, setIsLoadingData] = useState(!!selectedItemId);
+  // Track save-in-progress for spinner — fetcher.state is unreliable due to React 18 batching
+  const [isSaving, setIsSaving] = useState(false);
   // Track when initial data is ready (used to prevent field flash on load)
   const [isInitialDataReady, setIsInitialDataReady] = useState(false);
   // Track if clear all confirmation modal is open
@@ -1383,31 +1385,27 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
   // Show global InfoBox for success/error messages and revalidate after save
   useEffect(() => {
-    console.log('[CP-DIAG] effect2 | fetcher.data:', fetcher.data ? `{success:${fetcher.data.success},action:${fetcher.data.actionType}}` : 'null/undefined', '| sameAsProcessed:', fetcher.data === processedSaveResponseRef.current, '| isSavePending:', isSavePendingRef.current);
     // Skip if this response was already processed (prevents duplicate processing on re-renders)
     if (fetcher.data === processedSaveResponseRef.current) {
-      console.log('[CP-DIAG] effect2 BLOCKED: same as processedSaveResponseRef');
       return;
     }
 
     // Skip if no save was actually initiated (prevents false "saved" messages during reload/revalidation)
     if (!isSavePendingRef.current) {
-      console.log('[CP-DIAG] effect2 BLOCKED: isSavePending=false');
       return;
     }
 
-    console.log('[CP-DIAG] effect2 passed guards | fetcher.data.success:', fetcher.data?.success, '| actionType:', fetcher.data?.actionType);
     if (fetcher.data?.success && fetcher.data.actionType === "updateContent") {
       // Mark this response as processed and clear save pending flag
       processedSaveResponseRef.current = fetcher.data;
       isSavePendingRef.current = false;
+      setIsSaving(false);
 
       // Guard: check if the item that was saved is still the currently-selected item.
       const isSavedItemCurrent = savedItemIdRef.current === selectedItemIdRef.current;
       savedItemIdRef.current = null; // Always clean up — we've processed this response
 
       if (!isSavedItemCurrent) {
-        console.log('[CP-DIAG] effect2 BLOCKED: item changed during save');
         debugLog.response(' Item changed during save — skipping response application for wrong item');
         return;
       }
@@ -1424,18 +1422,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // primary locale by checking for a savedPrimaryValuesRef snapshot (only set for primary saves).
       {
         const currentItemId = selectedItemIdRef.current;
-        console.log('[CP-DIAG] save-response baseline-update | currentItemId:', currentItemId);
         if (currentItemId) {
           const primarySnapshot = savedPrimaryValuesRef.current[currentItemId];
-          console.log('[CP-DIAG] primarySnapshot:', primarySnapshot ? Object.keys(primarySnapshot) : 'MISSING');
           if (primarySnapshot && Object.keys(primarySnapshot).length > 0) {
             baselineValuesRef.current = { ...primarySnapshot };
             setBaselineVersion(v => v + 1);
-            console.log('[CP-DIAG] baseline updated from primary snapshot ✓');
           } else {
             baselineValuesRef.current = { ...editableValuesRef.current };
             setBaselineVersion(v => v + 1);
-            console.log('[CP-DIAG] baseline updated from editableValues (foreign) ✓');
           }
         }
       }
@@ -1709,6 +1703,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       processedSaveResponseRef.current = fetcher.data;
       isSavePendingRef.current = false;
       isSaveFromTranslateRef.current = false;
+      setIsSaving(false);
 
       const isSavedItemCurrent = savedItemIdRef.current === selectedItemIdRef.current;
       savedItemIdRef.current = null;
@@ -1731,6 +1726,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       processedSaveResponseRef.current = fetcher.data;
       isSavePendingRef.current = false;
       isSaveFromTranslateRef.current = false;
+      setIsSaving(false);
 
       const isSavedItemCurrent = savedItemIdRef.current === selectedItemIdRef.current;
       savedItemIdRef.current = null;
@@ -1843,9 +1839,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // currently-selected item (not a previously-selected one the user navigated from).
   // ============================================================================
 
-  const isSavingCurrentItem = fetcher.state !== "idle" &&
-    (fetcher.formData?.get("itemId") === selectedItemId ||
-     (isSavePendingRef.current && savedItemIdRef.current === selectedItemId));
+  // isSaving drives the spinner. fetcher.state is not used because React 18 automatic batching
+  // can collapse idle→submitting→loading→idle into one render, making state always appear idle.
+  const isSavingCurrentItem = isSaving && savedItemIdRef.current === selectedItemId;
 
   // ============================================================================
   // FIELD EVENT HANDLERS (extracted to useFieldHandlers)
@@ -1945,6 +1941,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     setFallbackFields,
     setTemplateValuesVersion,
     setFieldErrors,
+    setIsSaving,
   });
 
   // ============================================================================

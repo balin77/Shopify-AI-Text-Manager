@@ -57,12 +57,10 @@ export function useEditorChangeDetection({
     if (isLoadingData || !selectedItem) return false;
     const baseline = baselineValuesRef.current;
     if (Object.keys(baseline).length === 0) return false;
-    const diffKeys: string[] = [];
     for (const [key, baselineValue] of Object.entries(baseline)) {
-      if ((editableValues[key] ?? "") !== baselineValue) diffKeys.push(key);
+      if ((editableValues[key] ?? "") !== baselineValue) return true;
     }
-    console.log('[CP-DIAG] hasFieldChanges | baselineVersion:', baselineVersion, '| diffKeys:', diffKeys, '| isLoading:', isLoadingData);
-    return diffKeys.length > 0;
+    return false;
   // eslint-disable-next-line react-hooks/exhaustive-deps -- baselineVersion forces recalc when ref updates
   }, [editableValues, baselineVersion, isLoadingData, selectedItem]);
 

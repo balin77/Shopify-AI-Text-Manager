@@ -126,6 +126,7 @@ export interface FieldHandlerProps {
   setFallbackFields: React.Dispatch<React.SetStateAction<Set<string>>>;
   setTemplateValuesVersion: React.Dispatch<React.SetStateAction<number>>;
   setFieldErrors: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+  setIsSaving: React.Dispatch<React.SetStateAction<boolean>>;
 }
 
 export interface FieldHandlers {
@@ -229,6 +230,7 @@ export function useFieldHandlers(props: FieldHandlerProps): FieldHandlers {
     setFallbackFields,
     setTemplateValuesVersion,
     setFieldErrors,
+    setIsSaving,
   } = props;
 
 // ============================================================================
@@ -241,9 +243,7 @@ const performSaveWithValues = (valuesToSave: Record<string, string>, locale: str
 };
 
 const handleSave = () => {
-  console.log('[CP-DIAG] handleSave called | hasChanges:', hasChanges, '| selectedItemId:', selectedItemId, '| lang:', currentLanguage);
   if (!selectedItemId || !hasChanges) {
-    console.log('[CP-DIAG] handleSave early-return');
     return;
   }
 
@@ -328,7 +328,7 @@ const handleSave = () => {
   savedLocaleRef.current = currentLanguage; // Track which locale we're saving
   savedItemIdRef.current = selectedItemId; // Track which item we're saving
   isSavePendingRef.current = true; // Track that a save was initiated
-  console.log('[CP-DIAG] handleSave → safeSubmit | locale:', currentLanguage, '| fields:', Object.keys(formDataObj));
+  setIsSaving(true); // Drive spinner — fetcher.state is unreliable due to React 18 batching
   safeSubmit(formDataObj, { method: "POST" });
   // NOTE: clearPendingNavigation is NOT called here — it is deferred to the
   // response handler in useUnifiedContentEditor, which checks that the saved
