@@ -564,7 +564,7 @@ model AltTextTemplate {
   id            String   @id @default(cuid())
   shop          String
   productId     String
-  position      Int      // image position index (0 = first, 1 = second, ...)
+  position      Int      // image position (1-based: 1 = main image, 2 = first gallery, …); legacy rows may use 0-based
   positionLabel String?  // optional user-defined label, e.g. "Main Image"
   locale        String   // "de", "en", "fr", etc.
   template      String   @db.Text // e.g. "Eleganter {Farbe} Blumentopf"

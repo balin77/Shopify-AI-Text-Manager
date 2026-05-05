@@ -36,6 +36,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return json({ success: true, applied: 0, message: "No templates found for this locale" });
   }
 
+  // Legacy templates were stored 0-based (0 = main image, 1 = first gallery, …).
+  // Current templates are stored 1-based (1 = main image, 2 = first gallery, …).
+  // Detect which convention is in use so both old and new data map correctly.
+  const minPosition = Math.min(...templates.map(t => t.position));
+  const positionBase = minPosition === 0 ? 0 : 1;
+
   const uploadedSet = uploadedImageGids ? new Set(uploadedImageGids) : null;
   let applied = 0;
   let attempted = 0;
@@ -61,8 +67,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     );
 
     for (const tmpl of templates) {
-      // Templates use 1-based positions (1 = main image, 2 = first gallery, etc.)
-      const gid = orderedGids[tmpl.position - 1];
+      // Convert stored position to 0-based array index (handles both 0-based legacy and 1-based current data)
+      const gid = orderedGids[tmpl.position - positionBase];
       if (!gid) continue;
 
       // Scope filter: only apply to uploaded images if scope === "uploaded"
