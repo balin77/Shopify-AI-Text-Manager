@@ -130,12 +130,6 @@ function autoAssign(item: StagedItem, variants: VariantWithGallery[], matchMode:
   };
 }
 
-interface AltTextPositionTemplate {
-  position: number;
-  label: string;
-  template: string;
-}
-
 interface BulkImageUploadPanelProps {
   items: StagedItem[];
   selectedUniqueIds: Set<string>;
@@ -170,12 +164,6 @@ export function BulkImageUploadPanel({
   const [generatorDocsOpen, setGeneratorDocsOpen] = useState(false);
   const [sortListOpen, setSortListOpen] = useState(false);
   const [sortMode, setSortMode] = useState<SortMode>("identifier");
-  // Alt text template block state
-  const [altTextOpen, setAltTextOpen] = useState(false);
-  const [applyOnUpload, setApplyOnUpload] = useState(false);
-  const [altTextPositions, setAltTextPositions] = useState<AltTextPositionTemplate[]>([
-    { position: 0, label: "", template: "" },
-  ]);
 
   // Matching & generation state
   const [matchMode, setMatchMode] = useState<MatchMode>("sku");
@@ -201,27 +189,6 @@ export function BulkImageUploadPanel({
       .then(d => setMemoryMap(d.memory ?? {}))
       .catch(() => {});
   }, []);
-
-  // Load alt text templates for this product
-  useEffect(() => {
-    if (!productId) return;
-    fetch(`/api/alt-text-templates?productId=${encodeURIComponent(productId)}`)
-      .then(r => r.json())
-      .then((data: Array<{ position: number; positionLabel: string; locale: string; template: string }>) => {
-        if (!Array.isArray(data) || data.length === 0) return;
-        // Only use primary locale templates, grouped by position
-        const posMap = new Map<number, AltTextPositionTemplate>();
-        for (const row of data) {
-          if ((primaryLocale && row.locale !== primaryLocale) || (!primaryLocale && row.locale !== "en")) continue;
-          if (!posMap.has(row.position)) {
-            posMap.set(row.position, { position: row.position, label: row.positionLabel ?? "", template: row.template });
-          }
-        }
-        const sorted = Array.from(posMap.values()).sort((a, b) => a.position - b.position);
-        if (sorted.length > 0) setAltTextPositions(sorted);
-      })
-      .catch(() => {});
-  }, [productId, primaryLocale]);
 
   // Initialize localKeys when variants load
   useEffect(() => {
@@ -843,84 +810,6 @@ export function BulkImageUploadPanel({
             </>
           )}
 
-          {/* Alt Text Template block (collapsible) */}
-          {productId && (
-            <>
-              <Divider />
-              <div style={{ padding: "0 4px" }}>
-                <button
-                  style={{ background: "none", border: "none", cursor: "pointer", padding: "4px 0", display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 600, color: "#303030" }}
-                  onClick={() => setAltTextOpen(o => !o)}
-                >
-                  <span style={{ fontSize: 11, color: "#616161" }}>{altTextOpen ? "▼" : "▶"}</span>
-                  {t.imageManager?.altTextTemplates ?? "Alt Text Templates"}
-                </button>
-                <Collapsible id="alt-text-block" open={altTextOpen} transition={{ duration: "150ms", timingFunction: "ease" }}>
-                  <BlockStack gap="200">
-                    <Text as="p" variant="bodySm" tone="subdued">
-                      {t.imageManager?.altTextTemplateVariableHint ?? "Available variables"}:{" "}
-                      {Array.from(new Set(variants.flatMap(v => v.selectedOptions.map(o => o.name)))).map(n => `{${n}}`).join(", ")}
-                    </Text>
-                    {altTextPositions.map((pos, idx) => (
-                      <BlockStack key={pos.position} gap="100">
-                        <InlineStack gap="200" blockAlign="center">
-                          <TextField
-                            label={(t.imageManager?.altTextTemplatePosition ?? "Position {n}").replace("{n}", String(idx + 1))}
-                            value={pos.template}
-                            placeholder={t.imageManager?.altTextTemplatePlaceholder ?? "e.g. Elegant {Color} vase"}
-                            onChange={v => {
-                              setAltTextPositions(prev => prev.map((p, i) => i === idx ? { ...p, template: v } : p));
-                            }}
-                            onBlur={() => {
-                              if (!productId || !primaryLocale) return;
-                              fetch("/api/alt-text-templates", {
-                                method: "POST",
-                                headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify({ productId, position: pos.position, positionLabel: pos.label, locale: primaryLocale, template: pos.template }),
-                              }).catch(() => {});
-                            }}
-                            autoComplete="off"
-                          />
-                          {altTextPositions.length > 1 && (
-                            <Button
-                              size="slim"
-                              tone="critical"
-                              variant="plain"
-                              onClick={async () => {
-                                if (productId) {
-                                  await fetch(`/api/alt-text-templates?productId=${encodeURIComponent(productId)}&position=${pos.position}`, { method: "DELETE" }).catch(() => {});
-                                }
-                                setAltTextPositions(prev => prev.filter((_, i) => i !== idx));
-                              }}
-                            >✕</Button>
-                          )}
-                        </InlineStack>
-                      </BlockStack>
-                    ))}
-                    <Button
-                      size="slim"
-                      variant="plain"
-                      onClick={() => {
-                        const maxPos = altTextPositions.length > 0 ? Math.max(...altTextPositions.map(p => p.position)) : -1;
-                        setAltTextPositions(prev => [...prev, { position: maxPos + 1, label: "", template: "" }]);
-                      }}
-                    >
-                      + {t.imageManager?.altTextTemplateAddPosition ?? "Add position"}
-                    </Button>
-                    <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer" }}>
-                      <input
-                        type="checkbox"
-                        checked={applyOnUpload}
-                        onChange={e => setApplyOnUpload(e.target.checked)}
-                      />
-                      {t.imageManager?.altTextTemplateApplyOnUpload ?? "Apply after upload"}
-                    </label>
-                  </BlockStack>
-                </Collapsible>
-              </div>
-            </>
-          )}
-
           {/* Sticky action bar */}
           <div style={{ position: "sticky", bottom: 0, zIndex: 2, background: "var(--p-color-bg-surface)", borderTop: "1px solid var(--p-color-border)", borderRadius: "0 0 var(--p-border-radius-300) var(--p-border-radius-300)", padding: "10px 12px" }}>
             <BlockStack gap="100">
@@ -943,26 +832,6 @@ export function BulkImageUploadPanel({
                       if (err) {
                         setConfirmError(err);
                         return;
-                      }
-                      // Apply alt text templates after successful upload if checkbox is active
-                      if (applyOnUpload && productId && primaryLocale && variants.length > 0) {
-                        try {
-                          // Re-fetch fresh variant data so newly uploaded images are included
-                          const varRes = await fetch(`/api/product-variants?productId=${encodeURIComponent(productId)}`);
-                          const varData = await varRes.json();
-                          const freshVariants = varData.variants ?? variants;
-                          await fetch("/api/apply-alt-text-templates", {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({
-                              productId,
-                              locale: primaryLocale,
-                              primaryLocale,
-                              scope: "all",
-                              variants: freshVariants,
-                            }),
-                          });
-                        } catch {}
                       }
                     }}
                   >
