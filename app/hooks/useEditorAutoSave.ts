@@ -111,7 +111,7 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
       formData.append(key, String(value));
     });
 
-    console.log('[CP-DIAG] safeSubmit | fetcherState:', fetcherRef.current.state, '| justSubmitted:', justSubmittedRef.current, '| queueLen:', saveQueueRef.current.length);
+    console.log('[CP-DIAG] safeSubmit | fetcherState:', fetcherRef.current.state, '| justSubmitted:', justSubmittedRef.current, '| queueLen:', saveQueueRef.current.length, '| caller:', new Error().stack?.split('\n')[2]?.trim());
     if (fetcherRef.current.state !== 'idle' || justSubmittedRef.current) {
       console.log('[CP-DIAG] safeSubmit QUEUED (not submitted)');
       debugLog.submit(' Fetcher busy (state:', fetcherRef.current.state, ', justSubmitted:', justSubmittedRef.current, '), queuing save for locale:', savedLocaleRef.current);

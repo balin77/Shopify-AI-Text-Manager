@@ -1805,6 +1805,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // or when it returns to idle (request completed). This ensures the synchronous
   // double-submit guard in safeSubmit only blocks within the same tick.
   useEffect(() => {
+    console.log('[CP-DIAG] justSubmitted-reset effect | fetcher.state:', fetcher.state, '→ resetting justSubmitted to false');
     justSubmittedRef.current = false;
   }, [fetcher.state]);
 
