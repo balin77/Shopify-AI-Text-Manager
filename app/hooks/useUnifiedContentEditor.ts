@@ -1419,15 +1419,19 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // Foreign locale: use editableValuesRef as best approximation.
       {
         const currentItemId = selectedItemIdRef.current;
+        console.log('[CP-DIAG] save-response baseline-update | savedLocale:', savedLocaleRef.current, '| primaryLocale:', primaryLocale, '| currentItemId:', currentItemId);
         if (savedLocaleRef.current === primaryLocale && currentItemId) {
           const snapshot = savedPrimaryValuesRef.current[currentItemId];
+          console.log('[CP-DIAG] primary snapshot keys:', snapshot ? Object.keys(snapshot) : 'MISSING');
           if (snapshot && Object.keys(snapshot).length > 0) {
             baselineValuesRef.current = { ...snapshot };
             setBaselineVersion(v => v + 1);
+            console.log('[CP-DIAG] baseline updated from snapshot ✓');
           }
         } else if (savedLocaleRef.current && savedLocaleRef.current !== primaryLocale) {
           baselineValuesRef.current = { ...editableValuesRef.current };
           setBaselineVersion(v => v + 1);
+          console.log('[CP-DIAG] baseline updated from editableValues (foreign) ✓');
         }
       }
 
@@ -1837,6 +1841,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const isSavingCurrentItem = fetcher.state !== "idle" &&
     (fetcher.formData?.get("itemId") === selectedItemId ||
      (isSavePendingRef.current && savedItemIdRef.current === selectedItemId));
+
+  // Diagnostic: log when isSavingCurrentItem or fetcher.state changes
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    console.log('[CP-DIAG] fetcher.state:', fetcher.state, '| isSavingCurrentItem:', isSavingCurrentItem, '| formData action:', fetcher.formData?.get('action') ?? 'null');
+  }, [fetcher.state, isSavingCurrentItem]);
 
   // ============================================================================
   // FIELD EVENT HANDLERS (extracted to useFieldHandlers)

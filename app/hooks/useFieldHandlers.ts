@@ -241,7 +241,9 @@ const performSaveWithValues = (valuesToSave: Record<string, string>, locale: str
 };
 
 const handleSave = () => {
+  console.log('[CP-DIAG] handleSave called | hasChanges:', hasChanges, '| selectedItemId:', selectedItemId, '| lang:', currentLanguage);
   if (!selectedItemId || !hasChanges) {
+    console.log('[CP-DIAG] handleSave early-return (no changes or no item)');
     return;
   }
 
@@ -326,6 +328,7 @@ const handleSave = () => {
   savedLocaleRef.current = currentLanguage; // Track which locale we're saving
   savedItemIdRef.current = selectedItemId; // Track which item we're saving
   isSavePendingRef.current = true; // Track that a save was initiated
+  console.log('[CP-DIAG] handleSave → safeSubmit | locale:', currentLanguage, '| fields:', Object.keys(formDataObj));
   safeSubmit(formDataObj, { method: "POST" });
   // NOTE: clearPendingNavigation is NOT called here — it is deferred to the
   // response handler in useUnifiedContentEditor, which checks that the saved
