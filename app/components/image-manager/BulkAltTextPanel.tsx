@@ -196,9 +196,13 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
   const insertVariable = useCallback(
     (positionIndex: number, variableName: string) => {
       const current = positions[positionIndex].templates[activeLocale] ?? "";
-      handleTemplateChange(positionIndex, current + `{${variableName}}`);
+      const newValue = current + `{${variableName}}`;
+      handleTemplateChange(positionIndex, newValue);
+      // Explicitly save: onBlur fires BEFORE onClick so the blur-triggered save
+      // would capture the old value (without the just-inserted variable).
+      saveTemplate(positions[positionIndex], activeLocale, newValue);
     },
-    [positions, activeLocale, handleTemplateChange]
+    [positions, activeLocale, handleTemplateChange, saveTemplate]
   );
 
   /** Translate one position (positionIndex) or all positions (null) */
@@ -433,7 +437,12 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
                             border: "1px solid #c9cccf",
                             userSelect: "none",
                           }}
-                          onClick={() => insertVariable(idx, chip)}
+                          onMouseDown={(e) => {
+                            // Prevent the text field from losing focus (blur fires before click,
+                            // which would save the old value without the inserted variable).
+                            e.preventDefault();
+                            insertVariable(idx, chip);
+                          }}
                           title={`Insert {${chip}}`}
                         >
                           {`{${chip}}`}

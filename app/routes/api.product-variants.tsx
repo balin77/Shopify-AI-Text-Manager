@@ -87,8 +87,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const data = await response.json();
   const productData = data.data?.product;
 
-  // Fetch metaobject handles separately — optional, degrades gracefully if unavailable.
+  // Fetch metaobject handles + GIDs separately — optional, degrades gracefully if unavailable.
   const optionHandleMap: Record<string, Record<string, string | null>> = {};
+  const optionGidMap: Record<string, Record<string, string | null>> = {};
   try {
     // Step 1: get optionValues with their linked metaobject GID (stored as string)
     const optionsRes = await admin.graphql(`
@@ -135,13 +136,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         for (const { optionName, valueName } of (gidToRefs[node.id] ?? [])) {
           if (!optionHandleMap[optionName]) optionHandleMap[optionName] = {};
           optionHandleMap[optionName][valueName] = node.handle;
+          // Also store the GID so translation lookup can use it directly (no type required)
+          if (!optionGidMap[optionName]) optionGidMap[optionName] = {};
+          optionGidMap[optionName][valueName] = node.id;
         }
       }
     }
-    console.log("[api.product-variants] optionHandleMap:", JSON.stringify(optionHandleMap));
   } catch (err: any) {
     console.error("[api.product-variants] handle lookup failed:", err?.message);
-    console.error("[api.product-variants] graphQLErrors:", JSON.stringify(err?.graphQLErrors ?? null, null, 2));
   }
 
   const variants = (productData?.variants?.edges?.map((e: any) => {
@@ -150,6 +152,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       name: so.name,
       value: so.value,
       handle: optionHandleMap[so.name]?.[so.value] ?? null,
+      metaobjectGid: optionGidMap[so.name]?.[so.value] ?? null,
     }));
     return { ...node, selectedOptions };
   }) ?? []);

@@ -37,49 +37,32 @@ export async function resolveVariableValues(
     return selectedOptions.map((opt) => ({ name: opt.name, value: opt.value, fallback: false }));
   }
 
-  // For foreign locales: try to get Shopify translations for option values via metaobject handle
-  // If the option value is linked to a metaobject (has a handle), we can look up its translation.
-  // Otherwise, fall back to the original value.
+  // For foreign locales: try to get Shopify translations for option values via metaobject GID.
+  // Falls back to the original value if no translation is found.
   const resolved: ResolvedOption[] = [];
 
   for (const opt of selectedOptions) {
-    if (opt.handle) {
-      // Try to get the translated metaobject display name for this locale
-      const translatedValue = await fetchMetaobjectTranslation(opt.handle, locale, admin);
+    if (opt.metaobjectGid) {
+      // Preferred path: use the GID directly — no need to know the metaobject type.
+      const translatedValue = await fetchMetaobjectTranslationById(opt.metaobjectGid, locale, admin);
       if (translatedValue) {
         resolved.push({ name: opt.name, value: translatedValue, fallback: false });
         continue;
       }
     }
-    // Fallback: use original value
+    // Fallback: use original value (also covers options without a linked metaobject)
     resolved.push({ name: opt.name, value: opt.value, fallback: true });
   }
 
   return resolved;
 }
 
-async function fetchMetaobjectTranslation(
-  handle: string,
+async function fetchMetaobjectTranslationById(
+  metaobjectGid: string,
   locale: string,
   admin: { graphql: (query: string, options?: Record<string, unknown>) => Promise<Response> }
 ): Promise<string | null> {
   try {
-    // First find the metaobject GID by handle
-    const r = await admin.graphql(
-      `#graphql
-        query getMetaobjectByHandle($handle: String!) {
-          metaobjectByHandle(handle: { handle: $handle, type: "color" }) {
-            id
-            displayName
-          }
-        }`,
-      { variables: { handle } }
-    );
-    const d = await r.json() as any;
-    const metaobjectId = d.data?.metaobjectByHandle?.id;
-    if (!metaobjectId) return null;
-
-    // Then get the translation for this metaobject
     const tr = await admin.graphql(
       `#graphql
         query getMetaobjectTranslations($resourceId: ID!, $locale: String!) {
@@ -90,12 +73,11 @@ async function fetchMetaobjectTranslation(
             }
           }
         }`,
-      { variables: { resourceId: metaobjectId, locale } }
+      { variables: { resourceId: metaobjectGid, locale } }
     );
     const td = await tr.json() as any;
     const translations: { key: string; value: string }[] = td.data?.translatableResource?.translations ?? [];
-    const displayNameTranslation = translations.find((t) => t.key === "display_name");
-    return displayNameTranslation?.value ?? null;
+    return translations.find((t) => t.key === "display_name")?.value ?? null;
   } catch {
     return null;
   }

@@ -22,7 +22,8 @@ export interface StagedItem {
 export interface VariantSelectedOption {
   name: string;    // option name, e.g. "Farbe"
   value: string;   // display value, e.g. "Aschgrau"
-  handle: string | null; // metaobject handle if linked, e.g. "ashgrey"
+  handle: string | null;       // metaobject handle if linked, e.g. "ashgrey"
+  metaobjectGid: string | null; // metaobject GID if linked — used for translation lookup (no type required)
 }
 
 export interface VariantWithGallery {
