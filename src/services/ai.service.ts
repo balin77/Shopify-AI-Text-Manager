@@ -173,10 +173,45 @@ Return ONLY the translated text. Do NOT wrap it in XML tags, quotes, or any othe
       return `TPLVAR${idx}`;
     });
 
-    const translated = await this.translateContent(tokenized, fromLang, toLang);
+    // If there are no variables, fall back to generic translateContent.
+    if (varNames.length === 0) {
+      return this.translateContent(sanitized, fromLang, toLang);
+    }
 
-    // Restore the original {VarName} placeholders
-    return translated.replace(/TPLVAR(\d+)/g, (_, idx) => `{${varNames[parseInt(idx, 10)]}}`);
+    const fromName = LOCALE_NAMES[fromLang] || fromLang;
+    const toName = LOCALE_NAMES[toLang] || toLang;
+    const tokenList = varNames.map((n, i) => `TPLVAR${i} = {${n}}`).join(', ');
+
+    // Dedicated prompt that explicitly requires all TPLVAR tokens to be preserved.
+    const prompt = `Translate the following product image alt-text template from ${fromName} to ${toName}.
+
+Template: ${tokenized}
+
+Rules:
+- The tokens ${varNames.map((_, i) => `TPLVAR${i}`).join(', ')} are placeholders for product attributes (${tokenList}). You MUST keep ALL of them exactly as written — do not translate, omit, or reorder them.
+- Return ONLY the translated template. No XML tags, no quotes, no explanations.`;
+
+    const response = AIService.stripXmlWrapper(await this.askAI(prompt));
+
+    // Find which TPLVAR tokens the AI dropped (before restoring, so regex is still intact).
+    const dropped = varNames
+      .map((name, i) => ({ name, token: `TPLVAR${i}` }))
+      .filter(({ token }) => !response.includes(token));
+
+    // Restore surviving tokens.
+    let restored = response.replace(/TPLVAR(\d+)/g, (_, idx) => `{${varNames[parseInt(idx, 10)]}}`);
+
+    // Append any dropped variables so they are never silently lost.
+    if (dropped.length > 0) {
+      loggers.ai('warn', '[AI-SERVICE] translateTemplate: AI dropped TPLVAR tokens, appending them', {
+        dropped: dropped.map(d => d.name),
+        fromLang,
+        toLang,
+      });
+      restored = restored.trimEnd() + ' ' + dropped.map(d => `{${d.name}}`).join(' ');
+    }
+
+    return restored;
   }
 
   /**
