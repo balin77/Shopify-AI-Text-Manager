@@ -1410,6 +1410,27 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // Only unblock deferred navigation now that the correct item's save succeeded
       clearPendingNavigation();
 
+      // Update unified baseline to the saved values so hasChanges resets correctly.
+      // The data-loading effect only fires when selectedItemTranslationSignal changes;
+      // without this update, hasChanges stays true and navigation stays blocked after
+      // saves that don't affect translation count (e.g. primary locale with no translations).
+      // Primary locale: use the snapshot captured at submit time (savedPrimaryValuesRef),
+      // NOT editableValuesRef — the user may have made new edits while the save was in-flight.
+      // Foreign locale: use editableValuesRef as best approximation.
+      {
+        const currentItemId = selectedItemIdRef.current;
+        if (savedLocaleRef.current === primaryLocale && currentItemId) {
+          const snapshot = savedPrimaryValuesRef.current[currentItemId];
+          if (snapshot && Object.keys(snapshot).length > 0) {
+            baselineValuesRef.current = { ...snapshot };
+            setBaselineVersion(v => v + 1);
+          }
+        } else if (savedLocaleRef.current && savedLocaleRef.current !== primaryLocale) {
+          baselineValuesRef.current = { ...editableValuesRef.current };
+          setBaselineVersion(v => v + 1);
+        }
+      }
+
       // Check if there's a pending translation to start after this save
       if (pendingTranslationAfterSaveRef.current) {
         const { fieldKey, sourceText, targetLocales, contextTitle, itemId } = pendingTranslationAfterSaveRef.current;

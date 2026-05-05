@@ -70,7 +70,7 @@ export function SaveDiscardButtons({
         <Button
           variant={hasChanges ? "primary" : undefined}
           onClick={onSave}
-          disabled={!hasChanges || isSubmitting}
+          disabled={!hasChanges}
           loading={isSubmitting}
           size="slim"
         >
