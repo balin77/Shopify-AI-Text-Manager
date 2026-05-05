@@ -126,9 +126,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       savedPrimaryValuesRef,
       originalLoadedValuesRef,
       originalTemplateValuesRef,
+      baselineValuesRef,
     },
     templateValuesVersion,
     setTemplateValuesVersion,
+    baselineVersion,
+    setBaselineVersion,
   } = dataLoader;
 
   // Track which fields are showing fallback values (e.g., handle field showing primary locale value)
@@ -506,9 +509,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     fallbackFields,
     imageAltTexts,
     originalAltTexts,
-    originalLoadedValuesRef,
-    originalTemplateValuesRef,
-    templateValuesVersion,
+    baselineValuesRef,
+    baselineVersion,
   });
 
   // ============================================================================
@@ -648,19 +650,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
     setFallbackFields(newFallbackFields);
 
-    // Snapshot the loaded values so buildFieldsForSave() can later compare against them.
-    // Without this, every save in a foreign locale would re-send ALL fields to Shopify,
-    // including unchanged ones like handle, which causes "handle already taken" errors.
-    originalLoadedValuesRef.current = { ...newValues };
+    // Update the unified baseline and legacy refs via onDataLoaded.
+    // This is the single authoritative update point — never update these refs
+    // directly in save-response handlers (see "DO NOT REMOVE" comments below).
+    dataLoader.onDataLoaded(newValues);
 
     setEditableValues(newValues);
-
-    // For templates: Store original values for change detection
-    if (config.contentType === 'templates') {
-      debugLog.dataLoad(' Setting originalTemplateValuesRef:', newValues);
-      originalTemplateValuesRef.current = { ...newValues };
-      setTemplateValuesVersion(v => v + 1);
-    }
     // IMPORTANT: Deps are kept minimal to prevent unnecessary re-runs.
     // selectedItemTranslationSignal is stable (only changes when translation count changes)
     // so it won't cause extra re-runs during normal editing.
@@ -1422,13 +1417,16 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
         debugLog.acceptAndTranslate(' Save completed, now starting translation');
 
-        // For templates: Update originalTemplateValuesRef IMMEDIATELY after save completes,
-        // before the translation starts. Otherwise isLoadingData flips back to false (10ms timer)
-        // while the translation is still in-flight, and the stale originalTemplateValuesRef
-        // causes templateHasFieldChanges to return true → save button flickers active.
+        // For templates: Update originalTemplateValuesRef and unified baseline IMMEDIATELY
+        // after save completes, before the translation starts. Otherwise isLoadingData flips
+        // back to false (10ms timer) while the translation is still in-flight, and the stale
+        // baseline causes hasFieldChanges to return true → save button flickers active.
         if (config.contentType === 'templates') {
-          originalTemplateValuesRef.current = { ...editableValuesRef.current };
+          const snapshot = { ...editableValuesRef.current };
+          originalTemplateValuesRef.current = snapshot;
           setTemplateValuesVersion(v => v + 1);
+          baselineValuesRef.current = snapshot;
+          setBaselineVersion(v => v + 1);
         }
 
         // Start the translation using submitAIAction for parallel requests
@@ -1543,23 +1541,27 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             // Reset the accept-and-translate flow flag after translations are complete
             setIsAcceptAndTranslateFlow(false);
 
-            // For templates: Update original values so hasChanges becomes false
+            // For templates: Update original values and unified baseline so hasChanges becomes false
             if (config.contentType === 'templates') {
               // Update with the translated value if we're viewing a foreign locale,
               // OR with the current editableValues for the primary locale (the accepted
-              // AI suggestion was saved but originalTemplateValuesRef was never updated
-              // because the early `return` at the end of this block skips the normal
-              // post-save update at ~line 1990).
+              // AI suggestion was saved but the baseline was never updated because the
+              // early `return` at the end of this block skips the normal post-save path).
+              let newTemplateBaseline: Record<string, string> | null = null;
               if (translations[currentLanguage]) {
-                originalTemplateValuesRef.current = {
+                newTemplateBaseline = {
                   ...originalTemplateValuesRef.current,
                   [fieldKey]: translations[currentLanguage]
                 };
               } else if (currentLanguage === primaryLocale) {
                 // Primary locale: sync all original values with current editableValues
                 // so the save button correctly shows "no changes"
-                const snapshot = { ...editableValuesRef.current };
-                originalTemplateValuesRef.current = snapshot;
+                newTemplateBaseline = { ...editableValuesRef.current };
+              }
+              if (newTemplateBaseline) {
+                originalTemplateValuesRef.current = newTemplateBaseline;
+                baselineValuesRef.current = newTemplateBaseline;
+                setBaselineVersion(v => v + 1);
               }
               setTemplateValuesVersion(v => v + 1);
             }
@@ -1993,7 +1995,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     if (config.contentType === 'templates') {
       originalTemplateValuesRef.current = { ...values };
       originalLoadedValuesRef.current = { ...values };
+      baselineValuesRef.current = { ...values };
       setTemplateValuesVersion(v => v + 1);
+      setBaselineVersion(v => v + 1);
     }
   };
 
@@ -2006,10 +2010,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     setEditableValues(values);
     originalTemplateValuesRef.current = { ...values };
     originalLoadedValuesRef.current = { ...values };
+    baselineValuesRef.current = { ...values };
     // Mark initial load as successful so retry mechanism doesn't interfere
     initialLoadSuccessfulRef.current = true;
     retryCountRef.current = 0;
     setTemplateValuesVersion(v => v + 1);
+    setBaselineVersion(v => v + 1);
     setIsLoadingData(false);
   }, [config]);
 

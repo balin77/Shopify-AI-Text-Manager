@@ -1,9 +1,9 @@
 /**
  * Change detection for the Unified Content Editor.
- * Unifies three different change-detection strategies:
+ * Uses a single unified baseline (baselineValuesRef) across all content types:
  *  - Standard (products, collections, blogs, pages, policies)
- *  - Template-specific (compares against originalTemplateValuesRef snapshot)
- *  - Metaobject-specific (compares against originalLoadedValuesRef snapshot)
+ *  - Templates
+ *  - Metaobjects
  * Also detects alt-text changes separately.
  */
 
@@ -21,9 +21,10 @@ interface UseEditorChangeDetectionProps {
   fallbackFields: Set<string>;
   imageAltTexts: Record<number, string>;
   originalAltTexts: Record<number, string>;
-  originalLoadedValuesRef: React.MutableRefObject<Record<string, string>>;
-  originalTemplateValuesRef: React.MutableRefObject<Record<string, string>>;
-  templateValuesVersion: number;
+  /** Unified change-detection baseline — single source of truth for all content types */
+  baselineValuesRef: React.MutableRefObject<Record<string, string>>;
+  /** Incremented whenever baselineValuesRef updates, to force useMemo recalculation */
+  baselineVersion: number;
 }
 
 interface UseEditorChangeDetectionReturn {
@@ -42,56 +43,26 @@ export function useEditorChangeDetection({
   fallbackFields,
   imageAltTexts,
   originalAltTexts,
-  originalLoadedValuesRef,
-  originalTemplateValuesRef,
-  templateValuesVersion,
+  baselineValuesRef,
+  baselineVersion,
 }: UseEditorChangeDetectionProps): UseEditorChangeDetectionReturn {
-  // Standard change tracking — skip for templates and metaobjects (they use custom logic below)
-  const standardHasFieldChanges = useChangeTracking(
-    isLoadingData ? null : (
-      config.contentType !== 'templates' && config.contentType !== 'metaobjects'
-        ? (selectedItem || null)
-        : null
-    ),
-    currentLanguage,
-    primaryLocale,
-    editableValues,
-    config.contentType,
-    fallbackFields
-  );
+  // useChangeTracking is called with null to satisfy React hook rules while being disabled.
+  // All change detection now goes through the unified baselineValuesRef below.
+  useChangeTracking(null, currentLanguage, primaryLocale, editableValues, config.contentType, fallbackFields);
 
-  // Template-specific change detection: compare editableValues with originalTemplateValuesRef
-  const templateHasFieldChanges = useMemo(() => {
-    if (config.contentType !== 'templates' || isLoadingData || !selectedItem) return false;
-
-    const originalValues = originalTemplateValuesRef.current;
-    if (Object.keys(originalValues).length === 0) return false;
-
-    // Compare only current page's fields to avoid stale keys from previous pages
-    for (const [key, originalValue] of Object.entries(originalValues)) {
-      if ((editableValues[key] ?? "") !== originalValue) return true;
+  // Unified change detection: compare editableValues against the baseline set by
+  // onDataLoaded() after revalidation and by translation callbacks. Works for all
+  // content types (standard, templates, metaobjects).
+  const hasFieldChanges = useMemo(() => {
+    if (isLoadingData || !selectedItem) return false;
+    const baseline = baselineValuesRef.current;
+    if (Object.keys(baseline).length === 0) return false;
+    for (const [key, baselineValue] of Object.entries(baseline)) {
+      if ((editableValues[key] ?? "") !== baselineValue) return true;
     }
     return false;
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- templateValuesVersion forces recalc when ref updates
-  }, [config.contentType, isLoadingData, selectedItem, editableValues, templateValuesVersion]);
-
-  // Metaobjects-specific change detection: compare editableValues with originalLoadedValuesRef
-  const metaobjectsHasFieldChanges = useMemo(() => {
-    if (config.contentType !== 'metaobjects' || isLoadingData || !selectedItem) return false;
-
-    const originalValues = originalLoadedValuesRef.current;
-    if (!originalValues || Object.keys(originalValues).length === 0) return false;
-
-    for (const [key, originalValue] of Object.entries(originalValues)) {
-      if ((editableValues[key] ?? "") !== originalValue) return true;
-    }
-    return false;
-  }, [config.contentType, isLoadingData, selectedItem, editableValues]);
-
-  const hasFieldChanges =
-    config.contentType === 'templates' ? templateHasFieldChanges :
-    config.contentType === 'metaobjects' ? metaobjectsHasFieldChanges :
-    standardHasFieldChanges;
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- baselineVersion forces recalc when ref updates
+  }, [editableValues, baselineVersion, isLoadingData, selectedItem]);
 
   const hasAltTextChanges = useMemo(() => {
     const originalKeys = Object.keys(originalAltTexts);
