@@ -61,7 +61,7 @@ function buildVariableChips(variants: VariantWithGallery[]): string[] {
   return Array.from(seen);
 }
 
-export function BulkAltTextPanel({ productId, variants, shopLocales, primaryLocale, onApplySuccess }: Props) {
+export function BulkAltTextPanel({ productId, productTitle, variants, shopLocales, primaryLocale, onApplySuccess }: Props) {
   const { t } = useI18n();
   const im = t.imageManager;
   const { showInfoBox } = useInfoBox();
@@ -231,7 +231,7 @@ export function BulkAltTextPanel({ productId, variants, shopLocales, primaryLoca
         const res = await fetch("/api/translate-alt-text-template", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ templates, fromLocale: primaryLocale, toLocales }),
+          body: JSON.stringify({ templates, fromLocale: primaryLocale, toLocales, productId, productTitle }),
         });
         const data = await res.json();
 

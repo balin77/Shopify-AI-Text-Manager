@@ -157,10 +157,15 @@ Return only the translation, without additional explanations.`;
     const sanitized = sanitizePromptInput(template, { maxLength: 500, allowNewlines: false });
     const fromName = LOCALE_NAMES[fromLang] || fromLang;
     const toName = LOCALE_NAMES[toLang] || toLang;
+    // Extract variable names so we can list them explicitly in the guard instruction
+    const variableNames = [...sanitized.matchAll(/\{([^}]+)\}/g)].map(m => m[1]);
+    const varGuard = variableNames.length > 0
+      ? `IMPORTANT: Keep these placeholder names UNCHANGED (do not translate them): ${variableNames.map(v => `{${v}}`).join(", ")}`
+      : "IMPORTANT: Keep all {placeholder} names exactly as they appear — do not translate them.";
     const prompt = `Translate this product image alt text template from ${fromName} to ${toName}.
-The template contains variable placeholders in {curly braces} — these are product attribute names (e.g. color, size, material).
-Translate BOTH the surrounding text AND the variable names inside the curly braces to their ${toName} equivalents.
-Keep the curly brace {syntax} exactly as-is (do not remove or change the braces themselves).
+The template may contain variable placeholders in {curly braces}.
+${varGuard}
+Only translate the surrounding text, not the placeholder names inside the braces.
 Return only the translated template text, nothing else.
 
 Template: ${sanitized}`;
