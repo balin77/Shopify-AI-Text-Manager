@@ -570,6 +570,19 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     );
   }, [items, selectedItemId]);
 
+  // Safety-net signal for primary content changes after revalidation.
+  // Handles the case where translations are unchanged (e.g., both empty before and after)
+  // but primary fields like title/description changed — without this, the data-loading
+  // effect would never re-run after a reload because no other dep would change.
+  const selectedItemPrimarySignal = useMemo(() => {
+    if (!selectedItemId) return '';
+    const item = items.find(i => i.id === selectedItemId);
+    if (!item) return '';
+    return `${item.title || ''}|${(item.descriptionHtml || '').length}|${item.handle || ''}`;
+  }, [items, selectedItemId]);
+
+  const prevSelectedItemPrimarySignalRef = useRef<string>('');
+
   useEffect(() => {
     const item = selectedItemRef.current;
     if (!item) {
@@ -582,13 +595,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // 2. The language changed (user switched languages)
     // 3. Data refresh was triggered (e.g., by ReloadButton after revalidation)
     // 4. Translations arrived for the selected item (lazy-load / revalidation)
+    // 5. Primary content changed after revalidation (safety net for empty-translation case)
     // NOTE: Use separate ref from image loading to avoid race condition
     const itemIdChanged = prevItemIdForDataLoadRef.current !== selectedItemId;
     const languageChanged = prevCurrentLanguageRef.current !== currentLanguage;
     const refreshTriggered = prevDataRefreshTriggerRef.current !== dataRefreshTrigger;
     const translationsArrived = prevTranslationSignalRef.current !== selectedItemTranslationSignal;
+    const primaryContentChanged = prevSelectedItemPrimarySignalRef.current !== selectedItemPrimarySignal;
 
-    if (!itemIdChanged && !languageChanged && !refreshTriggered && !translationsArrived) {
+    if (!itemIdChanged && !languageChanged && !refreshTriggered && !translationsArrived && !primaryContentChanged) {
       // Don't log on skip to reduce console spam
       return;
     }
@@ -603,6 +618,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     prevCurrentLanguageRef.current = currentLanguage;
     prevDataRefreshTriggerRef.current = dataRefreshTrigger;
     prevTranslationSignalRef.current = selectedItemTranslationSignal;
+    prevSelectedItemPrimarySignalRef.current = selectedItemPrimarySignal;
 
     if (refreshTriggered) {
       debugLog.dataLoad(' Data refresh triggered by ReloadButton');
@@ -661,7 +677,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // IMPORTANT: Deps are kept minimal to prevent unnecessary re-runs.
     // selectedItemTranslationSignal is stable (only changes when translation count changes)
     // so it won't cause extra re-runs during normal editing.
-  }, [selectedItemId, currentLanguage, primaryLocale, config, dataRefreshTrigger, selectedItemTranslationSignal]);
+  }, [selectedItemId, currentLanguage, primaryLocale, config, dataRefreshTrigger, selectedItemTranslationSignal, selectedItemPrimarySignal]);
 
   // Mark loading as complete after editableValues have been updated
   // This is in a separate useEffect to ensure the state update has completed

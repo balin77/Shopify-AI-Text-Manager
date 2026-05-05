@@ -803,6 +803,9 @@ export class ProductSyncService {
       logger.debug(`[ProductSync] Fetched ${subResourceTranslations.length} sub-resource translations`);
 
       // 5. Save to database
+      if (forceSync) {
+        logger.info(`[ProductSync] [RELOAD] title="${productData.title || '(empty)'}", descLen=${(productData.descriptionHtml || '').length}, translations=${allTranslations.length}`);
+      }
       await this.saveToDatabase(productData, allTranslations, imageAltTranslations, subResourceTranslations, forceSync);
 
       logger.debug(`[ProductSync] Successfully synced product: ${productId}`);
@@ -1424,7 +1427,7 @@ export class ProductSyncService {
         const deletedTranslations = await tx.contentTranslation.deleteMany({
           where: { shop: this.shop, resourceId: productData.id, resourceType: "Product" }
         });
-        logger.debug(`[ProductSync] Deleted ${deletedTranslations.count} old translations from database`);
+        logger.info(`[ProductSync] [RELOAD] Deleted ${deletedTranslations.count} old translations, will save ${validTranslations.length} fresh ones`);
 
         // Insert translations
         if (validTranslations.length > 0) {

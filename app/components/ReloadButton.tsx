@@ -50,14 +50,35 @@ export function ReloadButton({
     processedCompletedRef.current = null;
   }
 
-  // Handle completed reload: trigger revalidation, then clear spinner.
-  // The entire post-fetch flow (revalidation + completion) runs inside
-  // setTimeout callbacks so it's immune to React re-renders and effect cleanups.
+  // Tracks that we triggered a revalidation. Set just before revalidate() is called;
+  // cleared when the revalidation-completion effect below detects idle.
+  const reloadTriggeredRef = useRef(false);
+  const reloadRidRef = useRef<string>('');
+
+  // Detect revalidation completion via React's render cycle.
+  // Replaces the old waitForIdle() setTimeout polling which had a race: the first poll
+  // at +500ms could see state='idle' BEFORE React processed the 'loading' state from
+  // revalidate(), causing triggerDataRefresh() to fire with stale item data. If translations
+  // hadn't changed, the data-loading effect would never re-run for the fresh content.
+  // React guarantees that when this effect fires with state='idle', the loader data
+  // (and therefore selectedItemRef in the editor) already reflects the fresh response.
+  useEffect(() => {
+    if (!reloadTriggeredRef.current) return;
+    if (revalidator?.state === 'idle') {
+      const rid = reloadRidRef.current;
+      reloadTriggeredRef.current = false;
+      clearReloading(rid);
+      onReloadCompleteRef.current?.();
+      onReloadSuccessRef.current?.();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [revalidator?.state]);
+
+  // Handle completed reload: cache-bust, then trigger revalidation.
   useEffect(() => {
     if (!completedData || completedData === processedCompletedRef.current) return;
     processedCompletedRef.current = completedData;
 
-    // Consume from the store so it's only processed once
     consumeCompleted(resourceId);
 
     if (!completedData.success) {
@@ -65,38 +86,22 @@ export function ReloadButton({
       return;
     }
 
-    // Capture resourceId in closure for the timeout chain
     const rid = resourceId;
 
     if (revalidatorRef.current) {
-      // Wait 1s for DB write to settle, then trigger revalidation
+      // Wait 1s for DB write to settle, then trigger revalidation.
       setTimeout(() => {
         // Cache-bust: force Remix to reload data
         const url = new URL(window.location.href);
         url.searchParams.set('_reload', Date.now().toString());
         window.history.replaceState({}, '', url.toString());
 
-        revalidatorRef.current?.revalidate();
+        // Set the flag BEFORE calling revalidate() so the effect above is ready
+        // to handle the idle transition that follows.
+        reloadRidRef.current = rid;
+        reloadTriggeredRef.current = true;
 
-        // Poll until revalidator is idle (revalidation complete), then finish.
-        // This replaces the old useEffect-based monitoring which missed fast
-        // revalidations due to React batching loading→idle into a single render.
-        const waitForIdle = (attempts: number) => {
-          if (attempts > 20) {
-            // Safety: give up after ~10s to avoid infinite polling
-            clearReloading(rid);
-            return;
-          }
-          if (revalidatorRef.current?.state === 'idle') {
-            clearReloading(rid);
-            onReloadCompleteRef.current?.();
-            onReloadSuccessRef.current?.();
-          } else {
-            setTimeout(() => waitForIdle(attempts + 1), 500);
-          }
-        };
-        // Give revalidation a moment to start before checking for idle
-        setTimeout(() => waitForIdle(0), 500);
+        revalidatorRef.current?.revalidate();
       }, 1000);
     } else {
       // Fallback: full page reload if revalidator not available

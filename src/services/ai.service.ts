@@ -148,9 +148,17 @@ ${languageInstruction}`;
 
 Text: ${sanitizedContent}
 
-Return only the translation, without additional explanations.`;
+Return ONLY the translated text. Do NOT wrap it in XML tags, quotes, or any other formatting. No explanations.`;
 
-    return await this.askAI(prompt);
+    const response = await this.askAI(prompt);
+    return AIService.stripXmlWrapper(response);
+  }
+
+  /** Strips single-root XML wrapper tags that some models add (e.g. <translation>…</translation>). */
+  private static stripXmlWrapper(text: string): string {
+    const trimmed = text.trim();
+    const match = trimmed.match(/^<([a-zA-Z][a-zA-Z0-9-]*)>([\s\S]*)<\/\1>$/);
+    return match ? match[2].trim() : trimmed;
   }
 
   async translateTemplate(template: string, fromLang: string, toLang: string): Promise<string> {
