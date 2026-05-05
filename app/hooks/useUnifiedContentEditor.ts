@@ -1621,11 +1621,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // Update original alt-texts to match current values (so hasChanges becomes false)
       setOriginalAltTexts({ ...imageAltTextsRef.current });
 
-      // For templates: Update original values to match current values (so hasChanges becomes false)
+      // For templates: Do NOT eagerly update originalTemplateValuesRef here.
+      // Using the current editableValues would incorrectly bake in any manual edits
+      // the user made after the save was submitted, making hasChanges=false and
+      // blocking subsequent saves. The data loading effect (after revalidation) sets
+      // originalTemplateValuesRef from resolve() which is always correct.
+      // The isLoadingData=true guard in templateHasFieldChanges covers the gap.
       if (config.contentType === 'templates') {
-        originalTemplateValuesRef.current = { ...editableValues };
-        setTemplateValuesVersion(v => v + 1); // Trigger useMemo recalculation
-
         // For foreign locale saves: update localTranslationsRef so isFieldTranslated
         // and hasLocaleMissingTranslations return correct results IMMEDIATELY —
         // without waiting for revalidation. No item mutation needed; resolve()
@@ -1649,10 +1651,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         }
       }
 
-      // For metaobjects: Update originalLoadedValuesRef so hasChanges becomes false
-      if (config.contentType === 'metaobjects') {
-        originalLoadedValuesRef.current = { ...editableValues };
-      }
+      // For metaobjects: Do NOT eagerly update originalLoadedValuesRef with current
+      // editableValues — same reason as templates above. The data loading effect
+      // sets it correctly after revalidation. isLoadingData=true covers the gap.
 
       // Mark this item as recently saved to prevent on-demand sync from re-fetching
       // stale translations from Shopify (race condition with eventual consistency)
