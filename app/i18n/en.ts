@@ -1,5 +1,6 @@
 import type { Translation } from "./de";
 
+// English translations
 export const en: Translation = {
   // Navigation
   nav: {
