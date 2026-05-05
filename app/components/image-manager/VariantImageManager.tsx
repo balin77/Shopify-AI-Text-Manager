@@ -1430,6 +1430,8 @@ export function VariantImageManager({
             thumbSize={thumbSize}
             skipDndContext
             onUploadToGallery={handleUploadToProductGallery}
+            localAltTexts={localAltTexts}
+            isPrimaryLocale={isPrimaryLocale}
           />
         </div>
 

@@ -105,6 +105,8 @@ interface SortableThumbnailProps {
   onSelect: (selected: boolean) => void;
   thumbSize: number;
   isMain?: boolean;
+  localAltTexts?: Record<string, string>;
+  isPrimaryLocale?: boolean;
 }
 
 function extractFilename(url: string): string {
@@ -115,14 +117,17 @@ function extractFilename(url: string): string {
   }
 }
 
-function SortableThumbnail({ sortableId, url, containerId, isSelected, meta, onSelect, thumbSize, isMain = false }: SortableThumbnailProps) {
+function SortableThumbnail({ sortableId, url, containerId, isSelected, meta, onSelect, thumbSize, isMain = false, localAltTexts, isPrimaryLocale = true }: SortableThumbnailProps) {
   const { t } = useI18n();
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: sortableId,
     data: { containerId, url },
   });
   const formatBadge = getFormatBadge(url, meta?.mimeType);
-  const hasAlt = Boolean(meta?.altText);
+  const currentLocaleAltText = isPrimaryLocale
+    ? (localAltTexts?.[url] ?? meta?.altText ?? "")
+    : (localAltTexts?.[url] ?? "");
+  const hasAlt = Boolean(currentLocaleAltText);
   const filename = extractFilename(url);
   const isConverting = Boolean(meta?.isConverting);
 
@@ -182,7 +187,7 @@ function SortableThumbnail({ sortableId, url, containerId, isSelected, meta, onS
 
         {/* Alt text badge */}
         <div
-          title={hasAlt ? (meta?.altText ?? undefined) : undefined}
+          title={hasAlt ? currentLocaleAltText : undefined}
           style={{
             position: "absolute",
             bottom: 4,
@@ -262,6 +267,8 @@ interface SortableImageGridProps {
   skipDndContext?: boolean;
   // When false, no image gets the "main" gold border (variant has no featured image)
   hasMainImage?: boolean;
+  localAltTexts?: Record<string, string>;
+  isPrimaryLocale?: boolean;
 }
 
 export function SortableImageGrid({
@@ -278,6 +285,8 @@ export function SortableImageGrid({
   onUploadToGallery,
   skipDndContext = false,
   hasMainImage = true,
+  localAltTexts,
+  isPrimaryLocale = true,
 }: SortableImageGridProps) {
   const { t } = useI18n();
   const sensors = useSensors(
@@ -364,6 +373,8 @@ export function SortableImageGrid({
             onSelect={(sel) => onSelect?.(url, sel)}
             thumbSize={thumbSize}
             isMain={showPlaceholder && hasMainImage && idx === 0}
+            localAltTexts={localAltTexts}
+            isPrimaryLocale={isPrimaryLocale}
           />
         ))}
       </SortableContext>

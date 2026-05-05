@@ -168,6 +168,8 @@ export function VariantGallerySection({
             thumbSize={thumbSize}
             skipDndContext={skipDndContext}
             hasMainImage={hasMainImage}
+            localAltTexts={localAltTexts}
+            isPrimaryLocale={isPrimaryLocale}
           />
 
           <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
