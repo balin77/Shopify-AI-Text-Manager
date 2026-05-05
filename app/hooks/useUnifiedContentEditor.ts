@@ -1383,16 +1383,20 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
   // Show global InfoBox for success/error messages and revalidate after save
   useEffect(() => {
+    console.log('[CP-DIAG] effect2 | fetcher.data:', fetcher.data ? `{success:${fetcher.data.success},action:${fetcher.data.actionType}}` : 'null/undefined', '| sameAsProcessed:', fetcher.data === processedSaveResponseRef.current, '| isSavePending:', isSavePendingRef.current);
     // Skip if this response was already processed (prevents duplicate processing on re-renders)
     if (fetcher.data === processedSaveResponseRef.current) {
+      console.log('[CP-DIAG] effect2 BLOCKED: same as processedSaveResponseRef');
       return;
     }
 
     // Skip if no save was actually initiated (prevents false "saved" messages during reload/revalidation)
     if (!isSavePendingRef.current) {
+      console.log('[CP-DIAG] effect2 BLOCKED: isSavePending=false');
       return;
     }
 
+    console.log('[CP-DIAG] effect2 passed guards | fetcher.data.success:', fetcher.data?.success, '| actionType:', fetcher.data?.actionType);
     if (fetcher.data?.success && fetcher.data.actionType === "updateContent") {
       // Mark this response as processed and clear save pending flag
       processedSaveResponseRef.current = fetcher.data;
@@ -1403,6 +1407,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       savedItemIdRef.current = null; // Always clean up — we've processed this response
 
       if (!isSavedItemCurrent) {
+        console.log('[CP-DIAG] effect2 BLOCKED: item changed during save');
         debugLog.response(' Item changed during save — skipping response application for wrong item');
         return;
       }
