@@ -1414,24 +1414,22 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // The data-loading effect only fires when selectedItemTranslationSignal changes;
       // without this update, hasChanges stays true and navigation stays blocked after
       // saves that don't affect translation count (e.g. primary locale with no translations).
-      // Primary locale: use the snapshot captured at submit time (savedPrimaryValuesRef),
-      // NOT editableValuesRef — the user may have made new edits while the save was in-flight.
-      // Foreign locale: use editableValuesRef as best approximation.
+      // NOTE: Do NOT use savedLocaleRef here — it is cleared to null by the "Update item
+      // object after saving" useEffect (which runs first, at line ~1376). Instead, detect
+      // primary locale by checking for a savedPrimaryValuesRef snapshot (only set for primary saves).
       {
         const currentItemId = selectedItemIdRef.current;
-        console.log('[CP-DIAG] save-response baseline-update | savedLocale:', savedLocaleRef.current, '| primaryLocale:', primaryLocale, '| currentItemId:', currentItemId);
-        if (savedLocaleRef.current === primaryLocale && currentItemId) {
-          const snapshot = savedPrimaryValuesRef.current[currentItemId];
-          console.log('[CP-DIAG] primary snapshot keys:', snapshot ? Object.keys(snapshot) : 'MISSING');
-          if (snapshot && Object.keys(snapshot).length > 0) {
-            baselineValuesRef.current = { ...snapshot };
+        if (currentItemId) {
+          const primarySnapshot = savedPrimaryValuesRef.current[currentItemId];
+          if (primarySnapshot && Object.keys(primarySnapshot).length > 0) {
+            baselineValuesRef.current = { ...primarySnapshot };
             setBaselineVersion(v => v + 1);
-            console.log('[CP-DIAG] baseline updated from snapshot ✓');
+          } else {
+            // Foreign locale save (no primary snapshot): use current editableValues as best approximation.
+            // editableValuesRef holds the saved state since no new edits can arrive during the save.
+            baselineValuesRef.current = { ...editableValuesRef.current };
+            setBaselineVersion(v => v + 1);
           }
-        } else if (savedLocaleRef.current && savedLocaleRef.current !== primaryLocale) {
-          baselineValuesRef.current = { ...editableValuesRef.current };
-          setBaselineVersion(v => v + 1);
-          console.log('[CP-DIAG] baseline updated from editableValues (foreign) ✓');
         }
       }
 
@@ -1841,12 +1839,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const isSavingCurrentItem = fetcher.state !== "idle" &&
     (fetcher.formData?.get("itemId") === selectedItemId ||
      (isSavePendingRef.current && savedItemIdRef.current === selectedItemId));
-
-  // Diagnostic: log when isSavingCurrentItem or fetcher.state changes
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => {
-    console.log('[CP-DIAG] fetcher.state:', fetcher.state, '| isSavingCurrentItem:', isSavingCurrentItem, '| formData action:', fetcher.formData?.get('action') ?? 'null');
-  }, [fetcher.state, isSavingCurrentItem]);
 
   // ============================================================================
   // FIELD EVENT HANDLERS (extracted to useFieldHandlers)
