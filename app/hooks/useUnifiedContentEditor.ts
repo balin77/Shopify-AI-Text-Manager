@@ -1419,16 +1419,18 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // primary locale by checking for a savedPrimaryValuesRef snapshot (only set for primary saves).
       {
         const currentItemId = selectedItemIdRef.current;
+        console.log('[CP-DIAG] save-response baseline-update | currentItemId:', currentItemId);
         if (currentItemId) {
           const primarySnapshot = savedPrimaryValuesRef.current[currentItemId];
+          console.log('[CP-DIAG] primarySnapshot:', primarySnapshot ? Object.keys(primarySnapshot) : 'MISSING');
           if (primarySnapshot && Object.keys(primarySnapshot).length > 0) {
             baselineValuesRef.current = { ...primarySnapshot };
             setBaselineVersion(v => v + 1);
+            console.log('[CP-DIAG] baseline updated from primary snapshot ✓');
           } else {
-            // Foreign locale save (no primary snapshot): use current editableValues as best approximation.
-            // editableValuesRef holds the saved state since no new edits can arrive during the save.
             baselineValuesRef.current = { ...editableValuesRef.current };
             setBaselineVersion(v => v + 1);
+            console.log('[CP-DIAG] baseline updated from editableValues (foreign) ✓');
           }
         }
       }
