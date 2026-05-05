@@ -549,7 +549,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                 {/* Operation Buttons */}
                 <div style={{ marginTop: "1rem" }}>
                   <Card padding="400">
-                  <InlineStack align="space-between" blockAlign="center">
+                  <InlineStack align="space-between" blockAlign="center" gap="300">
                     {/* Left: Translate All + Clear All Buttons */}
                     {/* Hidden for templates in primary locale when themeFilesUpsert is not enabled */}
                     <InlineStack gap="200">
