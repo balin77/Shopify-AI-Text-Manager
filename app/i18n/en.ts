@@ -716,6 +716,9 @@ export const en: Translation = {
     altTextTemplateApplySuccess: "Alt texts applied successfully",
     altTextTemplateApplyError: "Error applying templates: {error}",
     altTextTemplateSaved: "Template saved",
+    altTextTemplateTranslate: "Translate",
+    altTextTemplateTranslateAll: "Translate all positions",
+    altTextTemplateTranslating: "Translating…",
   },
 
   // Common

@@ -72,8 +72,13 @@ export function BulkAltTextPanel({ productId, variants, shopLocales, primaryLoca
   const [activeLocale, setActiveLocale] = useState(primaryLocale);
   const [isLoading, setIsLoading] = useState(false);
   const [isApplying, setIsApplying] = useState(false);
+  const [translatingPositions, setTranslatingPositions] = useState<Set<number>>(new Set());
+  const [isTranslatingAll, setIsTranslatingAll] = useState(false);
 
   const variableChips = buildVariableChips(variants);
+  const isPrimaryLocale = activeLocale === primaryLocale;
+  const foreignLocales = shopLocales.filter(l => l !== primaryLocale);
+  const hasMultipleLocales = shopLocales.length > 1;
 
   // Load saved templates whenever productId changes
   useEffect(() => {
@@ -196,6 +201,84 @@ export function BulkAltTextPanel({ productId, variants, shopLocales, primaryLoca
     [positions, activeLocale, handleTemplateChange]
   );
 
+  /** Translate one position (positionIndex) or all positions (null) */
+  const handleTranslate = useCallback(
+    async (positionIndex: number | null) => {
+      if (!hasMultipleLocales) return;
+
+      const toLocales = isPrimaryLocale ? foreignLocales : [activeLocale];
+      if (toLocales.length === 0) return;
+
+      // Source is always primary locale templates
+      const positionsToTranslate = positionIndex === null
+        ? positions
+        : [positions[positionIndex]];
+
+      const templates = positionsToTranslate
+        .map((pos) => ({ position: pos.position, template: pos.templates[primaryLocale] ?? "" }))
+        .filter((t) => t.template.length > 0);
+
+      if (templates.length === 0) return;
+
+      // Set loading state
+      if (positionIndex === null) {
+        setIsTranslatingAll(true);
+      } else {
+        setTranslatingPositions((prev) => new Set([...prev, positionIndex]));
+      }
+
+      try {
+        const res = await fetch("/api/translate-alt-text-template", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ templates, fromLocale: primaryLocale, toLocales }),
+        });
+        const data = await res.json();
+
+        if (data.success) {
+          const translationsMap = data.translations as Record<string, Array<{ position: number; template: string }>>;
+
+          // Gather current positions snapshot for save calls
+          const currentPositions = positions;
+
+          setPositions((prev) => {
+            const next = prev.map((pos) => ({ ...pos, templates: { ...pos.templates } }));
+            for (const [locale, items] of Object.entries(translationsMap)) {
+              for (const item of items) {
+                const idx = next.findIndex((p) => p.position === item.position);
+                if (idx >= 0) {
+                  next[idx].templates[locale] = item.template;
+                }
+              }
+            }
+            return next;
+          });
+
+          // Auto-save translated templates to DB
+          for (const [locale, items] of Object.entries(translationsMap)) {
+            for (const item of items) {
+              const pos = currentPositions.find((p) => p.position === item.position);
+              if (pos && item.template) {
+                saveTemplate(pos, locale, item.template).catch(() => {});
+              }
+            }
+          }
+        }
+      } catch {}
+
+      if (positionIndex === null) {
+        setIsTranslatingAll(false);
+      } else {
+        setTranslatingPositions((prev) => {
+          const next = new Set(prev);
+          next.delete(positionIndex);
+          return next;
+        });
+      }
+    },
+    [hasMultipleLocales, isPrimaryLocale, foreignLocales, activeLocale, positions, primaryLocale, saveTemplate]
+  );
+
   const handleApplyToAll = useCallback(async () => {
     setIsApplying(true);
     try {
@@ -245,6 +328,8 @@ export function BulkAltTextPanel({ productId, variants, shopLocales, primaryLoca
     );
   }
 
+  const anyTranslating = isTranslatingAll || translatingPositions.size > 0;
+
   return (
     <BlockStack gap="400">
       <Box padding="300">
@@ -259,10 +344,24 @@ export function BulkAltTextPanel({ productId, variants, shopLocales, primaryLoca
             />
           )}
 
+          {/* Translate All button — below locale selector */}
+          {hasMultipleLocales && (
+            <Button
+              size="slim"
+              onClick={() => handleTranslate(null)}
+              loading={isTranslatingAll}
+              disabled={anyTranslating && !isTranslatingAll}
+            >
+              🌍 {isTranslatingAll
+                ? (im?.altTextTemplateTranslating ?? "Translating…")
+                : (im?.altTextTemplateTranslateAll ?? "Translate all positions")}
+            </Button>
+          )}
 
           {/* Positions */}
           {positions.map((pos, idx) => {
             const templateValue = pos.templates[activeLocale] ?? "";
+            const isThisTranslating = translatingPositions.has(idx);
             return (
               <BlockStack key={pos.position} gap="200">
                 <InlineStack align="space-between" blockAlign="center">
@@ -270,15 +369,30 @@ export function BulkAltTextPanel({ productId, variants, shopLocales, primaryLoca
                     {(im?.altTextTemplatePosition ?? "Position {n}").replace("{n}", String(idx + 1))}
                     {pos.label ? ` – ${pos.label}` : ""}
                   </Text>
-                  {positions.length > 1 && (
-                    <Button
-                      icon={DeleteIcon}
-                      tone="critical"
-                      variant="plain"
-                      onClick={() => handleRemovePosition(idx)}
-                      accessibilityLabel="Remove position"
-                    />
-                  )}
+                  <InlineStack gap="200" blockAlign="center">
+                    {hasMultipleLocales && (
+                      <Button
+                        size="slim"
+                        variant="plain"
+                        onClick={() => handleTranslate(idx)}
+                        loading={isThisTranslating}
+                        disabled={anyTranslating && !isThisTranslating}
+                      >
+                        🌍 {isThisTranslating
+                          ? (im?.altTextTemplateTranslating ?? "Translating…")
+                          : (im?.altTextTemplateTranslate ?? "Translate")}
+                      </Button>
+                    )}
+                    {positions.length > 1 && (
+                      <Button
+                        icon={DeleteIcon}
+                        tone="critical"
+                        variant="plain"
+                        onClick={() => handleRemovePosition(idx)}
+                        accessibilityLabel="Remove position"
+                      />
+                    )}
+                  </InlineStack>
                 </InlineStack>
 
                 <TextField

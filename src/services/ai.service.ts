@@ -153,6 +153,20 @@ Return only the translation, without additional explanations.`;
     return await this.askAI(prompt);
   }
 
+  async translateTemplate(template: string, fromLang: string, toLang: string): Promise<string> {
+    const sanitized = sanitizePromptInput(template, { maxLength: 500, allowNewlines: false });
+    const fromName = LOCALE_NAMES[fromLang] || fromLang;
+    const toName = LOCALE_NAMES[toLang] || toLang;
+    const prompt = `Translate this product image alt text template from ${fromName} to ${toName}.
+The template contains variable placeholders in {curly braces} — these are product attribute names (e.g. color, size, material).
+Translate BOTH the surrounding text AND the variable names inside the curly braces to their ${toName} equivalents.
+Keep the curly brace {syntax} exactly as-is (do not remove or change the braces themselves).
+Return only the translated template text, nothing else.
+
+Template: ${sanitized}`;
+    return (await this.askAI(prompt)).trim();
+  }
+
   /**
    * Translate multiple alt-texts to multiple locales in a single AI request.
    * Much more efficient than calling translateContent() per image per locale.

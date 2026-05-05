@@ -713,6 +713,9 @@ export const de = {
     altTextTemplateApplySuccess: "Alt-Texte erfolgreich angewendet",
     altTextTemplateApplyError: "Fehler beim Anwenden: {error}",
     altTextTemplateSaved: "Vorlage gespeichert",
+    altTextTemplateTranslate: "Übersetzen",
+    altTextTemplateTranslateAll: "Alle Positionen übersetzen",
+    altTextTemplateTranslating: "Wird übersetzt…",
   },
 
   // Common
