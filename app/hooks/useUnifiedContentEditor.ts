@@ -36,6 +36,7 @@ import type {
   TranslatedAltTextsResponse,
 } from "../types/content-editor.types";
 import { debugLog } from "../utils/debug";
+import type { ValidationOverlays } from "../utils/field-validation.utils";
 import { markRecentlySaved } from "../utils/translation-timing";
 import { extractReadableName } from "../utils/templates-field-factory";
 import { useTaskCount } from "../contexts/TaskCountContext";
@@ -2143,6 +2144,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     return loadingFieldKeys.has(fieldKey);
   }, [loadingFieldKeys]);
 
+  const getValidationOverlays = useCallback((): ValidationOverlays => ({
+    savedPrimaryValues: selectedItem?.id
+      ? savedPrimaryValuesRef.current[selectedItem.id]
+      : undefined,
+    localTranslations: localTranslationsRef.current,
+    deletedKeys: deletedTranslationKeysRef.current,
+  }), [selectedItem?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
   return {
     state,
     handlers,
@@ -2163,6 +2172,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       reloadTemplateValues,
       triggerDataRefresh,
       isFieldLoading,
+      getValidationOverlays,
+      validationVersion: baselineVersion,
     },
     // Dynamic field definitions (for templates and other dynamic content types)
     effectiveFieldDefinitions,

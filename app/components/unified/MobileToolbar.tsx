@@ -14,6 +14,7 @@ import { useState, useCallback } from "react";
 import { Card, Button, Popover, ActionList, Tooltip } from "@shopify/polaris";
 import { MenuHorizontalIcon } from "@shopify/polaris-icons";
 import { useLocaleButtonStyle, getLocaleButtonTooltip } from "../../utils/contentEditor.utils";
+import type { ValidationOverlays } from "../../utils/contentEditor.utils";
 import { ReloadButton } from "../ReloadButton";
 import { HelpTooltip } from "../HelpTooltip";
 import { useI18n } from "../../contexts/I18nContext";
@@ -29,6 +30,8 @@ interface MobileToolbarProps {
   onLanguageChange: (locale: string) => void;
   enabledLanguages?: string[];
   isLoadingData?: boolean;
+  validationOverlays?: ValidationOverlays;
+  validationVersion?: number;
 
   // Operation handlers
   onTranslateAll: () => void;
@@ -86,6 +89,8 @@ export function MobileToolbar({
   onLanguageChange,
   enabledLanguages,
   isLoadingData = false,
+  validationOverlays,
+  validationVersion,
   onTranslateAll,
   onClearAll,
   onSave,
@@ -143,10 +148,12 @@ export function MobileToolbar({
               selectedItem,
               primaryLocale,
               contentType,
-              isLoadingData
+              isLoadingData,
+              validationOverlays,
+              validationVersion
             );
 
-            const tooltip = getLocaleButtonTooltip(locale, selectedItem, primaryLocale, contentType, isLoadingData, tooltipI18n);
+            const tooltip = getLocaleButtonTooltip(locale, selectedItem, primaryLocale, contentType, isLoadingData, tooltipI18n, validationOverlays);
 
             const isEnabled = !enabledLanguages || enabledLanguages.includes(locale.locale);
             const isPrimary = locale.primary;

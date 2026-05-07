@@ -12,6 +12,7 @@ import { useSeoSettings } from "../contexts/SeoSettingsContext";
 import { useI18n } from "../contexts/I18nContext";
 import { getLocalizedLanguageName } from "../utils/contentEditor.utils";
 import { hasFieldMissingTranslations } from "../utils/field-validation.utils";
+import type { ValidationOverlays } from "../utils/field-validation.utils";
 import type { FieldDefinition, ContentType } from "../types/content-editor.types";
 import { IMAGE_ALL_LOCALES_AI_ACTIONS, IMAGE_PER_LOCALE_AI_ACTIONS } from "../constants/ai-actions";
 
@@ -51,6 +52,7 @@ export interface FieldRendererProps {
   selectedItem: any;
   contentType: string;
   t: any;
+  validationOverlays?: ValidationOverlays;
 }
 
 export function UnifiedFieldRenderer(
@@ -92,6 +94,7 @@ export function UnifiedFieldRenderer(
     handlers,
     fetcherState,
     fetcherFormData,
+    validationOverlays,
   } = props;
 
   const currentAction = fetcherFormData?.get("action");
@@ -159,7 +162,7 @@ export function UnifiedFieldRenderer(
       (contentType === "products" && field.key === "title"));
 
   const fieldHasMissingTranslations = isPrimaryLocale
-    ? hasFieldMissingTranslations(selectedItem, field.key, shopLocales, primaryLocale, contentType as ContentType)
+    ? hasFieldMissingTranslations(selectedItem, field.key, shopLocales, primaryLocale, contentType as ContentType, validationOverlays)
     : false;
 
   // Custom render function (if provided)

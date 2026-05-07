@@ -28,7 +28,7 @@ import { getPlanDisplayName as getPlanDisplayNameUtil } from "../utils/planUtils
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { useItemSelector } from "../contexts/ItemSelectorContext";
 import { getLocalizedLanguageName, hasPrimaryContentMissing, getLocaleButtonTooltip } from "../utils/contentEditor.utils";
-import type { MetaobjectEntry } from "../utils/contentEditor.utils";
+import type { MetaobjectEntry, ValidationOverlays } from "../utils/contentEditor.utils";
 import { useI18n } from "../contexts/I18nContext";
 import { ENABLE_THEME_PRIMARY_EDIT } from "../config/constants";
 import { useGlobalActionState, useLoadingFieldKeys } from "../hooks/useAIOperationsStore";
@@ -218,6 +218,14 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   }, [fieldPagination?.search]);
 
   const { state, handlers, selectedItem, navigationGuard, helpers, effectiveFieldDefinitions } = editor;
+
+  // Overlay-aware snapshot: re-derived whenever baselineVersion ticks (overlays changed)
+  const validationOverlays = useMemo(
+    () => helpers.getValidationOverlays(),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [helpers.validationVersion]
+  );
+
   const { plan, getMaxProducts, getNextPlanUpgrade } = usePlan();
   const { showInfoBox } = useInfoBox();
   const { registerItems, clearItems } = useItemSelector();
@@ -264,14 +272,15 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
       if (config.contentType === "templates" && item.contentCount !== undefined) {
         subtitle = `${item.contentCount || 0} ${t.content?.translatableFields || "translatable fields"}`;
       }
-      const hasMissingPrimary = hasPrimaryContentMissing(item, config.contentType) || (extraMissingPrimaryIds?.has(item.id) ?? false);
+      const itemOverlays = item.id === selectedItem?.id ? validationOverlays : undefined;
+      const hasMissingPrimary = hasPrimaryContentMissing(item, config.contentType, itemOverlays) || (extraMissingPrimaryIds?.has(item.id) ?? false);
       const missingPrimaryTooltip = hasMissingPrimary
-        ? getLocaleButtonTooltip(primaryLocaleObj, item, primaryLocale, config.contentType, false, tooltipI18n)
+        ? getLocaleButtonTooltip(primaryLocaleObj, item, primaryLocale, config.contentType, false, tooltipI18n, itemOverlays)
         : null;
 
       const foreignMissingParts = foreignLocales
         .map((l) => {
-          const tip = getLocaleButtonTooltip(l, item, primaryLocale, config.contentType, false, tooltipI18n);
+          const tip = getLocaleButtonTooltip(l, item, primaryLocale, config.contentType, false, tooltipI18n, itemOverlays);
           if (!tip) return null;
           const fieldsStr = tip.replace(/^[^:]+:\s*/, "");
           return `${l.locale.toUpperCase()}: ${fieldsStr}`;
@@ -297,7 +306,8 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
         missingTranslationsTooltip,
       };
     });
-  }, [items, config.getPrimaryField, config.getSubtitle, config.contentType, t, shopLocales, primaryLocale, extraMissingPrimaryIds]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, config.getPrimaryField, config.getSubtitle, config.contentType, t, shopLocales, primaryLocale, extraMissingPrimaryIds, validationOverlays, helpers.validationVersion]);
 
   // Plan limit configuration
   const maxItems = getMaxProducts(); // This works for all content types
@@ -482,6 +492,8 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   onLanguageChange={handlers.handleLanguageChange}
                   enabledLanguages={state.enabledLanguages}
                   isLoadingData={state.isLoadingData}
+                  validationOverlays={validationOverlays}
+                  validationVersion={helpers.validationVersion}
                   onTranslateAll={state.currentLanguage === primaryLocale ? handlers.handleTranslateAll : handlers.handleTranslateAllForLocale}
                   onClearAll={state.currentLanguage === primaryLocale ? handlers.handleClearAllClick : handlers.handleClearAllForLocaleClick}
                   onSave={() => {
@@ -538,6 +550,8 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                     showTranslateAll={true}
                     showReloadButton={true}
                     isLoadingData={state.isLoadingData}
+                    validationOverlays={validationOverlays}
+                    validationVersion={helpers.validationVersion}
                     t={{
                       primaryLocaleSuffix: t.content?.primaryLanguageSuffix || "Primary",
                       translateAll: t.content?.translateAll || "🌍 Translate All",
@@ -811,6 +825,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                           handlers={handlers}
                           fetcherState={fetcherState}
                           fetcherFormData={fetcherFormData}
+                          validationOverlays={validationOverlays}
                         />
                         );
                       });
