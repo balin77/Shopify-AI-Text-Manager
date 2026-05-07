@@ -106,7 +106,7 @@ function hasTranslationForField(
  * Note: For templates, returns empty array as templates have dynamic fields
  * handled separately in hasPrimaryContentMissing and hasLocaleMissingTranslations
  */
-function getRequiredFieldsForContentType(contentType: ContentType): string[] {
+function getRequiredFieldsForContentType(contentType: ContentType, item?: TranslatableItem | null): string[] {
   if (contentType === 'templates' || contentType === 'metaobjects') {
     // Templates and metaobjects have dynamic fields in translatableContent/fields
     // The validation is handled separately in the calling functions
@@ -116,6 +116,10 @@ function getRequiredFieldsForContentType(contentType: ContentType): string[] {
   } else if (contentType === 'products') {
     return ["title", "body_html", "handle", "product_type", "meta_title", "meta_description"];
   } else if (contentType === 'blogs') {
+    // Blog containers (categories) only have title, handle, and SEO — no body or summary
+    if (item?.isBlogContainer) {
+      return ["title", "handle", "meta_title", "meta_description"];
+    }
     // Articles have body_html, summary_html, and SEO fields
     return ["title", "body_html", "summary_html", "handle", "meta_title", "meta_description"];
   } else if (contentType === 'policies') {
@@ -190,6 +194,14 @@ export function hasPrimaryContentMissing(
     });
   }
 
+  // For blogs, blog containers don't have body/summary — use item-aware field list
+  if (contentType === 'blogs') {
+    const blogContainerFields = ['title', 'handle', 'seo.title', 'seo.description'];
+    const articleFields = ['title', 'body', 'summary', 'handle', 'seo.title', 'seo.description'];
+    const requiredFields = selectedItem.isBlogContainer ? blogContainerFields : articleFields;
+    return hasAnyFieldMissing(selectedItem, requiredFields);
+  }
+
   const requiredFields = FIELD_CONFIGS[contentType];
   return hasAnyFieldMissing(selectedItem, requiredFields);
 }
@@ -256,7 +268,7 @@ export function hasLocaleMissingTranslations(
     });
   }
 
-  const requiredFields = getRequiredFieldsForContentType(contentType);
+  const requiredFields = getRequiredFieldsForContentType(contentType, selectedItem);
 
   const hasMissingMainFields = requiredFields.some(field => {
     // Skip handle field - Shopify often doesn't return translations for handles
@@ -405,7 +417,7 @@ export function getMissingLocaleTranslationFields(
       .map((metaobj: any) => metaobj.id);
   }
 
-  const requiredFields = getRequiredFieldsForContentType(contentType);
+  const requiredFields = getRequiredFieldsForContentType(contentType, selectedItem);
   const missingFields = requiredFields.filter(field => {
     if (field === 'handle') return false;
     if (!primaryHasFieldContent(selectedItem, field, contentType)) return false;
