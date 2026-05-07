@@ -475,7 +475,9 @@ const handleTranslateField = (fieldKey: string) => {
   const field = effectiveFieldDefinitions.find((f) => f.key === fieldKey);
   if (!field) return;
 
-  const sourceText = getItemFieldValue(selectedItem, fieldKey, primaryLocale, config);
+  const sourceText =
+    savedPrimaryValuesRef.current[selectedItemId]?.[fieldKey] ||
+    getItemFieldValue(selectedItem, fieldKey, primaryLocale, config);
   if (!sourceText) {
     showInfoBox(
       t.content?.noSourceText || "Kein Text in der Hauptsprache vorhanden zum Übersetzen",
@@ -603,7 +605,9 @@ const handleTranslateFieldToAllLocales = (fieldKey: string) => {
   const field = effectiveFieldDefinitions.find((f) => f.key === fieldKey);
   if (!field) return;
 
-  const sourceText = getItemFieldValue(selectedItem, fieldKey, primaryLocale, config);
+  const sourceText =
+    savedPrimaryValuesRef.current[selectedItemId]?.[fieldKey] ||
+    getItemFieldValue(selectedItem, fieldKey, primaryLocale, config);
   if (!sourceText) {
     showInfoBox(
       t.content?.noSourceText || "Kein Text in der Hauptsprache vorhanden zum Übersetzen",
@@ -613,7 +617,10 @@ const handleTranslateFieldToAllLocales = (fieldKey: string) => {
     return;
   }
 
-  const contextTitle = getItemFieldValue(selectedItem, 'title', primaryLocale, config) || selectedItem.id || "";
+  const contextTitle =
+    savedPrimaryValuesRef.current[selectedItemId]?.["title"] ||
+    getItemFieldValue(selectedItem, 'title', primaryLocale, config) ||
+    selectedItem.id || "";
 
   submitAIAction(
     {
