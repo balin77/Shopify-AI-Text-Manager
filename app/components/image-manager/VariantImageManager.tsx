@@ -549,9 +549,24 @@ export function VariantImageManager({
             setIsConvertingWebP(false);
             return;
           }
-          // Active tasks present → resume normal polling (existing behavior).
+          // Active tasks present → some images may already be done (worker progresses while away).
+          // Refetch /api/product-images once so the already-completed ones get their WebP URLs
+          // immediately; the polling tick only catches images that finish AFTER resume because
+          // it diffs against prevConvertingGidsRef which we just primed with the still-running set.
           setConvertingImageUrls(gids);
           prevConvertingGidsRef.current = gids;
+          try {
+            const imgR = await fetch(`/api/product-images?productId=${encodeURIComponent(productId)}`);
+            const imgData = await imgR.json();
+            if (!cancelled && imgData.success && Array.isArray(imgData.images)) {
+              const fresh = mapApiImagesToRefs(imgData.images);
+              setRefreshedProductImages(fresh);
+              onProductImagesRefreshedRef.current?.(productId, fresh);
+            }
+          } catch {
+            // Polling will eventually catch up when more tasks complete.
+          }
+          if (cancelled) return;
           startWebPPolling(productId);
         } catch {
           // Network blip: best effort fall back to polling so we self-heal on next tick.
