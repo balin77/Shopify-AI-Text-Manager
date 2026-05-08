@@ -5,7 +5,7 @@
  * with search functionality and compact item display.
  */
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Card, TextField, BlockStack, InlineStack, Text, Icon, Button, Thumbnail } from "@shopify/polaris";
 import { SearchIcon, ChevronDownIcon, ChevronUpIcon, ChevronLeftIcon, ChevronRightIcon } from "@shopify/polaris-icons";
 import type { UnifiedItem } from "./UnifiedItemList";
@@ -44,6 +44,7 @@ export function UnifiedItemListMobile({
   const [searchQuery, setSearchQuery] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
+  const userChangedPageRef = useRef(false);
 
   // Find selected item
   const selectedItem = items.find(item => item.id === selectedItemId);
@@ -63,6 +64,16 @@ export function UnifiedItemListMobile({
   const totalPages = Math.ceil(filteredItems.length / itemsPerPage);
   const startIndex = (currentPage - 1) * itemsPerPage;
   const paginatedItems = filteredItems.slice(startIndex, startIndex + itemsPerPage);
+
+  // Auto-jump to the page containing the selected item until the user manually paginates.
+  useEffect(() => {
+    if (userChangedPageRef.current) return;
+    if (!selectedItemId || filteredItems.length === 0 || itemsPerPage <= 0) return;
+    const idx = filteredItems.findIndex((item) => item.id === selectedItemId);
+    if (idx === -1) return;
+    const targetPage = Math.floor(idx / itemsPerPage) + 1;
+    if (targetPage !== currentPage) setCurrentPage(targetPage);
+  }, [selectedItemId, filteredItems, itemsPerPage, currentPage]);
 
   const handleItemSelect = (itemId: string) => {
     onItemSelect(itemId);
@@ -280,7 +291,10 @@ export function UnifiedItemListMobile({
                   <Button
                     icon={ChevronLeftIcon}
                     disabled={currentPage === 1}
-                    onClick={() => setCurrentPage(currentPage - 1)}
+                    onClick={() => {
+                      userChangedPageRef.current = true;
+                      setCurrentPage(currentPage - 1);
+                    }}
                     accessibilityLabel="Previous page"
                   />
                   <Text as="span" variant="bodySm" tone="subdued">
@@ -289,7 +303,10 @@ export function UnifiedItemListMobile({
                   <Button
                     icon={ChevronRightIcon}
                     disabled={currentPage === totalPages}
-                    onClick={() => setCurrentPage(currentPage + 1)}
+                    onClick={() => {
+                      userChangedPageRef.current = true;
+                      setCurrentPage(currentPage + 1);
+                    }}
                     accessibilityLabel="Next page"
                   />
                 </InlineStack>
