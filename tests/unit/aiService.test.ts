@@ -152,6 +152,63 @@ describe('AIService', () => {
     });
   });
 
+  describe('markdown code fence stripping (askAI sanitizer)', () => {
+    beforeEach(() => {
+      aiService = new AIService('huggingface', mockConfig);
+    });
+
+    const mockResponse = (text: string) =>
+      vi.spyOn(aiService as any, 'executeAIRequest').mockResolvedValue(text);
+
+    it('strips ```html ... ``` wrappers around HTML output', async () => {
+      mockResponse('```html\n<p>Hallo Welt</p>\n```');
+      const result = await aiService.generateProductDescription('t', 'p');
+      expect(result).toBe('<p>Hallo Welt</p>');
+    });
+
+    it('strips bare ``` ... ``` wrappers without a language tag', async () => {
+      mockResponse('```\nplain content\n```');
+      const result = await aiService.generateProductDescription('t', 'p');
+      expect(result).toBe('plain content');
+    });
+
+    it('leaves clean HTML untouched', async () => {
+      mockResponse('<p>schon sauber</p>');
+      const result = await aiService.generateProductDescription('t', 'p');
+      expect(result).toBe('<p>schon sauber</p>');
+    });
+
+    it('does not strip inline backticks in the middle of text', async () => {
+      mockResponse('Hier ist ein `inline` Codebeispiel.');
+      const result = await aiService.generateProductDescription('t', 'p');
+      expect(result).toBe('Hier ist ein `inline` Codebeispiel.');
+    });
+
+    it('strips fences from translateContent output (XML wrapper still applies)', async () => {
+      mockResponse('```\n<translation>Hallo</translation>\n```');
+      const result = await aiService.translateContent('Hello', 'en', 'de');
+      expect(result).toBe('Hallo');
+    });
+
+    it('strips fences from alt-text generation', async () => {
+      mockResponse('```\nBlaues Baumwoll-T-Shirt\n```');
+      const result = await aiService.generateImageAltText('https://example.com/img.jpg');
+      expect(result).toBe('Blaues Baumwoll-T-Shirt');
+    });
+
+    it('handles ```json ... ``` so parseJSONResponse still works on bare JSON', async () => {
+      mockResponse('```json\n{"seoTitle":"X","metaDescription":"Y","reasoning":"Z"}\n```');
+      const result = await aiService.generateSEO('title', 'desc');
+      expect(result).toMatchObject({ seoTitle: 'X', metaDescription: 'Y', reasoning: 'Z' });
+    });
+
+    it('trims surrounding whitespace around fenced blocks', async () => {
+      mockResponse('   \n```html\n<p>x</p>\n```   \n');
+      const result = await aiService.generateProductDescription('t', 'p');
+      expect(result).toBe('<p>x</p>');
+    });
+  });
+
   describe('generateSEO()', () => {
     beforeEach(() => {
       aiService = new AIService('huggingface', mockConfig);

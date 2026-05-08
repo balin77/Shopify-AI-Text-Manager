@@ -351,7 +351,7 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
           prompt += `\n\nCRITICAL LENGTH CONSTRAINT: The output MUST be ${charLimitHtml}. This overrides any other length or character count instruction in this prompt.`;
         }
 
-        prompt += `\n\nIMPORTANT: Return ONLY the ${field.label}, nothing else. Output in ${mainLanguage}.`;
+        prompt += `\n\nIMPORTANT: Return ONLY the ${field.label}, nothing else. Do NOT wrap the output in markdown code fences (\`\`\`). Output in ${mainLanguage}.`;
         generatedContent = await aiServiceWithTask.generateProductDescription(sanitizedContextTitle, prompt);
         if (!generatedContent || !generatedContent.trim()) throw new Error("AI returned empty response");
       }
@@ -523,7 +523,7 @@ Allowed formatting changes:
           prompt += `\n\nFormat Style Example (for HTML structure reference only):\n${formatExample3}`;
         }
 
-        prompt += `\n\nReturn ONLY the formatted HTML ${field.label}. Keep the original language and all original content. Do NOT add new sentences or rewrite existing ones. Output the result in ${mainLanguage}.`;
+        prompt += `\n\nReturn ONLY the formatted HTML ${field.label}. Do NOT wrap the output in markdown code fences (\`\`\`). Keep the original language and all original content. Do NOT add new sentences or rewrite existing ones. Output the result in ${mainLanguage}.`;
         formattedContent = await aiServiceWithTask.generateProductDescription(currentValue, prompt);
         if (!formattedContent || !formattedContent.trim()) throw new Error("AI returned empty response");
       }

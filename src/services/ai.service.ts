@@ -161,6 +161,17 @@ Return ONLY the translated text. Do NOT wrap it in XML tags, quotes, or any othe
     return match ? match[2].trim() : trimmed;
   }
 
+  /**
+   * Strips leading/trailing markdown code fences (``` or ```html / ```json etc.)
+   * that some models add around their entire response. Idempotent and safe on
+   * already-clean text — returns the trimmed original if no fence is found.
+   */
+  private static stripMarkdownFence(text: string): string {
+    const trimmed = text.trim();
+    const match = trimmed.match(/^```[a-zA-Z]*\s*\n?([\s\S]*?)\n?```$/);
+    return match ? match[1].trim() : trimmed;
+  }
+
   async translateTemplate(template: string, fromLang: string, toLang: string): Promise<string> {
     const sanitized = sanitizePromptInput(template, { maxLength: 500, allowNewlines: false });
 
@@ -719,12 +730,12 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       );
     }
 
-    // Save AI response to the corresponding prompt entry
+    // Save AI response to the corresponding prompt entry (raw, for debugging)
     if (this.taskId && this.shop) {
       await this.saveResponseToTask(response);
     }
 
-    return response;
+    return AIService.stripMarkdownFence(response);
   }
 
   private async savePromptToTask(prompt: string, imageUrl?: string): Promise<void> {
