@@ -93,7 +93,7 @@ function buildVariantKey(
 ): string {
   const opts = variant.selectedOptions.length > 0
     ? variant.selectedOptions
-    : variant.title.split(" / ").map(v => ({ name: "", value: v, handle: null }));
+    : variant.title.split(" / ").map(v => ({ name: "", value: v, handle: null, metaobjectGid: null }));
   const parts = opts.map((opt, i) => getOptionKeySegment(opt, labelMode, overrides[i], memoryMap));
   return [baseName.trim(), ...parts].filter(Boolean).join("_");
 }
@@ -598,7 +598,7 @@ export function BulkImageUploadPanel({
                   {variants.map(v => {
                     const opts = v.selectedOptions.length > 0
                       ? v.selectedOptions
-                      : v.title.split(" / ").map(val => ({ name: "", value: val, handle: null }));
+                      : v.title.split(" / ").map(val => ({ name: "", value: val, handle: null, metaobjectGid: null }));
                     return (
                       <InlineStack key={v.id} gap="200" blockAlign="center">
                         {/* Option value chips */}
