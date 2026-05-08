@@ -52,6 +52,16 @@ interface VariantImageManagerProps {
   enabledLanguages?: string[];
   onDirtyChange?: (isDirty: boolean) => void;
   onMissingMainImageChange?: (hasMissing: boolean) => void;
+  onProductImagesRefreshed?: (productId: string, images: ProductImageRef[]) => void;
+}
+
+function mapApiImagesToRefs(images: any[]): ProductImageRef[] {
+  return images.map((img: any) => ({
+    url: img.url ?? "",
+    mediaId: img.mediaId ?? img.url ?? "",
+    id: img.mediaId ?? img.url ?? "",
+    altText: img.altText ?? null,
+  }));
 }
 
 function insertGidAtPosition(gids: string[], gid: string, overUrl: string | null, fileUrlMap: Record<string, string>): string[] {
@@ -82,6 +92,7 @@ export function VariantImageManager({
   enabledLanguages = [],
   onDirtyChange,
   onMissingMainImageChange,
+  onProductImagesRefreshed,
 }: VariantImageManagerProps) {
   const { t } = useI18n();
   const [variants, setVariants] = useState<VariantWithGallery[]>([]);
@@ -111,6 +122,8 @@ export function VariantImageManager({
   const isConvertingWebPRef = useRef(false);
   const prevConvertingGidsRef = useRef<Set<string>>(new Set());
   const prevProductImagesKeyRef = useRef<string>("");
+  const onProductImagesRefreshedRef = useRef(onProductImagesRefreshed);
+  useEffect(() => { onProductImagesRefreshedRef.current = onProductImagesRefreshed; }, [onProductImagesRefreshed]);
   const [isExpanded, setIsExpanded] = useState(false);
   const [showAll, setShowAll] = useState(true);
   const [thumbSize, setThumbSize] = useState(imageManagerSettings.thumbSize ?? 80);
@@ -372,12 +385,7 @@ export function VariantImageManager({
             const imgR = await fetch(`/api/product-images?productId=${encodeURIComponent(pid)}`);
             const imgData = await imgR.json();
             if (imgData.success && Array.isArray(imgData.images)) {
-              const newImages: ProductImageRef[] = imgData.images.map((img: any) => ({
-                url: img.url ?? "",
-                mediaId: img.mediaId ?? img.url ?? "",
-                id: img.mediaId ?? img.url ?? "",
-                altText: img.altText ?? null,
-              }));
+              const newImages: ProductImageRef[] = mapApiImagesToRefs(imgData.images);
 
               const oldImages = currentImagesRef.current;
 
@@ -471,6 +479,7 @@ export function VariantImageManager({
                   return old;
                 });
                 setRefreshedProductImages(mergedImages);
+                onProductImagesRefreshedRef.current?.(pid, mergedImages);
               }
             }
           } catch {
@@ -494,37 +503,69 @@ export function VariantImageManager({
     }, 3000);
   }, []);
 
-  // Resume polling on mount/product-switch; reset spinner if no active conversion for this product
+  // Resume polling on mount/product-switch; reset spinner if no active conversion for this product.
+  // If the localStorage flag indicates a conversion was in progress when the user navigated
+  // away, but no tasks are still running (worker finished in the background), do a one-shot
+  // refetch of /api/product-images so the WebP URLs propagate to the UI.
   useEffect(() => {
     setRefreshedProductImages(null);
     setConvertingImageUrls(new Set());
     if (!productId) return;
+    let cancelled = false;
     const converting = localStorage.getItem(`webp_${productId}`);
     if (converting) {
       setIsConvertingWebP(true);
-      // Immediately populate converting URLs from DB tasks so spinners show without
-      // waiting for the first 3-second poll interval (important after navigation).
-      fetch(`/api/running-field-tasks?resourceId=${encodeURIComponent(productId)}`)
-        .then(r => r.json())
-        .then(({ tasks }) => {
+      (async () => {
+        try {
+          const r = await fetch(`/api/running-field-tasks?resourceId=${encodeURIComponent(productId)}`);
+          const { tasks } = await r.json();
+          if (cancelled) return;
           const webpTasks = (tasks ?? []).filter((t: { type: string }) => t.type === "imageWebpConversion");
           const gids = new Set<string>(
             webpTasks.map((t: { result?: string }) => {
               try { return JSON.parse(t.result || "{}").mediaId as string; } catch { return null; }
             }).filter(Boolean) as string[]
           );
+          if (webpTasks.length === 0) {
+            // Conversion completed while user was away. Refetch images once, propagate, and clean up.
+            // Show spinner overlay on all current thumbs while we fetch (~100-300ms typical).
+            const placeholderGids = new Set<string>(productImages.map(p => p.mediaId).filter(Boolean));
+            setConvertingImageUrls(placeholderGids);
+            try {
+              const imgR = await fetch(`/api/product-images?productId=${encodeURIComponent(productId)}`);
+              const imgData = await imgR.json();
+              if (!cancelled && imgData.success && Array.isArray(imgData.images)) {
+                const fresh = mapApiImagesToRefs(imgData.images);
+                setRefreshedProductImages(fresh);
+                onProductImagesRefreshedRef.current?.(productId, fresh);
+              }
+            } catch {
+              // Silent: next mount will retry while flag is still set, or full reload will refresh.
+              // We still clear the flag below so we don't loop forever on a broken endpoint.
+            }
+            if (cancelled) return;
+            setConvertingImageUrls(new Set());
+            localStorage.removeItem(`webp_${productId}`);
+            setIsConvertingWebP(false);
+            return;
+          }
+          // Active tasks present → resume normal polling (existing behavior).
           setConvertingImageUrls(gids);
           prevConvertingGidsRef.current = gids;
-        })
-        .catch(() => {});
-      startWebPPolling(productId);
+          startWebPPolling(productId);
+        } catch {
+          // Network blip: best effort fall back to polling so we self-heal on next tick.
+          if (!cancelled) startWebPPolling(productId);
+        }
+      })();
     } else {
       setIsConvertingWebP(false);
     }
     return () => {
+      cancelled = true;
       if (webpPollRef.current) clearInterval(webpPollRef.current);
     };
-  }, [productId, startWebPPolling]);
+  }, [productId, startWebPPolling]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Keep ref in sync so polling closures can read current conversion state without stale closure.
   isConvertingWebPRef.current = isConvertingWebP;

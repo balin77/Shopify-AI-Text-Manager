@@ -497,6 +497,23 @@ export default function ProductsPage() {
     }
   }, [editor.state.selectedItemId, imageManagerState.resetForProduct]);
 
+  // Per-product override of product images. Populated when WebP conversion completes
+  // (either while the product is open or detected on return after a background completion),
+  // so the new WebP URLs survive product switches without needing a full revalidate.
+  // Cleared whenever the loader returns fresh data (loader is then the authoritative source).
+  type ProductImageEntry = { url: string; mediaId: string; id: string; altText?: string | null };
+  const [productImagesOverride, setProductImagesOverride] = useState<Map<string, ProductImageEntry[]>>(new Map());
+  useEffect(() => {
+    setProductImagesOverride(new Map());
+  }, [products]);
+  const handleProductImagesRefreshed = useCallback((pid: string, images: ProductImageEntry[]) => {
+    setProductImagesOverride(prev => {
+      const next = new Map(prev);
+      next.set(pid, images);
+      return next;
+    });
+  }, []);
+
   // Initialize sub-resources hook for options + metafields translations
   // Uses its own internal fetcher to avoid race conditions with the main editor
   const subResources = useProductSubResources({
@@ -872,12 +889,15 @@ export default function ProductsPage() {
           imageGalleryReplacement={showImageManager && editor.selectedItem ? (
             <VariantImageManager
               productId={editor.selectedItem.id}
-              productImages={(editor.selectedItem.images ?? []).map((img: any) => ({
-                url: img.url ?? "",
-                mediaId: img.mediaId ?? img.url ?? "",
-                id: img.id ?? img.url ?? "",
-                altText: img.altText ?? null,
-              }))}
+              productImages={
+                productImagesOverride.get(editor.selectedItem.id) ??
+                (editor.selectedItem.images ?? []).map((img: any) => ({
+                  url: img.url ?? "",
+                  mediaId: img.mediaId ?? img.url ?? "",
+                  id: img.id ?? img.url ?? "",
+                  altText: img.altText ?? null,
+                }))
+              }
               bulkItems={imageManagerState.bulkItems}
               activeAction={imageManagerState.activeAction}
               selectedBulkIds={imageManagerState.selectedBulkIds}
@@ -894,6 +914,7 @@ export default function ProductsPage() {
               variantReloadKey={imageManagerState.variantReloadCounter}
               onDirtyChange={imageManagerState.setHasAltTextEdits}
               onMissingMainImageChange={(hasMissing) => imageManagerState.handleMissingMainImageChange(editor.selectedItem!.id, hasMissing)}
+              onProductImagesRefreshed={handleProductImagesRefreshed}
             />
           ) : undefined}
         />
