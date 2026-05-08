@@ -71,7 +71,7 @@ export function sanitizeHTML(html: string): string {
       'img'
     ],
     ALLOWED_ATTR: [
-      'href', 'target', 'rel', 'class',
+      'href', 'target', 'rel', 'class', 'style',
       'src', 'alt', 'title', 'width', 'height', 'loading', 'srcset', 'sizes'
     ],
     ALLOW_DATA_ATTR: false,
