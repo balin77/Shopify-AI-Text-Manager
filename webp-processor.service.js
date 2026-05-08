@@ -40,8 +40,26 @@ const DOWNLOAD_MAX_ATTEMPTS = 4;
 const DOWNLOAD_BASE_DELAY_MS = 1000;
 const DOWNLOAD_TIMEOUT_MS = 30000;
 const RETRYABLE_STATUS = new Set([408, 429, 500, 502, 503, 504]);
+const SHOPIFY_FETCH_TIMEOUT_MS = 30000;
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+// Single-shot fetch with abort timeout — used for all Shopify GraphQL/CDN calls
+// so a hanging request can't keep a running task alive past the stuck-task threshold.
+async function fetchWithTimeout(url, options, label) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), SHOPIFY_FETCH_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (err) {
+    if (err.name === "AbortError") {
+      throw new Error(`${label} timed out after ${SHOPIFY_FETCH_TIMEOUT_MS}ms`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 async function downloadImageAsBuffer(url) {
   for (let attempt = 1; attempt <= DOWNLOAD_MAX_ATTEMPTS; attempt++) {
@@ -91,7 +109,11 @@ async function convertToWebP(sourceBuffer, originalUrl, quality = 85) {
 const db = new PrismaClient();
 
 const POLL_INTERVAL_MS = 10000; // 10 seconds
-const MAX_CONCURRENT = 2;
+const GLOBAL_MAX_CONCURRENT = 8;
+// Mirror of PLAN_CONFIG[*].maxConcurrentWebpConversions in app/config/plans.ts.
+// Keep in sync — plans.ts is the source of truth for the UI/billing side.
+const PLAN_WEBP_CONCURRENCY = { free: 2, basic: 2, pro: 2, max: 4 };
+const DEFAULT_WEBP_CONCURRENCY = 2;
 
 export class WebPProcessorService {
   static instance = null;
@@ -128,18 +150,54 @@ export class WebPProcessorService {
   }
 
   async processPendingTasks() {
-    const tasks = await db.task.findMany({
-      where: {
-        type: "imageWebpConversion",
-        status: "pending",
-      },
-      take: MAX_CONCURRENT,
-      orderBy: { createdAt: "asc" },
+    // Heartbeat: bump updatedAt on all pending WebP tasks so task-recovery's
+    // 10-min stuck-task detector doesn't kill them while they wait in the queue.
+    // If the worker dies, no heartbeat fires and pending tasks correctly become
+    // stuck after the threshold — that's the intended crash signal.
+    await db.task.updateMany({
+      where: { type: "imageWebpConversion", status: "pending" },
+      data: { updatedAt: new Date() },
     });
 
-    if (tasks.length === 0) return;
+    // Find which shops have pending tasks (oldest pending task per shop wins ordering).
+    const shopsWithPending = await db.task.groupBy({
+      by: ["shop"],
+      where: { type: "imageWebpConversion", status: "pending" },
+      _min: { createdAt: true },
+      orderBy: { _min: { createdAt: "asc" } },
+    });
 
-    await Promise.all(tasks.map(task => this.processTask(task)));
+    if (shopsWithPending.length === 0) return;
+
+    const tasksToProcess = [];
+    for (const { shop } of shopsWithPending) {
+      if (tasksToProcess.length >= GLOBAL_MAX_CONCURRENT) break;
+
+      const settings = await db.aISettings.findUnique({
+        where: { shop },
+        select: { subscriptionPlan: true },
+      });
+      const plan = settings?.subscriptionPlan || "free";
+      const planLimit = PLAN_WEBP_CONCURRENCY[plan] ?? DEFAULT_WEBP_CONCURRENCY;
+
+      const running = await db.task.count({
+        where: { shop, type: "imageWebpConversion", status: "running" },
+      });
+      const freeSlots = Math.max(0, planLimit - running);
+      if (freeSlots === 0) continue;
+
+      const remaining = GLOBAL_MAX_CONCURRENT - tasksToProcess.length;
+      const tasks = await db.task.findMany({
+        where: { shop, type: "imageWebpConversion", status: "pending" },
+        take: Math.min(freeSlots, remaining),
+        orderBy: { createdAt: "asc" },
+      });
+      tasksToProcess.push(...tasks);
+    }
+
+    if (tasksToProcess.length === 0) return;
+
+    await Promise.all(tasksToProcess.map(task => this.processTask(task)));
   }
 
   async processTask(task) {
@@ -206,7 +264,7 @@ export class WebPProcessorService {
       };
 
       // 4. Create Shopify staged upload for WebP
-      const stagedRes = await fetch(shopifyApiUrl, {
+      const stagedRes = await fetchWithTimeout(shopifyApiUrl, {
         method: "POST",
         headers,
         body: JSON.stringify({
@@ -228,7 +286,7 @@ export class WebPProcessorService {
             }],
           },
         }),
-      });
+      }, "stagedUploadsCreate");
       if (!stagedRes.ok) {
         const body = await stagedRes.text();
         await this.failTask(task.id, `Staged upload HTTP ${stagedRes.status}: ${body}`);
@@ -251,16 +309,16 @@ export class WebPProcessorService {
       await db.task.update({ where: { id: task.id }, data: { progress: 60 } });
 
       // 5. Upload WebP to Shopify CDN
-      await fetch(target.url, {
+      await fetchWithTimeout(target.url, {
         method: "PUT",
         headers: { "Content-Type": "image/webp", "Content-Length": String(buffer.byteLength) },
         body: buffer,
-      });
+      }, "CDN upload");
 
       await db.task.update({ where: { id: task.id }, data: { progress: 70 } });
 
       // 6. Add new WebP as product media (productCreateMedia returns the new GID)
-      const createMediaRes = await fetch(shopifyApiUrl, {
+      const createMediaRes = await fetchWithTimeout(shopifyApiUrl, {
         method: "POST",
         headers,
         body: JSON.stringify({
@@ -277,7 +335,7 @@ export class WebPProcessorService {
             media: [{ originalSource: target.resourceUrl, mediaContentType: "IMAGE", ...(originalAltText ? { alt: originalAltText } : {}) }],
           },
         }),
-      });
+      }, "productCreateMedia");
       if (!createMediaRes.ok) {
         const body = await createMediaRes.text();
         await this.failTask(task.id, `Create media HTTP ${createMediaRes.status}: ${body}`);
@@ -301,14 +359,14 @@ export class WebPProcessorService {
       let variantIdsWithOldFeaturedImage = [];
       if (newMediaId) {
         try {
-          const variantsQueryRes = await fetch(shopifyApiUrl, {
+          const variantsQueryRes = await fetchWithTimeout(shopifyApiUrl, {
             method: "POST",
             headers,
             body: JSON.stringify({
               query: `query($id: ID!) { product(id: $id) { variants(first: 100) { edges { node { id image { url } } } } } }`,
               variables: { id: productId },
             }),
-          });
+          }, "variants query");
           const variantsQueryData = await variantsQueryRes.json();
           const srcPath = (() => {
             try { return new URL(sourceUrl).pathname; } catch { return sourceUrl; }
@@ -326,7 +384,7 @@ export class WebPProcessorService {
 
       // 7. Delete old media from Shopify (if mediaId available)
       if (mediaId) {
-        await fetch(shopifyApiUrl, {
+        await fetchWithTimeout(shopifyApiUrl, {
           method: "POST",
           headers,
           body: JSON.stringify({
@@ -339,14 +397,14 @@ export class WebPProcessorService {
             `,
             variables: { productId, mediaIds: [mediaId] },
           }),
-        });
+        }, "productDeleteMedia");
       }
 
       // 7b. Restore original position of the new WebP image
       const originalPosition = taskData.position;
       if (newMediaId && originalPosition != null && originalPosition >= 0) {
         try {
-          await fetch(shopifyApiUrl, {
+          await fetchWithTimeout(shopifyApiUrl, {
             method: "POST",
             headers,
             body: JSON.stringify({
@@ -362,7 +420,7 @@ export class WebPProcessorService {
                 moves: [{ id: newMediaId, newPosition: String(originalPosition) }],
               },
             }),
-          });
+          }, "productReorderMedia");
           console.log(`[WebPProcessor] Restored position ${originalPosition} for ${newMediaId}`);
         } catch (err) {
           console.error(`[WebPProcessor] Failed to restore position for task ${task.id}:`, err);
@@ -372,7 +430,7 @@ export class WebPProcessorService {
       // 7c. Re-assign variant featured images (mediaId) to the new WebP
       if (variantIdsWithOldFeaturedImage.length > 0 && newMediaId) {
         try {
-          await fetch(shopifyApiUrl, {
+          await fetchWithTimeout(shopifyApiUrl, {
             method: "POST",
             headers,
             body: JSON.stringify({
@@ -388,7 +446,7 @@ export class WebPProcessorService {
                 variants: variantIdsWithOldFeaturedImage.map(id => ({ id, mediaId: newMediaId })),
               },
             }),
-          });
+          }, "variant featured image update");
           console.log(`[WebPProcessor] Updated featured image for ${variantIdsWithOldFeaturedImage.length} variant(s): ${mediaId} → ${newMediaId}`);
         } catch (err) {
           console.error(`[WebPProcessor] Failed to update variant featured images for task ${task.id}:`, err);
@@ -413,7 +471,7 @@ export class WebPProcessorService {
               data: { galleryJson: updatedJson },
             });
 
-            await fetch(shopifyApiUrl, {
+            await fetchWithTimeout(shopifyApiUrl, {
               method: "POST",
               headers,
               body: JSON.stringify({
@@ -437,7 +495,7 @@ export class WebPProcessorService {
                   }],
                 },
               }),
-            });
+            }, "variant gallery update");
           } catch (err) {
             console.error(`[WebPProcessor] Failed to update variant gallery for ${variant.shopifyGid}:`, err);
           }

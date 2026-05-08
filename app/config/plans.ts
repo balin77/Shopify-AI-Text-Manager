@@ -23,6 +23,7 @@ export interface PlanLimits {
   maxArticles: number;
   maxPages: number;
   maxThemeTranslations: number;
+  maxConcurrentWebpConversions: number;
   productImages: "featured-only" | "all";
   contentTypes: ContentType[];
   aiInstructionsEditable: boolean;
@@ -48,6 +49,7 @@ export const PLAN_CONFIG: Record<Plan, PlanLimits> = {
     maxArticles: 0,
     maxPages: 0,
     maxThemeTranslations: 0,
+    maxConcurrentWebpConversions: 2,
     productImages: "featured-only",
     contentTypes: ["products", "collections"],
     aiInstructionsEditable: false,
@@ -71,6 +73,7 @@ export const PLAN_CONFIG: Record<Plan, PlanLimits> = {
     maxArticles: 0,
     maxPages: 20,
     maxThemeTranslations: 0,
+    maxConcurrentWebpConversions: 2,
     productImages: "all",
     contentTypes: ["products", "collections", "pages", "policies"],
     aiInstructionsEditable: false,
@@ -94,6 +97,7 @@ export const PLAN_CONFIG: Record<Plan, PlanLimits> = {
     maxArticles: 100,
     maxPages: 50,
     maxThemeTranslations: 50000,
+    maxConcurrentWebpConversions: 2,
     productImages: "all",
     contentTypes: ["products", "collections", "articles", "blogs", "pages", "policies", "templates", "menus", "metaobjects"],
     aiInstructionsEditable: true,
@@ -117,6 +121,7 @@ export const PLAN_CONFIG: Record<Plan, PlanLimits> = {
     maxArticles: 300,
     maxPages: 200,
     maxThemeTranslations: 100000,
+    maxConcurrentWebpConversions: 4,
     productImages: "all",
     contentTypes: ["products", "collections", "articles", "blogs", "pages", "policies", "templates", "menus", "metaobjects"],
     aiInstructionsEditable: true,

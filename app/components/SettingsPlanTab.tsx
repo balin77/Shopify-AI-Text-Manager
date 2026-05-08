@@ -206,6 +206,23 @@ export function SettingsPlanTab({
                           : t.settings.featuredImageOnly}
                       </Text>
                       <Text as="p" variant="bodyMd">
+                        <strong>{t.settings.webpConversion}:</strong>{" "}
+                        {planDetails.maxConcurrentWebpConversions >= 4 ? (
+                          <strong>
+                            {t.settings.webpConversionParallel.replace(
+                              "{count}",
+                              String(planDetails.maxConcurrentWebpConversions),
+                            )}{" "}
+                            ({t.settings.webpConversionFaster})
+                          </strong>
+                        ) : (
+                          t.settings.webpConversionParallel.replace(
+                            "{count}",
+                            String(planDetails.maxConcurrentWebpConversions),
+                          )
+                        )}
+                      </Text>
+                      <Text as="p" variant="bodyMd">
                         <strong>{t.settings.contentTypes}:</strong>
                       </Text>
                       <BlockStack gap="100">
