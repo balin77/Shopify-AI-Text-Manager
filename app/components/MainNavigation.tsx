@@ -41,7 +41,10 @@ export function MainNavigation() {
   const productCount = productsRouteData?.productCount;
   const maxProducts = getMaxProducts();
 
-  // Show notifications for newly completed tasks (from context)
+  // Show notifications for newly completed/failed tasks (from context).
+  // Tone is derived from status + processed/total so partial failures and
+  // outright failures are surfaced as warning/critical instead of silently
+  // appearing as success.
   useEffect(() => {
     if (!recentlyCompletedTasks.length || !isMountedRef.current) return;
 
@@ -50,7 +53,6 @@ export function MainNavigation() {
 
       notifiedTaskIds.current.add(task.id);
 
-      let message = "";
       const resourceTitle = task.resourceTitle || "";
 
       const toReadableFieldName = (raw: string) => {
@@ -61,24 +63,56 @@ export function MainNavigation() {
         return raw;
       };
 
-      if (task.type === "bulkTranslation") {
-        if (task.fieldType === "all") {
-          message = t.tasks?.translationCompleted?.replace("{title}", resourceTitle) || `Translation completed for "${resourceTitle}"`;
-        } else {
+      const baseMessage = (() => {
+        if (task.type === "bulkTranslation") {
+          if (task.fieldType === "all") {
+            return t.tasks?.translationCompleted?.replace("{title}", resourceTitle) || `Translation completed for "${resourceTitle}"`;
+          }
           const fieldName = toReadableFieldName(task.fieldType || "field");
-          message = t.tasks?.fieldTranslationCompleted?.replace("{field}", fieldName).replace("{title}", resourceTitle)
+          return t.tasks?.fieldTranslationCompleted?.replace("{field}", fieldName).replace("{title}", resourceTitle)
             || `Translation completed for ${fieldName} in "${resourceTitle}"`;
         }
-      } else if (task.type === "aiGeneration") {
-        const fieldName = toReadableFieldName(task.fieldType || "content");
-        message = t.tasks?.generationCompleted?.replace("{field}", fieldName).replace("{title}", resourceTitle)
-          || `AI generation completed for ${fieldName} in "${resourceTitle}"`;
-      } else {
-        message = t.tasks?.taskCompleted?.replace("{title}", resourceTitle) || `Task completed for "${resourceTitle}"`;
+        if (task.type === "aiGeneration" || task.type === "bulkAIGeneration") {
+          const fieldName = toReadableFieldName(task.fieldType || "content");
+          return t.tasks?.generationCompleted?.replace("{field}", fieldName).replace("{title}", resourceTitle)
+            || `AI generation completed for ${fieldName} in "${resourceTitle}"`;
+        }
+        if (task.type === "altTextTemplateApply") {
+          return t.tasks?.altTextTemplateApplied?.replace("{title}", resourceTitle) || `Alt-text templates applied to "${resourceTitle}"`;
+        }
+        return t.tasks?.taskCompleted?.replace("{title}", resourceTitle) || `Task completed for "${resourceTitle}"`;
+      })();
+
+      const total = typeof task.total === "number" ? task.total : null;
+      const processed = typeof task.processed === "number" ? task.processed : null;
+      const failed = total != null && processed != null ? Math.max(total - processed, 0) : 0;
+
+      let tone: InfoBoxTone = "success";
+      let title = t.tasks?.completedTitle || "✓ Completed";
+      let message = baseMessage;
+
+      if (task.status === "failed") {
+        tone = "critical";
+        title = t.tasks?.failedTitle || "✗ Failed";
+        const detail = task.error || t.tasks?.taskFailedGeneric || "Task failed — please retry.";
+        message = `${baseMessage}: ${detail}`;
+      } else if (total != null && processed != null && processed < total) {
+        tone = "warning";
+        title = t.tasks?.partialTitle || "⚠ Partially saved";
+        const summary = (t.tasks?.partialSummary || "{processed} of {total} saved, {failed} failed")
+          .replace("{processed}", String(processed))
+          .replace("{total}", String(total))
+          .replace("{failed}", String(failed));
+        message = `${baseMessage} — ${summary}${task.error ? `: ${task.error}` : ""}`;
+      } else if (task.error) {
+        // Completed with a soft error recorded — surface as warning.
+        tone = "warning";
+        title = t.tasks?.partialTitle || "⚠ Partially saved";
+        message = `${baseMessage} — ${task.error}`;
       }
 
       if (isMountedRef.current) {
-        showInfoBox(message, "success", t.tasks?.completedTitle || "✓ Completed");
+        showInfoBox(message, tone, title);
       }
     }
 

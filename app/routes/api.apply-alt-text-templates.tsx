@@ -2,6 +2,7 @@ import { json, type ActionFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
 import { fillAltTextTemplate, resolveVariableValues } from "../utils/alt-text-template";
+import { getTaskExpirationDate } from "../config/constants";
 import type { VariantWithGallery } from "../components/image-manager/types";
 
 interface ApplyBody {
@@ -49,6 +50,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   const isPrimary = !locale || locale === primaryLocale;
 
+  // Resolve a display title for the navigation InfoBox.
+  // Falls back to productId if the product isn't synced yet.
+  const productRecord = await db.product.findUnique({
+    where: { id: productId },
+    select: { title: true },
+  });
+  const taskTitle = productRecord?.title || productId;
+
   for (const variant of variants) {
     // Build ordered list of image GIDs for this variant:
     // Position 0 = main featured image, positions 1+ = gallery images
@@ -94,10 +103,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           const errs = d.data?.fileUpdate?.userErrors ?? [];
           if (errs.length === 0) {
             applied++;
-            await db.productImage.updateMany({
-              where: { mediaId: gid },
-              data: { altText: altText || null, altTextModifiedAt: new Date() },
-            }).catch(() => {});
+            try {
+              await db.productImage.updateMany({
+                where: { mediaId: gid },
+                data: { altText: altText || null, altTextModifiedAt: new Date() },
+              });
+            } catch (dbErr: unknown) {
+              // Don't roll back the Shopify save; surface the DB failure so the user
+              // knows the local cache is out of sync and can retry / re-sync.
+              errors.push(`${variant.title} (Position ${tmpl.position}, DB save): ${String(dbErr)}`);
+            }
           } else {
             errors.push(`${variant.title} (Position ${tmpl.position}, GID ${gid}): ${errs.map((e: any) => e.message).join(", ")}`);
           }
@@ -139,13 +154,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           const errs = d.data?.translationsRegister?.userErrors ?? [];
           if (errs.length === 0) {
             applied++;
-            const dbImage = await db.productImage.findFirst({ where: { mediaId: gid }, select: { id: true } });
-            if (dbImage) {
-              await db.productImageAltTranslation.upsert({
-                where: { imageId_locale: { imageId: dbImage.id, locale } },
-                create: { imageId: dbImage.id, locale, altText },
-                update: { altText },
-              }).catch(() => {});
+            try {
+              const dbImage = await db.productImage.findFirst({ where: { mediaId: gid }, select: { id: true } });
+              if (dbImage) {
+                await db.productImageAltTranslation.upsert({
+                  where: { imageId_locale: { imageId: dbImage.id, locale } },
+                  create: { imageId: dbImage.id, locale, altText },
+                  update: { altText },
+                });
+              }
+            } catch (dbErr: unknown) {
+              errors.push(`${variant.title} (Position ${tmpl.position}, ${locale} DB save): ${String(dbErr)}`);
             }
           } else {
             errors.push(`${variant.title} (Position ${tmpl.position}, GID ${gid}): ${errs.map((e: any) => e.message).join(", ")}`);
@@ -165,10 +184,42 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     });
   }
 
+  // Persist the outcome as a Task so the navigation InfoBox can surface
+  // partial failures and DB-save errors (which used to be swallowed silently).
+  // status: "failed" when nothing was applied, "completed" otherwise — the
+  // navigation logic differentiates partial vs. full success via processed/total.
+  const errorSummary = errors.length > 0 ? errors.join("\n").substring(0, 1000) : null;
+  const taskStatus = applied === 0 ? "failed" : "completed";
+  try {
+    await db.task.create({
+      data: {
+        shop: session.shop,
+        type: "altTextTemplateApply",
+        status: taskStatus,
+        resourceType: "products",
+        resourceId: productId,
+        resourceTitle: taskTitle,
+        fieldType: "allAltTexts",
+        targetLocale: locale,
+        progress: 100,
+        total: attempted,
+        processed: applied,
+        result: JSON.stringify({ applied, attempted, errors }),
+        error: errorSummary,
+        completedAt: new Date(),
+        expiresAt: getTaskExpirationDate(),
+      },
+    });
+  } catch {
+    // Task logging failure must not break the actual apply — the response
+    // below still carries the errors back to the caller.
+  }
+
   return json({
     success: errors.length === 0,
     applied,
+    attempted,
     errors: errors.length > 0 ? errors : undefined,
-    error: errors.length > 0 ? errors.join("\n") : undefined,
+    error: errorSummary,
   });
 };

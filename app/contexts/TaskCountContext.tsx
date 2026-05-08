@@ -4,10 +4,14 @@ import { useLocation } from "@remix-run/react";
 export interface CompletedTask {
   id: string;
   type: string;
+  status: "completed" | "failed";
   resourceType: string | null;
   resourceTitle: string | null;
   fieldType: string | null;
   completedAt: string;
+  processed?: number | null;
+  total?: number | null;
+  error?: string | null;
 }
 
 interface TaskCountContextType {

@@ -784,6 +784,58 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     }
   }, [editableValues, selectedItemId, isLoadingData, currentLanguage, primaryLocale, effectiveFieldDefinitions, config]);
 
+  // Poll a fire-and-forget task until it reaches a terminal state.
+  // Returns the parsed result (with `generatedAltTexts` when present) so the
+  // existing onSuccess callbacks downstream can keep their original shape.
+  const pollTaskUntilDone = useCallback(async (
+    taskId: string,
+  ): Promise<Record<string, unknown> | null> => {
+    const maxAttempts = 600; // 600 × 1s = 10 min — matches TaskRecovery stuck threshold
+    const intervalMs = 1000;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        const res = await fetch(`/api/task-result?taskId=${encodeURIComponent(taskId)}`, {
+          headers: { Accept: "application/json" },
+        });
+        if (!res.ok) {
+          await new Promise((resolve) => setTimeout(resolve, intervalMs));
+          continue;
+        }
+        const data = await res.json();
+        const task = data?.task;
+        if (!task) {
+          await new Promise((resolve) => setTimeout(resolve, intervalMs));
+          continue;
+        }
+
+        if (task.status === "completed" || task.status === "failed") {
+          let parsed: Record<string, unknown> = {};
+          if (task.result) {
+            try {
+              parsed = JSON.parse(task.result);
+            } catch {
+              parsed = { rawResult: task.result };
+            }
+          }
+          return {
+            ...parsed,
+            taskStatus: task.status,
+            taskError: task.error ?? null,
+            processed: task.processed,
+            total: task.total,
+            success: task.status === "completed",
+          };
+        }
+      } catch {
+        // Transient error — keep polling.
+      }
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+
+    return null;
+  }, []);
+
   // Submit AI action using fetch API directly to allow parallel requests
   // This enables multiple AI actions to run simultaneously on different fields.
   // Loading state is tracked in the global AI operations store so spinners
@@ -827,7 +879,29 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         throw new Error(`Server returned ${response.status}: Expected JSON but got ${contentType || 'unknown content type'}`);
       }
 
-      const result = await response.json();
+      let result = await response.json();
+
+      // Fire-and-forget actions (e.g. generateAllAltTexts) return only a taskId
+      // and run the heavy work detached from this request. Poll the task table
+      // until the worker finishes — the user can navigate away mid-poll without
+      // affecting the background work.
+      if (result?.success && result.taskId && !result.generatedAltTexts) {
+        const polled = await pollTaskUntilDone(result.taskId);
+        if (polled) {
+          // Polled result authoritatively decides success — partial failures and
+          // failed tasks come through as taskStatus: "failed".
+          result = { ...result, ...polled };
+        } else {
+          // Polling timed out — surface as critical so the user isn't left
+          // believing the operation succeeded silently.
+          result = {
+            ...result,
+            success: false,
+            error: t.tasks?.taskFailedGeneric || "Task did not complete in time — please retry.",
+          };
+        }
+      }
+
       if (result.success) {
         refreshTaskCount();
 
@@ -858,7 +932,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         showInfoBox(translatedError, "critical", t.common?.error || "Error");
       }
     }
-  }, [showInfoBox, t]);
+  }, [showInfoBox, t, pollTaskUntilDone]);
 
   // Fill forwarding refs now that real functions are available
   buildFieldsForSaveRef.current = buildFieldsForSave;
