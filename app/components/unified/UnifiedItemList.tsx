@@ -602,7 +602,7 @@ export function UnifiedItemList({
                       {(item.hasMissingPrimary || item.hasMissingTranslations) && (
                         <div style={{ display: "flex", gap: "4px", flexShrink: 0, marginLeft: "8px", alignItems: "center" }}>
                           {item.hasMissingPrimary && (
-                            <Tooltip content={item.missingPrimaryTooltip || "Missing primary content"} dismissOnMouseOut>
+                            <Tooltip content={item.missingPrimaryTooltip || "Missing primary content"} dismissOnMouseOut zIndexOverride={1200}>
                               <div
                                 style={{
                                   width: "12px",
@@ -616,7 +616,7 @@ export function UnifiedItemList({
                             </Tooltip>
                           )}
                           {item.hasMissingTranslations && (
-                            <Tooltip content={item.missingTranslationsTooltip || "Missing translations"} dismissOnMouseOut>
+                            <Tooltip content={item.missingTranslationsTooltip || "Missing translations"} dismissOnMouseOut zIndexOverride={1200}>
                               <div
                                 style={{
                                   width: "12px",
