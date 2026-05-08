@@ -292,7 +292,7 @@ export const en: Translation = {
     // Alt-text warnings
     altTextTranslatedToLanguages: "Alt-text translated to {count} language(s)",
     altTextTranslatedToAllLocales: "Alt-text for image {imageNumber} translated to {count} language(s)",
-    altTextPartialLocales: "Alt-text for image {imageNumber} partially translated. Language(s) {failedLocales} could not be saved to Shopify. Please sync the product again.",
+    altTextPartialLocales: "Alt-text for image {imageNumber} partially translated. Language(s) {failedLocales} could not be saved. Please try again or re-sync.",
     translatePartialLocales: "Translation partially completed: {successCount}/{totalCount} language(s) succeeded. Language(s) {failedLocales} failed.",
     translateRejectedFields: "Some fields could not be saved to Shopify: {details}. The translated content was generated but Shopify rejected it.",
     translateAllSuccess: "Successfully translated to {count} language(s).",

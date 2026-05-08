@@ -1122,7 +1122,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       if (failed.length > 0) {
         const failedList = failed.join(", ");
         showInfoBox(
-          String(t.content?.altTextPartialLocales || "Alt-text for image {imageNumber} partially translated. Language(s) {failedLocales} could not be saved to Shopify. Please sync the product again.")
+          String(t.content?.altTextPartialLocales || "Alt-text for image {imageNumber} partially translated. Language(s) {failedLocales} could not be saved. Please try again or re-sync.")
             .replace("{imageNumber}", String((imageIndex || 0) + 1))
             .replace("{failedLocales}", failedList),
           "warning",

@@ -419,6 +419,7 @@ export async function handleTranslateAltTextToAllLocales(
         translatedAltTexts,
         imageIndex,
         targetLocales,
+        savedLocales,
         failedLocales,
       });
     }
@@ -566,6 +567,7 @@ export async function handleTranslateAltTextToAllLocales(
       translatedAltTexts,
       imageIndex,
       targetLocales,
+      savedLocales,
       failedLocales,
     });
   } catch (error: unknown) {

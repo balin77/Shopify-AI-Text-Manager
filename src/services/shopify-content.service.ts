@@ -266,21 +266,31 @@ export class ShopifyContentService {
       const { digestMap: imageDigestMap } = await this.loadTranslatableContent(imageResourceId);
       const altDigest = imageDigestMap['alt'];
 
-      if (!altDigest) {
-        loggers.translation('warn', `[saveImageAltTextTranslation] No digest for ${resourceType} image alt — image may not exist`, { imageResourceId });
-        return { saved: false, reason: 'no-digest' };
-      }
-
       if (altText.trim() === '') {
-        await this.deleteAllTranslationsForKeys({
-          resourceId: imageResourceId,
-          translationKeys: ['alt'],
-          foreignLocales: [locale],
-        });
+        if (altDigest) {
+          await this.deleteAllTranslationsForKeys({
+            resourceId: imageResourceId,
+            translationKeys: ['alt'],
+            foreignLocales: [locale],
+          });
+        }
         await db.contentTranslation.deleteMany({
           where: { shop, resourceId, resourceType, key: 'image_alt_text', locale },
         });
         return { saved: true };
+      }
+
+      // No Shopify digest yet (ArticleImage/CollectionImage translatable resource not
+      // initialised). Still persist locally so the editor displays the translation;
+      // the next sync will reconcile the digest and push to Shopify.
+      if (!altDigest) {
+        loggers.translation('warn', `[saveImageAltTextTranslation] No digest for ${resourceType} image alt — saving locally only`, { imageResourceId });
+        await db.contentTranslation.upsert({
+          where: { shop_resourceId_key_locale: { shop, resourceId, key: 'image_alt_text', locale } },
+          update: { value: altText, digest: null, resourceType },
+          create: { shop, resourceId, resourceType, key: 'image_alt_text', value: altText, locale, digest: null },
+        });
+        return { saved: true, reason: 'no-digest' };
       }
 
       const translateResponse = await this.admin.graphql(TRANSLATE_CONTENT, {
@@ -297,8 +307,13 @@ export class ShopifyContentService {
       const translateData = await translateResponse.json() as any;
       const userErrors = translateData.data?.translationsRegister?.userErrors || [];
       if (userErrors.length > 0) {
-        loggers.translation('error', `[saveImageAltTextTranslation] Shopify userErrors`, { resourceType, errors: userErrors });
-        return { saved: false, reason: 'shopify-error' };
+        loggers.translation('error', `[saveImageAltTextTranslation] Shopify userErrors — saving locally only`, { resourceType, errors: userErrors });
+        await db.contentTranslation.upsert({
+          where: { shop_resourceId_key_locale: { shop, resourceId, key: 'image_alt_text', locale } },
+          update: { value: altText, digest: altDigest, resourceType },
+          create: { shop, resourceId, resourceType, key: 'image_alt_text', value: altText, locale, digest: altDigest },
+        });
+        return { saved: true, reason: 'shopify-error' };
       }
 
       await db.contentTranslation.upsert({
