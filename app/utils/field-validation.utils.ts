@@ -337,7 +337,6 @@ export function hasLocaleMissingTranslations(
   const requiredFields = getRequiredFieldsForContentType(contentType, selectedItem);
 
   const hasMissingMainFields = requiredFields.some(field => {
-    if (field === 'handle') return false;
     if (!primaryHasFieldContent(selectedItem, field, contentType, overlays)) return false;
     return !hasTranslationForField(selectedItem, field, locale, overlays);
   });
@@ -492,7 +491,6 @@ export function getMissingLocaleTranslationFields(
 
   const requiredFields = getRequiredFieldsForContentType(contentType, selectedItem);
   const missingFields = requiredFields.filter(field => {
-    if (field === 'handle') return false;
     if (!primaryHasFieldContent(selectedItem, field, contentType, overlays)) return false;
     return !hasTranslationForField(selectedItem, field, locale, overlays);
   });
@@ -684,8 +682,6 @@ export function hasFieldMissingTranslations(
   overlays?: ValidationOverlays
 ): boolean {
   if (!selectedItem) return false;
-
-  if (fieldKey === 'handle') return false;
 
   const translationKey = UI_FIELD_TO_TRANSLATION_KEY[fieldKey] || fieldKey;
   const foreignLocales = shopLocales.filter(l => !l.primary);
