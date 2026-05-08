@@ -20,6 +20,8 @@
 import { useState, useEffect } from "react";
 import { BlockStack, InlineStack, Button, Text, Banner } from "@shopify/polaris";
 import { AIEditableField } from "../AIEditableField";
+import { isAltTextTranslated, hasAltTextMissingTranslations } from "../../utils/field-validation.utils";
+import type { ShopLocale, AltTextTranslation } from "../../types/content-editor.types";
 
 function extractFilename(url: string): string {
   try {
@@ -32,6 +34,7 @@ function extractFilename(url: string): string {
 export interface ImageData {
   url: string;
   altText?: string;
+  altTextTranslations?: AltTextTranslation[];
   id?: string;
 }
 
@@ -53,6 +56,9 @@ interface ImageGalleryFieldProps {
 
   /** Whether user is on free plan (shows only featured image) */
   isFreePlan?: boolean;
+
+  /** All enabled shop locales — used to compute the missing-translation indicator on primary */
+  shopLocales?: ShopLocale[];
 
   /** Alt-text values (indexed by image position) */
   altTexts: Record<number, string>;
@@ -125,6 +131,7 @@ export function ImageGalleryField({
   primaryLocale,
   isPrimaryLocale,
   isFreePlan = false,
+  shopLocales = [],
   altTexts,
   onAltTextChange,
   onGenerateAltText,
@@ -416,7 +423,8 @@ export function ImageGalleryField({
           helpKey="altText"
           suggestion={altTextSuggestions[selectedImageIndex]}
           isPrimaryLocale={isPrimaryLocale}
-          isTranslated={true}
+          isTranslated={isAltTextTranslated(images[selectedImageIndex], currentLanguage, primaryLocale, altTexts[selectedImageIndex])}
+          hasFieldMissingTranslations={isPrimaryLocale && hasAltTextMissingTranslations(images[selectedImageIndex], shopLocales, primaryLocale, altTexts[selectedImageIndex])}
           placeholder={t.altTextPlaceholder}
           isLoading={isFieldLoading ? isFieldLoading(selectedImageIndex) : false}
           onGenerateAI={isPrimaryLocale ? () => onGenerateAltText(selectedImageIndex) : undefined}
@@ -441,7 +449,8 @@ export function ImageGalleryField({
           helpKey="altText"
           suggestion={altTextSuggestions[0]}
           isPrimaryLocale={isPrimaryLocale}
-          isTranslated={true}
+          isTranslated={isAltTextTranslated(featuredImage, currentLanguage, primaryLocale, altTexts[0])}
+          hasFieldMissingTranslations={isPrimaryLocale && hasAltTextMissingTranslations(featuredImage, shopLocales, primaryLocale, altTexts[0])}
           placeholder={t.altTextPlaceholder}
           isLoading={isFieldLoading ? isFieldLoading(0) : false}
           onGenerateAI={isPrimaryLocale ? () => onGenerateAltText(0) : undefined}

@@ -210,6 +210,7 @@ export function UnifiedFieldRenderer(
         primaryLocale={primaryLocale}
         isPrimaryLocale={isPrimaryLocale}
         isFreePlan={false}
+        shopLocales={shopLocales}
         altTexts={state.imageAltTexts}
         onAltTextChange={handlers.handleAltTextChange}
         onGenerateAltText={handlers.handleGenerateAltText}

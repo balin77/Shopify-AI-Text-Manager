@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import type { TranslatableItem, Translation, ContentType, ShopLocale } from "~/types/content-editor.types";
+import type { TranslatableItem, Translation, ContentType, ShopLocale, ContentImage } from "~/types/content-editor.types";
 import {
   FIELD_CONFIGS,
   UI_FIELD_TO_TRANSLATION_KEY,
@@ -613,6 +613,42 @@ export function getLocaleButtonTooltip(
   // Deduplicate (e.g. 'body' and 'body_html' both map to 'description')
   const unique = [...new Set(labels)];
   return `${prefix} ${unique.join(', ')}`;
+}
+
+/**
+ * Whether the image has an alt-text translation for the given locale.
+ * `liveValue` is the working value from `state.imageAltTexts[index]` for the
+ * active locale — pass it so unsaved edits are reflected immediately.
+ */
+export function isAltTextTranslated(
+  image: ContentImage | null | undefined,
+  locale: string,
+  primaryLocale: string,
+  liveValue?: string
+): boolean {
+  if (locale === primaryLocale) return true;
+  if (!image) return false;
+  if (liveValue !== undefined) return !isFieldEmpty(liveValue);
+  const t = image.altTextTranslations?.find(t => t.locale === locale);
+  return !!t && !isFieldEmpty(t.altText);
+}
+
+/**
+ * Whether the primary alt-text exists but at least one foreign enabled locale
+ * is missing its translation. Only meaningful while viewing the primary locale.
+ */
+export function hasAltTextMissingTranslations(
+  image: ContentImage | null | undefined,
+  shopLocales: ShopLocale[],
+  primaryLocale: string,
+  primaryLiveValue?: string
+): boolean {
+  if (!image) return false;
+  const primaryValue = primaryLiveValue !== undefined ? primaryLiveValue : (image.altText ?? '');
+  if (isFieldEmpty(primaryValue)) return false;
+  return shopLocales
+    .filter(l => !l.primary && l.locale !== primaryLocale)
+    .some(l => !isAltTextTranslated(image, l.locale, primaryLocale));
 }
 
 /**
