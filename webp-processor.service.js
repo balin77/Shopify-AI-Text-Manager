@@ -36,10 +36,43 @@ function decryptToken(encryptedToken) {
   return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString("utf8");
 }
 
+const DOWNLOAD_MAX_ATTEMPTS = 4;
+const DOWNLOAD_BASE_DELAY_MS = 1000;
+const DOWNLOAD_TIMEOUT_MS = 30000;
+const RETRYABLE_STATUS = new Set([408, 429, 500, 502, 503, 504]);
+
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
 async function downloadImageAsBuffer(url) {
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`Failed to download image: ${response.status} ${url}`);
-  return Buffer.from(await response.arrayBuffer());
+  for (let attempt = 1; attempt <= DOWNLOAD_MAX_ATTEMPTS; attempt++) {
+    const isLastAttempt = attempt === DOWNLOAD_MAX_ATTEMPTS;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS);
+
+    let retryReason;
+    try {
+      const response = await fetch(url, { signal: controller.signal });
+      if (response.ok) return Buffer.from(await response.arrayBuffer());
+
+      if (RETRYABLE_STATUS.has(response.status) && !isLastAttempt) {
+        retryReason = `HTTP ${response.status}`;
+      } else {
+        throw new Error(`Failed to download image: ${response.status} ${url}`);
+      }
+    } catch (err) {
+      // Network error or timeout — retry until last attempt; HTTP errors above re-throw directly.
+      if (isLastAttempt || err.message?.startsWith("Failed to download image:")) throw err;
+      retryReason = err.name === "AbortError" ? `timeout after ${DOWNLOAD_TIMEOUT_MS}ms` : err.message;
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    const delay = DOWNLOAD_BASE_DELAY_MS * 2 ** (attempt - 1) + Math.floor(Math.random() * 250);
+    console.warn(`[WebPProcessor] Download attempt ${attempt}/${DOWNLOAD_MAX_ATTEMPTS} failed (${retryReason}) for ${url} — retrying in ${delay}ms`);
+    await sleep(delay);
+  }
+  // Unreachable: loop either returns or throws.
+  throw new Error(`Failed to download image after ${DOWNLOAD_MAX_ATTEMPTS} attempts: ${url}`);
 }
 
 async function convertToWebP(sourceBuffer, originalUrl, quality = 85) {
