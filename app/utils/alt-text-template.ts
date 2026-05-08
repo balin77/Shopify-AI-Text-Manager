@@ -57,7 +57,7 @@ export async function resolveVariableValues(
   return resolved;
 }
 
-async function fetchMetaobjectTranslationById(
+export async function fetchMetaobjectTranslationById(
   metaobjectGid: string,
   locale: string,
   admin: { graphql: (query: string, options?: Record<string, unknown>) => Promise<Response> }

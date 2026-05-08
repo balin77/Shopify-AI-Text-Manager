@@ -39,10 +39,16 @@ interface Props {
   onApplySuccess?: () => void;
 }
 
-function fillTemplate(template: string, variant: VariantWithGallery): string {
+function fillTemplate(
+  template: string,
+  variant: VariantWithGallery,
+  gidTranslations?: Record<string, string>,
+): string {
   let result = template;
   for (const opt of variant.selectedOptions) {
-    result = result.replace(new RegExp(`\\{${escapeRegex(opt.name)}\\}`, "g"), opt.value);
+    const translated = opt.metaobjectGid && gidTranslations ? gidTranslations[opt.metaobjectGid] : undefined;
+    const value = translated ?? opt.value;
+    result = result.replace(new RegExp(`\\{${escapeRegex(opt.name)}\\}`, "g"), value);
   }
   return result;
 }
@@ -74,6 +80,7 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
   const [isApplying, setIsApplying] = useState(false);
   const [translatingPositions, setTranslatingPositions] = useState<Set<number>>(new Set());
   const [isTranslatingAll, setIsTranslatingAll] = useState(false);
+  const [optionTranslations, setOptionTranslations] = useState<Record<string, Record<string, string>>>({});
 
   const variableChips = buildVariableChips(variants);
   const isPrimaryLocale = activeLocale === primaryLocale;
@@ -109,6 +116,40 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
       .catch(() => {})
       .finally(() => setIsLoading(false));
   }, [productId]);
+
+  // Fetch translated option values (metaobject display_names) for foreign locales,
+  // so the preview reflects what the apply step will actually save.
+  useEffect(() => {
+    if (isPrimaryLocale) return;
+    if (optionTranslations[activeLocale]) return;
+
+    const previewGids = new Set<string>();
+    for (const v of variants.slice(0, 3)) {
+      for (const opt of v.selectedOptions) {
+        if (opt.metaobjectGid) previewGids.add(opt.metaobjectGid);
+      }
+    }
+    if (previewGids.size === 0) {
+      setOptionTranslations((prev) => ({ ...prev, [activeLocale]: {} }));
+      return;
+    }
+
+    let cancelled = false;
+    fetch("/api/option-value-translations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ locale: activeLocale, gids: Array.from(previewGids) }),
+    })
+      .then((r) => r.json())
+      .then((data: { translations?: Record<string, string> }) => {
+        if (cancelled) return;
+        setOptionTranslations((prev) => ({ ...prev, [activeLocale]: data.translations ?? {} }));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [activeLocale, isPrimaryLocale, variants, optionTranslations]);
 
   const saveTemplate = useCallback(
     async (pos: TemplatePosition, locale: string, value: string) => {
@@ -462,7 +503,7 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
                       <InlineStack key={v.id} gap="100" blockAlign="center" wrap={false}>
                         <Badge>{v.title}</Badge>
                         <Text variant="bodySm" as="p">
-                          {fillTemplate(templateValue, v)}
+                          {fillTemplate(templateValue, v, isPrimaryLocale ? undefined : optionTranslations[activeLocale])}
                         </Text>
                       </InlineStack>
                     ))}
