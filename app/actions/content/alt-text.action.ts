@@ -319,7 +319,7 @@ export async function handleTranslateAltTextToAllLocales(
   ctx: ContentActionHandlerContext,
   formData: FormData,
 ): Promise<Response> {
-  const { admin, session, contentConfig, db, itemId, provider, serviceConfig } = ctx;
+  const { admin, session, contentConfig, db, itemId, provider, serviceConfig, shopifyContentService } = ctx;
 
   const imageIndex = getFormInt(formData, "imageIndex") ?? 0;
   const sourceAltText = getFormString(formData, "sourceAltText");
@@ -378,6 +378,52 @@ export async function handleTranslateAltTextToAllLocales(
     });
 
     // Save translations to Shopify first, then DB only on success
+    const failedLocales: string[] = [];
+    const savedLocales: string[] = [];
+
+    // Articles/Collections store the featured image translation on a separate translatable
+    // resource (ArticleImage / CollectionImage) and persist locally to `contentTranslation`,
+    // not to `productImageAltTranslation`. Delegate to the shared helper.
+    if (contentConfig.resourceType === 'Article' || contentConfig.resourceType === 'Collection') {
+      for (const locale of targetLocales) {
+        const altText = translatedAltTexts[locale];
+        if (!altText) continue;
+        const result = await shopifyContentService.saveImageAltTextTranslation({
+          resourceId: itemId,
+          resourceType: contentConfig.resourceType,
+          locale,
+          altText,
+          shop: session.shop,
+          db,
+        });
+        if (result.saved) {
+          savedLocales.push(locale);
+        } else {
+          failedLocales.push(locale);
+        }
+      }
+
+      await db.task.update({
+        where: { id: task.id },
+        data: {
+          status: "completed",
+          progress: 100,
+          completedAt: new Date(),
+          result: JSON.stringify({ translatedAltTexts, imageIndex, targetLocales, savedLocales, failedLocales }),
+        },
+      });
+
+      return json({
+        actionType: "translateAltTextToAllLocales",
+        success: true,
+        translatedAltTexts,
+        imageIndex,
+        targetLocales,
+        failedLocales,
+      });
+    }
+
+    // Product path: image translations live on Shopify MediaImage GIDs and `productImageAltTranslation`.
     const { ShopifyApiGateway } = await import("~/services/shopify-api-gateway.service");
     const gateway = new ShopifyApiGateway(admin, session.shop);
 
@@ -392,8 +438,6 @@ export async function handleTranslateAltTextToAllLocales(
     });
 
     const dbImage = dbProduct?.images?.[imageIndex];
-    const failedLocales: string[] = [];
-    const savedLocales: string[] = [];
 
     if (!dbImage?.mediaId) {
       // No mediaId = cannot save to Shopify, so don't save to DB either

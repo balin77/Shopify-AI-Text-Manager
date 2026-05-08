@@ -193,7 +193,7 @@ export class ShopifyContentService {
   /**
    * Update an article
    */
-  async updateArticle(id: string, article: { title?: string; handle?: string; body?: string; summary?: string }) {
+  async updateArticle(id: string, article: { title?: string; handle?: string; body?: string; summary?: string; image?: { altText: string } | null }) {
     const response = await this.admin.graphql(UPDATE_ARTICLE, {
       variables: { id, article }
     });
@@ -233,6 +233,86 @@ export class ShopifyContentService {
     }
 
     return data.data?.collectionUpdate?.collection;
+  }
+
+  /**
+   * Translate the featured-image alt text of an Article or Collection.
+   *
+   * In Shopify, Article/Collection image alt text is a SEPARATE translatable resource
+   * (CollectionImage / ArticleImage), not part of the parent's translatable content.
+   * The image resource GID mirrors the parent's numeric ID:
+   *   Collection gid://shopify/Collection/123 → gid://shopify/CollectionImage/123
+   *   Article    gid://shopify/Article/123    → gid://shopify/ArticleImage/123
+   *
+   * Persists to the polymorphic `contentTranslation` table under the parent's resourceId
+   * with key "image_alt_text" so the editor's loader can read it back.
+   *
+   * Empty `altText` removes the translation (Shopify + DB).
+   * Returns { saved } so callers can compute failedLocales for partial-success UI.
+   */
+  async saveImageAltTextTranslation(params: {
+    resourceId: string;
+    resourceType: 'Article' | 'Collection';
+    locale: string;
+    altText: string;
+    shop: string;
+    db: PrismaClient;
+  }): Promise<{ saved: boolean; reason?: 'no-digest' | 'shopify-error' | 'error' }> {
+    const { resourceId, resourceType, locale, altText, shop, db } = params;
+    try {
+      const numericId = resourceId.split('/').pop();
+      const imageResourceId = `gid://shopify/${resourceType}Image/${numericId}`;
+
+      const { digestMap: imageDigestMap } = await this.loadTranslatableContent(imageResourceId);
+      const altDigest = imageDigestMap['alt'];
+
+      if (!altDigest) {
+        loggers.translation('warn', `[saveImageAltTextTranslation] No digest for ${resourceType} image alt — image may not exist`, { imageResourceId });
+        return { saved: false, reason: 'no-digest' };
+      }
+
+      if (altText.trim() === '') {
+        await this.deleteAllTranslationsForKeys({
+          resourceId: imageResourceId,
+          translationKeys: ['alt'],
+          foreignLocales: [locale],
+        });
+        await db.contentTranslation.deleteMany({
+          where: { shop, resourceId, resourceType, key: 'image_alt_text', locale },
+        });
+        return { saved: true };
+      }
+
+      const translateResponse = await this.admin.graphql(TRANSLATE_CONTENT, {
+        variables: {
+          resourceId: imageResourceId,
+          translations: [{
+            key: 'alt',
+            value: altText,
+            locale,
+            translatableContentDigest: altDigest,
+          }],
+        },
+      });
+      const translateData = await translateResponse.json() as any;
+      const userErrors = translateData.data?.translationsRegister?.userErrors || [];
+      if (userErrors.length > 0) {
+        loggers.translation('error', `[saveImageAltTextTranslation] Shopify userErrors`, { resourceType, errors: userErrors });
+        return { saved: false, reason: 'shopify-error' };
+      }
+
+      await db.contentTranslation.upsert({
+        where: { shop_resourceId_key_locale: { shop, resourceId, key: 'image_alt_text', locale } },
+        update: { value: altText, digest: altDigest, resourceType },
+        create: { shop, resourceId, resourceType, key: 'image_alt_text', value: altText, locale, digest: altDigest },
+      });
+      return { saved: true };
+    } catch (err: unknown) {
+      loggers.translation('error', `[saveImageAltTextTranslation] Error translating ${resourceType} image alt`, {
+        resourceId, locale, error: err instanceof Error ? err.message : String(err),
+      });
+      return { saved: false, reason: 'error' };
+    }
   }
 
   /**
@@ -571,74 +651,17 @@ export class ShopifyContentService {
         }
       }
 
-      // Handle collection/article image alt-text translation separately.
-      // In Shopify, collection/article image alt text is a separate translatable resource
-      // (COLLECTION_IMAGE / ARTICLE_IMAGE), not part of the main resource's translatable content.
-      // The image resource GID mirrors the parent's numeric ID:
-      //   Collection gid://shopify/Collection/123 → gid://shopify/CollectionImage/123
-      //   Article    gid://shopify/Article/123    → gid://shopify/ArticleImage/123
+      // Article/Collection image alt-text translations live on a separate translatable
+      // resource (ArticleImage / CollectionImage). Best-effort: failures don't fail the save.
       if (updates.imageAltText !== undefined && (resourceType === 'Collection' || resourceType === 'Article')) {
-        try {
-          const imageAltText = updates.imageAltText;
-          // Construct the image resource GID from the parent's numeric ID
-          const numericId = resourceId.split('/').pop();
-          const imageResourceId = `gid://shopify/${resourceType}Image/${numericId}`;
-
-          // Fetch translatable content (digest) for the image resource
-          const { digestMap: imageDigestMap } = await this.loadTranslatableContent(imageResourceId);
-          const altDigest = imageDigestMap['alt'];
-
-          if (altDigest) {
-            if (imageAltText.trim() === '') {
-              // Empty value: delete the translation from Shopify and DB
-              await this.deleteAllTranslationsForKeys({
-                resourceId: imageResourceId,
-                translationKeys: ['alt'],
-                foreignLocales: [locale],
-              });
-              await db.contentTranslation.deleteMany({
-                where: { shop, resourceId, resourceType, key: 'image_alt_text', locale },
-              });
-            } else {
-              // Register the translation at Shopify
-              const translateResponse = await this.admin.graphql(TRANSLATE_CONTENT, {
-                variables: {
-                  resourceId: imageResourceId,
-                  translations: [{
-                    key: 'alt',
-                    value: imageAltText,
-                    locale,
-                    translatableContentDigest: altDigest,
-                  }],
-                },
-              });
-              const translateData = await translateResponse.json() as any;
-              if (translateData.data?.translationsRegister?.userErrors?.length > 0) {
-                loggers.translation('error', `[updateContent] Failed to translate ${resourceType} image alt text`, {
-                  errors: translateData.data.translationsRegister.userErrors,
-                });
-              } else {
-                // Persist to DB so the UI can load it on reload
-                await db.contentTranslation.upsert({
-                  where: {
-                    shop_resourceId_key_locale: { shop, resourceId, key: 'image_alt_text', locale },
-                  },
-                  update: { value: imageAltText, digest: altDigest, resourceType },
-                  create: { shop, resourceId, resourceType, key: 'image_alt_text', value: imageAltText, locale, digest: altDigest },
-                });
-              }
-            }
-          } else {
-            loggers.translation('warn', `[updateContent] No digest for ${resourceType} image alt text — image may not exist`, {
-              imageResourceId,
-            });
-          }
-        } catch (imageAltError: unknown) {
-          loggers.translation('error', `[updateContent] Error translating ${resourceType} image alt text`, {
-            error: imageAltError instanceof Error ? imageAltError.message : String(imageAltError),
-          });
-          // Don't fail the whole save — image alt text translation is best-effort
-        }
+        await this.saveImageAltTextTranslation({
+          resourceId,
+          resourceType,
+          locale,
+          altText: updates.imageAltText,
+          shop,
+          db,
+        });
       }
 
       if (dbOnlyTranslations.length > 0) {
@@ -698,6 +721,7 @@ export class ShopifyContentService {
           handle: updates.handle,
           body: updates.body,
           summary: updates.summary,
+          ...(updates.imageAltText !== undefined ? { image: { altText: updates.imageAltText } } : {}),
         });
 
         // Update database
@@ -712,6 +736,7 @@ export class ShopifyContentService {
             summary: updates.summary,
             seoTitle: updates.seoTitle,
             seoDescription: updates.metaDescription,
+            ...(updates.imageAltText !== undefined ? { imageAltText: updates.imageAltText || null } : {}),
             lastSyncedAt: new Date(),
           },
         });

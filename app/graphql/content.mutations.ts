@@ -96,6 +96,10 @@ export const UPDATE_ARTICLE = `#graphql
         handle
         body
         summary
+        image {
+          altText
+          url
+        }
       }
       userErrors {
         field
