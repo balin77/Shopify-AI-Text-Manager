@@ -445,8 +445,37 @@ export async function handleTranslateAltTextToAllLocales(ctx: AIActionContext): 
 
     // Save translations to Shopify first, then DB only on success
     const failedLocales: string[] = [];
+    const savedLocales: string[] = [];
 
-    if (productId && contentType === 'products') {
+    // Articles/Collections: featured-image alt-text lives on a separate translatable
+    // resource (ArticleImage / CollectionImage) and is persisted to `contentTranslation`
+    // via the shared helper. Required because this api-ai handler bypasses the page
+    // route, which is the only place that previously routed Article/Collection saves.
+    if (contentType === 'blogs' || contentType === 'collections') {
+      const resourceType: 'Article' | 'Collection' = contentType === 'blogs' ? 'Article' : 'Collection';
+      const { ShopifyApiGateway } = await import("~/services/shopify-api-gateway.service");
+      const { ShopifyContentService } = await import("../../../src/services/shopify-content.service");
+      const gateway = new ShopifyApiGateway(admin, session.shop);
+      const shopifyContentService = new ShopifyContentService(gateway as any);
+
+      for (const locale of targetLocales) {
+        const altText = translatedAltTexts[locale];
+        if (!altText) continue;
+        const result = await shopifyContentService.saveImageAltTextTranslation({
+          resourceId: itemId,
+          resourceType,
+          locale,
+          altText,
+          shop: session.shop,
+          db,
+        });
+        if (result.saved) {
+          savedLocales.push(locale);
+        } else {
+          failedLocales.push(locale);
+        }
+      }
+    } else if (productId && contentType === 'products') {
       const { ShopifyApiGateway } = await import("~/services/shopify-api-gateway.service");
       const gateway = new ShopifyApiGateway(admin, session.shop);
 
@@ -577,6 +606,7 @@ export async function handleTranslateAltTextToAllLocales(ctx: AIActionContext): 
       translatedAltTexts,
       imageIndex,
       targetLocales,
+      savedLocales,
       failedLocales,
     });
   } catch (error: unknown) {
@@ -665,7 +695,37 @@ export async function handleTranslateAllAltTextsToAllLocales(ctx: AIActionContex
     const failedImages: number[] = [];
     let savedCount = 0;
 
-    if (productId && contentType === 'products') {
+    if (contentType === 'blogs' || contentType === 'collections') {
+      const resourceType: 'Article' | 'Collection' = contentType === 'blogs' ? 'Article' : 'Collection';
+      const { ShopifyApiGateway } = await import("~/services/shopify-api-gateway.service");
+      const { ShopifyContentService } = await import("../../../src/services/shopify-content.service");
+      const gateway = new ShopifyApiGateway(admin, session.shop);
+      const shopifyContentService = new ShopifyContentService(gateway as any);
+
+      for (const imgIdx of imageIndices) {
+        let imageFullySaved = true;
+        for (const locale of targetLocales) {
+          const altText = translatedResults[imgIdx]?.[locale];
+          if (!altText) continue;
+          const result = await shopifyContentService.saveImageAltTextTranslation({
+            resourceId: itemId,
+            resourceType,
+            locale,
+            altText,
+            shop: session.shop,
+            db,
+          });
+          if (result.saved) {
+            savedCount++;
+          } else {
+            imageFullySaved = false;
+          }
+        }
+        if (!imageFullySaved && !failedImages.includes(imgIdx)) {
+          failedImages.push(imgIdx);
+        }
+      }
+    } else if (productId && contentType === 'products') {
       const { ShopifyApiGateway } = await import("~/services/shopify-api-gateway.service");
       const gateway = new ShopifyApiGateway(admin, session.shop);
 
@@ -902,7 +962,31 @@ export async function handleTranslateAllAltTextsForLocale(ctx: AIActionContext):
     const failedImages: number[] = [];
     let savedCount = 0;
 
-    if (productId && contentType === 'products') {
+    if (contentType === 'blogs' || contentType === 'collections') {
+      const resourceType: 'Article' | 'Collection' = contentType === 'blogs' ? 'Article' : 'Collection';
+      const { ShopifyApiGateway } = await import("~/services/shopify-api-gateway.service");
+      const { ShopifyContentService } = await import("../../../src/services/shopify-content.service");
+      const gateway = new ShopifyApiGateway(admin, session.shop);
+      const shopifyContentService = new ShopifyContentService(gateway as any);
+
+      for (const imgIdx of imageIndices) {
+        const altText = translatedAltTexts[imgIdx];
+        if (!altText) continue;
+        const result = await shopifyContentService.saveImageAltTextTranslation({
+          resourceId: itemId,
+          resourceType,
+          locale: targetLocale,
+          altText,
+          shop: session.shop,
+          db,
+        });
+        if (result.saved) {
+          savedCount++;
+        } else {
+          failedImages.push(imgIdx);
+        }
+      }
+    } else if (productId && contentType === 'products') {
       const { ShopifyApiGateway } = await import("~/services/shopify-api-gateway.service");
       const gateway = new ShopifyApiGateway(admin, session.shop);
 
