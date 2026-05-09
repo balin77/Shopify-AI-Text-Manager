@@ -46,7 +46,7 @@ function fillTemplate(
 ): string {
   let result = template;
   for (const opt of variant.selectedOptions) {
-    const translated = opt.metaobjectGid && gidTranslations ? gidTranslations[opt.metaobjectGid] : undefined;
+    const translated = opt.optionValueGid && gidTranslations ? gidTranslations[opt.optionValueGid] : undefined;
     const value = translated ?? opt.value;
     result = result.replace(new RegExp(`\\{${escapeRegex(opt.name)}\\}`, "g"), value);
   }
@@ -117,28 +117,32 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
       .finally(() => setIsLoading(false));
   }, [productId]);
 
-  // Fetch translated option values (metaobject display_names) for foreign locales,
-  // so the preview reflects what the apply step will actually save.
+  // Fetch translated option values for foreign locales so the preview reflects
+  // what the apply step will actually save. Handles both metaobject-linked options
+  // (display_name) and plain text option values (ProductOptionValue.name).
   useEffect(() => {
     if (isPrimaryLocale) return;
     if (optionTranslations[activeLocale]) return;
 
-    const previewGids = new Set<string>();
+    const seen = new Map<string, { optionValueGid: string; metaobjectGid: string | null }>();
     for (const v of variants.slice(0, 3)) {
       for (const opt of v.selectedOptions) {
-        if (opt.metaobjectGid) previewGids.add(opt.metaobjectGid);
+        if (!opt.optionValueGid) continue;
+        if (!seen.has(opt.optionValueGid)) {
+          seen.set(opt.optionValueGid, {
+            optionValueGid: opt.optionValueGid,
+            metaobjectGid: opt.metaobjectGid ?? null,
+          });
+        }
       }
     }
-    if (previewGids.size === 0) {
-      setOptionTranslations((prev) => ({ ...prev, [activeLocale]: {} }));
-      return;
-    }
+    if (seen.size === 0) return;
 
     let cancelled = false;
     fetch("/api/option-value-translations", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ locale: activeLocale, gids: Array.from(previewGids) }),
+      body: JSON.stringify({ locale: activeLocale, options: Array.from(seen.values()) }),
     })
       .then((r) => r.json())
       .then((data: { translations?: Record<string, string> }) => {

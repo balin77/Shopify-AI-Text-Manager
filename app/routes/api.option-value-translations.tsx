@@ -1,10 +1,18 @@
 import { json, type ActionFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
-import { fetchMetaobjectTranslationById } from "../utils/alt-text-template";
+import {
+  fetchMetaobjectTranslationById,
+  fetchOptionValueTranslationById,
+} from "../utils/alt-text-template";
+
+interface OptionLookup {
+  optionValueGid: string;
+  metaobjectGid?: string | null;
+}
 
 interface RequestBody {
   locale?: string;
-  gids?: string[];
+  options?: OptionLookup[];
 }
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -15,19 +23,33 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const { admin } = await authenticate.admin(request);
   const body = (await request.json()) as RequestBody;
   const locale = body.locale;
-  const gids = Array.isArray(body.gids) ? body.gids.filter((g) => typeof g === "string" && g.length > 0) : [];
+  const options = Array.isArray(body.options) ? body.options : [];
 
-  if (!locale || gids.length === 0) {
+  if (!locale || options.length === 0) {
     return json({ translations: {} });
   }
 
-  const uniqueGids = Array.from(new Set(gids));
+  // Deduplicate by optionValueGid — the response key the client uses to look up.
+  const byKey = new Map<string, OptionLookup>();
+  for (const opt of options) {
+    if (typeof opt?.optionValueGid !== "string" || opt.optionValueGid.length === 0) continue;
+    if (!byKey.has(opt.optionValueGid)) byKey.set(opt.optionValueGid, opt);
+  }
+
   const translations: Record<string, string> = {};
 
   await Promise.all(
-    uniqueGids.map(async (gid) => {
-      const value = await fetchMetaobjectTranslationById(gid, locale, admin);
-      if (value) translations[gid] = value;
+    Array.from(byKey.values()).map(async (opt) => {
+      // Same priority as resolveVariableValues: metaobject first, then ProductOptionValue.
+      if (opt.metaobjectGid) {
+        const value = await fetchMetaobjectTranslationById(opt.metaobjectGid, locale, admin);
+        if (value) {
+          translations[opt.optionValueGid] = value;
+          return;
+        }
+      }
+      const value = await fetchOptionValueTranslationById(opt.optionValueGid, locale, admin);
+      if (value) translations[opt.optionValueGid] = value;
     })
   );
 

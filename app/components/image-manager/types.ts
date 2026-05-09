@@ -24,6 +24,7 @@ export interface VariantSelectedOption {
   value: string;   // display value, e.g. "Aschgrau"
   handle: string | null;       // metaobject handle if linked, e.g. "ashgrey"
   metaobjectGid: string | null; // metaobject GID if linked — used for translation lookup (no type required)
+  optionValueGid: string | null; // ProductOptionValue GID — used for translating non-linked option values (key="name")
 }
 
 export interface VariantWithGallery {

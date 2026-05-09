@@ -90,14 +90,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // Fetch metaobject handles + GIDs separately — optional, degrades gracefully if unavailable.
   const optionHandleMap: Record<string, Record<string, string | null>> = {};
   const optionGidMap: Record<string, Record<string, string | null>> = {};
+  const optionValueIdMap: Record<string, Record<string, string | null>> = {};
   try {
-    // Step 1: get optionValues with their linked metaobject GID (stored as string)
+    // Step 1: get optionValues with their id and linked metaobject GID (stored as string)
     const optionsRes = await admin.graphql(`
       query GetProductOptionValues($id: ID!) {
         product(id: $id) {
           options {
             name
             optionValues {
+              id
               name
               linkedMetafieldValue
             }
@@ -112,6 +114,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const gidToRefs: Record<string, OVRef[]> = {};
     for (const opt of (optionsData.data?.product?.options ?? [])) {
       for (const ov of (opt.optionValues ?? [])) {
+        // Always remember the ProductOptionValue id so non-linked options can be translated too.
+        if (ov.id) {
+          if (!optionValueIdMap[opt.name]) optionValueIdMap[opt.name] = {};
+          optionValueIdMap[opt.name][ov.name] = ov.id;
+        }
         if (ov.linkedMetafieldValue) {
           if (!gidToRefs[ov.linkedMetafieldValue]) gidToRefs[ov.linkedMetafieldValue] = [];
           gidToRefs[ov.linkedMetafieldValue].push({ optionName: opt.name, valueName: ov.name });
@@ -153,6 +160,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       value: so.value,
       handle: optionHandleMap[so.name]?.[so.value] ?? null,
       metaobjectGid: optionGidMap[so.name]?.[so.value] ?? null,
+      optionValueGid: optionValueIdMap[so.name]?.[so.value] ?? null,
     }));
     return { ...node, selectedOptions };
   }) ?? []);
