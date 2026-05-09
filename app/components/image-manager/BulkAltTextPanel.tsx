@@ -136,7 +136,12 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
         }
       }
     }
-    if (seen.size === 0) return;
+    if (seen.size === 0) {
+      // No GIDs to translate (e.g. variants without options) — record empty result
+      // so the preview renders immediately with the primary-locale fallback.
+      setOptionTranslations((prev) => ({ ...prev, [activeLocale]: {} }));
+      return;
+    }
 
     let cancelled = false;
     fetch("/api/option-value-translations", {
@@ -498,21 +503,28 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
                 )}
 
                 {/* Preview */}
-                {previewVariants.length > 0 && templateValue && (
-                  <BlockStack gap="100">
-                    <Text variant="bodySm" as="p" tone="subdued">
-                      {im?.altTextTemplatePreview ?? "Preview"}
-                    </Text>
-                    {previewVariants.map((v) => (
-                      <InlineStack key={v.id} gap="100" blockAlign="center" wrap={false}>
-                        <Badge>{v.title}</Badge>
-                        <Text variant="bodySm" as="p">
-                          {fillTemplate(templateValue, v, isPrimaryLocale ? undefined : optionTranslations[activeLocale])}
-                        </Text>
-                      </InlineStack>
-                    ))}
-                  </BlockStack>
-                )}
+                {previewVariants.length > 0 && templateValue && (() => {
+                  const isResolvingTranslations = !isPrimaryLocale && optionTranslations[activeLocale] === undefined;
+                  return (
+                    <BlockStack gap="100">
+                      <Text variant="bodySm" as="p" tone="subdued">
+                        {im?.altTextTemplatePreview ?? "Preview"}
+                      </Text>
+                      {isResolvingTranslations ? (
+                        <Spinner size="small" />
+                      ) : (
+                        previewVariants.map((v) => (
+                          <InlineStack key={v.id} gap="100" blockAlign="center" wrap={false}>
+                            <Badge>{v.title}</Badge>
+                            <Text variant="bodySm" as="p">
+                              {fillTemplate(templateValue, v, isPrimaryLocale ? undefined : optionTranslations[activeLocale])}
+                            </Text>
+                          </InlineStack>
+                        ))
+                      )}
+                    </BlockStack>
+                  );
+                })()}
 
                 {idx < positions.length - 1 && <Divider />}
               </BlockStack>
