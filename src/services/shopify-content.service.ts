@@ -286,7 +286,21 @@ export class ShopifyContentService {
       // otherwise the editor would show a value that does not exist on the
       // storefront and the next sync would be misleading.
       if (!altDigest) {
-        loggers.translation('warn', `[saveImageAltTextTranslation] No digest for ${resourceType} image alt — image may not exist`, { imageResourceId });
+        // Diagnostic: also load the parent's translatable keys so we can see
+        // whether the alt-text key lives on the parent resource directly, or
+        // whether the *Image translatable resource is genuinely uninitialised.
+        let parentKeys: string[] = [];
+        try {
+          const parentContent = await this.loadTranslatableContent(resourceId);
+          parentKeys = Object.keys(parentContent.digestMap);
+        } catch {
+          /* swallow — diagnostic only */
+        }
+        loggers.translation('warn', `[saveImageAltTextTranslation] No digest for ${resourceType} image alt`, {
+          imageResourceId,
+          parentResourceId: resourceId,
+          parentKeys,
+        });
         return { saved: false, reason: 'no-digest' };
       }
 
