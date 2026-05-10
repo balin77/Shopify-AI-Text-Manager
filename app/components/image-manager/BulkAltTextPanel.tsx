@@ -633,10 +633,18 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
 
           <Divider />
 
-          {/* Apply buttons — single locale (always visible) and all locales (when multi-locale) */}
-          <InlineStack gap="200" wrap>
+          {/* Apply buttons — single locale (always visible) and all locales (when multi-locale).
+              Use a 2-column grid so both buttons have identical width. */}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: hasMultipleLocales ? "1fr 1fr" : "1fr",
+              gap: 8,
+            }}
+          >
             <Button
               variant="primary"
+              fullWidth
               onClick={handleApplyToAll}
               loading={isApplying}
               disabled={variants.length === 0 || isApplyingAll}
@@ -654,6 +662,7 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
               const button = (
                 <Button
                   variant="primary"
+                  fullWidth
                   onClick={handleApplyToAllLocales}
                   loading={isApplyingAll}
                   disabled={disabled}
@@ -671,7 +680,7 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
                 button
               );
             })()}
-          </InlineStack>
+          </div>
 
           {variants.length === 0 && (
             <Text variant="bodySm" as="p" tone="subdued">
