@@ -1460,13 +1460,6 @@ export function VariantImageManager({
             style={{ width: 80, cursor: "pointer", accentColor: "#005bd3" }}
             aria-label={t.imageManager.thumbSizeLabel}
           />
-          <Button
-            size="slim"
-            variant="plain"
-            onClick={() => setIsProductGalleryExpanded(e => !e)}
-          >
-            {isProductGalleryExpanded ? t.imageManager.collapse : t.imageManager.expand}
-          </Button>
         </InlineStack>
         </InlineStack>
         <div style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 6 }}>
@@ -1483,29 +1476,50 @@ export function VariantImageManager({
           />
           <Text as="span" variant="bodySm" tone="subdued">{t.imageManager.selectAll}</Text>
         </div>
-        <div
-          style={{
-            marginTop: 8,
-            maxHeight: isProductGalleryExpanded ? "none" : thumbSize * 2 + 32,
-            overflowY: isProductGalleryExpanded ? "visible" : "auto",
-            overflowX: "hidden",
-          }}
-          ref={setProductDropRef}
-        >
-          <SortableImageGrid
-            containerId="product"
-            imageUrls={displayedProductUrls}
-            imageMetas={imageMetas}
-            onReorder={handleProductReorder}
-            onSelect={makeSelectHandler(null)}
-            selectedUrls={selectedUrlsByGallery.get("product") ?? new Set()}
-            isDropTarget={activeAction !== null || (activeDragSourceContainer !== null && activeDragSourceContainer !== "product")}
-            thumbSize={thumbSize}
-            skipDndContext
-            onUploadToGallery={handleUploadToProductGallery}
-            localAltTexts={localAltTexts}
-            isPrimaryLocale={isPrimaryLocale}
-          />
+        <div style={{ position: "relative", marginTop: 8 }}>
+          <div
+            style={{
+              maxHeight: isProductGalleryExpanded ? "none" : thumbSize + 24,
+              overflowY: isProductGalleryExpanded ? "visible" : "hidden",
+              overflowX: "hidden",
+            }}
+            ref={setProductDropRef}
+          >
+            <SortableImageGrid
+              containerId="product"
+              imageUrls={displayedProductUrls}
+              imageMetas={imageMetas}
+              onReorder={handleProductReorder}
+              onSelect={makeSelectHandler(null)}
+              selectedUrls={selectedUrlsByGallery.get("product") ?? new Set()}
+              isDropTarget={activeAction !== null || (activeDragSourceContainer !== null && activeDragSourceContainer !== "product")}
+              thumbSize={thumbSize}
+              skipDndContext
+              onUploadToGallery={handleUploadToProductGallery}
+              localAltTexts={localAltTexts}
+              isPrimaryLocale={isPrimaryLocale}
+            />
+          </div>
+          <div
+            style={{
+              position: "absolute",
+              left: "50%",
+              bottom: 0,
+              transform: "translate(-50%, 50%)",
+              background: "white",
+              padding: "0 8px",
+              borderRadius: 4,
+              zIndex: 1,
+            }}
+          >
+            <Button
+              size="slim"
+              variant="plain"
+              onClick={() => setIsProductGalleryExpanded(e => !e)}
+            >
+              {isProductGalleryExpanded ? t.imageManager.collapse : t.imageManager.expand}
+            </Button>
+          </div>
         </div>
 
         {/* Selection info bar for product gallery */}
