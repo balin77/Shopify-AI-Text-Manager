@@ -1,4 +1,4 @@
-import { useCallback, useState, useEffect } from "react";
+import { useCallback, useState, useEffect, useRef } from "react";
 import {
   Text,
   Button,
@@ -9,7 +9,7 @@ import {
   Spinner,
   Divider,
   Box,
-  Select,
+  Tooltip,
 } from "@shopify/polaris";
 import { PlusIcon, DeleteIcon } from "@shopify/polaris-icons";
 import { useI18n } from "../../contexts/I18nContext";
@@ -81,6 +81,12 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
   const [translatingPositions, setTranslatingPositions] = useState<Set<number>>(new Set());
   const [isTranslatingAll, setIsTranslatingAll] = useState(false);
   const [optionTranslations, setOptionTranslations] = useState<Record<string, Record<string, string>>>({});
+  const [excludedLocales, setExcludedLocales] = useState<Set<string>>(new Set());
+  const [isApplyingAll, setIsApplyingAll] = useState(false);
+  const [applyAllProgress, setApplyAllProgress] = useState<{ done: number; total: number } | null>(null);
+  // Tracks which locale chip received a Ctrl+pointerdown so the subsequent click
+  // doesn't also switch the active locale.
+  const ctrlPressedRef = useRef<Record<string, boolean>>({});
 
   const variableChips = buildVariableChips(variants);
   const isPrimaryLocale = activeLocale === primaryLocale;
@@ -369,7 +375,59 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
     }
   }, [productId, activeLocale, primaryLocale, variants, im, showInfoBox, onApplySuccess]);
 
-  const localeOptions = shopLocales.map((l) => ({ label: l.toUpperCase(), value: l }));
+  // Locales that "Apply to all languages" will write to. Primary is always included;
+  // foreign locales can be Ctrl-clicked off via excludedLocales.
+  const targetLocales = shopLocales.filter((l) => !excludedLocales.has(l));
+  const allLocalesComplete =
+    targetLocales.length > 0 &&
+    targetLocales.every((loc) =>
+      positions.every((pos) => (pos.templates[loc] ?? "").trim().length > 0)
+    );
+
+  const handleApplyToAllLocales = useCallback(async () => {
+    if (targetLocales.length === 0) return;
+    setIsApplyingAll(true);
+    setApplyAllProgress({ done: 0, total: targetLocales.length });
+    let totalApplied = 0;
+    const allErrors: string[] = [];
+    try {
+      for (let i = 0; i < targetLocales.length; i++) {
+        const loc = targetLocales[i];
+        try {
+          const res = await fetch("/api/apply-alt-text-templates", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ productId, locale: loc, primaryLocale, scope: "all", variants }),
+          });
+          const data = await res.json();
+          if (typeof data.applied === "number") totalApplied += data.applied;
+          if (Array.isArray(data.errors)) {
+            allErrors.push(...data.errors.map((e: string) => `[${loc.toUpperCase()}] ${e}`));
+          } else if (!data.success && data.error) {
+            allErrors.push(`[${loc.toUpperCase()}] ${data.error}`);
+          }
+        } catch (e: any) {
+          allErrors.push(`[${loc.toUpperCase()}] ${e?.message ?? "Unknown error"}`);
+        }
+        setApplyAllProgress({ done: i + 1, total: targetLocales.length });
+      }
+      if (allErrors.length === 0) {
+        const langWord = targetLocales.length === 1 ? "language" : "languages";
+        showInfoBox(
+          `${im?.altTextTemplateApplySuccess ?? "Alt texts applied successfully"} (${totalApplied}, ${targetLocales.length} ${langWord})`,
+          "success"
+        );
+      } else {
+        showInfoBox(allErrors.join("\n"), "critical");
+      }
+      // Refresh the gallery either way so any partial saves become visible.
+      onApplySuccess?.();
+    } finally {
+      setIsApplyingAll(false);
+      setApplyAllProgress(null);
+    }
+  }, [targetLocales, productId, primaryLocale, variants, im, showInfoBox, onApplySuccess]);
+
   const previewVariants = variants.slice(0, 3);
 
   if (isLoading) {
@@ -388,14 +446,51 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
     <BlockStack gap="400">
       <Box padding="300">
         <BlockStack gap="300">
-          {/* Locale selector */}
+          {/* Locale chip bar — click to switch active, Ctrl-click to exclude from "apply to all" */}
           {shopLocales.length > 1 && (
-            <Select
-              label={im?.altTextTemplates ?? "Alt Text Templates"}
-              options={localeOptions}
-              value={activeLocale}
-              onChange={setActiveLocale}
-            />
+            <BlockStack gap="100">
+              <Text variant="bodyMd" as="p" fontWeight="medium">
+                {im?.altTextTemplates ?? "Alt Text Templates"}
+              </Text>
+              <InlineStack gap="200" wrap>
+                {shopLocales.map((loc) => {
+                  const isPrimary = loc === primaryLocale;
+                  const isExcluded = excludedLocales.has(loc);
+                  return (
+                    <Button
+                      key={loc}
+                      size="slim"
+                      pressed={loc === activeLocale}
+                      tone={isExcluded && !isPrimary ? "critical" : undefined}
+                      onPointerDown={(event: React.PointerEvent) => {
+                        if (event.ctrlKey && !isPrimary) {
+                          ctrlPressedRef.current[loc] = true;
+                          event.preventDefault();
+                          setExcludedLocales((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(loc)) next.delete(loc);
+                            else next.add(loc);
+                            return next;
+                          });
+                        }
+                      }}
+                      onClick={() => {
+                        if (ctrlPressedRef.current[loc]) {
+                          ctrlPressedRef.current[loc] = false;
+                          return;
+                        }
+                        setActiveLocale(loc);
+                      }}
+                    >
+                      {loc.toUpperCase()}
+                    </Button>
+                  );
+                })}
+              </InlineStack>
+              <Text variant="bodySm" as="p" tone="subdued">
+                {im?.altTextTemplateCtrlClickExclude ?? "Ctrl-click to exclude a language from ‘apply to all’"}
+              </Text>
+            </BlockStack>
           )}
 
           {/* Translate All button — below locale selector */}
@@ -538,17 +633,45 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
 
           <Divider />
 
-          {/* Apply to all button */}
-          <Button
-            variant="primary"
-            onClick={handleApplyToAll}
-            loading={isApplying}
-            disabled={variants.length === 0}
-          >
-            {isApplying
-              ? (im?.altTextTemplateApplying ?? "Applying…")
-              : (im?.altTextTemplateApplyToAll ?? "Apply to all images")}
-          </Button>
+          {/* Apply buttons — single locale (always visible) and all locales (when multi-locale) */}
+          <InlineStack gap="200" wrap>
+            <Button
+              variant="primary"
+              onClick={handleApplyToAll}
+              loading={isApplying}
+              disabled={variants.length === 0 || isApplyingAll}
+            >
+              {isApplying
+                ? (im?.altTextTemplateApplying ?? "Applying…")
+                : hasMultipleLocales
+                  ? (im?.altTextTemplateApplyToActiveLocale ?? "Apply to images in {locale}")
+                      .replace("{locale}", activeLocale.toUpperCase())
+                  : (im?.altTextTemplateApplyToAll ?? "Apply to all images")}
+            </Button>
+
+            {hasMultipleLocales && (() => {
+              const disabled = !allLocalesComplete || variants.length === 0 || isApplying || isApplyingAll;
+              const button = (
+                <Button
+                  variant="primary"
+                  onClick={handleApplyToAllLocales}
+                  loading={isApplyingAll}
+                  disabled={disabled}
+                >
+                  {isApplyingAll
+                    ? `${im?.altTextTemplateApplyingAllLocales ?? "Applying to all languages…"}${applyAllProgress ? ` (${applyAllProgress.done}/${applyAllProgress.total})` : ""}`
+                    : (im?.altTextTemplateApplyToAllLocales ?? "Apply to images in all languages")}
+                </Button>
+              );
+              return !allLocalesComplete && variants.length > 0 ? (
+                <Tooltip content={im?.altTextTemplateAllLocalesIncomplete ?? "All positions need a template in every non-excluded language"}>
+                  <div>{button}</div>
+                </Tooltip>
+              ) : (
+                button
+              );
+            })()}
+          </InlineStack>
 
           {variants.length === 0 && (
             <Text variant="bodySm" as="p" tone="subdued">
