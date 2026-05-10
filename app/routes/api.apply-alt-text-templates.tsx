@@ -5,6 +5,42 @@ import { fillAltTextTemplate, resolveVariableValues } from "../utils/alt-text-te
 import { getTaskExpirationDate } from "../config/constants";
 import type { VariantWithGallery } from "../components/image-manager/types";
 
+// Resolve a fresh image URL from Shopify for stub-row creation. Returns the gid
+// itself as a last-resort placeholder so we never lose a translation due to a
+// missing local DB row — the next product sync will overwrite the URL.
+async function resolveImageUrl(admin: { graphql: (q: string, opts?: any) => Promise<Response> }, gid: string): Promise<string> {
+  try {
+    const r = await admin.graphql(
+      `#graphql
+        query mediaImageUrl($id: ID!) {
+          node(id: $id) {
+            ... on MediaImage { image { url } }
+          }
+        }`,
+      { variables: { id: gid } }
+    );
+    const d = await r.json() as any;
+    const url = d?.data?.node?.image?.url;
+    if (typeof url === "string" && url.length > 0) return url;
+  } catch {
+    // fall through
+  }
+  return gid;
+}
+
+// Get-or-create the local ProductImage row for a given media GID. Without this,
+// productImageAltTranslation upserts silently no-op when the gallery image was
+// never synced into the local DB (common for variant_gallery metafield images).
+async function getOrCreateProductImage(productId: string, gid: string, admin: { graphql: (q: string, opts?: any) => Promise<Response> }): Promise<{ id: string }> {
+  const existing = await db.productImage.findFirst({ where: { mediaId: gid }, select: { id: true } });
+  if (existing) return existing;
+  const url = await resolveImageUrl(admin, gid);
+  return db.productImage.create({
+    data: { productId, mediaId: gid, url },
+    select: { id: true },
+  });
+}
+
 interface ApplyBody {
   productId: string;
   locale: string;
@@ -104,8 +140,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           if (errs.length === 0) {
             applied++;
             try {
-              await db.productImage.updateMany({
-                where: { mediaId: gid },
+              const dbImage = await getOrCreateProductImage(productId, gid, admin);
+              await db.productImage.update({
+                where: { id: dbImage.id },
                 data: { altText: altText || null, altTextModifiedAt: new Date() },
               });
             } catch (dbErr: unknown) {
@@ -155,14 +192,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           if (errs.length === 0) {
             applied++;
             try {
-              const dbImage = await db.productImage.findFirst({ where: { mediaId: gid }, select: { id: true } });
-              if (dbImage) {
-                await db.productImageAltTranslation.upsert({
-                  where: { imageId_locale: { imageId: dbImage.id, locale } },
-                  create: { imageId: dbImage.id, locale, altText },
-                  update: { altText },
-                });
-              }
+              const dbImage = await getOrCreateProductImage(productId, gid, admin);
+              await db.productImageAltTranslation.upsert({
+                where: { imageId_locale: { imageId: dbImage.id, locale } },
+                create: { imageId: dbImage.id, locale, altText },
+                update: { altText },
+              });
             } catch (dbErr: unknown) {
               errors.push(`${variant.title} (Position ${tmpl.position}, ${locale} DB save): ${String(dbErr)}`);
             }

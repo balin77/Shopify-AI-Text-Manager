@@ -186,6 +186,7 @@ export function VariantImageManager({
   }, [variantReloadKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load foreign-locale alt text translations from DB when language changes
+  // or after a bulk apply (variantReloadKey bump) so freshly saved translations show up.
   useEffect(() => {
     setLocalAltTexts({});
     if (!productId || !currentLanguage || currentLanguage === primaryLocale) return;
@@ -194,7 +195,7 @@ export function VariantImageManager({
     form.append("productId", productId);
     form.append("locale", currentLanguage);
     translationsFetcher.submit(form, { method: "post" });
-  }, [currentLanguage, productId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [currentLanguage, productId, variantReloadKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Apply loaded translations to localAltTexts (mediaId → url → altText)
   useEffect(() => {
