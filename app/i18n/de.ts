@@ -607,6 +607,8 @@ export const de = {
     title: "Image Manager",
     expand: "Vergrößern ↓",
     collapse: "Verkleinern ↑",
+    showAll: "Alle anzeigen ↓",
+    showLess: "Weniger anzeigen ↑",
     productPhotos: "Produktfotos:",
     all: "Alle",
     unassigned: "Nicht zugewiesen",

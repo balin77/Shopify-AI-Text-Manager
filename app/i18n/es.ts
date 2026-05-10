@@ -609,6 +609,8 @@ export const es: Translation = {
     title: "Image Manager",
     expand: "Expandir ↓",
     collapse: "Contraer ↑",
+    showAll: "Mostrar todas ↓",
+    showLess: "Mostrar menos ↑",
     productPhotos: "Fotos del producto:",
     all: "Todas",
     unassigned: "Sin asignar",

@@ -126,6 +126,8 @@ export function VariantImageManager({
   useEffect(() => { onProductImagesRefreshedRef.current = onProductImagesRefreshed; }, [onProductImagesRefreshed]);
   const [isExpanded, setIsExpanded] = useState(false);
   const [isProductGalleryExpanded, setIsProductGalleryExpanded] = useState(false);
+  const [productGalleryHasOverflow, setProductGalleryHasOverflow] = useState(false);
+  const productGalleryInnerRef = useRef<HTMLDivElement | null>(null);
   const [showAll, setShowAll] = useState(true);
   const [thumbSize, setThumbSize] = useState(imageManagerSettings.thumbSize ?? 80);
   const thumbSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -707,6 +709,21 @@ export function VariantImageManager({
       return !gid || !assignedGids.has(gid);
     });
   }, [showAll, pendingProductImageOrder, effectiveProductImages, urlToGid, assignedGids, variants.length]);
+
+  // Detect whether the product gallery overflows the single-row collapsed height
+  useEffect(() => {
+    const el = productGalleryInnerRef.current;
+    if (!el) return;
+    const collapsedMax = thumbSize + 24;
+    const measure = () => {
+      const overflow = el.scrollHeight > collapsedMax + 1;
+      setProductGalleryHasOverflow(overflow);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [displayedProductUrls, thumbSize, isProductGalleryExpanded]);
 
   // Per-gallery selected URL sets — same URL in different galleries is independent
   const selectedUrlsByGallery = useMemo(() => {
@@ -1483,7 +1500,7 @@ export function VariantImageManager({
               overflowY: isProductGalleryExpanded ? "visible" : "hidden",
               overflowX: "hidden",
             }}
-            ref={setProductDropRef}
+            ref={(el) => { setProductDropRef(el); productGalleryInnerRef.current = el; }}
           >
             <SortableImageGrid
               containerId="product"
@@ -1500,28 +1517,30 @@ export function VariantImageManager({
               isPrimaryLocale={isPrimaryLocale}
             />
           </div>
-          <div
-            style={{
-              position: "absolute",
-              left: 0,
-              right: 0,
-              bottom: 0,
-              transform: "translateY(50%)",
-              display: "flex",
-              justifyContent: "center",
-              background: "white",
-              borderRadius: 4,
-              zIndex: 1,
-            }}
-          >
-            <Button
-              size="slim"
-              variant="plain"
-              onClick={() => setIsProductGalleryExpanded(e => !e)}
+          {(productGalleryHasOverflow || isProductGalleryExpanded) && (
+            <div
+              style={{
+                position: "absolute",
+                left: 0,
+                right: 0,
+                bottom: 0,
+                transform: "translateY(50%)",
+                display: "flex",
+                justifyContent: "center",
+                background: "white",
+                borderRadius: 4,
+                zIndex: 1,
+              }}
             >
-              {isProductGalleryExpanded ? t.imageManager.collapse : t.imageManager.expand}
-            </Button>
-          </div>
+              <Button
+                size="slim"
+                variant="plain"
+                onClick={() => setIsProductGalleryExpanded(e => !e)}
+              >
+                {isProductGalleryExpanded ? t.imageManager.showLess : t.imageManager.showAll}
+              </Button>
+            </div>
+          )}
         </div>
 
         {/* Selection info bar for product gallery */}
