@@ -286,20 +286,59 @@ export class ShopifyContentService {
       // otherwise the editor would show a value that does not exist on the
       // storefront and the next sync would be misleading.
       if (!altDigest) {
-        // Diagnostic: also load the parent's translatable keys so we can see
-        // whether the alt-text key lives on the parent resource directly, or
-        // whether the *Image translatable resource is genuinely uninitialised.
+        // Diagnostic: dump the parent's translatable keys + Shopify-side image.altText
+        // + a sample of valid translatableResources GIDs of the matching type.
+        // Helps determine why ${resourceType}Image/{numericId} returns nothing.
         let parentKeys: string[] = [];
         try {
           const parentContent = await this.loadTranslatableContent(resourceId);
           parentKeys = Object.keys(parentContent.digestMap);
-        } catch {
-          /* swallow — diagnostic only */
-        }
-        loggers.translation('warn', `[saveImageAltTextTranslation] No digest for ${resourceType} image alt`, {
-          imageResourceId,
+        } catch {/* diagnostic only */}
+
+        let shopifyImageAltText: string | null | undefined = '<query-failed>';
+        let shopifyImageId: string | null | undefined = '<query-failed>';
+        try {
+          const fieldName = resourceType === 'Article' ? 'article' : 'collection';
+          const probe = await this.admin.graphql(
+            `#graphql
+              query probeImage($id: ID!) {
+                ${fieldName}(id: $id) {
+                  image { id url altText }
+                }
+              }`,
+            { variables: { id: resourceId } }
+          );
+          const probeData = await probe.json() as any;
+          shopifyImageAltText = probeData.data?.[fieldName]?.image?.altText ?? null;
+          shopifyImageId = probeData.data?.[fieldName]?.image?.id ?? null;
+        } catch {/* diagnostic only */}
+
+        let sampleImageResources: Array<{ resourceId: string; keys: string[] }> = [];
+        try {
+          const enumType = resourceType === 'Article' ? 'ARTICLE_IMAGE' : 'COLLECTION_IMAGE';
+          const list = await this.admin.graphql(
+            `#graphql
+              query probeList($type: TranslatableResourceType!) {
+                translatableResources(resourceType: $type, first: 3) {
+                  edges { node { resourceId translatableContent { key } } }
+                }
+              }`,
+            { variables: { type: enumType } }
+          );
+          const listData = await list.json() as any;
+          sampleImageResources = (listData.data?.translatableResources?.edges || []).map((e: any) => ({
+            resourceId: e.node?.resourceId,
+            keys: (e.node?.translatableContent || []).map((c: any) => c.key),
+          }));
+        } catch {/* diagnostic only */}
+
+        loggers.translation('warn', `[saveImageAltTextTranslation] No digest for ${resourceType} image alt — diagnostic`, {
+          imageResourceIdTried: imageResourceId,
           parentResourceId: resourceId,
           parentKeys,
+          shopifyImageId,
+          shopifyImageAltText,
+          sampleImageResources,
         });
         return { saved: false, reason: 'no-digest' };
       }
