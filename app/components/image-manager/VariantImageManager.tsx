@@ -1545,7 +1545,7 @@ export function VariantImageManager({
 
         {/* Selection info bar for product gallery */}
         {selectedGalleryItems.size > 0 && (
-          <div style={{ marginTop: 6, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <div style={{ marginTop: (productGalleryHasOverflow || isProductGalleryExpanded) ? 20 : 6, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
             <Text as="span" variant="bodySm" tone="subdued">
               {t.imageManager.selectedCount.replace("{count}", String(selectedGalleryItems.size))}
             </Text>
