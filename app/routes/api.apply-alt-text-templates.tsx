@@ -94,6 +94,35 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   });
   const taskTitle = productRecord?.title || productId;
 
+  // Create the task up-front with status "running" so the navigation badge
+  // counts it while we work — otherwise it only appeared after completion.
+  // The total is an upper-bound estimate (variants × templates); we update
+  // the real `processed`/`total` at the end alongside the final status.
+  const estimatedTotal = variants.length * templates.length;
+  let taskId: string | null = null;
+  try {
+    const task = await db.task.create({
+      data: {
+        shop: session.shop,
+        type: "altTextTemplateApply",
+        status: "running",
+        resourceType: "products",
+        resourceId: productId,
+        resourceTitle: taskTitle,
+        fieldType: "allAltTexts",
+        targetLocale: locale,
+        progress: 0,
+        total: estimatedTotal,
+        processed: 0,
+        expiresAt: getTaskExpirationDate(),
+      },
+      select: { id: true },
+    });
+    taskId = task.id;
+  } catch {
+    // Task tracking is best-effort — failure here must not block the apply.
+  }
+
   for (const variant of variants) {
     // Build ordered list of image GIDs for this variant:
     // Position 0 = main featured image, positions 1+ = gallery images
@@ -212,6 +241,23 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 
   if (attempted === 0) {
+    if (taskId) {
+      try {
+        await db.task.update({
+          where: { id: taskId },
+          data: {
+            status: "failed",
+            progress: 100,
+            total: 0,
+            processed: 0,
+            error: "No images could be matched to positions.",
+            completedAt: new Date(),
+          },
+        });
+      } catch {
+        // best-effort — don't block the response
+      }
+    }
     return json({
       success: false,
       applied: 0,
@@ -219,35 +265,29 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     });
   }
 
-  // Persist the outcome as a Task so the navigation InfoBox can surface
-  // partial failures and DB-save errors (which used to be swallowed silently).
-  // status: "failed" when nothing was applied, "completed" otherwise — the
-  // navigation logic differentiates partial vs. full success via processed/total.
+  // Finalize the running task with the real outcome. status: "failed" when
+  // nothing was applied, "completed" otherwise — the navigation logic
+  // differentiates partial vs. full success via processed/total.
   const errorSummary = errors.length > 0 ? errors.join("\n").substring(0, 1000) : null;
   const taskStatus = applied === 0 ? "failed" : "completed";
-  try {
-    await db.task.create({
-      data: {
-        shop: session.shop,
-        type: "altTextTemplateApply",
-        status: taskStatus,
-        resourceType: "products",
-        resourceId: productId,
-        resourceTitle: taskTitle,
-        fieldType: "allAltTexts",
-        targetLocale: locale,
-        progress: 100,
-        total: attempted,
-        processed: applied,
-        result: JSON.stringify({ applied, attempted, errors }),
-        error: errorSummary,
-        completedAt: new Date(),
-        expiresAt: getTaskExpirationDate(),
-      },
-    });
-  } catch {
-    // Task logging failure must not break the actual apply — the response
-    // below still carries the errors back to the caller.
+  if (taskId) {
+    try {
+      await db.task.update({
+        where: { id: taskId },
+        data: {
+          status: taskStatus,
+          progress: 100,
+          total: attempted,
+          processed: applied,
+          result: JSON.stringify({ applied, attempted, errors }),
+          error: errorSummary,
+          completedAt: new Date(),
+        },
+      });
+    } catch {
+      // Task tracking failure must not break the actual apply — the response
+      // below still carries the errors back to the caller.
+    }
   }
 
   return json({
