@@ -21,6 +21,7 @@ interface ShopifyCollectionData {
   descriptionHtml: string | null;
   updatedAt: string;
   image: {
+    id: string | null;
     url: string;
     altText: string | null;
   } | null;
@@ -39,6 +40,7 @@ interface ShopifyArticleData {
   summary: string | null;
   updatedAt: string;
   image: {
+    id: string | null;
     url: string;
     altText: string | null;
   } | null;
@@ -97,10 +99,10 @@ export class ContentSyncService {
       );
       logger.debug(`[ContentSync] Fetched ${allTranslations.length} translations`);
 
-      // 3b. Fetch collection image alt-text translations (separate Shopify resource type)
-      if (collectionData.image) {
-        const numericId = collectionId.split('/').pop();
-        const imageResourceId = `gid://shopify/CollectionImage/${numericId}`;
+      // 3b. Fetch collection image alt-text translations (separate Shopify resource type).
+      // The CollectionImage GID uses the image's OWN id, not the parent collection id.
+      if (collectionData.image?.id) {
+        const imageResourceId = collectionData.image.id;
         try {
           const imageTranslations = await fetchAllTranslations(this.graphqlFn(),
             imageResourceId,
@@ -181,10 +183,10 @@ export class ContentSyncService {
         "Article"
       );
 
-      // 3b. Fetch article image alt-text translations (separate Shopify resource type)
-      if (articleData.image) {
-        const numericId = articleId.split('/').pop();
-        const imageResourceId = `gid://shopify/ArticleImage/${numericId}`;
+      // 3b. Fetch article image alt-text translations (separate Shopify resource type).
+      // The ArticleImage GID uses the image's OWN id, not the parent article id.
+      if (articleData.image?.id) {
+        const imageResourceId = articleData.image.id;
         try {
           const imageTranslations = await fetchAllTranslations(this.graphqlFn(),
             imageResourceId,
@@ -300,6 +302,7 @@ export class ContentSyncService {
             descriptionHtml
             updatedAt
             image {
+              id
               url
               altText
             }
@@ -332,6 +335,7 @@ export class ContentSyncService {
             summary
             updatedAt
             image {
+              id
               url
               altText
             }
