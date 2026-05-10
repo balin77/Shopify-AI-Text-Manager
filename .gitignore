@@ -32,6 +32,8 @@ prisma/*.db-journal
 
 # Shopify
 .shopify/
+shopify.app.*.toml
+!shopify.app.toml
 
 # Local development files
 .claude/settings.local.json
