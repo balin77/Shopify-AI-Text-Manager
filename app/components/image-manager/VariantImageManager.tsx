@@ -125,6 +125,7 @@ export function VariantImageManager({
   const onProductImagesRefreshedRef = useRef(onProductImagesRefreshed);
   useEffect(() => { onProductImagesRefreshedRef.current = onProductImagesRefreshed; }, [onProductImagesRefreshed]);
   const [isExpanded, setIsExpanded] = useState(false);
+  const [isProductGalleryExpanded, setIsProductGalleryExpanded] = useState(false);
   const [showAll, setShowAll] = useState(true);
   const [thumbSize, setThumbSize] = useState(imageManagerSettings.thumbSize ?? 80);
   const thumbSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1375,7 +1376,7 @@ export function VariantImageManager({
         </InlineStack>
 
         <div style={{
-          maxHeight: isExpanded ? "none" : 480,
+          maxHeight: isExpanded ? "none" : 320,
           overflowY: isExpanded ? "visible" : "auto",
           overflowX: "hidden",
           paddingRight: isExpanded ? 0 : 4,
@@ -1459,6 +1460,13 @@ export function VariantImageManager({
             style={{ width: 80, cursor: "pointer", accentColor: "#005bd3" }}
             aria-label={t.imageManager.thumbSizeLabel}
           />
+          <Button
+            size="slim"
+            variant="plain"
+            onClick={() => setIsProductGalleryExpanded(e => !e)}
+          >
+            {isProductGalleryExpanded ? t.imageManager.collapse : t.imageManager.expand}
+          </Button>
         </InlineStack>
         </InlineStack>
         <div style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 6 }}>
@@ -1475,7 +1483,15 @@ export function VariantImageManager({
           />
           <Text as="span" variant="bodySm" tone="subdued">{t.imageManager.selectAll}</Text>
         </div>
-        <div style={{ marginTop: 8 }} ref={setProductDropRef}>
+        <div
+          style={{
+            marginTop: 8,
+            maxHeight: isProductGalleryExpanded ? "none" : thumbSize * 2 + 32,
+            overflowY: isProductGalleryExpanded ? "visible" : "auto",
+            overflowX: "hidden",
+          }}
+          ref={setProductDropRef}
+        >
           <SortableImageGrid
             containerId="product"
             imageUrls={displayedProductUrls}
