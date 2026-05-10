@@ -1503,11 +1503,13 @@ export function VariantImageManager({
           <div
             style={{
               position: "absolute",
-              left: "50%",
+              left: 0,
+              right: 0,
               bottom: 0,
-              transform: "translate(-50%, 50%)",
+              transform: "translateY(50%)",
+              display: "flex",
+              justifyContent: "center",
               background: "white",
-              padding: "0 8px",
               borderRadius: 4,
               zIndex: 1,
             }}
