@@ -154,22 +154,17 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
     }
 
     let cancelled = false;
-    const requestPayload = { locale: activeLocale, options: Array.from(seen.values()) };
-    console.log("[bulk-preview] fetching translations", requestPayload);
     fetch("/api/option-value-translations", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(requestPayload),
+      body: JSON.stringify({ locale: activeLocale, options: Array.from(seen.values()) }),
     })
       .then((r) => r.json())
       .then((data: { translations?: Record<string, string> }) => {
         if (cancelled) return;
-        console.log("[bulk-preview] received translations", { locale: activeLocale, response: data });
         setOptionTranslations((prev) => ({ ...prev, [activeLocale]: data.translations ?? {} }));
       })
-      .catch((err) => {
-        console.log("[bulk-preview] translation fetch error", err);
-      });
+      .catch(() => {});
     return () => {
       cancelled = true;
     };

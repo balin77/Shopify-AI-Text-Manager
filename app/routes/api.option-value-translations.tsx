@@ -38,39 +38,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   const translations: Record<string, string> = {};
 
-  // Diagnostic: probe both the metaobject and the ProductOptionValue with raw queries
-  // so we can see exactly what Shopify exposes (key + value) for each locale.
-  async function rawTranslationsFor(resourceId: string): Promise<{ key: string; value: string }[]> {
-    try {
-      const r = await admin.graphql(
-        `#graphql
-          query probe($resourceId: ID!, $locale: String!) {
-            translatableResource(resourceId: $resourceId) {
-              translations(locale: $locale) { key value }
-            }
-          }`,
-        { variables: { resourceId, locale } }
-      );
-      const d = await r.json() as any;
-      return d?.data?.translatableResource?.translations ?? [];
-    } catch (err) {
-      return [{ key: "__error__", value: String(err) }];
-    }
-  }
-
   await Promise.all(
     Array.from(byKey.values()).map(async (opt) => {
       // Same priority as resolveVariableValues: metaobject first, then ProductOptionValue.
-      const metaTranslations = opt.metaobjectGid ? await rawTranslationsFor(opt.metaobjectGid) : [];
-      const ovTranslations = await rawTranslationsFor(opt.optionValueGid);
-      console.log("[option-value-translations] probe", {
-        locale,
-        optionValueGid: opt.optionValueGid,
-        metaobjectGid: opt.metaobjectGid,
-        metaTranslations,
-        ovTranslations,
-      });
-
       if (opt.metaobjectGid) {
         const value = await fetchMetaobjectTranslationById(opt.metaobjectGid, locale, admin);
         if (value) {

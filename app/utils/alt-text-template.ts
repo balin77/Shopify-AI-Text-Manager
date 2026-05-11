@@ -1,4 +1,5 @@
 import type { VariantSelectedOption } from "../components/image-manager/types";
+import { METAOBJECT_LABEL_FIELD_KEYS } from "../constants/shopifyFields";
 
 export interface ResolvedOption {
   name: string;
@@ -64,12 +65,13 @@ export async function resolveVariableValues(
 }
 
 /**
- * Generic translatable-resource lookup. Returns the translated value for the given key, or null.
+ * Generic translatable-resource lookup. Returns the translated value for the first
+ * matching key in `keys`, or null if none match.
  */
-async function fetchTranslationByKey(
+async function fetchTranslationByAnyKey(
   resourceId: string,
   locale: string,
-  key: string,
+  keys: readonly string[],
   admin: { graphql: (query: string, options?: Record<string, unknown>) => Promise<Response> }
 ): Promise<string | null> {
   try {
@@ -87,7 +89,11 @@ async function fetchTranslationByKey(
     );
     const td = await tr.json() as any;
     const translations: { key: string; value: string }[] = td.data?.translatableResource?.translations ?? [];
-    return translations.find((t) => t.key === key)?.value ?? null;
+    for (const k of keys) {
+      const found = translations.find((t) => t.key === k)?.value;
+      if (found) return found;
+    }
+    return null;
   } catch {
     return null;
   }
@@ -98,7 +104,8 @@ export async function fetchMetaobjectTranslationById(
   locale: string,
   admin: { graphql: (query: string, options?: Record<string, unknown>) => Promise<Response> }
 ): Promise<string | null> {
-  return fetchTranslationByKey(metaobjectGid, locale, "display_name", admin);
+  // Metaobject label is stored under one of these keys depending on the type definition.
+  return fetchTranslationByAnyKey(metaobjectGid, locale, METAOBJECT_LABEL_FIELD_KEYS, admin);
 }
 
 export async function fetchOptionValueTranslationById(
@@ -106,7 +113,7 @@ export async function fetchOptionValueTranslationById(
   locale: string,
   admin: { graphql: (query: string, options?: Record<string, unknown>) => Promise<Response> }
 ): Promise<string | null> {
-  return fetchTranslationByKey(optionValueGid, locale, "name", admin);
+  return fetchTranslationByAnyKey(optionValueGid, locale, ["name"], admin);
 }
 
 function escapeRegex(str: string): string {
