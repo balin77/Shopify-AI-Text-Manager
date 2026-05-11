@@ -122,6 +122,7 @@ export function VariantImageManager({
   const isConvertingWebPRef = useRef(false);
   const prevConvertingGidsRef = useRef<Set<string>>(new Set());
   const prevProductImagesKeyRef = useRef<string>("");
+  const stagedUrlCheckedProductIdRef = useRef<string | null>(null);
   const onProductImagesRefreshedRef = useRef(onProductImagesRefreshed);
   useEffect(() => { onProductImagesRefreshedRef.current = onProductImagesRefreshed; }, [onProductImagesRefreshed]);
   const [isExpanded, setIsExpanded] = useState(false);
@@ -585,6 +586,37 @@ export function VariantImageManager({
       if (webpPollRef.current) clearInterval(webpPollRef.current);
     };
   }, [productId, startWebPPolling]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Legacy self-heal: products converted before the staged-URL fix have rows whose
+  // url points to shopify-staged-uploads.storage.googleapis.com (now 404). Detect
+  // that signature once per product open and trigger /api/product-images, which
+  // purges the stale rows and refetches the correct CDN URLs from Shopify.
+  useEffect(() => {
+    if (!productId) return;
+    if (stagedUrlCheckedProductIdRef.current === productId) return;
+    stagedUrlCheckedProductIdRef.current = productId;
+
+    const hasStagedUrl = productImages.some(i =>
+      i.url.startsWith("https://shopify-staged-uploads.storage.googleapis.com/")
+    );
+    if (!hasStagedUrl) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const imgR = await fetch(`/api/product-images?productId=${encodeURIComponent(productId)}`);
+        const imgData = await imgR.json();
+        if (!cancelled && imgData.success && Array.isArray(imgData.images)) {
+          const fresh = mapApiImagesToRefs(imgData.images);
+          setRefreshedProductImages(fresh);
+          onProductImagesRefreshedRef.current?.(productId, fresh);
+        }
+      } catch {
+        // Best-effort: a full page reload will retry; no user-facing error needed.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [productId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Keep ref in sync so polling closures can read current conversion state without stale closure.
   isConvertingWebPRef.current = isConvertingWebP;
