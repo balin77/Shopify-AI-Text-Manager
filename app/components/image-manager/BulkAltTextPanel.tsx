@@ -143,9 +143,13 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
       }
     }
     if (seen.size === 0) {
-      // No GIDs to translate (e.g. variants without options) — record empty result
-      // so the preview renders immediately with the primary-locale fallback.
-      setOptionTranslations((prev) => ({ ...prev, [activeLocale]: {} }));
+      // Variants still loading → don't lock the cache. Only mark "nothing to
+      // translate" when variants are actually present but carry no option GIDs;
+      // otherwise the guard above would prevent the effect from ever re-fetching
+      // once variants populate, leaving the preview stuck on primary-locale values.
+      if (variants.length > 0) {
+        setOptionTranslations((prev) => ({ ...prev, [activeLocale]: {} }));
+      }
       return;
     }
 
