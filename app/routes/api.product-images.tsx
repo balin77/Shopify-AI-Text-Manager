@@ -93,6 +93,17 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
           // URLs from the WebP worker untouched. Upsert preserves rows for
           // PROCESSING images and overwrites stale URLs once they appear in Shopify's response.
           await db.$transaction(async (tx) => {
+            // Legacy cleanup: prior versions of the WebP worker persisted the staged-upload
+            // URL into productImage.url, which 404s once Shopify finalizes media processing.
+            // Those rows can never reconcile via upsert (their stale mediaId no longer exists
+            // on Shopify) — wipe them here so this product's gallery self-heals on next open.
+            await tx.productImage.deleteMany({
+              where: {
+                productId,
+                url: { startsWith: "https://shopify-staged-uploads.storage.googleapis.com/" },
+              },
+            });
+
             for (const img of mediaImages as Array<{ url: string; altText: string | null; mediaId: string; position: number }>) {
               const updated = await tx.productImage.updateMany({
                 where: { productId, mediaId: img.mediaId },
