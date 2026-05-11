@@ -86,24 +86,33 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         });
 
         if (product) {
-          // Delete existing images and insert new ones
+          // Upsert by mediaId per row instead of delete-then-create. The previous
+          // approach lost data when Shopify returned a partial response (e.g. a
+          // newly converted WebP still in PROCESSING is filtered out above) — the
+          // wipe ran but the new row never reinserted, leaving stale staged-upload
+          // URLs from the WebP worker untouched. Upsert preserves rows for
+          // PROCESSING images and overwrites stale URLs once they appear in Shopify's response.
           await db.$transaction(async (tx) => {
-            await tx.productImage.deleteMany({
-              where: { productId: productId },
-            });
-
-            await tx.productImage.createMany({
-              data: mediaImages.map((img: any) => ({
-                productId: productId,
-                url: img.url,
-                altText: img.altText,
-                mediaId: img.mediaId,
-                position: img.position,
-              })),
-            });
+            for (const img of mediaImages as Array<{ url: string; altText: string | null; mediaId: string; position: number }>) {
+              const updated = await tx.productImage.updateMany({
+                where: { productId, mediaId: img.mediaId },
+                data: { url: img.url, altText: img.altText, position: img.position },
+              });
+              if (updated.count === 0) {
+                await tx.productImage.create({
+                  data: {
+                    productId,
+                    url: img.url,
+                    altText: img.altText,
+                    mediaId: img.mediaId,
+                    position: img.position,
+                  },
+                });
+              }
+            }
           });
 
-          logger.debug("[API:ProductImages] Cached images to DB", { context: "ProductImages", count: mediaImages.length, productId });
+          logger.debug("[API:ProductImages] Upserted images to DB", { context: "ProductImages", count: mediaImages.length, productId });
         }
       } catch (dbError) {
         // Don't fail the request if DB save fails - images are still returned

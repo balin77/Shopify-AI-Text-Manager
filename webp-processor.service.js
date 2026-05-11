@@ -61,6 +61,31 @@ async function fetchWithTimeout(url, options, label) {
   }
 }
 
+// One-shot lookup of the CDN URL for a freshly created MediaImage. Returns null
+// if Shopify is still PROCESSING (image.url not yet available) or on any error —
+// caller should treat that as "URL unknown" and skip persisting it.
+async function fetchNewMediaUrl(shopifyApiUrl, headers, mediaId) {
+  try {
+    const res = await fetchWithTimeout(shopifyApiUrl, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        query: `query($id: ID!) {
+          node(id: $id) {
+            ... on MediaImage { image { url } }
+          }
+        }`,
+        variables: { id: mediaId },
+      }),
+    }, "new media URL query");
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.data?.node?.image?.url ?? null;
+  } catch {
+    return null;
+  }
+}
+
 async function downloadImageAsBuffer(url) {
   for (let attempt = 1; attempt <= DOWNLOAD_MAX_ATTEMPTS; attempt++) {
     const isLastAttempt = attempt === DOWNLOAD_MAX_ATTEMPTS;
@@ -507,11 +532,20 @@ export class WebPProcessorService {
 
       await db.task.update({ where: { id: task.id }, data: { progress: 90 } });
 
-      // 9. Update DB with new URL (match by Shopify mediaId, not the DB CUID)
-      if (mediaId) {
+      // 9. Update DB: swap mediaId to new GID + set CDN URL.
+      //    target.resourceUrl is the staged-upload storage URL and must NEVER be
+      //    persisted. We query Shopify once for the real CDN URL; if Shopify is
+      //    still PROCESSING the new MediaImage, we update mediaId but keep the
+      //    existing url (column is non-nullable). A subsequent /api/product-images
+      //    upsert reconciles the URL once Shopify finishes processing.
+      let resolvedUrl = null;
+      if (mediaId && newMediaId) {
+        resolvedUrl = await fetchNewMediaUrl(shopifyApiUrl, headers, newMediaId);
         await db.productImage.updateMany({
           where: { mediaId: mediaId },
-          data: { url: target.resourceUrl },
+          data: resolvedUrl
+            ? { mediaId: newMediaId, url: resolvedUrl }
+            : { mediaId: newMediaId },
         }).catch(() => {});
       }
 
@@ -524,12 +558,12 @@ export class WebPProcessorService {
           completedAt: new Date(),
           result: JSON.stringify({
             ...taskData,
-            webpUrl: target.resourceUrl,
+            webpUrl: resolvedUrl ?? target.resourceUrl,
           }),
         },
       });
 
-      console.log(`[WebPProcessor] Task ${task.id} completed: ${sourceUrl} → ${target.resourceUrl}`);
+      console.log(`[WebPProcessor] Task ${task.id} completed: ${sourceUrl} → ${resolvedUrl ?? "(URL pending)"}`);
     } catch (err) {
       console.error(`[WebPProcessor] Task ${task.id} failed:`, err);
       await this.failTask(task.id, String(err));
