@@ -235,6 +235,16 @@ const server = app.listen(port, host, async () => {
   } catch (error) {
     serverLogger.error("Failed to recover tasks", { error: String(error) });
   }
+
+  // Start stale image cleanup service (startup sweep + 24h periodic)
+  try {
+    const { StaleImageCleanupService } = await import("./stale-image-cleanup.service.js");
+    const staleImageService = StaleImageCleanupService.getInstance();
+    staleImageService.start();
+    serverLogger.info("Stale image cleanup service started");
+  } catch (error) {
+    serverLogger.error("Failed to start stale image cleanup service", { error: String(error) });
+  }
 });
 
 // Graceful shutdown handler
@@ -263,6 +273,15 @@ async function gracefulShutdown(signal) {
       serverLogger.info("Stuck task monitoring stopped");
     } catch (error) {
       serverLogger.error("Error stopping stuck task monitoring", { error: String(error) });
+    }
+
+    try {
+      // Stop stale image cleanup service
+      const { StaleImageCleanupService } = await import("./stale-image-cleanup.service.js");
+      StaleImageCleanupService.getInstance().stop();
+      serverLogger.info("Stale image cleanup service stopped");
+    } catch (error) {
+      serverLogger.error("Error stopping stale image cleanup service", { error: String(error) });
     }
 
     try {

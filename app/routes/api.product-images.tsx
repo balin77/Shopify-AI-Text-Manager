@@ -93,14 +93,19 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
           // URLs from the WebP worker untouched. Upsert preserves rows for
           // PROCESSING images and overwrites stale URLs once they appear in Shopify's response.
           await db.$transaction(async (tx) => {
-            // Legacy cleanup: prior versions of the WebP worker persisted the staged-upload
-            // URL into productImage.url, which 404s once Shopify finalizes media processing.
-            // Those rows can never reconcile via upsert (their stale mediaId no longer exists
-            // on Shopify) — wipe them here so this product's gallery self-heals on next open.
+            // Orphan reconciliation: delete any ProductImage row whose mediaId is
+            // no longer present in Shopify's current media set for this product.
+            // This catches both legacy staged-upload URLs (whose mediaId no longer
+            // exists) and orphan rows from interrupted WebP conversions (where the
+            // worker deleted the old media on Shopify but never updated the row).
+            const shopifyMediaIds = (mediaImages as Array<{ mediaId: string }>).map(img => img.mediaId);
             await tx.productImage.deleteMany({
               where: {
                 productId,
-                url: { startsWith: "https://shopify-staged-uploads.storage.googleapis.com/" },
+                // notIn with empty array would match every row; sentinel avoids wiping
+                // the table when Shopify reports zero media (defensive — shouldn't happen
+                // since the outer `if (mediaImages.length > 0)` already guards this).
+                mediaId: { notIn: shopifyMediaIds.length > 0 ? shopifyMediaIds : ["__none__"] },
               },
             });
 

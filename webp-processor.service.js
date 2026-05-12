@@ -175,19 +175,22 @@ export class WebPProcessorService {
   }
 
   async processPendingTasks() {
-    // Heartbeat: bump updatedAt on all pending WebP tasks so task-recovery's
+    // Heartbeat: bump updatedAt on all waiting WebP tasks so task-recovery's
     // 10-min stuck-task detector doesn't kill them while they wait in the queue.
-    // If the worker dies, no heartbeat fires and pending tasks correctly become
+    // If the worker dies, no heartbeat fires and waiting tasks correctly become
     // stuck after the threshold — that's the intended crash signal.
+    // We accept both "pending" (newly created) and "queued" (reset by
+    // TaskRecoveryService.resetPendingTasks after a server restart) so restart
+    // doesn't silently orphan tasks.
     await db.task.updateMany({
-      where: { type: "imageWebpConversion", status: "pending" },
+      where: { type: "imageWebpConversion", status: { in: ["pending", "queued"] } },
       data: { updatedAt: new Date() },
     });
 
-    // Find which shops have pending tasks (oldest pending task per shop wins ordering).
+    // Find which shops have waiting tasks (oldest waiting task per shop wins ordering).
     const shopsWithPending = await db.task.groupBy({
       by: ["shop"],
-      where: { type: "imageWebpConversion", status: "pending" },
+      where: { type: "imageWebpConversion", status: { in: ["pending", "queued"] } },
       _min: { createdAt: true },
       orderBy: { _min: { createdAt: "asc" } },
     });
@@ -213,7 +216,7 @@ export class WebPProcessorService {
 
       const remaining = GLOBAL_MAX_CONCURRENT - tasksToProcess.length;
       const tasks = await db.task.findMany({
-        where: { shop, type: "imageWebpConversion", status: "pending" },
+        where: { shop, type: "imageWebpConversion", status: { in: ["pending", "queued"] } },
         take: Math.min(freeSlots, remaining),
         orderBy: { createdAt: "asc" },
       });
