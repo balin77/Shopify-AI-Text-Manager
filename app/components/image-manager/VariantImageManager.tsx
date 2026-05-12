@@ -587,19 +587,16 @@ export function VariantImageManager({
     };
   }, [productId, startWebPPolling]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Legacy self-heal: products converted before the staged-URL fix have rows whose
-  // url points to shopify-staged-uploads.storage.googleapis.com (now 404). Detect
-  // that signature once per product open and trigger /api/product-images, which
-  // purges the stale rows and refetches the correct CDN URLs from Shopify.
+  // Reconcile gallery with Shopify on every product open (once per productId mount).
+  // The /api/product-images endpoint deletes ProductImage rows whose mediaId is no
+  // longer in Shopify's response — catches staged-upload-URL legacy orphans AND
+  // CDN-URL orphans left behind by interrupted WebP conversions. One extra Shopify
+  // GraphQL call per product open; the previous staged-URL-only gate missed
+  // CDN-URL orphans entirely.
   useEffect(() => {
     if (!productId) return;
     if (stagedUrlCheckedProductIdRef.current === productId) return;
     stagedUrlCheckedProductIdRef.current = productId;
-
-    const hasStagedUrl = productImages.some(i =>
-      i.url.startsWith("https://shopify-staged-uploads.storage.googleapis.com/")
-    );
-    if (!hasStagedUrl) return;
 
     let cancelled = false;
     (async () => {
