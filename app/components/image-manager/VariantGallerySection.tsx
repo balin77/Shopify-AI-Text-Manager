@@ -183,11 +183,6 @@ export function VariantGallerySection({
                 {t.imageManager.remove.replace("{count}", String(localSelectedUrls.length))}
               </Button>
             )}
-            {variant.sku && hasLocalSelection && (
-              <Button size="slim" onClick={() => onGenerateAltFromSku(variant.id, localSelectedUrls.map(url => urlToGid[url]).filter(Boolean))}>
-                {t.imageManager.altTextFromSku}
-              </Button>
-            )}
           </div>
 
           {/* Alt text editor — only when exactly 1 image is selected */}

@@ -11,6 +11,7 @@ import {
   Divider,
   Box,
   Tooltip,
+  Card,
 } from "@shopify/polaris";
 import { PlusIcon, DeleteIcon } from "@shopify/polaris-icons";
 import { useI18n } from "../../contexts/I18nContext";
@@ -473,9 +474,8 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
   const anyTranslating = isTranslatingAll || translatingPositions.size > 0;
 
   return (
-    <BlockStack gap="400">
-      <Box padding="300">
-        <BlockStack gap="300">
+    <Card>
+      <BlockStack gap="300">
           {/* Locale chip bar — click to switch active, Ctrl-click to exclude from "apply to all" */}
           {shopLocales.length > 1 && (
             <BlockStack gap="100">
@@ -762,7 +762,6 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
             )}
           </BlockStack>
         </BlockStack>
-      </Box>
-    </BlockStack>
+    </Card>
   );
 }
