@@ -728,6 +728,13 @@ export const es: Translation = {
     altTextTemplateTranslate: "Traducir",
     altTextTemplateTranslateAll: "Traducir todas las posiciones",
     altTextTemplateTranslating: "Traduciendo…",
+    altTextFromSkuSection: "Texto alternativo desde SKU",
+    altTextFromSkuAllBtn: "Todos",
+    altTextFromSkuSelectedBtn: "Solo seleccionados ({n})",
+    altTextFromSkuRunning: "Aplicando…",
+    altTextFromSkuSuccess: "Textos alt desde SKU aplicados",
+    altTextFromSkuError: "Error: {error}",
+    altTextFromSkuNoSelection: "No hay imágenes seleccionadas",
   },
 
   // Common

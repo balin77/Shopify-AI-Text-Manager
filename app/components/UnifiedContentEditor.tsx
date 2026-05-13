@@ -139,6 +139,7 @@ interface UnifiedContentEditorProps {
     imageManagerSettings: { firstImageBig: boolean; showAltTags: boolean; autoAltText: boolean };
     variantsForBulk?: import("./image-manager/types").VariantWithGallery[];
     onVariantsLoaded?: (variants: import("./image-manager/types").VariantWithGallery[]) => void;
+    selectedGalleryGids?: string[];
     onConfirm?: () => Promise<string | null>;
     isApplying?: boolean;
     productTitle?: string;
@@ -1078,6 +1079,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   shopLocales={shopLocales.map((l) => l.locale)}
                   primaryLocale={primaryLocale}
                   onApplySuccess={imageManager.onApplySuccess}
+                  selectedGids={imageManager.selectedGalleryGids}
                 />
               )}
             </div>

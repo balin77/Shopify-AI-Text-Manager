@@ -1,4 +1,5 @@
 import { useCallback, useState, useEffect, useRef } from "react";
+import { useFetcher } from "@remix-run/react";
 import {
   Text,
   Button,
@@ -37,6 +38,7 @@ interface Props {
   shopLocales: string[];
   primaryLocale: string;
   onApplySuccess?: () => void;
+  selectedGids?: string[];
 }
 
 function fillTemplate(
@@ -67,10 +69,12 @@ function buildVariableChips(variants: VariantWithGallery[]): string[] {
   return Array.from(seen);
 }
 
-export function BulkAltTextPanel({ productId, productTitle, variants, shopLocales, primaryLocale, onApplySuccess }: Props) {
+export function BulkAltTextPanel({ productId, productTitle, variants, shopLocales, primaryLocale, onApplySuccess, selectedGids = [] }: Props) {
   const { t } = useI18n();
   const im = t.imageManager;
   const { showInfoBox } = useInfoBox();
+  const skuFetcher = useFetcher<{ success: boolean; updated?: number; error?: string }>();
+  const prevSkuFetcherData = useRef<typeof skuFetcher.data>(undefined);
 
   const [positions, setPositions] = useState<TemplatePosition[]>([
     { position: 1, label: "", templates: {} },
@@ -92,6 +96,28 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
   const isPrimaryLocale = activeLocale === primaryLocale;
   const foreignLocales = shopLocales.filter(l => l !== primaryLocale);
   const hasMultipleLocales = shopLocales.length > 1;
+
+  const isSkuRunning = skuFetcher.state !== "idle";
+
+  const handleSkuGenerate = useCallback((gids: string[]) => {
+    if (!gids.length) return;
+    const form = new FormData();
+    form.append("action", "generateAltTextFromSku");
+    form.append("productId", productId);
+    gids.forEach(gid => form.append("mediaId", gid));
+    skuFetcher.submit(form, { method: "post" });
+  }, [productId, skuFetcher]);
+
+  useEffect(() => {
+    const data = skuFetcher.data;
+    if (!data || data === prevSkuFetcherData.current) return;
+    prevSkuFetcherData.current = data;
+    if (data.success) {
+      showInfoBox(im?.altTextFromSkuSuccess ?? "Alt texts from SKU applied", "success");
+    } else {
+      showInfoBox((im?.altTextFromSkuError ?? "Error: {error}").replace("{error}", data.error ?? ""), "critical");
+    }
+  }, [skuFetcher.data]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load saved templates whenever productId changes
   useEffect(() => {
@@ -691,6 +717,50 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
               {im?.altTextTemplateNoVariants ?? "No variants found"}
             </Text>
           )}
+
+          <Divider />
+
+          {/* SKU alt text section */}
+          <BlockStack gap="200">
+            <Text variant="headingSm" as="h3">
+              {im?.altTextFromSkuSection ?? "Alt text from SKU"}
+            </Text>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: 8,
+              }}
+            >
+              <Button
+                fullWidth
+                onClick={() => {
+                  const allGids = variants.flatMap(v => v.galleryFileGids);
+                  handleSkuGenerate(allGids);
+                }}
+                loading={isSkuRunning}
+                disabled={variants.length === 0}
+              >
+                {isSkuRunning
+                  ? (im?.altTextFromSkuRunning ?? "Applying…")
+                  : (im?.altTextFromSkuAllBtn ?? "All")}
+              </Button>
+              <Button
+                fullWidth
+                onClick={() => handleSkuGenerate(selectedGids)}
+                loading={isSkuRunning}
+                disabled={selectedGids.length === 0}
+              >
+                {(im?.altTextFromSkuSelectedBtn ?? "Selected only ({n})")
+                  .replace("{n}", String(selectedGids.length))}
+              </Button>
+            </div>
+            {selectedGids.length === 0 && (
+              <Text variant="bodySm" as="p" tone="subdued">
+                {im?.altTextFromSkuNoSelection ?? "No images selected"}
+              </Text>
+            )}
+          </BlockStack>
         </BlockStack>
       </Box>
     </BlockStack>

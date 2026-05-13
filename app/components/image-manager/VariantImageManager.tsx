@@ -53,6 +53,7 @@ interface VariantImageManagerProps {
   onDirtyChange?: (isDirty: boolean) => void;
   onMissingMainImageChange?: (hasMissing: boolean) => void;
   onProductImagesRefreshed?: (productId: string, images: ProductImageRef[]) => void;
+  onGallerySelectionGidsChange?: (gids: string[]) => void;
 }
 
 function mapApiImagesToRefs(images: any[]): ProductImageRef[] {
@@ -93,6 +94,7 @@ export function VariantImageManager({
   onDirtyChange,
   onMissingMainImageChange,
   onProductImagesRefreshed,
+  onGallerySelectionGidsChange,
 }: VariantImageManagerProps) {
   const { t } = useI18n();
   const [variants, setVariants] = useState<VariantWithGallery[]>([]);
@@ -769,6 +771,16 @@ export function VariantImageManager({
     }
     return map;
   }, [selectedGalleryItems, variants]);
+
+  // Notify parent of selected GIDs whenever selection or GID map changes
+  useEffect(() => {
+    if (!onGallerySelectionGidsChange) return;
+    const gids = [...selectedGalleryItems.keys()]
+      .map(key => key.slice(key.indexOf("::") + 2))
+      .map(url => urlToGid[url])
+      .filter((g): g is string => Boolean(g));
+    onGallerySelectionGidsChange(gids);
+  }, [selectedGalleryItems, urlToGid, onGallerySelectionGidsChange]);
 
   const makeSelectHandler = useCallback((sourceVariantId: string | null) =>
     (url: string, sel: boolean) => {
@@ -1472,9 +1484,6 @@ export function VariantImageManager({
           )}
         </InlineStack>
         <InlineStack gap="400" blockAlign="center">
-          <Button size="slim" onClick={handleGenerateAltFromSkuAll}>
-            {t.imageManager.altTextFromSkuAll}
-          </Button>
           {(imagesToConvert.length > 0 || isConvertingWebP) && (
             <InlineStack gap="200" blockAlign="center">
               <Button size="slim" onClick={() => handleConvertToWebP(imagesToConvert)} disabled={isConvertingWebP}>
@@ -1611,17 +1620,6 @@ export function VariantImageManager({
                 }}
               >
                 {t.imageManager.deleteImage}
-              </Button>
-            )}
-            {productSelectedUrls.length > 0 && (
-              <Button
-                size="slim"
-                onClick={() => {
-                  const gids = productSelectedUrls.map(url => urlToGid[url]).filter(Boolean);
-                  handleGenerateAltFromSku("", gids);
-                }}
-              >
-                {t.imageManager.altTextFromSku}
               </Button>
             )}
             <Button

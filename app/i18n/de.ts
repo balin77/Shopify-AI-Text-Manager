@@ -726,6 +726,13 @@ export const de = {
     altTextTemplateTranslate: "Übersetzen",
     altTextTemplateTranslateAll: "Alle Positionen übersetzen",
     altTextTemplateTranslating: "Wird übersetzt…",
+    altTextFromSkuSection: "Alt-Text aus SKU",
+    altTextFromSkuAllBtn: "Alle",
+    altTextFromSkuSelectedBtn: "Nur ausgewählte ({n})",
+    altTextFromSkuRunning: "Wird gesetzt…",
+    altTextFromSkuSuccess: "Alt-Texte aus SKU gesetzt",
+    altTextFromSkuError: "Fehler: {error}",
+    altTextFromSkuNoSelection: "Keine Bilder ausgewählt",
   },
 
   // Common

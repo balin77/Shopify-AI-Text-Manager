@@ -869,6 +869,7 @@ export default function ProductsPage() {
             imageManagerSettings: imageManagerSettings ?? { firstImageBig: false, showAltTags: false, autoAltText: false, thumbSize: 80 },
             variantsForBulk: imageManagerState.variantsForBulk,
             onVariantsLoaded: imageManagerState.handleVariantsLoaded,
+            selectedGalleryGids: imageManagerState.selectedGalleryGids,
             onConfirm: async () => {
               const err = await imageManagerState.handleApply(editor.selectedItem?.id ?? "");
               if (err) {
@@ -915,6 +916,7 @@ export default function ProductsPage() {
               onDirtyChange={imageManagerState.setHasAltTextEdits}
               onMissingMainImageChange={(hasMissing) => imageManagerState.handleMissingMainImageChange(editor.selectedItem!.id, hasMissing)}
               onProductImagesRefreshed={handleProductImagesRefreshed}
+              onGallerySelectionGidsChange={imageManagerState.handleGallerySelectionGidsChange}
             />
           ) : undefined}
         />
