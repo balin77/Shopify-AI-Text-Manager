@@ -33,16 +33,19 @@ describe('ShopifyApiGateway', () => {
 
   it('clearQueue removes all pending requests and rejects them', () => {
     const admin = makeAdmin({ data: {} });
-    // Make the graphql call hang so the request stays in queue
+    // Make graphql hang so the first request stays "in flight"
+    // and subsequent requests remain in the queue.
     admin.graphql = vi.fn().mockReturnValue(new Promise(() => {}));
     const gateway = new ShopifyApiGateway(admin, 'test-shop.myshopify.com');
 
-    // Add a request but don't await — it will queue
-    const promise = gateway.graphql('{ shop { name } }');
-    // Clear immediately
+    // First request gets shifted out of the queue and becomes in-flight.
+    gateway.graphql('{ shop { name } }');
+    // Second request stays queued — this is what clearQueue rejects.
+    const queued = gateway.graphql('{ shop { name } }');
+
     gateway.clearQueue();
-    // The promise should reject
-    return expect(promise).rejects.toThrow('Queue cleared');
+
+    return expect(queued).rejects.toThrow('Queue cleared');
   });
 
   it('resolves a successful graphql call', async () => {
