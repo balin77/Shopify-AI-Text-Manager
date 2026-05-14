@@ -8,6 +8,7 @@ import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prism
 import prisma from "./db.server";
 import { logger } from "./utils/logger.server";
 import { EncryptedPrismaSessionStorage } from "./utils/encrypted-session-storage.server";
+import { checkAndSyncSubscription } from "./services/billing.server";
 
 /**
  * Map string API version (e.g., "2025-10") to ApiVersion enum
@@ -92,7 +93,7 @@ const shopify = shopifyApp({
     unstable_newEmbeddedAuthStrategy: true,
   },
   hooks: {
-    afterAuth: async ({ session }) => {
+    afterAuth: async ({ session, admin }) => {
       logger.info(`[SHOPIFY.SERVER] afterAuth hook triggered`);
       logger.debug(`[SHOPIFY.SERVER]  - Shop: ${session.shop}`);
       logger.debug(`[SHOPIFY.SERVER]  - Session ID: ${session.id}`);
@@ -107,11 +108,18 @@ const shopify = shopifyApp({
         logger.info(`[SHOPIFY.SERVER] Cleared stale scheduler for ${session.shop} after re-auth`);
       }
 
+      // All webhook subscriptions (app/uninstalled, products/*, collections/*,
+      // articles/*, app_subscriptions/update) are declared in shopify.app.toml and
+      // registered by Shopify automatically on every (re)install.
+
+      // Reconcile DB plan with live Shopify Billing state on every (re)install.
+      // Without this, a reinstall after uninstall keeps the old paid plan in
+      // aISettings even though Shopify auto-cancels the subscription on uninstall,
+      // until the next APP_SUBSCRIPTIONS_UPDATE webhook or settings load fires.
       try {
-        await shopify.registerWebhooks({ session });
-        logger.info(`[SHOPIFY.SERVER] Webhooks registered successfully`);
+        await checkAndSyncSubscription(admin, session.shop);
       } catch (error) {
-        logger.error(`[SHOPIFY.SERVER] Webhook registration failed:`, error);
+        logger.warn(`[SHOPIFY.SERVER] afterAuth subscription sync failed`, { shop: session.shop, error: error instanceof Error ? error.message : String(error) });
       }
     },
   },

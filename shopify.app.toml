@@ -22,6 +22,26 @@ api_version = "2025-10"
 compliance_topics = [ "customers/data_request", "customers/redact", "shop/redact" ]
 uri = "/webhooks/compliance"
 
+[[webhooks.subscriptions]]
+topics = [ "app/uninstalled" ]
+uri = "/webhooks/app-uninstalled"
+
+[[webhooks.subscriptions]]
+topics = [ "products/create", "products/update", "products/delete" ]
+uri = "/webhooks/products"
+
+[[webhooks.subscriptions]]
+topics = [ "collections/create", "collections/update", "collections/delete" ]
+uri = "/webhooks/collections"
+
+[[webhooks.subscriptions]]
+topics = [ "articles/create", "articles/update", "articles/delete" ]
+uri = "/webhooks/articles"
+
+[[webhooks.subscriptions]]
+topics = [ "app_subscriptions/update" ]
+uri = "/webhooks/subscription"
+
 [pos]
 embedded = false
 

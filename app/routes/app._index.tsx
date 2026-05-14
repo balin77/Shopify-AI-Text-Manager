@@ -115,20 +115,13 @@ export default function AppIndex() {
     }
   }, [needsSetup, navigate]);
 
-  // Auto-start setup if needed
+  // Auto-start sync on first install. Webhook subscriptions are declared in
+  // shopify.app.toml and registered by Shopify automatically on every (re)install,
+  // so no separate /api/setup-webhooks call is needed here.
   useEffect(() => {
     if (needsSetup && !setupStarted) {
       setSetupStarted(true);
-
-      // Register webhooks first, then start sync
-      fetch('/api/setup-webhooks', { method: 'POST' })
-        .then(() => {
-          startSync(false);
-        })
-        .catch((error) => {
-          console.error('Webhook setup failed, continuing with sync:', error);
-          startSync(false);
-        });
+      startSync(false);
     }
   }, [needsSetup, setupStarted, startSync]);
 
