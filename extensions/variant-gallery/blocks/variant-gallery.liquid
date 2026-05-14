@@ -10,7 +10,7 @@
 -%}
 
 {{ 'variant-gallery.css' | asset_url | stylesheet_tag }}
-{{ 'variant-gallery.js' | asset_url | script_tag }}
+<script src="{{ 'variant-gallery.js' | asset_url }}" defer></script>
 
 {%- comment -%}
   Embed ALL variant gallery data as JSON so the JS can switch galleries
@@ -61,7 +61,8 @@
           sizes="(min-width: 1024px) 50vw, 100vw"
           alt="{{ current_variant.title | escape }}"
           loading="eager"
-          width="800"
+          width="{{ first_img.width }}"
+          height="{{ first_img.height }}"
         >
       </div>
 
@@ -102,7 +103,8 @@
           sizes="(min-width: 1024px) 50vw, 100vw"
           alt="{{ product.title | escape }}"
           loading="eager"
-          width="800"
+          width="{{ fallback_image.width }}"
+          height="{{ fallback_image.height }}"
         >
       </div>
 
