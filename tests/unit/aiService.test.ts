@@ -476,17 +476,17 @@ describe('AIService', () => {
       const prompt = 'A'.repeat(400); // 400 characters
       const tokens = (aiService as any).estimateTokens(prompt);
 
-      // ~4 chars per token + 2000 output tokens
-      expect(tokens).toBeGreaterThan(2000);
-      expect(tokens).toBeLessThan(3000);
+      // ~4 chars per token (100) + 8192 output tokens = 8292
+      expect(tokens).toBeGreaterThan(8192);
+      expect(tokens).toBeLessThan(8400);
     });
 
     it('should include output tokens in estimate', () => {
       const prompt = 'Short prompt';
       const tokens = (aiService as any).estimateTokens(prompt);
 
-      // Should be roughly 2000 (output) + small input
-      expect(tokens).toBeGreaterThanOrEqual(2000);
+      // Should be roughly 8192 (output) + small input
+      expect(tokens).toBeGreaterThanOrEqual(8192);
     });
   });
 

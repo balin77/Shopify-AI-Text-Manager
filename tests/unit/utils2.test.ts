@@ -381,7 +381,7 @@ describe('sanitizer', () => {
       expect(result).toContain('&lt;');
       expect(result).toContain('&gt;');
       expect(result).toContain('&quot;');
-      expect(result).toContain('&#039;');
+      expect(result).toContain('&#39;');
     });
 
     it('does not escape normal text', () => {
