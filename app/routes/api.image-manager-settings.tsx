@@ -3,6 +3,7 @@ import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
+  if (process.env.APP_ENV === "production") throw new Response("Not Found", { status: 404 });
   const { session } = await authenticate.admin(request);
   const settings = await db.imageManagerSettings.findUnique({
     where: { shopId: session.shop },
@@ -13,6 +14,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
+  if (process.env.APP_ENV === "production") throw new Response("Not Found", { status: 404 });
   const { session } = await authenticate.admin(request);
   const { enabled, autoAltText, firstImageBig, showAltTags, thumbSize } = await request.json();
 

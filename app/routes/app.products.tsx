@@ -406,7 +406,7 @@ export const loader = createContentLoader({
   },
 
   async extraData(ctx) {
-    const { getPlanLimits, canAccessVariantImageManager } = await import("../utils/planUtils");
+    const { getPlanLimits, canAccessVariantImageManagerInEnv, isProductionLocked, canAccessImageProcessingTab } = await import("../utils/planUtils");
     const settings = await ctx.db.aISettings.findUnique({ where: { shop: ctx.session.shop } });
     const plan = (settings?.subscriptionPlan || "free") as "free" | "basic" | "pro" | "max";
     const planLimits = getPlanLimits(plan);
@@ -414,8 +414,10 @@ export const loader = createContentLoader({
     const imageManagerSettings = await ctx.db.imageManagerSettings.findUnique({
       where: { shopId: ctx.session.shop },
     }) ?? { enabled: true, firstImageBig: false, showAltTags: false, autoAltText: false, thumbSize: 80 };
-    const showImageManager = canAccessVariantImageManager(plan) && (imageManagerSettings.enabled ?? true);
-    return { plan, maxProducts: planLimits.maxProducts, productCount, showImageManager, imageManagerSettings };
+    const newFeaturesEnabled = !isProductionLocked();
+    const showImageManager = canAccessVariantImageManagerInEnv(plan, newFeaturesEnabled) && (imageManagerSettings.enabled ?? true);
+    const showImageProcessingTab = canAccessImageProcessingTab(newFeaturesEnabled);
+    return { plan, maxProducts: planLimits.maxProducts, productCount, showImageManager, showImageProcessingTab, imageManagerSettings };
   },
 });
 

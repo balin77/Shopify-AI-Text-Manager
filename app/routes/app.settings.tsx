@@ -328,7 +328,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const imageManagerSettings = await db.imageManagerSettings.findUnique({
       where: { shopId: session.shop },
     }) ?? { enabled: true, firstImageBig: false, showAltTags: false, autoAltText: false };
-    const showImageManagerTab = subscriptionPlan === "pro" || subscriptionPlan === "max";
+    const { isProductionLocked } = await import("../utils/planUtils");
+    const showImageManagerTab = !isProductionLocked() && (subscriptionPlan === "pro" || subscriptionPlan === "max");
 
     return json({
       shop: session.shop,

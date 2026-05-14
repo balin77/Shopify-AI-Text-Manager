@@ -20,11 +20,15 @@ import {
   isAtLimit,
   getResourcesApproachingLimits,
   getMinimumPlanForContentType,
+  canAccessVariantImageManagerInEnv,
+  canAccessImageProcessingTab as utilCanAccessImageProcessingTab,
+  canAccessImageManagerSettingsTab as utilCanAccessImageManagerSettingsTab,
   type ResourceType,
 } from "../utils/planUtils";
 
 interface PlanContextValue {
   plan: Plan;
+  newFeaturesEnabled: boolean;
   // Plan queries
   getPlanLimits: () => ReturnType<typeof getPlanLimits>;
   canAccessContentType: (contentType: ContentType) => boolean;
@@ -41,18 +45,24 @@ interface PlanContextValue {
   isApproachingLimit: (resourceType: ResourceType, currentCount: number, threshold?: number) => boolean;
   isAtLimit: (resourceType: ResourceType, currentCount: number) => boolean;
   getResourcesApproachingLimits: (counts: Record<ResourceType, number>, threshold?: number) => ResourceType[];
+  // Production-locked feature checks
+  canAccessVariantImageManager: () => boolean;
+  canAccessImageProcessingTab: () => boolean;
+  canAccessImageManagerSettingsTab: () => boolean;
 }
 
 const PlanContext = createContext<PlanContextValue | null>(null);
 
 interface PlanProviderProps {
   plan: Plan;
+  newFeaturesEnabled: boolean;
   children: ReactNode;
 }
 
-export function PlanProvider({ plan, children }: PlanProviderProps) {
+export function PlanProvider({ plan, newFeaturesEnabled, children }: PlanProviderProps) {
   const value: PlanContextValue = useMemo(() => ({
     plan,
+    newFeaturesEnabled,
     getPlanLimits: () => getPlanLimits(plan),
     canAccessContentType: (contentType: ContentType) => utilCanAccessContentType(plan, contentType),
     isWithinProductLimit: (currentCount: number) => utilIsWithinProductLimit(plan, currentCount),
@@ -68,7 +78,11 @@ export function PlanProvider({ plan, children }: PlanProviderProps) {
     isApproachingLimit: (resourceType: ResourceType, currentCount: number, threshold?: number) => isApproachingLimit(plan, resourceType, currentCount, threshold),
     isAtLimit: (resourceType: ResourceType, currentCount: number) => isAtLimit(plan, resourceType, currentCount),
     getResourcesApproachingLimits: (counts: Record<ResourceType, number>, threshold?: number) => getResourcesApproachingLimits(plan, counts, threshold),
-  }), [plan]);
+    // Production-locked feature checks
+    canAccessVariantImageManager: () => canAccessVariantImageManagerInEnv(plan, newFeaturesEnabled),
+    canAccessImageProcessingTab: () => utilCanAccessImageProcessingTab(newFeaturesEnabled),
+    canAccessImageManagerSettingsTab: () => utilCanAccessImageManagerSettingsTab(plan, newFeaturesEnabled),
+  }), [plan, newFeaturesEnabled]);
 
   return <PlanContext.Provider value={value}>{children}</PlanContext.Provider>;
 }

@@ -13,6 +13,7 @@ interface UpdateVariantGalleriesBody {
 }
 
 export const action = async ({ request }: ActionFunctionArgs) => {
+  if (process.env.APP_ENV === "production") throw new Response("Not Found", { status: 404 });
   const { admin } = await authenticate.admin(request);
   const body: UpdateVariantGalleriesBody = await request.json();
   const { productId, newMedia = [], variantGalleries = [], mediaOrder = [], clearVariantMainImages = [] } = body;

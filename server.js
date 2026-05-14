@@ -212,14 +212,19 @@ const server = app.listen(port, host, async () => {
     serverLogger.error("Failed to start task cleanup service", { error: String(error) });
   }
 
-  // Start WebP conversion task processor
-  try {
-    const { WebPProcessorService } = await import("./webp-processor.service.js");
-    const webpProcessor = WebPProcessorService.getInstance();
-    webpProcessor.start();
-    serverLogger.info("WebP processor service started");
-  } catch (error) {
-    serverLogger.error("Failed to start WebP processor service", { error: String(error) });
+  // Start WebP conversion task processor — gated while app is under Shopify review.
+  // Remove this guard once the Image Manager feature set is approved.
+  if (process.env.APP_ENV !== "production") {
+    try {
+      const { WebPProcessorService } = await import("./webp-processor.service.js");
+      const webpProcessor = WebPProcessorService.getInstance();
+      webpProcessor.start();
+      serverLogger.info("WebP processor service started");
+    } catch (error) {
+      serverLogger.error("Failed to start WebP processor service", { error: String(error) });
+    }
+  } else {
+    serverLogger.info("WebP processor service skipped (APP_ENV=production, feature gated for review)");
   }
 
   // Recover pending tasks after server restart and start stuck task monitoring
@@ -236,14 +241,19 @@ const server = app.listen(port, host, async () => {
     serverLogger.error("Failed to recover tasks", { error: String(error) });
   }
 
-  // Start stale image cleanup service (startup sweep + 24h periodic)
-  try {
-    const { StaleImageCleanupService } = await import("./stale-image-cleanup.service.js");
-    const staleImageService = StaleImageCleanupService.getInstance();
-    staleImageService.start();
-    serverLogger.info("Stale image cleanup service started");
-  } catch (error) {
-    serverLogger.error("Failed to start stale image cleanup service", { error: String(error) });
+  // Start stale image cleanup service — gated while app is under Shopify review.
+  // Remove this guard once the Image Manager feature set is approved.
+  if (process.env.APP_ENV !== "production") {
+    try {
+      const { StaleImageCleanupService } = await import("./stale-image-cleanup.service.js");
+      const staleImageService = StaleImageCleanupService.getInstance();
+      staleImageService.start();
+      serverLogger.info("Stale image cleanup service started");
+    } catch (error) {
+      serverLogger.error("Failed to start stale image cleanup service", { error: String(error) });
+    }
+  } else {
+    serverLogger.info("Stale image cleanup service skipped (APP_ENV=production, feature gated for review)");
   }
 });
 
@@ -275,13 +285,15 @@ async function gracefulShutdown(signal) {
       serverLogger.error("Error stopping stuck task monitoring", { error: String(error) });
     }
 
-    try {
-      // Stop stale image cleanup service
-      const { StaleImageCleanupService } = await import("./stale-image-cleanup.service.js");
-      StaleImageCleanupService.getInstance().stop();
-      serverLogger.info("Stale image cleanup service stopped");
-    } catch (error) {
-      serverLogger.error("Error stopping stale image cleanup service", { error: String(error) });
+    if (process.env.APP_ENV !== "production") {
+      try {
+        // Stop stale image cleanup service
+        const { StaleImageCleanupService } = await import("./stale-image-cleanup.service.js");
+        StaleImageCleanupService.getInstance().stop();
+        serverLogger.info("Stale image cleanup service stopped");
+      } catch (error) {
+        serverLogger.error("Error stopping stale image cleanup service", { error: String(error) });
+      }
     }
 
     try {
