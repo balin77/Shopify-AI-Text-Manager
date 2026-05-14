@@ -6,6 +6,7 @@
 
 import type { FetcherWithComponents } from "@remix-run/react";
 import type { Translation as I18nTranslation } from "~/i18n/de";
+import type { ValidationOverlays } from "~/utils/field-validation.utils";
 
 export type InfoBoxTone = "success" | "info" | "warning" | "critical";
 
@@ -451,6 +452,10 @@ export interface UseContentEditorReturn {
     triggerDataRefresh: () => void;
     /** Check if a specific field is currently loading */
     isFieldLoading: (fieldKey: string, action?: string) => boolean;
+    /** Snapshot of current overlay refs for overlay-aware validation (reads refs at call time) */
+    getValidationOverlays: () => ValidationOverlays;
+    /** Increments whenever overlays change — use as useMemo dependency to trigger recomputation */
+    validationVersion: number;
   };
 
   /** Effective field definitions (dynamic for templates, static for other content types) */

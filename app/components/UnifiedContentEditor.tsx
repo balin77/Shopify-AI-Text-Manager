@@ -20,13 +20,15 @@ import { ReloadButton } from "./ReloadButton";
 import type { SubResourceState, SubResourceHandlers } from "../hooks/useProductSubResources";
 import { HelpTooltip } from "./HelpTooltip";
 import { SeoSidebar } from "./SeoSidebar";
+import { BulkImageUploadPanel } from "./image-manager/BulkImageUploadPanel";
+import { BulkAltTextPanel } from "./image-manager/BulkAltTextPanel";
 import { useNavigationHeight } from "../contexts/NavigationHeightContext";
 import { usePlan } from "../contexts/PlanContext";
 import { getPlanDisplayName as getPlanDisplayNameUtil } from "../utils/planUtils";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { useItemSelector } from "../contexts/ItemSelectorContext";
 import { getLocalizedLanguageName, hasPrimaryContentMissing, getLocaleButtonTooltip } from "../utils/contentEditor.utils";
-import type { MetaobjectEntry } from "../utils/contentEditor.utils";
+import type { MetaobjectEntry, ValidationOverlays } from "../utils/contentEditor.utils";
 import { useI18n } from "../contexts/I18nContext";
 import { ENABLE_THEME_PRIMARY_EDIT } from "../config/constants";
 import { useGlobalActionState, useLoadingFieldKeys } from "../hooks/useAIOperationsStore";
@@ -114,6 +116,39 @@ interface UnifiedContentEditorProps {
 
   /** Optional: Sub-resource handlers */
   subResourceHandlers?: SubResourceHandlers;
+
+  /** Optional: replaces the image-gallery field for Pro/Max users */
+  imageGalleryReplacement?: React.ReactNode;
+
+  /** Optional: Variant Image Manager für Pro/Max */
+  showImageManager?: boolean;
+
+  /** Optional: Image Manager State + Handlers */
+  imageManager?: {
+    bulkItems: import("./image-manager/types").StagedItem[];
+    onBulkItemsChange: (updater: (prev: import("./image-manager/types").StagedItem[]) => import("./image-manager/types").StagedItem[]) => void;
+    selectedBulkIds: Set<string>;
+    activeAction: "copy" | "move" | null;
+    onSetAction: (action: "copy" | "move" | null) => void;
+    onBulkSelect: (id: string, selected: boolean) => void;
+    onRemoveBulk: (ids: string[]) => void;
+    activeRightTab: "seo" | "images";
+    onTabChange: (tab: "seo" | "images") => void;
+    activeImageSubTab: "bulkUpload" | "bulkAltText";
+    onImageSubTabChange: (tab: "bulkUpload" | "bulkAltText") => void;
+    imageManagerSettings: { firstImageBig: boolean; showAltTags: boolean; autoAltText: boolean };
+    variantsForBulk?: import("./image-manager/types").VariantWithGallery[];
+    onVariantsLoaded?: (variants: import("./image-manager/types").VariantWithGallery[]) => void;
+    selectedGalleryGids?: string[];
+    onConfirm?: () => Promise<string | null>;
+    isApplying?: boolean;
+    productTitle?: string;
+    productId?: string;
+    onApplySuccess?: () => void;
+  };
+
+  /** Optional: product IDs that have variants with missing main images (for yellow dot in list) */
+  extraMissingPrimaryIds?: Set<string>;
 }
 
 export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
@@ -140,10 +175,38 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     sortOptions,
     subResourceState,
     subResourceHandlers,
+    showImageManager,
+    imageManager,
+    imageGalleryReplacement,
+    extraMissingPrimaryIds,
   } = props;
 
   // Local state for search input - synced with fieldPagination.search
   const [fieldSearchInput, setFieldSearchInput] = useState(fieldPagination?.search || "");
+
+  // Resizable SEO/bulk sidebar
+  const [sidebarWidth, setSidebarWidth] = useState(320);
+  const sidebarWidthRef = useRef(320);
+  const handleResizerMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = sidebarWidthRef.current;
+    const onMouseMove = (ev: MouseEvent) => {
+      const newWidth = Math.max(200, Math.min(600, startWidth + (startX - ev.clientX)));
+      sidebarWidthRef.current = newWidth;
+      setSidebarWidth(newWidth);
+    };
+    const onMouseUp = () => {
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+    };
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+  }, []);
 
   // Sync local search input when fieldPagination.search changes externally (e.g. group switch)
   const prevFieldSearchRef = useRef(fieldPagination?.search || "");
@@ -156,6 +219,14 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   }, [fieldPagination?.search]);
 
   const { state, handlers, selectedItem, navigationGuard, helpers, effectiveFieldDefinitions } = editor;
+
+  // Overlay-aware snapshot: re-derived whenever baselineVersion ticks (overlays changed)
+  const validationOverlays = useMemo(
+    () => helpers.getValidationOverlays(),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [helpers.validationVersion]
+  );
+
   const { plan, getMaxProducts, getNextPlanUpgrade } = usePlan();
   const { showInfoBox } = useInfoBox();
   const { registerItems, clearItems } = useItemSelector();
@@ -202,14 +273,15 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
       if (config.contentType === "templates" && item.contentCount !== undefined) {
         subtitle = `${item.contentCount || 0} ${t.content?.translatableFields || "translatable fields"}`;
       }
-      const hasMissingPrimary = hasPrimaryContentMissing(item, config.contentType);
+      const itemOverlays = item.id === selectedItem?.id ? validationOverlays : undefined;
+      const hasMissingPrimary = hasPrimaryContentMissing(item, config.contentType, itemOverlays) || (extraMissingPrimaryIds?.has(item.id) ?? false);
       const missingPrimaryTooltip = hasMissingPrimary
-        ? getLocaleButtonTooltip(primaryLocaleObj, item, primaryLocale, config.contentType, false, tooltipI18n)
+        ? getLocaleButtonTooltip(primaryLocaleObj, item, primaryLocale, config.contentType, false, tooltipI18n, itemOverlays)
         : null;
 
       const foreignMissingParts = foreignLocales
         .map((l) => {
-          const tip = getLocaleButtonTooltip(l, item, primaryLocale, config.contentType, false, tooltipI18n);
+          const tip = getLocaleButtonTooltip(l, item, primaryLocale, config.contentType, false, tooltipI18n, itemOverlays);
           if (!tip) return null;
           const fieldsStr = tip.replace(/^[^:]+:\s*/, "");
           return `${l.locale.toUpperCase()}: ${fieldsStr}`;
@@ -235,7 +307,8 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
         missingTranslationsTooltip,
       };
     });
-  }, [items, config.getPrimaryField, config.getSubtitle, config.contentType, t, shopLocales, primaryLocale]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, config.getPrimaryField, config.getSubtitle, config.contentType, t, shopLocales, primaryLocale, extraMissingPrimaryIds, validationOverlays, helpers.validationVersion]);
 
   // Plan limit configuration
   const maxItems = getMaxProducts(); // This works for all content types
@@ -420,6 +493,8 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   onLanguageChange={handlers.handleLanguageChange}
                   enabledLanguages={state.enabledLanguages}
                   isLoadingData={state.isLoadingData}
+                  validationOverlays={validationOverlays}
+                  validationVersion={helpers.validationVersion}
                   onTranslateAll={state.currentLanguage === primaryLocale ? handlers.handleTranslateAll : handlers.handleTranslateAllForLocale}
                   onClearAll={state.currentLanguage === primaryLocale ? handlers.handleClearAllClick : handlers.handleClearAllForLocaleClick}
                   onSave={() => {
@@ -476,6 +551,8 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                     showTranslateAll={true}
                     showReloadButton={true}
                     isLoadingData={state.isLoadingData}
+                    validationOverlays={validationOverlays}
+                    validationVersion={helpers.validationVersion}
                     t={{
                       primaryLocaleSuffix: t.content?.primaryLanguageSuffix || "Primary",
                       translateAll: t.content?.translateAll || "🌍 Translate All",
@@ -487,7 +564,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                 {/* Operation Buttons */}
                 <div style={{ marginTop: "1rem" }}>
                   <Card padding="400">
-                  <InlineStack align="space-between" blockAlign="center">
+                  <InlineStack align="space-between" blockAlign="center" gap="300">
                     {/* Left: Translate All + Clear All Buttons */}
                     {/* Hidden for templates in primary locale when themeFilesUpsert is not enabled */}
                     <InlineStack gap="200">
@@ -707,7 +784,11 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         && state.currentLanguage === primaryLocale
                         && !ENABLE_THEME_PRIMARY_EDIT;
 
-                      return fieldDefinitions.map((field) => (
+                      return fieldDefinitions.map((field) => {
+                        if (field.type === "image-gallery" && imageGalleryReplacement) {
+                          return <div key={field.key}>{imageGalleryReplacement}</div>;
+                        }
+                        return (
                         <UnifiedFieldRenderer
                           key={field.key}
                           field={field}
@@ -745,8 +826,10 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                           handlers={handlers}
                           fetcherState={fetcherState}
                           fetcherFormData={fetcherFormData}
+                          validationOverlays={validationOverlays}
                         />
-                      ));
+                        );
+                      });
                     })()}
 
                     {/* Bottom Pagination (for easier navigation after scrolling) */}
@@ -868,11 +951,137 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           )}
         </div>
 
+        {/* Resizer handle between editor and sidebar */}
+        {selectedItem && config.showSeoSidebar && (
+          <div
+            className="sidebar-resizer desktop-only"
+            onMouseDown={handleResizerMouseDown}
+            style={{
+              width: 8,
+              flexShrink: 0,
+              cursor: "col-resize",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              marginInline: -4,
+              zIndex: 10,
+            }}
+          >
+            <div style={{
+              width: 4,
+              height: 40,
+              borderRadius: 2,
+              background: "var(--p-color-border)",
+              transition: "background 150ms",
+            }} />
+          </div>
+        )}
+
         {/* Right: Optional Sidebar (Fixed) - Hidden on narrow screens via CSS */}
         {selectedItem && config.showSeoSidebar && (
-          <div className="seo-sidebar-container" style={{ width: "320px", flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+          <div className="seo-sidebar-container" style={{ width: sidebarWidth, flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+            {/* Tab-Toggle für Pro/Max Image Manager */}
+            {showImageManager && imageManager && (
+              <div style={{ display: "flex", borderBottom: "1px solid #e1e3e5", marginBottom: 8, flexShrink: 0 }}>
+                <button
+                  style={{
+                    flex: 1,
+                    padding: "8px 4px",
+                    border: "none",
+                    background: "none",
+                    borderBottom: imageManager.activeRightTab === "seo" ? "2px solid #005bd3" : "2px solid transparent",
+                    cursor: "pointer",
+                    fontWeight: imageManager.activeRightTab === "seo" ? 600 : 400,
+                    fontSize: 13,
+                    color: imageManager.activeRightTab === "seo" ? "#005bd3" : "#616161",
+                  }}
+                  onClick={() => imageManager.onTabChange("seo")}
+                >
+                  {t.imageManager?.seoScoreTab ?? "SEO Score"}
+                </button>
+                <button
+                  style={{
+                    flex: 1,
+                    padding: "8px 4px",
+                    border: "none",
+                    background: "none",
+                    borderBottom: imageManager.activeRightTab === "images" ? "2px solid #005bd3" : "2px solid transparent",
+                    cursor: "pointer",
+                    fontWeight: imageManager.activeRightTab === "images" ? 600 : 400,
+                    fontSize: 13,
+                    color: imageManager.activeRightTab === "images" ? "#005bd3" : "#616161",
+                  }}
+                  onClick={() => imageManager.onTabChange("images")}
+                >
+                  {t.imageManager?.imagesTab ?? "Bulk Upload"}
+                </button>
+              </div>
+            )}
+            {/* Sub-Tab bar for Image Processing tab */}
+            {showImageManager && imageManager && imageManager.activeRightTab === "images" && (
+              <div style={{ display: "flex", borderBottom: "1px solid #e1e3e5", marginBottom: 4, flexShrink: 0, paddingLeft: 4 }}>
+                <button
+                  style={{
+                    padding: "6px 10px",
+                    border: "none",
+                    background: "none",
+                    borderBottom: imageManager.activeImageSubTab === "bulkUpload" ? "2px solid #005bd3" : "2px solid transparent",
+                    cursor: "pointer",
+                    fontWeight: imageManager.activeImageSubTab === "bulkUpload" ? 600 : 400,
+                    fontSize: 12,
+                    color: imageManager.activeImageSubTab === "bulkUpload" ? "#005bd3" : "#616161",
+                  }}
+                  onClick={() => imageManager.onImageSubTabChange("bulkUpload")}
+                >
+                  {t.imageManager?.bulkUploadSubTab ?? "Bulk Upload"}
+                </button>
+                <button
+                  style={{
+                    padding: "6px 10px",
+                    border: "none",
+                    background: "none",
+                    borderBottom: imageManager.activeImageSubTab === "bulkAltText" ? "2px solid #005bd3" : "2px solid transparent",
+                    cursor: "pointer",
+                    fontWeight: imageManager.activeImageSubTab === "bulkAltText" ? 600 : 400,
+                    fontSize: 12,
+                    color: imageManager.activeImageSubTab === "bulkAltText" ? "#005bd3" : "#616161",
+                  }}
+                  onClick={() => imageManager.onImageSubTabChange("bulkAltText")}
+                >
+                  {t.imageManager?.bulkAltTextSubTab ?? "Bulk Alt Text"}
+                </button>
+              </div>
+            )}
             <div style={{ flex: 1, overflowY: "auto" }}>
-              {sidebarRenderer(selectedItem, state.editableValues)}
+              {(!showImageManager || !imageManager || imageManager.activeRightTab === "seo") && (
+                sidebarRenderer(selectedItem, state.editableValues)
+              )}
+              {showImageManager && imageManager && imageManager.activeRightTab === "images" && imageManager.activeImageSubTab === "bulkUpload" && (
+                <BulkImageUploadPanel
+                  items={imageManager.bulkItems}
+                  selectedUniqueIds={imageManager.selectedBulkIds}
+                  variants={imageManager.variantsForBulk}
+                  productTitle={imageManager.productTitle}
+                  productId={imageManager.productId}
+                  primaryLocale={primaryLocale}
+                  onItemsChange={imageManager.onBulkItemsChange}
+                  onSelect={imageManager.onBulkSelect}
+                  onRemove={imageManager.onRemoveBulk}
+                  onConfirm={imageManager.onConfirm}
+                  isConfirming={imageManager.isApplying}
+                />
+              )}
+              {showImageManager && imageManager && imageManager.activeRightTab === "images" && imageManager.activeImageSubTab === "bulkAltText" && (
+                <BulkAltTextPanel
+                  productId={imageManager.productId ?? ""}
+                  productTitle={imageManager.productTitle ?? ""}
+                  variants={imageManager.variantsForBulk ?? []}
+                  shopLocales={shopLocales.map((l) => l.locale)}
+                  primaryLocale={primaryLocale}
+                  onApplySuccess={imageManager.onApplySuccess}
+                  selectedGids={imageManager.selectedGalleryGids}
+                />
+              )}
             </div>
           </div>
         )}

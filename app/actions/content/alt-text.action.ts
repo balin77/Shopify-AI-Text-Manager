@@ -319,24 +319,30 @@ export async function handleTranslateAltTextToAllLocales(
   ctx: ContentActionHandlerContext,
   formData: FormData,
 ): Promise<Response> {
-  const { admin, session, contentConfig, db, itemId, provider, serviceConfig } = ctx;
+  const { admin, session, contentConfig, db, itemId, provider, serviceConfig, shopifyContentService } = ctx;
 
   const imageIndex = getFormInt(formData, "imageIndex") ?? 0;
   const sourceAltText = getFormString(formData, "sourceAltText");
+  const productTitle = getFormString(formData, "productTitle") || "";
   const targetLocales = getFormJSON<string[]>(formData, "targetLocales");
   if (!targetLocales) {
     return json({ success: false, error: "Invalid targetLocales format" }, { status: 400 });
   }
 
+  const resourceTitle = productTitle
+    ? `${productTitle} – Bild ${imageIndex + 1}`
+    : `Bild ${imageIndex + 1}`;
+
   // Create task entry
   const task = await db.task.create({
     data: {
       shop: session.shop,
-      type: "translation",
+      type: "bulkTranslation",
       status: "pending",
       resourceType: contentConfig.resourceType,
       resourceId: itemId,
-      fieldType: `altText_${imageIndex}`,
+      resourceTitle,
+      fieldType: "all",
       targetLocale: targetLocales.join(","),
       progress: 0,
       expiresAt: getTaskExpirationDate(),
@@ -372,6 +378,53 @@ export async function handleTranslateAltTextToAllLocales(
     });
 
     // Save translations to Shopify first, then DB only on success
+    const failedLocales: string[] = [];
+    const savedLocales: string[] = [];
+
+    // Articles/Collections store the featured image translation on a separate translatable
+    // resource (ArticleImage / CollectionImage) and persist locally to `contentTranslation`,
+    // not to `productImageAltTranslation`. Delegate to the shared helper.
+    if (contentConfig.resourceType === 'Article' || contentConfig.resourceType === 'Collection') {
+      for (const locale of targetLocales) {
+        const altText = translatedAltTexts[locale];
+        if (!altText) continue;
+        const result = await shopifyContentService.saveImageAltTextTranslation({
+          resourceId: itemId,
+          resourceType: contentConfig.resourceType,
+          locale,
+          altText,
+          shop: session.shop,
+          db,
+        });
+        if (result.saved) {
+          savedLocales.push(locale);
+        } else {
+          failedLocales.push(locale);
+        }
+      }
+
+      await db.task.update({
+        where: { id: task.id },
+        data: {
+          status: "completed",
+          progress: 100,
+          completedAt: new Date(),
+          result: JSON.stringify({ translatedAltTexts, imageIndex, targetLocales, savedLocales, failedLocales }),
+        },
+      });
+
+      return json({
+        actionType: "translateAltTextToAllLocales",
+        success: true,
+        translatedAltTexts,
+        imageIndex,
+        targetLocales,
+        savedLocales,
+        failedLocales,
+      });
+    }
+
+    // Product path: image translations live on Shopify MediaImage GIDs and `productImageAltTranslation`.
     const { ShopifyApiGateway } = await import("~/services/shopify-api-gateway.service");
     const gateway = new ShopifyApiGateway(admin, session.shop);
 
@@ -386,8 +439,6 @@ export async function handleTranslateAltTextToAllLocales(
     });
 
     const dbImage = dbProduct?.images?.[imageIndex];
-    const failedLocales: string[] = [];
-    const savedLocales: string[] = [];
 
     if (!dbImage?.mediaId) {
       // No mediaId = cannot save to Shopify, so don't save to DB either
@@ -516,6 +567,7 @@ export async function handleTranslateAltTextToAllLocales(
       translatedAltTexts,
       imageIndex,
       targetLocales,
+      savedLocales,
       failedLocales,
     });
   } catch (error: unknown) {
@@ -530,4 +582,212 @@ export async function handleTranslateAltTextToAllLocales(
     });
     return json({ success: false, error: errorMsg }, { status: 500 });
   }
+}
+
+/**
+ * Generate Alt Text from Variant SKUs
+ *
+ * Finds all variants that reference this image in their custom.variant_gallery
+ * metafield and generates an alt text from their comma-separated SKUs.
+ */
+export async function handleGenerateAltTextFromSku(
+  ctx: ContentActionHandlerContext,
+  formData: FormData
+) {
+  const mediaIds = formData.getAll("mediaId").map(v => String(v)).filter(Boolean);
+  const productId = formData.get("productId") as string;
+
+  if (mediaIds.length === 0 || !productId) {
+    return json({ success: false, error: "mediaId(s) and productId required" }, { status: 400 });
+  }
+
+  // 1. Alle gecachten Varianten des Produkts laden
+  const variants = await ctx.db.productVariant.findMany({
+    where: { productId },
+    select: { sku: true, galleryJson: true },
+  });
+
+  const results: Array<{ mediaId: string; altText: string }> = [];
+
+  for (const mediaId of mediaIds) {
+    const numericId = mediaId.replace("gid://shopify/MediaImage/", "").replace("gid://shopify/File/", "");
+
+    const matchingSkus = variants
+      .filter(v => {
+        if (!v.galleryJson) return false;
+        try {
+          const gids: string[] = JSON.parse(v.galleryJson);
+          return gids.some(gid => gid.includes(numericId) || gid === mediaId);
+        } catch { return false; }
+      })
+      .filter(v => v.sku)
+      .map(v => v.sku as string);
+
+    if (matchingSkus.length === 0) continue;
+
+    const altText = matchingSkus.join(",").slice(0, 512);
+    results.push({ mediaId, altText });
+  }
+
+  if (results.length === 0) {
+    return json({ success: false, error: "No variants with SKU found for these images" }, { status: 404 });
+  }
+
+  // 2. Alt-Text zu Shopify synchronisieren
+  await ctx.admin.graphql(`
+    mutation fileUpdate($files: [FileUpdateInput!]!) {
+      fileUpdate(files: $files) { userErrors { field message } }
+    }
+  `, { variables: { files: results.map(r => ({ id: r.mediaId, alt: r.altText })) } });
+
+  // 3. DB updaten
+  await Promise.all(results.map(r =>
+    ctx.db.productImage.updateMany({ where: { mediaId: r.mediaId }, data: { altText: r.altText } })
+  ));
+
+  return json({ success: true, updated: results.length });
+}
+
+// ============================================================================
+// SAVE IMAGE ALT-TEXT (single image, primary or foreign locale)
+// ============================================================================
+
+export async function handleSaveImageAltText(
+  ctx: ContentActionHandlerContext,
+  formData: FormData,
+): Promise<Response> {
+  const { admin, db } = ctx;
+  const mediaId = getFormString(formData, "mediaId");
+  const altText = getFormString(formData, "altText") ?? "";
+  const locale = getFormString(formData, "locale") || null;
+  const primaryLocale = getFormString(formData, "primaryLocale") || null;
+
+  if (!mediaId) {
+    return json({ success: false, error: "mediaId required" }, { status: 400 });
+  }
+
+  let shopifySaved = false;
+
+  if (!locale || locale === primaryLocale) {
+    // Primary locale: update media alt text via fileUpdate
+    try {
+      const r = await admin.graphql(
+        `#graphql
+          mutation fileUpdate($files: [FileUpdateInput!]!) {
+            fileUpdate(files: $files) { userErrors { field message } }
+          }`,
+        { variables: { files: [{ id: mediaId, alt: altText }] } }
+      );
+      const d = await r.json() as any;
+      shopifySaved = (d.data?.fileUpdate?.userErrors ?? []).length === 0;
+    } catch (err: unknown) {
+      logger.error("[saveImageAltText] fileUpdate error", { error: String(err) });
+      return json({ success: false, error: "Shopify API error" }, { status: 500 });
+    }
+
+    if (shopifySaved) {
+      await db.productImage.updateMany({
+        where: { mediaId },
+        data: { altText: altText || null, altTextModifiedAt: new Date() },
+      }).catch(() => {});
+    }
+  } else {
+    // Foreign locale: use translationsRegister (needs digest from Shopify)
+    let altDigest: string | undefined;
+    try {
+      const tr = await admin.graphql(
+        `#graphql
+          query translatableContent($id: ID!) {
+            translatableResource(resourceId: $id) {
+              translatableContent { key digest }
+            }
+          }`,
+        { variables: { id: mediaId } }
+      );
+      const td = await tr.json() as any;
+      altDigest = (td.data?.translatableResource?.translatableContent ?? [])
+        .find((c: { key: string; digest?: string }) => c.key === "alt")?.digest;
+    } catch (err: unknown) {
+      logger.error("[saveImageAltText] translatableContent error", { error: String(err) });
+    }
+
+    if (!altDigest) {
+      return json({ success: false, error: "No digest found for alt-text translation" }, { status: 400 });
+    }
+
+    try {
+      const r = await admin.graphql(
+        `#graphql
+          mutation translateMedia($resourceId: ID!, $translations: [TranslationInput!]!) {
+            translationsRegister(resourceId: $resourceId, translations: $translations) {
+              userErrors { field message }
+            }
+          }`,
+        {
+          variables: {
+            resourceId: mediaId,
+            translations: [{ key: "alt", value: altText, locale, translatableContentDigest: altDigest }],
+          },
+        }
+      );
+      const d = await r.json() as any;
+      shopifySaved = (d.data?.translationsRegister?.userErrors ?? []).length === 0;
+    } catch (err: unknown) {
+      logger.error("[saveImageAltText] translationsRegister error", { error: String(err) });
+      return json({ success: false, error: "Shopify translation API error" }, { status: 500 });
+    }
+
+    if (shopifySaved) {
+      try {
+        const dbImage = await db.productImage.findFirst({ where: { mediaId }, select: { id: true } });
+        if (dbImage) {
+          if (altText.trim() === "") {
+            await db.productImageAltTranslation.deleteMany({ where: { imageId: dbImage.id, locale } });
+          } else {
+            await db.productImageAltTranslation.upsert({
+              where: { imageId_locale: { imageId: dbImage.id, locale } },
+              create: { imageId: dbImage.id, locale, altText },
+              update: { altText },
+            });
+          }
+        }
+      } catch {
+        // DB update is best-effort; Shopify is the source of truth
+      }
+    }
+  }
+
+  return json({ actionType: "saveImageAltText", success: shopifySaved });
+}
+
+// ============================================================================
+// LOAD IMAGE ALT-TEXT TRANSLATIONS (for a given product + locale)
+// Returns { mediaId → altText } map from DB
+// ============================================================================
+
+export async function handleLoadImageAltTranslations(
+  ctx: ContentActionHandlerContext,
+  formData: FormData,
+): Promise<Response> {
+  const { db } = ctx;
+  const productId = getFormString(formData, "productId") || ctx.itemId;
+  const locale = getFormString(formData, "locale");
+
+  if (!productId || !locale) {
+    return json({ success: false, error: "productId and locale required" }, { status: 400 });
+  }
+
+  const rows = await db.productImageAltTranslation.findMany({
+    where: { locale, image: { productId } },
+    select: { altText: true, image: { select: { mediaId: true } } },
+  });
+
+  const altTexts: Record<string, string> = {};
+  for (const row of rows) {
+    if (row.image?.mediaId) {
+      altTexts[row.image.mediaId] = row.altText;
+    }
+  }
+
+  return json({ actionType: "loadImageAltTranslations", locale, altTexts });
 }

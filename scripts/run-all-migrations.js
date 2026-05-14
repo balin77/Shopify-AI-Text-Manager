@@ -131,6 +131,13 @@ async function main() {
       log('❌ Both migrate deploy and db push failed!', 'red');
       process.exit(1);
     }
+  } else {
+    // Always run db push after successful migrate deploy to sync schema-only changes
+    // (models added via prisma db push without migration files, e.g. ProductVariant, ImageManagerSettings)
+    runCommand(
+      'npx prisma db push --skip-generate --accept-data-loss',
+      'Prisma DB Push (schema sync)'
+    );
   }
 
   // 3. Run API Key encryption migration (if ENCRYPTION_KEY is set)

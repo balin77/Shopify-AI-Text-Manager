@@ -158,6 +158,7 @@ export function UnifiedItemList({
   const headerRef = useRef<HTMLDivElement>(null);
   const paginationRef = useRef<HTMLDivElement>(null);
   const listContainerRef = useRef<HTMLDivElement>(null);
+  const userChangedPageRef = useRef(false);
 
   // Use dynamic items per page (calculated from window height)
   const itemsPerPage = fixedItemsPerPage || dynamicItemsPerPage;
@@ -204,6 +205,17 @@ export function UnifiedItemList({
   const paginatedItems = showPagination
     ? sortedItems.slice(startIndex, startIndex + itemsPerPage)
     : sortedItems;
+
+  // Auto-jump to the page containing the selected item until the user manually paginates.
+  // Why: selectedItemId is restored from localStorage on mount, but currentPage was always 1.
+  useEffect(() => {
+    if (userChangedPageRef.current) return;
+    if (!selectedItemId || sortedItems.length === 0 || itemsPerPage <= 0) return;
+    const idx = sortedItems.findIndex((item) => item.id === selectedItemId);
+    if (idx === -1) return;
+    const targetPage = Math.floor(idx / itemsPerPage) + 1;
+    if (targetPage !== currentPage) setCurrentPage(targetPage);
+  }, [selectedItemId, sortedItems, itemsPerPage, currentPage]);
 
   // Calculate items per page and item height based on available space
   useEffect(() => {
@@ -590,7 +602,7 @@ export function UnifiedItemList({
                       {(item.hasMissingPrimary || item.hasMissingTranslations) && (
                         <div style={{ display: "flex", gap: "4px", flexShrink: 0, marginLeft: "8px", alignItems: "center" }}>
                           {item.hasMissingPrimary && (
-                            <Tooltip content={item.missingPrimaryTooltip || "Missing primary content"} dismissOnMouseOut>
+                            <Tooltip content={item.missingPrimaryTooltip || "Missing primary content"} dismissOnMouseOut zIndexOverride={1200}>
                               <div
                                 style={{
                                   width: "12px",
@@ -604,7 +616,7 @@ export function UnifiedItemList({
                             </Tooltip>
                           )}
                           {item.hasMissingTranslations && (
-                            <Tooltip content={item.missingTranslationsTooltip || "Missing translations"} dismissOnMouseOut>
+                            <Tooltip content={item.missingTranslationsTooltip || "Missing translations"} dismissOnMouseOut zIndexOverride={1200}>
                               <div
                                 style={{
                                   width: "12px",
@@ -646,7 +658,10 @@ export function UnifiedItemList({
               <InlineStack gap="200">
                 <Button
                   icon={ChevronLeftIcon}
-                  onClick={() => setCurrentPage(currentPage - 1)}
+                  onClick={() => {
+                    userChangedPageRef.current = true;
+                    setCurrentPage(currentPage - 1);
+                  }}
                   disabled={currentPage === 1}
                   accessibilityLabel={t.paginationPrevious || "Previous page"}
                 />
@@ -655,7 +670,10 @@ export function UnifiedItemList({
                 </Text>
                 <Button
                   icon={ChevronRightIcon}
-                  onClick={() => setCurrentPage(currentPage + 1)}
+                  onClick={() => {
+                    userChangedPageRef.current = true;
+                    setCurrentPage(currentPage + 1);
+                  }}
                   disabled={currentPage === totalPages}
                   accessibilityLabel={t.paginationNext || "Next page"}
                 />

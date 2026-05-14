@@ -15,6 +15,7 @@
 import { useRef } from "react";
 import { Button, InlineStack, ButtonGroup, Tooltip } from "@shopify/polaris";
 import { useLocaleButtonStyle, getLocaleButtonTooltip, getLocalizedLanguageName } from "../../utils/contentEditor.utils";
+import type { ValidationOverlays } from "../../utils/contentEditor.utils";
 import { ReloadButton } from "../ReloadButton";
 import { HelpTooltip } from "../HelpTooltip";
 import { useI18n } from "../../contexts/I18nContext";
@@ -63,6 +64,11 @@ interface UnifiedLanguageBarProps {
   /** Optional: Whether data is currently loading (suppresses blinking) */
   isLoadingData?: boolean;
 
+  /** Overlay snapshot for overlay-aware validation markers */
+  validationOverlays?: ValidationOverlays;
+  /** Version counter — increments when overlays change */
+  validationVersion?: number;
+
   /** Translation strings */
   t?: {
     primaryLocaleSuffix?: string;
@@ -86,6 +92,8 @@ export function UnifiedLanguageBar({
   showTranslateAll = true,
   showReloadButton = true,
   isLoadingData = false,
+  validationOverlays,
+  validationVersion,
   t = {},
 }: UnifiedLanguageBarProps) {
   const isPrimaryLocale = currentLanguage === primaryLocale;
@@ -119,7 +127,9 @@ export function UnifiedLanguageBar({
           selectedItem,
           primaryLocale,
           contentType,
-          isLoadingData
+          isLoadingData,
+          validationOverlays,
+          validationVersion
         );
 
         const isEnabled = !enabledLanguages || enabledLanguages.includes(locale.locale);
@@ -149,7 +159,7 @@ export function UnifiedLanguageBar({
         const fullLabel = `${getLocalizedLanguageName(locale.locale, appLocale, locale.name)}${locale.primary ? ` (${t.primaryLocaleSuffix || "Primary"})` : ""}`;
         const shortLabel = locale.locale.charAt(0).toUpperCase() + locale.locale.slice(1);
 
-        const tooltip = getLocaleButtonTooltip(locale, selectedItem, primaryLocale, contentType, isLoadingData, tooltipI18n);
+        const tooltip = getLocaleButtonTooltip(locale, selectedItem, primaryLocale, contentType, isLoadingData, tooltipI18n, validationOverlays);
 
         const buttonContent = (
           <div key={locale.locale} style={buttonStyle}>

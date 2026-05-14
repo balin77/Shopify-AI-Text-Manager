@@ -228,6 +228,7 @@ export function useAltTextHandlers(props: AltTextHandlerProps): AltTextHandlers 
         action: "translateAltText",
         itemId: selectedItem.id,
         productId: selectedItem.id,
+        productTitle: selectedItem.title || "",
         imageIndex: String(imageIndex),
         sourceAltText,
         targetLocale: currentLanguage,
@@ -309,6 +310,7 @@ export function useAltTextHandlers(props: AltTextHandlerProps): AltTextHandlers 
         action: "translateAltTextToAllLocales",
         itemId: selectedItem.id,
         productId: selectedItem.id,
+        productTitle: selectedItem.title || "",
         imageIndex: String(imageIndex),
         sourceAltText,
         targetLocales: JSON.stringify(targetLocales),
@@ -330,7 +332,7 @@ export function useAltTextHandlers(props: AltTextHandlerProps): AltTextHandlers 
           showInfoBox(
             String(
               t.content?.altTextPartialLocales ||
-                "Alt-text for image {imageNumber} partially translated. Language(s) {failedLocales} could not be saved to Shopify. Please sync the product again."
+                "Alt-text for image {imageNumber} partially translated. Language(s) {failedLocales} could not be saved. Please try again or re-sync."
             )
               .replace("{imageNumber}", String(imageIndex + 1))
               .replace("{failedLocales}", failedList),
@@ -399,6 +401,7 @@ export function useAltTextHandlers(props: AltTextHandlerProps): AltTextHandlers 
         action: "translateAllAltTextsToAllLocales",
         itemId: selectedItem.id,
         productId: selectedItem.id,
+        productTitle: selectedItem.title || "",
         altTextsData: JSON.stringify(altTextsData),
         targetLocales: JSON.stringify(targetLocales),
         primaryLocale,
@@ -498,6 +501,7 @@ export function useAltTextHandlers(props: AltTextHandlerProps): AltTextHandlers 
         action: "translateAllAltTextsForLocale",
         itemId: selectedItem.id,
         productId: selectedItem.id,
+        productTitle: selectedItem.title || "",
         altTextsData: JSON.stringify(altTextsData),
         targetLocale: currentLanguage,
         primaryLocale,

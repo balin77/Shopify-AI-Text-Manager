@@ -201,6 +201,7 @@ model Product {
   images       ProductImage[]
   options      ProductOption[]
   metafields   ProductMetafield[]
+  variants     ProductVariant[]
 
   @@unique([shop, id])
   @@index([shop])
@@ -263,6 +264,44 @@ model ProductMetafield {
   type      String
 
   @@index([productId])
+}
+
+model ProductVariant {
+  id         String  @id           // numerische Shopify ID
+  shopifyGid String  @unique       // gid://shopify/ProductVariant/...
+  productId  String
+  product    Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  title      String
+  sku        String?
+  imageKey   String?
+  position   Int
+  galleryJson String? @db.Text    // JSON: ["gid://shopify/File/...", ...]
+  updatedAt  DateTime @updatedAt
+
+  @@index([productId])
+}
+
+model OptionValueMemory {
+  id          String   @id @default(cuid())
+  shop        String
+  optionValue String   // original display name, e.g. "Erdnuss"
+  savedAs     String   // last saved key segment, e.g. "Peanut"
+  updatedAt   DateTime @updatedAt
+
+  @@unique([shop, optionValue])
+  @@index([shop])
+}
+
+model ImageManagerSettings {
+  id            String  @id @default(cuid())
+  shopId        String  @unique
+  enabled       Boolean @default(true)
+  firstImageBig Boolean @default(false)
+  showAltTags   Boolean @default(false)
+  autoAltText   Boolean @default(false)
+  thumbSize     Int     @default(80)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 }
 
 model WebhookLog {
@@ -518,6 +557,22 @@ model MetaobjectTranslation {
   @@index([shop, metaobjectId])
   @@index([shop, type, locale]) // For efficient type-specific locale queries
   @@index([locale])
+}
+
+/// Templates for bulk alt text generation with variable placeholders (e.g. {Farbe}).
+model AltTextTemplate {
+  id            String   @id @default(cuid())
+  shop          String
+  productId     String
+  position      Int      // image position (1-based: 1 = main image, 2 = first gallery, …); legacy rows may use 0-based
+  positionLabel String?  // optional user-defined label, e.g. "Main Image"
+  locale        String   // "de", "en", "fr", etc.
+  template      String   @db.Text // e.g. "Eleganter {Farbe} Blumentopf"
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([shop, productId, position, locale])
+  @@index([shop, productId])
 }
 
 /// Persistent audit trail for GDPR compliance requests.

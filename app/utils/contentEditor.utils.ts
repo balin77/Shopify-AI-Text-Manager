@@ -4,17 +4,22 @@
  */
 
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
-import type { TranslatableItem, Translation, ContentType, ShopLocale } from "~/types/content-editor.types";
+import type { TranslatableItem, ContentType, ShopLocale } from "~/types/content-editor.types";
 import {
   SHOPIFY_TRANSLATION_KEYS,
   CONTENT_TYPE_DESCRIPTION_KEY,
-  UI_FIELD_TO_TRANSLATION_KEY,
-  FIELD_CONFIGS,
   FIELD_TO_LABEL_KEY,
-  isMetaobjectLabelField,
 } from "~/constants/shopifyFields";
 import { TIMING } from "~/constants/timing";
 import { extractReadableName } from "~/utils/templates-field-factory";
+import {
+  ValidationOverlays,
+  hasPrimaryContentMissing as fvHasPrimaryContentMissing,
+  hasLocaleMissingTranslations as fvHasLocaleMissingTranslations,
+  getMissingPrimaryFields as fvGetMissingPrimaryFields,
+  getMissingLocaleTranslationFields as fvGetMissingLocaleTranslationFields,
+} from "~/utils/field-validation.utils";
+export type { ValidationOverlays };
 
 /** Minimal shape of a metaobject entry as stored on TranslatableItem */
 export interface MetaobjectEntry {
@@ -42,122 +47,6 @@ export function getLocalizedLanguageName(localeCode: string, appLocale: string, 
 // ============================================================================
 // Helper Functions
 // ============================================================================
-
-/**
- * Get field value from item, supporting nested paths (e.g., 'seo.title')
- */
-function getFieldValue(item: TranslatableItem | null, fieldPath: string): string {
-  if (!item) return '';
-
-  const parts = fieldPath.split('.');
-  let value: unknown = item;
-
-  for (const part of parts) {
-    if (value === null || value === undefined || typeof value !== 'object') {
-      return '';
-    }
-    value = (value as Record<string, unknown>)[part];
-  }
-
-  if (value === undefined || value === null) {
-    return '';
-  }
-
-  return typeof value === 'string' ? value : '';
-}
-
-/**
- * Check if a field value is empty (null, undefined, or whitespace only)
- */
-function isFieldEmpty(value: string): boolean {
-  return !value || (typeof value === 'string' && value.trim() === '');
-}
-
-/**
- * Check if item has any missing required fields
- */
-function hasAnyFieldMissing(
-  item: TranslatableItem | null,
-  fields: readonly string[]
-): boolean {
-  if (!item) return false;
-
-  return fields.some(field => {
-    const value = getFieldValue(item, field);
-    return isFieldEmpty(value);
-  });
-}
-
-/**
- * Check if primary locale has content for a specific field
- */
-function primaryHasFieldContent(
-  item: TranslatableItem | null,
-  field: string,
-  contentType: ContentType
-): boolean {
-  if (!item) return false;
-
-  // Map translation key to actual field path
-  const fieldPathMap: Record<string, string> = {
-    title: 'title',
-    body_html: contentType === 'collections' || contentType === 'products' ? 'descriptionHtml' : 'body',
-    body: 'body',
-    handle: 'handle',
-    meta_title: 'seo.title',
-    meta_description: 'seo.description',
-    product_type: 'productType',
-    summary_html: 'summary', // Article excerpt/summary
-  };
-
-  const fieldPath = fieldPathMap[field] || field;
-  const value = getFieldValue(item, fieldPath);
-  return !isFieldEmpty(value);
-}
-
-/**
- * Check if a specific locale has a translation for a field
- */
-function hasTranslationForField(
-  item: TranslatableItem | null,
-  field: string,
-  locale: string
-): boolean {
-  if (!item) return false;
-
-  const translations = item.translations?.filter(t => t.locale === locale) || [];
-  const translation = translations.find(t => t.key === field);
-  return !!translation && !isFieldEmpty(translation.value);
-}
-
-/**
- * Get required translation fields for content type
- * Note: For templates, returns empty array as templates have dynamic fields
- * handled separately in hasPrimaryContentMissing and hasLocaleMissingTranslations
- */
-function getRequiredFieldsForContentType(contentType: ContentType): string[] {
-  if (contentType === 'templates' || contentType === 'metaobjects') {
-    // Templates and metaobjects have dynamic fields in translatableContent/fields
-    // The validation is handled separately in the calling functions
-    return [];
-  } else if (contentType === 'collections') {
-    return ["title", "body_html", "handle", "meta_title", "meta_description"];
-  } else if (contentType === 'products') {
-    return ["title", "body_html", "handle", "product_type", "meta_title", "meta_description"];
-  } else if (contentType === 'blogs') {
-    // Articles have body_html, summary_html, and SEO fields
-    return ["title", "body_html", "summary_html", "handle", "meta_title", "meta_description"];
-  } else if (contentType === 'policies') {
-    return ["body"];
-  } else if (contentType === 'pages') {
-    // meta_title and meta_description are optional (only present if set in Shopify),
-    // but included here so translations are flagged when the primary locale has them.
-    // The primaryHasFieldContent guard in the caller skips them when empty.
-    return ["title", "body_html", "handle", "meta_title", "meta_description"];
-  } else {
-    return ["title", "body_html", "handle"];
-  }
-}
 
 /**
  * Safely scroll to top of page
@@ -439,306 +328,45 @@ export function useChangeTracking(
   return hasChanges;
 }
 
-/**
- * Check if primary locale has any missing content
- * For templates: checks if any translatableContent entry has empty value
- */
+// ============================================================================
+// Validation functions — delegate to field-validation.utils.ts
+// (overlay-aware implementations live there; re-exported with same signature)
+// ============================================================================
+
 export function hasPrimaryContentMissing(
   selectedItem: TranslatableItem | null,
-  contentType: ContentType
+  contentType: ContentType,
+  overlays?: ValidationOverlays
 ): boolean {
-  if (!selectedItem) return false;
-
-  // Templates have dynamic fields in translatableContent
-  if (contentType === 'templates') {
-    const translatableContent = selectedItem.translatableContent;
-    if (!translatableContent || !Array.isArray(translatableContent) || translatableContent.length === 0) {
-      return false; // No content to check
-    }
-    // Check if any translatableContent entry has empty value
-    // Filter out null/undefined items to prevent "Cannot read properties of null" errors
-    return translatableContent.filter((item) => item != null).some((item: { key: string; value: string }) =>
-      isFieldEmpty(item.value)
-    );
-  }
-
-  // Metaobjects have dynamic fields in metaobjects array
-  if (contentType === 'metaobjects') {
-    const metaobjects = (selectedItem as { metaobjects?: MetaobjectEntry[] }).metaobjects;
-    if (!metaobjects || !Array.isArray(metaobjects) || metaobjects.length === 0) {
-      return false;
-    }
-    // Check if any metaobject entry has an empty label field (display_name/name/label)
-    return metaobjects.some((metaobj: MetaobjectEntry) => {
-      const labelField = metaobj.fields?.find((f: { key: string; value: string }) => isMetaobjectLabelField(f.key));
-      return !labelField || isFieldEmpty(labelField.value);
-    });
-  }
-
-  const requiredFields = FIELD_CONFIGS[contentType];
-  return hasAnyFieldMissing(selectedItem, requiredFields);
+  return fvHasPrimaryContentMissing(selectedItem, contentType, overlays);
 }
 
-/**
- * Check if a specific locale has missing translations
- * Only marks a field as missing if the primary locale has content for that field
- * For templates: checks translations for dynamic translatableContent fields
- * For products: also checks product options translations
- */
 export function hasLocaleMissingTranslations(
   selectedItem: TranslatableItem | null,
   locale: string,
   primaryLocale: string,
-  contentType: ContentType
+  contentType: ContentType,
+  overlays?: ValidationOverlays
 ): boolean {
-  if (!selectedItem || locale === primaryLocale) return false;
-
-  // Templates have dynamic fields in translatableContent
-  if (contentType === 'templates') {
-    const translatableContent = selectedItem.translatableContent;
-    if (!translatableContent || !Array.isArray(translatableContent) || translatableContent.length === 0) {
-      return false; // No content to check
-    }
-
-    const translations = selectedItem.translations || [];
-
-    // Check if any translatableContent entry with a value is missing a translation
-    // Filter out null/undefined items to prevent "Cannot read properties of null" errors
-    return translatableContent.filter((item) => item != null).some((item: { key: string; value: string }) => {
-      // Only check if primary has content for this field
-      if (isFieldEmpty(item.value)) {
-        return false;
-      }
-      // Check if translation exists for this locale
-      const translation = translations.find(
-        (t: Translation) => t.key === item.key && t.locale === locale
-      );
-      return !translation || isFieldEmpty(translation.value);
-    });
-  }
-
-  // Metaobjects have dynamic fields in metaobjects array
-  if (contentType === 'metaobjects') {
-    const metaobjects = (selectedItem as { metaobjects?: MetaobjectEntry[] }).metaobjects;
-    if (!metaobjects || !Array.isArray(metaobjects) || metaobjects.length === 0) {
-      return false;
-    }
-
-    const translations = selectedItem.translations || [];
-
-    // Check if any metaobject entry with primary content is missing a translation
-    return metaobjects.some((metaobj: MetaobjectEntry) => {
-      const labelField = metaobj.fields?.find((f: { key: string; value: string }) => isMetaobjectLabelField(f.key));
-      // Only check if primary has content for this entry
-      if (!labelField || isFieldEmpty(labelField.value)) {
-        return false;
-      }
-      // Check if translation exists for this locale (key = metaobject ID)
-      const translation = translations.find(
-        (t: Translation) => t.key === metaobj.id && t.locale === locale
-      );
-      return !translation || isFieldEmpty(translation.value);
-    });
-  }
-
-  const requiredFields = getRequiredFieldsForContentType(contentType);
-
-  const hasMissingMainFields = requiredFields.some(field => {
-    // Skip handle field - Shopify often doesn't return translations for handles
-    // that are identical to the primary locale, so we ignore it in validation
-    if (field === 'handle') {
-      return false;
-    }
-
-    // Only check if primary has content
-    if (!primaryHasFieldContent(selectedItem, field, contentType)) {
-      return false;
-    }
-
-    // Check if translation exists
-    return !hasTranslationForField(selectedItem, field, locale);
-  });
-
-  // For products, also check product options translations
-  if (contentType === 'products' && selectedItem.options && selectedItem.options.length > 0) {
-    const subResourceTranslations = selectedItem.subResourceTranslations || {};
-
-    const hasMissingOptionTranslations = selectedItem.options.some(option => {
-      // Check if option name translation is missing
-      const optionTranslations = subResourceTranslations[option.id] || [];
-      const nameTranslation = optionTranslations.find(t => t.key === 'name' && t.locale === locale);
-
-      // If option name exists in primary but translation is missing
-      if (option.name && (!nameTranslation || isFieldEmpty(nameTranslation.value))) {
-        return true;
-      }
-
-      // For non-linked options, also check value translations
-      if (!option.isLinked && option.values && option.values.length > 0) {
-        return option.values.some((value, index) => {
-          // ProductOptionValue translations are stored under value.id with key="name"
-          // (not under option.id with key="value:0", "value:1", etc.)
-          if (!value.id) return false; // Skip values without IDs
-
-          const valueTranslations = subResourceTranslations[value.id] || [];
-          const valueTranslation = valueTranslations.find(
-            t => t.key === 'name' && t.locale === locale
-          );
-
-          // If value exists in primary but translation is missing
-          return value.name && (!valueTranslation || isFieldEmpty(valueTranslation.value));
-        });
-      }
-
-      return false;
-    });
-
-    if (hasMissingOptionTranslations) {
-      return true;
-    }
-  }
-
-  return hasMissingMainFields;
+  return fvHasLocaleMissingTranslations(selectedItem, locale, primaryLocale, contentType, overlays);
 }
 
-/**
- * Get the list of missing primary content fields (returns field keys, not just boolean)
- */
 export function getMissingPrimaryFields(
   selectedItem: TranslatableItem | null,
-  contentType: ContentType
+  contentType: ContentType,
+  overlays?: ValidationOverlays
 ): string[] {
-  if (!selectedItem) return [];
-
-  if (contentType === 'templates') {
-    const translatableContent = selectedItem.translatableContent;
-    if (!translatableContent || !Array.isArray(translatableContent) || translatableContent.length === 0) {
-      return [];
-    }
-    return translatableContent
-      .filter((item): item is { key: string; value: string } => item != null)
-      .filter((item: { key: string; value: string }) => isFieldEmpty(item.value))
-      .map((item: { key: string; value: string }) => item.key);
-  }
-
-  if (contentType === 'metaobjects') {
-    const metaobjects = (selectedItem as { metaobjects?: MetaobjectEntry[] }).metaobjects;
-    if (!metaobjects || !Array.isArray(metaobjects) || metaobjects.length === 0) {
-      return [];
-    }
-    return metaobjects
-      .filter((metaobj: MetaobjectEntry) => {
-        const labelField = metaobj.fields?.find((f: { key: string; value: string }) => isMetaobjectLabelField(f.key));
-        return !labelField || isFieldEmpty(labelField.value);
-      })
-      .map((metaobj: MetaobjectEntry) => metaobj.id);
-  }
-
-  const requiredFields = FIELD_CONFIGS[contentType];
-  return requiredFields.filter(field => {
-    const value = getFieldValue(selectedItem, field);
-    return isFieldEmpty(value);
-  });
+  return fvGetMissingPrimaryFields(selectedItem, contentType, overlays);
 }
 
-/**
- * Get the list of missing translation fields for a specific locale (returns field keys, not just boolean)
- */
 export function getMissingLocaleTranslationFields(
   selectedItem: TranslatableItem | null,
   locale: string,
   primaryLocale: string,
-  contentType: ContentType
+  contentType: ContentType,
+  overlays?: ValidationOverlays
 ): string[] {
-  if (!selectedItem || locale === primaryLocale) return [];
-
-  if (contentType === 'templates') {
-    const translatableContent = selectedItem.translatableContent;
-    if (!translatableContent || !Array.isArray(translatableContent) || translatableContent.length === 0) {
-      return [];
-    }
-    const translations = selectedItem.translations || [];
-    return translatableContent
-      .filter((item): item is { key: string; value: string } => item != null)
-      .filter((item: { key: string; value: string }) => {
-        if (isFieldEmpty(item.value)) return false;
-        const translation = translations.find(
-          (t: Translation) => t.key === item.key && t.locale === locale
-        );
-        return !translation || isFieldEmpty(translation.value);
-      })
-      .map((item: { key: string; value: string }) => item.key);
-  }
-
-  if (contentType === 'metaobjects') {
-    const metaobjects = (selectedItem as { metaobjects?: MetaobjectEntry[] }).metaobjects;
-    if (!metaobjects || !Array.isArray(metaobjects) || metaobjects.length === 0) {
-      return [];
-    }
-    const translations = selectedItem.translations || [];
-    return metaobjects
-      .filter((metaobj: MetaobjectEntry) => {
-        const labelField = metaobj.fields?.find((f: { key: string; value: string }) => isMetaobjectLabelField(f.key));
-        // Only check if primary has content
-        if (!labelField || isFieldEmpty(labelField.value)) return false;
-        // Check if translation exists for this locale
-        const translation = translations.find(
-          (t: Translation) => t.key === metaobj.id && t.locale === locale
-        );
-        return !translation || isFieldEmpty(translation.value);
-      })
-      .map((metaobj: MetaobjectEntry) => metaobj.id);
-  }
-
-  const requiredFields = getRequiredFieldsForContentType(contentType);
-  const missingFields = requiredFields.filter(field => {
-    if (field === 'handle') return false;
-    if (!primaryHasFieldContent(selectedItem, field, contentType)) return false;
-    return !hasTranslationForField(selectedItem, field, locale);
-  });
-
-  // For products, also check product options translations
-  if (contentType === 'products' && selectedItem.options && selectedItem.options.length > 0) {
-    const subResourceTranslations = selectedItem.subResourceTranslations || {};
-
-    selectedItem.options.forEach((option, optionIndex) => {
-      // Check if option name translation is missing
-      const optionTranslations = subResourceTranslations[option.id] || [];
-      const nameTranslation = optionTranslations.find(t => t.key === 'name' && t.locale === locale);
-
-      // If option name exists in primary but translation is missing
-      if (option.name && (!nameTranslation || isFieldEmpty(nameTranslation.value))) {
-        missingFields.push(`option_${optionIndex + 1}_name`);
-      }
-
-      // For non-linked options, also check value translations
-      if (!option.isLinked && option.values && option.values.length > 0) {
-        const missingValueIndices: number[] = [];
-        option.values.forEach((value, valueIndex) => {
-          // ProductOptionValue translations are stored under value.id with key="name"
-          // (not under option.id with key="value:0", "value:1", etc.)
-          if (!value.id) return; // Skip values without IDs (shouldn't happen but safety check)
-
-          const valueTranslations = subResourceTranslations[value.id] || [];
-          const valueTranslation = valueTranslations.find(
-            t => t.key === 'name' && t.locale === locale
-          );
-
-          // If value exists in primary but translation is missing
-          if (value.name && (!valueTranslation || isFieldEmpty(valueTranslation.value))) {
-            missingValueIndices.push(valueIndex + 1);
-          }
-        });
-
-        // Add a summary entry for missing values
-        if (missingValueIndices.length > 0) {
-          missingFields.push(`option_${optionIndex + 1}_values`);
-        }
-      }
-    });
-  }
-
-  return missingFields;
+  return fvGetMissingLocaleTranslationFields(selectedItem, locale, primaryLocale, contentType, overlays);
 }
 
 /**
@@ -757,7 +385,8 @@ export function getLocaleButtonTooltip(
     missingContent: string;
     missingTranslations: string;
     fieldLabels: Record<string, string>;
-  }
+  },
+  overlays?: ValidationOverlays
 ): string | null {
   if (isLoadingData || !selectedItem) return null;
 
@@ -765,11 +394,11 @@ export function getLocaleButtonTooltip(
   let prefix: string;
 
   if (locale.primary) {
-    missingFields = getMissingPrimaryFields(selectedItem, contentType);
+    missingFields = getMissingPrimaryFields(selectedItem, contentType, overlays);
     prefix = i18n?.missingContent ?? 'Missing content:';
   } else {
     missingFields = getMissingLocaleTranslationFields(
-      selectedItem, locale.locale, primaryLocale, contentType
+      selectedItem, locale.locale, primaryLocale, contentType, overlays
     );
     prefix = i18n?.missingTranslations ?? 'Missing translations:';
   }
@@ -818,7 +447,7 @@ export function getLocaleButtonTooltip(
 // A negative animation-delay calculated from this epoch ensures every button starts
 // at the correct phase of the shared pulse cycle, even when animations restart at
 // different times (e.g., after editing a field briefly removes the "missing" state).
-const PULSE_SYNC_EPOCH = Date.now();
+export const PULSE_SYNC_EPOCH = Date.now();
 
 /**
  * Hook: Get button style for locale navigation with memoization
@@ -830,7 +459,9 @@ export function useLocaleButtonStyle(
   selectedItem: TranslatableItem | null,
   primaryLocale: string,
   contentType: ContentType,
-  isLoadingData: boolean = false
+  isLoadingData: boolean = false,
+  overlays?: ValidationOverlays,
+  overlaysVersion?: number
 ): React.CSSProperties {
   // Track translations length separately so the memo recalculates when
   // item.translations is mutated in-place (e.g. after Accept & Translate).
@@ -844,8 +475,8 @@ export function useLocaleButtonStyle(
       return {};
     }
 
-    const primaryContentMissing = locale.primary && hasPrimaryContentMissing(selectedItem, contentType);
-    const foreignTranslationMissing = !locale.primary && hasLocaleMissingTranslations(selectedItem, locale.locale, primaryLocale, contentType);
+    const primaryContentMissing = locale.primary && hasPrimaryContentMissing(selectedItem, contentType, overlays);
+    const foreignTranslationMissing = !locale.primary && hasLocaleMissingTranslations(selectedItem, locale.locale, primaryLocale, contentType, overlays);
 
     if (primaryContentMissing || foreignTranslationMissing) {
       // Synchronize all pulse animations to a shared reference point (PULSE_SYNC_EPOCH).
@@ -865,6 +496,7 @@ export function useLocaleButtonStyle(
     }
 
     return {};
-  }, [locale, selectedItem, primaryLocale, contentType, isLoadingData, translationsLength]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [locale, selectedItem, primaryLocale, contentType, isLoadingData, translationsLength, overlaysVersion]);
 }
 

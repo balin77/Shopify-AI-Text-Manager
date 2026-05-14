@@ -86,24 +86,49 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         });
 
         if (product) {
-          // Delete existing images and insert new ones
+          // Upsert by mediaId per row instead of delete-then-create. The previous
+          // approach lost data when Shopify returned a partial response (e.g. a
+          // newly converted WebP still in PROCESSING is filtered out above) — the
+          // wipe ran but the new row never reinserted, leaving stale staged-upload
+          // URLs from the WebP worker untouched. Upsert preserves rows for
+          // PROCESSING images and overwrites stale URLs once they appear in Shopify's response.
           await db.$transaction(async (tx) => {
+            // Orphan reconciliation: delete any ProductImage row whose mediaId is
+            // no longer present in Shopify's current media set for this product.
+            // This catches both legacy staged-upload URLs (whose mediaId no longer
+            // exists) and orphan rows from interrupted WebP conversions (where the
+            // worker deleted the old media on Shopify but never updated the row).
+            const shopifyMediaIds = (mediaImages as Array<{ mediaId: string }>).map(img => img.mediaId);
             await tx.productImage.deleteMany({
-              where: { productId: productId },
+              where: {
+                productId,
+                // notIn with empty array would match every row; sentinel avoids wiping
+                // the table when Shopify reports zero media (defensive — shouldn't happen
+                // since the outer `if (mediaImages.length > 0)` already guards this).
+                mediaId: { notIn: shopifyMediaIds.length > 0 ? shopifyMediaIds : ["__none__"] },
+              },
             });
 
-            await tx.productImage.createMany({
-              data: mediaImages.map((img: any) => ({
-                productId: productId,
-                url: img.url,
-                altText: img.altText,
-                mediaId: img.mediaId,
-                position: img.position,
-              })),
-            });
+            for (const img of mediaImages as Array<{ url: string; altText: string | null; mediaId: string; position: number }>) {
+              const updated = await tx.productImage.updateMany({
+                where: { productId, mediaId: img.mediaId },
+                data: { url: img.url, altText: img.altText, position: img.position },
+              });
+              if (updated.count === 0) {
+                await tx.productImage.create({
+                  data: {
+                    productId,
+                    url: img.url,
+                    altText: img.altText,
+                    mediaId: img.mediaId,
+                    position: img.position,
+                  },
+                });
+              }
+            }
           });
 
-          logger.debug("[API:ProductImages] Cached images to DB", { context: "ProductImages", count: mediaImages.length, productId });
+          logger.debug("[API:ProductImages] Upserted images to DB", { context: "ProductImages", count: mediaImages.length, productId });
         }
       } catch (dbError) {
         // Don't fail the request if DB save fails - images are still returned

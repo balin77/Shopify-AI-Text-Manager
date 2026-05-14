@@ -138,17 +138,18 @@ export async function handleGenerateAllAltTexts(ctx: AIActionContext): Promise<R
     return json({ success: false, error: "No images to process" }, { status: 400 });
   }
 
-  // Load AI instructions
   const altTextInstructions = await db.aIInstructions.findUnique({
     where: { shop: session.shop },
   });
+  const sharedFormat = getInstructionWithDefault(altTextInstructions, "productAltTextFormat");
+  const sharedInstructions = getInstructionWithDefault(altTextInstructions, "productAltTextInstructions");
+  const charLimit = getCharacterLimitRequirement("productAltText");
 
-  // Create task entry
   const bulkTask = await db.task.create({
     data: {
       shop: session.shop,
       type: "bulkAIGeneration",
-      status: "pending",
+      status: "running",
       resourceType: contentType,
       resourceId: productId,
       resourceTitle: productTitle,
@@ -160,86 +161,120 @@ export async function handleGenerateAllAltTexts(ctx: AIActionContext): Promise<R
     },
   });
 
-  try {
-    await db.task.update({
-      where: { id: bulkTask.id },
-      data: { status: "running", progress: 10 },
+  // Fire-and-forget: the heavy AI loop runs detached from the HTTP request.
+  // If the user navigates away, Node keeps the promise alive — progress and
+  // partial results are persisted to Task.result after every image, so a
+  // server restart only loses the in-flight image (TaskRecoveryService will
+  // mark stalled tasks as failed after 10 min).
+  void runBulkAltTextGeneration(bulkTask.id, {
+    db,
+    settings,
+    shop: session.shop,
+    imagesData,
+    productTitle,
+    mainLanguage,
+    sendImageToAI,
+    charLimit,
+    format: sharedFormat,
+    instructions: sharedInstructions,
+  }).catch((err) => {
+    logger.error("[API-AI] Bulk alt-text generation crashed", {
+      context: "AI",
+      taskId: bulkTask.id,
+      error: errorMessage(err),
     });
+  });
 
-    const bulkAiService = createAIService(settings, session.shop, bulkTask.id);
+  return json({ success: true, taskId: bulkTask.id, total: totalImages });
+}
 
-    const generatedAltTexts: Record<number, string> = {};
+interface BulkAltTextRunArgs {
+  db: AIActionContext["db"];
+  settings: AIActionContext["settings"];
+  shop: string;
+  imagesData: Array<{ url: string }>;
+  productTitle: string;
+  mainLanguage: string;
+  sendImageToAI: boolean;
+  charLimit: string | null;
+  format: string;
+  instructions: string;
+}
 
-    for (let i = 0; i < imagesData.length; i++) {
-      const image = imagesData[i];
-      try {
-        let prompt = `Create an optimized alt text for a product image.
+async function runBulkAltTextGeneration(taskId: string, args: BulkAltTextRunArgs): Promise<void> {
+  const { db, settings, shop, imagesData, productTitle, mainLanguage, sendImageToAI, charLimit, format, instructions } = args;
+  const totalImages = imagesData.length;
+  const aiService = createAIService(settings, shop, taskId);
+  const generatedAltTexts: Record<number, string> = {};
+  const failedIndices: number[] = [];
+  let lastError: string | undefined;
+
+  for (let i = 0; i < imagesData.length; i++) {
+    const image = imagesData[i];
+    try {
+      let prompt = `Create an optimized alt text for a product image.
 
 Product: ${productTitle}
 Image URL: ${image.url}${mainLanguage ? `\nLanguage: ${mainLanguage}` : ''}`;
 
-        // Add requirements
-        prompt += `\n\nRequirements:`;
-        const bulkAltTextCharLimit = getCharacterLimitRequirement("productAltText");
-        if (bulkAltTextCharLimit) {
-          prompt += `\n- Length: ${bulkAltTextCharLimit}`;
-        }
-        prompt += `\n- Describe what's visible in the image`;
-        prompt += `\n- Include product name or key feature`;
-        prompt += `\n- Accessible and helpful for screen readers`;
+      prompt += `\n\nRequirements:`;
+      if (charLimit) prompt += `\n- Length: ${charLimit}`;
+      prompt += `\n- Describe what's visible in the image`;
+      prompt += `\n- Include product name or key feature`;
+      prompt += `\n- Accessible and helpful for screen readers`;
 
-        const bulkAltTextFormat = getInstructionWithDefault(altTextInstructions, "productAltTextFormat");
-        if (bulkAltTextFormat) {
-          prompt += `\n\nFormat Example:\n${bulkAltTextFormat}`;
-        }
+      if (format) prompt += `\n\nFormat Example:\n${format}`;
+      if (instructions) prompt += `\n\nGuidelines:\n${instructions}`;
+      prompt += `\n\nIMPORTANT: Return ONLY the alt text, nothing else.${mainLanguage ? ` Output in ${mainLanguage}.` : ''}`;
 
-        const bulkAltTextInstructions = getInstructionWithDefault(altTextInstructions, "productAltTextInstructions");
-        if (bulkAltTextInstructions) {
-          prompt += `\n\nGuidelines:\n${bulkAltTextInstructions}`;
-        }
-
-        prompt += `\n\nIMPORTANT: Return ONLY the alt text, nothing else.${mainLanguage ? ` Output in ${mainLanguage}.` : ''}`;
-
-        const altText = await bulkAiService.generateImageAltText(image.url, productTitle, prompt, sendImageToAI);
-        generatedAltTexts[i] = altText;
-
-        const progressPercent = Math.round(10 + ((i + 1) / totalImages) * 90);
-        await db.task.update({
-          where: { id: bulkTask.id },
-          data: { progress: progressPercent, processed: i + 1 },
-        });
-      } catch (imgError: unknown) {
-        logger.error("[API-AI] Failed to generate alt-text for image", {
-          context: "AI",
-          imageIndex: i,
-          error: errorMessage(imgError),
-        });
-      }
+      const altText = await aiService.generateImageAltText(image.url, productTitle, prompt, sendImageToAI);
+      generatedAltTexts[i] = altText;
+    } catch (imgError: unknown) {
+      const message = errorMessage(imgError);
+      lastError = message;
+      failedIndices.push(i);
+      logger.error("[API-AI] Failed to generate alt-text for image", {
+        context: "AI",
+        taskId,
+        imageIndex: i,
+        error: message,
+      });
     }
 
-    // Mark task as completed
+    // Persist after every image so a crash only loses the current one.
+    const progressPercent = Math.round(((i + 1) / totalImages) * 100);
     await db.task.update({
-      where: { id: bulkTask.id },
+      where: { id: taskId },
       data: {
-        status: "completed",
-        progress: 100,
-        completedAt: new Date(),
-        result: JSON.stringify({ generatedAltTexts }),
+        progress: progressPercent,
+        processed: i + 1,
+        result: JSON.stringify({ generatedAltTexts, failedIndices }),
       },
+    }).catch((err: unknown) => {
+      logger.error("[API-AI] Failed to persist bulk alt-text progress", {
+        context: "AI",
+        taskId,
+        error: errorMessage(err),
+      });
     });
-
-    return json({ success: true, generatedAltTexts });
-  } catch (error: unknown) {
-    await db.task.update({
-      where: { id: bulkTask.id },
-      data: {
-        status: "failed",
-        completedAt: new Date(),
-        error: errorMessage(error).substring(0, 1000),
-      },
-    });
-    throw error;
   }
+
+  const generatedCount = Object.keys(generatedAltTexts).length;
+  const finalStatus = generatedCount === 0 ? "failed" : "completed";
+  const failureSummary = failedIndices.length > 0
+    ? `${failedIndices.length} of ${totalImages} images failed${lastError ? `: ${lastError}` : ""}`
+    : null;
+
+  await db.task.update({
+    where: { id: taskId },
+    data: {
+      status: finalStatus,
+      progress: 100,
+      completedAt: new Date(),
+      result: JSON.stringify({ generatedAltTexts, failedIndices }),
+      error: failureSummary ? failureSummary.substring(0, 1000) : null,
+    },
+  });
 }
 
 export async function handleTranslateAltText(ctx: AIActionContext): Promise<Response> {
@@ -249,6 +284,7 @@ export async function handleTranslateAltText(ctx: AIActionContext): Promise<Resp
   const sourceAltText = getFormString(formData, "sourceAltText");
   const targetLocale = getFormString(formData, "targetLocale");
   const primaryLocale = getFormString(formData, "primaryLocale");
+  const productTitle = getFormString(formData, "productTitle");
 
   if (!sourceAltText) {
     return json({ success: false, error: "No source alt-text available" }, { status: 400 });
@@ -262,7 +298,7 @@ export async function handleTranslateAltText(ctx: AIActionContext): Promise<Resp
       status: "pending",
       resourceType: contentType,
       resourceId: itemId,
-      resourceTitle: `altText_${imageIndex}`,
+      resourceTitle: productTitle || itemId,
       fieldType: `altText_${imageIndex}`,
       targetLocale,
       progress: 0,
@@ -328,6 +364,7 @@ export async function handleTranslateAltTextToAllLocales(ctx: AIActionContext): 
   const targetLocalesJson = getFormString(formData, "targetLocales");
   const primaryLocale = getFormString(formData, "primaryLocale");
   const productId = getFormString(formData, "productId");
+  const productTitle = getFormString(formData, "productTitle");
 
   if (!sourceAltText) {
     return json({ success: false, error: "No source alt-text available" }, { status: 400 });
@@ -346,7 +383,7 @@ export async function handleTranslateAltTextToAllLocales(ctx: AIActionContext): 
       status: "pending",
       resourceType: contentType,
       resourceId: itemId,
-      resourceTitle: `altText_${imageIndex}`,
+      resourceTitle: productTitle || itemId,
       fieldType: `altText_${imageIndex}`,
       progress: 0,
       expiresAt: getTaskExpirationDate(),
@@ -408,8 +445,37 @@ export async function handleTranslateAltTextToAllLocales(ctx: AIActionContext): 
 
     // Save translations to Shopify first, then DB only on success
     const failedLocales: string[] = [];
+    const savedLocales: string[] = [];
 
-    if (productId && contentType === 'products') {
+    // Articles/Collections: featured-image alt-text lives on a separate translatable
+    // resource (ArticleImage / CollectionImage) and is persisted to `contentTranslation`
+    // via the shared helper. Required because this api-ai handler bypasses the page
+    // route, which is the only place that previously routed Article/Collection saves.
+    if (contentType === 'blogs' || contentType === 'collections') {
+      const resourceType: 'Article' | 'Collection' = contentType === 'blogs' ? 'Article' : 'Collection';
+      const { ShopifyApiGateway } = await import("~/services/shopify-api-gateway.service");
+      const { ShopifyContentService } = await import("../../../src/services/shopify-content.service");
+      const gateway = new ShopifyApiGateway(admin, session.shop);
+      const shopifyContentService = new ShopifyContentService(gateway as any);
+
+      for (const locale of targetLocales) {
+        const altText = translatedAltTexts[locale];
+        if (!altText) continue;
+        const result = await shopifyContentService.saveImageAltTextTranslation({
+          resourceId: itemId,
+          resourceType,
+          locale,
+          altText,
+          shop: session.shop,
+          db,
+        });
+        if (result.saved) {
+          savedLocales.push(locale);
+        } else {
+          failedLocales.push(locale);
+        }
+      }
+    } else if (productId && contentType === 'products') {
       const { ShopifyApiGateway } = await import("~/services/shopify-api-gateway.service");
       const gateway = new ShopifyApiGateway(admin, session.shop);
 
@@ -540,6 +606,7 @@ export async function handleTranslateAltTextToAllLocales(ctx: AIActionContext): 
       translatedAltTexts,
       imageIndex,
       targetLocales,
+      savedLocales,
       failedLocales,
     });
   } catch (error: unknown) {
@@ -563,6 +630,7 @@ export async function handleTranslateAllAltTextsToAllLocales(ctx: AIActionContex
   const targetLocalesJson = getFormString(formData, "targetLocales");
   const primaryLocale = getFormString(formData, "primaryLocale");
   const productId = getFormString(formData, "productId");
+  const productTitle = getFormString(formData, "productTitle");
 
   if (!altTextsDataJson) {
     return json({ success: false, error: "No alt-text data provided" }, { status: 400 });
@@ -584,7 +652,7 @@ export async function handleTranslateAllAltTextsToAllLocales(ctx: AIActionContex
       status: "pending",
       resourceType: contentType,
       resourceId: itemId,
-      resourceTitle: `allAltTexts`,
+      resourceTitle: productTitle || itemId,
       fieldType: "allAltTexts",
       progress: 0,
       expiresAt: getTaskExpirationDate(),
@@ -627,7 +695,37 @@ export async function handleTranslateAllAltTextsToAllLocales(ctx: AIActionContex
     const failedImages: number[] = [];
     let savedCount = 0;
 
-    if (productId && contentType === 'products') {
+    if (contentType === 'blogs' || contentType === 'collections') {
+      const resourceType: 'Article' | 'Collection' = contentType === 'blogs' ? 'Article' : 'Collection';
+      const { ShopifyApiGateway } = await import("~/services/shopify-api-gateway.service");
+      const { ShopifyContentService } = await import("../../../src/services/shopify-content.service");
+      const gateway = new ShopifyApiGateway(admin, session.shop);
+      const shopifyContentService = new ShopifyContentService(gateway as any);
+
+      for (const imgIdx of imageIndices) {
+        let imageFullySaved = true;
+        for (const locale of targetLocales) {
+          const altText = translatedResults[imgIdx]?.[locale];
+          if (!altText) continue;
+          const result = await shopifyContentService.saveImageAltTextTranslation({
+            resourceId: itemId,
+            resourceType,
+            locale,
+            altText,
+            shop: session.shop,
+            db,
+          });
+          if (result.saved) {
+            savedCount++;
+          } else {
+            imageFullySaved = false;
+          }
+        }
+        if (!imageFullySaved && !failedImages.includes(imgIdx)) {
+          failedImages.push(imgIdx);
+        }
+      }
+    } else if (productId && contentType === 'products') {
       const { ShopifyApiGateway } = await import("~/services/shopify-api-gateway.service");
       const gateway = new ShopifyApiGateway(admin, session.shop);
 
@@ -798,6 +896,7 @@ export async function handleTranslateAllAltTextsForLocale(ctx: AIActionContext):
   const altTextsDataJson = getFormString(formData, "altTextsData");
   const targetLocale = getFormString(formData, "targetLocale");
   const primaryLocale = getFormString(formData, "primaryLocale");
+  const productTitle = getFormString(formData, "productTitle");
 
   if (!altTextsDataJson) {
     return json({ success: false, error: "No alt-text data provided" }, { status: 400 });
@@ -818,7 +917,7 @@ export async function handleTranslateAllAltTextsForLocale(ctx: AIActionContext):
       status: "pending",
       resourceType: contentType,
       resourceId: itemId,
-      resourceTitle: `allAltTexts`,
+      resourceTitle: productTitle || itemId,
       fieldType: "allAltTexts",
       targetLocale,
       progress: 0,
@@ -863,7 +962,31 @@ export async function handleTranslateAllAltTextsForLocale(ctx: AIActionContext):
     const failedImages: number[] = [];
     let savedCount = 0;
 
-    if (productId && contentType === 'products') {
+    if (contentType === 'blogs' || contentType === 'collections') {
+      const resourceType: 'Article' | 'Collection' = contentType === 'blogs' ? 'Article' : 'Collection';
+      const { ShopifyApiGateway } = await import("~/services/shopify-api-gateway.service");
+      const { ShopifyContentService } = await import("../../../src/services/shopify-content.service");
+      const gateway = new ShopifyApiGateway(admin, session.shop);
+      const shopifyContentService = new ShopifyContentService(gateway as any);
+
+      for (const imgIdx of imageIndices) {
+        const altText = translatedAltTexts[imgIdx];
+        if (!altText) continue;
+        const result = await shopifyContentService.saveImageAltTextTranslation({
+          resourceId: itemId,
+          resourceType,
+          locale: targetLocale,
+          altText,
+          shop: session.shop,
+          db,
+        });
+        if (result.saved) {
+          savedCount++;
+        } else {
+          failedImages.push(imgIdx);
+        }
+      }
+    } else if (productId && contentType === 'products') {
       const { ShopifyApiGateway } = await import("~/services/shopify-api-gateway.service");
       const gateway = new ShopifyApiGateway(admin, session.shop);
 

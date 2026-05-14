@@ -80,9 +80,10 @@ interface AIInstructionsTabsProps {
   fetcher: FetcherWithComponents<any>;
   readOnly?: boolean;
   onHasChangesChange?: (hasChanges: boolean) => void;
+  highlightSaveButton?: boolean;
 }
 
-export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, onHasChangesChange }: AIInstructionsTabsProps) {
+export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, onHasChangesChange, highlightSaveButton = false }: AIInstructionsTabsProps) {
   const { t } = useI18n();
   const [selectedTab, setSelectedTab] = useState(0);
   const [localInstructions, setLocalInstructions] = useState<Instructions>(instructions);
@@ -211,6 +212,7 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, on
                 action="saveInstructions"
                 fetcherState={fetcher.state}
                 fetcherFormData={fetcher.formData}
+                highlightSaveButton={highlightSaveButton}
               />
             </div>
           )}

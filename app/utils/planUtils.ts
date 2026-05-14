@@ -181,3 +181,47 @@ export function getResourcesApproachingLimits(
     isApproachingLimit(plan, resource, counts[resource], threshold)
   );
 }
+
+
+/**
+ * Check if a plan has access to the Variant Image Manager feature
+ */
+export function canAccessVariantImageManager(plan: Plan): boolean {
+  return getPlanLimits(plan).variantImageManager;
+}
+
+// ============================================================================
+// Production lock — temporary gating while the app is under Shopify review.
+// Hides features that were added on `develop` after the version submitted for
+// review. Remove these once the new feature set is approved and ready to ship.
+// ============================================================================
+
+/**
+ * Server-only: true when running with APP_ENV=production (Railway prod).
+ * Do NOT call from client code — use `newFeaturesEnabled` from PlanContext.
+ */
+export function isProductionLocked(): boolean {
+  return process.env.APP_ENV === "production";
+}
+
+/**
+ * Variant Image Manager visibility, combining plan tier + production lock.
+ */
+export function canAccessVariantImageManagerInEnv(plan: Plan, newFeaturesEnabled: boolean): boolean {
+  return newFeaturesEnabled && canAccessVariantImageManager(plan);
+}
+
+/**
+ * Image Processing tab (new sub-tabs: Bulk Alt Text Templates, new Bulk Upload flow).
+ * No plan check — the tab exists for all paying plans on develop.
+ */
+export function canAccessImageProcessingTab(newFeaturesEnabled: boolean): boolean {
+  return newFeaturesEnabled;
+}
+
+/**
+ * Settings → Image Manager card (theme editor deeplinks, enabled toggle, etc.).
+ */
+export function canAccessImageManagerSettingsTab(plan: Plan, newFeaturesEnabled: boolean): boolean {
+  return newFeaturesEnabled && (plan === "pro" || plan === "max");
+}

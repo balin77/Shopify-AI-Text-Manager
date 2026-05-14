@@ -1,6 +1,7 @@
 import { useRef } from "react";
 import { Button, Tooltip } from "@shopify/polaris";
 import { useLocaleButtonStyle, getLocaleButtonTooltip, getLocalizedLanguageName } from "../utils/contentEditor.utils";
+import type { ValidationOverlays } from "../utils/contentEditor.utils";
 import type { ShopLocale, TranslatableItem, ContentType } from "../types/content-editor.types";
 import { ReloadButton } from "./ReloadButton";
 import { HelpTooltip } from "./HelpTooltip";
@@ -18,6 +19,8 @@ interface LocaleNavigationButtonsProps {
   enabledLanguages?: string[];
   onToggleLanguage?: (locale: string) => void;
   isLoadingData?: boolean;
+  validationOverlays?: ValidationOverlays;
+  validationVersion?: number;
 }
 
 export function LocaleNavigationButtons({
@@ -32,6 +35,8 @@ export function LocaleNavigationButtons({
   enabledLanguages,
   onToggleLanguage,
   isLoadingData = false,
+  validationOverlays,
+  validationVersion,
 }: LocaleNavigationButtonsProps) {
   const { t: i18n, locale: appLocale } = useI18n();
   const tooltipI18n = {
@@ -55,10 +60,12 @@ export function LocaleNavigationButtons({
               selectedItem,
               primaryLocale,
               contentType,
-              isLoadingData
+              isLoadingData,
+              validationOverlays,
+              validationVersion
             );
 
-            const tooltip = getLocaleButtonTooltip(locale, selectedItem, primaryLocale, contentType, isLoadingData, tooltipI18n);
+            const tooltip = getLocaleButtonTooltip(locale, selectedItem, primaryLocale, contentType, isLoadingData, tooltipI18n, validationOverlays);
 
             const isEnabled = !enabledLanguages || enabledLanguages.includes(locale.locale);
             const isPrimary = locale.primary;

@@ -27,4 +27,4 @@ embedded = false
 
 [build]
 automatically_update_urls_on_dev = true
-dev_store_url = "8c19f3-ce.myshopify.com"
+dev_store_url = "patis-universe-test-shop.myshopify.com"

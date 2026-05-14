@@ -89,6 +89,10 @@ html, body {
   }
 }
 
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
 /* Hide SEO sidebar on narrow screens */
 @media (max-width: 1100px) {
   .seo-sidebar-container {

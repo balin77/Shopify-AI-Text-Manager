@@ -148,9 +148,81 @@ ${languageInstruction}`;
 
 Text: ${sanitizedContent}
 
-Return only the translation, without additional explanations.`;
+Return ONLY the translated text. Do NOT wrap it in XML tags, quotes, or any other formatting. No explanations.`;
 
-    return await this.askAI(prompt);
+    const response = await this.askAI(prompt);
+    return AIService.stripXmlWrapper(response);
+  }
+
+  /** Strips single-root XML wrapper tags that some models add (e.g. <translation>…</translation>). */
+  private static stripXmlWrapper(text: string): string {
+    const trimmed = text.trim();
+    const match = trimmed.match(/^<([a-zA-Z][a-zA-Z0-9-]*)>([\s\S]*)<\/\1>$/);
+    return match ? match[2].trim() : trimmed;
+  }
+
+  /**
+   * Strips leading/trailing markdown code fences (``` or ```html / ```json etc.)
+   * that some models add around their entire response. Idempotent and safe on
+   * already-clean text — returns the trimmed original if no fence is found.
+   */
+  private static stripMarkdownFence(text: string): string {
+    const trimmed = text.trim();
+    const match = trimmed.match(/^```[a-zA-Z]*\s*\n?([\s\S]*?)\n?```$/);
+    return match ? match[1].trim() : trimmed;
+  }
+
+  async translateTemplate(template: string, fromLang: string, toLang: string): Promise<string> {
+    const sanitized = sanitizePromptInput(template, { maxLength: 500, allowNewlines: false });
+
+    // Replace every {VarName} with a unique opaque token before sending to the AI.
+    // This prevents the AI from "absorbing" the variable into the surrounding translation.
+    const varNames: string[] = [];
+    const tokenized = sanitized.replace(/\{([^}]+)\}/g, (_, name: string) => {
+      const idx = varNames.length;
+      varNames.push(name);
+      return `TPLVAR${idx}`;
+    });
+
+    // If there are no variables, fall back to generic translateContent.
+    if (varNames.length === 0) {
+      return this.translateContent(sanitized, fromLang, toLang);
+    }
+
+    const fromName = LOCALE_NAMES[fromLang] || fromLang;
+    const toName = LOCALE_NAMES[toLang] || toLang;
+    const tokenList = varNames.map((n, i) => `TPLVAR${i} = {${n}}`).join(', ');
+
+    // Dedicated prompt that explicitly requires all TPLVAR tokens to be preserved.
+    const prompt = `Translate the following product image alt-text template from ${fromName} to ${toName}.
+
+Template: ${tokenized}
+
+Rules:
+- The tokens ${varNames.map((_, i) => `TPLVAR${i}`).join(', ')} are placeholders for product attributes (${tokenList}). You MUST keep ALL of them exactly as written — do not translate, omit, or reorder them.
+- Return ONLY the translated template. No XML tags, no quotes, no explanations.`;
+
+    const response = AIService.stripXmlWrapper(await this.askAI(prompt));
+
+    // Find which TPLVAR tokens the AI dropped (before restoring, so regex is still intact).
+    const dropped = varNames
+      .map((name, i) => ({ name, token: `TPLVAR${i}` }))
+      .filter(({ token }) => !response.includes(token));
+
+    // Restore surviving tokens.
+    let restored = response.replace(/TPLVAR(\d+)/g, (_, idx) => `{${varNames[parseInt(idx, 10)]}}`);
+
+    // Append any dropped variables so they are never silently lost.
+    if (dropped.length > 0) {
+      loggers.ai('warn', '[AI-SERVICE] translateTemplate: AI dropped TPLVAR tokens, appending them', {
+        dropped: dropped.map(d => d.name),
+        fromLang,
+        toLang,
+      });
+      restored = restored.trimEnd() + ' ' + dropped.map(d => `{${d.name}}`).join(' ');
+    }
+
+    return restored;
   }
 
   /**
@@ -658,12 +730,12 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       );
     }
 
-    // Save AI response to the corresponding prompt entry
+    // Save AI response to the corresponding prompt entry (raw, for debugging)
     if (this.taskId && this.shop) {
       await this.saveResponseToTask(response);
     }
 
-    return response;
+    return AIService.stripMarkdownFence(response);
   }
 
   private async savePromptToTask(prompt: string, imageUrl?: string): Promise<void> {

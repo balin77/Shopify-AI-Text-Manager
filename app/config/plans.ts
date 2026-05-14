@@ -23,9 +23,11 @@ export interface PlanLimits {
   maxArticles: number;
   maxPages: number;
   maxThemeTranslations: number;
+  maxConcurrentWebpConversions: number;
   productImages: "featured-only" | "all";
   contentTypes: ContentType[];
   aiInstructionsEditable: boolean;
+  variantImageManager: boolean;
   cacheEnabled: {
     products: boolean;
     productImages: boolean;
@@ -47,9 +49,11 @@ export const PLAN_CONFIG: Record<Plan, PlanLimits> = {
     maxArticles: 0,
     maxPages: 0,
     maxThemeTranslations: 0,
+    maxConcurrentWebpConversions: 2,
     productImages: "featured-only",
     contentTypes: ["products", "collections"],
     aiInstructionsEditable: false,
+    variantImageManager: false,
     cacheEnabled: {
       products: true, // limited to 25
       productImages: false, // only featured image
@@ -69,9 +73,11 @@ export const PLAN_CONFIG: Record<Plan, PlanLimits> = {
     maxArticles: 0,
     maxPages: 20,
     maxThemeTranslations: 0,
+    maxConcurrentWebpConversions: 2,
     productImages: "all",
     contentTypes: ["products", "collections", "pages", "policies"],
     aiInstructionsEditable: false,
+    variantImageManager: false,
     cacheEnabled: {
       products: true,
       productImages: true,
@@ -91,9 +97,11 @@ export const PLAN_CONFIG: Record<Plan, PlanLimits> = {
     maxArticles: 100,
     maxPages: 50,
     maxThemeTranslations: 50000,
+    maxConcurrentWebpConversions: 2,
     productImages: "all",
     contentTypes: ["products", "collections", "articles", "blogs", "pages", "policies", "templates", "menus", "metaobjects"],
     aiInstructionsEditable: true,
+    variantImageManager: true,
     cacheEnabled: {
       products: true,
       productImages: true,
@@ -113,9 +121,11 @@ export const PLAN_CONFIG: Record<Plan, PlanLimits> = {
     maxArticles: 300,
     maxPages: 200,
     maxThemeTranslations: 100000,
+    maxConcurrentWebpConversions: 4,
     productImages: "all",
     contentTypes: ["products", "collections", "articles", "blogs", "pages", "policies", "templates", "menus", "metaobjects"],
     aiInstructionsEditable: true,
+    variantImageManager: true,
     cacheEnabled: {
       products: true,
       productImages: true,

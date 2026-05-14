@@ -13,13 +13,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     try {
       const { db } = await import("../db.server");
 
-      // Get tasks that completed in the last 30 seconds
+      // Get tasks that completed (or failed) in the last 30 seconds.
+      // Failed tasks and tasks with partial failures are included so the
+      // navigation can surface them as critical/warning toasts.
       const thirtySecondsAgo = new Date(Date.now() - 30000);
 
       const recentlyCompletedTasks = await db.task.findMany({
         where: {
           shop: session.shop,
-          status: "completed",
+          status: { in: ["completed", "failed"] },
           completedAt: {
             gte: thirtySecondsAgo,
           },
@@ -27,10 +29,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         select: {
           id: true,
           type: true,
+          status: true,
           resourceType: true,
           resourceTitle: true,
           fieldType: true,
           completedAt: true,
+          processed: true,
+          total: true,
+          error: true,
         },
         orderBy: {
           completedAt: "desc",

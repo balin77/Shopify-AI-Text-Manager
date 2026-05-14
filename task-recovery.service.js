@@ -72,6 +72,12 @@ export class TaskRecoveryService {
   async recoverPendingTasks() {
     console.log('[TaskRecovery] Starting task recovery...');
 
+    // Recover WebP tasks that were "running" when the server stopped, BEFORE
+    // markStuckTasksAsFailed would blanket-fail them. Step boundaries inside
+    // webp-processor.service.js processTask determine whether a partial run
+    // is safe to retry or must be flagged for manual review.
+    const webpRecovered = await this.recoverRunningWebpTasks();
+
     // Mark stuck tasks as failed
     const stuckCount = await this.markStuckTasksAsFailed();
 
@@ -80,9 +86,59 @@ export class TaskRecoveryService {
     // which should be loaded in the context of a user request
     const resetCount = await this.resetPendingTasks();
 
-    console.log(`[TaskRecovery] Recovery complete: ${resetCount} reset to queued, ${stuckCount} marked as failed`);
+    console.log(`[TaskRecovery] Recovery complete: ${resetCount} reset to queued, ${stuckCount} marked as failed, ${webpRecovered.retried} WebP retried, ${webpRecovered.failed} WebP flagged`);
 
-    return { recovered: resetCount, failed: stuckCount };
+    return { recovered: resetCount, failed: stuckCount, webpRetried: webpRecovered.retried, webpFailed: webpRecovered.failed };
+  }
+
+  /**
+   * Recover WebP conversion tasks that were "running" at server stop.
+   *
+   * Step boundaries (progress field, set in webp-processor.service.js processTask):
+   *   <70:   nothing changed on Shopify yet -> safe to retry (reset to pending)
+   *   70-89: new WebP may already exist on Shopify -> retry would duplicate
+   *   >=90:  old PNG already deleted on Shopify, only DB swap missing -> manual review
+   *
+   * retryCount is capped at 3 to prevent loops when the underlying source is broken.
+   */
+  async recoverRunningWebpTasks() {
+    const tasks = await prisma.task.findMany({
+      where: { type: 'imageWebpConversion', status: 'running' },
+      select: { id: true, progress: true, retryCount: true },
+    });
+
+    let retried = 0;
+    let failed = 0;
+    for (const t of tasks) {
+      if ((t.progress ?? 0) < 70 && (t.retryCount ?? 0) < 3) {
+        await prisma.task.update({
+          where: { id: t.id },
+          data: {
+            status: 'pending',
+            retryCount: { increment: 1 },
+            error: null,
+            progress: 0,
+          },
+        });
+        retried++;
+      } else {
+        await prisma.task.update({
+          where: { id: t.id },
+          data: {
+            status: 'failed',
+            completedAt: new Date(),
+            error: `Server restarted at progress ${t.progress ?? 0} — partial Shopify state, manual review needed`,
+          },
+        });
+        failed++;
+      }
+    }
+
+    if (retried > 0 || failed > 0) {
+      console.log(`[TaskRecovery] WebP running-task recovery: ${retried} retried, ${failed} flagged for review`);
+    }
+
+    return { retried, failed };
   }
 
   /**

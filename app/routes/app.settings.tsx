@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher, useSearchParams, useRevalidator } from "@remix-run/react";
 import {
@@ -18,10 +18,12 @@ import { SettingsLanguageTab } from "../components/SettingsLanguageTab";
 import { SettingsSEOTab } from "../components/SettingsSEOTab";
 import { SettingsUsageLimitsTab } from "../components/SettingsUsageLimitsTab";
 import { SettingsPlanTab } from "../components/SettingsPlanTab";
+import { SettingsImageManagerTab } from "../components/SettingsImageManagerTab";
 import { db } from "../db.server";
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { useItemSelector } from "../contexts/ItemSelectorContext";
+import { useNavigationGuard } from "../contexts/NavigationGuardContext";
 import { sanitizeHTML } from "../utils/sanitizer";
 import { AISettingsSchema, AIInstructionsSchema, parseFormData } from "../utils/validation";
 import { getFormString } from "../utils/form-data.utils";
@@ -323,6 +325,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       };
     }
 
+    const imageManagerSettings = await db.imageManagerSettings.findUnique({
+      where: { shopId: session.shop },
+    }) ?? { enabled: true, firstImageBig: false, showAltTags: false, autoAltText: false };
+    const { isProductionLocked } = await import("../utils/planUtils");
+    const showImageManagerTab = !isProductionLocked() && (subscriptionPlan === "pro" || subscriptionPlan === "max");
+
     return json({
       shop: session.shop,
       shopDisplayName,
@@ -337,6 +345,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       isTestStore,
       isDevMode,
       subscriptionPlan,
+      imageManagerSettings,
+      showImageManagerTab,
       settings: {
         ...decryptedKeys,
         preferredProvider: settings.preferredProvider,
@@ -622,13 +632,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function SettingsPage() {
-  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, localeCount, subscriptionPlan, isTestStore, isDevMode } = useLoaderData<typeof loader>();
+  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, localeCount, subscriptionPlan, isTestStore, isDevMode, imageManagerSettings, showImageManagerTab } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
   const [searchParams, setSearchParams] = useSearchParams();
   const { t } = useI18n();
   const { showInfoBox } = useInfoBox();
   const { registerItems, clearItems } = useItemSelector();
+  const { registerGuard, unregisterGuard } = useNavigationGuard();
   const isFreePlan = subscriptionPlan === "free";
   const isBasicPlan = subscriptionPlan === "basic";
   const aiInstructionsReadOnly = isFreePlan || isBasicPlan;
@@ -644,26 +655,44 @@ export default function SettingsPage() {
     return "setup";
   };
 
-  const [selectedSection, setSelectedSection] = useState<"setup" | "ai" | "instructions" | "language" | "seo" | "plan" | "feedback">(getInitialSection);
+  const [selectedSection, setSelectedSection] = useState<"setup" | "ai" | "instructions" | "language" | "seo" | "plan" | "feedback" | "imagemanager">(getInitialSection);
   const [hasAIChanges, setHasAIChanges] = useState(false);
   const [hasLanguageChanges, setHasLanguageChanges] = useState(false);
   const [hasInstructionsChanges, setHasInstructionsChanges] = useState(false);
+  const [hasImageManagerChanges, setHasImageManagerChanges] = useState(false);
+  const [highlightSaveButton, setHighlightSaveButton] = useState(false);
   // Check if there are any unsaved changes across tabs
-  const hasUnsavedChanges = hasAIChanges || hasLanguageChanges || hasInstructionsChanges;
+  const hasUnsavedChanges = hasAIChanges || hasLanguageChanges || hasInstructionsChanges || hasImageManagerChanges;
+
+  const triggerSaveButtonHighlight = useCallback(() => {
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    setHighlightSaveButton(true);
+    showInfoBox(
+      t.settings?.unsavedChangesMessage || "You have unsaved changes. Please save before navigating away.",
+      "warning",
+      t.common?.unsavedChanges || "Unsaved Changes"
+    );
+    setTimeout(() => setHighlightSaveButton(false), 3000);
+  }, [showInfoBox, t]);
+
+  // Register navigation guard while there are unsaved changes
+  useEffect(() => {
+    if (hasUnsavedChanges) {
+      registerGuard(() => {
+        triggerSaveButtonHighlight();
+        return false;
+      });
+    } else {
+      unregisterGuard();
+    }
+    return () => unregisterGuard();
+  }, [hasUnsavedChanges, registerGuard, unregisterGuard, triggerSaveButtonHighlight]);
 
   // Handle section navigation with unsaved changes warning
-  const handleSectionChange = (newSection: "setup" | "ai" | "instructions" | "language" | "seo" | "plan" | "feedback") => {
+  const handleSectionChange = (newSection: "setup" | "ai" | "instructions" | "language" | "seo" | "plan" | "feedback" | "imagemanager") => {
     if (hasUnsavedChanges) {
-      const message = t.settings?.unsavedChangesMessage ||
-        "You have unsaved changes. Do you really want to continue? Your changes will be lost.";
-      const confirmed = window.confirm(message);
-      if (!confirmed) {
-        return;
-      }
-      // Reset changes state when user confirms navigation
-      setHasAIChanges(false);
-      setHasLanguageChanges(false);
-      setHasInstructionsChanges(false);
+      triggerSaveButtonHighlight();
+      return;
     }
     setSelectedSection(newSection);
   };
@@ -674,6 +703,7 @@ export default function SettingsPage() {
       setHasAIChanges(false);
       setHasLanguageChanges(false);
       setHasInstructionsChanges(false);
+      setHighlightSaveButton(false);
     }
   }, [fetcher.data]);
 
@@ -843,6 +873,27 @@ export default function SettingsPage() {
                   {t.settings.plan}
                 </Text>
               </button>
+              {showImageManagerTab && (
+                <button
+                  onClick={() => handleSectionChange("imagemanager")}
+                  style={{
+                    width: "100%",
+                    padding: "1rem",
+                    background: selectedSection === "imagemanager" ? "#f1f8f5" : "white",
+                    borderTop: "1px solid #e1e3e5",
+                    borderRight: "none",
+                    borderBottom: "none",
+                    borderLeft: selectedSection === "imagemanager" ? "3px solid #008060" : "3px solid transparent",
+                    textAlign: "left",
+                    cursor: "pointer",
+                    transition: "all 0.2s",
+                  }}
+                >
+                  <Text as="p" variant="bodyMd" fontWeight={selectedSection === "imagemanager" ? "semibold" : "regular"}>
+                    Image Manager
+                  </Text>
+                </button>
+              )}
               <button
                 onClick={() => handleSectionChange("feedback")}
                 style={{
@@ -888,6 +939,7 @@ export default function SettingsPage() {
                   fetcher={fetcher}
                   t={t}
                   onHasChangesChange={setHasAIChanges}
+                  highlightSaveButton={highlightSaveButton}
                 />
               )}
 
@@ -909,6 +961,7 @@ export default function SettingsPage() {
                     fetcher={fetcher}
                     readOnly={aiInstructionsReadOnly}
                     onHasChangesChange={setHasInstructionsChanges}
+                    highlightSaveButton={highlightSaveButton}
                   />
                 </>
               )}
@@ -920,6 +973,7 @@ export default function SettingsPage() {
                   fetcher={fetcher}
                   t={t}
                   onHasChangesChange={setHasLanguageChanges}
+                  highlightSaveButton={highlightSaveButton}
                 />
               )}
 
@@ -931,6 +985,7 @@ export default function SettingsPage() {
                   t={t}
                   shopDisplayName={shopDisplayName}
                   onHasChangesChange={setHasAIChanges}
+                  highlightSaveButton={highlightSaveButton}
                 />
               )}
 
@@ -977,6 +1032,16 @@ export default function SettingsPage() {
                     t={t}
                   />
                 </>
+              )}
+
+              {/* Image Manager Settings */}
+              {selectedSection === "imagemanager" && showImageManagerTab && (
+                <SettingsImageManagerTab
+                  settings={{ enabled: imageManagerSettings?.enabled ?? true, autoAltText: imageManagerSettings?.autoAltText ?? false }}
+                  shop={shop}
+                  onHasChangesChange={setHasImageManagerChanges}
+                  highlightSaveButton={highlightSaveButton}
+                />
               )}
 
               {/* Feedback */}

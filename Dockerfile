@@ -43,11 +43,12 @@ COPY --from=builder /app/build ./build
 
 # Copy runtime files
 COPY server.js start.js remix.config.js ./
-COPY task-cleanup.service.js task-recovery.service.js ./
+COPY task-cleanup.service.js task-recovery.service.js webp-processor.service.js stale-image-cleanup.service.js ./
 COPY scripts ./scripts/
 
 # Copy middleware and other app files needed at runtime by server.js
 COPY app/middleware ./app/middleware/
+COPY app/utils ./app/utils/
 
 EXPOSE 3000
 

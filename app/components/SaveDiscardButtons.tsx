@@ -1,5 +1,12 @@
 import { Button } from "@shopify/polaris";
 
+const PULSE_STYLE = `
+  @keyframes save-btn-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(255, 149, 0, 0.7); }
+    50% { box-shadow: 0 0 12px 6px rgba(255, 149, 0, 0.3); }
+  }
+`;
+
 interface SaveDiscardButtonsProps {
   hasChanges: boolean;
   onSave: () => void;
@@ -46,6 +53,7 @@ export function SaveDiscardButtons({
 
   return (
     <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", flex: 1, minWidth: 0, alignItems: "center" }}>
+      {highlightSaveButton && <style>{PULSE_STYLE}</style>}
       <Button
         onClick={onDiscard}
         disabled={!hasChanges || isSubmitting}
@@ -55,7 +63,7 @@ export function SaveDiscardButtons({
       </Button>
       <div
         style={{
-          animation: highlightSaveButton ? "pulse 1.5s ease-in-out infinite" : "none",
+          animation: highlightSaveButton ? "save-btn-pulse 1.5s ease-in-out infinite" : "none",
           borderRadius: "8px",
         }}
       >

@@ -12,6 +12,7 @@ import { SeoSettingsProvider } from "../contexts/SeoSettingsContext";
 import { NavigationHeightProvider } from "../contexts/NavigationHeightContext";
 import { ItemSelectorProvider } from "../contexts/ItemSelectorContext";
 import { TaskCountProvider } from "../contexts/TaskCountContext";
+import { NavigationGuardProvider } from "../contexts/NavigationGuardContext";
 import { useEffect } from "react";
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
@@ -21,6 +22,7 @@ import type { Locale } from "../i18n";
 import type { Plan } from "../config/plans";
 import { logger } from "~/utils/logger.server";
 import { checkAndSyncSubscription } from "~/services/billing.server";
+import { isProductionLocked } from "../utils/planUtils";
 import { de, en, es } from "../i18n";
 
 // Inline helper to build API-key presence flags from a single AISettings record.
@@ -112,6 +114,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       subscriptionPlan,
       aiSettings,
       seoTitleSuffix,
+      newFeaturesEnabled: !isProductionLocked(),
     });
   } catch (error) {
     // Check if this is a redirect response (e.g., to /auth/login)
@@ -134,6 +137,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       subscriptionPlan: "free" as Plan,
       aiSettings: null,
       seoTitleSuffix: "",
+      newFeaturesEnabled: !isProductionLocked(),
       loaderError: true,
     });
   }
@@ -190,14 +194,15 @@ function AppContent() {
 }
 
 export default function App() {
-  const { appLanguage, subscriptionPlan, seoTitleSuffix } = useLoaderData<typeof loader>();
+  const { appLanguage, subscriptionPlan, seoTitleSuffix, newFeaturesEnabled } = useLoaderData<typeof loader>();
 
   return (
     <AppProvider i18n={{}}>
       <I18nProvider locale={appLanguage}>
-        <PlanProvider plan={subscriptionPlan}>
+        <PlanProvider plan={subscriptionPlan} newFeaturesEnabled={newFeaturesEnabled}>
           <SeoSettingsProvider seoTitleSuffix={seoTitleSuffix ?? ""}>
           <InfoBoxProvider>
+            <NavigationGuardProvider>
             <TaskCountProvider>
             <NavigationHeightProvider>
               <ItemSelectorProvider>
@@ -205,6 +210,7 @@ export default function App() {
               </ItemSelectorProvider>
             </NavigationHeightProvider>
             </TaskCountProvider>
+            </NavigationGuardProvider>
           </InfoBoxProvider>
           </SeoSettingsProvider>
         </PlanProvider>

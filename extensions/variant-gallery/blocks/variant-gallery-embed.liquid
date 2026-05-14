@@ -1,0 +1,73 @@
+{%- comment -%}
+  App Embed Block (target: body) — runs on every product page automatically.
+  Finds the native gallery in the DOM, hides it when variant-specific images
+  exist in custom.variant_gallery, and injects the custom gallery in its place.
+  On variants without metafield images the native gallery is restored.
+{%- endcomment -%}
+
+{%- if product != blank -%}
+
+<script type="application/json" id="cp-embed-data-{{ block.id }}">
+  {
+    {%- for variant in product.variants -%}
+      {%- assign vg = variant.metafields.custom.variant_gallery -%}
+      {{ variant.id | json }}: [
+        {%- if vg != blank and vg.value != blank and vg.value.size > 0 -%}
+          {%- for img in vg.value -%}
+            {
+              "src_400":  {{ img | image_url: width: 400  | json }},
+              "src_800":  {{ img | image_url: width: 800  | json }},
+              "src_1200": {{ img | image_url: width: 1200 | json }},
+              "thumb":    {{ img | image_url: width: 160  | json }},
+              "alt":      {{ variant.title | json }}
+            }{% unless forloop.last %},{% endunless %}
+          {%- endfor -%}
+        {%- endif -%}
+      ]{% unless forloop.last %},{% endunless %}
+    {%- endfor -%}
+  }
+</script>
+
+<cp-embed-gallery
+  id="cp-embed-gallery-{{ block.id }}"
+  class="cp-embed-gallery"
+  style="--cp-thumb-size: {{ block.settings.thumbnail_size }}px; display: none;"
+  data-block-id="{{ block.id }}"
+  data-native-selector="{{ block.settings.native_gallery_selector }}"
+>
+  <div class="cp-gallery__inner"></div>
+</cp-embed-gallery>
+
+{{ 'variant-gallery-embed.css' | asset_url | stylesheet_tag }}
+<script src="{{ 'variant-gallery-embed.js' | asset_url }}" defer></script>
+
+{%- endif -%}
+
+{% schema %}
+{
+  "name": "Variant Image Gallery",
+  "target": "body",
+  "settings": [
+    {
+      "type": "text",
+      "id": "native_gallery_selector",
+      "label": "Native gallery CSS selector",
+      "default": "media-gallery",
+      "info": "CSS selector of your theme's native product image gallery. Default works for Dawn theme. For other themes inspect the gallery element and enter its tag or class (e.g. .product__media-wrapper)."
+    },
+    {
+      "type": "range",
+      "id": "thumbnail_size",
+      "label": "Thumbnail size (px)",
+      "min": 60,
+      "max": 160,
+      "step": 10,
+      "default": 80
+    },
+    {
+      "type": "paragraph",
+      "content": "Automatically replaces the native product gallery with variant-specific images from ContentPilot AI. Enable this embed once — no block placement needed."
+    }
+  ]
+}
+{% endschema %}

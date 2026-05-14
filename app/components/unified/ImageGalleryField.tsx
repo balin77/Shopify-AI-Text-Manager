@@ -20,10 +20,21 @@
 import { useState, useEffect } from "react";
 import { BlockStack, InlineStack, Button, Text, Banner } from "@shopify/polaris";
 import { AIEditableField } from "../AIEditableField";
+import { isAltTextTranslated, hasAltTextMissingTranslations } from "../../utils/field-validation.utils";
+import type { ShopLocale, AltTextTranslation } from "../../types/content-editor.types";
+
+function extractFilename(url: string): string {
+  try {
+    return new URL(url).pathname.split("/").pop() ?? url;
+  } catch {
+    return url.split("/").pop()?.split("?")[0] ?? url;
+  }
+}
 
 export interface ImageData {
   url: string;
   altText?: string;
+  altTextTranslations?: AltTextTranslation[];
   id?: string;
 }
 
@@ -45,6 +56,9 @@ interface ImageGalleryFieldProps {
 
   /** Whether user is on free plan (shows only featured image) */
   isFreePlan?: boolean;
+
+  /** All enabled shop locales — used to compute the missing-translation indicator on primary */
+  shopLocales?: ShopLocale[];
 
   /** Alt-text values (indexed by image position) */
   altTexts: Record<number, string>;
@@ -105,6 +119,8 @@ interface ImageGalleryFieldProps {
     onlyFeaturedImageAvailable?: string;
     additionalImagesLocked?: string;
     availableInBasicPlan?: string;
+    altBadge?: string;
+    noAltBadge?: string;
   };
 }
 
@@ -115,6 +131,7 @@ export function ImageGalleryField({
   primaryLocale,
   isPrimaryLocale,
   isFreePlan = false,
+  shopLocales = [],
   altTexts,
   onAltTextChange,
   onGenerateAltText,
@@ -208,6 +225,7 @@ export function ImageGalleryField({
               <img
                 src={previewImage.url}
                 alt={altTexts[selectedImageIndex] || previewImage.altText || t.featuredImage || "Image"}
+                title={extractFilename(previewImage.url)}
                 style={{
                   position: "absolute",
                   top: 0,
@@ -221,56 +239,34 @@ export function ImageGalleryField({
             {/* Alt-text status badge on preview */}
             {!isFreePlan && images && images[selectedImageIndex] && (
               <div
+                title={(() => {
+                  const alt = altTexts[selectedImageIndex] !== undefined
+                    ? altTexts[selectedImageIndex]
+                    : (isPrimaryLocale ? images[selectedImageIndex]?.altText : undefined);
+                  return alt || undefined;
+                })()}
                 style={{
                   position: "absolute",
-                  top: "8px",
-                  right: "8px",
-                  backgroundColor: (altTexts[selectedImageIndex] !== undefined
+                  top: 8,
+                  right: 8,
+                  background: (altTexts[selectedImageIndex] !== undefined
                     ? altTexts[selectedImageIndex] !== ""
-                    : (isPrimaryLocale && !!images[selectedImageIndex]?.altText)) ? "#008060" : "#d72c0d",
-                  borderRadius: "50%",
-                  width: "36px",
-                  height: "36px",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  boxShadow: "0 2px 4px rgba(0, 0, 0, 0.2)",
+                    : (isPrimaryLocale && !!images[selectedImageIndex]?.altText))
+                    ? "rgba(0,128,96,0.85)"
+                    : "rgba(142,31,11,0.75)",
+                  color: "white",
+                  fontSize: 11,
+                  fontWeight: 700,
+                  padding: "3px 7px",
+                  borderRadius: 3,
+                  lineHeight: "15px",
                 }}
               >
-                <svg
-                  width="20"
-                  height="20"
-                  viewBox="0 0 20 20"
-                  fill="none"
-                  xmlns="http://www.w3.org/2000/svg"
-                >
-                  {(altTexts[selectedImageIndex] !== undefined
-                    ? altTexts[selectedImageIndex] !== ""
-                    : (isPrimaryLocale && !!images[selectedImageIndex]?.altText)) ? (
-                    <path
-                      d="M16 6L8 14L4 10"
-                      stroke="white"
-                      strokeWidth="2.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  ) : (
-                    <>
-                      <path
-                        d="M5 5L15 15"
-                        stroke="white"
-                        strokeWidth="2.5"
-                        strokeLinecap="round"
-                      />
-                      <path
-                        d="M15 5L5 15"
-                        stroke="white"
-                        strokeWidth="2.5"
-                        strokeLinecap="round"
-                      />
-                    </>
-                  )}
-                </svg>
+                {(altTexts[selectedImageIndex] !== undefined
+                  ? altTexts[selectedImageIndex] !== ""
+                  : (isPrimaryLocale && !!images[selectedImageIndex]?.altText))
+                  ? (t.altBadge || "ALT")
+                  : (t.noAltBadge || "NO ALT")}
               </div>
             )}
           </div>
@@ -305,6 +301,7 @@ export function ImageGalleryField({
                   <button
                     key={index}
                     onClick={() => setSelectedImageIndex(index)}
+                    title={extractFilename(image.url)}
                     style={{
                       position: "relative",
                       width: "100%",
@@ -333,52 +330,21 @@ export function ImageGalleryField({
                     />
                     {/* Alt-text status badge */}
                     <div
+                      title={(altTexts[index] !== undefined ? altTexts[index] : (isPrimaryLocale ? image.altText : undefined)) || undefined}
                       style={{
                         position: "absolute",
-                        top: "4px",
-                        right: "4px",
-                        backgroundColor: hasAltText ? "#008060" : "#d72c0d",
-                        borderRadius: "50%",
-                        width: "24px",
-                        height: "24px",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        boxShadow: "0 2px 4px rgba(0, 0, 0, 0.2)",
+                        top: 4,
+                        right: 4,
+                        background: hasAltText ? "rgba(0,128,96,0.85)" : "rgba(142,31,11,0.75)",
+                        color: "white",
+                        fontSize: 10,
+                        fontWeight: 700,
+                        padding: "2px 6px",
+                        borderRadius: 3,
+                        lineHeight: "14px",
                       }}
                     >
-                      <svg
-                        width="14"
-                        height="14"
-                        viewBox="0 0 20 20"
-                        fill="none"
-                        xmlns="http://www.w3.org/2000/svg"
-                      >
-                        {hasAltText ? (
-                          <path
-                            d="M16 6L8 14L4 10"
-                            stroke="white"
-                            strokeWidth="2.5"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          />
-                        ) : (
-                          <>
-                            <path
-                              d="M5 5L15 15"
-                              stroke="white"
-                              strokeWidth="2.5"
-                              strokeLinecap="round"
-                            />
-                            <path
-                              d="M15 5L5 15"
-                              stroke="white"
-                              strokeWidth="2.5"
-                              strokeLinecap="round"
-                            />
-                          </>
-                        )}
-                      </svg>
+                      {hasAltText ? (t.altBadge || "ALT") : (t.noAltBadge || "NO ALT")}
                     </div>
                   </button>
                 );
@@ -457,7 +423,8 @@ export function ImageGalleryField({
           helpKey="altText"
           suggestion={altTextSuggestions[selectedImageIndex]}
           isPrimaryLocale={isPrimaryLocale}
-          isTranslated={true}
+          isTranslated={isAltTextTranslated(images[selectedImageIndex], currentLanguage, primaryLocale, altTexts[selectedImageIndex])}
+          hasFieldMissingTranslations={isPrimaryLocale && hasAltTextMissingTranslations(images[selectedImageIndex], shopLocales, primaryLocale, altTexts[selectedImageIndex])}
           placeholder={t.altTextPlaceholder}
           isLoading={isFieldLoading ? isFieldLoading(selectedImageIndex) : false}
           onGenerateAI={isPrimaryLocale ? () => onGenerateAltText(selectedImageIndex) : undefined}
@@ -482,7 +449,8 @@ export function ImageGalleryField({
           helpKey="altText"
           suggestion={altTextSuggestions[0]}
           isPrimaryLocale={isPrimaryLocale}
-          isTranslated={true}
+          isTranslated={isAltTextTranslated(featuredImage, currentLanguage, primaryLocale, altTexts[0])}
+          hasFieldMissingTranslations={isPrimaryLocale && hasAltTextMissingTranslations(featuredImage, shopLocales, primaryLocale, altTexts[0])}
           placeholder={t.altTextPlaceholder}
           isLoading={isFieldLoading ? isFieldLoading(0) : false}
           onGenerateAI={isPrimaryLocale ? () => onGenerateAltText(0) : undefined}

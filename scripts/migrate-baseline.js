@@ -44,6 +44,10 @@ try {
   try {
     execSync('npx prisma migrate deploy', { stdio: 'pipe' });
     console.log('✅ Migrations applied successfully!');
+    // Also run db push to sync schema-only changes not captured in migration files
+    console.log('🔄 Running db push to sync any additional schema changes...');
+    execSync('npx prisma db push --skip-generate --accept-data-loss', { stdio: 'inherit' });
+    console.log('✅ Schema sync complete!');
     process.exit(0);
   } catch (migrateError) {
     // Get error output from stderr and stdout

@@ -36,6 +36,7 @@ import type {
   TranslatedAltTextsResponse,
 } from "../types/content-editor.types";
 import { debugLog } from "../utils/debug";
+import type { ValidationOverlays } from "../utils/field-validation.utils";
 import { markRecentlySaved } from "../utils/translation-timing";
 import { extractReadableName } from "../utils/templates-field-factory";
 import { useTaskCount } from "../contexts/TaskCountContext";
@@ -54,6 +55,14 @@ import {
 interface TaskData {
   fieldType?: string | null;
   targetLocale?: string | null;
+}
+
+function readLastSelectedId(contentType: string): string | null {
+  try { return localStorage.getItem(`contentpilot_last_selected_${contentType}`); } catch { return null; }
+}
+
+function writeLastSelectedId(contentType: string, id: string): void {
+  try { localStorage.setItem(`contentpilot_last_selected_${contentType}`, id); } catch {}
 }
 
 export function useUnifiedContentEditor(props: UseContentEditorProps): UseContentEditorReturn {
@@ -77,7 +86,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // STATE MANAGEMENT
   // ============================================================================
 
-  const [selectedItemId, setSelectedItemId] = useState<string | null>(initialItemId || null);
+  const [selectedItemId, setSelectedItemId] = useState<string | null>(
+    initialItemId || readLastSelectedId(config.contentType) || null
+  );
   const [currentLanguage, setCurrentLanguage] = useState(primaryLocale);
   const currentLanguageRef = useLatestRef(currentLanguage);
   const [editableValues, setEditableValues] = useState<Record<string, string>>({});
@@ -323,6 +334,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     }
   }, [items, selectedItemId]);
 
+  // Persist selected item so the same item reopens after a page reload
+  useEffect(() => {
+    if (selectedItemId) {
+      writeLastSelectedId(config.contentType, selectedItemId);
+    }
+  }, [selectedItemId, config.contentType]);
+
   // ============================================================================
   // FOCUS MANAGEMENT - Set focus when item changes
   // ============================================================================
@@ -553,6 +571,19 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     );
   }, [items, selectedItemId]);
 
+  // Safety-net signal for primary content changes after revalidation.
+  // Handles the case where translations are unchanged (e.g., both empty before and after)
+  // but primary fields like title/description changed — without this, the data-loading
+  // effect would never re-run after a reload because no other dep would change.
+  const selectedItemPrimarySignal = useMemo(() => {
+    if (!selectedItemId) return '';
+    const item = items.find(i => i.id === selectedItemId);
+    if (!item) return '';
+    return `${item.title || ''}|${(item.descriptionHtml || '').length}|${item.handle || ''}`;
+  }, [items, selectedItemId]);
+
+  const prevSelectedItemPrimarySignalRef = useRef<string>('');
+
   useEffect(() => {
     const item = selectedItemRef.current;
     if (!item) {
@@ -565,13 +596,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // 2. The language changed (user switched languages)
     // 3. Data refresh was triggered (e.g., by ReloadButton after revalidation)
     // 4. Translations arrived for the selected item (lazy-load / revalidation)
+    // 5. Primary content changed after revalidation (safety net for empty-translation case)
     // NOTE: Use separate ref from image loading to avoid race condition
     const itemIdChanged = prevItemIdForDataLoadRef.current !== selectedItemId;
     const languageChanged = prevCurrentLanguageRef.current !== currentLanguage;
     const refreshTriggered = prevDataRefreshTriggerRef.current !== dataRefreshTrigger;
     const translationsArrived = prevTranslationSignalRef.current !== selectedItemTranslationSignal;
+    const primaryContentChanged = prevSelectedItemPrimarySignalRef.current !== selectedItemPrimarySignal;
 
-    if (!itemIdChanged && !languageChanged && !refreshTriggered && !translationsArrived) {
+    if (!itemIdChanged && !languageChanged && !refreshTriggered && !translationsArrived && !primaryContentChanged) {
       // Don't log on skip to reduce console spam
       return;
     }
@@ -586,6 +619,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     prevCurrentLanguageRef.current = currentLanguage;
     prevDataRefreshTriggerRef.current = dataRefreshTrigger;
     prevTranslationSignalRef.current = selectedItemTranslationSignal;
+    prevSelectedItemPrimarySignalRef.current = selectedItemPrimarySignal;
 
     if (refreshTriggered) {
       debugLog.dataLoad(' Data refresh triggered by ReloadButton');
@@ -644,7 +678,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // IMPORTANT: Deps are kept minimal to prevent unnecessary re-runs.
     // selectedItemTranslationSignal is stable (only changes when translation count changes)
     // so it won't cause extra re-runs during normal editing.
-  }, [selectedItemId, currentLanguage, primaryLocale, config, dataRefreshTrigger, selectedItemTranslationSignal]);
+  }, [selectedItemId, currentLanguage, primaryLocale, config, dataRefreshTrigger, selectedItemTranslationSignal, selectedItemPrimarySignal]);
 
   // Mark loading as complete after editableValues have been updated
   // This is in a separate useEffect to ensure the state update has completed
@@ -750,6 +784,58 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     }
   }, [editableValues, selectedItemId, isLoadingData, currentLanguage, primaryLocale, effectiveFieldDefinitions, config]);
 
+  // Poll a fire-and-forget task until it reaches a terminal state.
+  // Returns the parsed result (with `generatedAltTexts` when present) so the
+  // existing onSuccess callbacks downstream can keep their original shape.
+  const pollTaskUntilDone = useCallback(async (
+    taskId: string,
+  ): Promise<Record<string, unknown> | null> => {
+    const maxAttempts = 600; // 600 × 1s = 10 min — matches TaskRecovery stuck threshold
+    const intervalMs = 1000;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        const res = await fetch(`/api/task-result?taskId=${encodeURIComponent(taskId)}`, {
+          headers: { Accept: "application/json" },
+        });
+        if (!res.ok) {
+          await new Promise((resolve) => setTimeout(resolve, intervalMs));
+          continue;
+        }
+        const data = await res.json();
+        const task = data?.task;
+        if (!task) {
+          await new Promise((resolve) => setTimeout(resolve, intervalMs));
+          continue;
+        }
+
+        if (task.status === "completed" || task.status === "failed") {
+          let parsed: Record<string, unknown> = {};
+          if (task.result) {
+            try {
+              parsed = JSON.parse(task.result);
+            } catch {
+              parsed = { rawResult: task.result };
+            }
+          }
+          return {
+            ...parsed,
+            taskStatus: task.status,
+            taskError: task.error ?? null,
+            processed: task.processed,
+            total: task.total,
+            success: task.status === "completed",
+          };
+        }
+      } catch {
+        // Transient error — keep polling.
+      }
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+
+    return null;
+  }, []);
+
   // Submit AI action using fetch API directly to allow parallel requests
   // This enables multiple AI actions to run simultaneously on different fields.
   // Loading state is tracked in the global AI operations store so spinners
@@ -793,7 +879,29 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         throw new Error(`Server returned ${response.status}: Expected JSON but got ${contentType || 'unknown content type'}`);
       }
 
-      const result = await response.json();
+      let result = await response.json();
+
+      // Fire-and-forget actions (e.g. generateAllAltTexts) return only a taskId
+      // and run the heavy work detached from this request. Poll the task table
+      // until the worker finishes — the user can navigate away mid-poll without
+      // affecting the background work.
+      if (result?.success && result.taskId && !result.generatedAltTexts) {
+        const polled = await pollTaskUntilDone(result.taskId);
+        if (polled) {
+          // Polled result authoritatively decides success — partial failures and
+          // failed tasks come through as taskStatus: "failed".
+          result = { ...result, ...polled };
+        } else {
+          // Polling timed out — surface as critical so the user isn't left
+          // believing the operation succeeded silently.
+          result = {
+            ...result,
+            success: false,
+            error: t.tasks?.taskFailedGeneric || "Task did not complete in time — please retry.",
+          };
+        }
+      }
+
       if (result.success) {
         refreshTaskCount();
 
@@ -824,7 +932,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         showInfoBox(translatedError, "critical", t.common?.error || "Error");
       }
     }
-  }, [showInfoBox, t]);
+  }, [showInfoBox, t, pollTaskUntilDone]);
 
   // Fill forwarding refs now that real functions are available
   buildFieldsForSaveRef.current = buildFieldsForSave;
@@ -1014,7 +1122,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       if (failed.length > 0) {
         const failedList = failed.join(", ");
         showInfoBox(
-          String(t.content?.altTextPartialLocales || "Alt-text for image {imageNumber} partially translated. Language(s) {failedLocales} could not be saved to Shopify. Please sync the product again.")
+          String(t.content?.altTextPartialLocales || "Alt-text for image {imageNumber} partially translated. Language(s) {failedLocales} could not be saved. Please try again or re-sync.")
             .replace("{imageNumber}", String((imageIndex || 0) + 1))
             .replace("{failedLocales}", failedList),
           "warning",
@@ -1411,8 +1519,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             baselineValuesRef.current = { ...primarySnapshot };
             setBaselineVersion(v => v + 1);
           } else {
-            // Foreign locale save (no primary snapshot): use current editableValues as best approximation.
-            // editableValuesRef holds the saved state since no new edits can arrive during the save.
             baselineValuesRef.current = { ...editableValuesRef.current };
             setBaselineVersion(v => v + 1);
           }
@@ -2112,6 +2218,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     return loadingFieldKeys.has(fieldKey);
   }, [loadingFieldKeys]);
 
+  const getValidationOverlays = useCallback((): ValidationOverlays => ({
+    savedPrimaryValues: selectedItem?.id
+      ? savedPrimaryValuesRef.current[selectedItem.id]
+      : undefined,
+    localTranslations: localTranslationsRef.current,
+    deletedKeys: deletedTranslationKeysRef.current,
+  }), [selectedItem?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
   return {
     state,
     handlers,
@@ -2132,6 +2246,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       reloadTemplateValues,
       triggerDataRefresh,
       isFieldLoading,
+      getValidationOverlays,
+      validationVersion: baselineVersion,
     },
     // Dynamic field definitions (for templates and other dynamic content types)
     effectiveFieldDefinitions,

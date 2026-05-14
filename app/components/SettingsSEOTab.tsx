@@ -6,10 +6,10 @@ import {
   BlockStack,
   TextField,
   Banner,
-  Checkbox,
   InlineStack,
 } from "@shopify/polaris";
 import { SaveDiscardButtons } from "./SaveDiscardButtons";
+import { ToggleSwitch } from "./ToggleSwitch";
 
 interface Settings {
   seoTitleSuffixEnabled: boolean;
@@ -22,6 +22,7 @@ interface SettingsSEOTabProps {
   t: any;
   shopDisplayName?: string;
   onHasChangesChange?: (hasChanges: boolean) => void;
+  highlightSaveButton?: boolean;
 }
 
 export function SettingsSEOTab({
@@ -30,6 +31,7 @@ export function SettingsSEOTab({
   t,
   shopDisplayName = "",
   onHasChangesChange,
+  highlightSaveButton = false,
 }: SettingsSEOTabProps) {
   const [seoTitleSuffixEnabled, setSeoTitleSuffixEnabled] = useState(
     settings.seoTitleSuffixEnabled ?? false
@@ -79,6 +81,7 @@ export function SettingsSEOTab({
               action="saveSeoSettings"
               fetcherState={fetcher.state}
               fetcherFormData={fetcher.formData}
+              highlightSaveButton={highlightSaveButton}
             />
           </div>
         </InlineStack>
@@ -89,23 +92,25 @@ export function SettingsSEOTab({
         </Text>
 
         <BlockStack gap="400">
-          <Text as="h3" variant="headingMd">
-            {t.settings.seoTitleSuffix || "SEO-Titel Shop-Suffix"}
-          </Text>
-
-          <Checkbox
-            label={
-              t.settings.seoTitleSuffixLabel ||
-              "Shopify hängt Shop-Namen an SEO-Titel an"
-            }
-            checked={seoTitleSuffixEnabled}
-            onChange={(checked) => {
-              setSeoTitleSuffixEnabled(checked);
-              if (checked && !seoTitleSuffix && shopDisplayName) {
-                setSeoTitleSuffix(` \u2013 ${shopDisplayName}`);
-              }
-            }}
-          />
+          <InlineStack align="space-between" blockAlign="center">
+            <BlockStack gap="100">
+              <Text as="p" variant="bodyMd">
+                {t.settings.seoTitleSuffix || "SEO-Titel Shop-Suffix"}
+              </Text>
+              <Text as="p" variant="bodySm" tone="subdued">
+                {t.settings.seoTitleSuffixLabel || "Shopify hängt Shop-Namen an SEO-Titel an"}
+              </Text>
+            </BlockStack>
+            <ToggleSwitch
+              checked={seoTitleSuffixEnabled}
+              onChange={(checked) => {
+                setSeoTitleSuffixEnabled(checked);
+                if (checked && !seoTitleSuffix && shopDisplayName) {
+                  setSeoTitleSuffix(` \u2013 ${shopDisplayName}`);
+                }
+              }}
+            />
+          </InlineStack>
 
           {seoTitleSuffixEnabled && (
             <BlockStack gap="200">

@@ -67,9 +67,13 @@ export function sanitizeHTML(html: string): string {
       'p', 'br', 'strong', 'em', 'b', 'i', 'u', 's',
       'ul', 'ol', 'li',
       'blockquote', 'pre', 'code',
-      'a', 'span', 'div'
+      'a', 'span', 'div',
+      'img'
     ],
-    ALLOWED_ATTR: ['href', 'target', 'rel', 'class'],
+    ALLOWED_ATTR: [
+      'href', 'target', 'rel', 'class', 'style',
+      'src', 'alt', 'title', 'width', 'height', 'loading', 'srcset', 'sizes'
+    ],
     ALLOW_DATA_ATTR: false,
   });
 }

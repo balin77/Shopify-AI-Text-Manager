@@ -5,7 +5,6 @@ import {
   Card,
   Text,
   BlockStack,
-  Button,
   Select,
   InlineStack,
 } from "@shopify/polaris";
@@ -19,9 +18,10 @@ interface SettingsLanguageTabProps {
   fetcher: FetcherWithComponents<any>;
   t: I18nTranslation;
   onHasChangesChange?: (hasChanges: boolean) => void;
+  highlightSaveButton?: boolean;
 }
 
-export function SettingsLanguageTab({ settings, fetcher, t, onHasChangesChange }: SettingsLanguageTabProps) {
+export function SettingsLanguageTab({ settings, fetcher, t, onHasChangesChange, highlightSaveButton = false }: SettingsLanguageTabProps) {
   const APP_LANGUAGES = [
     { label: t.settings.languages.de, value: "de" },
     { label: t.settings.languages.en, value: "en" },
@@ -88,77 +88,40 @@ export function SettingsLanguageTab({ settings, fetcher, t, onHasChangesChange }
   };
 
   return (
-    <>
-      <Card>
-        <BlockStack gap="500">
-          <InlineStack align="space-between" blockAlign="center" wrap={false}>
-            <Text as="h2" variant="headingLg">
-              {t.settings.appLanguage}
-            </Text>
-            {/* Show action buttons inline on mobile only */}
-            <div className="settings-action-buttons-mobile" style={{ marginLeft: "auto" }}>
-              <SaveDiscardButtons
-                hasChanges={languageChanged}
-                onSave={handleSave}
-                onDiscard={handleDiscard}
-                saveText={t.products.saveChanges}
-                discardText={t.content?.discardChanges || "Verwerfen"}
-                action="saveSettings"
-                fetcherState={fetcher.state}
-                fetcherFormData={fetcher.formData}
-              />
-            </div>
-          </InlineStack>
-
-          <Text as="p" variant="bodyMd" tone="subdued">
-            {t.settings.appLanguageDescription}
+    <Card>
+      <BlockStack gap="500">
+        <InlineStack align="space-between" blockAlign="center" wrap={false}>
+          <Text as="h2" variant="headingLg">
+            {t.settings.appLanguage}
           </Text>
+          <div style={{ marginLeft: "auto" }}>
+            <SaveDiscardButtons
+              hasChanges={languageChanged}
+              onSave={handleSave}
+              onDiscard={handleDiscard}
+              saveText={t.products.saveChanges}
+              discardText={t.content?.discardChanges || "Verwerfen"}
+              action="saveSettings"
+              fetcherState={fetcher.state}
+              fetcherFormData={fetcher.formData}
+              highlightSaveButton={highlightSaveButton}
+            />
+          </div>
+        </InlineStack>
 
+        <Text as="p" variant="bodyMd" tone="subdued">
+          {t.settings.appLanguageDescription}
+        </Text>
+
+        <div style={{ maxWidth: "280px" }}>
           <Select
             label=""
             options={APP_LANGUAGES}
             value={appLanguage}
             onChange={setAppLanguage}
           />
-        </BlockStack>
-      </Card>
-
-      <div className="settings-action-buttons-desktop" style={{ marginTop: "var(--p-space-400)" }}>
-      <Card>
-        <SaveDiscardButtons
-          hasChanges={languageChanged}
-          onSave={handleSave}
-          onDiscard={handleDiscard}
-          saveText={t.products.saveChanges}
-          discardText={t.content?.discardChanges || "Verwerfen"}
-          action="saveSettings"
-          fetcherState={fetcher.state}
-          fetcherFormData={fetcher.formData}
-        />
-      </Card>
-      </div>
-
-      <style>{`
-        /* Show action buttons in separate card on desktop (900px+) */
-        @media (min-width: 900px) {
-          .settings-action-buttons-desktop {
-            display: block;
-          }
-          .settings-action-buttons-mobile {
-            display: none;
-          }
-        }
-
-        /* Show action buttons inline on mobile */
-        @media (max-width: 899px) {
-          .settings-action-buttons-desktop {
-            display: none;
-          }
-          .settings-action-buttons-mobile {
-            display: block;
-          }
-        }
-      `}</style>
-    </>
+        </div>
+      </BlockStack>
+    </Card>
   );
 }

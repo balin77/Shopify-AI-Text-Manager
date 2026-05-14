@@ -26,7 +26,9 @@ import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { usePlan } from "../contexts/PlanContext";
 import { useNavigationHeight } from "../contexts/NavigationHeightContext";
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback, useMemo } from "react";
+import { useVariantImageManager } from "../hooks/useVariantImageManager";
+import { VariantImageManager } from "../components/image-manager/VariantImageManager";
 import { Spinner, Text } from "@shopify/polaris";
 import type { ContentItem } from "../types/content-editor.types";
 import { logger } from "~/utils/logger.server";
@@ -330,6 +332,7 @@ export const loader = createContentLoader({
         ? p.images.map((img: any) => ({
             url: img.url,
             altText: img.altText,
+            mediaId: img.mediaId ?? null,
             altTextTranslations: img.altTextTranslations
               ? img.altTextTranslations.map((t: any) => ({ locale: t.locale, altText: t.altText }))
               : [],
@@ -339,7 +342,15 @@ export const loader = createContentLoader({
         title: p.seoTitle || "",
         description: p.seoDescription || "",
       },
-      options: p.options?.map((opt: any) => {
+      options: p.options?.filter((opt: any) => {
+        try {
+          const parsed = JSON.parse(opt.values || "[]");
+          const valNames = Array.isArray(parsed)
+            ? parsed.map((v: any) => typeof v === "string" ? v : v.name)
+            : [];
+          return !isDefaultTitleOption({ name: opt.name, values: valNames });
+        } catch { return true; }
+      }).map((opt: any) => {
         let values: Array<{ id: string; name: string; linked?: boolean }> = [];
         try {
           const parsed = JSON.parse(opt.values || "[]");
@@ -395,12 +406,18 @@ export const loader = createContentLoader({
   },
 
   async extraData(ctx) {
-    const { getPlanLimits } = await import("../utils/planUtils");
+    const { getPlanLimits, canAccessVariantImageManagerInEnv, isProductionLocked, canAccessImageProcessingTab } = await import("../utils/planUtils");
     const settings = await ctx.db.aISettings.findUnique({ where: { shop: ctx.session.shop } });
     const plan = (settings?.subscriptionPlan || "free") as "free" | "basic" | "pro" | "max";
     const planLimits = getPlanLimits(plan);
     const productCount = await ctx.db.product.count({ where: { shop: ctx.session.shop } });
-    return { plan, maxProducts: planLimits.maxProducts, productCount };
+    const imageManagerSettings = await ctx.db.imageManagerSettings.findUnique({
+      where: { shopId: ctx.session.shop },
+    }) ?? { enabled: true, firstImageBig: false, showAltTags: false, autoAltText: false, thumbSize: 80 };
+    const newFeaturesEnabled = !isProductionLocked();
+    const showImageManager = canAccessVariantImageManagerInEnv(plan, newFeaturesEnabled) && (imageManagerSettings.enabled ?? true);
+    const showImageProcessingTab = canAccessImageProcessingTab(newFeaturesEnabled);
+    return { plan, maxProducts: planLimits.maxProducts, productCount, showImageManager, showImageProcessingTab, imageManagerSettings };
   },
 });
 
@@ -436,7 +453,7 @@ export const action = async (args: ActionFunctionArgs) => {
 // ============================================================================
 
 export default function ProductsPage() {
-  const { products, shopLocales, primaryLocale, error, aiSettings, plan, maxProducts } = useLoaderData<typeof loader>();
+  const { products, shopLocales, primaryLocale, error, aiSettings, plan, maxProducts, showImageManager, imageManagerSettings } = useLoaderData<typeof loader>();
   const navigation = useNavigation();
   const fetcher = useFetcher<typeof action>();
   const syncFetcher = useFetcher<{ success: boolean; synced: number; total: number }>();
@@ -469,6 +486,36 @@ export default function ProductsPage() {
     t,
   });
 
+  // Image Manager state (Pro/Max only - always call hook, gated in UI)
+  const imageManagerState = useVariantImageManager();
+
+  // Reset image manager state when product selection changes
+  const prevSelectedItemId = useRef<string | null>(null);
+  useEffect(() => {
+    const currentId = editor.state.selectedItemId;
+    if (currentId && currentId !== prevSelectedItemId.current) {
+      prevSelectedItemId.current = currentId;
+      imageManagerState.resetForProduct();
+    }
+  }, [editor.state.selectedItemId, imageManagerState.resetForProduct]);
+
+  // Per-product override of product images. Populated when WebP conversion completes
+  // (either while the product is open or detected on return after a background completion),
+  // so the new WebP URLs survive product switches without needing a full revalidate.
+  // Cleared whenever the loader returns fresh data (loader is then the authoritative source).
+  type ProductImageEntry = { url: string; mediaId: string; id: string; altText?: string | null };
+  const [productImagesOverride, setProductImagesOverride] = useState<Map<string, ProductImageEntry[]>>(new Map());
+  useEffect(() => {
+    setProductImagesOverride(new Map());
+  }, [products]);
+  const handleProductImagesRefreshed = useCallback((pid: string, images: ProductImageEntry[]) => {
+    setProductImagesOverride(prev => {
+      const next = new Map(prev);
+      next.set(pid, images);
+      return next;
+    });
+  }, []);
+
   // Initialize sub-resources hook for options + metafields translations
   // Uses its own internal fetcher to avoid race conditions with the main editor
   const subResources = useProductSubResources({
@@ -478,7 +525,59 @@ export default function ProductsPage() {
     revalidator,
     showInfoBox,
     enabledLanguages: editor.state.enabledLanguages,
+    strings: {
+      optionsSavedSuccess: t.products.optionsSavedSuccess,
+      saveFailed: t.products.saveFailed,
+      saveFailedOptions: t.products.saveFailedOptions,
+      saveFailedItems: t.products.saveFailedItems,
+      validationError: t.products.validationError,
+      optionNameEmpty: t.products.optionNameEmpty,
+      optionValuesEmpty: t.products.optionValuesEmpty,
+      metafieldValuesEmpty: t.products.metafieldValuesEmpty,
+      success: t.products.successTitle,
+    },
   });
+
+  // Extend subResource state/handlers to include pending gallery changes so the
+  // main Speichern/Verwerfen buttons also save and reset variant gallery assignments.
+  const hasPendingImageChanges = showImageManager && (
+    imageManagerState.pendingVariantGalleries.length > 0 ||
+    imageManagerState.pendingMediaOrder.length > 0 ||
+    imageManagerState.pendingProductNewMedia.length > 0 ||
+    imageManagerState.bulkItems.some(i => i.status === "ready") ||
+    imageManagerState.hasAltTextEdits
+  );
+
+  const wrappedSubResourceState = useMemo(() => ({
+    ...subResources.state,
+    hasChanges: subResources.state.hasChanges || hasPendingImageChanges,
+  }), [subResources.state, hasPendingImageChanges]);
+
+  const wrappedSubResourceHandlers = useMemo(() => ({
+    ...subResources.handlers,
+    saveSubResources: () => {
+      subResources.handlers.saveSubResources();
+      if (hasPendingImageChanges && editor.selectedItem) {
+        imageManagerState.handleApply(editor.selectedItem.id).then(err => {
+          if (err) {
+            showInfoBox(err, "critical", t.products.galleryErrorTitle);
+          } else {
+            showInfoBox(t.products.gallerySaveSuccess, "success");
+          }
+        }).catch(() => {
+          showInfoBox(t.products.gallerySaveError, "critical");
+        });
+      }
+    },
+    resetChanges: () => {
+      subResources.handlers.resetChanges();
+      imageManagerState.resetForProduct();
+    },
+    resetForReload: () => {
+      subResources.handlers.resetForReload();
+      imageManagerState.resetForProduct();
+    },
+  }), [subResources.handlers, hasPendingImageChanges, editor.selectedItem, imageManagerState, showInfoBox]);
 
   // Wrap translate-all handlers to also translate product options and metafields.
   // Uses a separate internal fetcher in useProductSubResources to avoid conflicting
@@ -736,6 +835,7 @@ export default function ProductsPage() {
           shopLocales={shopLocales}
           primaryLocale={primaryLocale}
           editor={editorWithSubResources}
+          extraMissingPrimaryIds={imageManagerState.missingMainImageProductIds}
           fetcherState={fetcher.state}
           fetcherFormData={fetcher.formData}
           t={t}
@@ -752,8 +852,75 @@ export default function ProductsPage() {
             { field: "status", label: "Status" },
             { field: "shopifyUpdatedAt", label: "Last Updated", type: "date" },
           ]}
-          subResourceState={subResources.state}
-          subResourceHandlers={subResources.handlers}
+          subResourceState={wrappedSubResourceState}
+          subResourceHandlers={wrappedSubResourceHandlers}
+          showImageManager={showImageManager}
+          imageManager={showImageManager ? {
+            bulkItems: imageManagerState.bulkItems,
+            onBulkItemsChange: imageManagerState.handleBulkItemsChange,
+            selectedBulkIds: imageManagerState.selectedBulkIds,
+            activeAction: imageManagerState.activeAction,
+            onSetAction: imageManagerState.setActiveAction,
+            onBulkSelect: imageManagerState.handleBulkSelect,
+            onRemoveBulk: imageManagerState.handleRemoveBulk,
+            activeRightTab: imageManagerState.activeRightTab,
+            onTabChange: imageManagerState.setActiveRightTab,
+            activeImageSubTab: imageManagerState.activeImageSubTab,
+            onImageSubTabChange: imageManagerState.setActiveImageSubTab,
+            productId: editor.selectedItem?.id ?? "",
+            imageManagerSettings: imageManagerSettings ?? { firstImageBig: false, showAltTags: false, autoAltText: false, thumbSize: 80 },
+            variantsForBulk: imageManagerState.variantsForBulk,
+            onVariantsLoaded: imageManagerState.handleVariantsLoaded,
+            selectedGalleryGids: imageManagerState.selectedGalleryGids,
+            onConfirm: async () => {
+              const err = await imageManagerState.handleApply(editor.selectedItem?.id ?? "");
+              if (err) {
+                showInfoBox(err, "critical", t.products.galleryErrorTitle);
+              } else {
+                showInfoBox(t.products.gallerySaveSuccess, "success");
+                revalidator.revalidate();
+              }
+              return err;
+            },
+            isApplying: imageManagerState.isApplying,
+            productTitle: editor.selectedItem?.title ?? "",
+            onApplySuccess: () => {
+              imageManagerState.reloadVariants();
+              revalidator.revalidate();
+            },
+          } : undefined}
+          imageGalleryReplacement={showImageManager && editor.selectedItem ? (
+            <VariantImageManager
+              productId={editor.selectedItem.id}
+              productImages={
+                productImagesOverride.get(editor.selectedItem.id) ??
+                (editor.selectedItem.images ?? []).map((img: any) => ({
+                  url: img.url ?? "",
+                  mediaId: img.mediaId ?? img.url ?? "",
+                  id: img.id ?? img.url ?? "",
+                  altText: img.altText ?? null,
+                }))
+              }
+              bulkItems={imageManagerState.bulkItems}
+              activeAction={imageManagerState.activeAction}
+              selectedBulkIds={imageManagerState.selectedBulkIds}
+              onRemoveBulk={imageManagerState.handleRemoveBulk}
+              onSetAction={imageManagerState.setActiveAction}
+              imageManagerSettings={imageManagerSettings ?? { firstImageBig: false, showAltTags: false, autoAltText: false, thumbSize: 80 }}
+              onPendingChange={imageManagerState.handlePendingChange}
+              onVariantsLoaded={imageManagerState.handleVariantsLoaded}
+              resetKey={imageManagerState.resetCounter}
+              currentLanguage={editor.state.currentLanguage}
+              primaryLocale={primaryLocale}
+              productTitle={editor.selectedItem.title}
+              enabledLanguages={shopLocales.map((l: any) => l.locale)}
+              variantReloadKey={imageManagerState.variantReloadCounter}
+              onDirtyChange={imageManagerState.setHasAltTextEdits}
+              onMissingMainImageChange={(hasMissing) => imageManagerState.handleMissingMainImageChange(editor.selectedItem!.id, hasMissing)}
+              onProductImagesRefreshed={handleProductImagesRefreshed}
+              onGallerySelectionGidsChange={imageManagerState.handleGallerySelectionGidsChange}
+            />
+          ) : undefined}
         />
       </div>
     </div>

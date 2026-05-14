@@ -1,0 +1,7 @@
+api_version = "2025-10"
+uid = "55861f03-b391-90ea-8394-b3a6d5b6946b5f566a73"
+
+[[extensions]]
+  type = "theme"
+  name = "Variant Gallery"
+  handle = "variant-gallery"

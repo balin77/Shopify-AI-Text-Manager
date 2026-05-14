@@ -132,13 +132,13 @@ export default function AppIndex() {
     }
   }, [needsSetup, setupStarted, startSync]);
 
-  // Redirect to products after sync completes
+  // Redirect to setup guide after sync completes (first-time onboarding)
   useEffect(() => {
     if (syncComplete && syncStats) {
       // Small delay so user can see the completion message
       const timeout = setTimeout(() => {
         const search = typeof window !== 'undefined' ? window.location.search : '';
-        navigate(`/app/products${search}`, { replace: true });
+        navigate(`/app/setup${search}`, { replace: true });
       }, 1500);
       return () => clearTimeout(timeout);
     }
