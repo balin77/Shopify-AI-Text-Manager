@@ -9,7 +9,6 @@ import { describe, it, expect } from 'vitest';
 import { z } from 'zod';
 import {
   parseJsonBody,
-  UpdatePlanSchema,
   SyncContentQuerySchema,
 } from '~/utils/validation';
 
@@ -90,31 +89,6 @@ describe('parseJsonBody()', () => {
     if (!result.success) {
       expect(result.status).toBe(400);
     }
-  });
-});
-
-// ── UpdatePlanSchema ─────────────────────────────────────────────────────────
-
-describe('UpdatePlanSchema via parseJsonBody()', () => {
-  it('should accept valid plan values', async () => {
-    for (const plan of ['free', 'basic', 'pro', 'max'] as const) {
-      const request = makeJsonRequest({ plan });
-      const result = await parseJsonBody(request, UpdatePlanSchema);
-      expect(result.success).toBe(true);
-      if (result.success) expect(result.data.plan).toBe(plan);
-    }
-  });
-
-  it('should reject unknown plan values', async () => {
-    const request = makeJsonRequest({ plan: 'enterprise' });
-    const result = await parseJsonBody(request, UpdatePlanSchema);
-    expect(result.success).toBe(false);
-  });
-
-  it('should reject a missing plan field', async () => {
-    const request = makeJsonRequest({});
-    const result = await parseJsonBody(request, UpdatePlanSchema);
-    expect(result.success).toBe(false);
   });
 });
 
