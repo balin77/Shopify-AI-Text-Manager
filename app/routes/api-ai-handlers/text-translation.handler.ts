@@ -12,6 +12,8 @@ import { getCharacterLimitRequirement } from "~/utils/character-limits";
 import { getTaskExpirationDate } from "~/config/constants";
 import { logger } from "~/utils/logger.server";
 import { TRANSLATE_CONTENT } from "../../graphql/content.mutations";
+import { GroupedFieldTranslationService } from "../../../src/services/grouped-field-translation.service";
+import { isGroupedFieldKey } from "~/utils/grouped-field.utils";
 
 export async function handleTranslateField(ctx: AIActionContext): Promise<Response> {
   const { session, admin, db, formData, settings, contentType, itemId } = ctx;
@@ -63,10 +65,60 @@ export async function handleTranslateField(ctx: AIActionContext): Promise<Respon
       textLength: sourceText.length
     });
 
+    // For grouped fields (productType) on products: check the shop-wide mapping first.
+    const isGroupedProductsField =
+      contentType === 'products' && isGroupedFieldKey(fieldType);
+    const groupedService = isGroupedProductsField
+      ? new GroupedFieldTranslationService(db)
+      : null;
+    let groupedHitValue: string | null = null;
+    if (groupedService) {
+      const lookupResult = await groupedService.lookup({
+        shop: session.shop,
+        fieldKey: fieldType,
+        sourceLocale: primaryLocale,
+        sourceValue: sourceText,
+        targetLocales: [targetLocale],
+      });
+      if (lookupResult.hits[targetLocale]) {
+        groupedHitValue = lookupResult.hits[targetLocale];
+        logger.info("[API-AI] Grouped-field cache hit (single)", {
+          context: "AI",
+          fieldType,
+          targetLocale,
+        });
+      }
+    }
+
     // Use special method for URL slugs
-    let translatedValue = isSlugField
-      ? await aiService.translateSlug(sourceText, primaryLocale, targetLocale)
-      : await aiService.translateContent(sourceText, primaryLocale, targetLocale);
+    let translatedValue: string;
+    if (groupedHitValue !== null) {
+      translatedValue = groupedHitValue;
+    } else if (isSlugField) {
+      translatedValue = await aiService.translateSlug(sourceText, primaryLocale, targetLocale);
+    } else {
+      translatedValue = await aiService.translateContent(sourceText, primaryLocale, targetLocale);
+    }
+
+    // Persist the new grouped-field translation (only if it was freshly produced).
+    if (groupedService && groupedHitValue === null && translatedValue) {
+      try {
+        await groupedService.upsertMany({
+          shop: session.shop,
+          fieldKey: fieldType,
+          sourceLocale: primaryLocale,
+          sourceValue: sourceText,
+          entries: { [targetLocale]: translatedValue },
+          source: "ai",
+        });
+      } catch (gErr) {
+        logger.error("[API-AI] Failed to persist grouped-field translation (single)", {
+          context: "AI",
+          error: errorMessage(gErr),
+          fieldType,
+        });
+      }
+    }
 
     // For URL slugs: ensure the result is a valid slug (post-process as safety net)
     if (isSlugField) {
@@ -252,18 +304,79 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
       try {
         let batchResults: Record<string, string>;
 
+        // For grouped fields (productType), consult the shop-wide mapping first to keep
+        // category labels consistent across all products that share a source value.
+        const isGroupedProductsField =
+          contentType === 'products' && isGroupedFieldKey(fieldType);
+        const groupedService = isGroupedProductsField
+          ? new GroupedFieldTranslationService(db)
+          : null;
+        let groupedHits: Record<string, string> = {};
+        let localesToTranslate = targetLocales;
+
+        if (groupedService) {
+          const lookupResult = await groupedService.lookup({
+            shop: session.shop,
+            fieldKey: fieldType,
+            sourceLocale: primaryLocale,
+            sourceValue: sourceText,
+            targetLocales,
+          });
+          groupedHits = lookupResult.hits;
+          localesToTranslate = lookupResult.misses;
+          if (Object.keys(groupedHits).length > 0) {
+            logger.info("[API-AI] Grouped-field cache hits", {
+              context: "AI",
+              fieldType,
+              hits: Object.keys(groupedHits),
+              missing: localesToTranslate,
+            });
+          }
+        }
+
         if (isSlugField) {
           // Use batch slug translation
           batchResults = await aiService.translateSlugBatch(sourceText, primaryLocale, targetLocales);
+        } else if (localesToTranslate.length === 0) {
+          // All locales served from grouped-field cache, no AI call needed
+          batchResults = { ...groupedHits };
         } else {
-          // Use batch short field translation (title, seoTitle)
+          // Use batch short field translation (title, seoTitle, productType-misses)
           const fieldsToTranslate = { [fieldType]: sourceText };
-          const batchFieldResults = await aiService.translateShortFieldsBatch(fieldsToTranslate, primaryLocale, targetLocales, contentType);
+          const batchFieldResults = await aiService.translateShortFieldsBatch(fieldsToTranslate, primaryLocale, localesToTranslate, contentType);
           // Extract just the single field from each locale
-          batchResults = {};
-          for (const locale of targetLocales) {
+          batchResults = { ...groupedHits };
+          for (const locale of localesToTranslate) {
             if (batchFieldResults[locale] && batchFieldResults[locale][fieldType]) {
               batchResults[locale] = batchFieldResults[locale][fieldType];
+            }
+          }
+        }
+
+        // Persist newly translated grouped-field values for future reuse.
+        if (groupedService && localesToTranslate.length > 0) {
+          const newEntries: Record<string, string> = {};
+          for (const locale of localesToTranslate) {
+            if (batchResults[locale]) {
+              newEntries[locale] = batchResults[locale];
+            }
+          }
+          if (Object.keys(newEntries).length > 0) {
+            try {
+              await groupedService.upsertMany({
+                shop: session.shop,
+                fieldKey: fieldType,
+                sourceLocale: primaryLocale,
+                sourceValue: sourceText,
+                entries: newEntries,
+                source: "ai",
+              });
+            } catch (gErr) {
+              logger.error("[API-AI] Failed to persist grouped-field translations", {
+                context: "AI",
+                error: errorMessage(gErr),
+                fieldType,
+              });
             }
           }
         }
@@ -286,7 +399,11 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
           }
 
           translations[locale] = translatedValue;
-          aiResponses.push({ locale, response: translatedValue });
+          const isCacheHit = locale in groupedHits;
+          aiResponses.push({
+            locale,
+            response: isCacheHit ? `${translatedValue} (cache)` : translatedValue,
+          });
 
           // Save to Shopify for templates
           if (contentType === 'templates' && templateGroupId) {

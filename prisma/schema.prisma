@@ -292,6 +292,26 @@ model OptionValueMemory {
   @@index([shop])
 }
 
+// Shop-weites Mapping fuer Felder mit Gruppierungs-Charakter (productType, perspektivisch vendor/tag).
+// Mehrere Produkte mit demselben Quellwert muessen pro Zielsprache exakt eine gemeinsame Uebersetzung
+// haben, sonst zerfaellt eine Kategorie in Google Merchant in mehrere.
+model GroupedFieldTranslation {
+  id              String   @id @default(cuid())
+  shop            String
+  fieldKey        String   // "productType" (zukuenftig: "vendor" | "tag")
+  sourceLocale    String
+  sourceValueNorm String   // trim + collapsed whitespace + lowercase (Lookup-Key)
+  sourceValue     String   // kanonische Originalform (Casing des ersten Inserts)
+  targetLocale    String
+  translatedValue String
+  source          String   @default("ai") // "ai" | "user" | "imported"
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([shop, fieldKey, sourceLocale, sourceValueNorm, targetLocale])
+  @@index([shop, fieldKey, sourceLocale])
+}
+
 model ImageManagerSettings {
   id            String  @id @default(cuid())
   shopId        String  @unique

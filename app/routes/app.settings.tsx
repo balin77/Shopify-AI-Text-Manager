@@ -15,6 +15,7 @@ import { AIInstructionsTabs } from "../components/AIInstructionsTabs";
 import { SettingsSetupTab } from "../components/SettingsSetupTab";
 import { SettingsAITab } from "../components/SettingsAITab";
 import { SettingsLanguageTab } from "../components/SettingsLanguageTab";
+import { SettingsTranslationsTab } from "../components/SettingsTranslationsTab";
 import { SettingsSEOTab } from "../components/SettingsSEOTab";
 import { SettingsUsageLimitsTab } from "../components/SettingsUsageLimitsTab";
 import { SettingsPlanTab } from "../components/SettingsPlanTab";
@@ -331,6 +332,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const { isProductionLocked } = await import("../utils/planUtils");
     const showImageManagerTab = !isProductionLocked() && (subscriptionPlan === "pro" || subscriptionPlan === "max");
 
+    const groupedFieldTranslations = await db.groupedFieldTranslation.findMany({
+      where: { shop: session.shop },
+      orderBy: [{ fieldKey: "asc" }, { sourceValue: "asc" }, { targetLocale: "asc" }],
+    });
+
+    const optionValueMemory = await db.optionValueMemory.findMany({
+      where: { shop: session.shop },
+      orderBy: { optionValue: "asc" },
+    });
+
     return json({
       shop: session.shop,
       shopDisplayName,
@@ -347,6 +358,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       subscriptionPlan,
       imageManagerSettings,
       showImageManagerTab,
+      groupedFieldTranslations,
+      optionValueMemory,
+      primaryShopLocale,
       settings: {
         ...decryptedKeys,
         preferredProvider: settings.preferredProvider,
@@ -632,7 +646,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function SettingsPage() {
-  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, localeCount, subscriptionPlan, isTestStore, isDevMode, imageManagerSettings, showImageManagerTab } = useLoaderData<typeof loader>();
+  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, localeCount, subscriptionPlan, isTestStore, isDevMode, imageManagerSettings, showImageManagerTab, groupedFieldTranslations, optionValueMemory, primaryShopLocale } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -646,16 +660,16 @@ export default function SettingsPage() {
 
   // Get initial tab from URL parameter (e.g., ?tab=plan).
   // Billing callbacks always land on the plan tab so the merchant sees the result.
-  const getInitialSection = (): "setup" | "ai" | "instructions" | "language" | "seo" | "plan" | "feedback" => {
+  const getInitialSection = (): "setup" | "ai" | "instructions" | "language" | "translations" | "seo" | "plan" | "feedback" => {
     if (searchParams.get("billing")) return "plan";
     const tabParam = searchParams.get("tab");
-    if (tabParam && ["setup", "ai", "instructions", "language", "seo", "plan", "feedback"].includes(tabParam)) {
-      return tabParam as "setup" | "ai" | "instructions" | "language" | "seo" | "plan" | "feedback";
+    if (tabParam && ["setup", "ai", "instructions", "language", "translations", "seo", "plan", "feedback"].includes(tabParam)) {
+      return tabParam as "setup" | "ai" | "instructions" | "language" | "translations" | "seo" | "plan" | "feedback";
     }
     return "setup";
   };
 
-  const [selectedSection, setSelectedSection] = useState<"setup" | "ai" | "instructions" | "language" | "seo" | "plan" | "feedback" | "imagemanager">(getInitialSection);
+  const [selectedSection, setSelectedSection] = useState<"setup" | "ai" | "instructions" | "language" | "translations" | "seo" | "plan" | "feedback" | "imagemanager">(getInitialSection);
   const [hasAIChanges, setHasAIChanges] = useState(false);
   const [hasLanguageChanges, setHasLanguageChanges] = useState(false);
   const [hasInstructionsChanges, setHasInstructionsChanges] = useState(false);
@@ -689,7 +703,7 @@ export default function SettingsPage() {
   }, [hasUnsavedChanges, registerGuard, unregisterGuard, triggerSaveButtonHighlight]);
 
   // Handle section navigation with unsaved changes warning
-  const handleSectionChange = (newSection: "setup" | "ai" | "instructions" | "language" | "seo" | "plan" | "feedback" | "imagemanager") => {
+  const handleSectionChange = (newSection: "setup" | "ai" | "instructions" | "language" | "translations" | "seo" | "plan" | "feedback" | "imagemanager") => {
     if (hasUnsavedChanges) {
       triggerSaveButtonHighlight();
       return;
@@ -725,6 +739,7 @@ export default function SettingsPage() {
       { id: "ai", title: t.settings.aiApiAccess },
       { id: "instructions", title: t.settings.aiInstructions },
       { id: "language", title: t.settings.appLanguage },
+      { id: "translations", title: t.settings.translations },
       { id: "seo", title: t.settings.seoSettings || "SEO" },
       { id: "plan", title: t.settings.plan },
       { id: "feedback", title: t.settings.feedback },
@@ -833,6 +848,25 @@ export default function SettingsPage() {
               >
                 <Text as="p" variant="bodyMd" fontWeight={selectedSection === "language" ? "semibold" : "regular"}>
                   {t.settings.appLanguage}
+                </Text>
+              </button>
+              <button
+                onClick={() => handleSectionChange("translations")}
+                style={{
+                  width: "100%",
+                  padding: "1rem",
+                  background: selectedSection === "translations" ? "#f1f8f5" : "white",
+                  borderTop: "1px solid #e1e3e5",
+                  borderRight: "none",
+                  borderBottom: "none",
+                  borderLeft: selectedSection === "translations" ? "3px solid #008060" : "3px solid transparent",
+                  textAlign: "left",
+                  cursor: "pointer",
+                  transition: "all 0.2s",
+                }}
+              >
+                <Text as="p" variant="bodyMd" fontWeight={selectedSection === "translations" ? "semibold" : "regular"}>
+                  {t.settings.translations}
                 </Text>
               </button>
               <button
@@ -974,6 +1008,16 @@ export default function SettingsPage() {
                   t={t}
                   onHasChangesChange={setHasLanguageChanges}
                   highlightSaveButton={highlightSaveButton}
+                />
+              )}
+
+              {/* Translations Mapping (productType + variant match keys) */}
+              {selectedSection === "translations" && (
+                <SettingsTranslationsTab
+                  groupedFieldTranslations={groupedFieldTranslations}
+                  optionValueMemory={optionValueMemory}
+                  primaryShopLocale={primaryShopLocale}
+                  t={t}
                 />
               )}
 
