@@ -35,10 +35,6 @@ topics = [ "collections/create", "collections/update", "collections/delete" ]
 uri = "/webhooks/collections"
 
 [[webhooks.subscriptions]]
-topics = [ "articles/create", "articles/update", "articles/delete" ]
-uri = "/webhooks/articles"
-
-[[webhooks.subscriptions]]
 topics = [ "app_subscriptions/update" ]
 uri = "/webhooks/subscription"
 
