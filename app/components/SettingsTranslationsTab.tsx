@@ -9,7 +9,6 @@ import {
   Button,
   Badge,
   Banner,
-  Divider,
   EmptyState,
 } from "@shopify/polaris";
 import type { Translation as I18nTranslation } from "~/i18n/de";
@@ -26,14 +25,8 @@ interface GroupedFieldTranslationEntry {
   updatedAt: string | Date;
 }
 
-interface OptionValueMemoryEntry {
-  optionValue: string;
-  savedAs: string;
-}
-
 interface Props {
   groupedFieldTranslations: GroupedFieldTranslationEntry[];
-  optionValueMemory: OptionValueMemoryEntry[];
   primaryShopLocale: string;
   t: I18nTranslation;
 }
@@ -69,7 +62,6 @@ function buildRows(entries: GroupedFieldTranslationEntry[]): GroupedRow[] {
 
 export function SettingsTranslationsTab({
   groupedFieldTranslations,
-  optionValueMemory,
   primaryShopLocale,
   t,
 }: Props) {
@@ -296,46 +288,6 @@ export function SettingsTranslationsTab({
         </BlockStack>
       </Card>
 
-      <Card>
-        <BlockStack gap="300">
-          <InlineStack align="space-between" blockAlign="center">
-            <Text as="h3" variant="headingMd">
-              {t.settings.translationsVariantKeys}
-            </Text>
-            <Badge tone="info">{`${optionValueMemory.length}`}</Badge>
-          </InlineStack>
-          <Text as="p" tone="subdued" variant="bodySm">
-            {t.settings.translationsVariantKeysDescription}
-          </Text>
-          <Divider />
-          {optionValueMemory.length === 0 ? (
-            <Text as="p" tone="subdued">
-              {t.settings.translationsVariantKeysEmpty}
-            </Text>
-          ) : (
-            <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                <thead>
-                  <tr style={{ borderBottom: "1px solid #e1e3e5" }}>
-                    <th style={thStyle}>{t.settings.translationsVariantOriginal}</th>
-                    <th style={thStyle}>{t.settings.translationsVariantSavedAs}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {optionValueMemory.map((m) => (
-                    <tr key={m.optionValue} style={{ borderBottom: "1px solid #f1f1f1" }}>
-                      <td style={tdStyle}>{m.optionValue}</td>
-                      <td style={tdStyle}>
-                        <code>{m.savedAs}</code>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </BlockStack>
-      </Card>
     </BlockStack>
   );
 }

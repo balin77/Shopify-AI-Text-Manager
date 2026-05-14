@@ -16,6 +16,7 @@ import { SettingsSetupTab } from "../components/SettingsSetupTab";
 import { SettingsAITab } from "../components/SettingsAITab";
 import { SettingsLanguageTab } from "../components/SettingsLanguageTab";
 import { SettingsTranslationsTab } from "../components/SettingsTranslationsTab";
+import { SettingsSkuTab } from "../components/SettingsSkuTab";
 import { SettingsSEOTab } from "../components/SettingsSEOTab";
 import { SettingsUsageLimitsTab } from "../components/SettingsUsageLimitsTab";
 import { SettingsPlanTab } from "../components/SettingsPlanTab";
@@ -660,16 +661,16 @@ export default function SettingsPage() {
 
   // Get initial tab from URL parameter (e.g., ?tab=plan).
   // Billing callbacks always land on the plan tab so the merchant sees the result.
-  const getInitialSection = (): "setup" | "ai" | "instructions" | "language" | "translations" | "seo" | "plan" | "feedback" => {
+  const getInitialSection = (): "setup" | "ai" | "instructions" | "language" | "translations" | "sku" | "seo" | "plan" | "feedback" => {
     if (searchParams.get("billing")) return "plan";
     const tabParam = searchParams.get("tab");
-    if (tabParam && ["setup", "ai", "instructions", "language", "translations", "seo", "plan", "feedback"].includes(tabParam)) {
-      return tabParam as "setup" | "ai" | "instructions" | "language" | "translations" | "seo" | "plan" | "feedback";
+    if (tabParam && ["setup", "ai", "instructions", "language", "translations", "sku", "seo", "plan", "feedback"].includes(tabParam)) {
+      return tabParam as "setup" | "ai" | "instructions" | "language" | "translations" | "sku" | "seo" | "plan" | "feedback";
     }
     return "setup";
   };
 
-  const [selectedSection, setSelectedSection] = useState<"setup" | "ai" | "instructions" | "language" | "translations" | "seo" | "plan" | "feedback" | "imagemanager">(getInitialSection);
+  const [selectedSection, setSelectedSection] = useState<"setup" | "ai" | "instructions" | "language" | "translations" | "sku" | "seo" | "plan" | "feedback" | "imagemanager">(getInitialSection);
   const [hasAIChanges, setHasAIChanges] = useState(false);
   const [hasLanguageChanges, setHasLanguageChanges] = useState(false);
   const [hasInstructionsChanges, setHasInstructionsChanges] = useState(false);
@@ -703,7 +704,7 @@ export default function SettingsPage() {
   }, [hasUnsavedChanges, registerGuard, unregisterGuard, triggerSaveButtonHighlight]);
 
   // Handle section navigation with unsaved changes warning
-  const handleSectionChange = (newSection: "setup" | "ai" | "instructions" | "language" | "translations" | "seo" | "plan" | "feedback" | "imagemanager") => {
+  const handleSectionChange = (newSection: "setup" | "ai" | "instructions" | "language" | "translations" | "sku" | "seo" | "plan" | "feedback" | "imagemanager") => {
     if (hasUnsavedChanges) {
       triggerSaveButtonHighlight();
       return;
@@ -740,6 +741,7 @@ export default function SettingsPage() {
       { id: "instructions", title: t.settings.aiInstructions },
       { id: "language", title: t.settings.appLanguage },
       { id: "translations", title: t.settings.translations },
+      { id: "sku", title: t.settings.sku },
       { id: "seo", title: t.settings.seoSettings || "SEO" },
       { id: "plan", title: t.settings.plan },
       { id: "feedback", title: t.settings.feedback },
@@ -867,6 +869,25 @@ export default function SettingsPage() {
               >
                 <Text as="p" variant="bodyMd" fontWeight={selectedSection === "translations" ? "semibold" : "regular"}>
                   {t.settings.translations}
+                </Text>
+              </button>
+              <button
+                onClick={() => handleSectionChange("sku")}
+                style={{
+                  width: "100%",
+                  padding: "1rem",
+                  background: selectedSection === "sku" ? "#f1f8f5" : "white",
+                  borderTop: "1px solid #e1e3e5",
+                  borderRight: "none",
+                  borderBottom: "none",
+                  borderLeft: selectedSection === "sku" ? "3px solid #008060" : "3px solid transparent",
+                  textAlign: "left",
+                  cursor: "pointer",
+                  transition: "all 0.2s",
+                }}
+              >
+                <Text as="p" variant="bodyMd" fontWeight={selectedSection === "sku" ? "semibold" : "regular"}>
+                  {t.settings.sku}
                 </Text>
               </button>
               <button
@@ -1011,12 +1032,19 @@ export default function SettingsPage() {
                 />
               )}
 
-              {/* Translations Mapping (productType + variant match keys) */}
+              {/* Translations Mapping (productType) */}
               {selectedSection === "translations" && (
                 <SettingsTranslationsTab
                   groupedFieldTranslations={groupedFieldTranslations}
-                  optionValueMemory={optionValueMemory}
                   primaryShopLocale={primaryShopLocale}
+                  t={t}
+                />
+              )}
+
+              {/* SKU / variant match keys */}
+              {selectedSection === "sku" && (
+                <SettingsSkuTab
+                  optionValueMemory={optionValueMemory}
                   t={t}
                 />
               )}
