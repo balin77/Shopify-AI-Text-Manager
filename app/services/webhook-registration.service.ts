@@ -69,7 +69,10 @@ export class WebhookRegistrationService {
   }
 
   /**
-   * Register all content webhooks (collections, blogs)
+   * Register all content webhooks (collections).
+   *
+   * Note: Shopify does not expose article/* webhook topics, so blog article
+   * sync relies on manual sync runs rather than push notifications.
    */
   async registerContentWebhooks(): Promise<void> {
     const appUrl = process.env.SHOPIFY_APP_URL;
@@ -79,7 +82,6 @@ export class WebhookRegistrationService {
     }
 
     const webhooks = [
-      // Collection webhooks
       {
         topic: "COLLECTIONS_CREATE",
         address: `${appUrl}/webhooks/collections`,
@@ -91,19 +93,6 @@ export class WebhookRegistrationService {
       {
         topic: "COLLECTIONS_DELETE",
         address: `${appUrl}/webhooks/collections`,
-      },
-      // Blog article webhooks
-      {
-        topic: "ARTICLES_CREATE",
-        address: `${appUrl}/webhooks/articles`,
-      },
-      {
-        topic: "ARTICLES_UPDATE",
-        address: `${appUrl}/webhooks/articles`,
-      },
-      {
-        topic: "ARTICLES_DELETE",
-        address: `${appUrl}/webhooks/articles`,
       },
     ];
 
