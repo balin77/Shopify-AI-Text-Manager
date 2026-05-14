@@ -602,6 +602,10 @@ export const es: Translation = {
     billingDeclinedMessage: "La suscripción no fue activada. Puedes intentarlo de nuevo a continuación.",
     billingErrorTitle: "Error de facturación",
     billingErrorMessage: "Algo salió mal al procesar tu suscripción. Por favor, inténtalo de nuevo o contacta con el soporte.",
+    billingRedirectingSuccess: "¡Gracias! Te estamos redirigiendo a la configuración del plan…",
+    billingRedirectingDeclined: "La suscripción no fue activada. Te estamos redirigiendo a la configuración del plan…",
+    billingRedirectingError: "Algo salió mal. Te estamos redirigiendo a la configuración del plan…",
+    billingGoToPlanSettings: "Ir a la configuración del plan",
   },
 
   // Image Manager
