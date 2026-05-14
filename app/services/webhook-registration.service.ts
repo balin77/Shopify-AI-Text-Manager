@@ -155,34 +155,19 @@ export class WebhookRegistrationService {
   }
 
   /**
-   * Register APP_UNINSTALLED webhook so the app can immediately clean up
-   * state (session, scheduler) when a shop uninstalls. Without this, the
-   * old revoked session persists until the SHOP_REDACT webhook 48 h later.
-   */
-  async registerAppUninstalledWebhook(): Promise<void> {
-    const appUrl = process.env.SHOPIFY_APP_URL;
-    if (!appUrl) {
-      throw new Error("SHOPIFY_APP_URL environment variable not set");
-    }
-    try {
-      await this.registerWebhook("APP_UNINSTALLED", `${appUrl}/webhooks/app-uninstalled`);
-      logger.info(`[WebhookRegistration] Registered APP_UNINSTALLED`);
-    } catch (error: unknown) {
-      logger.error(
-        `[WebhookRegistration] Failed to register APP_UNINSTALLED:`,
-        error instanceof Error ? error.message : String(error),
-      );
-    }
-  }
-
-  /**
-   * Register ALL webhooks (products + content + subscriptions + app lifecycle)
+   * Manual re-registration of all webhooks. Used by the Settings → Setup tab
+   * and the /api/setup-webhooks debug endpoint.
+   *
+   * NOTE: All webhook subscriptions (app/uninstalled, products/*, collections/*,
+   * articles/*, app_subscriptions/update) are declared in shopify.app.toml and
+   * registered automatically by Shopify on every (re)install. This method exists
+   * only as a manual recovery / inspection tool — it should be a no-op in
+   * normal operation (existing subscriptions are detected and updated in place).
    */
   async registerAllWebhooks(): Promise<void> {
     await this.registerProductWebhooks();
     await this.registerContentWebhooks();
     await this.registerSubscriptionWebhooks();
-    await this.registerAppUninstalledWebhook();
   }
 
   /**
