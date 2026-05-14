@@ -603,6 +603,10 @@ export const en: Translation = {
     billingDeclinedMessage: "The subscription was not activated. You can try again below.",
     billingErrorTitle: "Billing error",
     billingErrorMessage: "Something went wrong while processing your subscription. Please try again or contact support.",
+    billingRedirectingSuccess: "Thank you! Redirecting you back to plan settings…",
+    billingRedirectingDeclined: "The subscription was not activated. Redirecting you back to plan settings…",
+    billingRedirectingError: "Something went wrong. Redirecting you back to plan settings…",
+    billingGoToPlanSettings: "Go to plan settings",
   },
 
   // Image Manager

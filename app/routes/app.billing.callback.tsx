@@ -16,6 +16,7 @@ import { Page, Card, BlockStack, Text, Spinner, Button } from '@shopify/polaris'
 import { authenticate } from '~/shopify.server';
 import { checkAndSyncSubscription } from '~/services/billing.server';
 import { logger } from '~/utils/logger.server';
+import { useI18n } from '~/contexts/I18nContext';
 
 type BillingStatus = 'success' | 'declined' | 'error';
 
@@ -52,6 +53,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 export default function BillingCallback() {
   const { status, plan } = useLoaderData<typeof loader>();
   const navigate = useNavigate();
+  const { t } = useI18n();
 
   const target = status === 'error'
     ? '/app/settings?billing=error'
@@ -63,16 +65,16 @@ export default function BillingCallback() {
   }, [navigate, target]);
 
   const title = status === 'success'
-    ? 'Plan aktiviert'
+    ? t.settings.billingSuccessTitle
     : status === 'declined'
-      ? 'Zahlung nicht abgeschlossen'
-      : 'Abrechnungsfehler';
+      ? t.settings.billingDeclinedTitle
+      : t.settings.billingErrorTitle;
 
   const message = status === 'success'
-    ? 'Vielen Dank! Du wirst zurück zu den Plan-Einstellungen geleitet…'
+    ? t.settings.billingRedirectingSuccess
     : status === 'declined'
-      ? 'Das Abonnement wurde nicht aktiviert. Du wirst zurück zu den Plan-Einstellungen geleitet…'
-      : 'Bei der Verarbeitung ist etwas schiefgelaufen. Du wirst zurück zu den Plan-Einstellungen geleitet…';
+      ? t.settings.billingRedirectingDeclined
+      : t.settings.billingRedirectingError;
 
   return (
     <Page>
@@ -82,7 +84,7 @@ export default function BillingCallback() {
           <Text as="p" tone="subdued">{message}</Text>
           <Spinner accessibilityLabel="Loading" size="small" />
           <Button onClick={() => navigate(target, { replace: true })}>
-            Jetzt zu den Plan-Einstellungen
+            {t.settings.billingGoToPlanSettings}
           </Button>
         </BlockStack>
       </Card>

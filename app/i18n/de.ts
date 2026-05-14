@@ -600,6 +600,10 @@ export const de = {
     billingDeclinedMessage: "Das Abonnement wurde nicht aktiviert. Du kannst es unten erneut versuchen.",
     billingErrorTitle: "Abrechnungsfehler",
     billingErrorMessage: "Bei der Verarbeitung deines Abonnements ist etwas schiefgelaufen. Bitte versuche es erneut oder kontaktiere den Support.",
+    billingRedirectingSuccess: "Vielen Dank! Du wirst zurück zu den Plan-Einstellungen geleitet…",
+    billingRedirectingDeclined: "Das Abonnement wurde nicht aktiviert. Du wirst zurück zu den Plan-Einstellungen geleitet…",
+    billingRedirectingError: "Bei der Verarbeitung ist etwas schiefgelaufen. Du wirst zurück zu den Plan-Einstellungen geleitet…",
+    billingGoToPlanSettings: "Zu den Plan-Einstellungen",
   },
 
   // Image Manager
