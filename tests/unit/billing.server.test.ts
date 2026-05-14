@@ -16,8 +16,8 @@ import {
 // ── Mocks ────────────────────────────────────────────────────────────────────
 
 // Use vi.hoisted so these refs are available inside vi.mock factories (which are hoisted)
-const { mockAISettingsUpdate, mockAISettingsFindUnique } = vi.hoisted(() => ({
-  mockAISettingsUpdate: vi.fn().mockResolvedValue({}),
+const { mockAISettingsUpsert, mockAISettingsFindUnique } = vi.hoisted(() => ({
+  mockAISettingsUpsert: vi.fn().mockResolvedValue({}),
   mockAISettingsFindUnique: vi.fn().mockResolvedValue({ shop: 'test.myshopify.com', subscriptionPlan: 'free' }),
 }));
 
@@ -25,7 +25,7 @@ vi.mock('~/db.server', () => ({
   db: {
     aISettings: {
       findUnique: mockAISettingsFindUnique,
-      update: mockAISettingsUpdate,
+      upsert: mockAISettingsUpsert,
     },
   },
 }));
@@ -134,7 +134,7 @@ describe('checkAndSyncSubscription()', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockAISettingsFindUnique.mockResolvedValue({ shop, subscriptionPlan: 'free' });
-    mockAISettingsUpdate.mockResolvedValue({});
+    mockAISettingsUpsert.mockResolvedValue({});
   });
 
   it('returns and syncs "pro" when an active Pro subscription exists', async () => {
@@ -143,10 +143,11 @@ describe('checkAndSyncSubscription()', () => {
     const plan = await checkAndSyncSubscription(admin, shop);
 
     expect(plan).toBe('pro');
-    expect(mockAISettingsUpdate).toHaveBeenCalledWith(
+    expect(mockAISettingsUpsert).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { shop },
-        data: { subscriptionPlan: 'pro' },
+        update: { subscriptionPlan: 'pro' },
+        create: { shop, subscriptionPlan: 'pro' },
       })
     );
   });
@@ -157,8 +158,8 @@ describe('checkAndSyncSubscription()', () => {
     const plan = await checkAndSyncSubscription(admin, shop);
 
     expect(plan).toBe('max');
-    expect(mockAISettingsUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({ data: { subscriptionPlan: 'max' } })
+    expect(mockAISettingsUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({ update: { subscriptionPlan: 'max' } })
     );
   });
 
@@ -168,8 +169,8 @@ describe('checkAndSyncSubscription()', () => {
     const plan = await checkAndSyncSubscription(admin, shop);
 
     expect(plan).toBe('free');
-    expect(mockAISettingsUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({ data: { subscriptionPlan: 'free' } })
+    expect(mockAISettingsUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({ update: { subscriptionPlan: 'free' } })
     );
   });
 
@@ -190,20 +191,26 @@ describe('checkAndSyncSubscription()', () => {
 
     expect(plan).toBe('free');
     // Should still attempt to sync 'free' to DB even on error
-    expect(mockAISettingsUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({ data: { subscriptionPlan: 'free' } })
+    expect(mockAISettingsUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({ update: { subscriptionPlan: 'free' } })
     );
   });
 
-  it('does not update DB when shop has no aISettings record', async () => {
+  it('upserts even when shop has no aISettings record (covers reinstall edge case)', async () => {
     mockAISettingsFindUnique.mockResolvedValue(null);
     const admin = makeMockAdmin([activeProSubscription]);
 
     const plan = await checkAndSyncSubscription(admin, shop);
 
-    // Plan is still determined correctly
     expect(plan).toBe('pro');
-    // But update is not called since findUnique returned null
-    expect(mockAISettingsUpdate).not.toHaveBeenCalled();
+    // upsert is called with both update and create so reinstalled shops
+    // without an existing AISettings row are handled correctly.
+    expect(mockAISettingsUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { shop },
+        update: { subscriptionPlan: 'pro' },
+        create: { shop, subscriptionPlan: 'pro' },
+      })
+    );
   });
 });

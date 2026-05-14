@@ -262,13 +262,6 @@ export const SyncContentQuerySchema = z.object({
 });
 
 /**
- * Schema for plan update requests in api.update-plan.tsx
- */
-export const UpdatePlanSchema = z.object({
-  plan: z.enum(['free', 'basic', 'pro', 'max']),
-});
-
-/**
  * Helper to parse and validate a JSON request body with a Zod schema.
  * Returns either the typed data or a 400 Response-compatible error object.
  */
