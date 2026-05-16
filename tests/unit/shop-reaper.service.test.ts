@@ -98,17 +98,23 @@ describe('ShopReaperService.reapInactiveShops()', () => {
     expect(result.skipped).toBe(1);
   });
 
-  it('NEVER purges a shop on a paid plan', async () => {
+  // Regression: subscriptionPlan is never reset to "free" on uninstall, so an
+  // ex-paying shop keeps "pro" forever. A plan-based skip would permanently
+  // exclude exactly the shops this R3 backstop exists for — it MUST purge.
+  it('PURGES a >30d-uninstalled "pro" shop with zero sessions (R3 regression)', async () => {
     mockFindMany.mockResolvedValueOnce([
-      { shop: 'paying.myshopify.com', uninstalledAt: new Date(Date.now() - 60 * DAY_MS) },
+      { shop: 'ex-paying.myshopify.com', uninstalledAt: new Date(Date.now() - 60 * DAY_MS) },
     ]);
     mockAiFindUnique.mockResolvedValueOnce({ subscriptionPlan: 'pro' });
 
     const result = await ShopReaperService.getInstance().triggerReap();
 
-    expect(mockRedactShopData).not.toHaveBeenCalled();
-    expect(result.purged).toEqual([]);
-    expect(result.skipped).toBe(1);
+    expect(mockRedactShopData).toHaveBeenCalledWith({
+      shop_id: 0,
+      shop_domain: 'ex-paying.myshopify.com',
+    });
+    expect(result.purged).toEqual(['ex-paying.myshopify.com']);
+    expect(result.skipped).toBe(0);
   });
 
   it('still purges when AISettings exists with the free plan', async () => {

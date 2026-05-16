@@ -18,10 +18,17 @@
  * request path (app/shopify.server.ts) and stopped in app/entry.server.tsx,
  * the same lifecycle the in-app SyncScheduler uses.
  *
- * Safety guards — a shop is purged ONLY when ALL hold:
+ * Safety guards — a shop is purged ONLY when BOTH hold:
  *   1. ShopInstallState.uninstalledAt is set and older than the retention window
  *   2. it has zero Session rows (no active install — cleared on reinstall)
- *   3. it has no paid plan (AISettings.subscriptionPlan is "free" or absent)
+ *
+ * There is deliberately NO "paid plan" guard. An uninstalled app has, by
+ * Shopify's definition, no active subscription anymore, and there is no admin
+ * token to verify billing live. AISettings.subscriptionPlan is never reset to
+ * "free" on uninstall, so a former paying shop keeps e.g. "pro" forever — a
+ * plan-based skip would make the reaper exclude exactly the ex-paying shops
+ * this backstop exists for (R3). Guard 1 (no session = not installed) plus the
+ * 30-day uninstalledAt window are sufficient protection for active shops.
  */
 
 import { db } from "../../app/db.server";
@@ -119,22 +126,12 @@ export class ShopReaperService {
         continue;
       }
 
-      // Guard 2: a paying shop. Only "free" (or no AISettings at all) is
-      // eligible — never delete data for a shop that looks like it pays.
-      const aiSettings = await db.aISettings.findUnique({
-        where: { shop },
-        select: { subscriptionPlan: true },
-      });
-      if (aiSettings && aiSettings.subscriptionPlan !== "free") {
-        skipped++;
-        loggers.queue(
-          "info",
-          `Shop reap: skipping ${shop} — paid plan "${aiSettings.subscriptionPlan}"`,
-        );
-        continue;
-      }
+      // No paid-plan guard on purpose: subscriptionPlan is never reset to
+      // "free" on uninstall, so an ex-paying shop keeps "pro" indefinitely.
+      // Skipping on that would permanently exclude exactly the shops this
+      // backstop exists for (R3). Guard 1 + the 30-day window are enough.
 
-      // All guards passed — purge via the single source of truth. shop_id is
+      // Guard passed — purge via the single source of truth. shop_id is
       // unused by the deletion logic (only shop_domain is). redactShopData
       // also deletes the ShopInstallState marker, so this won't re-process.
       try {

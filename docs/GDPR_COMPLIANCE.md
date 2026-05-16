@@ -208,10 +208,14 @@ the webhook is misconfigured), the **Shop Reaper**
   `app/entry.server.tsx`. It is **not** started from `server.js` because it
   reuses the TypeScript `redactShopData`, which the plain-`node` entrypoint
   cannot import (the standalone `.js` cleanup jobs can't either).
-- **Eligibility:** a shop is purged only when **all** hold:
+- **Eligibility:** a shop is purged only when **both** hold:
   1. `uninstalledAt` is set and older than `REAPER_RETENTION_DAYS` (default 30)
   2. zero `Session` rows (no active install)
-  3. no paid plan — `AISettings.subscriptionPlan` is `"free"` or absent
+
+  There is intentionally **no paid-plan guard**: `subscriptionPlan` is never
+  reset on uninstall, so an ex-paying shop keeps e.g. `"pro"` forever and a
+  plan-based skip would permanently exclude exactly the shops this backstop
+  exists for (R3). Guard 1 + the 30-day window protect active shops.
 - **Action:** calls the single source of truth `redactShopData` (which also
   deletes the `ShopInstallState` marker → idempotent), logging every purged
   shop.
