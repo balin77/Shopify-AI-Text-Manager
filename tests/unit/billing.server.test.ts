@@ -12,6 +12,7 @@ import {
   getPlanFromSubscription,
   getCurrentSubscription,
   createSubscription,
+  getTrialInfo,
 } from '~/services/billing.server';
 import { BILLING_PLANS } from '~/config/billing';
 import type { Session } from '@shopify/shopify-api';
@@ -440,5 +441,68 @@ describe('checkAndSyncSubscription() – dev override short-circuit', () => {
 
     expect(plan).toBe('pro'); // resolved from the real Shopify subscription
     expect(admin.graphql).toHaveBeenCalled();
+  });
+});
+
+// ── getTrialInfo ─────────────────────────────────────────────────────────────
+
+describe('getTrialInfo()', () => {
+  const now = new Date('2026-05-16T00:00:00Z');
+  const daysFromNow = (n: number) =>
+    new Date(now.getTime() + n * 86_400_000).toISOString();
+
+  it('detects an active trial (currentPeriodEnd within trialDays)', () => {
+    expect(
+      getTrialInfo({
+        subscriptionStatus: 'ACTIVE',
+        trialDays: 7,
+        currentPeriodEnd: daysFromNow(3),
+        now,
+      })
+    ).toEqual({ inTrial: true, remainingDays: 3 });
+  });
+
+  it('returns false after the trial ended (currentPeriodEnd > trialDays away)', () => {
+    expect(
+      getTrialInfo({
+        subscriptionStatus: 'ACTIVE',
+        trialDays: 7,
+        currentPeriodEnd: daysFromNow(30),
+        now,
+      })
+    ).toEqual({ inTrial: false, remainingDays: 0 });
+  });
+
+  it('returns false when there is no subscription', () => {
+    expect(
+      getTrialInfo({
+        subscriptionStatus: null,
+        trialDays: 0,
+        currentPeriodEnd: null,
+        now,
+      })
+    ).toEqual({ inTrial: false, remainingDays: 0 });
+  });
+
+  it('returns false when status is not ACTIVE', () => {
+    expect(
+      getTrialInfo({
+        subscriptionStatus: 'PENDING',
+        trialDays: 7,
+        currentPeriodEnd: daysFromNow(3),
+        now,
+      })
+    ).toEqual({ inTrial: false, remainingDays: 0 });
+  });
+
+  it('returns false when currentPeriodEnd is in the past', () => {
+    expect(
+      getTrialInfo({
+        subscriptionStatus: 'ACTIVE',
+        trialDays: 7,
+        currentPeriodEnd: daysFromNow(-1),
+        now,
+      })
+    ).toEqual({ inTrial: false, remainingDays: 0 });
   });
 });
