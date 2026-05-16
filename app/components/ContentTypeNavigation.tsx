@@ -108,6 +108,17 @@ export function ContentTypeNavigation() {
             const hasAccess = canAccessContentType(type.planContentType);
             const isDisabled = type.comingSoon || !hasAccess;
             const nextPlan = getNextPlanUpgrade();
+            const isPlanLocked = !hasAccess && !type.comingSoon;
+
+            // Build the upgrade hint up front so it can also be used as a
+            // native `title` (guaranteed browser tooltip — works even on
+            // aria-disabled elements and is not clipped by the fixed,
+            // overflow:auto nav bar that hides the Polaris Tooltip portal).
+            const nextPlanName = nextPlan ? getPlanDisplayNameUtil(nextPlan) : "";
+            const upgradeHint =
+              isPlanLocked && nextPlan
+                ? t.content.upgradeToAccessFeature.replace("{plan}", nextPlanName)
+                : undefined;
 
             const button = (
               <button
@@ -122,12 +133,16 @@ export function ContentTypeNavigation() {
                 // which prevents the Polaris <Tooltip> below from ever showing
                 // the "upgrade to {plan}" hint on plan-locked features.
                 aria-disabled={isDisabled}
+                title={upgradeHint}
                 style={{
                   padding: "0.75rem 1.5rem",
                   border: activeType === type.id ? "2px solid #008060" : "1px solid #c9cccf",
                   borderRadius: "8px",
                   background: activeType === type.id ? "#f1f8f5" : isDisabled ? "#f6f6f7" : "white",
-                  cursor: isDisabled ? "not-allowed" : "pointer",
+                  // Plan-locked buttons use `help` so the cursor invites a
+                  // hover (instead of a "stop" sign) to reveal the upgrade
+                  // hint; genuine coming-soon items stay not-allowed.
+                  cursor: isPlanLocked ? "help" : type.comingSoon ? "not-allowed" : "pointer",
                   transition: "all 0.2s",
                   display: "flex",
                   alignItems: "center",
@@ -154,12 +169,12 @@ export function ContentTypeNavigation() {
               </button>
             );
 
-            // Wrap with tooltip if locked by plan
-            if (!hasAccess && !type.comingSoon && nextPlan) {
-              const nextPlanName = getPlanDisplayNameUtil(nextPlan);
-              const tooltipText = t.content.upgradeToAccessFeature.replace('{plan}', nextPlanName);
+            // Also wrap with the styled Polaris Tooltip when locked by plan.
+            // The native `title` above is the guaranteed fallback; this adds
+            // nicer styling when the portal isn't clipped by the nav bar.
+            if (upgradeHint) {
               return (
-                <Tooltip key={type.id} content={tooltipText}>
+                <Tooltip key={type.id} content={upgradeHint}>
                   {button}
                 </Tooltip>
               );
