@@ -329,6 +329,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     }) ?? { enabled: true, firstImageBig: false, showAltTags: false, autoAltText: false };
     const { isProductionLocked } = await import("../utils/planUtils");
     const showImageManagerTab = !isProductionLocked() && (subscriptionPlan === "pro" || subscriptionPlan === "max");
+    // Future-options Settings tabs (SKU match keys, productType Translations
+    // mapping). Develop-only — hidden in production until ready to ship,
+    // same prod-gate as showImageManagerTab.
+    const showSkuTab = !isProductionLocked();
+    const showTranslationsTab = !isProductionLocked();
 
     const groupedFieldTranslations = await db.groupedFieldTranslation.findMany({
       where: { shop: session.shop },
@@ -355,6 +360,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       subscriptionPlan,
       imageManagerSettings,
       showImageManagerTab,
+      showSkuTab,
+      showTranslationsTab,
       groupedFieldTranslations,
       optionValueMemory,
       primaryShopLocale,
@@ -643,7 +650,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function SettingsPage() {
-  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, localeCount, subscriptionPlan, isTestStore, imageManagerSettings, showImageManagerTab, groupedFieldTranslations, optionValueMemory, primaryShopLocale } = useLoaderData<typeof loader>();
+  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, localeCount, subscriptionPlan, isTestStore, imageManagerSettings, showImageManagerTab, showSkuTab, showTranslationsTab, groupedFieldTranslations, optionValueMemory, primaryShopLocale } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -660,6 +667,9 @@ export default function SettingsPage() {
   const getInitialSection = (): "setup" | "ai" | "instructions" | "language" | "translations" | "sku" | "seo" | "plan" | "feedback" => {
     if (searchParams.get("billing")) return "plan";
     const tabParam = searchParams.get("tab");
+    // Don't honor deep-links to prod-gated future tabs (would render blank).
+    if (tabParam === "sku" && !showSkuTab) return "setup";
+    if (tabParam === "translations" && !showTranslationsTab) return "setup";
     if (tabParam && ["setup", "ai", "instructions", "language", "translations", "sku", "seo", "plan", "feedback"].includes(tabParam)) {
       return tabParam as "setup" | "ai" | "instructions" | "language" | "translations" | "sku" | "seo" | "plan" | "feedback";
     }
@@ -736,8 +746,8 @@ export default function SettingsPage() {
       { id: "ai", title: t.settings.aiApiAccess },
       { id: "instructions", title: t.settings.aiInstructions },
       { id: "language", title: t.settings.appLanguage },
-      { id: "translations", title: t.settings.translations },
-      { id: "sku", title: t.settings.sku },
+      ...(showTranslationsTab ? [{ id: "translations", title: t.settings.translations }] : []),
+      ...(showSkuTab ? [{ id: "sku", title: t.settings.sku }] : []),
       { id: "seo", title: t.settings.seoSettings || "SEO" },
       { id: "plan", title: t.settings.plan },
       { id: "feedback", title: t.settings.feedback },
@@ -848,6 +858,7 @@ export default function SettingsPage() {
                   {t.settings.appLanguage}
                 </Text>
               </button>
+              {showTranslationsTab && (
               <button
                 onClick={() => handleSectionChange("translations")}
                 style={{
@@ -867,6 +878,8 @@ export default function SettingsPage() {
                   {t.settings.translations}
                 </Text>
               </button>
+              )}
+              {showSkuTab && (
               <button
                 onClick={() => handleSectionChange("sku")}
                 style={{
@@ -886,6 +899,7 @@ export default function SettingsPage() {
                   {t.settings.sku}
                 </Text>
               </button>
+              )}
               <button
                 onClick={() => handleSectionChange("seo")}
                 style={{
@@ -1029,7 +1043,7 @@ export default function SettingsPage() {
               )}
 
               {/* Translations Mapping (productType) */}
-              {selectedSection === "translations" && (
+              {selectedSection === "translations" && showTranslationsTab && (
                 <SettingsTranslationsTab
                   groupedFieldTranslations={groupedFieldTranslations}
                   primaryShopLocale={primaryShopLocale}
@@ -1038,7 +1052,7 @@ export default function SettingsPage() {
               )}
 
               {/* SKU / variant match keys */}
-              {selectedSection === "sku" && (
+              {selectedSection === "sku" && showSkuTab && (
                 <SettingsSkuTab
                   optionValueMemory={optionValueMemory}
                   t={t}
