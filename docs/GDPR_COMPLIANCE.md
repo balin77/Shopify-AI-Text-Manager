@@ -345,10 +345,14 @@ Alle GDPR Requests werden geloggt für Compliance Audit Trail:
 
 **WICHTIG:** Diese Logs müssen für **mindestens 3 Jahre** aufbewahrt werden (GDPR Compliance).
 
-**TODO für Production:**
-- [ ] Erstelle separate GDPR Audit Log Tabelle
-- [ ] Implementiere automatische Archivierung
-- [ ] Backup-Strategie für Compliance Logs
+**Status (umgesetzt):**
+- [x] Separate `GdprAuditLog`-Tabelle (`prisma/schema.prisma`), befüllt via
+      `logGDPRRequest()` in `app/services/gdpr.service.ts`
+- [x] 3-Jahres-Retention automatisch durchgesetzt durch
+      `GdprAuditLogCleanupService` (`src/services/gdpr-audit-cleanup.service.ts`,
+      täglich, löscht `requestedAt < now − 3 Jahre`)
+- [x] `GdprAuditLog` wird bei `shop/redact` bewusst NICHT gelöscht
+      (Art. 5(2) Accountability)
 
 ---
 
@@ -356,26 +360,19 @@ Alle GDPR Requests werden geloggt für Compliance Audit Trail:
 
 ### Webhook Authentifizierung
 
-⚠️ **WICHTIG:** Shopify GDPR Webhooks verwenden **HMAC-Signatur** zur Authentifizierung.
+✅ **Umgesetzt:** Shopify GDPR Webhooks verwenden **HMAC-Signatur** zur
+Authentifizierung. Die Verifikation ist **vollständig implementiert** über
+Shopifys eingebautes `authenticate.webhook(request)` (`~/shopify.server`), das
+in [app/routes/webhooks.compliance.tsx](../app/routes/webhooks.compliance.tsx)
+sowie allen anderen Webhook-Handlern aufgerufen wird.
 
-**TODO für Production:**
-- [ ] HMAC Verification implementieren
-- [ ] Shopify Webhook Secret in Environment Variables
-- [ ] Request Signature validieren
+- [x] HMAC Verification implementiert (`authenticate.webhook()`)
+- [x] `SHOPIFY_API_SECRET` in Environment Variables (Signatur-Schlüssel)
+- [x] Ungültige Signatur → automatisch **401 Unauthorized**
+- [x] Lösch-/Verarbeitungsfehler → **500** (Shopify-Retry), siehe Audit R3
 
-**Beispiel HMAC Verification:**
-```typescript
-import crypto from 'crypto';
-
-function verifyShopifyWebhook(body: string, hmacHeader: string): boolean {
-  const secret = process.env.SHOPIFY_API_SECRET;
-  const hash = crypto
-    .createHmac('sha256', secret)
-    .update(body, 'utf8')
-    .digest('base64');
-  return hash === hmacHeader;
-}
-```
+Eine manuelle `crypto.createHmac`-Eigenimplementierung ist **nicht** nötig und
+**nicht** vorhanden — Shopifys SDK übernimmt Signaturprüfung und 401-Antwort.
 
 ---
 
@@ -456,9 +453,10 @@ Beim Löschen eines Products werden automatisch alle Relations gelöscht.
 - [x] GDPR Service implementiert
 - [x] Alle 3 Webhook Routes erstellt
 - [x] Logging implementiert
-- [ ] HMAC Verification implementiert
-- [ ] Separate Audit Log Tabelle erstellt
-- [ ] Lokales Testing durchgeführt
+- [x] HMAC Verification implementiert (`authenticate.webhook()`)
+- [x] Separate Audit Log Tabelle erstellt (`GdprAuditLog` + 3-Jahres-Cleanup)
+- [x] Lokales Testing durchgeführt (`tests/unit/gdpr.service.test.ts`,
+      `gdpr-audit-cleanup.service.test.ts`)
 
 ### Production
 - [ ] Webhooks in Shopify Partner Dashboard registriert
@@ -551,4 +549,4 @@ Bei Fragen zur GDPR Compliance:
 **Erstellt:** 2026-01-14
 **Letztes Update:** 2026-05-16
 **Version:** 1.1.0
-**Status:** ✅ Ready for Production (HMAC verification pending)
+**Status:** ✅ Ready for Production (HMAC verification implemented via `authenticate.webhook()`; GdprAuditLog + 3-year retention enforced)

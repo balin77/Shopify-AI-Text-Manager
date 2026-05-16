@@ -16,9 +16,9 @@
 
 | Stufe | Anzah| Kernpunkte |
 |---|---|---|
-| 🔴 BLOCKER | 2 (+2 ✅ behoben: B1, B4) | Off-Platform-Billing-Bypass `APP_ENV=development`, Session-PII unverschlüsselt trotz gegenteiliger Doku (B1 `/api/update-plan` entfernt; B4 KI-Datenfluss via BYO-Key gelöst) |
-| 🟠 RISIKO | 8 | Cross-Tenant-Lösch-Bug, fehlende Lösch-/Retention-Jobs, nicht angewandter Free-Trial, geleakte Secrets, unvollständige Privacy-Disclosure |
-| 🟡 HINWEIS | 7 | App-Bridge-Placement, toter REST-Client, Doku-Inkonsistenzen, Webhook-Registrierung |
+| 🔴 BLOCKER | 0 (✅ alle 4 behoben: B1–B4) | B1 `/api/update-plan` entfernt · B2 `APP_ENV`-Billing-Bypass entfernt · B3 Session-PII at rest verschlüsselt · B4 KI-Datenfluss via erzwungenem BYO-Key gelöst — verifiziert (Code-Review, typecheck, Unit-Tests grün) |
+| 🟠 RISIKO | 0 offen (✅ R1–R9 behoben) | R1/R2 Lösch-Bug+Vollständigkeit, R3 shop/redact-Retry+30-Tage-Reaper (inkl. Guard-Nachbesserung), R4 GdprAuditLog-3-Jahres-Job, R5 Trial angewandt, R6 hinfällig (nur Dummy-Keys), R7 REST-Client entfernt, R8 Privacy-Disclosure, **R9** Trial-Mehrfachvergabe via persistentem `trialConsumedAt`-Marker geschlossen |
+| 🟡 HINWEIS | 1 bewusst akzeptiert (✅ H1–H4, H6, H7 behoben) | H5 (Cancel-DB-Fehler-Support-Hinweis) bleibt per Entscheidung unverändert — reiner Edge-Case ohne Überberechnung |
 
 Die App ist in **Auth/Embedding/App-Bridge** und **grundsätzlicher Billing-API-Nutzung**
 solide. Die schwerwiegenden Probleme liegen in **Billing-Bypass-Routen**, **KI-Datenfluss-
@@ -52,8 +52,17 @@ Transparenz/Consent** (für eine KI-App der kritischste Bereich) und **Datenschu
   Plan-Schreibrecht entkoppeln). Niemals planänderbaren Endpoint ohne Billing-Gate
   ausliefern.
 
-### B2 — Production-Billing-Bypass über `APP_ENV=development`
+### B2 — Production-Billing-Bypass über `APP_ENV=development` ✅ BEHOBEN
 
+- **Status:** Behoben (Commit `d9b607e`). Der `directUpdate`/`APP_ENV`/`NODE_ENV`-
+  Zweig wurde aus [api.billing.create-subscription.tsx](app/routes/api.billing.create-subscription.tsx)
+  und [api.billing.cancel-subscription.tsx](app/routes/api.billing.cancel-subscription.tsx)
+  vollständig entfernt; beide Routen laufen jetzt **ausnahmslos** über die Shopify
+  Billing API (`createSubscription`/`cancelSubscription`). Die `directUpdate`-
+  Behandlung in `SettingsPlanTab.tsx` ist entfernt (Grep: kein Treffer mehr).
+  Test-/Partner-Dev-Stores erhalten Test-Charges ausschließlich über Shopifys
+  eigenes `test`-Flag in `billing.server.ts` — kein DB-Direktschreiben als Ersatz.
+  Verifiziert per Code-Review + `npx tsc --noEmit` + `billing.server.test.ts` grün.
 - **Anforderung:** wie B1 — kein Off-Platform-Billing.
 - **Dateien:** [app/routes/api.billing.create-subscription.tsx:34-41](app/routes/api.billing.create-subscription.tsx#L34-L41),
   [app/routes/api.billing.cancel-subscription.tsx:35-42](app/routes/api.billing.cancel-subscription.tsx#L35-L42),
@@ -68,8 +77,18 @@ Transparenz/Consent** (für eine KI-App der kritischste Bereich) und **Datenschu
   gaten. Für die Public App darf es **keinen** Codepfad geben, der Bezahlpläne ohne
   Billing-API gewährt.
 
-### B3 — Session-PII (Vorname/Nachname/E-Mail) wird unverschlüsselt gespeichert — Doku behauptet das Gegenteil
+### B3 — Session-PII (Vorname/Nachname/E-Mail) wird unverschlüsselt gespeichert — Doku behauptet das Gegenteil ✅ BEHOBEN
 
+- **Status:** Behoben (Commit `2a87f17`). `EncryptedPrismaSessionStorage`
+  ver-/entschlüsselt jetzt `associated_user.{first_name,last_name,email}` per
+  `encryptPII`/`decryptPII` in `storeSession`, `loadSession` und
+  `findSessionsByShop`. Idempotenz über `isEncrypted`-Guard (Altbestand/Backfill-
+  sicher); `onlineAccessInfo` wird vor Mutation deep-kopiert, sodass die
+  In-Memory-Session des Aufrufers nicht mit Ciphertext kontaminiert wird;
+  PII-Entschlüsselungsfehler werden nur geloggt und erzwingen **kein** Re-Auth
+  (anders als beim Token). Verifiziert per Code-Review + `npx tsc --noEmit` +
+  `encryption.test.ts` grün. Doku-Status in `docs/SESSION_PII_ENCRYPTION_SETUP.md`
+  ist damit zutreffend (vorher: falsch).
 - **Anforderung:** Protected-Customer-Data Level 1 — Verschlüsselung at rest & in
   transit; Datenschutz-Transparenz. (<https://shopify.dev/docs/apps/launch/protected-customer-data>)
 - **Dateien:** [app/utils/encrypted-session-storage.server.ts:24-47](app/utils/encrypted-session-storage.server.ts#L24-L47),
@@ -147,8 +166,12 @@ Transparenz/Consent** (für eine KI-App der kritischste Bereich) und **Datenschu
 
 ## 🟠 RISIKO
 
-### R1 — `redactShopData` löscht `ContentTranslation` ohne Shop-Filter (Cross-Tenant-Datenverlust + Lösch-Defekt)
+### R1 — `redactShopData` löscht `ContentTranslation` ohne Shop-Filter (Cross-Tenant-Datenverlust + Lösch-Defekt) ✅ BEHOBEN
 
+- **Status:** Behoben (Commit `ab6521e`). `ContentTranslation`-Löschung jetzt
+  `where: { shop: shop_domain }`; der mandantenübergreifende `startsWith
+  'gid://shopify/'`-Filter ist entfernt. Regressionstest „Shop A löscht nichts
+  von Shop B" in `tests/unit/gdpr.service.test.ts` grün.
 - **Anforderung:** Korrekte, mandantengetrennte Datenlöschung nach `shop/redact`
   (<https://shopify.dev/docs/apps/build/privacy-law-compliance>).
 - **Datei:** [app/services/gdpr.service.ts:220-226](app/services/gdpr.service.ts#L220-L226)
@@ -159,8 +182,14 @@ Transparenz/Consent** (für eine KI-App der kritischste Bereich) und **Datenschu
 - **Fix:** `where: { shop: shop_domain }` ergänzen (wie bei allen anderen `deleteMany`
   in dieser Funktion).
 
-### R2 — Mehrere shop-bezogene Tabellen werden bei `shop/redact` nicht gelöscht
+### R2 — Mehrere shop-bezogene Tabellen werden bei `shop/redact` nicht gelöscht ✅ BEHOBEN
 
+- **Status:** Behoben (Commit `ab6521e`). Alle zuvor fehlenden Tabellen ergänzt
+  (`WebhookRetry`, `OptionValueMemory`, `GroupedFieldTranslation`,
+  `AltTextTemplate`, `ImageManagerSettings` per `shopId`,
+  `MetaobjectDefinition/Metaobject/MetaobjectTranslation`, `ShopInstallState`).
+  „Completeness-Contract"-Kommentar + Schema-Coverage-Guard-Test, der bei neuen
+  shop-skopierten Modellen automatisch fehlschlägt. Tests grün.
 - **Anforderung:** Alle Daten des Shops innerhalb 30 Tagen / per `shop/redact` löschen.
 - **Datei:** [app/services/gdpr.service.ts:158-246](app/services/gdpr.service.ts#L158-L246)
 - **Ist-Zustand:** Nicht gelöscht: `AltTextTemplate`, `OptionValueMemory`,
@@ -171,8 +200,21 @@ Transparenz/Consent** (für eine KI-App der kritischste Bereich) und **Datenschu
   generisch über Prisma-Modell-Iteration absichern, damit künftige Modelle nicht vergessen
   werden.
 
-### R3 — Keine 30-Tage-Lösch-Fallback nach Uninstall; `shop/redact`-Fehler werden verschluckt
+### R3 — Keine 30-Tage-Lösch-Fallback nach Uninstall; `shop/redact`-Fehler werden verschluckt ✅ BEHOBEN (1 Nachbesserung offen)
 
+- **Status:** Behoben (P2, Working Tree). Compliance-Webhook gibt bei Fehler
+  **HTTP 500** zurück → Shopify-Retry; Best-Effort-Failed-Audit-Eintrag;
+  Idempotenz begründet. `ShopReaperService` (`src/services/shop-reaper.service.ts`)
+  purged Shops 30 Tage nach Uninstall via `redactShopData`; `uninstalledAt`-Marker
+  in `ShopInstallState` (neues Model + Migration), bei Reinstall in `afterAuth`
+  zurückgesetzt; Bootstrap in `shopify.server.ts`, Stop in `entry.server.tsx`.
+  `shop-reaper.service.test.ts` grün.
+- **⚠️ Offene Nachbesserung (separater Korrektur-Prompt vergeben):** Reaper
+  Guard 2 überspringt Shops mit `subscriptionPlan !== "free"`. Da der Plan bei
+  Uninstall nie auf `free` zurückgesetzt wird, werden **vormals zahlende,
+  deinstallierte Shops nie final gepurged** — genau im Fallback-Fall. Fix:
+  Guard 2 streichen (deinstallierte App hat per Definition keine aktive
+  Subscription) oder `subscriptionPlan` bei Uninstall auf `free` setzen.
 - **Anforderung:** Datenlöschung ≤ 30 Tage nach Uninstall (API Terms §6.2).
 - **Dateien:** [app/routes/webhooks.app-uninstalled.tsx:28-37](app/routes/webhooks.app-uninstalled.tsx#L28-L37),
   [app/routes/webhooks.compliance.tsx:70-79](app/routes/webhooks.compliance.tsx#L70-L79)
@@ -184,8 +226,13 @@ Transparenz/Consent** (für eine KI-App der kritischste Bereich) und **Datenschu
 - **Fix:** Bei Lösch-Fehler 500 zurückgeben (Shopify wiederholt), plus geplanter
   Reaper-Job, der Shops ohne aktive Installation/Session nach 30 Tagen final purged.
 
-### R4 — Keine durchgesetzte 3-Jahres-Retention für `GdprAuditLog`
+### R4 — Keine durchgesetzte 3-Jahres-Retention für `GdprAuditLog` ✅ BEHOBEN
 
+- **Status:** Behoben (P3). `GdprAuditLogCleanupService`
+  (`src/services/gdpr-audit-cleanup.service.ts` + `.js`-Mirror) löscht täglich
+  ausschließlich `GdprAuditLog`-Zeilen mit `requestedAt < now − 3 Jahre`.
+  Feld `requestedAt DateTime @default(now())` in `schema.prisma` verifiziert;
+  in `server.js` gebootstrappt/gestoppt. `gdpr-audit-cleanup.service.test.ts` grün.
 - **Anforderung:** Datenminimierung / Aufbewahrungsfristen (Protected Customer Data
   Level 1; DSGVO Storage Limitation).
 - **Dateien:** [app/services/gdpr.service.ts:255-257](app/services/gdpr.service.ts#L255-L257),
@@ -196,8 +243,14 @@ Transparenz/Consent** (für eine KI-App der kritischste Bereich) und **Datenschu
 - **Fix:** Geplanten Cleanup implementieren, der nur Zeilen `requestedAt < NOW() - 3 Jahre`
   entfernt; in `docs/GDPR_COMPLIANCE.md` dokumentieren.
 
-### R5 — Beworbener 7-Tage-Free-Trial wird nicht angewandt
+### R5 — Beworbener 7-Tage-Free-Trial wird nicht angewandt ✅ BEHOBEN
 
+- **Status:** Behoben (Commit `868ae7f`). `trialDays` wird als Top-Level-Argument
+  `$trialDays: Int` an `appSubscriptionCreate` übergeben
+  (`hasExistingSubscription ? 0 : planConfig.trialDays`) — kein erneuter Trial
+  beim paid→paid-Wechsel, dokumentiert. Config/Doku/UI konsistent.
+  `billing.server.test.ts` grün. **Folge-Risiko siehe R9** (Trial-Mehrfachvergabe
+  über Cancel/Re-Subscribe).
 - **Anforderung:** Wahrheitsgemäße/genaue Preisangaben (Req 4.2, häufiger
   Ablehnungsgrund — <https://shopify.dev/docs/apps/launch/app-store-review/pass-app-review>).
 - **Datei:** [app/services/billing.server.ts:122-131](app/services/billing.server.ts#L122-L131)
@@ -209,8 +262,15 @@ Transparenz/Consent** (für eine KI-App der kritischste Bereich) und **Datenschu
 - **Fix:** `trialDays: planConfig.trialDays` in das LineItem aufnehmen — oder Trial-
   Versprechen aus UI/Doku entfernen.
 
-### R6 — Geleakte/Shared Provider-Secrets im Repo, Free-Tier-Google-Key
+### R6 — Geleakte/Shared Provider-Secrets im Repo, Free-Tier-Google-Key ✅ BEHOBEN / HINFÄLLIG
 
+- **Status:** Hinfällig + behoben. Klarstellung Betreiber: Die `.env`-Werte waren
+  ausschließlich Dummy-Platzhalter, nie produktionsfähig — kein realer
+  Secret-Leak. Zusätzlich Code/Doku-seitig erledigt (P5): Provider-Keys in
+  `.env.*.template` geleert, `validate-env.js` erwartet sie nicht; kein
+  Codepfad liest noch `process.env.*_API_KEY` (BYO-Key, B4); Secret-Rotation-
+  Runbook in `docs/SECURITY_IMPROVEMENTS.md` (inkl. korrektem Hinweis,
+  `ENCRYPTION_KEY` nicht blind zu rotieren).
 - **Anforderung:** Datenschutz/Sicherheit; KI/ML-Restriction (Free-Tier-Google nutzt
   Content u. U. zur Modellverbesserung).
 - **Datei/Pfad:** `.env` (Z. ~19-22, populated `HUGGINGFACE_API_KEY`, real-aussehender
@@ -221,8 +281,12 @@ Transparenz/Consent** (für eine KI-App der kritischste Bereich) und **Datenschu
 - **Fix:** Keys rotieren/entfernen, `.env` aus Git-History bereinigen (BFG-Reports
   vorhanden — Prozess existiert bereits), Shared-Fallback streichen (vgl. B4).
 
-### R7 — `getRestClient()` im ausgelieferten Code (REST-Admin-API-Oberfläche)
+### R7 — `getRestClient()` im ausgelieferten Code (REST-Admin-API-Oberfläche) ✅ BEHOBEN
 
+- **Status:** Behoben (P5). `getRestClient()` aus `src/shopify-connector.ts`
+  entfernt; repo-weit **keine** REST-Admin-Oberfläche mehr
+  (`clients.Rest`/`admin.rest`/`restResources` = 0 Treffer). Alle Shopify-Calls
+  laufen über `/graphql.json`. typecheck grün.
 - **Anforderung:** Neue Public Apps ausschließlich GraphQL Admin API (Req 2.2.4, seit
   2025-04-01).
 - **Datei:** [src/shopify-connector.ts:112-114](src/shopify-connector.ts#L112-L114)
@@ -232,12 +296,13 @@ Transparenz/Consent** (für eine KI-App der kritischste Bereich) und **Datenschu
   `shopify-api-gateway.service.ts`, `webp-processor.service.js`).
 - **Fix:** Methode löschen, um REST-Oberfläche vollständig zu entfernen.
 
-### R8 — Unvollständige/zu vage Privacy-Policy-Offenlegung (Provider/Zweck ✅ behoben — Retention offen)
+### R8 — Unvollständige/zu vage Privacy-Policy-Offenlegung ✅ BEHOBEN
 
-> **Teil-Status:** KI-Provider-Liste (alle 6), konkreter Verarbeitungszweck,
-> „kein Training", Drittland-/EU-Transfer-Hinweis und Settings-Verlinkung sind
-> mit B4 umgesetzt. **Offen bleibt** die Retention-Aussage (durch Code zu decken,
-> siehe R3/R4).
+> **Status:** Vollständig behoben. KI-Provider-Liste (alle 6), konkreter
+> Verarbeitungszweck, „kein Training", Drittland-/EU-Transfer-Hinweis und
+> Settings-Verlinkung mit B4 umgesetzt. Die zuvor offene Retention-Aussage
+> (§5.3 in `privacy.tsx`) ist mit P2 angeglichen: `shop/redact` ~48 h +
+> garantierter 30-Tage-Reaper-Fallback — deckt sich jetzt mit dem Code.
 
 
 - **Anforderung:** Privacy Policy muss erhobene Daten, Zweck, Drittempfänger,
@@ -252,59 +317,98 @@ Transparenz/Consent** (für eine KI-App der kritischste Bereich) und **Datenschu
   Retention/Trigger (48 h `shop/redact` etc.) und ggf. Sub-Processor-Liste aufnehmen;
   aus Settings verlinken.
 
+### R9 — Trial-Mehrfachvergabe über Cancel/Re-Subscribe ✅ BEHOBEN
+
+- **Status:** Behoben & verifiziert. Persistenter Marker
+  `AISettings.trialConsumedAt` (additive Migration
+  `20260516000002`/`..._add_trial_consumed_at`, nullable, kein Backfill).
+  `isTrialEligible()` gewährt einen Trial nur, wenn **kein** aktives Abo **und**
+  `trialConsumedAt == null`; `trialDays` wird entsprechend auf 0 gesetzt.
+  `markTrialConsumed()` ist idempotent (`updateMany where trialConsumedAt:null`)
+  und wird am **Shopify-verifizierten** Punkt gesetzt (`checkAndSyncSubscription`,
+  nur bei `subscription.trialDays > 0` & ACTIVE) — nicht optimistisch am
+  Mutations-Call, nie zurückgesetzt. Damit ist free→basic[Trial]→cancel→pro
+  geschlossen; nach vollständigem `shop/redact` + echter Neuinstallation wieder
+  ein Trial möglich (bewusst). `billing.server.test.ts` 21/21 grün (inkl.
+  „trialDays=0 nach Cancel mit gesetztem Marker", paid→paid, Marking am
+  verifizierten Punkt). typecheck grün.
+- **Anforderung:** Wahrheitsgemäße/genaue Preisangaben; kein Umgehen der
+  Bezahlpflicht (Req 1.2.x / 4.2 —
+  <https://shopify.dev/docs/apps/launch/app-store-review/pass-app-review>).
+- **Datei:** [app/services/billing.server.ts:72](app/services/billing.server.ts#L72), [app/services/billing.server.ts:90](app/services/billing.server.ts#L90), [app/services/billing.server.ts:366](app/services/billing.server.ts#L366)
+- **Ist-Zustand:** Folge-Risiko aus R5-Fix. Trial-Vergabe hängt allein an
+  `hasExistingSubscription`. Die Sequenz free → basic (Trial) → cancel → pro
+  setzt `hasExistingSubscription` wieder auf `false` → der Shop erhält einen
+  **zweiten Trial**, beliebig wiederholbar = dauerhaft kostenlose Bezahlfeatures.
+- **Fix:** Persistenter Trial-Konsum-Marker pro Shop (`trialConsumedAt` auf
+  `AISettings`, additive Prisma-Migration), gesetzt am verifizierten
+  Aktivierungspunkt (Billing-Callback / `checkAndSyncSubscription`), nie
+  zurückgesetzt. `trialDays > 0` nur wenn kein `hasExistingSubscription` **und**
+  `trialConsumedAt == null`. Bewusst akzeptiert: nach vollständigem `shop/redact`
+  (AISettings gelöscht) ist nach echter Neuinstallation wieder ein Trial möglich
+  (legitimer Reset). Korrektur-Prompt vergeben; Umsetzung ausstehend.
+
 ---
 
 ## 🟡 HINWEIS
 
-### H1 — App-Bridge-Script & `shopify-api-key`-Meta nicht im `<head>`
-[app/root.tsx:38-44](app/root.tsx#L38-L44): `app-bridge.js` und
-`<meta name="shopify-api-key">` werden als `Document`-Children in `<body>` gerendert,
-nicht in `<head>`. Funktioniert praktisch, aber Shopifys dokumentierte Best Practice
-(Req 2.2.3) ist die Platzierung im `<head>`. Verschieben empfohlen.
+### H1 — App-Bridge-Script & `shopify-api-key`-Meta nicht im `<head>` ✅ BEHOBEN
+**Status:** Behoben. `Document` in [app/root.tsx](app/root.tsx) rendert
+`<meta name="shopify-api-key">` (zuerst), `app-bridge.js`-Script, preconnect und
+Font-Stylesheet jetzt im `<head>`; Reihenfolge meta→script entspricht Req 2.2.3.
+`ErrorBoundary`-Pfad ohne API-Key lässt das Meta sauber weg. typecheck grün.
 
-### H2 — `webhooks.articles.tsx` nicht in `shopify.app.toml` registriert
-[app/routes/webhooks.articles.tsx](app/routes/webhooks.articles.tsx) (ungetrackt)
-verarbeitet `articles/*`, aber [shopify.app.toml:18-39](shopify.app.toml#L18-L39)
-abonniert keine `articles/*`-Topics → Handler feuert nie, Artikel-Sync unvollständig
-(Funktionalitäts-/„fertiges Produkt"-Risiko, Req 2.1.x). Auch `menus/*` wird vom
-Handler `webhooks.menus.tsx` erwartet, ist aber nicht abonniert. Topics ergänzen oder
-Handler/Doku bereinigen.
+### H2 — `webhooks.articles.tsx` / `webhooks.menus.tsx` — Shopify bietet diese Topics gar nicht ✅ BEHOBEN
+**Status:** Behoben. Verifiziert an Shopifys `WebhookSubscriptionTopic`-Enum
+(API 2026-04): es existieren **keine** `ARTICLES_*`- oder `MENUS_*`-Topics.
+Die beiden toten Handler (`webhooks.articles.tsx`, `webhooks.menus.tsx`) wurden
+**restlos entfernt**; die README-Webhook-Tabelle korrigiert (Hinweis: Artikel/
+Menüs werden ausschließlich über den manuellen/geplanten `ContentSyncService`-
+Sync aktualisiert, nicht per Webhook). `ContentSyncService.syncArticle/syncMenu`
+bleiben unverändert (anderweitig genutzt).
 
-### H3 — DB-Default-Plan inkonsistent (`free` vs. `basic`)
-[prisma/schema.prisma](prisma/schema.prisma) setzt `subscriptionPlan` Default `"free"`,
-aber `prisma/migrations/00000000000000_baseline/migration.sql:40` und
-`docs/PLAN_SYSTEM.md` setzen `'basic'`. Eine per Roh-DB-Default angelegte Zeile gewährt
-Basic ohne Bezahlung. App-Code setzt den Wert explizit (Impact begrenzt), dennoch
-angleichen auf `'free'`.
+### H3 — DB-Default-Plan inkonsistent (`free` vs. `basic`) ✅ BEHOBEN
+**Status:** Behoben. Additive Migration
+`prisma/migrations/20260516000002_default_subscription_plan_free/` setzt
+`ALTER TABLE "AISettings" ALTER COLUMN "subscriptionPlan" SET DEFAULT 'free'` —
+DB-Default jetzt deckungsgleich mit dem Prisma-Schema; bestehende Zeilen
+unverändert (App-Code setzt den Plan ohnehin explizit aus dem
+Shopify-verifizierten Abo). `docs/PLAN_SYSTEM.md`-Migrations-Snippet korrigiert.
+typecheck grün.
 
-### H4 — Plan-Auflösung per Substring des Subscription-Namens
-[app/services/billing.server.ts:234-244](app/services/billing.server.ts#L234-L244):
-`name.includes('max'|'pro'|'basic')` ist fragil (z. B. „Promo Plan"). Robust per
-LineItem-Preis / gespeicherter `AppSubscription.id` mappen.
+### H4 — Plan-Auflösung per Substring des Subscription-Namens ✅ BEHOBEN
+**Status:** Behoben. `getPlanFromSubscription`
+([billing.server.ts](app/services/billing.server.ts)) mappt jetzt deterministisch
+gegen `BILLING_PLANS`: (1) exakter (case-insensitiver) Name-Match, (2) Fallback
+über den Recurring-Preis des Line-Items; kein Substring/`includes` mehr. Kein
+Treffer → `free` mit Warn-Log (kein Raten). `billing.server.test.ts` 21/21 grün.
 
-### H5 — „Contact support" als Fallback bei Cancel-DB-Schreibfehler
-[app/routes/api.billing.cancel-subscription.tsx:80](app/routes/api.billing.cancel-subscription.tsx#L80):
-Nur Edge-Case (Shopify-Cancel erfolgreich, DB-Write 3× fehlgeschlagen). Akzeptabel, aber
-durch automatischen Background-Reconcile ersetzen, um „Plan-Wechsel ohne Support" (Req
-1.2.3) vollständig zu erfüllen.
+### H5 — „Contact support" als Fallback bei Cancel-DB-Schreibfehler 🟡 BEWUSST AKZEPTIERT
+**Status:** Per Entscheidung unverändert belassen. Reiner Edge-Case (Shopify-
+Cancel erfolgreich, DB-Write 3× fehlgeschlagen) ohne Überberechnung des
+Merchants; `checkAndSyncSubscription` korrigiert den DB-Plan ohnehin beim
+nächsten Request selbsttätig.
+[app/routes/api.billing.cancel-subscription.tsx:80](app/routes/api.billing.cancel-subscription.tsx#L80).
 
-### H6 — `WebhookLog`-Cleanup überspringt fehlgeschlagene Zeilen
-[app/services/sync-scheduler.service.ts:233-238](app/services/sync-scheduler.service.ts#L233-L238):
-nur `processed:true` wird nach 24 h gelöscht; fehlgeschlagene/`processed:false` nie.
-Aktuell geringe Wirkung (payload = `"{}"`), aber Retention-Lücke schließen.
+### H6 — `WebhookLog`-Cleanup überspringt fehlgeschlagene Zeilen ✅ BEHOBEN
+**Status:** Behoben. `runDatabaseCleanup`
+([sync-scheduler.service.ts](app/services/sync-scheduler.service.ts)) löscht jetzt
+zusätzlich **alle** `WebhookLog`-Zeilen älter als 7 Tage — unabhängig von
+`processed` —, sodass fehlgeschlagene/unverarbeitete Zeilen nicht mehr unbegrenzt
+akkumulieren (7-Tage-Karenz für Inspektion/Retry). typecheck grün.
 
-### H7 — Doku-Abweichungen (Doku ≠ Code, vor Submission bereinigen)
-- `docs/PLAN_SYSTEM.md` Limit-Tabelle (Free 15 / Basic 100 / Pro 250 / Max ∞) ≠
-  `app/config/plans.ts` (Free 25 / Basic 75 / Pro 150 / Max 5000).
-- ✅ behoben: `docs/PLAN_SYSTEM.md` beschrieb einen MainNavigation-4-Button-Plan-Selector
-  zu `/api/update-plan` (existierte nicht) — korrigiert auf den realen Flow
-  (`SettingsPlanTab` via Billing-API, `checkAndSyncSubscription`).
-- `docs/BILLING_SYSTEM.md` unterschätzt Test-Billing-Trigger (auch `APP_ENV`,
-  `partnerDevelopment`) und bewirbt nicht implementierten Trial.
-- `docs/SESSION_PII_ENCRYPTION_SETUP.md` behauptet PII-Verschlüsselung at rest (siehe B3).
-- `docs/GDPR_COMPLIANCE.md` markiert HMAC-Verifikation als „TODO for Production" —
-  tatsächlich ist HMAC durch `authenticate.webhook()` umgesetzt; Doku veraltet, aber
-  KI/ML-Restriction & 3-Jahres-Retention werden in der Doku nicht behandelt.
+### H7 — Doku-Abweichungen (Doku ≠ Code) ✅ BEHOBEN
+- ✅ `docs/PLAN_SYSTEM.md` Limit-Tabelle auf `app/config/plans.ts` angeglichen
+  (Free 25 / Basic 75 / Pro 150 / Max 5000) inkl. korrekter Content-Types &
+  AI-Instructions-Stufen (editierbar erst ab Pro); stale „15/100/250/∞"-Werte
+  und der nicht mehr existente MainNavigation-4-Button-Selector korrigiert.
+- ✅ `docs/PLAN_SYSTEM.md` Plan-Flow bereits zuvor auf `SettingsPlanTab` via
+  Billing-API / `checkAndSyncSubscription` korrigiert.
+- ✅ `docs/GDPR_COMPLIANCE.md` „TODO HMAC/Audit-Log" entfernt — als umgesetzt
+  dokumentiert (`authenticate.webhook()` → 401, `GdprAuditLog` + 3-Jahres-
+  Cleanup, 500→Retry); Status-Footer aktualisiert.
+- ✅ `docs/BILLING_SYSTEM.md` (Trial) und `docs/SESSION_PII_ENCRYPTION_SETUP.md`
+  (PII-at-rest) wurden bereits mit R5 bzw. B3 zutreffend gemacht.
 
 ---
 

@@ -4,12 +4,15 @@
 
 Die App implementiert ein vier-stufiges Subscription-Plan-System:
 
-| Plan | Max Produkte | Produkt-Bilder | Content-Types | AI Instructions Editierbar |
-|------|--------------|----------------|---------------|----------------------------|
-| **Free** | 15 | Nur Hauptbild | Products, Collections | ❌ Nein |
-| **Basic** | 100 | Alle Bilder | Alle außer Metaobjects/Metadata | ✅ Ja |
-| **Pro** | 250 | Alle Bilder | Alle | ✅ Ja |
-| **Max** | Unbegrenzt | Alle Bilder | Alle | ✅ Ja |
+> Quelle der Wahrheit: [`app/config/plans.ts`](../app/config/plans.ts) (`PLAN_CONFIG`).
+> Diese Tabelle spiegelt exakt die dortigen Werte wider.
+
+| Plan | Max Produkte | Max Collections | Max Pages | Max Articles | Locales | Produkt-Bilder | Content-Types | AI Instructions editierbar |
+|------|-------------|-----------------|-----------|--------------|---------|----------------|---------------|----------------------------|
+| **Free** | 25 | 5 | 0 | 0 | 2 | Nur Hauptbild | Products, Collections | ❌ Nein |
+| **Basic** | 75 | 50 | 20 | 0 | 5 | Alle Bilder | Products, Collections, Pages, Policies | ❌ Nein |
+| **Pro** | 150 | 100 | 50 | 100 | 10 | Alle Bilder | Alle (inkl. Blogs/Articles, Menus, Templates, Metaobjects) | ✅ Ja |
+| **Max** | 5000 | 500 | 200 | 300 | 20 | Alle Bilder | Alle (inkl. Blogs/Articles, Menus, Templates, Metaobjects) | ✅ Ja |
 
 ## Dateien-Struktur
 
@@ -23,7 +26,7 @@ app/
 ├── contexts/
 │   └── PlanContext.tsx             # React Context für Plan-Management
 ├── components/
-│   ├── MainNavigation.tsx          # Plan-Selector (4 Buttons)
+│   ├── SettingsPlanTab.tsx         # Plan-Auswahl/Upgrade (Shopify Billing API)
 │   ├── ContentTypeNavigation.tsx   # Plan-aware Content-Type-Tabs
 │   ├── PlanBadge.tsx               # Visual Plan-Indikator
 │   └── UpgradePrompt.tsx           # Upgrade-Call-to-Action
@@ -42,12 +45,12 @@ prisma/
 
 ## Implementierte Features
 
-### 1. Plan-Selector in MainNavigation
+### 1. Plan-Auswahl im Settings-Tab
 
-- **Position**: Rechts neben den Tabs (Products, Other Content, Tasks, Settings)
-- **Design**: 4 Segmented Buttons (Free | Basic | Pro | Max)
+- **Position**: Settings → Plan-Tab (`SettingsPlanTab.tsx`). MainNavigation
+  enthält **keinen** Plan-Selector mehr.
 - **Funktion**:
-  - Aktueller Plan ist hervorgehoben (`pressed` State)
+  - Aktueller Plan ist hervorgehoben
   - Plan-Wechsel läuft ausschließlich über die Shopify Billing API:
     Upgrade via `/api/billing/create-subscription`, Downgrade via
     `/api/billing/cancel-subscription` (siehe `SettingsPlanTab`)
@@ -69,19 +72,19 @@ prisma/
 ### 3. Plan-basierte Produkt-Limits
 
 **Products Route** (`app/routes/app.products.tsx`):
-- Loader lädt max. 15/100/250/∞ Produkte je nach Plan
+- Loader lädt max. 25/75/150/5000 Produkte je nach Plan (Free/Basic/Pro/Max)
 - Im Free-Plan:
   - KEINE `ProductImage` geladen (außer featuredImage)
   - KEINE `ProductOption` geladen
   - KEINE `ProductMetafield` geladen
-- UI zeigt Limit-Information (z.B. "15/15 Products (Free Plan)")
+- UI zeigt Limit-Information (z.B. "25/25 Products (Free Plan)")
 
 ### 4. Automatische Cache-Bereinigung
 
 Beim Plan-Downgrade (z.B. Basic → Free) werden automatisch gelöscht:
 
 **Free-Plan Cleanup:**
-- Produkte über Limit 15
+- Produkte über Limit 25
 - Alle `ProductImage` Einträge
 - Alle `ProductOption` Einträge
 - Alle `ProductMetafield` Einträge
@@ -92,7 +95,7 @@ Beim Plan-Downgrade (z.B. Basic → Free) werden automatisch gelöscht:
 - Zugehörige `ContentTranslation` Einträge
 
 **Basic-Plan Cleanup:**
-- Produkte über Limit 100
+- Produkte über Limit 75
 - Restliche Daten bleiben erhalten
 
 ### 5. Plan Context API
@@ -136,7 +139,10 @@ node scripts/run-migration.js
 ### Migration-SQL:
 
 ```sql
-ALTER TABLE "AISettings" ADD COLUMN "subscriptionPlan" TEXT NOT NULL DEFAULT 'basic';
+-- Baseline legte die Spalte historisch mit DEFAULT 'basic' an. Die Folge-
+-- Migration 20260516000002_default_subscription_plan_free gleicht den
+-- DB-Default an das Prisma-Schema an (DEFAULT 'free'):
+ALTER TABLE "AISettings" ADD COLUMN "subscriptionPlan" TEXT NOT NULL DEFAULT 'free';
 COMMENT ON COLUMN "AISettings"."subscriptionPlan" IS 'Valid values: free, basic, pro, max';
 ```
 
@@ -166,7 +172,7 @@ Downgrades).
 **Zweck**: Minimale Ressourcen-Nutzung für Testing/Kleine Shops
 
 **Einschränkungen:**
-- Nur 15 Produkte gecached
+- Nur 25 Produkte gecached
 - Nur Hauptbild pro Produkt (keine `ProductImage` Table)
 - Keine Produkt-Optionen/Metafelder gecached
 - Nur Products & Collections zugänglich
@@ -180,11 +186,11 @@ Downgrades).
 **Zweck**: Standard-Nutzung für mittelgroße Shops
 
 **Features:**
-- Bis zu 100 Produkte
+- Bis zu 75 Produkte
 - Alle Bilder, Optionen, Metafelder gecached
-- Alle Content-Types (Collections, Blogs, Pages, Policies, Themes, Menus)
-- AI Instructions voll editierbar
-- Theme-Übersetzungen verfügbar
+- Content-Types: Products, Collections, Pages, Policies (KEINE Blogs/Menus/
+  Templates/Metaobjects — erst ab Pro)
+- AI Instructions read-only (erst ab Pro editierbar)
 
 **Use Case**: Standard-Shops mit normalem Content-Volumen
 
@@ -193,9 +199,10 @@ Downgrades).
 **Zweck**: Große Shops mit vielen Produkten
 
 **Features:**
-- Bis zu 250 Produkte
+- Bis zu 150 Produkte
 - Alle Features von Basic
-- Zusätzlich: Metaobjects, Shop Metadata (wenn implementiert)
+- Zusätzlich: Blogs/Articles, Menus, Templates, Metaobjects
+- AI Instructions editierbar (erster Plan mit dieser Funktion)
 
 **Use Case**: Große E-Commerce-Shops
 
@@ -204,9 +211,9 @@ Downgrades).
 **Zweck**: Enterprise/Unlimited
 
 **Features:**
-- **Unbegrenzte** Produkte
-- Alle Features aktiviert
-- Keine Limits
+- Bis zu **5000** Produkte (höchstes Limit, nicht „unbegrenzt")
+- Alle Features aktiviert (höhere Limits als Pro: 500 Collections, 200 Pages,
+  300 Articles, 20 Locales, 4 parallele WebP-Konvertierungen)
 
 **Use Case**: Very large shops, agencies
 
@@ -231,7 +238,7 @@ Downgrades).
 
 5. **UI Enhancements**
    - Plan-Limit-Warning in ProductList
-   - Progress Bar: "15/15 Products (Free Plan)"
+   - Progress Bar: "25/25 Products (Free Plan)"
    - Upgrade-Modal mit Feature-Vergleich
    - Storage-Usage-Indikator
 
@@ -241,7 +248,7 @@ Downgrades).
 
 1. Starte die App: `npm run dev`
 2. Öffne die App im Browser
-3. Wechsle den Plan über die 4 Buttons in der Navigation
+3. Wechsle den Plan über den Settings → Plan-Tab (Shopify Billing Flow)
 4. Beobachte Console-Logs für Cleanup-Stats
 5. Prüfe, dass Content-Types entsprechend deaktiviert werden
 
