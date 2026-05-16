@@ -107,13 +107,6 @@ export class ShopifyConnector {
   }
 
   /**
-   * Get the REST client for making REST API calls
-   */
-  getRestClient() {
-    return new this.shopify.clients.Rest({ session: this.session });
-  }
-
-  /**
    * Update product title
    */
   async updateProductTitle(productId: string, newTitle: string): Promise<import('./types/shopify-graphql.types').ProductUpdateResponse> {
