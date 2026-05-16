@@ -11,12 +11,29 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   });
 };
 
-function Document({ children, title = "App" }: { children: React.ReactNode; title?: string }) {
+function Document({
+  children,
+  title = "App",
+  apiKey,
+}: {
+  children: React.ReactNode;
+  title?: string;
+  apiKey?: string;
+}) {
   return (
     <html lang="en">
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width,initial-scale=1" />
+        {/* Shopify requirement 2.2.3: the api-key meta MUST precede the
+            App Bridge script, and both MUST be in <head>. */}
+        {apiKey ? <meta name="shopify-api-key" content={apiKey} /> : null}
+        <link rel="preconnect" href="https://cdn.shopify.com/" />
+        <link
+          rel="stylesheet"
+          href="https://cdn.shopify.com/static/fonts/inter/v4/styles.css"
+        />
+        <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js" />
         <title>{title}</title>
         <Meta />
         <Links />
@@ -34,14 +51,7 @@ export default function App() {
   const { apiKey } = useLoaderData<typeof loader>();
 
   return (
-    <Document>
-      <meta name="shopify-api-key" content={apiKey} />
-      <link rel="preconnect" href="https://cdn.shopify.com/" />
-      <link
-        rel="stylesheet"
-        href="https://cdn.shopify.com/static/fonts/inter/v4/styles.css"
-      />
-      <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js" />
+    <Document apiKey={apiKey}>
       <Outlet />
     </Document>
   );
