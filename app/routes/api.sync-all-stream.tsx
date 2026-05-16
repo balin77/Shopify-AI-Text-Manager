@@ -138,14 +138,20 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           total: 100
         });
 
-        // Check if products exist
+        // Gate the products+translations phase on the explicit "initial full
+        // sync completed" marker — NOT on db.product.count. A Remix prefetch of
+        // the products loader populates db.product before this runs, so a
+        // count-based gate would skip the only bulk-translation fetch forever.
         if (!force) {
-          const existingCount = await db.product.count({ where: { shop } });
-          if (existingCount > 0) {
+          const installState = await db.shopInstallState.findUnique({
+            where: { shop },
+            select: { initialSyncCompletedAt: true },
+          });
+          if (installState?.initialSyncCompletedAt) {
             sendEvent({
               type: 'progress',
               phase: 'products',
-              message: `Found ${existingCount} existing products, skipping...`,
+              message: `Initial sync already completed, skipping products...`,
               current: 100,
               total: 100
             });
@@ -504,6 +510,25 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         // ==========================================
         // COMPLETE
         // ==========================================
+        // Mark the initial full sync as completed. This is what onboarding
+        // (app._index) and the products gate above key off — set ONLY here,
+        // after a fully successful run. A client disconnect/abort throws
+        // AbortError into the outer catch and skips this block, leaving the
+        // marker unset (the safe state → onboarding re-runs). Written BEFORE
+        // the 'complete' event so the client's redirect only fires once the
+        // marker is durably persisted (closes the re-nav / multi-tab race).
+        try {
+          await db.shopInstallState.upsert({
+            where: { shop },
+            create: { shop, initialSyncCompletedAt: new Date() },
+            update: { initialSyncCompletedAt: new Date() },
+          });
+        } catch (e) {
+          logger.warn("[SYNC-STREAM] Failed to set initialSyncCompletedAt", {
+            shop, error: e instanceof Error ? e.message : String(e),
+          });
+        }
+
         sendEvent({
           type: 'complete',
           phase: 'done',

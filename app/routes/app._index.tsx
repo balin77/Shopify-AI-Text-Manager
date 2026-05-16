@@ -31,13 +31,18 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const shop = session.shop;
 
-  // Check if products already exist (= setup was already done)
-  const existingProductCount = await db.product.count({
+  // Gate onboarding on the explicit "initial full sync completed" marker —
+  // NOT on db.product.count. A Remix prefetch of the products loader upserts
+  // products into the DB before the initial sync runs, so a count-based gate
+  // would mark setup done and skip the bulk translation fetch forever.
+  // null marker (or no install-state row yet) → run onboarding (self-correcting).
+  const installState = await db.shopInstallState.findUnique({
     where: { shop },
+    select: { initialSyncCompletedAt: true },
   });
 
   return json({
-    needsSetup: existingProductCount === 0,
+    needsSetup: !installState?.initialSyncCompletedAt,
     shop,
   });
 };

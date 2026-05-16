@@ -641,9 +641,17 @@ model GdprAuditLog {
 /// "inactive since" anchor. `uninstalledAt` is set by the APP_UNINSTALLED
 /// webhook and cleared (set null) on every (re)install via afterAuth.
 model ShopInstallState {
-  shop          String    @id
-  uninstalledAt DateTime?
-  updatedAt     DateTime  @updatedAt
+  shop                   String    @id
+  uninstalledAt          DateTime?
+  // Set ONCE when the initial full sync (incl. product translations) completes
+  // successfully (api.sync-all-stream). Onboarding (app._index) and the
+  // sync-stream products gate key off THIS marker, not db.product.count — a
+  // Remix prefetch of the products loader populates db.product before the
+  // initial sync runs, so a count-based gate would skip translations forever.
+  // null = initial sync not yet completed (run onboarding). Deleted together
+  // with products on full GDPR wipe (gdpr.service) → reinstall re-onboards.
+  initialSyncCompletedAt DateTime?
+  updatedAt              DateTime  @updatedAt
 
   @@index([uninstalledAt])
 }
