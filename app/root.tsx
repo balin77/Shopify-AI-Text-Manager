@@ -4,7 +4,12 @@ import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const apiKey = process.env.SHOPIFY_API_KEY || "";
+  // The standalone /admin tool is NOT embedded in the Shopify Admin iframe.
+  // Loading App Bridge there makes it hijack navigation (auth redirect),
+  // which silently breaks form submits. Omit the api key for /admin so the
+  // shopify-api-key meta + App Bridge script are not rendered.
+  const isEmbedded = !new URL(request.url).pathname.startsWith("/admin");
+  const apiKey = isEmbedded ? process.env.SHOPIFY_API_KEY || "" : "";
 
   return json({
     apiKey,
@@ -33,7 +38,9 @@ function Document({
           rel="stylesheet"
           href="https://cdn.shopify.com/static/fonts/inter/v4/styles.css"
         />
-        <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js" />
+        {apiKey ? (
+          <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js" />
+        ) : null}
         <title>{title}</title>
         <Meta />
         <Links />
