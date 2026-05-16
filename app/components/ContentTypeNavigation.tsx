@@ -117,7 +117,11 @@ export function ContentTypeNavigation() {
                     handleNavigate(type.path);
                   }
                 }}
-                disabled={isDisabled}
+                // NOTE: We intentionally do NOT set the native `disabled`
+                // attribute. A disabled <button> does not emit hover events,
+                // which prevents the Polaris <Tooltip> below from ever showing
+                // the "upgrade to {plan}" hint on plan-locked features.
+                aria-disabled={isDisabled}
                 style={{
                   padding: "0.75rem 1.5rem",
                   border: activeType === type.id ? "2px solid #008060" : "1px solid #c9cccf",
