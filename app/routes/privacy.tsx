@@ -182,10 +182,11 @@ export default function PrivacyPolicy() {
 
         <h3 style={{ fontSize: '1.4rem', marginTop: '20px', marginBottom: '10px' }}>5.3 Data Retention</h3>
         <ul style={{ marginLeft: '20px' }}>
-          <li><strong>Active Subscriptions:</strong> Data is retained while your app is installed</li>
-          <li><strong>Cached Content:</strong> Automatically cleaned up after 30 days</li>
-          <li><strong>After Uninstall:</strong> Most data is deleted within 30 days</li>
-          <li><strong>Legal Requirements:</strong> Some data may be retained longer for compliance</li>
+          <li><strong>While Installed:</strong> Your store data is retained for as long as the app is installed</li>
+          <li><strong>On Uninstall (immediate):</strong> Authentication/session data is deleted immediately when you uninstall the app</li>
+          <li><strong>On Uninstall (remaining data):</strong> All remaining store data is deleted in response to Shopify's <code>shop/redact</code> request (typically about 48 hours after uninstall) and, as a guaranteed fallback, no later than 30 days after uninstall by an automated cleanup job</li>
+          <li><strong>Operational Data:</strong> Transient data such as background jobs, webhook logs and performance caches is pruned within days by routine maintenance</li>
+          <li><strong>Legal Requirements:</strong> GDPR compliance audit logs are retained for 3 years (Art. 5(2) GDPR accountability); other legally required data may be retained longer</li>
         </ul>
       </section>
 

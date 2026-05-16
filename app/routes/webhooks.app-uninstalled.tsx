@@ -36,5 +36,24 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     );
   }
 
+  // Stamp the uninstall time. This is the reliable "inactive since" anchor for
+  // the 30-day reaper (shop-reaper.service), which finally purges all remaining
+  // shop data if Shopify's shop/redact webhook never succeeds. Cleared again on
+  // any (re)install in shopify.server afterAuth. Own try/catch — must not fail
+  // the 200 we owe Shopify.
+  try {
+    await db.shopInstallState.upsert({
+      where: { shop },
+      create: { shop, uninstalledAt: new Date() },
+      update: { uninstalledAt: new Date() },
+    });
+    logger.info(`[APP_UNINSTALLED] Marked uninstalledAt for ${shop}`);
+  } catch (error) {
+    logger.error(
+      `[APP_UNINSTALLED] Failed to record uninstalledAt for ${shop}:`,
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+
   return new Response("OK", { status: 200 });
 };

@@ -613,3 +613,14 @@ model GdprAuditLog {
   @@index([shop, requestType])
   @@index([requestedAt])
 }
+
+/// Tracks per-shop install lifecycle so the 30-day reaper has a reliable
+/// "inactive since" anchor. `uninstalledAt` is set by the APP_UNINSTALLED
+/// webhook and cleared (set null) on every (re)install via afterAuth.
+model ShopInstallState {
+  shop          String    @id
+  uninstalledAt DateTime?
+  updatedAt     DateTime  @updatedAt
+
+  @@index([uninstalledAt])
+}

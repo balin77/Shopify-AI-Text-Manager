@@ -121,6 +121,18 @@ const shopify = shopifyApp({
       } catch (error) {
         logger.warn(`[SHOPIFY.SERVER] afterAuth subscription sync failed`, { shop: session.shop, error: error instanceof Error ? error.message : String(error) });
       }
+
+      // Clear any pending uninstall marker so a reinstall cancels the 30-day
+      // reaper for this shop (see shop-reaper.service).
+      try {
+        await prisma.shopInstallState.upsert({
+          where: { shop: session.shop },
+          create: { shop: session.shop, uninstalledAt: null },
+          update: { uninstalledAt: null },
+        });
+      } catch (error) {
+        logger.warn(`[SHOPIFY.SERVER] afterAuth uninstall-marker clear failed`, { shop: session.shop, error: error instanceof Error ? error.message : String(error) });
+      }
     },
   },
   // Note: customShopDomains removed for multi-tenant SaaS compatibility
@@ -132,6 +144,7 @@ logger.info(`[SHOPIFY.SERVER] Shopify App initialized`);
 // Import activity tracking and sync scheduler
 import { trackActivity } from "./middleware/activity-tracker.middleware";
 import { syncScheduler } from "./services/sync-scheduler.service";
+import { ShopReaperService } from "../src/services/shop-reaper.service";
 
 // Wrap authenticate.admin to add activity tracking and scheduler management
 const originalAuthenticateAdmin = shopify.authenticate.admin;
@@ -152,6 +165,12 @@ const enhancedAuthenticate = {
       logger.info('[SHOPIFY.SERVER] Starting background sync for shop: ' + session.shop);
       syncScheduler.startSyncForShop(session.shop, admin);
     }
+
+    // Bootstrap the 30-day GDPR reaper once per process (idempotent: start()
+    // no-ops if already running). Started from the authenticated request path
+    // because the standalone server.js cleanup jobs run under plain node and
+    // cannot import this TS service / redactShopData.
+    ShopReaperService.getInstance().start();
 
     return { admin, session };
   }

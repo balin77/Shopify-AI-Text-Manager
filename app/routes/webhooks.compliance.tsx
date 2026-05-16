@@ -68,12 +68,43 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         logger.warn(`[GDPR] Unhandled compliance topic: ${topic}`, { context: "GDPR" });
     }
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     logger.error("[GDPR] Error processing compliance webhook", {
       context: "GDPR",
       topic,
       shop,
-      error: error instanceof Error ? error.message : String(error),
+      error: message,
     });
+
+    // Best-effort failed audit entry. Wrapped separately so a logging failure
+    // can never mask the 500 — returning 500 is what guarantees Shopify
+    // redelivers the webhook per its retry policy (without a retry the data
+    // would be retained forever; the 30-day reaper is the final fallback).
+    const auditType =
+      topic === "CUSTOMERS_DATA_REQUEST"
+        ? "data_request"
+        : topic === "CUSTOMERS_REDACT"
+          ? "customer_redact"
+          : topic === "SHOP_REDACT"
+            ? "shop_redact"
+            : null;
+    if (auditType) {
+      try {
+        await logGDPRRequest(shop, auditType, undefined, undefined, undefined, message);
+      } catch (auditError) {
+        logger.error("[GDPR] Failed to persist failed-request audit entry", {
+          context: "GDPR",
+          topic,
+          shop,
+          error: auditError instanceof Error ? auditError.message : String(auditError),
+        });
+      }
+    }
+
+    // 500 → Shopify retries. redactShopData/redactCustomerData are
+    // deleteMany-based inside a transaction, so a redelivered request is
+    // idempotent (a second pass simply deletes 0 rows).
+    return new Response("Internal Server Error", { status: 500 });
   }
 
   return new Response("OK", { status: 200 });

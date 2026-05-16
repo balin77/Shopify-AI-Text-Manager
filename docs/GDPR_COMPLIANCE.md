@@ -171,6 +171,56 @@ Alle drei Pflicht-Webhooks von Shopify sind implementiert:
 
 ---
 
+## 🔁 Retry & Fallback Deletion (R3)
+
+### Webhook retry on failure
+
+The unified compliance handler (`app/routes/webhooks.compliance.tsx`) returns:
+
+| Outcome | HTTP status | Effect |
+|---|---|---|
+| Invalid HMAC signature | **401** | Rejected by `authenticate.webhook()` (unchanged) |
+| Handler succeeded | **200** | Shopify marks the request delivered |
+| Handler threw (e.g. transient DB error) | **500** | Shopify **retries** per its webhook retry policy |
+| Unknown/unhandled topic | **200** | No infinite retry on topics we don't handle |
+
+Previously every error was swallowed and a 200 was returned, so a single
+failed `shop/redact` meant the shop's data was retained **forever**. Now a
+failure surfaces as 500, Shopify redelivers, and a `failed` row is written to
+`GdprAuditLog` for the audit trail.
+
+**Idempotency:** `redactShopData` / `redactCustomerData` are `deleteMany`-based
+inside a `$transaction`. A redelivered request simply deletes 0 rows on the
+second pass — safe to retry any number of times.
+
+### 30-day Shop Reaper (guaranteed fallback)
+
+If `shop/redact` never succeeds (Shopify gives up after its retry window, or
+the webhook is misconfigured), the **Shop Reaper**
+(`src/services/shop-reaper.service.ts`) is the final backstop.
+
+- **Marker:** `webhooks.app-uninstalled.tsx` stamps
+  `ShopInstallState.uninstalledAt` on uninstall. `shopify.server.ts` `afterAuth`
+  clears it (`null`) on every (re)install, so reinstalling cancels deletion.
+- **Schedule:** in-app singleton, runs once on bootstrap then every
+  `REAPER_INTERVAL_MS` (default 24 h). Bootstrapped from the authenticated
+  request path (`app/shopify.server.ts`) and stopped on SIGTERM/SIGINT in
+  `app/entry.server.tsx`. It is **not** started from `server.js` because it
+  reuses the TypeScript `redactShopData`, which the plain-`node` entrypoint
+  cannot import (the standalone `.js` cleanup jobs can't either).
+- **Eligibility:** a shop is purged only when **all** hold:
+  1. `uninstalledAt` is set and older than `REAPER_RETENTION_DAYS` (default 30)
+  2. zero `Session` rows (no active install)
+  3. no paid plan — `AISettings.subscriptionPlan` is `"free"` or absent
+- **Action:** calls the single source of truth `redactShopData` (which also
+  deletes the `ShopInstallState` marker → idempotent), logging every purged
+  shop.
+
+**Env vars:** `REAPER_RETENTION_DAYS` (default `30`),
+`REAPER_INTERVAL_MS` (default `86400000`).
+
+---
+
 ## 🚀 Shopify Partner Dashboard Setup
 
 ### Schritt 1: Webhooks registrieren
@@ -339,6 +389,29 @@ function verifyShopifyWebhook(body: string, hmacHeader: string): boolean {
 - Sessions, Profile, Preferences
 - Nicht-essentielle Metadaten
 
+**Retention-Politik `GdprAuditLog` (Audit-Trail):**
+
+| Aspekt | Regel |
+| --- | --- |
+| Aufbewahrungsdauer | **3 Jahre** ab `requestedAt` (Eingang der GDPR-Anfrage) |
+| Rechtsgrundlage | Art. 5(2) DSGVO (Accountability / Rechenschaftspflicht) — wir müssen nachweisen können, dass GDPR-Anfragen fristgerecht bearbeitet wurden |
+| Obergrenze | Art. 5(1)(e) DSGVO (Storage Limitation) — nicht länger als nötig |
+| Bei `shop/redact` | **Bewusst NICHT gelöscht** (Accountability). Siehe „Completeness Contract" in `app/services/gdpr.service.ts`. |
+
+**Durchsetzung (geplanter Job):**
+
+- Service: `GdprAuditLogCleanupService`
+  - TS-Quelle: `src/services/gdpr-audit-cleanup.service.ts`
+  - Standalone-Runtime-Mirror: `gdpr-audit-cleanup.service.js` (von `server.js`
+    gestartet, im `gracefulShutdown` gestoppt)
+- Zeitplan: läuft **einmal beim Start** und danach **täglich**.
+- Lösch-Kriterium: ausschließlich `GdprAuditLog`-Zeilen mit
+  `requestedAt < now − 3 Jahre` (kein Shop-/Kunden-Scope → kann keine Zeilen
+  innerhalb der Aufbewahrungsfrist treffen). Anzahl gelöschter Zeilen wird
+  geloggt.
+- Index: `@@index([requestedAt])` in `prisma/schema.prisma` hält den Delete
+  performant.
+
 ### 2. Anonymisierung vs. Löschung
 
 Bei `customers/redact`:
@@ -456,6 +529,12 @@ Bei Fragen zur GDPR Compliance:
 
 ## 📝 Changelog
 
+### v1.1.0 (2026-05-16)
+- ✅ R3: compliance webhook returns 500 on failure → Shopify retries
+- ✅ R3: failed requests written to GdprAuditLog audit trail
+- ✅ R3: 30-day Shop Reaper fallback (`ShopInstallState.uninstalledAt` marker)
+- ✅ R8: privacy policy retention wording aligned to actual behavior
+
 ### v1.0.0 (2026-01-14)
 - ✅ Initial GDPR implementation
 - ✅ All 3 mandatory webhooks implemented
@@ -466,6 +545,6 @@ Bei Fragen zur GDPR Compliance:
 ---
 
 **Erstellt:** 2026-01-14
-**Letztes Update:** 2026-01-14
-**Version:** 1.0.0
+**Letztes Update:** 2026-05-16
+**Version:** 1.1.0
 **Status:** ✅ Ready for Production (HMAC verification pending)
