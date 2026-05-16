@@ -596,7 +596,11 @@ model AltTextTemplate {
 }
 
 /// Persistent audit trail for GDPR compliance requests.
-/// Entries must be retained for at least 3 years (Art. 5(2) GDPR accountability).
+/// Entries are retained for 3 years (Art. 5(2) GDPR accountability) and are
+/// deliberately NOT deleted on shop/redact. The 3-year upper bound is enforced
+/// by GdprAuditLogCleanupService (src/services/gdpr-audit-cleanup.service.ts;
+/// standalone mirror gdpr-audit-cleanup.service.js, started from server.js),
+/// which runs daily and deletes only rows where requestedAt < now − 3 years.
 model GdprAuditLog {
   id              String   @id @default(cuid())
   shop            String

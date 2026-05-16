@@ -212,6 +212,17 @@ const server = app.listen(port, host, async () => {
     serverLogger.error("Failed to start task cleanup service", { error: String(error) });
   }
 
+  // Start GDPR audit log cleanup service (enforces 3-year retention,
+  // GDPR Art. 5(1)(e)). Compliance-critical — intentionally NOT gated.
+  try {
+    const { GdprAuditLogCleanupService } = await import("./gdpr-audit-cleanup.service.js");
+    const gdprCleanupService = GdprAuditLogCleanupService.getInstance();
+    gdprCleanupService.start();
+    serverLogger.info("GDPR audit log cleanup service started");
+  } catch (error) {
+    serverLogger.error("Failed to start GDPR audit log cleanup service", { error: String(error) });
+  }
+
   // Start WebP conversion task processor — gated while app is under Shopify review.
   // Remove this guard once the Image Manager feature set is approved.
   if (process.env.APP_ENV !== "production") {
@@ -273,6 +284,15 @@ async function gracefulShutdown(signal) {
       serverLogger.info("Task cleanup service stopped");
     } catch (error) {
       serverLogger.error("Error stopping task cleanup service", { error: String(error) });
+    }
+
+    try {
+      // Stop GDPR audit log cleanup service
+      const { GdprAuditLogCleanupService } = await import("./gdpr-audit-cleanup.service.js");
+      GdprAuditLogCleanupService.getInstance().stop();
+      serverLogger.info("GDPR audit log cleanup service stopped");
+    } catch (error) {
+      serverLogger.error("Error stopping GDPR audit log cleanup service", { error: String(error) });
     }
 
     try {
