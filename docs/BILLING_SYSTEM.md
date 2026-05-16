@@ -46,9 +46,12 @@ Zentrale Funktionen für Abrechnung:
 ```typescript
 createSubscription(admin, session, plan, returnUrl)
 ```
-- Erstellt ein Shopify App-Abonnement
+- Erstellt ein Shopify App-Abonnement (immer über die Shopify Billing API)
 - Gibt `confirmationUrl` zurück (Redirect für Zahlungsbestätigung)
-- Im Development-Modus: `test: true` (keine echte Zahlung)
+- Setzt das Shopify-`test`-Flag automatisch, wenn `NODE_ENV=development`
+  **oder** `APP_ENV=development` **oder** der Shop ein Partner-/Dev-Store ist
+  (`shop.plan.partnerDevelopment === true`). Dann simuliert Shopify die
+  Zahlung — es gibt **keinen** DB-Direktschreib-Bypass.
 
 #### Subscription kündigen
 ```typescript
@@ -218,12 +221,23 @@ const withinLimit = isWithinProductLimit(plan, 100); // true für pro (150 max)
 
 ## Testing
 
-### Development Mode
+### Test-Billing
 
-In `NODE_ENV=development`:
-- Alle Subscriptions haben `test: true`
-- Shopify simuliert Zahlungen (keine echte Belastung)
-- Subscriptions können jederzeit erstellt/gelöscht werden
+Jeder Plan-Wechsel — auch in Dev/Test — läuft über die Shopify Billing API
+(`appSubscriptionCreate` / `appSubscriptionCancel`). Es gibt **keinen**
+DB-Direktschreib-Bypass.
+
+Test-Charges (Shopify simuliert die Zahlung, keine echte Belastung) entstehen
+automatisch über das `test`-Flag der Billing-Mutation, sobald **eine** der
+folgenden Bedingungen zutrifft (siehe `useTestBilling` in
+[`billing.server.ts`](../app/services/billing.server.ts)):
+
+- `NODE_ENV=development`
+- `APP_ENV=development`
+- Shop ist ein Partner-/Dev-Store (`shop.plan.partnerDevelopment === true`)
+
+Solche Subscriptions können jederzeit erstellt/gekündigt werden, ohne dass
+echte Beträge belastet werden.
 
 ### Test-Szenarien
 
@@ -285,12 +299,15 @@ Keine zusätzlichen Variablen erforderlich! Billing nutzt:
 ### Railway Deployment
 
 1. **Development Environment**:
-   - `NODE_ENV=development`
-   - Test-Subscriptions aktiv
+   - `NODE_ENV=development` oder `APP_ENV=development`
+   - Subscriptions laufen über die Billing API mit `test: true`
+     (Shopify simuliert die Zahlung, keine echte Belastung)
 
 2. **Production Environment**:
-   - `NODE_ENV=production`
-   - Echte Zahlungen
+   - `NODE_ENV=production`, `APP_ENV=production`
+   - Echte Zahlungen — Ausnahme: Partner-/Dev-Stores
+     (`shop.plan.partnerDevelopment`) erhalten weiterhin automatisch
+     Test-Charges über das Shopify-`test`-Flag
 
 ## Troubleshooting
 
@@ -348,7 +365,7 @@ Um Preise zu ändern:
 
 - ✅ Webhook-Verifizierung via Shopify HMAC
 - ✅ Admin-Authentication für alle Billing APIs
-- ✅ Test-Mode in Development
+- ✅ Test-Mode ausschließlich über das Shopify-`test`-Flag (kein DB-Direktschreib-Bypass)
 - ✅ Plan-Validation vor Subscription-Erstellung
 - ✅ Subscription-Status Checks
 

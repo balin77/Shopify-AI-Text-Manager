@@ -286,9 +286,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // Get subscription plan
     const subscriptionPlan = settings.subscriptionPlan || "free";
 
-    // Check if this is a development environment (custom app mode - all plans freely selectable)
-    const isDevMode = process.env.NODE_ENV === 'development' || process.env.APP_ENV === 'development';
-
     // Check if this is a development/partner test store
     let isTestStore = false;
     try {
@@ -355,7 +352,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       themeTranslationCount,
       localeCount,
       isTestStore,
-      isDevMode,
       subscriptionPlan,
       imageManagerSettings,
       showImageManagerTab,
@@ -647,7 +643,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function SettingsPage() {
-  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, localeCount, subscriptionPlan, isTestStore, isDevMode, imageManagerSettings, showImageManagerTab, groupedFieldTranslations, optionValueMemory, primaryShopLocale } = useLoaderData<typeof loader>();
+  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, localeCount, subscriptionPlan, isTestStore, imageManagerSettings, showImageManagerTab, groupedFieldTranslations, optionValueMemory, primaryShopLocale } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1094,7 +1090,6 @@ export default function SettingsPage() {
                   <SettingsPlanTab
                     subscriptionPlan={subscriptionPlan}
                     isTestStore={isTestStore}
-                    isDevMode={isDevMode}
                     productCount={productCount}
                     localeCount={localeCount}
                     collectionCount={collectionCount}

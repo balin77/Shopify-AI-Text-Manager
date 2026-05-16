@@ -1,14 +1,16 @@
 /**
  * API Route: Create Billing Subscription
  *
- * Creates a new subscription for the specified plan
- * In development mode, directly updates the database without Shopify Billing API
+ * Creates a new subscription for the specified plan.
+ * Always goes through the Shopify Billing API (appSubscriptionCreate).
+ * Development/partner test stores automatically get test charges via the
+ * Shopify `test` flag (see billing.server.ts), never a DB-direct write.
  */
 
 import type { ActionFunctionArgs } from '@remix-run/node';
 import { json } from '@remix-run/node';
 import { authenticate } from '~/shopify.server';
-import { createSubscription, getCurrentSubscription, syncSubscriptionToDatabase } from '~/services/billing.server';
+import { createSubscription, getCurrentSubscription } from '~/services/billing.server';
 import type { BillingPlan } from '~/config/billing';
 import { isPaidPlan } from '~/config/billing';
 import { logger } from '~/utils/logger.server';
@@ -26,18 +28,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     if (!plan || !isPaidPlan(plan)) {
       return json({ success: false, error: 'Invalid plan specified' }, { status: 400 });
-    }
-
-    // In development mode, directly update the database without Shopify Billing API
-    // This is useful for Custom Apps which cannot use the Billing API
-    // APP_ENV=development allows this behavior even when NODE_ENV=production (e.g. deployed custom apps)
-    if (process.env.NODE_ENV === 'development' || process.env.APP_ENV === 'development') {
-      await syncSubscriptionToDatabase(session.shop, plan);
-      return json({
-        success: true,
-        directUpdate: true,
-        message: `Plan changed to ${plan} (development mode)`,
-      });
     }
 
     // Check for an existing paid subscription to enable atomic replacement (paid→paid switch).

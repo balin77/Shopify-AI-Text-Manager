@@ -24,7 +24,6 @@ import { SettingsUsageLimitsTab } from "./SettingsUsageLimitsTab";
 interface SettingsPlanTabProps {
   subscriptionPlan: string;
   isTestStore: boolean;
-  isDevMode: boolean;
   productCount: number;
   localeCount: number;
   collectionCount: number;
@@ -37,7 +36,6 @@ interface SettingsPlanTabProps {
 export function SettingsPlanTab({
   subscriptionPlan,
   isTestStore,
-  isDevMode,
   productCount,
   localeCount,
   collectionCount,
@@ -83,13 +81,6 @@ export function SettingsPlanTab({
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Failed to create subscription");
 
-      // In development mode, revalidate loaders to refresh plan data
-      if (data.directUpdate) {
-        revalidator.revalidate();
-        setPlanLoading(null);
-        return;
-      }
-
       if (data.confirmationUrl) {
         // Must open in top-level window — Shopify billing blocks iframes
         window.open(data.confirmationUrl, "_top");
@@ -134,16 +125,7 @@ export function SettingsPlanTab({
         </Banner>
       )}
 
-      {isDevMode && (
-        <Banner tone="info" title="Development Mode">
-          <p>
-            {t.settings?.devModeBanner ||
-              "Development-Modus: Alle Pläne sind frei wählbar. Planwechsel werden direkt in der Datenbank gespeichert, ohne die Shopify Billing API zu verwenden."}
-          </p>
-        </Banner>
-      )}
-
-      {isTestStore && !isDevMode && (
+      {isTestStore && (
         <Banner tone="info" title="Test Store">
           <p>
             This is a development/test store. All plan subscriptions are free and will not be

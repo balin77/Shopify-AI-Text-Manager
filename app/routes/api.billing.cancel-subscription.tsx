@@ -29,18 +29,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 
   try {
-    // In development mode, directly update the database without Shopify Billing API
-    // This is useful for Custom Apps which cannot use the Billing API
-    // APP_ENV=development allows this behavior even when NODE_ENV=production (e.g. deployed custom apps)
-    if (process.env.NODE_ENV === 'development' || process.env.APP_ENV === 'development') {
-      await syncSubscriptionToDatabase(session.shop, 'free');
-      return json({
-        success: true,
-        directUpdate: true,
-        message: 'Plan changed to free (development mode)',
-      });
-    }
-
     // Get current subscription
     const subscription = await getCurrentSubscription(admin);
 
