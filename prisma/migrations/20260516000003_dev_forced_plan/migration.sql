@@ -1,0 +1,12 @@
+-- Dev/test affordance: nullable forced-plan column.
+--
+-- Read ONLY by the custom-app build. resolveDevPlanMode()
+-- (app/services/dev-plan-override.server.ts) gates every read/write behind the
+-- dev app's client_id (SHOPIFY_API_KEY) AND APP_ENV !== 'production'. The
+-- public App-Store build carries a different, Shopify-enforced client_id, so
+-- this column is provably never consulted there (closes the B2-class weakness
+-- that APP_ENV alone is not config-enforced in production).
+--
+-- Additive, nullable, no default — zero behavioural impact on existing rows or
+-- the public production build.
+ALTER TABLE "AISettings" ADD COLUMN "devForcedPlan" TEXT;

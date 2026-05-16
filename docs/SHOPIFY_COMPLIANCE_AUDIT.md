@@ -77,6 +77,38 @@ Transparenz/Consent** (für eine KI-App der kritischste Bereich) und **Datenschu
   gaten. Für die Public App darf es **keinen** Codepfad geben, der Bezahlpläne ohne
   Billing-API gewährt.
 
+### B2-Folge — Dev-Plan-Override / Test-Billing (kein Regress) ✅ KONFORM
+
+- **Kontext:** Eine Custom-App-Distribution hat **per Shopify-Design keine Billing-API**
+  (offizielle [App-Distribution-Capabilities-Tabelle](https://shopify.dev/docs/apps/launch/distribution):
+  *„Custom distribution … Can't use the Billing API to charge merchants"*). Für den
+  Dev/Custom-Build ist eine Plan-Entkopplung von Shopify daher die **einzig mögliche**
+  Testlösung — es gibt dort schlicht keinen Umsatzpfad, der umgangen werden könnte.
+- **Implementierung:** [app/services/dev-plan-override.server.ts](app/services/dev-plan-override.server.ts)
+  mit zwei sich gegenseitig ausschließenden Modi:
+  - **`override`** (Custom-Build): Plan aus `AISettings.devForcedPlan`,
+    Kurzschluss in [checkAndSyncSubscription](app/services/billing.server.ts) +
+    Routen-Kurzschluss in `api.billing.create-subscription`/`cancel-subscription`.
+  - **`test-billing`** (Public-Build, nur allow-gelistete eigene Shops): der
+    **echte** Shopify-Flow bleibt **unverändert**, nur das `appSubscriptionCreate`-
+    `test`-Flag kippt auf `true`. Shopify bleibt Source-of-Truth — **kein**
+    Off-Platform-Schreiben (anders als der entfernte B1/B2-`directUpdate`).
+- **Warum dies B2 NICHT wieder öffnet:** B2 bemängelte, dass `APP_ENV` in Prod
+  **nicht** Dockerfile/toml-erzwungen ist. `override` hängt daher **nicht** an
+  `APP_ENV` allein, sondern primär an der **Shopify-erzwungenen App-Identität**:
+  `SHOPIFY_API_KEY === '433cf493223c0c6b95bdb91b0de5961a'` (Allowlist *einer*
+  bekannten Dev-client_id; jede unbekannte/Public-ID ⇒ Modus aus). Shopify
+  erzwingt die client_id im OAuth — das Public-App-Binary kann die Dev-ID
+  **strukturell nie** tragen, unabhängig von jeder Railway-Env-Fehlkonfiguration.
+  `APP_ENV !== 'production'` bleibt als zweiter, unabhängiger Riegel. Damit ist
+  `override` im App-Store-Binary **beweisbar toter Code** — strikt stärker als
+  der ursprüngliche B2-Fix.
+- **DB:** additive, nullable Spalte `AISettings.devForcedPlan` (Migration
+  `20260516000003_dev_forced_plan`) — im Public-Build nie gelesen.
+- **Verifiziert:** Unit-Tests (`dev-plan-override.server.test.ts`) fixieren u. a.
+  „Public-client_id ⇒ Modus `null` selbst mit gesetzter Spalte/Allowlist"; jede
+  Aktivierung wird per `logger.warn('[DevPlanOverride] …')` protokolliert.
+
 ### B3 — Session-PII (Vorname/Nachname/E-Mail) wird unverschlüsselt gespeichert — Doku behauptet das Gegenteil ✅ BEHOBEN
 
 - **Status:** Behoben (Commit `2a87f17`). `EncryptedPrismaSessionStorage`

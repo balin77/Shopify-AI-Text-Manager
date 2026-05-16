@@ -56,8 +56,15 @@ createSubscription(admin, session, plan, returnUrl)
 - Gibt `confirmationUrl` zurück (Redirect für Zahlungsbestätigung)
 - Setzt das Shopify-`test`-Flag automatisch, wenn `NODE_ENV=development`
   **oder** `APP_ENV=development` **oder** der Shop ein Partner-/Dev-Store ist
-  (`shop.plan.partnerDevelopment === true`). Dann simuliert Shopify die
-  Zahlung — es gibt **keinen** DB-Direktschreib-Bypass.
+  (`shop.plan.partnerDevelopment === true`) **oder** der Shop in
+  `DEV_PLAN_OVERRIDE_SHOPS` allow-gelistet ist (Modus `test-billing`). Dann
+  simuliert Shopify die Zahlung — es gibt **keinen** DB-Direktschreib-Bypass.
+- **Dev/Custom-Build (Modus `override`):** Die Custom-App-Distribution hat
+  **keine** Billing-API. `checkAndSyncSubscription` und die Billing-Routen
+  schließen daher kurz auf `AISettings.devForcedPlan` (Plan-Wechsel frei über
+  die UI, persistent). Hart gegated über die Dev-client_id +
+  `APP_ENV !== 'production'` → im Public-Build beweisbar toter Code. Details:
+  [docs/SHOPIFY_COMPLIANCE_AUDIT.md](SHOPIFY_COMPLIANCE_AUDIT.md) §„B2-Folge".
 
 #### Subscription kündigen
 ```typescript

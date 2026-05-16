@@ -10,6 +10,7 @@ import { BILLING_PLANS, type BillingPlan, isPaidPlan } from '~/config/billing';
 import { db as prisma } from '~/db.server';
 import { logger } from '~/utils/logger.server';
 import { cleanupCacheForPlan } from '~/utils/planCacheCleanup';
+import { resolveDevPlanMode, getDevForcedPlan } from '~/services/dev-plan-override.server';
 
 interface ShopifyAdminClient {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -110,12 +111,15 @@ export async function createSubscription(
   const planConfig = BILLING_PLANS[plan];
 
   // Use test billing for dev environments OR development/partner test stores
+  // OR an explicitly allow-listed developer-owned shop on the public app
+  // ('test-billing' mode — real Shopify flow, only the `test` flag flips).
   const isDevEnv = process.env.NODE_ENV === 'development' || process.env.APP_ENV === 'development';
   const isTestStore = await isDevStore(admin);
-  const useTestBilling = isDevEnv || isTestStore;
+  const isTestBillingShop = resolveDevPlanMode(session.shop) === 'test-billing';
+  const useTestBilling = isDevEnv || isTestStore || isTestBillingShop;
 
   if (useTestBilling) {
-    logger.info('[Billing] Using test billing mode', { isDevEnv, isTestStore, shop: session.shop });
+    logger.info('[Billing] Using test billing mode', { isDevEnv, isTestStore, isTestBillingShop, shop: session.shop });
   }
 
   // Trial only for a shop's FIRST-EVER subscription. isTrialEligible() combines
@@ -370,6 +374,18 @@ async function reconcileCacheForVerifiedPlan(shop: string, previousPlan: Billing
 export async function checkAndSyncSubscription(admin: ShopifyAdminClient, shop: string): Promise<BillingPlan> {
   const existing = await prisma.aISettings.findUnique({ where: { shop } });
   const previousPlan = (existing?.subscriptionPlan as BillingPlan | undefined) ?? 'free';
+
+  // Custom-app build only (override mode): the plan is decoupled from Shopify
+  // because the custom-app distribution has no Billing API. getDevForcedPlan()
+  // is itself hard-gated (dev client_id + APP_ENV !== 'production'), so this
+  // branch is provably dead in the public App-Store build. Cache is reconciled
+  // exactly like a real plan change so downgrade edge cases are testable.
+  const forced = await getDevForcedPlan(shop);
+  if (forced) {
+    await syncSubscriptionToDatabase(shop, forced);
+    await reconcileCacheForVerifiedPlan(shop, previousPlan, forced);
+    return forced;
+  }
 
   try {
     const subscription = await getCurrentSubscription(admin);

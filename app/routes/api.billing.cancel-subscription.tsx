@@ -12,6 +12,7 @@ import type { ActionFunctionArgs } from '@remix-run/node';
 import { json } from '@remix-run/node';
 import { authenticate } from '~/shopify.server';
 import { cancelSubscription, getCurrentSubscription, syncSubscriptionToDatabase } from '~/services/billing.server';
+import { resolveDevPlanMode, setDevForcedPlan } from '~/services/dev-plan-override.server';
 import { logger } from '~/utils/logger.server';
 
 const MAX_DB_RETRIES = 3;
@@ -29,6 +30,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 
   try {
+    // Custom-app build only: no Billing API exists to cancel. Force the plan
+    // back to 'free'; checkAndSyncSubscription then reconciles the cache like a
+    // real downgrade. Hard-gated via resolveDevPlanMode() — dead in the public
+    // App-Store build.
+    if (resolveDevPlanMode(session.shop) === 'override') {
+      await setDevForcedPlan(session.shop, 'free');
+      logger.warn('[Billing] Override mode — downgraded to free without Shopify (custom-app build)', {
+        shop: session.shop,
+      });
+      return json({ success: true, message: 'Subscription cancelled (dev override)' });
+    }
+
     // Get current subscription
     const subscription = await getCurrentSubscription(admin);
 

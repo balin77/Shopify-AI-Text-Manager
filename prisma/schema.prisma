@@ -42,6 +42,15 @@ model AISettings {
   appLanguage       String  @default("de")
   subscriptionPlan  String  @default("free") // "free", "basic", "pro", "max"
 
+  // Dev/test affordance — read ONLY by the custom-app build. The custom-app
+  // Shopify distribution has NO Billing API at all, so on that build the plan
+  // is decoupled from Shopify and read from here instead. resolveDevPlanMode()
+  // (app/services/dev-plan-override.server.ts) gates every read/write behind
+  // the dev app's client_id (SHOPIFY_API_KEY) AND APP_ENV !== 'production', so
+  // this column is provably never consulted by the public App-Store build.
+  // null = no override (normal Shopify-derived plan).
+  devForcedPlan     String? // "free" | "basic" | "pro" | "max" | null
+
   // Persistent per-shop trial-consumption marker. Set ONCE when a trial-bearing
   // subscription is verified ACTIVE (never optimistically at the mutation call,
   // never reset — not even on cancel). Bewusste Entscheidung: das Feld liegt auf

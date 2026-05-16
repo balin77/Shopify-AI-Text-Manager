@@ -6,7 +6,7 @@
  * ✅ Fast (<50ms per test)
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   checkAndSyncSubscription,
   getPlanFromSubscription,
@@ -380,5 +380,65 @@ describe('checkAndSyncSubscription() – trialConsumedAt marking', () => {
     expect(plan).toBe('free');
     // Marker is never reset on the free/cancel path.
     expect(mockAISettingsUpdateMany).not.toHaveBeenCalled();
+  });
+});
+
+// ── dev-plan-override short-circuit (custom-app build) ───────────────────────
+
+describe('checkAndSyncSubscription() – dev override short-circuit', () => {
+  const shop = 'test.myshopify.com';
+  const DEV_APP_CLIENT_ID = '433cf493223c0c6b95bdb91b0de5961a';
+  let savedKey: string | undefined;
+  let savedEnv: string | undefined;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    savedKey = process.env.SHOPIFY_API_KEY;
+    savedEnv = process.env.APP_ENV;
+    delete process.env.APP_ENV;
+    mockAISettingsUpsert.mockResolvedValue({});
+    mockAISettingsUpdateMany.mockResolvedValue({ count: 1 });
+  });
+
+  afterEach(() => {
+    if (savedKey === undefined) delete process.env.SHOPIFY_API_KEY;
+    else process.env.SHOPIFY_API_KEY = savedKey;
+    if (savedEnv === undefined) delete process.env.APP_ENV;
+    else process.env.APP_ENV = savedEnv;
+  });
+
+  it('returns the forced plan without ever calling Shopify (admin.graphql)', async () => {
+    process.env.SHOPIFY_API_KEY = DEV_APP_CLIENT_ID;
+    mockAISettingsFindUnique.mockResolvedValue({
+      shop,
+      subscriptionPlan: 'free',
+      trialConsumedAt: null,
+      devForcedPlan: 'max',
+    });
+    const admin = makeMockAdmin([activeProSubscription]);
+
+    const plan = await checkAndSyncSubscription(admin, shop);
+
+    expect(plan).toBe('max');
+    expect(admin.graphql).not.toHaveBeenCalled();
+    expect(mockAISettingsUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({ update: { subscriptionPlan: 'max' } }),
+    );
+  });
+
+  it('does NOT short-circuit when client_id is not the dev app id', async () => {
+    process.env.SHOPIFY_API_KEY = '9e5abc8c0e9e03ed24d4a2a2b1174c88'; // public app
+    mockAISettingsFindUnique.mockResolvedValue({
+      shop,
+      subscriptionPlan: 'free',
+      trialConsumedAt: null,
+      devForcedPlan: 'max',
+    });
+    const admin = makeMockAdmin([activeProSubscription]);
+
+    const plan = await checkAndSyncSubscription(admin, shop);
+
+    expect(plan).toBe('pro'); // resolved from the real Shopify subscription
+    expect(admin.graphql).toHaveBeenCalled();
   });
 });
