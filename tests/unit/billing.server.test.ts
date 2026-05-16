@@ -11,7 +11,10 @@ import {
   checkAndSyncSubscription,
   getPlanFromSubscription,
   getCurrentSubscription,
+  createSubscription,
 } from '~/services/billing.server';
+import { BILLING_PLANS } from '~/config/billing';
+import type { Session } from '@shopify/shopify-api';
 
 // ── Mocks ────────────────────────────────────────────────────────────────────
 
@@ -211,6 +214,85 @@ describe('checkAndSyncSubscription()', () => {
         update: { subscriptionPlan: 'pro' },
         create: { shop, subscriptionPlan: 'pro' },
       })
+    );
+  });
+});
+
+// ── createSubscription ───────────────────────────────────────────────────────
+
+describe('createSubscription()', () => {
+  const session = { shop: 'test.myshopify.com' } as Session;
+  const returnUrl = 'https://example.com/app/billing/callback';
+
+  /**
+   * Mock admin that routes by query content:
+   * - the isDevStore() shop.plan query → non-dev store
+   * - the appSubscriptionCreate mutation → valid payload
+   * Captures the variables passed to the mutation for assertions.
+   */
+  function makeBillingAdmin(userErrors: Array<{ field?: string; message: string }> = []) {
+    const graphql = vi.fn(async (query: string, options?: { variables?: Record<string, unknown> }) => {
+      if (query.includes('partnerDevelopment')) {
+        return { json: async () => ({ data: { shop: { plan: { partnerDevelopment: false } } } }) };
+      }
+      if (query.includes('appSubscriptionCreate')) {
+        return {
+          json: async () => ({
+            data: {
+              appSubscriptionCreate: {
+                appSubscription: {
+                  id: 'gid://shopify/AppSubscription/99',
+                  name: options?.variables?.name,
+                  test: false,
+                  status: 'PENDING',
+                  currentPeriodEnd: null,
+                  trialDays: options?.variables?.trialDays,
+                },
+                confirmationUrl: 'https://shopify.example/confirm',
+                userErrors,
+              },
+            },
+          }),
+        };
+      }
+      throw new Error(`Unexpected query: ${query.slice(0, 40)}`);
+    });
+    return { graphql };
+  }
+
+  function lastMutationVariables(admin: { graphql: ReturnType<typeof vi.fn> }) {
+    const call = admin.graphql.mock.calls.find(([q]) => String(q).includes('appSubscriptionCreate'));
+    return (call?.[1] as { variables?: Record<string, unknown> } | undefined)?.variables;
+  }
+
+  it('sends trialDays from the plan config for a new subscription', async () => {
+    const admin = makeBillingAdmin();
+
+    const result = await createSubscription(admin, session, 'pro', returnUrl);
+
+    const vars = lastMutationVariables(admin);
+    expect(vars?.trialDays).toBe(BILLING_PLANS.pro.trialDays);
+    expect(vars?.trialDays).toBe(7);
+    expect(vars?.replacementBehavior).toBeNull();
+    expect(result.confirmationUrl).toBe('https://shopify.example/confirm');
+    expect(result.subscription.trialDays).toBe(7);
+  });
+
+  it('sends trialDays=0 and APPLY_IMMEDIATELY on a paid→paid switch', async () => {
+    const admin = makeBillingAdmin();
+
+    await createSubscription(admin, session, 'max', returnUrl, true);
+
+    const vars = lastMutationVariables(admin);
+    expect(vars?.trialDays).toBe(0);
+    expect(vars?.replacementBehavior).toBe('APPLY_IMMEDIATELY');
+  });
+
+  it('throws when the mutation returns userErrors', async () => {
+    const admin = makeBillingAdmin([{ field: 'lineItems', message: 'Invalid price' }]);
+
+    await expect(createSubscription(admin, session, 'basic', returnUrl)).rejects.toThrow(
+      /Failed to create subscription: Invalid price/
     );
   });
 });

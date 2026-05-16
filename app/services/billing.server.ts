@@ -80,12 +80,21 @@ export async function createSubscription(
     logger.info('[Billing] Using test billing mode', { isDevEnv, isTestStore, shop: session.shop });
   }
 
+  // Trial only for NEW subscriptions. On a paid→paid switch
+  // (hasExistingSubscription, APPLY_IMMEDIATELY) we deliberately grant NO new
+  // trial: this prevents repeated trial-farming via plan-hopping and matches
+  // the advertised UI/i18n statement "New subscriptions include a 7-day free
+  // trial". `trialDays` is a top-level argument of appSubscriptionCreate
+  // (Admin API 2025-10), not a lineItems/plan field.
+  const trialDays = hasExistingSubscription ? 0 : (planConfig.trialDays ?? 0);
+
   const response = await admin.graphql(
     `#graphql
       mutation AppSubscriptionCreate(
         $name: String!
         $returnUrl: URL!
         $test: Boolean
+        $trialDays: Int
         $lineItems: [AppSubscriptionLineItemInput!]!
         $replacementBehavior: AppSubscriptionReplacementBehavior
       ) {
@@ -93,6 +102,7 @@ export async function createSubscription(
           name: $name
           returnUrl: $returnUrl
           test: $test
+          trialDays: $trialDays
           lineItems: $lineItems
           replacementBehavior: $replacementBehavior
         ) {
@@ -117,8 +127,10 @@ export async function createSubscription(
         name: planConfig.name,
         returnUrl,
         test: useTestBilling,
+        trialDays,
         // Replace existing subscription immediately (prorated) for paid→paid switches.
         // Merchant still confirms via confirmationUrl; if they cancel, nothing changes.
+        // No fresh trial is granted on this path (trialDays === 0 above) by design.
         replacementBehavior: hasExistingSubscription ? 'APPLY_IMMEDIATELY' : null,
         lineItems: [
           {

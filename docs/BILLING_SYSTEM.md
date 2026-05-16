@@ -9,7 +9,9 @@ Das Billing-System integriert Shopify's native App-Abrechnung mit 4 Plänen:
 - **Pro**: €19.90/Monat
 - **Max**: €49.90/Monat
 
-Alle bezahlten Pläne haben eine **7-tägige kostenlose Testphase**.
+Alle bezahlten Pläne haben eine **7-tägige kostenlose Testphase** für **neue
+Subscriptions**. Bei einem Wechsel zwischen zwei bezahlten Plänen (paid→paid,
+`APPLY_IMMEDIATELY`) wird der Trial bewusst **nicht erneut** gewährt.
 
 ## Architektur
 
@@ -47,6 +49,10 @@ Zentrale Funktionen für Abrechnung:
 createSubscription(admin, session, plan, returnUrl)
 ```
 - Erstellt ein Shopify App-Abonnement (immer über die Shopify Billing API)
+- Setzt `trialDays` aus der Plan-Config als Top-Level-Argument der
+  `appSubscriptionCreate`-Mutation (Admin API 2025-10) — der Trial greift damit
+  real. Nur für **neue** Subscriptions; bei paid→paid-Wechsel
+  (`hasExistingSubscription`) wird `trialDays: 0` gesendet (kein erneuter Trial).
 - Gibt `confirmationUrl` zurück (Redirect für Zahlungsbestätigung)
 - Setzt das Shopify-`test`-Flag automatisch, wenn `NODE_ENV=development`
   **oder** `APP_ENV=development` **oder** der Shop ein Partner-/Dev-Store ist
