@@ -1,4 +1,4 @@
-import { json, type LoaderFunctionArgs } from "@remix-run/node";
+import { json, redirect, type LoaderFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useNavigate } from "@remix-run/react";
 import {
   Page,
@@ -18,6 +18,16 @@ const EXTENSION_HANDLE = "variant-gallery";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
+
+  // Production lock — the Variant Gallery feature set is hidden behind the
+  // production lock while under Shopify review (see planUtils.isProductionLocked).
+  // Keep this route gated like every other Variant Gallery element so it never
+  // surfaces on production/master.
+  const { isProductionLocked } = await import("../utils/planUtils");
+  if (isProductionLocked()) {
+    return redirect("/app/products");
+  }
+
   return json({ shop: session.shop });
 };
 
@@ -25,13 +35,14 @@ function StepRow({ number, title, description }: { number: number; title: string
   return (
     <InlineStack gap="400" align="start" blockAlign="start">
       <Box
-        minWidth="32px"
+        width="32px"
         minHeight="32px"
         background="bg-fill-brand"
         borderRadius="full"
+        padding="150"
       >
         <InlineStack align="center" blockAlign="center">
-          <Text as="span" variant="bodyMd" fontWeight="bold" tone="base">
+          <Text as="span" variant="bodyMd" fontWeight="bold" tone="text-inverse">
             {number}
           </Text>
         </InlineStack>
