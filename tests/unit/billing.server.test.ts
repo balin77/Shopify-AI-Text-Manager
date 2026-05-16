@@ -19,9 +19,14 @@ import type { Session } from '@shopify/shopify-api';
 // ── Mocks ────────────────────────────────────────────────────────────────────
 
 // Use vi.hoisted so these refs are available inside vi.mock factories (which are hoisted)
-const { mockAISettingsUpsert, mockAISettingsFindUnique } = vi.hoisted(() => ({
+const { mockAISettingsUpsert, mockAISettingsFindUnique, mockAISettingsUpdateMany } = vi.hoisted(() => ({
   mockAISettingsUpsert: vi.fn().mockResolvedValue({}),
-  mockAISettingsFindUnique: vi.fn().mockResolvedValue({ shop: 'test.myshopify.com', subscriptionPlan: 'free' }),
+  mockAISettingsFindUnique: vi.fn().mockResolvedValue({
+    shop: 'test.myshopify.com',
+    subscriptionPlan: 'free',
+    trialConsumedAt: null,
+  }),
+  mockAISettingsUpdateMany: vi.fn().mockResolvedValue({ count: 1 }),
 }));
 
 vi.mock('~/db.server', () => ({
@@ -29,6 +34,7 @@ vi.mock('~/db.server', () => ({
     aISettings: {
       findUnique: mockAISettingsFindUnique,
       upsert: mockAISettingsUpsert,
+      updateMany: mockAISettingsUpdateMany,
     },
   },
 }));
@@ -136,8 +142,9 @@ describe('checkAndSyncSubscription()', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockAISettingsFindUnique.mockResolvedValue({ shop, subscriptionPlan: 'free' });
+    mockAISettingsFindUnique.mockResolvedValue({ shop, subscriptionPlan: 'free', trialConsumedAt: null });
     mockAISettingsUpsert.mockResolvedValue({});
+    mockAISettingsUpdateMany.mockResolvedValue({ count: 1 });
   });
 
   it('returns and syncs "pro" when an active Pro subscription exists', async () => {
@@ -224,6 +231,16 @@ describe('createSubscription()', () => {
   const session = { shop: 'test.myshopify.com' } as Session;
   const returnUrl = 'https://example.com/app/billing/callback';
 
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // Default: shop has never consumed a trial.
+    mockAISettingsFindUnique.mockResolvedValue({
+      shop: session.shop,
+      subscriptionPlan: 'free',
+      trialConsumedAt: null,
+    });
+  });
+
   /**
    * Mock admin that routes by query content:
    * - the isDevStore() shop.plan query → non-dev store
@@ -278,6 +295,23 @@ describe('createSubscription()', () => {
     expect(result.subscription.trialDays).toBe(7);
   });
 
+  it('sends trialDays=0 for a re-subscribe after cancel when trialConsumedAt is set', async () => {
+    // free → basic[trial] → cancel → pro: no active sub now (hasExistingSubscription
+    // = false), but the persistent marker blocks a second trial.
+    mockAISettingsFindUnique.mockResolvedValue({
+      shop: session.shop,
+      subscriptionPlan: 'free',
+      trialConsumedAt: new Date('2026-05-01T00:00:00Z'),
+    });
+    const admin = makeBillingAdmin();
+
+    await createSubscription(admin, session, 'pro', returnUrl);
+
+    const vars = lastMutationVariables(admin);
+    expect(vars?.trialDays).toBe(0);
+    expect(vars?.replacementBehavior).toBeNull();
+  });
+
   it('sends trialDays=0 and APPLY_IMMEDIATELY on a paid→paid switch', async () => {
     const admin = makeBillingAdmin();
 
@@ -294,5 +328,57 @@ describe('createSubscription()', () => {
     await expect(createSubscription(admin, session, 'basic', returnUrl)).rejects.toThrow(
       /Failed to create subscription: Invalid price/
     );
+  });
+});
+
+// ── trial-consumption marking (verified point) ───────────────────────────────
+
+describe('checkAndSyncSubscription() – trialConsumedAt marking', () => {
+  const shop = 'test.myshopify.com';
+
+  const trialingProSubscription = {
+    id: 'gid://shopify/AppSubscription/7',
+    name: 'Pro Plan',
+    status: 'ACTIVE',
+    test: false,
+    currentPeriodEnd: '2026-05-23T00:00:00Z',
+    trialDays: 7,
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAISettingsFindUnique.mockResolvedValue({ shop, subscriptionPlan: 'free', trialConsumedAt: null });
+    mockAISettingsUpsert.mockResolvedValue({});
+    mockAISettingsUpdateMany.mockResolvedValue({ count: 1 });
+  });
+
+  it('marks the trial consumed when an ACTIVE trial subscription is verified', async () => {
+    const admin = makeMockAdmin([trialingProSubscription]);
+
+    await checkAndSyncSubscription(admin, shop);
+
+    // Idempotent + never-reset: filtered on trialConsumedAt:null, sets a Date.
+    expect(mockAISettingsUpdateMany).toHaveBeenCalledWith({
+      where: { shop, trialConsumedAt: null },
+      data: { trialConsumedAt: expect.any(Date) },
+    });
+  });
+
+  it('does NOT mark when the active subscription has no trial (trialDays=0)', async () => {
+    const admin = makeMockAdmin([activeProSubscription]); // trialDays: 0
+
+    await checkAndSyncSubscription(admin, shop);
+
+    expect(mockAISettingsUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it('does NOT touch the marker on cancel/downgrade (no active subscription)', async () => {
+    const admin = makeMockAdmin([]);
+
+    const plan = await checkAndSyncSubscription(admin, shop);
+
+    expect(plan).toBe('free');
+    // Marker is never reset on the free/cancel path.
+    expect(mockAISettingsUpdateMany).not.toHaveBeenCalled();
   });
 });

@@ -42,6 +42,16 @@ model AISettings {
   appLanguage       String  @default("de")
   subscriptionPlan  String  @default("free") // "free", "basic", "pro", "max"
 
+  // Persistent per-shop trial-consumption marker. Set ONCE when a trial-bearing
+  // subscription is verified ACTIVE (never optimistically at the mutation call,
+  // never reset — not even on cancel). Bewusste Entscheidung: das Feld liegt auf
+  // AISettings (shop-scoped) und wird damit bei shop/redact mitgelöscht. Das ist
+  // gewollt — ein vollständig redacteter Shop, der echt neu installiert, darf
+  // wieder einen Trial bekommen. Der Missbrauchspfad
+  // (free → basic[Trial] → cancel → pro OHNE Uninstall/Redact) wird geschlossen,
+  // weil die Zeile dabei erhalten bleibt. null = Trial noch nie konsumiert.
+  trialConsumedAt   DateTime?
+
   // Rate Limiting - Hugging Face
   hfMaxTokensPerMinute   Int? @default(1000000)
   hfMaxRequestsPerMinute Int? @default(100)

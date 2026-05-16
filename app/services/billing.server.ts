@@ -57,6 +57,44 @@ async function isDevStore(admin: ShopifyAdminClient): Promise<boolean> {
 }
 
 /**
+ * Determines whether a shop may still receive a free trial.
+ *
+ * A trial is granted at most ONCE per shop, independent of
+ * cancel/re-subscribe/plan-switch/reinstall. Two conditions must hold:
+ *  - no existing ACTIVE subscription (paid→paid switches never get a trial), and
+ *  - the persistent per-shop marker `trialConsumedAt` is still null.
+ *
+ * The marker lives on AISettings and is therefore wiped by shop/redact — a
+ * fully redacted shop that genuinely reinstalls becomes eligible again. This is
+ * deliberate; the abuse path (cancel/re-subscribe WITHOUT uninstall+redact)
+ * stays closed because the AISettings row survives it.
+ */
+export async function isTrialEligible(shop: string, hasExistingSubscription: boolean): Promise<boolean> {
+  if (hasExistingSubscription) return false;
+  const settings = await prisma.aISettings.findUnique({
+    where: { shop },
+    select: { trialConsumedAt: true },
+  });
+  return !settings?.trialConsumedAt;
+}
+
+/**
+ * Idempotently records that this shop has consumed its one-time trial.
+ *
+ * Only ever transitions null → now() (the `trialConsumedAt: null` filter makes
+ * a second call a no-op). It is NEVER reset — not on cancel, not on downgrade —
+ * so a shop cannot regain trial eligibility by cancelling and re-subscribing.
+ * The AISettings row is guaranteed to exist here because the caller runs
+ * syncSubscriptionToDatabase (upsert) immediately beforehand.
+ */
+async function markTrialConsumed(shop: string): Promise<void> {
+  await prisma.aISettings.updateMany({
+    where: { shop, trialConsumedAt: null },
+    data: { trialConsumedAt: new Date() },
+  });
+}
+
+/**
  * Creates a billing subscription for the given plan.
  * Automatically uses test mode for development stores and dev environments.
  * Pass hasExistingSubscription=true for paid→paid switches so Shopify
@@ -80,13 +118,16 @@ export async function createSubscription(
     logger.info('[Billing] Using test billing mode', { isDevEnv, isTestStore, shop: session.shop });
   }
 
-  // Trial only for NEW subscriptions. On a paid→paid switch
-  // (hasExistingSubscription, APPLY_IMMEDIATELY) we deliberately grant NO new
-  // trial: this prevents repeated trial-farming via plan-hopping and matches
-  // the advertised UI/i18n statement "New subscriptions include a 7-day free
-  // trial". `trialDays` is a top-level argument of appSubscriptionCreate
-  // (Admin API 2025-10), not a lineItems/plan field.
-  const trialDays = hasExistingSubscription ? 0 : (planConfig.trialDays ?? 0);
+  // Trial only for a shop's FIRST-EVER subscription. isTrialEligible() combines
+  // the live "no active subscription" check with the persistent per-shop
+  // trialConsumedAt marker, so the sequence free → basic[trial] → cancel → pro
+  // can NOT farm a second trial (the marker survives cancel/re-subscribe). On a
+  // paid→paid switch (hasExistingSubscription, APPLY_IMMEDIATELY) it is likewise
+  // 0. Matches the advertised UI/i18n statement "New subscriptions include a
+  // 7-day free trial". `trialDays` is a top-level argument of
+  // appSubscriptionCreate (Admin API 2025-10), not a lineItems/plan field.
+  const eligible = await isTrialEligible(session.shop, hasExistingSubscription);
+  const trialDays = eligible ? (planConfig.trialDays ?? 0) : 0;
 
   const response = await admin.graphql(
     `#graphql
@@ -316,6 +357,16 @@ export async function checkAndSyncSubscription(admin: ShopifyAdminClient, shop: 
 
     const plan = getPlanFromSubscription(subscription);
     await syncSubscriptionToDatabase(shop, plan);
+
+    // Trial-consumption is recorded HERE — at the Shopify-verified point, not
+    // optimistically at the mutation call. We trust the returned subscription
+    // (ACTIVE + trialDays > 0 means Shopify actually granted the trial), never
+    // the requested plan. markTrialConsumed is idempotent and never resets, so
+    // repeated syncs (incl. after the trial ends) keep the marker set.
+    if ((subscription.trialDays ?? 0) > 0) {
+      await markTrialConsumed(shop);
+    }
+
     await reconcileCacheForVerifiedPlan(shop, previousPlan, plan);
     return plan;
   } catch (error) {
