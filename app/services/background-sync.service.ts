@@ -864,28 +864,64 @@ export class BackgroundSyncService {
 
     logger.debug(`[BackgroundSync] Fetched ${allTranslations.length} translations across ${uniqueResourceIds.length} resource(s) for group ${groupId}`);
 
-    // Delete all existing translations for this group, then re-create from Shopify
-    await db.themeTranslation.deleteMany({
-      where: {
-        shop: this.shop,
-        groupId: groupId,
-      },
+    // Differential sync: only write rows that are new or actually changed, and
+    // delete rows that disappeared. Re-creating every row on each sync produced
+    // tens of thousands of dead tuples per run -> table bloat + WAL explosion.
+    const desired = allTranslations.map((t) => ({
+      resourceId: (t as any)._resourceId || uniqueResourceIds[0],
+      key: t.key,
+      value: t.value,
+      locale: t.locale,
+      outdated: t.outdated || false,
+    }));
+
+    const existing = await db.themeTranslation.findMany({
+      where: { shop: this.shop, groupId: groupId },
+      select: { id: true, resourceId: true, key: true, locale: true, value: true, outdated: true },
     });
 
-    // Re-create translations from ALL resources
-    for (const t of allTranslations) {
-      const resId = (t as any)._resourceId || uniqueResourceIds[0];
-      await db.themeTranslation.create({
-        data: {
-          shop: this.shop,
-          resourceId: resId,
-          groupId: groupId,
-          key: t.key,
-          value: t.value,
-          locale: t.locale,
-          outdated: t.outdated || false,
-        },
-      });
+    const rowKey = (r: { resourceId: string; key: string; locale: string }) =>
+      `${r.resourceId} ${r.key} ${r.locale}`;
+    const existingByKey = new Map(existing.map((r) => [rowKey(r), r]));
+    const desiredKeys = new Set(desired.map(rowKey));
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const ops: any[] = [];
+
+    for (const d of desired) {
+      const prev = existingByKey.get(rowKey(d));
+      if (!prev) {
+        ops.push(
+          db.themeTranslation.create({
+            data: {
+              shop: this.shop,
+              resourceId: d.resourceId,
+              groupId: groupId,
+              key: d.key,
+              value: d.value,
+              locale: d.locale,
+              outdated: d.outdated,
+            },
+          })
+        );
+      } else if (prev.value !== d.value || prev.outdated !== d.outdated) {
+        ops.push(
+          db.themeTranslation.update({
+            where: { id: prev.id },
+            data: { value: d.value, outdated: d.outdated, updatedAt: new Date() },
+          })
+        );
+      }
+      // else: identical -> no write, no dead tuple
+    }
+
+    const staleIds = existing.filter((r) => !desiredKeys.has(rowKey(r))).map((r) => r.id);
+    if (staleIds.length > 0) {
+      ops.push(db.themeTranslation.deleteMany({ where: { id: { in: staleIds } } }));
+    }
+
+    if (ops.length > 0) {
+      await db.$transaction(ops);
     }
 
     // Return fresh data (merged from all resources)
