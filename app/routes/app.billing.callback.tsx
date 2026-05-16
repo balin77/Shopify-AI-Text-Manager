@@ -8,7 +8,7 @@
  * (`host`, `embedded`) and produces a blank page inside the embedded iframe.
  */
 
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import type { LoaderFunctionArgs } from '@remix-run/node';
 import { json, redirect } from '@remix-run/node';
 import { useLoaderData, useNavigate } from '@remix-run/react';
@@ -55,9 +55,23 @@ export default function BillingCallback() {
   const navigate = useNavigate();
   const { t } = useI18n();
 
-  const target = status === 'error'
-    ? '/app/settings?billing=error'
-    : `/app/settings?billing=${status}&plan=${encodeURIComponent(plan)}`;
+  // Preserve the Shopify embedded params (host, embedded, shop, id_token, …)
+  // that Shopify appended to this callback URL. Hardcoding the target would
+  // strip them from window.location; the next full-page navigation
+  // (useAppNavigation) would then reload the embedded app without `host`,
+  // leaving App Bridge unable to initialize -> blank page.
+  const target = useMemo(() => {
+    const params = typeof window !== 'undefined'
+      ? new URLSearchParams(window.location.search)
+      : new URLSearchParams();
+    params.set('billing', status);
+    if (status === 'error') {
+      params.delete('plan');
+    } else {
+      params.set('plan', plan);
+    }
+    return `/app/settings?${params.toString()}`;
+  }, [status, plan]);
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => navigate(target, { replace: true }), 1200);
