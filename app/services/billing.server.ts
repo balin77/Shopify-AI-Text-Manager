@@ -283,17 +283,43 @@ export async function getCurrentSubscription(admin: ShopifyAdminClient): Promise
 }
 
 /**
- * Gets the plan from the subscription name or defaults to free
+ * Resolves the plan from a Shopify subscription deterministically.
+ *
+ * H4 fix: the previous `name.includes('pro'|'basic'|...)` substring heuristic
+ * silently mis-mapped on any rename or marketing name (e.g. "Promo Plan").
+ * Mapping is now exact and anchored to BILLING_PLANS, the same source
+ * createSubscription uses to set the name and price:
+ *   1. exact (case-insensitive) match of the subscription name to a plan name
+ *   2. fallback: recurring price amount of the first line item
+ * Anything that matches neither yields 'free' (logged) — we never guess.
  */
 export function getPlanFromSubscription(subscription: AppSubscription | null): BillingPlan {
   if (!subscription) return 'free';
 
-  const name = subscription.name.toLowerCase();
+  const paidPlans = Object.entries(BILLING_PLANS) as Array<
+    [Exclude<BillingPlan, 'free'>, (typeof BILLING_PLANS)[Exclude<BillingPlan, 'free'>]]
+  >;
 
-  if (name.includes('max')) return 'max';
-  if (name.includes('pro')) return 'pro';
-  if (name.includes('basic')) return 'basic';
+  // 1. Exact name match (createSubscription always sets name = planConfig.name).
+  const subName = subscription.name.trim().toLowerCase();
+  const byName = paidPlans.find(([, cfg]) => cfg.name.trim().toLowerCase() === subName);
+  if (byName) return byName[0];
 
+  // 2. Price fallback — robust against a renamed subscription.
+  const recurring = subscription.lineItems?.find(
+    (li) => li.plan?.pricingDetails?.price?.amount != null,
+  );
+  const amount = recurring?.plan.pricingDetails.price?.amount;
+  if (amount != null) {
+    const numeric = Number(amount);
+    const byPrice = paidPlans.find(([, cfg]) => cfg.price === numeric);
+    if (byPrice) return byPrice[0];
+  }
+
+  logger.warn('[Billing] Could not map subscription to a known plan — defaulting to free', {
+    subscriptionName: subscription.name,
+    priceAmount: amount ?? null,
+  });
   return 'free';
 }
 
