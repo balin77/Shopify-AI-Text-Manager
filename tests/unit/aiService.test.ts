@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { AIService } from '../../src/services/ai.service';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { AIService, MissingAIKeyError } from '../../src/services/ai.service';
 import type { AIProvider, AIServiceConfig } from '../../src/services/ai.service';
 
 // Mock the AI providers using classes (arrow functions are not constructable with `new`)
@@ -109,8 +109,51 @@ describe('AIService', () => {
     });
 
     it('should default to HuggingFace if no provider specified', () => {
-      const service = new AIService();
+      const service = new AIService(undefined, mockConfig);
       expect(service).toBeDefined();
+    });
+  });
+
+  describe('Compliance: merchant-key enforcement (Option A)', () => {
+    const ENV_VARS = [
+      'HUGGINGFACE_API_KEY', 'GOOGLE_API_KEY', 'ANTHROPIC_API_KEY',
+      'OPENAI_API_KEY', 'GROK_API_KEY', 'DEEPSEEK_API_KEY',
+    ];
+
+    afterEach(() => {
+      for (const v of ENV_VARS) delete process.env[v];
+    });
+
+    const providers: AIProvider[] = [
+      'huggingface', 'gemini', 'claude', 'openai', 'grok', 'deepseek',
+    ];
+
+    it.each(providers)('throws MissingAIKeyError for "%s" when no merchant key is set', (provider) => {
+      expect(() => new AIService(provider, {})).toThrow(MissingAIKeyError);
+    });
+
+    it('MissingAIKeyError carries the provider and NO_AI_KEY code', () => {
+      try {
+        new AIService('claude', {});
+        throw new Error('expected constructor to throw');
+      } catch (err) {
+        expect(err).toBeInstanceOf(MissingAIKeyError);
+        expect((err as MissingAIKeyError).provider).toBe('claude');
+        expect((err as MissingAIKeyError).code).toBe('NO_AI_KEY');
+      }
+    });
+
+    it('does NOT fall back to a shared process.env key', () => {
+      // Even with an operator-owned env key present, an empty merchant config
+      // must block the call — env fallback was removed for Shopify compliance.
+      for (const v of ENV_VARS) process.env[v] = 'operator-shared-key';
+      expect(() => new AIService('huggingface', {})).toThrow(MissingAIKeyError);
+      expect(() => new AIService('gemini', {})).toThrow(MissingAIKeyError);
+    });
+
+    it('does not throw when the merchant supplied their own key', () => {
+      expect(() => new AIService('huggingface', { huggingfaceApiKey: 'merchant-key' })).not.toThrow();
+      expect(() => new AIService('openai', { openaiApiKey: 'merchant-key' })).not.toThrow();
     });
   });
 
@@ -491,15 +534,16 @@ describe('AIService', () => {
   });
 
   describe('Error Handling', () => {
-    it('should throw error if no provider configured', async () => {
-      const service = new AIService('huggingface', {});
+    it('should throw if no merchant key is configured', () => {
+      // Option A: no shared env fallback — an empty config blocks the call.
+      expect(() => new AIService('huggingface', {})).toThrow(MissingAIKeyError);
+    });
 
-      // This should work because HuggingFace falls back to env vars
-      // But if we create a service with invalid provider, it should fail
-      await expect(async () => {
-        const invalidService = new AIService('invalid' as AIProvider, {});
-        await (invalidService as any).executeAIRequest('test');
-      }).rejects.toThrow();
+    it('should throw for an invalid/unknown provider with a configured key', async () => {
+      const invalidService = new AIService('invalid' as AIProvider, mockConfig);
+      await expect(
+        (invalidService as any).executeAIRequest('test')
+      ).rejects.toThrow();
     });
   });
 

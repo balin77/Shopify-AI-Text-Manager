@@ -476,6 +476,9 @@ export const en: Translation = {
     goToSettings: "Go to Settings",
     preferredProviderNoKey: "No {provider} API key. Please add key in Settings or change model.",
     preferredProviderNoKeyDescription: "AI features require an API key for {provider}.",
+    aiKeyMissingTitle: "AI API key required",
+    aiKeyMissingBody: "No {provider} API key configured. Add your own AI API key under Settings → AI API Access Codes to use AI features.",
+    privacyPolicyLink: "Privacy Policy",
     // Plan restrictions
     aiInstructionsReadOnly: "AI Instructions are read-only in the Free and Basic plans",
     aiInstructionsReadOnlyDescription: "Upgrade to Pro plan to customize AI generation instructions for your products and content.",

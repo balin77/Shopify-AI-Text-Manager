@@ -1,7 +1,7 @@
 import { json, type ActionFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
-import { createAIService } from "./api-ai-handlers/shared";
+import { createAIService, getMissingPreferredKey, noAiKeyResponse } from "./api-ai-handlers/shared";
 import { getTaskExpirationDate } from "../config/constants";
 
 interface TemplateItem {
@@ -30,6 +30,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return json({ success: false, error: "templates, fromLocale, toLocales required" }, { status: 400 });
   }
 
+  // Compliance gate: require the shop's own AI key before doing any work.
+  const settings = await db.aISettings.findUnique({ where: { shop: session.shop } });
+  const missingKey = getMissingPreferredKey(settings);
+  if (missingKey) {
+    return noAiKeyResponse(settings, missingKey);
+  }
+
   const totalSteps = toLocales.length * templates.filter((t) => t.template).length;
   const taskType = toLocales.length > 1 ? "bulkTranslation" : "translation";
 
@@ -51,7 +58,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   try {
     await db.task.update({ where: { id: task.id }, data: { status: "running", progress: 10 } });
 
-    const settings = await db.aISettings.findUnique({ where: { shop: session.shop } });
     const aiService = createAIService(settings, session.shop, task.id);
 
     const result: Record<string, TemplateItem[]> = {};

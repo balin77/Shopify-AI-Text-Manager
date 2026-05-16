@@ -16,7 +16,7 @@
 
 | Stufe | Anzah| Kernpunkte |
 |---|---|---|
-| 🔴 BLOCKER | 3 (+1 ✅ behoben: B1) | Off-Platform-Billing-Bypass `APP_ENV=development`, Session-PII unverschlüsselt trotz gegenteiliger Doku, fehlende KI-Consent/Disclosure (B1 `/api/update-plan` entfernt) |
+| 🔴 BLOCKER | 2 (+2 ✅ behoben: B1, B4) | Off-Platform-Billing-Bypass `APP_ENV=development`, Session-PII unverschlüsselt trotz gegenteiliger Doku (B1 `/api/update-plan` entfernt; B4 KI-Datenfluss via BYO-Key gelöst) |
 | 🟠 RISIKO | 8 | Cross-Tenant-Lösch-Bug, fehlende Lösch-/Retention-Jobs, nicht angewandter Free-Trial, geleakte Secrets, unvollständige Privacy-Disclosure |
 | 🟡 HINWEIS | 7 | App-Bridge-Placement, toter REST-Client, Doku-Inkonsistenzen, Webhook-Registrierung |
 
@@ -87,8 +87,31 @@ Transparenz/Consent** (für eine KI-App der kritischste Bereich) und **Datenschu
   `firstName`/`lastName`/`email` erweitern (analog Token-Pfad). Doku erst nach
   verifizierter Implementierung als „erfüllt" markieren.
 
-### B4 — Keine KI-Datenverarbeitungs-Zustimmung / unzureichende Offenlegung (für eine KI-App kritisch)
+### B4 — Keine KI-Datenverarbeitungs-Zustimmung / unzureichende Offenlegung (für eine KI-App kritisch) ✅ BEHOBEN (Ansatz A: BYO-Key)
 
+- **Status:** Behoben durch **Ansatz A (BYO-Key erzwingen)**.
+  - `process.env.*_API_KEY`-Shared-Fallback in
+    [src/services/ai.service.ts](src/services/ai.service.ts) **vollständig entfernt**;
+    fehlt der merchant-eigene Key, wirft `initializeProvider()` jetzt
+    `MissingAIKeyError` (Code `NO_AI_KEY`) — garantierter Chokepoint für **alle**
+    `new AIService(...)`-Aufrufer inkl. Hintergrund-Tasks. Es existiert **kein**
+    Codepfad mehr, der Merchant-Content über einen App-/Operator-Account an eine
+    Dritt-KI sendet.
+  - Freundliche Vorab-Prüfung (`getMissingPreferredKey` / `noAiKeyResponse`,
+    `409 NO_AI_KEY`, lokalisiert) an den HTTP-Eintrittspunkten:
+    [api.ai.tsx](app/routes/api.ai.tsx) (deckt alle 11 Handler),
+    [api.translate-alt-text-template.tsx](app/routes/api.translate-alt-text-template.tsx),
+    [templates-translate-field.action.ts](app/actions/templates/templates-translate-field.action.ts).
+  - `privacy.tsx`: alle **6** Provider (HuggingFace, Google Gemini, Anthropic,
+    OpenAI, Grok/X.AI, DeepSeek) + konkreter Verarbeitungszweck + „kein
+    Modell-Training" + Drittland-/EU-Transfer-Hinweis; aus dem Settings-AI-Tab
+    verlinkt.
+  - **No-Go:** Die Variablen `HUGGINGFACE_API_KEY`, `GOOGLE_API_KEY`,
+    `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GROK_API_KEY`, `DEEPSEEK_API_KEY`
+    dürfen **nicht** als Shared-/Operator-Keys gesetzt werden — sie werden vom
+    Code nicht mehr gelesen und würden den Compliance-Verstoß wieder einführen.
+    (`scripts/validate-env.js` erwartet diese Vars nicht — kein Pflicht-Env.)
+    Bestehende Werte in `.env`/Deployment entfernen (siehe R6).
 - **Anforderung:** Keine Nutzung von API-/Merchant-Daten für ML/KI ohne **schriftliche
   Zustimmung von Shopify ODER des Merchants**; Privacy-Policy-Offenlegung der erhobenen
   Daten/Zwecke/Drittempfänger. (PPA §6.1 / API Terms — <https://www.shopify.com/partners/terms>,
@@ -209,7 +232,13 @@ Transparenz/Consent** (für eine KI-App der kritischste Bereich) und **Datenschu
   `shopify-api-gateway.service.ts`, `webp-processor.service.js`).
 - **Fix:** Methode löschen, um REST-Oberfläche vollständig zu entfernen.
 
-### R8 — Unvollständige/zu vage Privacy-Policy-Offenlegung
+### R8 — Unvollständige/zu vage Privacy-Policy-Offenlegung (Provider/Zweck ✅ behoben — Retention offen)
+
+> **Teil-Status:** KI-Provider-Liste (alle 6), konkreter Verarbeitungszweck,
+> „kein Training", Drittland-/EU-Transfer-Hinweis und Settings-Verlinkung sind
+> mit B4 umgesetzt. **Offen bleibt** die Retention-Aussage (durch Code zu decken,
+> siehe R3/R4).
+
 
 - **Anforderung:** Privacy Policy muss erhobene Daten, Zweck, Drittempfänger,
   Aufbewahrung offenlegen (<https://shopify.dev/docs/apps/launch/privacy-requirements>).

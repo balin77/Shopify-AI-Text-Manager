@@ -12,6 +12,7 @@ import {
   Icon,
   Banner,
   Spinner,
+  Link,
 } from "@shopify/polaris";
 import { ViewIcon, HideIcon } from "@shopify/polaris-icons";
 import { SaveDiscardButtons } from "./SaveDiscardButtons";
@@ -280,7 +281,10 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange, highli
         </InlineStack>
 
         <Text as="p" variant="bodyMd" tone="subdued">
-          {t.settings.aiKeysDescription}
+          {t.settings.aiKeysDescription}{" "}
+          <Link url="/privacy" target="_blank">
+            {t.settings.privacyPolicyLink}
+          </Link>
         </Text>
 
         {!preferredProviderHasKey && (

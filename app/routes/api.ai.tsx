@@ -17,6 +17,8 @@ import {
   VALID_CONTENT_TYPES,
   errorMessage,
   errorStack,
+  getMissingPreferredKey,
+  noAiKeyResponse,
 } from "./api-ai-handlers/shared";
 import type { AIActionContext } from "./api-ai-handlers/shared";
 import {
@@ -56,6 +58,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const settings = await db.aISettings.findUnique({
       where: { shop: session.shop }
     });
+
+    // Compliance gate: never send merchant content to a third-party AI through
+    // an operator key. Block early with an actionable code if the shop has no
+    // own API key for its preferred provider.
+    const missingKey = getMissingPreferredKey(settings);
+    if (missingKey) {
+      return noAiKeyResponse(settings, missingKey);
+    }
 
     // Compute effective SEO title limit (accounts for shop name suffix appended by Shopify)
     const seoTitleMaxChars = settings?.seoTitleSuffixEnabled && settings.seoTitleSuffix

@@ -473,6 +473,9 @@ export const de = {
     goToSettings: "Zu den Einstellungen",
     preferredProviderNoKey: "Kein {provider} API-Schlüssel. Bitte Schlüssel in den Einstellungen eingeben oder Modell wechseln.",
     preferredProviderNoKeyDescription: "KI-Funktionen benötigen einen API-Schlüssel für {provider}.",
+    aiKeyMissingTitle: "AI-API-Schlüssel erforderlich",
+    aiKeyMissingBody: "Kein {provider} API-Schlüssel hinterlegt. Bitte hinterlegen Sie Ihren eigenen AI-API-Schlüssel unter Einstellungen → AI API-Zugangscodes, um KI-Funktionen zu nutzen.",
+    privacyPolicyLink: "Datenschutzerklärung",
     // Plan restrictions
     aiInstructionsReadOnly: "KI-Anweisungen sind im Free- und Basic-Plan schreibgeschützt",
     aiInstructionsReadOnlyDescription: "Upgrade auf Pro-Plan, um KI-Generierungsanweisungen für Ihre Produkte und Inhalte anzupassen.",

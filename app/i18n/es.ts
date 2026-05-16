@@ -475,6 +475,9 @@ export const es: Translation = {
     goToSettings: "Ir a Configuración",
     preferredProviderNoKey: "Sin clave API de {provider}. Por favor, añade la clave en Configuración o cambia el modelo.",
     preferredProviderNoKeyDescription: "Las funciones de IA requieren una clave API para {provider}.",
+    aiKeyMissingTitle: "Se requiere una clave API de IA",
+    aiKeyMissingBody: "No hay clave API de {provider} configurada. Añade tu propia clave API de IA en Configuración → Códigos de acceso a la API de IA para usar las funciones de IA.",
+    privacyPolicyLink: "Política de privacidad",
     // Plan restrictions
     aiInstructionsReadOnly: "Las instrucciones de IA son de solo lectura en los planes Free y Basic",
     aiInstructionsReadOnlyDescription: "Actualiza al plan Pro para personalizar las instrucciones de generación de IA para tus productos y contenido.",

@@ -1,5 +1,6 @@
 import { json } from "@remix-run/node";
 import { AIService, toValidProvider } from "../../../src/services/ai.service";
+import { getMissingPreferredKey, noAiKeyResponse } from "~/routes/api-ai-handlers/shared";
 import { decryptApiKey } from "~/utils/encryption.server";
 import { getTaskExpirationDate } from "~/config/constants";
 import { getFormString } from "~/utils/form-data.utils";
@@ -21,6 +22,13 @@ export async function handleTranslateField(ctx: TemplatesActionContext): Promise
     return json({ success: false, error: "No source text available" }, { status: 400 });
   }
 
+  // Compliance gate: require the shop's own AI key before creating a task.
+  const settings = await db.aISettings.findUnique({ where: { shop: session.shop } });
+  const missingKey = getMissingPreferredKey(settings);
+  if (missingKey) {
+    return noAiKeyResponse(settings, missingKey);
+  }
+
   const task = await db.task.create({
     data: {
       shop: session.shop,
@@ -37,8 +45,6 @@ export async function handleTranslateField(ctx: TemplatesActionContext): Promise
   });
 
   try {
-    const settings = await db.aISettings.findUnique({ where: { shop: session.shop } });
-
     await db.task.update({
       where: { id: task.id },
       data: { status: "running", progress: 20 },
@@ -161,6 +167,13 @@ export async function handleTranslateFieldToAllLocales(ctx: TemplatesActionConte
     return json({ success: false, error: "No target locales specified" }, { status: 400 });
   }
 
+  // Compliance gate: require the shop's own AI key before creating a task.
+  const settings = await db.aISettings.findUnique({ where: { shop: session.shop } });
+  const missingKey = getMissingPreferredKey(settings);
+  if (missingKey) {
+    return noAiKeyResponse(settings, missingKey);
+  }
+
   const task = await db.task.create({
     data: {
       shop: session.shop,
@@ -176,8 +189,6 @@ export async function handleTranslateFieldToAllLocales(ctx: TemplatesActionConte
   });
 
   try {
-    const settings = await db.aISettings.findUnique({ where: { shop: session.shop } });
-
     await db.task.update({
       where: { id: task.id },
       data: { status: "running", progress: 10 },

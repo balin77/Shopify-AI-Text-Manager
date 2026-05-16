@@ -25,6 +25,30 @@ export function toValidProvider(value: string | null | undefined): AIProvider {
   return VALID_PROVIDERS.includes(value as AIProvider) ? (value as AIProvider) : 'huggingface';
 }
 
+/**
+ * Thrown when an AI call is attempted but the merchant has not configured
+ * their own API key for the selected provider.
+ *
+ * IMPORTANT (Shopify PPA / API Terms compliance): ContentPilot must NOT send
+ * merchant content to any third-party AI service through an operator-owned
+ * (shared) key. Each shop must use its own key. This error is the guaranteed
+ * backstop that blocks every AI call path — including background tasks — when
+ * no merchant key is present.
+ */
+export class MissingAIKeyError extends Error {
+  readonly code = 'NO_AI_KEY' as const;
+  readonly provider: AIProvider;
+
+  constructor(provider: AIProvider) {
+    super(
+      `No API key configured for AI provider "${provider}". ` +
+      `The merchant must add their own API key in Settings before AI features can be used.`
+    );
+    this.name = 'MissingAIKeyError';
+    this.provider = provider;
+  }
+}
+
 export interface AIServiceConfig {
   huggingfaceApiKey?: string;
   geminiApiKey?: string;
@@ -62,32 +86,41 @@ export class AIService {
   }
 
   private initializeProvider() {
+    // Compliance backstop: only the merchant's own key is ever used. No
+    // operator-owned process.env.*_API_KEY fallback. An empty key blocks the
+    // call for EVERY AIService consumer, including background tasks.
     if (this.provider === 'huggingface') {
-      const apiKey = this.config.huggingfaceApiKey || process.env.HUGGINGFACE_API_KEY || '';
+      const apiKey = this.config.huggingfaceApiKey || '';
+      if (!apiKey) throw new MissingAIKeyError('huggingface');
       this.huggingface = new HfInference(apiKey);
-      loggers.ai('info', 'AI Provider: Hugging Face (FREE)');
+      loggers.ai('info', 'AI Provider: Hugging Face');
     } else if (this.provider === 'gemini') {
-      const apiKey = this.config.geminiApiKey || process.env.GOOGLE_API_KEY || '';
+      const apiKey = this.config.geminiApiKey || '';
+      if (!apiKey) throw new MissingAIKeyError('gemini');
       const genAI = new GoogleGenerativeAI(apiKey);
       this.gemini = genAI.getGenerativeModel({ model: this.getModel() });
-      loggers.ai('info', 'AI Provider: Google Gemini (FREE)');
+      loggers.ai('info', 'AI Provider: Google Gemini');
     } else if (this.provider === 'claude') {
-      const apiKey = this.config.claudeApiKey || process.env.ANTHROPIC_API_KEY || '';
+      const apiKey = this.config.claudeApiKey || '';
+      if (!apiKey) throw new MissingAIKeyError('claude');
       this.anthropic = new Anthropic({ apiKey });
       loggers.ai('info', 'AI Provider: Claude');
     } else if (this.provider === 'openai') {
-      const apiKey = this.config.openaiApiKey || process.env.OPENAI_API_KEY || '';
+      const apiKey = this.config.openaiApiKey || '';
+      if (!apiKey) throw new MissingAIKeyError('openai');
       this.openai = new OpenAI({ apiKey });
       loggers.ai('info', 'AI Provider: OpenAI');
     } else if (this.provider === 'grok') {
-      const apiKey = this.config.grokApiKey || process.env.GROK_API_KEY || '';
+      const apiKey = this.config.grokApiKey || '';
+      if (!apiKey) throw new MissingAIKeyError('grok');
       this.grok = new OpenAI({
         apiKey,
         baseURL: 'https://api.x.ai/v1',
       });
       loggers.ai('info', 'AI Provider: Grok (X.AI)');
     } else if (this.provider === 'deepseek') {
-      const apiKey = this.config.deepseekApiKey || process.env.DEEPSEEK_API_KEY || '';
+      const apiKey = this.config.deepseekApiKey || '';
+      if (!apiKey) throw new MissingAIKeyError('deepseek');
       this.deepseek = new OpenAI({
         apiKey,
         baseURL: 'https://api.deepseek.com',
