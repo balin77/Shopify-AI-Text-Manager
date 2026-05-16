@@ -81,7 +81,7 @@ export const loader = createContentLoader({
                   updatedAt
                   seo { title description }
                   featuredImage { url altText }
-                  media(first: 20) {
+                  media(first: 250) {
                     edges {
                       node {
                         ... on MediaImage {
@@ -186,8 +186,13 @@ export const loader = createContentLoader({
         },
       });
 
-      // Save images only for NEW products (existing products keep their images)
-      if (newProductIds.has(product.id) && planLimits.cacheEnabled.productImages) {
+      // Sync images for ALL products (not only new ones): Shopify caps a product
+      // at 250 media total, so media(first: 250) above fetches everything in one
+      // page. Re-syncing on every load also self-heals products whose images
+      // were still PROCESSING (image.url null → filtered) during an earlier sync.
+      // The `mediaImages.length > 0` guard below still protects cached images
+      // from being wiped by a transient empty Shopify response.
+      if (planLimits.cacheEnabled.productImages) {
         const mediaImages = product.media?.edges
           ?.filter((edge: any) => edge.node.id && edge.node.image?.url)
           .map((edge: any) => edge.node) || [];
