@@ -6,13 +6,16 @@
  * ✅ Fast (<50ms per test)
  */
 
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { logGDPRRequest } from '~/services/gdpr.service';
+import { logGDPRRequest, redactShopData } from '~/services/gdpr.service';
 
 // ── Mocks ────────────────────────────────────────────────────────────────────
 
-const { mockGdprAuditLogCreate } = vi.hoisted(() => ({
+const { mockGdprAuditLogCreate, mockTransaction } = vi.hoisted(() => ({
   mockGdprAuditLogCreate: vi.fn().mockResolvedValue({ id: 'audit-1' }),
+  mockTransaction: vi.fn(),
 }));
 
 vi.mock('~/db.server', () => ({
@@ -24,7 +27,7 @@ vi.mock('~/db.server', () => ({
       findMany: vi.fn().mockResolvedValue([]),
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
-    $transaction: vi.fn(),
+    $transaction: mockTransaction,
   },
 }));
 
@@ -131,5 +134,141 @@ describe('logGDPRRequest()', () => {
     await expect(
       logGDPRRequest('shop.myshopify.com', 'customer_redact')
     ).rejects.toThrow('DB connection lost');
+  });
+});
+
+// ── redactShopData() ─────────────────────────────────────────────────────────
+
+interface DeleteCall {
+  model: string;
+  where: Record<string, unknown> | undefined;
+}
+
+/**
+ * Builds a fake Prisma `tx` whose every `<model>.deleteMany` is a spy that
+ * records the model name and the `where` clause it was called with.
+ */
+function makeTxRecorder() {
+  const calls: DeleteCall[] = [];
+  const cache: Record<string, { deleteMany: ReturnType<typeof vi.fn> }> = {};
+  const tx = new Proxy(
+    {},
+    {
+      get(_t, prop: string | symbol) {
+        if (typeof prop !== 'string') return undefined;
+        if (!cache[prop]) {
+          cache[prop] = {
+            deleteMany: vi.fn(async (args?: { where?: Record<string, unknown> }) => {
+              calls.push({ model: prop, where: args?.where });
+              return { count: 0 };
+            }),
+          };
+        }
+        return cache[prop];
+      },
+    }
+  );
+  return { tx, calls };
+}
+
+const SHOP_A = 'shop-a.myshopify.com';
+const SHOP_B = 'shop-b.myshopify.com';
+
+describe('redactShopData()', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('R1 regression: scopes EVERY deleteMany to the requested shop only', async () => {
+    const { tx, calls } = makeTxRecorder();
+    mockTransaction.mockImplementation(async (cb: (t: unknown) => Promise<void>) => cb(tx));
+
+    await redactShopData({ shop_id: 1, shop_domain: SHOP_A });
+
+    expect(calls.length).toBeGreaterThan(0);
+
+    for (const call of calls) {
+      // Each delete must carry an explicit shop scope (`shop` or `shopId`)
+      // matching the requested domain — never an unscoped/startsWith filter
+      // that would reach across tenants (the original ContentTranslation bug).
+      const scope = call.where?.shop ?? call.where?.shopId;
+      expect(
+        scope,
+        `${call.model}.deleteMany was not scoped to a shop domain: ${JSON.stringify(call.where)}`
+      ).toBe(SHOP_A);
+      // Defense-in-depth: no `startsWith`/`contains` style cross-tenant filter.
+      expect(JSON.stringify(call.where ?? {})).not.toContain('startsWith');
+    }
+  });
+
+  it('R1 regression: redacting shop A issues no delete that could touch shop B', async () => {
+    const { tx, calls } = makeTxRecorder();
+    mockTransaction.mockImplementation(async (cb: (t: unknown) => Promise<void>) => cb(tx));
+
+    await redactShopData({ shop_id: 1, shop_domain: SHOP_A });
+
+    const touchesShopB = calls.some((c) => {
+      const scope = c.where?.shop ?? c.where?.shopId;
+      return scope === SHOP_B || scope === undefined;
+    });
+    expect(touchesShopB).toBe(false);
+  });
+
+  it('purges every shop-scoped table (schema-coverage guard)', async () => {
+    const { tx, calls } = makeTxRecorder();
+    mockTransaction.mockImplementation(async (cb: (t: unknown) => Promise<void>) => cb(tx));
+
+    await redactShopData({ shop_id: 1, shop_domain: SHOP_A });
+
+    // Prisma delegate name = model name with first character lower-cased
+    // (e.g. AISettings -> aISettings).
+    const delegate = (model: string) => model.charAt(0).toLowerCase() + model.slice(1);
+    const deletedDelegates = new Set(calls.map((c) => c.model));
+
+    // Parse schema.prisma for every model carrying a `shop`/`shopId` field.
+    const schemaPath = join(process.cwd(), 'prisma', 'schema.prisma');
+    const schema = readFileSync(schemaPath, 'utf8');
+    const modelRegex = /model\s+(\w+)\s*\{([^}]*)\}/g;
+    const shopScopedModels: string[] = [];
+    for (let m = modelRegex.exec(schema); m; m = modelRegex.exec(schema)) {
+      const [, name, body] = m;
+      if (/^\s*(shop|shopId)\s+\w/m.test(body)) shopScopedModels.push(name);
+    }
+
+    // Tables NOT expected to be explicitly deleted in redactShopData:
+    //  - cascade children of Product (onDelete: Cascade)
+    //  - GdprAuditLog (deliberately retained, 3-year GDPR retention)
+    // If you add a new shop-scoped model, either delete it in redactShopData
+    // or justify its place in this allowlist.
+    const ALLOWLIST = new Set<string>([
+      'ProductImage',
+      'ProductImageAltTranslation',
+      'ProductOption',
+      'ProductMetafield',
+      'ProductVariant',
+      'GdprAuditLog',
+    ]);
+
+    const sanity = ['Session', 'Product', 'ContentTranslation', 'ImageManagerSettings'];
+    expect(sanity.every((s) => shopScopedModels.includes(s))).toBe(true);
+
+    const missing = shopScopedModels
+      .filter((name) => !ALLOWLIST.has(name))
+      .filter((name) => !deletedDelegates.has(delegate(name)));
+
+    expect(
+      missing,
+      `Shop-scoped model(s) not purged by redactShopData (add a deleteMany or ` +
+        `extend the allowlist with justification): ${missing.join(', ')}`
+    ).toEqual([]);
+  });
+
+  it('does NOT delete the deliberately retained GdprAuditLog', async () => {
+    const { tx, calls } = makeTxRecorder();
+    mockTransaction.mockImplementation(async (cb: (t: unknown) => Promise<void>) => cb(tx));
+
+    await redactShopData({ shop_id: 1, shop_domain: SHOP_A });
+
+    expect(calls.some((c) => c.model === 'gdprAuditLog')).toBe(false);
   });
 });
