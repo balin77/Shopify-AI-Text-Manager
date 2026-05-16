@@ -5,7 +5,13 @@
  * (Produkte, Plan, Speicherverbrauch, Install-Status) und erlaubt pro Shop das
  * vollständige Löschen aller Shop-Daten (Testzwecke).
  *
- * Schutz: HTTP Basic Auth gegen process.env.ADMIN_PASSWORD. Ist die Variable
+ * Schutz: Eigenes Passwort-Formular + signiertes, httpOnly-Cookie. Bewusst
+ * KEIN HTTP Basic Auth — eine im Loader geworfene 401-Response würde von der
+ * Root-ErrorBoundary (app/root.tsx) abgefangen, wodurch der WWW-Authenticate-
+ * Header verloren geht und der Browser nie einen Login-Dialog zeigt. Das
+ * Formular ist vollständig in dieser Route gekapselt und unabhängig davon.
+ *
+ * Passwort/Signatur stammen aus process.env.ADMIN_PASSWORD. Ist die Variable
  * nicht gesetzt, ist die Seite komplett gesperrt (kein Default-Passwort).
  *
  * Das eigentliche Löschen verwendet die bereits durch Tests abgesicherte
@@ -16,63 +22,46 @@
 
 import { useState } from 'react';
 import type { LoaderFunctionArgs, ActionFunctionArgs } from '@remix-run/node';
-import { json } from '@remix-run/node';
+import { json, redirect, createCookie } from '@remix-run/node';
 import { useLoaderData, useActionData, Form, useNavigation } from '@remix-run/react';
 import { timingSafeEqual } from 'node:crypto';
 import { db } from '~/db.server';
 import { redactShopData } from '~/services/gdpr.service';
 import { logger } from '~/utils/logger.server';
 
-const REALM = 'ContentPilot Admin';
+/** Liefert das konfigurierte Admin-Passwort oder null, wenn nicht gesetzt. */
+function adminPassword(): string | null {
+  const p = process.env.ADMIN_PASSWORD;
+  return p && p.length > 0 ? p : null;
+}
 
 /**
- * Prüft HTTP Basic Auth. Wirft eine 401-Response (mit WWW-Authenticate),
- * wenn kein/falsches Passwort vorliegt oder ADMIN_PASSWORD nicht gesetzt ist.
- * Benutzername wird ignoriert; nur das Passwort zählt.
+ * Auth-Cookie. Mit ADMIN_PASSWORD signiert → ändert sich das Passwort,
+ * werden alle bestehenden Sessions automatisch ungültig.
  */
-function requireBasicAuth(request: Request): void {
-  const expected = process.env.ADMIN_PASSWORD;
+function authCookie() {
+  const secret = adminPassword() ?? 'no-admin-password-set';
+  return createCookie('cp_admin', {
+    httpOnly: true,
+    secure: true,
+    sameSite: 'lax',
+    path: '/admin',
+    maxAge: 60 * 60 * 8, // 8 Stunden
+    secrets: [secret],
+  });
+}
 
-  const deny = (msg: string, status: number) => {
-    throw new Response(msg, {
-      status,
-      headers:
-        status === 401
-          ? { 'WWW-Authenticate': `Basic realm="${REALM}", charset="UTF-8"` }
-          : {},
-    });
-  };
+function constantTimeEqual(a: string, b: string): boolean {
+  const ba = Buffer.from(a, 'utf-8');
+  const bb = Buffer.from(b, 'utf-8');
+  return ba.length === bb.length && timingSafeEqual(ba, bb);
+}
 
-  if (!expected || expected.length === 0) {
-    deny(
-      'Admin-Seite gesperrt: Umgebungsvariable ADMIN_PASSWORD ist nicht gesetzt.',
-      503,
-    );
-    return;
-  }
-
-  const header = request.headers.get('Authorization') ?? '';
-  if (!header.startsWith('Basic ')) {
-    deny('Authentifizierung erforderlich.', 401);
-    return;
-  }
-
-  let provided = '';
-  try {
-    const decoded = Buffer.from(header.slice(6), 'base64').toString('utf-8');
-    // Format ist user:pass — alles nach dem ersten ':' ist das Passwort.
-    provided = decoded.slice(decoded.indexOf(':') + 1);
-  } catch {
-    deny('Ungültiger Authorization-Header.', 401);
-    return;
-  }
-
-  const a = Buffer.from(provided, 'utf-8');
-  const b = Buffer.from(expected, 'utf-8');
-  const ok = a.length === b.length && timingSafeEqual(a, b);
-  if (!ok) {
-    deny('Falsches Passwort.', 401);
-  }
+/** True, wenn das Request-Cookie eine gültige Admin-Session trägt. */
+async function isAuthenticated(request: Request): Promise<boolean> {
+  if (!adminPassword()) return false;
+  const value = await authCookie().parse(request.headers.get('Cookie'));
+  return value === 'ok';
 }
 
 interface ShopRow {
@@ -90,9 +79,11 @@ interface ShopRow {
   storageMB: number;
 }
 
-export const loader = async ({ request }: LoaderFunctionArgs) => {
-  requireBasicAuth(request);
+type LoaderData =
+  | { authed: false; configured: boolean }
+  | { authed: true; rows: ShopRow[] };
 
+async function loadShopRows(): Promise<ShopRow[]> {
   // Shop-Liste aus allen Quellen zusammenführen — ein Shop kann existieren
   // ohne aktive Session (deinstalliert) oder ohne ShopInstallState (alt).
   const [sessionShops, installStates, aiSettings] = await Promise.all([
@@ -153,50 +144,93 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         1000,
     });
   }
+  return rows;
+}
 
-  return json(
-    { rows },
+export const loader = async ({ request }: LoaderFunctionArgs) => {
+  if (!(await isAuthenticated(request))) {
+    return json<LoaderData>(
+      { authed: false, configured: adminPassword() !== null },
+      { headers: { 'Cache-Control': 'no-store' } },
+    );
+  }
+  const rows = await loadShopRows();
+  return json<LoaderData>(
+    { authed: true, rows },
     { headers: { 'Cache-Control': 'no-store' } },
   );
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  requireBasicAuth(request);
-
   const form = await request.formData();
   const intent = form.get('intent');
-  const shop = String(form.get('shop') ?? '');
-  const confirm = String(form.get('confirm') ?? '');
 
-  if (intent !== 'delete-shop') {
-    return json({ error: 'Unbekannte Aktion.' }, { status: 400 });
-  }
-  if (!shop) {
-    return json({ error: 'Kein Shop angegeben.' }, { status: 400 });
-  }
-  if (confirm !== shop) {
-    return json(
-      {
-        error: `Bestätigung stimmt nicht. Tippe exakt "${shop}" ins Bestätigungsfeld.`,
-      },
-      { status: 400 },
-    );
-  }
-
-  try {
-    logger.warn(`[ADMIN] Manuelles vollständiges Löschen aller Daten für ${shop}`);
-    await redactShopData({ shop_id: 0, shop_domain: shop });
-    return json({ ok: `Alle Daten für ${shop} wurden gelöscht.` });
-  } catch (error) {
-    logger.error('[ADMIN] Löschen fehlgeschlagen', {
-      shop,
-      error: error instanceof Error ? error.message : String(error),
+  // --- Login ---
+  if (intent === 'login') {
+    const expected = adminPassword();
+    if (!expected) {
+      return json(
+        { error: 'Admin-Seite gesperrt: ADMIN_PASSWORD ist nicht gesetzt.' },
+        { status: 503 },
+      );
+    }
+    const pw = String(form.get('password') ?? '');
+    if (!constantTimeEqual(pw, expected)) {
+      return json({ error: 'Falsches Passwort.' }, { status: 401 });
+    }
+    return redirect('/admin', {
+      headers: { 'Set-Cookie': await authCookie().serialize('ok') },
     });
-    return json(
-      { error: `Löschen fehlgeschlagen: ${error instanceof Error ? error.message : String(error)}` },
-      { status: 500 },
-    );
   }
+
+  // Alle übrigen Aktionen erfordern eine gültige Session.
+  if (!(await isAuthenticated(request))) {
+    return json({ error: 'Nicht angemeldet.' }, { status: 401 });
+  }
+
+  // --- Logout ---
+  if (intent === 'logout') {
+    return redirect('/admin', {
+      headers: {
+        'Set-Cookie': await authCookie().serialize('', { maxAge: 0 }),
+      },
+    });
+  }
+
+  // --- Shop-Daten löschen ---
+  if (intent === 'delete-shop') {
+    const shop = String(form.get('shop') ?? '');
+    const confirm = String(form.get('confirm') ?? '');
+    if (!shop) {
+      return json({ error: 'Kein Shop angegeben.' }, { status: 400 });
+    }
+    if (confirm !== shop) {
+      return json(
+        {
+          error: `Bestätigung stimmt nicht. Tippe exakt "${shop}" ins Bestätigungsfeld.`,
+        },
+        { status: 400 },
+      );
+    }
+    try {
+      logger.warn(`[ADMIN] Manuelles vollständiges Löschen aller Daten für ${shop}`);
+      await redactShopData({ shop_id: 0, shop_domain: shop });
+      return json({ ok: `Alle Daten für ${shop} wurden gelöscht.` });
+    } catch (error) {
+      logger.error('[ADMIN] Löschen fehlgeschlagen', {
+        shop,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return json(
+        {
+          error: `Löschen fehlgeschlagen: ${error instanceof Error ? error.message : String(error)}`,
+        },
+        { status: 500 },
+      );
+    }
+  }
+
+  return json({ error: 'Unbekannte Aktion.' }, { status: 400 });
 };
 
 const TD: React.CSSProperties = {
@@ -213,12 +247,83 @@ const TH: React.CSSProperties = {
   position: 'sticky',
   top: 0,
 };
+const PAGE: React.CSSProperties = {
+  fontFamily:
+    '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+  padding: 24,
+  maxWidth: 1200,
+  margin: '0 auto',
+  color: '#202223',
+};
+
+function LoginView({ configured }: { configured: boolean }) {
+  const actionData = useActionData<typeof action>();
+  return (
+    <div style={{ ...PAGE, maxWidth: 380 }}>
+      <h1 style={{ fontSize: 20 }}>ContentPilot — Admin</h1>
+      {!configured && (
+        <div
+          style={{
+            background: '#fbeae5',
+            border: '1px solid #e0b3a8',
+            padding: '10px 12px',
+            borderRadius: 4,
+            fontSize: 13,
+          }}
+        >
+          Gesperrt: Umgebungsvariable <code>ADMIN_PASSWORD</code> ist nicht
+          gesetzt.
+        </div>
+      )}
+      {configured && (
+        <Form method="post" replace>
+          <input type="hidden" name="intent" value="login" />
+          <input
+            type="password"
+            name="password"
+            placeholder="Passwort"
+            autoFocus
+            autoComplete="current-password"
+            style={{
+              width: '100%',
+              padding: '8px 10px',
+              border: '1px solid #babfc3',
+              borderRadius: 4,
+              fontSize: 14,
+              marginBottom: 10,
+              boxSizing: 'border-box',
+            }}
+          />
+          {actionData && 'error' in actionData && actionData.error && (
+            <div style={{ color: '#bf0711', fontSize: 13, marginBottom: 10 }}>
+              {actionData.error}
+            </div>
+          )}
+          <button
+            type="submit"
+            style={{
+              width: '100%',
+              padding: '9px 0',
+              border: 'none',
+              background: '#008060',
+              color: 'white',
+              borderRadius: 4,
+              cursor: 'pointer',
+              fontSize: 14,
+            }}
+          >
+            Anmelden
+          </button>
+        </Form>
+      )}
+    </div>
+  );
+}
 
 function ShopRowView({ row }: { row: ShopRow }) {
   const [open, setOpen] = useState(false);
   const nav = useNavigation();
-  const busy =
-    nav.state !== 'idle' && nav.formData?.get('shop') === row.shop;
+  const busy = nav.state !== 'idle' && nav.formData?.get('shop') === row.shop;
 
   return (
     <>
@@ -248,9 +353,7 @@ function ShopRowView({ row }: { row: ShopRow }) {
         <td style={TD}>{row.pages}</td>
         <td style={TD}>{row.tasks}</td>
         <td style={TD}>{row.storageMB} MB</td>
-        <td style={TD}>
-          {row.initialSyncCompletedAt ? '✓' : '—'}
-        </td>
+        <td style={TD}>{row.initialSyncCompletedAt ? '✓' : '—'}</td>
         <td style={TD}>
           <button
             type="button"
@@ -316,24 +419,48 @@ function ShopRowView({ row }: { row: ShopRow }) {
 }
 
 export default function AdminPage() {
-  const { rows } = useLoaderData<typeof loader>();
+  const data = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
 
+  if (!data.authed) {
+    return <LoginView configured={data.configured} />;
+  }
+
+  const { rows } = data;
   return (
-    <div
-      style={{
-        fontFamily:
-          '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-        padding: 24,
-        maxWidth: 1200,
-        margin: '0 auto',
-        color: '#202223',
-      }}
-    >
-      <h1 style={{ fontSize: 22, marginBottom: 4 }}>ContentPilot — Admin</h1>
-      <p style={{ color: '#5c5f62', marginTop: 0, fontSize: 13 }}>
-        {rows.length} Shop(s). Diese Seite läuft außerhalb von Shopify.
-      </p>
+    <div style={PAGE}>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'baseline',
+        }}
+      >
+        <div>
+          <h1 style={{ fontSize: 22, marginBottom: 4 }}>
+            ContentPilot — Admin
+          </h1>
+          <p style={{ color: '#5c5f62', marginTop: 0, fontSize: 13 }}>
+            {rows.length} Shop(s). Diese Seite läuft außerhalb von Shopify.
+          </p>
+        </div>
+        <Form method="post" replace>
+          <input type="hidden" name="intent" value="logout" />
+          <button
+            type="submit"
+            style={{
+              padding: '6px 12px',
+              border: '1px solid #babfc3',
+              background: 'white',
+              borderRadius: 4,
+              cursor: 'pointer',
+              fontSize: 13,
+            }}
+          >
+            Abmelden
+          </button>
+        </Form>
+      </div>
 
       {actionData && 'ok' in actionData && actionData.ok && (
         <div
@@ -364,7 +491,13 @@ export default function AdminPage() {
         </div>
       )}
 
-      <div style={{ overflowX: 'auto', border: '1px solid #e1e3e5', borderRadius: 6 }}>
+      <div
+        style={{
+          overflowX: 'auto',
+          border: '1px solid #e1e3e5',
+          borderRadius: 6,
+        }}
+      >
         <table style={{ borderCollapse: 'collapse', width: '100%' }}>
           <thead>
             <tr>
