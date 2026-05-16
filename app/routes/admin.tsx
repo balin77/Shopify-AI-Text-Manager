@@ -45,7 +45,8 @@ function authCookie() {
     httpOnly: true,
     secure: true,
     sameSite: 'lax',
-    path: '/admin',
+    path: '/', // bewusst nicht /admin — Pfad-Scoping führt sonst dazu,
+    // dass das Cookie bei manchen Remix-Data-Requests nicht mitgeschickt wird
     maxAge: 60 * 60 * 8, // 8 Stunden
     secrets: [secret],
   });
@@ -183,18 +184,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     });
   }
 
-  // Alle übrigen Aktionen erfordern eine gültige Session.
-  if (!(await isAuthenticated(request))) {
-    return json({ error: 'Nicht angemeldet.' }, { status: 401 });
-  }
-
-  // --- Logout ---
+  // --- Logout --- (immer möglich, auch ohne gültige Session: Cookie weg)
   if (intent === 'logout') {
     return redirect('/admin', {
       headers: {
         'Set-Cookie': await authCookie().serialize('', { maxAge: 0 }),
       },
     });
+  }
+
+  // Alle übrigen Aktionen erfordern eine gültige Session.
+  if (!(await isAuthenticated(request))) {
+    return json({ error: 'Nicht angemeldet.' }, { status: 401 });
   }
 
   // --- Shop-Daten löschen ---
