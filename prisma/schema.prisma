@@ -42,6 +42,25 @@ model AISettings {
   appLanguage       String  @default("de")
   subscriptionPlan  String  @default("free") // "free", "basic", "pro", "max"
 
+  // Dev/test affordance — read ONLY by the custom-app build. The custom-app
+  // Shopify distribution has NO Billing API at all, so on that build the plan
+  // is decoupled from Shopify and read from here instead. resolveDevPlanMode()
+  // (app/services/dev-plan-override.server.ts) gates every read/write behind
+  // the dev app's client_id (SHOPIFY_API_KEY) AND APP_ENV !== 'production', so
+  // this column is provably never consulted by the public App-Store build.
+  // null = no override (normal Shopify-derived plan).
+  devForcedPlan     String? // "free" | "basic" | "pro" | "max" | null
+
+  // Persistent per-shop trial-consumption marker. Set ONCE when a trial-bearing
+  // subscription is verified ACTIVE (never optimistically at the mutation call,
+  // never reset — not even on cancel). Bewusste Entscheidung: das Feld liegt auf
+  // AISettings (shop-scoped) und wird damit bei shop/redact mitgelöscht. Das ist
+  // gewollt — ein vollständig redacteter Shop, der echt neu installiert, darf
+  // wieder einen Trial bekommen. Der Missbrauchspfad
+  // (free → basic[Trial] → cancel → pro OHNE Uninstall/Redact) wird geschlossen,
+  // weil die Zeile dabei erhalten bleibt. null = Trial noch nie konsumiert.
+  trialConsumedAt   DateTime?
+
   // Rate Limiting - Hugging Face
   hfMaxTokensPerMinute   Int? @default(1000000)
   hfMaxRequestsPerMinute Int? @default(100)
@@ -290,6 +309,26 @@ model OptionValueMemory {
 
   @@unique([shop, optionValue])
   @@index([shop])
+}
+
+// Shop-weites Mapping fuer Felder mit Gruppierungs-Charakter (productType, perspektivisch vendor/tag).
+// Mehrere Produkte mit demselben Quellwert muessen pro Zielsprache exakt eine gemeinsame Uebersetzung
+// haben, sonst zerfaellt eine Kategorie in Google Merchant in mehrere.
+model GroupedFieldTranslation {
+  id              String   @id @default(cuid())
+  shop            String
+  fieldKey        String   // "productType" (zukuenftig: "vendor" | "tag")
+  sourceLocale    String
+  sourceValueNorm String   // trim + collapsed whitespace + lowercase (Lookup-Key)
+  sourceValue     String   // kanonische Originalform (Casing des ersten Inserts)
+  targetLocale    String
+  translatedValue String
+  source          String   @default("ai") // "ai" | "user" | "imported"
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([shop, fieldKey, sourceLocale, sourceValueNorm, targetLocale])
+  @@index([shop, fieldKey, sourceLocale])
 }
 
 model ImageManagerSettings {
@@ -576,7 +615,11 @@ model AltTextTemplate {
 }
 
 /// Persistent audit trail for GDPR compliance requests.
-/// Entries must be retained for at least 3 years (Art. 5(2) GDPR accountability).
+/// Entries are retained for 3 years (Art. 5(2) GDPR accountability) and are
+/// deliberately NOT deleted on shop/redact. The 3-year upper bound is enforced
+/// by GdprAuditLogCleanupService (src/services/gdpr-audit-cleanup.service.ts;
+/// standalone mirror gdpr-audit-cleanup.service.js, started from server.js),
+/// which runs daily and deletes only rows where requestedAt < now − 3 years.
 model GdprAuditLog {
   id              String   @id @default(cuid())
   shop            String
@@ -592,4 +635,15 @@ model GdprAuditLog {
   @@index([shop])
   @@index([shop, requestType])
   @@index([requestedAt])
+}
+
+/// Tracks per-shop install lifecycle so the 30-day reaper has a reliable
+/// "inactive since" anchor. `uninstalledAt` is set by the APP_UNINSTALLED
+/// webhook and cleared (set null) on every (re)install via afterAuth.
+model ShopInstallState {
+  shop          String    @id
+  uninstalledAt DateTime?
+  updatedAt     DateTime  @updatedAt
+
+  @@index([uninstalledAt])
 }

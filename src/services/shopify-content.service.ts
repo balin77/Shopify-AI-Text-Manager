@@ -1194,6 +1194,31 @@ export class ShopifyContentService {
     // Collect all prepared translations across all locales (no Shopify calls yet)
     const allPrepared: PreparedTranslation[] = [];
 
+    // === Grouped-field cache lookup for productType (consistent shop-wide categories) ===
+    // Done BEFORE the AI batch so we know which locales already have a cached value.
+    let groupedCacheHits: Map<string, string> = new Map();
+    const sourceProductType = shortFields['productType'];
+    const isProductResource = resourceType === 'Product';
+    if (sourceProductType && isProductResource) {
+      try {
+        const { GroupedFieldTranslationService } = await import('./grouped-field-translation.service');
+        const groupedService = new GroupedFieldTranslationService(db);
+        const lookup = await groupedService.lookup({
+          shop,
+          fieldKey: 'productType',
+          sourceLocale,
+          sourceValue: sourceProductType,
+          targetLocales,
+        });
+        groupedCacheHits = new Map(Object.entries(lookup.hits));
+        if (groupedCacheHits.size > 0) {
+          loggers.translation('info', `Grouped-field cache hits for productType in ${groupedCacheHits.size} locales`, { hits: Array.from(groupedCacheHits.keys()) });
+        }
+      } catch (cacheErr) {
+        loggers.translation('error', 'Grouped-field cache lookup failed', { error: cacheErr instanceof Error ? cacheErr.message : String(cacheErr) });
+      }
+    }
+
     // === STEP 1: Batch translate short fields (1 AI request for all locales) ===
     if (hasShortFields && translationService.translateShortFieldsBatch) {
       try {
@@ -1207,11 +1232,40 @@ export class ShopifyContentService {
           customInstructions
         );
 
+        // Track new productType translations to persist after the loop.
+        const newProductTypeEntries: Record<string, string> = {};
+
         for (const locale of targetLocales) {
           const localeTranslations = batchResult[locale];
           if (!localeTranslations) continue;
+          // Override productType with cached value if the shop already has one for this
+          // (sourceValue, targetLocale) pair — keeps category labels consistent.
+          if (groupedCacheHits.has(locale) && 'productType' in localeTranslations) {
+            localeTranslations.productType = groupedCacheHits.get(locale)!;
+          } else if (sourceProductType && isProductResource && localeTranslations.productType) {
+            // Newly translated productType for an uncached locale → schedule persist.
+            newProductTypeEntries[locale] = String(localeTranslations.productType);
+          }
           const prepared = await collectLocaleTranslations(locale, localeTranslations);
           allPrepared.push(...prepared);
+        }
+
+        // Persist new productType translations for future reuse.
+        if (Object.keys(newProductTypeEntries).length > 0 && sourceProductType) {
+          try {
+            const { GroupedFieldTranslationService } = await import('./grouped-field-translation.service');
+            const groupedService = new GroupedFieldTranslationService(db);
+            await groupedService.upsertMany({
+              shop,
+              fieldKey: 'productType',
+              sourceLocale,
+              sourceValue: sourceProductType,
+              entries: newProductTypeEntries,
+              source: 'ai',
+            });
+          } catch (persistErr) {
+            loggers.translation('error', 'Failed to persist grouped-field productType translations', { error: persistErr instanceof Error ? persistErr.message : String(persistErr) });
+          }
         }
 
         loggers.translation('debug', 'Batch short fields completed');

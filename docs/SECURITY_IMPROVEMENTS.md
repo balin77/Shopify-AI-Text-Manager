@@ -837,6 +837,62 @@ skip: (req) => req.path.startsWith('/assets')
 
 ---
 
+## 🔑 Secret-Rotation Runbook (R6)
+
+> Kontext: Nach dem BYO-Key-Umbau (Compliance-Fix **B4**, merchant-owned
+> keys, Option A) liest **kein Codepfad** mehr Provider-Shared-Keys aus
+> `process.env` (verifiziert: `src/services/ai.service.ts` nutzt
+> ausschließlich `config.<provider>ApiKey`; `tests/unit/aiService.test.ts`
+> erzwingt das Fehlen jedes Env-Fallbacks). Die in `.env` /
+> `.env.*.template` verbliebenen Provider-Keys wurden auf leere Platzhalter
+> gesetzt. Verbleibendes Risiko: bereits geleakte Werte im Working Tree und
+> teilweise in der Git-History.
+
+### 1. Extern zu rotieren / zu invalidieren (durch den Betreiber)
+
+Diese Aktionen erfolgen außerhalb des Repos beim jeweiligen Anbieter — hier
+werden **keine neuen Secrets erzeugt oder committet**.
+
+| Secret | Priorität | Aktion |
+| --- | --- | --- |
+| `GOOGLE_API_KEY` (`AIzaSy…`) | **Höchste** | In Google AI Studio sofort widerrufen/neu erzeugen. Free-Tier-Google darf eingereichte Inhalte zur Modellverbesserung nutzen → höchstes Compliance-/Datenschutz-Risiko. |
+| `HUGGINGFACE_API_KEY` (`hf_…`) | Hoch | HuggingFace-Token revoken (Settings → Access Tokens). |
+| `SHOPIFY_API_SECRET` (`shpss_…`) | Hoch | Im Shopify Partner Dashboard (App → API credentials) rotieren; kein Provider-Key, aber im Working Tree geleakt. |
+| `ENCRYPTION_KEY` | Mittel — **nicht blind drehen** | Schützt die at-rest verschlüsselten Merchant-Keys. Rotation erfordert Re-Encrypt der gespeicherten Werte (Migration), sonst werden alle Merchant-Keys unlesbar. Separat planen. |
+| `DATABASE_URL` (Postgres-Credentials) | Hoch | Railway-DB-Passwort rotieren; kein Provider-Key, aber im Working Tree geleakt. |
+
+### 2. Git-History-Bereinigung
+
+- `.env` selbst ist gitignored (`.gitignore`) und wurde **nie committet**;
+  der reale `GOOGLE_API_KEY` ist **nicht** in der History (reiner
+  Working-Tree-Leak — Datei-Hygiene oben genügt dort).
+- Das Literal `HUGGINGFACE_API_KEY=hf_…` ist in **4 History-Commits**
+  (`9490dc7`, `3feb7dd`, `cb0bbd9`, `ca969a9`, Docs-/README-Reorganisation)
+  vorhanden. Jeder jemals committete Provider-Key gilt als kompromittiert
+  und muss (siehe oben) rotiert werden — Rotation ist die primäre
+  Schutzmaßnahme, History-Rewrite ergänzend.
+- Ein **BFG-Prozess existiert bereits** im Repo
+  (`.bfg-report/2026-01-13/{23-14-32,23-39-46}/`, zwei Läufe). Eine
+  erneute History-Bereinigung folgt diesem etablierten Prozess.
+- ⚠️ **Destruktiv, NICHT hier ausgeführt:** Der History-Rewrite (BFG +
+  `git reflog expire` + `git gc` + `git push --force` + Neuklonen durch
+  alle Mitarbeiter) ist eine bewusst vom Betreiber durchzuführende
+  Operation. Dieses Repo-Change führt sie nicht aus.
+
+### 3. Dauerhaftes Verbot (Compliance-Backstop B4)
+
+Die Variablen `HUGGINGFACE_API_KEY`, `GOOGLE_API_KEY`, `ANTHROPIC_API_KEY`,
+`OPENAI_API_KEY`, `GROK_API_KEY`, `DEEPSEEK_API_KEY` dürfen **nie wieder**
+als Shared-/Operator-Keys gesetzt werden — weder in `.env`, noch in
+Railway-/Deployment-Env. Jeder Merchant hinterlegt seinen eigenen Key in
+den App-Settings. Ein gesetzter Shared-Key würde den Compliance-Fix **B4**
+(merchant-owned keys) aushebeln und den ursprünglichen App-Store-Verstoß
+(KI-Training auf Merchant-Inhalten ohne Einwilligung) wieder einführen.
+`scripts/validate-env.js` erwartet diese Vars bewusst **nicht** als
+Pflicht-Env. Querverweis: `docs/SHOPIFY_COMPLIANCE_AUDIT.md` → R6 / B4.
+
+---
+
 ## 📝 Changelog
 
 ### v3.1.0 (2026-01-14) ⭐⭐⭐

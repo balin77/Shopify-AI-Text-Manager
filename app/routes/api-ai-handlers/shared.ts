@@ -2,7 +2,11 @@
  * Shared types and helpers used by all api.ai action handlers.
  */
 
+import { json } from "@remix-run/node";
 import { AIService, toValidProvider } from "../../../src/services/ai.service";
+import type { AIProvider } from "../../../src/services/ai.service";
+import { getProviderDisplayName } from "../../utils/api-key-validation";
+import { getTranslation, type Locale } from "../../i18n";
 import { decryptApiKey } from "../../utils/encryption.server";
 import {
   PRODUCTS_CONFIG, COLLECTIONS_CONFIG, BLOGS_CONFIG, PAGES_CONFIG, POLICIES_CONFIG,
@@ -84,6 +88,64 @@ export function isPrismaError(err: unknown, code: string): boolean {
     err !== null &&
     "code" in err &&
     (err as { code: string }).code === code
+  );
+}
+
+// ─── Merchant-key compliance gate ─────────────────────────────────────────────
+
+/** Encrypted-column name on AISettings for each provider. */
+const PROVIDER_KEY_FIELD: Record<AIProvider, keyof AISettings> = {
+  huggingface: "huggingfaceApiKey",
+  gemini: "geminiApiKey",
+  claude: "claudeApiKey",
+  openai: "openaiApiKey",
+  grok: "grokApiKey",
+  deepseek: "deepseekApiKey",
+};
+
+/**
+ * Returns the provider that the shop wants to use but has NOT supplied an own
+ * API key for, or `null` when a usable merchant key exists.
+ *
+ * Decrypts the stored key (DB columns are encrypted, so a raw "is non-empty"
+ * check would falsely report a key as present). Used to block AI calls early
+ * with an actionable message before any task is created — Shopify PPA/API
+ * Terms forbid processing merchant content via a shared/operator key.
+ */
+export function getMissingPreferredKey(
+  settings: AISettings | null
+): { provider: AIProvider; displayName: string } | null {
+  const provider = toValidProvider(settings?.preferredProvider);
+  const encrypted = settings?.[PROVIDER_KEY_FIELD[provider]] as string | null | undefined;
+  const decrypted = decryptApiKey(encrypted);
+  if (decrypted && decrypted.trim().length > 0) {
+    return null;
+  }
+  return { provider, displayName: getProviderDisplayName(provider) };
+}
+
+/**
+ * Standard 409 response when the shop has no own API key for its preferred
+ * provider. The message is localized via the shop's app language so the
+ * existing client-side error toast shows an actionable, translated hint that
+ * points the merchant to Settings → AI API Access Codes.
+ */
+export function noAiKeyResponse(
+  settings: AISettings | null,
+  missing: { provider: AIProvider; displayName: string }
+): Response {
+  const t = getTranslation((settings?.appLanguage ?? "en") as Locale);
+  const template =
+    t.settings.aiKeyMissingBody ??
+    "No {provider} API key configured. Add your own AI API key in Settings → AI API Access Codes to use AI features.";
+  return json(
+    {
+      success: false,
+      code: "NO_AI_KEY",
+      provider: missing.displayName,
+      error: template.replace("{provider}", missing.displayName),
+    },
+    { status: 409 }
   );
 }
 

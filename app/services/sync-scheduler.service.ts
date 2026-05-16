@@ -227,15 +227,23 @@ class SyncSchedulerService {
         }
       });
 
-      // 2. Delete old webhook logs (older than 24 hours)
-      // Reduced from 7 days to 24h to minimize database storage for multi-tenant SaaS
+      // 2. Delete old webhook logs.
+      //   a) processed rows after 24h (minimise storage for multi-tenant SaaS).
+      //   b) H6 fix: failed/unprocessed rows are NOT exempt from retention —
+      //      previously they were never purged and accumulated unbounded. They
+      //      get a longer grace window (7 days) so transient failures can still
+      //      be inspected/retried, then are removed regardless of `processed`.
       const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-      const webhookLogs = await db.webhookLog.deleteMany({
-        where: {
-          createdAt: { lt: oneDayAgo },
-          processed: true
-        }
-      });
+      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+      const [processedLogs, staleLogs] = await Promise.all([
+        db.webhookLog.deleteMany({
+          where: { createdAt: { lt: oneDayAgo }, processed: true }
+        }),
+        db.webhookLog.deleteMany({
+          where: { createdAt: { lt: sevenDaysAgo } }
+        })
+      ]);
+      const webhookLogs = { count: processedLogs.count + staleLogs.count };
 
       // 3. Delete excess product images ONLY for free-plan shops
       // Free plan: productImages = "featured-only", so only keep first image

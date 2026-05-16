@@ -11,7 +11,7 @@
 | Task | Status | Notes |
 |------|--------|-------|
 | 1. Logging Consolidation | ✅ Done | Replaced server-side `console.*` in `app.tasks.tsx` |
-| 2. Input Validation (Zod) | ✅ Done | Schemas + `parseJsonBody` helper; applied to `api.update-plan.tsx` and `api.sync-content.tsx` |
+| 2. Input Validation (Zod) | ✅ Done | Schemas + `parseJsonBody` helper; applied to `api.sync-content.tsx` (`api.update-plan.tsx` + `UpdatePlanSchema` since removed — Billing-Bypass-Fix B1) |
 | 3. Test Coverage Config | ✅ Done | `@vitest/coverage-v8` installed; thresholds set at 20% |
 | 4. Bug Fix: Hardcoded Plan Values | ✅ Done | Fixed in `UnifiedContentEditor.tsx` |
 | 5. GDPR Audit Log | ✅ Done | `GdprAuditLog` DB table + persistent logging in `gdpr.service.ts` |
@@ -91,9 +91,9 @@
   - `AIRequestBaseSchema` – common fields for all AI actions
   - `AITranslateFieldSchema` – for `translateField`/`rewriteField` actions
   - `SyncContentQuerySchema` – for `api.sync-content.tsx` query params
-  - `UpdatePlanSchema` – for `api.update-plan.tsx` JSON body
+  - ~~`UpdatePlanSchema` – for `api.update-plan.tsx` JSON body~~ (obsolet: Route + Schema entfernt, Billing-Bypass-Fix B1)
   - `parseJsonBody()` – reusable helper for JSON body parsing + validation
-- [x] `api.update-plan.tsx` – replaced manual plan check with `parseJsonBody(request, UpdatePlanSchema)`
+- [x] ~~`api.update-plan.tsx` – replaced manual plan check with `parseJsonBody(request, UpdatePlanSchema)`~~ (obsolet: Route entfernt, Billing-Bypass-Fix B1)
 - [x] `api.sync-content.tsx` – replaced unvalidated `types` string split with `SyncContentQuerySchema.safeParse()`
 - Note: `api.ai.tsx` and `api.billing.create-subscription.tsx` already have solid manual validation; schemas available for future adoption
 
@@ -359,7 +359,7 @@ All 139 unit tests pass (9 test files).
 | `CODE_REVIEW_PROGRESS.md` | Created + updated (this file) |
 | `app/routes/app.tasks.tsx` | Replaced `console.error` with `logger.error`; `catch (error: any)` → `unknown` |
 | `app/utils/validation.ts` | Added `AIRequestBaseSchema`, `AITranslateFieldSchema`, `SyncContentQuerySchema`, `UpdatePlanSchema`, `parseJsonBody()` |
-| `app/routes/api.update-plan.tsx` | Replaced manual plan validation with `parseJsonBody(request, UpdatePlanSchema)` |
+| ~~`app/routes/api.update-plan.tsx`~~ | Route entfernt (Billing-Bypass-Fix B1); Cache-Cleanup an `checkAndSyncSubscription` umgehängt |
 | `app/routes/api.sync-content.tsx` | Replaced raw string split with `SyncContentQuerySchema.safeParse()`; `catch` → `unknown` |
 | `vitest.config.ts` | Added `coverage` configuration with v8 provider and thresholds |
 | `package.json` / `package-lock.json` | Added `@vitest/coverage-v8` devDependency |
@@ -550,7 +550,7 @@ Added `WebhookEntry { topic, callbackUrl? }` interface; all 6x `(w: any)` in web
 | `api.sync-single-product.tsx` | `authenticate.admin` ✅ | None | |
 | `api.sync-single-resource.tsx` | `authenticate.admin` ✅ | None | |
 | `api.templates.$.tsx` | `authenticate.admin` ✅ | None | Auth in both loader and action |
-| `api.update-plan.tsx` | `authenticate.admin` ✅ | None | |
+| ~~`api.update-plan.tsx`~~ | entfernt (Billing-Bypass-Fix B1) | — | |
 
 **Finding:** Zero issues. No unauthenticated endpoints, no sensitive data leakage without a valid Shopify session.
 

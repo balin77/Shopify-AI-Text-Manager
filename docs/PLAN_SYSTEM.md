@@ -4,12 +4,15 @@
 
 Die App implementiert ein vier-stufiges Subscription-Plan-System:
 
-| Plan | Max Produkte | Produkt-Bilder | Content-Types | AI Instructions Editierbar |
-|------|--------------|----------------|---------------|----------------------------|
-| **Free** | 15 | Nur Hauptbild | Products, Collections | ❌ Nein |
-| **Basic** | 100 | Alle Bilder | Alle außer Metaobjects/Metadata | ✅ Ja |
-| **Pro** | 250 | Alle Bilder | Alle | ✅ Ja |
-| **Max** | Unbegrenzt | Alle Bilder | Alle | ✅ Ja |
+> Quelle der Wahrheit: [`app/config/plans.ts`](../app/config/plans.ts) (`PLAN_CONFIG`).
+> Diese Tabelle spiegelt exakt die dortigen Werte wider.
+
+| Plan | Max Produkte | Max Collections | Max Pages | Max Articles | Locales | Produkt-Bilder | Content-Types | AI Instructions editierbar |
+|------|-------------|-----------------|-----------|--------------|---------|----------------|---------------|----------------------------|
+| **Free** | 25 | 5 | 0 | 0 | 2 | Nur Hauptbild | Products, Collections | ❌ Nein |
+| **Basic** | 75 | 50 | 20 | 0 | 5 | Alle Bilder | Products, Collections, Pages, Policies | ❌ Nein |
+| **Pro** | 150 | 100 | 50 | 100 | 10 | Alle Bilder | Alle (inkl. Blogs/Articles, Menus, Templates, Metaobjects) | ✅ Ja |
+| **Max** | 5000 | 500 | 200 | 300 | 20 | Alle Bilder | Alle (inkl. Blogs/Articles, Menus, Templates, Metaobjects) | ✅ Ja |
 
 ## Dateien-Struktur
 
@@ -23,14 +26,15 @@ app/
 ├── contexts/
 │   └── PlanContext.tsx             # React Context für Plan-Management
 ├── components/
-│   ├── MainNavigation.tsx          # Plan-Selector (4 Buttons)
+│   ├── SettingsPlanTab.tsx         # Plan-Auswahl/Upgrade (Shopify Billing API)
 │   ├── ContentTypeNavigation.tsx   # Plan-aware Content-Type-Tabs
 │   ├── PlanBadge.tsx               # Visual Plan-Indikator
 │   └── UpgradePrompt.tsx           # Upgrade-Call-to-Action
 └── routes/
-    ├── app.tsx                     # Plan im Loader laden
+    ├── app.tsx                     # Plan im Loader laden (checkAndSyncSubscription)
     ├── app.products.tsx            # Plan-basierte Produkt-Limits
-    └── api.update-plan.tsx         # API für Plan-Wechsel
+    ├── api.billing.create-subscription.tsx  # Upgrade via Shopify Billing API
+    └── api.billing.cancel-subscription.tsx  # Downgrade via Shopify Billing API
 
 prisma/
 ├── schema.prisma                   # subscriptionPlan Feld
@@ -41,14 +45,17 @@ prisma/
 
 ## Implementierte Features
 
-### 1. Plan-Selector in MainNavigation
+### 1. Plan-Auswahl im Settings-Tab
 
-- **Position**: Rechts neben den Tabs (Products, Other Content, Tasks, Settings)
-- **Design**: 4 Segmented Buttons (Free | Basic | Pro | Max)
+- **Position**: Settings → Plan-Tab (`SettingsPlanTab.tsx`). MainNavigation
+  enthält **keinen** Plan-Selector mehr.
 - **Funktion**:
-  - Aktueller Plan ist hervorgehoben (`pressed` State)
-  - Click sendet POST-Request an `/api/update-plan`
-  - Nach erfolgreichem Wechsel: Page Reload
+  - Aktueller Plan ist hervorgehoben
+  - Plan-Wechsel läuft ausschließlich über die Shopify Billing API:
+    Upgrade via `/api/billing/create-subscription`, Downgrade via
+    `/api/billing/cancel-subscription` (siehe `SettingsPlanTab`)
+  - Der gespeicherte Plan wird serverseitig aus dem von Shopify
+    verifizierten aktiven Abo abgeleitet (`checkAndSyncSubscription`)
 
 ### 2. Plan-basierte Content-Type-Zugriffskontrolle
 
@@ -65,19 +72,19 @@ prisma/
 ### 3. Plan-basierte Produkt-Limits
 
 **Products Route** (`app/routes/app.products.tsx`):
-- Loader lädt max. 15/100/250/∞ Produkte je nach Plan
+- Loader lädt max. 25/75/150/5000 Produkte je nach Plan (Free/Basic/Pro/Max)
 - Im Free-Plan:
   - KEINE `ProductImage` geladen (außer featuredImage)
   - KEINE `ProductOption` geladen
   - KEINE `ProductMetafield` geladen
-- UI zeigt Limit-Information (z.B. "15/15 Products (Free Plan)")
+- UI zeigt Limit-Information (z.B. "25/25 Products (Free Plan)")
 
 ### 4. Automatische Cache-Bereinigung
 
 Beim Plan-Downgrade (z.B. Basic → Free) werden automatisch gelöscht:
 
 **Free-Plan Cleanup:**
-- Produkte über Limit 15
+- Produkte über Limit 25
 - Alle `ProductImage` Einträge
 - Alle `ProductOption` Einträge
 - Alle `ProductMetafield` Einträge
@@ -88,7 +95,7 @@ Beim Plan-Downgrade (z.B. Basic → Free) werden automatisch gelöscht:
 - Zugehörige `ContentTranslation` Einträge
 
 **Basic-Plan Cleanup:**
-- Produkte über Limit 100
+- Produkte über Limit 75
 - Restliche Daten bleiben erhalten
 
 ### 5. Plan Context API
@@ -132,47 +139,31 @@ node scripts/run-migration.js
 ### Migration-SQL:
 
 ```sql
-ALTER TABLE "AISettings" ADD COLUMN "subscriptionPlan" TEXT NOT NULL DEFAULT 'basic';
+-- Baseline legte die Spalte historisch mit DEFAULT 'basic' an. Die Folge-
+-- Migration 20260516000002_default_subscription_plan_free gleicht den
+-- DB-Default an das Prisma-Schema an (DEFAULT 'free'):
+ALTER TABLE "AISettings" ADD COLUMN "subscriptionPlan" TEXT NOT NULL DEFAULT 'free';
 COMMENT ON COLUMN "AISettings"."subscriptionPlan" IS 'Valid values: free, basic, pro, max';
 ```
 
 ## API Endpoints
 
-### POST `/api/update-plan`
+Plan-Wechsel erfolgt **ausschließlich über die Shopify Billing API**. Es gibt
+keinen Endpoint, der den Plan aus einem Request-Body setzt.
 
-**Request:**
-```json
-{
-  "plan": "free" | "basic" | "pro" | "max"
-}
-```
+- `POST /api/billing/create-subscription` — startet ein bezahltes Abo
+  (Upgrade); Shopify führt durch den Bestätigungs-/Bezahlflow.
+- `POST /api/billing/cancel-subscription` — kündigt das Abo (Downgrade auf Free).
+- `GET /api/billing/status` — liefert den aktuellen, von Shopify verifizierten
+  Plan.
 
-**Response:**
-```json
-{
-  "success": true,
-  "plan": "free",
-  "cleanupStats": {
-    "deletedProducts": 85,
-    "deletedProductImages": 342,
-    "deletedArticles": 12,
-    ...
-  },
-  "cacheStats": {
-    "before": {
-      "products": 100,
-      "articles": 12,
-      ...
-    },
-    "after": {
-      "products": 15,
-      "articles": 0,
-      ...
-    }
-  },
-  "message": "Successfully switched to free plan"
-}
-```
+Der in der DB gespeicherte `subscriptionPlan` wird serverseitig durch
+`checkAndSyncSubscription()` (`app/services/billing.server.ts`) aus dem von
+Shopify verifizierten aktiven Abo abgeleitet — aufgerufen in den Loadern
+(`app.tsx`, `app.settings.tsx`), im Billing-Callback und im
+`APP_SUBSCRIPTIONS_UPDATE`-Webhook. Bei einem verifizierten Plan-Wechsel wird
+dabei automatisch `cleanupCacheForPlan()` ausgeführt (auch bei realen
+Downgrades).
 
 ## Plan-Verhalten
 
@@ -181,7 +172,7 @@ COMMENT ON COLUMN "AISettings"."subscriptionPlan" IS 'Valid values: free, basic,
 **Zweck**: Minimale Ressourcen-Nutzung für Testing/Kleine Shops
 
 **Einschränkungen:**
-- Nur 15 Produkte gecached
+- Nur 25 Produkte gecached
 - Nur Hauptbild pro Produkt (keine `ProductImage` Table)
 - Keine Produkt-Optionen/Metafelder gecached
 - Nur Products & Collections zugänglich
@@ -195,11 +186,11 @@ COMMENT ON COLUMN "AISettings"."subscriptionPlan" IS 'Valid values: free, basic,
 **Zweck**: Standard-Nutzung für mittelgroße Shops
 
 **Features:**
-- Bis zu 100 Produkte
+- Bis zu 75 Produkte
 - Alle Bilder, Optionen, Metafelder gecached
-- Alle Content-Types (Collections, Blogs, Pages, Policies, Themes, Menus)
-- AI Instructions voll editierbar
-- Theme-Übersetzungen verfügbar
+- Content-Types: Products, Collections, Pages, Policies (KEINE Blogs/Menus/
+  Templates/Metaobjects — erst ab Pro)
+- AI Instructions read-only (erst ab Pro editierbar)
 
 **Use Case**: Standard-Shops mit normalem Content-Volumen
 
@@ -208,9 +199,10 @@ COMMENT ON COLUMN "AISettings"."subscriptionPlan" IS 'Valid values: free, basic,
 **Zweck**: Große Shops mit vielen Produkten
 
 **Features:**
-- Bis zu 250 Produkte
+- Bis zu 150 Produkte
 - Alle Features von Basic
-- Zusätzlich: Metaobjects, Shop Metadata (wenn implementiert)
+- Zusätzlich: Blogs/Articles, Menus, Templates, Metaobjects
+- AI Instructions editierbar (erster Plan mit dieser Funktion)
 
 **Use Case**: Große E-Commerce-Shops
 
@@ -219,9 +211,9 @@ COMMENT ON COLUMN "AISettings"."subscriptionPlan" IS 'Valid values: free, basic,
 **Zweck**: Enterprise/Unlimited
 
 **Features:**
-- **Unbegrenzte** Produkte
-- Alle Features aktiviert
-- Keine Limits
+- Bis zu **5000** Produkte (höchstes Limit, nicht „unbegrenzt")
+- Alle Features aktiviert (höhere Limits als Pro: 500 Collections, 200 Pages,
+  300 Articles, 20 Locales, 4 parallele WebP-Konvertierungen)
 
 **Use Case**: Very large shops, agencies
 
@@ -246,7 +238,7 @@ COMMENT ON COLUMN "AISettings"."subscriptionPlan" IS 'Valid values: free, basic,
 
 5. **UI Enhancements**
    - Plan-Limit-Warning in ProductList
-   - Progress Bar: "15/15 Products (Free Plan)"
+   - Progress Bar: "25/25 Products (Free Plan)"
    - Upgrade-Modal mit Feature-Vergleich
    - Storage-Usage-Indikator
 
@@ -256,7 +248,7 @@ COMMENT ON COLUMN "AISettings"."subscriptionPlan" IS 'Valid values: free, basic,
 
 1. Starte die App: `npm run dev`
 2. Öffne die App im Browser
-3. Wechsle den Plan über die 4 Buttons in der Navigation
+3. Wechsle den Plan über den Settings → Plan-Tab (Shopify Billing Flow)
 4. Beobachte Console-Logs für Cleanup-Stats
 5. Prüfe, dass Content-Types entsprechend deaktiviert werden
 
@@ -285,8 +277,8 @@ console.log(stats);
 ### Plan wechselt nicht
 
 - Check Browser Console für Fetch-Errors
-- Check Server Logs für `/api/update-plan` Errors
-- Verify `subscriptionPlan` wurde in DB gespeichert
+- Check Server Logs für `[Billing]` Errors (`api.billing.*`, `checkAndSyncSubscription`)
+- Verify Shopify-Abo ist `ACTIVE` und `subscriptionPlan` wurde in DB gespeichert
 
 ### Content-Types nicht deaktiviert
 
@@ -318,7 +310,9 @@ console.log(stats);
 ### Plan-Manipulation verhindern
 
 - Plan ist in DB gespeichert (nicht Client-Side)
-- API `/api/update-plan` erfordert Shopify Auth
+- Plan wird **nie** aus einem Request-Body gesetzt — ausschließlich aus dem
+  von Shopify verifizierten aktiven Abo abgeleitet (`checkAndSyncSubscription`)
+- Billing-Endpoints erfordern Shopify Auth (`authenticate.admin`)
 - Multi-Tenant-Safe: Jeder Shop hat eigenen Plan
 
 ### Cleanup-Sicherheit

@@ -94,9 +94,8 @@ export default function PrivacyPolicy() {
         <h2 style={{ fontSize: '1.8rem', marginTop: '30px', marginBottom: '15px' }}>3. How We Use Your Information</h2>
         <p>We use the collected information for:</p>
         <ul style={{ marginLeft: '20px' }}>
-          <li><strong>Service Delivery:</strong> To provide AI-powered content creation and translation services</li>
-          <li><strong>Content Processing:</strong> To analyze, translate, and improve your store content</li>
-          <li><strong>Feature Improvement:</strong> To enhance app functionality and user experience</li>
+          <li><strong>Service Delivery:</strong> To generate and translate the specific store content you request</li>
+          <li><strong>Content Processing:</strong> To send the content you select to the AI provider you configured, using your own API key, solely to produce the requested output</li>
           <li><strong>Technical Support:</strong> To troubleshoot issues and provide customer support</li>
           <li><strong>Billing Management:</strong> To process subscriptions and manage plan limits</li>
           <li><strong>Security:</strong> To detect and prevent fraud, abuse, and security issues</li>
@@ -109,24 +108,39 @@ export default function PrivacyPolicy() {
 
         <h3 style={{ fontSize: '1.4rem', marginTop: '20px', marginBottom: '10px' }}>4.1 AI Service Providers</h3>
         <p>
-          {appName} uses third-party AI services to process your content. Your content may be
-          sent to one or more of the following providers:
+          {appName} sends store content to a third-party AI provider <strong>only</strong> when
+          you explicitly trigger an AI generation or translation action, and <strong>only</strong>
+          using <strong>your own API key</strong> that you configure in the app's settings.
+          {appName} does not provide a shared or operator-owned API key: without your own key,
+          no content is ever sent to any AI provider. Depending on the provider you choose, the
+          content you submit (e.g. product titles, descriptions, SEO fields, store policies,
+          image URLs) is sent to one of the following providers:
         </p>
         <ul style={{ marginLeft: '20px' }}>
-          <li><strong>Hugging Face:</strong> For AI-powered text generation and translation</li>
-          <li><strong>Google Gemini:</strong> For advanced language processing</li>
-          <li><strong>OpenAI:</strong> For content generation (if configured)</li>
-          <li><strong>Anthropic Claude:</strong> For content generation (if configured)</li>
+          <li><strong>Hugging Face:</strong> Text generation and translation</li>
+          <li><strong>Google Gemini:</strong> Text generation and translation</li>
+          <li><strong>Anthropic Claude:</strong> Text generation and translation</li>
+          <li><strong>OpenAI:</strong> Text generation and translation</li>
+          <li><strong>Grok (X.AI):</strong> Text generation and translation</li>
+          <li><strong>DeepSeek:</strong> Text generation and translation</li>
         </ul>
         <p>
-          These services process content temporarily to generate responses and do not store
-          your content permanently. Please review their respective privacy policies:
+          Content is sent solely to produce the output you requested. It is processed
+          transiently by the provider to generate a response and is <strong>not used by
+          {appName} to train any machine-learning or AI models</strong>. The handling of your
+          content by each provider is governed by that provider's own terms and privacy policy.
+          Most of these providers process data on infrastructure located outside the European
+          Union (for example, in the United States); by selecting a provider and submitting
+          content you consent to this international transfer (see also Section 9). Please review
+          the respective privacy policies:
         </p>
         <ul style={{ marginLeft: '20px' }}>
           <li>Hugging Face: <a href="https://huggingface.co/privacy" target="_blank" rel="noopener">https://huggingface.co/privacy</a></li>
           <li>Google: <a href="https://policies.google.com/privacy" target="_blank" rel="noopener">https://policies.google.com/privacy</a></li>
-          <li>OpenAI: <a href="https://openai.com/privacy" target="_blank" rel="noopener">https://openai.com/privacy</a></li>
           <li>Anthropic: <a href="https://www.anthropic.com/privacy" target="_blank" rel="noopener">https://www.anthropic.com/privacy</a></li>
+          <li>OpenAI: <a href="https://openai.com/privacy" target="_blank" rel="noopener">https://openai.com/privacy</a></li>
+          <li>Grok (X.AI): <a href="https://x.ai/legal/privacy-policy" target="_blank" rel="noopener">https://x.ai/legal/privacy-policy</a></li>
+          <li>DeepSeek: <a href="https://cdn.deepseek.com/policies/en-US/deepseek-privacy-policy.html" target="_blank" rel="noopener">https://cdn.deepseek.com/policies/en-US/deepseek-privacy-policy.html</a></li>
         </ul>
 
         <h3 style={{ fontSize: '1.4rem', marginTop: '20px', marginBottom: '10px' }}>4.2 Shopify Platform</h3>
@@ -168,10 +182,11 @@ export default function PrivacyPolicy() {
 
         <h3 style={{ fontSize: '1.4rem', marginTop: '20px', marginBottom: '10px' }}>5.3 Data Retention</h3>
         <ul style={{ marginLeft: '20px' }}>
-          <li><strong>Active Subscriptions:</strong> Data is retained while your app is installed</li>
-          <li><strong>Cached Content:</strong> Automatically cleaned up after 30 days</li>
-          <li><strong>After Uninstall:</strong> Most data is deleted within 30 days</li>
-          <li><strong>Legal Requirements:</strong> Some data may be retained longer for compliance</li>
+          <li><strong>While Installed:</strong> Your store data is retained for as long as the app is installed</li>
+          <li><strong>On Uninstall (immediate):</strong> Authentication/session data is deleted immediately when you uninstall the app</li>
+          <li><strong>On Uninstall (remaining data):</strong> All remaining store data is deleted in response to Shopify's <code>shop/redact</code> request (typically about 48 hours after uninstall) and, as a guaranteed fallback, no later than 30 days after uninstall by an automated cleanup job</li>
+          <li><strong>Operational Data:</strong> Transient data such as background jobs, webhook logs and performance caches is pruned within days by routine maintenance</li>
+          <li><strong>Legal Requirements:</strong> GDPR compliance audit logs are retained for 3 years (Art. 5(2) GDPR accountability); other legally required data may be retained longer</li>
         </ul>
       </section>
 

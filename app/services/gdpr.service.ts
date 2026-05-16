@@ -145,7 +145,42 @@ export async function redactCustomerData(
 }
 
 /**
- * Delete ALL data for a shop (when app is uninstalled)
+ * Delete ALL data for a shop (when app is uninstalled / shop/redact webhook).
+ *
+ * ────────────────────────────────────────────────────────────────────────────
+ * COMPLETENESS CONTRACT — read before adding a Prisma model
+ * ────────────────────────────────────────────────────────────────────────────
+ * Every shop-scoped table MUST be purged here, filtered strictly by the
+ * incoming `shop_domain` (NEVER an unscoped/`startsWith` delete — that would
+ * wipe other tenants, see regression R1).
+ *
+ * Coverage of all 29 models in prisma/schema.prisma:
+ *
+ *  • Explicitly deleted below (scope field in parentheses):
+ *      Session, AISettings, AIInstructions, Task, Product, Collection,
+ *      Article, Page, ShopPolicy, Menu, ContentTranslation, ThemeContent,
+ *      ThemeTranslation, WebhookLog, WebhookRetry, OptionValueMemory,
+ *      GroupedFieldTranslation, AltTextTemplate, MetaobjectDefinition,
+ *      Metaobject, MetaobjectTranslation, ShopInstallState
+ *                                                (all scoped by `shop`)
+ *      ImageManagerSettings                      (scoped by `shopId`)
+ *
+ *  • Removed transitively via Product `onDelete: Cascade` — do NOT delete
+ *    explicitly: ProductImage, ProductImageAltTranslation (cascade through
+ *    ProductImage), ProductOption, ProductMetafield, ProductVariant.
+ *
+ *  • Deliberately RETAINED: GdprAuditLog — mandatory 3-year retention
+ *    (Art. 5(2) GDPR). Its time-based upper bound is enforced by
+ *    GdprAuditLogCleanupService
+ *    (src/services/gdpr-audit-cleanup.service.ts; standalone mirror
+ *    gdpr-audit-cleanup.service.js, started from server.js, runs daily and
+ *    deletes rows where requestedAt < now − 3 years). Never deleted here.
+ *
+ * A schema-coverage guard in tests/unit/gdpr.service.test.ts parses
+ * schema.prisma and fails if a new shop-scoped model is added without being
+ * accounted for above. If that test fails: add the deleteMany here (or, if the
+ * table cascades / is intentionally retained, extend the test's allowlist).
+ * ────────────────────────────────────────────────────────────────────────────
  */
 export async function redactShopData(
   request: GDPRShopRedactRequest
@@ -217,12 +252,11 @@ export async function redactShopData(
     logger.debug(`[GDPR] Deleted ${menusDeleted.count} menus`);
 
     // 11. Delete content translations
+    //     R1 FIX: must be scoped by `shop`. The previous `resourceId
+    //     startsWith 'gid://shopify/'` filter matched EVERY tenant's rows and
+    //     deleted all shops' translations on any single shop/redact.
     const contentTranslationsDeleted = await tx.contentTranslation.deleteMany({
-      where: {
-        resourceId: {
-          startsWith: `gid://shopify/`,
-        },
-      },
+      where: { shop: shop_domain },
     });
     logger.debug(`[GDPR] Deleted ${contentTranslationsDeleted.count} content translations`);
 
@@ -243,6 +277,63 @@ export async function redactShopData(
       where: { shop: shop_domain },
     });
     logger.debug(`[GDPR] Deleted ${webhookLogsDeleted.count} webhook logs`);
+
+    // 15. Delete webhook retry queue (R2)
+    const webhookRetriesDeleted = await tx.webhookRetry.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${webhookRetriesDeleted.count} webhook retries`);
+
+    // 16. Delete option-value translation memory (R2)
+    const optionValueMemoryDeleted = await tx.optionValueMemory.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${optionValueMemoryDeleted.count} option value memory entries`);
+
+    // 17. Delete grouped-field translations (R2)
+    const groupedFieldTranslationsDeleted = await tx.groupedFieldTranslation.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${groupedFieldTranslationsDeleted.count} grouped field translations`);
+
+    // 18. Delete alt-text templates (R2)
+    const altTextTemplatesDeleted = await tx.altTextTemplate.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${altTextTemplatesDeleted.count} alt text templates`);
+
+    // 19. Delete image manager settings (R2) — NOTE: scoped by `shopId`
+    //     (stores the shop domain), not `shop`.
+    const imageManagerSettingsDeleted = await tx.imageManagerSettings.deleteMany({
+      where: { shopId: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${imageManagerSettingsDeleted.count} image manager settings`);
+
+    // 20. Delete metaobject definitions (R2)
+    const metaobjectDefinitionsDeleted = await tx.metaobjectDefinition.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${metaobjectDefinitionsDeleted.count} metaobject definitions`);
+
+    // 21. Delete metaobjects (R2)
+    const metaobjectsDeleted = await tx.metaobject.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${metaobjectsDeleted.count} metaobjects`);
+
+    // 22. Delete metaobject translations (R2)
+    const metaobjectTranslationsDeleted = await tx.metaobjectTranslation.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${metaobjectTranslationsDeleted.count} metaobject translations`);
+
+    // 23. Delete install-state marker (R3) — leaving no residue keeps both the
+    //     shop/redact webhook and the 30-day reaper idempotent (a redelivered
+    //     request finds no marker and deletes 0 rows everywhere).
+    const shopInstallStateDeleted = await tx.shopInstallState.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${shopInstallStateDeleted.count} install-state rows`);
   });
 
   logger.info(`[GDPR] Successfully redacted ALL data for shop ${shop_domain}`);
@@ -251,10 +342,11 @@ export async function redactShopData(
 /**
  * Log GDPR request for compliance audit trail.
  *
- * Persists every GDPR webhook event to the GdprAuditLog table so that
- * the mandatory 3-year retention period (Art. 5(2) GDPR) can be enforced
- * at the database level (e.g. via a scheduled cleanup job that only removes
- * rows where requestedAt < NOW() - INTERVAL '3 years').
+ * Persists every GDPR webhook event to the GdprAuditLog table. The mandatory
+ * 3-year retention period (Art. 5(2) GDPR) is enforced by
+ * GdprAuditLogCleanupService (src/services/gdpr-audit-cleanup.service.ts;
+ * standalone mirror gdpr-audit-cleanup.service.js, started from server.js),
+ * which runs daily and deletes only rows where requestedAt < now − 3 years.
  */
 export async function logGDPRRequest(
   shop: string,

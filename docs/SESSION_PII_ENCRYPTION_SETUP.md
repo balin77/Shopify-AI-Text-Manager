@@ -13,6 +13,34 @@ The Session table stores sensitive PII data that must be encrypted:
 
 **Encryption Method:** AES-256-GCM (same as API Keys)
 
+**Status:** Encryption-at-rest for these fields is **implemented in runtime code**.
+`EncryptedPrismaSessionStorage` ([app/utils/encrypted-session-storage.server.ts](../app/utils/encrypted-session-storage.server.ts))
+wraps the Shopify SDK's `PrismaSessionStorage` and transparently:
+
+- encrypts `accessToken`, `refreshToken` and online-session PII
+  (`firstName`/`lastName`/`email`) on every `storeSession` (i.e. on every
+  login and token refresh), and
+- decrypts them again on `loadSession` and `findSessionsByShop`.
+
+PII lives at `session.onlineAccessInfo.associated_user.{first_name,last_name,email}`
+and only exists for **online** sessions — offline sessions carry no PII and are
+left untouched. The one-time backfill
+([scripts/migrate-encrypt-session-pii.ts](../scripts/migrate-encrypt-session-pii.ts))
+only needs to be run once to encrypt rows written before this wrapper existed.
+
+### Idempotency & migration assumptions
+
+- **Write path** skips re-encrypting values that are already encrypted
+  (`isEncrypted` guard), so re-storing a session does not double-encrypt PII.
+- **Read path** is tolerant of plaintext: `decryptPII` passes pre-backfill
+  plaintext values through unchanged, so legacy rows never crash a login.
+- A PII decryption failure is **logged and the raw value is kept** — unlike a
+  failed `accessToken` decryption, it does **not** force re-auth (a
+  name/email we cannot decrypt must not invalidate an otherwise valid session).
+- `gdpr.service.ts` reads `db.session` **directly via Prisma** (bypassing this
+  wrapper) and decrypts with `decryptPII` itself exactly once — there is no
+  double decryption.
+
 ---
 
 ## Setup Steps
@@ -74,9 +102,12 @@ const refreshToken = decryptToken(session.refreshToken); // Decrypted
 
 ### Writing Session Data
 
-**⚠️ WARNING:** The Shopify SDK manages Session storage automatically via `PrismaSessionStorage`.
+Session writes go through `EncryptedPrismaSessionStorage`, which encrypts
+`accessToken`/`refreshToken` and online-session PII automatically. You do
+**not** call `encryptPII`/`encryptToken` for normal login/token-refresh flows.
 
-Direct Session writes are **rare** and should only be done in special cases:
+Direct `db.session` writes that bypass the storage wrapper are **rare** and
+must encrypt the fields themselves:
 
 ```typescript
 import { encryptPII, encryptToken } from '../utils/encryption';
@@ -94,7 +125,10 @@ await db.session.update({
 });
 ```
 
-**Best Practice:** Let Shopify SDK handle Session storage. You only need to decrypt when **reading** Session data (e.g., in GDPR exports).
+**Best Practice:** Let `EncryptedPrismaSessionStorage` handle Session storage.
+You only need to call `decryptPII` yourself when **reading** Session rows
+**directly via Prisma** (e.g. in GDPR exports), not when going through
+`loadSession`/`findSessionsByShop`.
 
 ---
 
@@ -355,6 +389,6 @@ For issues or questions:
 
 ---
 
-**Last Updated:** 2026-01-14
-**Version:** 1.0.0
-**Status:** ✅ Production-ready
+**Last Updated:** 2026-05-16
+**Version:** 1.1.0
+**Status:** ✅ Implemented — PII encrypted at rest via `EncryptedPrismaSessionStorage` (runtime), backfill script for legacy rows

@@ -1,16 +1,19 @@
 /**
  * API Route: Create Billing Subscription
  *
- * Creates a new subscription for the specified plan
- * In development mode, directly updates the database without Shopify Billing API
+ * Creates a new subscription for the specified plan.
+ * Always goes through the Shopify Billing API (appSubscriptionCreate).
+ * Development/partner test stores automatically get test charges via the
+ * Shopify `test` flag (see billing.server.ts), never a DB-direct write.
  */
 
 import type { ActionFunctionArgs } from '@remix-run/node';
 import { json } from '@remix-run/node';
 import { authenticate } from '~/shopify.server';
-import { createSubscription, getCurrentSubscription, syncSubscriptionToDatabase } from '~/services/billing.server';
+import { createSubscription, getCurrentSubscription } from '~/services/billing.server';
 import type { BillingPlan } from '~/config/billing';
 import { isPaidPlan } from '~/config/billing';
+import { resolveDevPlanMode, setDevForcedPlan } from '~/services/dev-plan-override.server';
 import { logger } from '~/utils/logger.server';
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -28,16 +31,20 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return json({ success: false, error: 'Invalid plan specified' }, { status: 400 });
     }
 
-    // In development mode, directly update the database without Shopify Billing API
-    // This is useful for Custom Apps which cannot use the Billing API
-    // APP_ENV=development allows this behavior even when NODE_ENV=production (e.g. deployed custom apps)
-    if (process.env.NODE_ENV === 'development' || process.env.APP_ENV === 'development') {
-      await syncSubscriptionToDatabase(session.shop, plan);
-      return json({
-        success: true,
-        directUpdate: true,
-        message: `Plan changed to ${plan} (development mode)`,
+    // Custom-app build only: the custom-app distribution has NO Billing API,
+    // so calling createSubscription would fail. Persist the forced plan and
+    // route through the SAME billing callback URL the real flow uses, so the
+    // post-billing UI path is exercised end-to-end. resolveDevPlanMode() is
+    // hard-gated (dev client_id + APP_ENV !== 'production') — dead in the
+    // public App-Store build.
+    if (resolveDevPlanMode(session.shop) === 'override') {
+      await setDevForcedPlan(session.shop, plan);
+      logger.warn('[Billing] Override mode — plan set without Shopify (custom-app build)', {
+        plan,
+        shop: session.shop,
       });
+      const returnUrl = `https://${session.shop}/admin/apps/${process.env.SHOPIFY_API_KEY}/app/billing/callback?plan=${plan}`;
+      return json({ success: true, confirmationUrl: returnUrl, subscriptionId: null });
     }
 
     // Check for an existing paid subscription to enable atomic replacement (paid→paid switch).

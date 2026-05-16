@@ -5,6 +5,7 @@ import { RemixServer } from "@remix-run/react";
 import { renderToPipeableStream } from "react-dom/server";
 import { addDocumentResponseHeaders } from "./shopify.server";
 import { syncScheduler } from "./services/sync-scheduler.service";
+import { ShopReaperService } from "../src/services/shop-reaper.service";
 import { logger } from "./utils/logger.server";
 
 const ABORT_DELAY = 5000;
@@ -13,6 +14,7 @@ const ABORT_DELAY = 5000;
 process.on('SIGTERM', () => {
   logger.info('SIGTERM received - stopping all sync schedulers', { context: 'EntryServer' });
   syncScheduler.stopAll();
+  ShopReaperService.getInstance().stop();
   logger.info('All sync schedulers stopped', { context: 'EntryServer' });
   process.exit(0);
 });
@@ -20,6 +22,7 @@ process.on('SIGTERM', () => {
 process.on('SIGINT', () => {
   logger.info('SIGINT received - stopping all sync schedulers', { context: 'EntryServer' });
   syncScheduler.stopAll();
+  ShopReaperService.getInstance().stop();
   logger.info('All sync schedulers stopped', { context: 'EntryServer' });
   process.exit(0);
 });
