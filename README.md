@@ -586,9 +586,11 @@ Für **externe Änderungen** (direkt in Shopify Admin):
 | `collections/create` | [webhooks.collections.tsx](app/routes/webhooks.collections.tsx) | Neue Collection → DB |
 | `collections/update` | [webhooks.collections.tsx](app/routes/webhooks.collections.tsx) | Collection-Update → DB |
 | `collections/delete` | [webhooks.collections.tsx](app/routes/webhooks.collections.tsx) | Collection löschen aus DB |
-| `articles/create` | [webhooks.articles.tsx](app/routes/webhooks.articles.tsx) | Neuer Artikel → DB |
-| `articles/update` | [webhooks.articles.tsx](app/routes/webhooks.articles.tsx) | Artikel-Update → DB |
-| `articles/delete` | [webhooks.articles.tsx](app/routes/webhooks.articles.tsx) | Artikel löschen aus DB |
+
+> Hinweis: Shopify bietet **keine** Webhook-Topics für Blog-Artikel oder
+> Navigations-Menüs an (nicht in `WebhookSubscriptionTopic` enthalten).
+> Artikel/Menüs werden ausschließlich über den manuellen/geplanten Sync
+> (`ContentSyncService`) aktualisiert, nicht per Webhook.
 
 **Webhook-Flow:**
 
